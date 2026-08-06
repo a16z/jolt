@@ -2,9 +2,16 @@
 
 use std::mem::{align_of, size_of};
 
-use jolt_field::Field;
+use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
 use thiserror::Error;
+
+mod runtime;
+
+pub use runtime::{
+    SpartanShiftFoldInvocation, SpartanShiftFoldObservation, SpartanShiftPrefixInvocation,
+    SpartanShiftPrefixObservation, SpartanShiftResidentRows,
+};
 
 pub const SOURCE: &str = include_str!("shader.metal");
 
@@ -59,9 +66,9 @@ pub struct SpartanShiftKernelConfig {
 impl Default for SpartanShiftKernelConfig {
     fn default() -> Self {
         Self {
-            build_threads_per_threadgroup: 128,
+            build_threads_per_threadgroup: 64,
             high_tile_elements: 128,
-            fold_threads_per_threadgroup: 128,
+            fold_threads_per_threadgroup: 32,
         }
     }
 }
@@ -966,18 +973,18 @@ pub fn prefix_round_endpoints<F: Field>(
             });
         }
     }
-    let mut endpoints = [F::zero(); 2];
+    let mut endpoints = [F::Accumulator::default(); 2];
     for pair in 0..SPARTAN_SHIFT_PREFIX_PAIRS {
         for y in 0..length / 2 {
             let p0 = tables.p[pair][2 * y];
             let p1 = tables.p[pair][2 * y + 1];
             let q0 = tables.q[pair][2 * y];
             let q1 = tables.q[pair][2 * y + 1];
-            endpoints[0] += p0 * q0;
-            endpoints[1] += (p1 + p1 - p0) * (q1 + q1 - q0);
+            endpoints[0].fmadd(p0, q0);
+            endpoints[1].fmadd(p1 + p1 - p0, q1 + q1 - q0);
         }
     }
-    Ok(endpoints)
+    Ok(endpoints.map(F::Accumulator::reduce))
 }
 
 pub fn prefix_round<F: Field>(
@@ -1079,7 +1086,7 @@ pub fn dense_round_endpoints<F: Field>(
     }
     validate_dense_lengths(state, length)?;
     let gamma_powers = gamma_powers(gamma);
-    let mut endpoints = [F::zero(); 2];
+    let mut endpoints = [F::Accumulator::default(); 2];
     for y in 0..length / 2 {
         for (node, t) in [F::zero(), F::from_u64(2)].into_iter().enumerate() {
             let eq_outer = extend_pair(&state.eq_plus_one_outer, y, t);
@@ -1089,15 +1096,17 @@ pub fn dense_round_endpoints<F: Field>(
             let is_virtual = extend_pair(&state.is_virtual, y, t);
             let is_first = extend_pair(&state.is_first_in_sequence, y, t);
             let is_noop = extend_pair(&state.is_noop, y, t);
-            endpoints[node] += eq_outer
-                * (unexpanded_pc
+            endpoints[node].fmadd(
+                eq_outer,
+                unexpanded_pc
                     + gamma_powers[1] * pc
                     + gamma_powers[2] * is_virtual
-                    + gamma_powers[3] * is_first)
-                + eq_product * gamma_powers[4] * (F::one() - is_noop);
+                    + gamma_powers[3] * is_first,
+            );
+            endpoints[node].fmadd(eq_product, gamma_powers[4] * (F::one() - is_noop));
         }
     }
-    Ok(endpoints)
+    Ok(endpoints.map(F::Accumulator::reduce))
 }
 
 pub fn dense_round<F: Field>(
@@ -1440,6 +1449,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn resident_upload_is_not_coupled_to_default_dispatch_geometry() {
+        let Ok(context) = super::super::SolinasMetal::for_akita() else {
+            return;
+        };
+        let rows = context
+            .prepare_spartan_shift_rows(&[3, 5], &[7, 11], &[SpartanShiftFlagWord::default()], true)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {
         let mut state = seed;
         (0..len)
@@ -1631,5 +1651,81 @@ mod tests {
                 "tiled successor mismatch at high tile {high_tile_elements}"
             );
         }
+    }
+
+    #[test]
+    fn metal_runtime_matches_prefix_and_fold_oracles() {
+        let Ok(context) = super::super::SolinasMetal::for_akita() else {
+            return;
+        };
+        let geometry = SpartanShiftGeometry::new(1 << 16).unwrap();
+        let mut unexpanded_pc = vec![0u64; geometry.rows];
+        let mut pc = vec![0u64; geometry.rows];
+        let mut is_virtual = vec![false; geometry.rows];
+        let mut is_first = vec![false; geometry.rows];
+        let mut is_noop = vec![false; geometry.rows];
+        for row in 0..geometry.rows {
+            unexpanded_pc[row] = (row as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .rotate_left((row & 63) as u32);
+            pc[row] = u64::MAX.wrapping_sub(
+                (row as u64)
+                    .wrapping_mul(0xD134_2543_DE82_EF95)
+                    .rotate_right((row & 31) as u32),
+            );
+            is_virtual[row] = row % 5 == 1;
+            is_first[row] = row % 17 == 3;
+            is_noop[row] = row % 7 == 0;
+        }
+        let flags = pack_flag_words(geometry, &is_virtual, &is_first, &is_noop).unwrap();
+        let planes = SpartanShiftNativePlanes::new(geometry, &unexpanded_pc, &pc, &flags).unwrap();
+        let rows = context
+            .prepare_spartan_shift_rows(&unexpanded_pc, &pc, &flags, true)
+            .unwrap();
+        let source_allocations = rows.allocation_identities();
+        let r_outer = point(geometry.log_t, 0xA11C_E001);
+        let r_product = point(geometry.log_t, 0xB22D_F002);
+        let gamma = AkitaField::from_u64(0xC33E_1003);
+        let expected_prefix =
+            build_prefix_successor(geometry, planes, &r_outer, &r_product, gamma).unwrap();
+
+        for strategy in [
+            SpartanShiftPrefixStrategy::Mixed,
+            SpartanShiftPrefixStrategy::ExpandedHalfWidth,
+        ] {
+            let invocation = context
+                .prepare_spartan_shift_prefix(
+                    &rows,
+                    &r_outer,
+                    &r_product,
+                    gamma,
+                    SpartanShiftKernelConfig::default(),
+                    strategy,
+                )
+                .unwrap();
+            assert_eq!(
+                invocation.source_allocation_identities(),
+                source_allocations
+            );
+            assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+            let observation = invocation.execute().unwrap();
+            assert_eq!(observation.q, expected_prefix.q, "strategy {strategy:?}");
+            assert!(!observation.gpu_active.is_zero());
+        }
+
+        let prefix_challenges = point(geometry.prefix_vars, 0xD44F_2004);
+        let expected_fold = fold_native_prefix(geometry, planes, &prefix_challenges).unwrap();
+        let fold = context
+            .prepare_spartan_shift_fold(
+                &rows,
+                &prefix_challenges,
+                SpartanShiftKernelConfig::default(),
+            )
+            .unwrap();
+        assert_eq!(fold.source_allocation_identities(), source_allocations);
+        assert_eq!(fold.execute_device_buffer_allocations(), 0);
+        let observation = fold.execute().unwrap();
+        assert_eq!(observation.outputs, expected_fold);
+        assert!(!observation.gpu_active.is_zero());
     }
 }

@@ -538,6 +538,24 @@ pub enum MetalError {
     )]
     RamOutputCheckThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(transparent)]
+    SpartanShiftPlan(#[from] spartan_shift::SpartanShiftPlanError),
+    #[error(transparent)]
+    SpartanShiftOracle(#[from] spartan_shift::SpartanShiftOracleError),
+    #[error("invalid resident Spartan shift state: {0}")]
+    InvalidSpartanShiftState(&'static str),
+    #[error(
+        "Spartan shift pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedSpartanShiftExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "Spartan shift fold needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
+    )]
+    SpartanShiftThreadgroupMemory { requested: u64, maximum: u64 },
+    #[error(transparent)]
     RamValCheckShape(#[from] ram_val_check::RamValCheckShapeError),
     #[error(transparent)]
     RamRaf(#[from] ram_raf_evaluation::RamRafError),

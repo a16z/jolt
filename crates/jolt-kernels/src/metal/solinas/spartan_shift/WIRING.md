@@ -1,9 +1,15 @@
 # Spartan shift Metal design
 
-This directory is an isolated first-principles design slice for the stage-3
-`SpartanShift` member. It contains a checked geometry/oracle and shader drafts.
-It does not register a source, select a backend, alter Cargo, or change the
-protocol.
+This directory contains the checked geometry and independent host oracle,
+registered Metal entry points, a standalone resident-buffer runtime, and its
+microbenchmark for the stage-3 `SpartanShift` member. It does not yet select a
+PIOP backend or change the protocol.
+
+The current result is a provisional resident-service kernel, not an accepted
+PIOP result. Exact GPU parity passes and the retained prepared-path median
+clears 5x, but command-service variance has a long tail and the production
+resident producer, reusable workspace, asynchronous schedule, and fairly
+attributed complete-member evaluator are still missing.
 
 ## Decision
 
@@ -25,18 +31,16 @@ larger challenge-independent transform. A per-round Metal port is rejected:
 26 submissions add latency and repeatedly move shrinking field tables without
 removing either full-domain pass.
 
-The first implementation should carry both prefix-build variants in this
-directory until one same-run sweep selects a winner:
+The implementation carries both prefix-build variants as controls:
 
 - **mixed:** form the gamma-combined outer value with one 128-by-64 product,
   then perform two full-field products per row for the current/successor sums;
 - **expanded:** pre-scale five high weights and use only 128-by-64 products.
 
-The retained controls project mixed slightly ahead at the minimum accepted
-half-width rate. Expanded becomes analytically preferable once half-width
-throughput exceeds 1.5 times the matched full-width rate, and can also win by
-breaking the mixed path's dependent multiply chain. The evaluator, not a
-compile-time assumption, chooses between them.
+The target sweep retained mixed at 64 build threads and a 128-row high tile.
+Expanded was slower across the useful target configurations and remains a
+correctness/control path rather than a production candidate. Revisit it only
+if a new half-width primitive materially changes the matched arithmetic roof.
 
 ## Frozen CPU denominator
 
@@ -255,10 +259,10 @@ be described as data reuse.
 
 ### Command 1: prefix Q build
 
-The initial geometry uses 128 threads per threadgroup and 128 high rows per
+The retained geometry uses 64 threads per threadgroup and 128 high rows per
 tile. One thread owns one `x_lo`; adjacent lanes therefore read adjacent cycle
-rows at every high step. At the target there are 64 low threadgroups times 64
-high tiles, or 4096 threadgroups. Each thread carries four field accumulators
+rows at every high step. At the target there are 128 low threadgroups times 64
+high tiles, or 8192 threadgroups. Each thread carries four field accumulators
 and writes one four-field partial. A second dispatch in the same command buffer
 reduces the 64 partials for every `x_lo` and writes four Q tables.
 
@@ -270,12 +274,12 @@ Both produce identical partial and Q layouts.
 
 ### Command 2: native prefix fold
 
-Dispatch one threadgroup per `x_hi`. At width 128 each thread visits 64
-contiguous low rows and accumulates the five output columns. PC columns use
-canonical 128-by-64 multiplication. Boolean columns conditionally add the
-field weight. SIMD reductions use five fields per SIMD group, or 320 bytes of
-dynamic threadgroup memory at width 128. The command writes five 8192-element
-tables and waits once before the CPU suffix.
+Dispatch one threadgroup per `x_hi`. At the retained width 32 each lane visits
+256 contiguous low rows and accumulates the five output columns. PC columns
+use canonical 128-by-64 multiplication. Boolean columns conditionally add the
+field weight. SIMD reductions use five fields per SIMD group, or 80 bytes of
+dynamic threadgroup memory. The command writes five 8192-element tables and
+waits once before the CPU suffix.
 
 The two commands read back `4P + 5H = 73,728` fields, exactly 1,179,648 bytes.
 Shared-buffer visibility and host cache effects count in wall time even if no
@@ -393,22 +397,59 @@ complete paired median decides 5x. If the expanded kernel or a better
 half-width result makes the 16.381453-ms 8x cap credible, continue toward it
 instead of stopping at 5x.
 
+## Observed standalone result
+
+The registered runtime now owns three shared resident source buffers and
+preallocates all command-private buffers. `execute` performs no device-buffer
+allocation. A target sweep selected mixed `(build_threads = 64,
+high_tile = 128)` and native fold `(fold_threads = 32)`. The expanded build and
+a column-parallel fold were both measured and rejected. The latter regressed a
+focused parity run to seconds rather than milliseconds.
+
+The focused suite runs 16 Spartan-shift tests, including element-for-element
+Metal parity for both prefix strategies and the native fold against an
+independent host oracle. The runtime also proves that both commands retain the
+same source allocation identities.
+
+Five fresh-process, retained-only observations at `T = 2^26` produced prepared
+hybrid service walls of:
+
+```text
+22.636833 ms, 15.750583 ms, 24.399833 ms, 13.224375 ms, 45.228959 ms
+```
+
+The median is `22.636833 ms`, or `5.789309x` against the frozen CPU member, and
+four of five samples clear the `26.210324-ms` cap. Median command-active time
+was `9.274125 ms` for the mixed prefix and `5.016500 ms` for the fold. The slow
+sample spent only `15.131375 ms` active on the GPU; its `45.228959-ms` service
+wall came from command scheduling plus host-visible completion latency. That
+tail is real and prevents promotion based on the median alone.
+
+These numbers begin after challenge-dependent high/low weight preparation,
+scratch allocation, and pipeline lookup, and they exclude the 1.099-GB source
+upload. They therefore establish a useful kernel-service result, not a fair
+complete-member speedup. The next runtime step is a reusable workspace with
+buffer updates plus submit/join APIs. The paired PIOP evaluator must charge the
+incremental resident producer, workspace updates, both commands, both host
+ladders, and all joins before this member can pass.
+
 ## Occupancy and tuning
 
-The prefix partial grid has 524,288 independent threads and 4096 target
+The prefix partial grid has 524,288 independent threads and 8192 target
 threadgroups, so launch width is not expected to limit saturation. Its
 source-level live set is dominated by four field accumulators, current/next
 outer temporaries, two weights, gamma powers, and one wide product. This is a
 structural estimate, not a compiler register count. The low-fold grid has 8192
-threadgroups and five field accumulators; its 320-byte target scratch is less
+threadgroups and five field accumulators; its 80-byte target scratch is less
 than 1% of the 32-KiB legal threadgroup-memory limit.
 
-Before promotion, capture both build variants and the fold at widths 64, 128,
-and 256 and high-tile heights 64, 128, and 256. Record register allocation,
+The first target sweep covered both build variants at widths 64, 128, 256, and
+512 and high-tile heights 32, 64, 128, 256, and 512. The fold covered widths 32
+through 1024. Before promotion, capture compiler register allocation,
 spills/local memory, resident SIMD groups, active cores, achieved half/full
-products per second, and achieved bytes per second. Tune width or tile height
-only against the fixed byte-parity evaluator. A phase below 80% of its matched
-roof is unfinished even when aggregate wall happens to clear 5x.
+products per second, and achieved bytes per second for the retained geometry.
+A phase below 80% of its matched roof is unfinished even when an aggregate
+prepared-path median happens to clear 5x.
 
 ## CPU fallback and crossover
 
@@ -465,17 +506,17 @@ Kill or redesign the path under any of these conditions:
 
 ## Integration map
 
-After the isolated slice is accepted:
+Before PIOP promotion:
 
 1. add a typed resident-plane owner to the shared stage-1 producer;
 2. change that producer to 32-row chunk ownership and add the current `IsNoop`
    source without changing witness semantics;
-3. register the selected source fragments and entry points;
-4. add a Metal backend slot that attaches the owner, runs the two commands,
-   and delegates both ladders to a small serial host state;
-5. add exact CPU/Metal unit and integration parity;
-6. add Criterion microbenchmarks for each command, the host ladders, producer
-   attribution, and complete member; and
+3. replace per-invocation scratch allocation with a reusable workspace and add
+   submit/join APIs for both commands;
+4. add a Metal backend slot that borrows the owner, runs the two commands, and
+   delegates both ladders to a small serial host state;
+5. add generated-driver and proof-level CPU/Metal parity in both clear and ZK
+   modes;
+6. extend the existing microbenchmark to charge workspace updates, producer
+   attribution, command joins, and the complete member; and
 7. run the paired PIOP evaluator before changing the backend cutoff.
-
-No item in that list is performed by this directory.

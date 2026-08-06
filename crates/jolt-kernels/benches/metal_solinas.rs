@@ -85,6 +85,10 @@ mod registers_val;
 mod spartan_outer_uniskip;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/spartan_shift.rs"]
+mod spartan_shift;
+
+#[cfg(target_os = "macos")]
 #[path = "../tests/support/mod.rs"]
 mod reference;
 
@@ -105,7 +109,7 @@ mod macos {
         instruction_input, instruction_ra, instruction_ra_sequence, product5, product_remainder,
         product_uniskip, ram_output_check, ram_raf_evaluation, ram_val_check,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
-        registers_read_write, registers_val, spartan_outer_uniskip,
+        registers_read_write, registers_val, spartan_outer_uniskip, spartan_shift,
     };
 
     const STREAM_ELEMENTS: usize = 1 << 20;
@@ -189,6 +193,7 @@ mod macos {
                 }
                 "bytecode-cycle-dense" => bytecode_cycle::bench(c, &context),
                 "spartan-outer-uniskip" => spartan_outer_uniskip::bench(c, &context),
+                "spartan-shift" => spartan_shift::bench(c, &context),
                 "product5" => {
                     product5::bench_message(c, &context);
                     product5::bench_transition(c, &context);
