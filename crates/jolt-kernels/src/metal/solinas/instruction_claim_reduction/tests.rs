@@ -1,0 +1,798 @@
+use core::mem::{align_of, size_of};
+
+use jolt_field::{AkitaField, FromPrimitiveInt};
+use jolt_poly::UnivariatePoly;
+
+use crate::optimized::instruction_claim_reduction::InstructionOperandRow;
+
+use super::*;
+
+fn operand_planes(
+    core: &[InstructionClaimCoreRow],
+    right_input: &[InstructionClaimRightInput],
+) -> InstructionClaimOperandPlanes {
+    InstructionClaimOperandPlanes::new(
+        core.iter().map(|row| row.lookup_output()).collect(),
+        core.iter().map(|row| row.left_lookup_operand()).collect(),
+        core.iter()
+            .map(|row| InstructionClaimRightLookup::new(row.right_lookup_operand()))
+            .collect(),
+        core.iter()
+            .map(|row| row.left_instruction_input())
+            .collect(),
+        right_input.to_vec(),
+    )
+    .expect("the operand planes are valid")
+}
+
+#[test]
+fn metal_entry_points_compile() {
+    let Ok(context) = super::super::SolinasMetal::for_akita() else {
+        return;
+    };
+    for name in [
+        MATERIALIZE_PIPELINE,
+        TRANSITION_PIPELINE,
+        CORE_OPENING_PIPELINE,
+        ALIASED_OPENING_PIPELINE,
+        ALL_OPENING_PIPELINE,
+        REDUCTION_PIPELINE,
+    ] {
+        let pipeline = context
+            .compile_named_pipeline(name)
+            .expect("instruction claim pipeline should compile");
+        let limits = super::super::SolinasMetal::limits(&pipeline);
+        assert_eq!(limits.thread_execution_width, INSTRUCTION_CLAIM_SIMD_WIDTH);
+        assert!(limits.max_total_threads_per_threadgroup >= 128);
+    }
+}
+
+#[test]
+fn native_plane_abis_and_word_order_are_fixed() {
+    assert_eq!(INSTRUCTION_CLAIM_AKITA_OFFSET, 0xffff_a7f7);
+    assert_eq!(size_of::<InstructionClaimCoreRow>(), 40);
+    assert_eq!(align_of::<InstructionClaimCoreRow>(), 8);
+    assert_eq!(size_of::<InstructionClaimRightInput>(), 16);
+    assert_eq!(align_of::<InstructionClaimRightInput>(), 8);
+    assert_eq!(size_of::<InstructionClaimRightLookup>(), 16);
+    assert_eq!(align_of::<InstructionClaimRightLookup>(), 8);
+    assert_eq!(size_of::<InstructionClaimLookupOperandRow>(), 24);
+    assert_eq!(align_of::<InstructionClaimLookupOperandRow>(), 8);
+    assert_eq!(size_of::<InstructionClaimPhaseParams>(), 16);
+    assert_eq!(size_of::<InstructionClaimOpeningParams>(), 16);
+    assert_eq!(size_of::<InstructionClaimReductionParams>(), 16);
+    assert_eq!(align_of::<InstructionClaimPhaseParams>(), 4);
+    assert_eq!(align_of::<InstructionClaimOpeningParams>(), 4);
+    assert_eq!(align_of::<InstructionClaimReductionParams>(), 4);
+
+    let core = InstructionClaimCoreRow::new(1, 2, u128::MAX - 3, 4);
+    assert_eq!(core.words(), [1, 2, u64::MAX - 3, u64::MAX, 4]);
+    assert_eq!(core.lookup_output(), 1);
+    assert_eq!(core.left_lookup_operand(), 2);
+    assert_eq!(core.right_lookup_operand(), u128::MAX - 3);
+    assert_eq!(core.left_instruction_input(), 4);
+    let right_lookup = InstructionClaimRightLookup::new(u128::MAX - 3);
+    assert_eq!(right_lookup.words(), [u64::MAX - 3, u64::MAX]);
+    assert_eq!(
+        InstructionClaimRightLookup::from_words(right_lookup.words()),
+        right_lookup
+    );
+    assert_eq!(right_lookup.value(), u128::MAX - 3);
+}
+
+#[test]
+fn optimized_rows_split_into_native_planes() {
+    use jolt_witness::witnesses::{
+        LeftInstructionInput, LeftLookupOperand, LookupOutput, RightInstructionInput,
+        RightLookupOperand,
+    };
+
+    let rows = [
+        InstructionOperandRow {
+            lookup_output: LookupOutput(1),
+            left_lookup_operand: LeftLookupOperand(2),
+            right_lookup_operand: RightLookupOperand(u128::MAX - 3),
+            left_instruction_input: LeftInstructionInput(4),
+            right_instruction_input: RightInstructionInput(-5),
+        },
+        InstructionOperandRow {
+            lookup_output: LookupOutput(6),
+            left_lookup_operand: LeftLookupOperand(7),
+            right_lookup_operand: RightLookupOperand(8),
+            left_instruction_input: LeftInstructionInput(9),
+            right_instruction_input: RightInstructionInput(10),
+        },
+    ];
+    let planes = split_operand_rows(&rows).expect("the row count is valid");
+
+    assert_eq!(planes.lookup_output(), [1, 6]);
+    assert_eq!(planes.left_lookup_operand(), [2, 7]);
+    assert_eq!(
+        planes.right_lookup_operand(),
+        [
+            InstructionClaimRightLookup::new(u128::MAX - 3),
+            InstructionClaimRightLookup::new(8),
+        ]
+    );
+    assert_eq!(planes.left_instruction_input(), [4, 9]);
+    assert_eq!(
+        planes.right_instruction_input(),
+        [
+            InstructionClaimRightInput::new(-5),
+            InstructionClaimRightInput::new(10),
+        ]
+    );
+    assert_eq!(
+        lookup_operand_rows(&rows),
+        [
+            InstructionClaimLookupOperandRow::new(2, u128::MAX - 3),
+            InstructionClaimLookupOperandRow::new(7, 8),
+        ]
+    );
+}
+
+#[test]
+fn operand_planes_reject_mismatched_or_invalid_lengths() {
+    assert_eq!(
+        InstructionClaimOperandPlanes::new(
+            vec![0; 2],
+            vec![0; 4],
+            vec![InstructionClaimRightLookup::default(); 2],
+            vec![0; 2],
+            vec![InstructionClaimRightInput::default(); 2],
+        ),
+        Err(InstructionClaimShapeError::OperandPlaneLength {
+            name: "left lookup operand",
+            expected: 2,
+            got: 4,
+        })
+    );
+    assert_eq!(
+        InstructionClaimOperandPlanes::new(
+            vec![0; 3],
+            vec![0; 3],
+            vec![InstructionClaimRightLookup::default(); 3],
+            vec![0; 3],
+            vec![InstructionClaimRightInput::default(); 3],
+        ),
+        Err(InstructionClaimShapeError::InvalidRows(3))
+    );
+}
+
+#[test]
+fn signed_right_input_round_trips_twos_complement() {
+    for value in [i128::MIN, -1, 0, 1, i128::MAX] {
+        let encoded = InstructionClaimRightInput::new(value);
+        assert_eq!(
+            InstructionClaimRightInput::from_words(encoded.words()),
+            encoded
+        );
+        assert_eq!(encoded.value(), value);
+    }
+}
+
+#[test]
+fn exact_gruen_geometry_covers_even_and_odd_log_t() {
+    let even = InstructionClaimGeometry::new(16).expect("the geometry is valid");
+    assert_eq!(even.log_t(), 4);
+    assert_eq!(
+        (0..4)
+            .map(|round| even.message(round).expect("the round is valid").weights())
+            .collect::<Vec<_>>(),
+        vec![
+            InstructionClaimWeightGeometry {
+                e_in_length: 2,
+                e_out_length: 4,
+            },
+            InstructionClaimWeightGeometry {
+                e_in_length: 1,
+                e_out_length: 4,
+            },
+            InstructionClaimWeightGeometry {
+                e_in_length: 1,
+                e_out_length: 2,
+            },
+            InstructionClaimWeightGeometry {
+                e_in_length: 1,
+                e_out_length: 1,
+            },
+        ]
+    );
+    assert_eq!(
+        even.opening(),
+        InstructionClaimWeightGeometry {
+            e_in_length: 4,
+            e_out_length: 4,
+        }
+    );
+
+    let odd = InstructionClaimGeometry::new(8).expect("the geometry is valid");
+    assert_eq!(
+        (0..3)
+            .map(|round| odd.message(round).expect("the round is valid").weights())
+            .collect::<Vec<_>>(),
+        vec![
+            InstructionClaimWeightGeometry {
+                e_in_length: 2,
+                e_out_length: 2,
+            },
+            InstructionClaimWeightGeometry {
+                e_in_length: 1,
+                e_out_length: 2,
+            },
+            InstructionClaimWeightGeometry {
+                e_in_length: 1,
+                e_out_length: 1,
+            },
+        ]
+    );
+    assert_eq!(
+        odd.opening(),
+        InstructionClaimWeightGeometry {
+            e_in_length: 4,
+            e_out_length: 2,
+        }
+    );
+    assert!(matches!(
+        InstructionClaimOpeningParams::new(odd, 2, 4, InstructionClaimOpeningMode::AllColumns,),
+        Err(InstructionClaimShapeError::WeightLayout { .. })
+    ));
+    assert!(matches!(
+        InstructionClaimStorageLayout::new(8, 2, 4),
+        Err(InstructionClaimShapeError::WeightCapacity { .. })
+    ));
+}
+
+#[test]
+fn oracle_materializes_hinted_message_endpoints() {
+    let core: Vec<_> = [1, 2, 3, 4]
+        .into_iter()
+        .map(|lookup| InstructionClaimCoreRow::new(lookup, 0, 0, 0))
+        .collect();
+    let right = vec![InstructionClaimRightInput::default(); 4];
+    let planes = operand_planes(&core, &right);
+    let result = oracle::materialize_message(
+        &planes,
+        AkitaField::from_u64(9),
+        &[AkitaField::from_u64(3)],
+        &[AkitaField::from_u64(5), AkitaField::from_u64(7)],
+    )
+    .expect("the shape is valid");
+
+    assert_eq!(
+        result.state,
+        [1, 2, 3, 4].map(AkitaField::from_u64).to_vec()
+    );
+    assert_eq!(result.partials, [15, 63, 45, 105].map(AkitaField::from_u64));
+    assert_eq!(
+        result.q_endpoints,
+        [AkitaField::from_u64(78), AkitaField::from_u64(150)]
+    );
+}
+
+#[test]
+fn oracle_fuses_bind_with_the_next_message() {
+    let state = [1, 2, 3, 4].map(AkitaField::from_u64);
+    let geometry = InstructionClaimGeometry::new(4).expect("the geometry is valid");
+    let result = oracle::bind_and_message(
+        &state,
+        geometry,
+        1,
+        AkitaField::from_u64(2),
+        &[AkitaField::one()],
+        &[AkitaField::from_u64(3)],
+    )
+    .expect("the shape is valid");
+
+    assert_eq!(
+        result.state,
+        [AkitaField::from_u64(3), AkitaField::from_u64(5)]
+    );
+    assert_eq!(
+        result.partials,
+        [AkitaField::from_u64(9), AkitaField::from_u64(21)]
+    );
+    assert_eq!(
+        result.q_endpoints,
+        [AkitaField::from_u64(9), AkitaField::from_u64(21)]
+    );
+}
+
+#[test]
+fn host_endpoint_scaling_and_final_bind_match_the_protocol_formula() {
+    let scaled = scale_q_endpoints(
+        [AkitaField::from_u64(3), AkitaField::from_u64(5)],
+        [AkitaField::from_u64(7), AkitaField::from_u64(11)],
+    );
+    assert_eq!(scaled, [AkitaField::from_u64(21), AkitaField::from_u64(75)]);
+    assert_eq!(
+        finish_bind(
+            [AkitaField::from_u64(3), AkitaField::from_u64(5)],
+            AkitaField::from_u64(7),
+        ),
+        AkitaField::from_u64(17)
+    );
+
+    let previous_claim = AkitaField::from_u64(65);
+    let actual = round_polynomial_from_q_endpoints(
+        previous_claim,
+        [AkitaField::from_u64(3), AkitaField::from_u64(5)],
+        [AkitaField::from_u64(7), AkitaField::from_u64(11)],
+    );
+    let expected = UnivariatePoly::from_evals(&[
+        AkitaField::from_u64(21),
+        AkitaField::from_u64(44),
+        AkitaField::from_u64(75),
+    ]);
+    assert_eq!(actual.coefficients(), expected.coefficients());
+}
+
+#[test]
+fn oracle_openings_cover_core_and_signed_planes() {
+    let core = [
+        InstructionClaimCoreRow::new(1, 2, 3, 4),
+        InstructionClaimCoreRow::new(6, 7, 8, 9),
+        InstructionClaimCoreRow::new(11, 12, 13, 14),
+        InstructionClaimCoreRow::new(16, 17, 18, 19),
+    ];
+    let right = [-5, 10, -15, 20].map(InstructionClaimRightInput::new);
+    let planes = operand_planes(&core, &right);
+    let e_in = [AkitaField::from_u64(2), AkitaField::from_u64(3)];
+    let e_out = [AkitaField::from_u64(5), AkitaField::from_u64(7)];
+
+    assert_eq!(
+        oracle::core_openings(&planes, &e_in, &e_out).expect("the opening shape is valid"),
+        [590, 650, 710, 770].map(AkitaField::from_u64)
+    );
+    assert_eq!(
+        oracle::core_opening_partials(&planes, &e_in, &e_out).expect("the opening shape is valid"),
+        [100, 490, 125, 525, 150, 560, 175, 595].map(AkitaField::from_u64)
+    );
+    assert_eq!(
+        oracle::all_openings(&planes, &e_in, &e_out)
+            .expect("the opening shape is valid")
+            .into_array(),
+        [590, 650, 710, 770, 310].map(AkitaField::from_u64)
+    );
+    assert_eq!(
+        oracle::all_opening_partials(&planes, &e_in, &e_out).expect("the opening shape is valid"),
+        [100, 490, 125, 525, 150, 560, 175, 595, 100, 210,].map(AkitaField::from_u64)
+    );
+    assert_eq!(
+        oracle::aliased_openings(&planes, &e_in, &e_out)
+            .expect("the aliased opening shape is valid"),
+        [650, 710].map(AkitaField::from_u64)
+    );
+    assert_eq!(
+        oracle::aliased_opening_partials(&planes, &e_in, &e_out)
+            .expect("the aliased opening shape is valid"),
+        [125, 525, 150, 560].map(AkitaField::from_u64)
+    );
+}
+
+#[test]
+fn nonzero_gamma_recovers_the_fifth_opening() {
+    let gamma = AkitaField::from_u64(2);
+    let core = [3, 5, 7, 11].map(AkitaField::from_u64);
+    let right = AkitaField::from_u64(13);
+    let powers = nontrivial_gamma_powers(gamma);
+    let combined = core[0]
+        + powers[0] * core[1]
+        + powers[1] * core[2]
+        + powers[2] * core[3]
+        + powers[3] * right;
+
+    assert_eq!(
+        InstructionClaimOpeningMode::for_gamma(gamma),
+        InstructionClaimOpeningMode::CoreAndRecover
+    );
+    assert_eq!(recover_right_input(gamma, combined, core), Ok(right));
+    assert_eq!(
+        finalize_openings(
+            InstructionClaimOpeningMode::CoreAndRecover,
+            gamma,
+            combined,
+            core,
+            None,
+        )
+        .expect("nonzero gamma is invertible")
+        .into_array(),
+        [core[0], core[1], core[2], core[3], right]
+    );
+}
+
+#[test]
+fn opening_geometry_matches_low_to_high_resident_binding() {
+    let gamma = AkitaField::from_u64(2);
+    let first_challenge = AkitaField::from_u64(3);
+    let final_challenge = AkitaField::from_u64(5);
+    let core = [
+        InstructionClaimCoreRow::new(1, 2, 3, 4),
+        InstructionClaimCoreRow::new(6, 7, 8, 9),
+        InstructionClaimCoreRow::new(11, 12, 13, 14),
+        InstructionClaimCoreRow::new(16, 17, 18, 19),
+    ];
+    let right = [-5, 10, -15, 20].map(InstructionClaimRightInput::new);
+    let planes = operand_planes(&core, &right);
+    let combined: [AkitaField; 4] =
+        std::array::from_fn(|index| core[index].combined(right[index], gamma));
+    let bound_once = [
+        finish_bind([combined[0], combined[1]], first_challenge),
+        finish_bind([combined[2], combined[3]], first_challenge),
+    ];
+    let final_combined = finish_bind(bound_once, final_challenge);
+
+    let e_in = [AkitaField::one() - first_challenge, first_challenge];
+    let e_out = [AkitaField::one() - final_challenge, final_challenge];
+    let openings =
+        oracle::all_openings(&planes, &e_in, &e_out).expect("the opening shape is valid");
+    assert_eq!(openings.combined(gamma), final_combined);
+
+    let core_openings =
+        oracle::core_openings(&planes, &e_in, &e_out).expect("the opening shape is valid");
+    assert_eq!(
+        finalize_openings(
+            InstructionClaimOpeningMode::CoreAndRecover,
+            gamma,
+            final_combined,
+            core_openings,
+            None,
+        )
+        .expect("nonzero gamma is invertible"),
+        openings
+    );
+}
+
+#[test]
+fn gamma_zero_selects_and_requires_the_all_column_path() {
+    let zero = AkitaField::zero();
+    let core = [3, 5, 7, 11].map(AkitaField::from_u64);
+    let right = AkitaField::from_u64(13);
+    assert_eq!(
+        InstructionClaimOpeningMode::for_gamma(zero),
+        InstructionClaimOpeningMode::AllColumns
+    );
+    assert_eq!(
+        recover_right_input(zero, core[0], core),
+        Err(InstructionClaimOpeningError::ZeroGammaRecovery)
+    );
+    assert_eq!(
+        finalize_openings(
+            InstructionClaimOpeningMode::AllColumns,
+            zero,
+            core[0],
+            core,
+            None,
+        ),
+        Err(InstructionClaimOpeningError::MissingRightInputOpening)
+    );
+    assert_eq!(
+        finalize_openings(
+            InstructionClaimOpeningMode::AllColumns,
+            zero,
+            core[0],
+            core,
+            Some(right),
+        )
+        .expect("the fifth column was scanned")
+        .right_instruction_input,
+        right
+    );
+}
+
+#[test]
+fn aliased_openings_cover_zero_and_nonzero_gamma() {
+    let aliases = InstructionClaimAliasedOpenings {
+        lookup_output: AkitaField::from_u64(3),
+        left_instruction_input: AkitaField::from_u64(11),
+        right_instruction_input: AkitaField::from_u64(13),
+    };
+    let lookup_operands = [AkitaField::from_u64(5), AkitaField::from_u64(7)];
+
+    for gamma in [AkitaField::zero(), AkitaField::from_u64(2)] {
+        let expected = InstructionClaimOpenings {
+            lookup_output: aliases.lookup_output,
+            left_lookup_operand: lookup_operands[0],
+            right_lookup_operand: lookup_operands[1],
+            left_instruction_input: aliases.left_instruction_input,
+            right_instruction_input: aliases.right_instruction_input,
+        };
+        let combined = expected.combined(gamma);
+        assert_eq!(
+            finalize_aliased_openings(gamma, combined, lookup_operands, aliases),
+            Ok(expected)
+        );
+        assert_eq!(
+            verifier_output_term(AkitaField::from_u64(17), expected, gamma),
+            AkitaField::from_u64(17) * combined
+        );
+    }
+}
+
+#[test]
+fn finalization_rejects_openings_from_the_wrong_point() {
+    let gamma = AkitaField::from_u64(2);
+    let core = [3, 5, 7, 11].map(AkitaField::from_u64);
+    assert_eq!(
+        finalize_openings(
+            InstructionClaimOpeningMode::AllColumns,
+            gamma,
+            AkitaField::from_u64(123),
+            core,
+            Some(AkitaField::from_u64(13)),
+        ),
+        Err(InstructionClaimOpeningError::CombinedClaimMismatch)
+    );
+}
+
+#[test]
+fn reduction_plan_and_oracle_cover_the_recursive_entry_point() {
+    let plan =
+        InstructionClaimReductionPlan::new(8192, 2).expect("the reduction geometry is valid");
+    assert_eq!(
+        plan.passes(),
+        [
+            InstructionClaimReductionPass {
+                input_count: 8192,
+                output_count: 256,
+                dispatched_threads: 8192,
+            },
+            InstructionClaimReductionPass {
+                input_count: 256,
+                output_count: 8,
+                dispatched_threads: 256,
+            },
+            InstructionClaimReductionPass {
+                input_count: 8,
+                output_count: 1,
+                dispatched_threads: 32,
+            },
+        ]
+    );
+
+    let first_column: Vec<_> = (1..=33).map(AkitaField::from_u64).collect();
+    let second_column: Vec<_> = (0..33)
+        .map(|index| AkitaField::from_u64(100 + index))
+        .collect();
+    let input = [first_column, second_column].concat();
+    let reduced = oracle::reduce_once(&input, 33, 2).expect("the shape is valid");
+    assert_eq!(
+        reduced,
+        [
+            AkitaField::from_u64((1..=32).sum()),
+            AkitaField::from_u64(33),
+            AkitaField::from_u64((100..132).sum()),
+            AkitaField::from_u64(132),
+        ]
+    );
+}
+
+#[test]
+fn native_conversion_edges_match_field_constructors() {
+    let core = InstructionClaimCoreRow::new(u64::MAX, u64::MAX - 1, u128::MAX, 1_u64 << 63);
+    let right = InstructionClaimRightInput::new(i128::MIN);
+    let gamma = AkitaField::from_u64(17);
+    let powers = nontrivial_gamma_powers(gamma);
+    let expected = AkitaField::from_u64(u64::MAX)
+        + powers[0] * AkitaField::from_u64(u64::MAX - 1)
+        + powers[1] * AkitaField::from_u128(u128::MAX)
+        + powers[2] * AkitaField::from_u64(1_u64 << 63)
+        + powers[3] * AkitaField::from_i128(i128::MIN);
+    assert_eq!(core.combined(right, gamma), expected);
+
+    let modulus = u128::MAX - u128::from(INSTRUCTION_CLAIM_AKITA_OFFSET) + 1;
+    for (value, expected) in [
+        (modulus - 1, -AkitaField::one()),
+        (modulus, AkitaField::zero()),
+        (modulus + 1, AkitaField::one()),
+    ] {
+        let row = InstructionClaimCoreRow::new(0, 0, value, 0);
+        assert_eq!(
+            row.combined(InstructionClaimRightInput::default(), AkitaField::one()),
+            expected
+        );
+    }
+}
+
+#[test]
+fn config_and_column_shapes_reject_invalid_dispatches() {
+    assert_eq!(
+        InstructionClaimOpeningMode::aliased_pipeline(),
+        "solinas_instruction_claim_open_lookup_operands"
+    );
+    assert_eq!(
+        InstructionClaimKernelConfig::default().validate(),
+        Ok(InstructionClaimKernelConfig::default())
+    );
+    let config = InstructionClaimKernelConfig::default();
+    assert_eq!(config.materialize_threadgroup_bytes(), Ok(128));
+    assert_eq!(config.transition_threadgroup_bytes(), Ok(64));
+    assert_eq!(
+        config.opening_threadgroup_bytes(INSTRUCTION_CLAIM_ALIASED_OPENINGS),
+        Ok(128)
+    );
+    assert_eq!(
+        config.opening_threadgroup_bytes(INSTRUCTION_CLAIM_CORE_OPENINGS),
+        Ok(256)
+    );
+    assert_eq!(
+        config.opening_threadgroup_bytes(INSTRUCTION_CLAIM_ALL_OPENINGS),
+        Ok(320)
+    );
+    let invalid = InstructionClaimKernelConfig {
+        transition_threads_per_threadgroup: 48,
+        ..InstructionClaimKernelConfig::default()
+    };
+    assert_eq!(
+        invalid.validate(),
+        Err(InstructionClaimShapeError::InvalidThreadgroupWidth {
+            phase: "transition",
+            width: 48,
+        })
+    );
+
+    for columns in [
+        INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
+        INSTRUCTION_CLAIM_CORE_OPENINGS,
+        INSTRUCTION_CLAIM_ALL_OPENINGS,
+    ] {
+        assert!(InstructionClaimReductionParams::new(33, columns).is_ok());
+    }
+    assert_eq!(
+        InstructionClaimReductionParams::new(33, 3),
+        Err(InstructionClaimShapeError::InvalidReductionColumns(3))
+    );
+    let geometry = InstructionClaimGeometry::new(8).expect("the geometry is valid");
+    assert!(InstructionClaimOpeningParams::new(
+        geometry,
+        4,
+        2,
+        InstructionClaimOpeningMode::AllColumns,
+    )
+    .is_ok());
+    assert!(matches!(
+        InstructionClaimOpeningParams::new(
+            geometry,
+            2,
+            4,
+            InstructionClaimOpeningMode::CoreAndRecover,
+        ),
+        Err(InstructionClaimShapeError::WeightLayout {
+            phase: "openings",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn target_scale_storage_layout_is_pinned() {
+    let rows = 1usize << 26;
+    let e_in_capacity = 1usize << 13;
+    let e_out_capacity = 1usize << 13;
+    let layout = InstructionClaimStorageLayout::new(rows, e_in_capacity, e_out_capacity)
+        .expect("the target-scale layout is valid");
+    let expected_workspace_fields = rows
+        + rows / 2
+        + e_in_capacity
+        + e_out_capacity
+        + 2 * INSTRUCTION_CLAIM_ALL_OPENINGS * e_out_capacity
+        + INSTRUCTION_CLAIM_NONTRIVIAL_GAMMA_POWERS;
+    let expected_workspace_bytes = expected_workspace_fields * 16;
+
+    assert_eq!(layout.rows(), rows);
+    assert_eq!(layout.lookup_output_bytes(), rows * 8);
+    assert_eq!(layout.left_lookup_operand_bytes(), rows * 8);
+    assert_eq!(layout.right_lookup_operand_bytes(), rows * 16);
+    assert_eq!(layout.left_instruction_input_bytes(), rows * 8);
+    assert_eq!(layout.right_input_bytes(), rows * 16);
+    assert_eq!(layout.maximum_operand_plane_bytes(), 1usize << 30);
+    assert_eq!(layout.maximum_buffer_bytes(), 1usize << 30);
+    assert_eq!(layout.validate_max_buffer_length(1usize << 31), Ok(layout));
+    assert_eq!(
+        layout.validate_max_buffer_length((1usize << 30) - 1),
+        Err(InstructionClaimShapeError::BufferLengthLimit {
+            required: 1usize << 30,
+            maximum: (1usize << 30) - 1,
+        })
+    );
+    assert_eq!(
+        layout.gamma_power_fields(),
+        INSTRUCTION_CLAIM_NONTRIVIAL_GAMMA_POWERS
+    );
+    assert_eq!(layout.state_a_fields(), rows);
+    assert_eq!(layout.state_b_fields(), rows / 2);
+    assert_eq!(layout.e_in_fields(), e_in_capacity);
+    assert_eq!(layout.e_out_fields(), e_out_capacity);
+    assert_eq!(
+        layout.partial_fields(),
+        INSTRUCTION_CLAIM_ALL_OPENINGS * e_out_capacity
+    );
+    assert_eq!(layout.workspace_bytes(), expected_workspace_bytes);
+    assert_eq!(
+        layout.resident_bytes(),
+        expected_workspace_bytes + rows * 56
+    );
+}
+
+#[test]
+fn target_scale_work_separates_useful_issued_and_traffic_counts() {
+    let geometry = InstructionClaimGeometry::new(INSTRUCTION_CLAIM_TARGET_ROWS)
+        .expect("the target geometry is valid");
+    let aliased =
+        InstructionClaimWorkPlan::new(geometry, InstructionClaimOpeningArchitecture::Aliased)
+            .expect("the aliased plan is valid");
+
+    assert_eq!(aliased.materialize.useful_field_products, 335_560_704);
+    assert_eq!(aliased.materialize.issued_field_product_lanes, 335_806_464);
+    assert_eq!(aliased.transitions.useful_field_products, 134_430_714);
+    assert_eq!(aliased.transitions.issued_field_product_lanes, 142_868_320);
+    assert_eq!(aliased.opening.useful_field_products, 134_234_112);
+    assert_eq!(aliased.opening.issued_field_product_lanes, 134_479_872);
+    assert_eq!(aliased.useful_field_products(), 604_225_530);
+    assert_eq!(aliased.issued_field_product_lanes(), 613_154_656);
+
+    assert_eq!(aliased.materialize.compulsory_bytes, 4_831_838_208);
+    assert_eq!(aliased.transitions.compulsory_bytes, 3_221_225_376);
+    assert_eq!(aliased.opening.compulsory_bytes, 1_610_612_736);
+    assert_eq!(
+        aliased.product_fused_materialize_incremental_bytes,
+        2_684_354_560
+    );
+    assert_eq!(
+        aliased.shared_row_standalone_materialize_bytes,
+        5_368_709_120
+    );
+
+    assert_eq!(
+        aliased.materialize.shader_logical_equality_bytes,
+        537_001_984
+    );
+    assert_eq!(
+        aliased.transitions.shader_logical_equality_bytes,
+        538_574_816
+    );
+    assert_eq!(aliased.opening.shader_logical_equality_bytes, 1_073_872_896);
+    assert_eq!(aliased.materialize.reduction.traffic_bytes, 279_072);
+    assert_eq!(aliased.transitions.reduction.traffic_bytes, 3_627_968);
+    assert_eq!(aliased.opening.reduction.traffic_bytes, 279_072);
+
+    let core = InstructionClaimWorkPlan::new(
+        geometry,
+        InstructionClaimOpeningArchitecture::CoreAndRecover,
+    )
+    .expect("the core-opening plan is valid");
+    assert_eq!(core.useful_field_products(), 738_459_642);
+    assert_eq!(core.issued_field_product_lanes(), 747_372_384);
+    assert_eq!(core.opening.compulsory_bytes, 2_684_354_560);
+}
+
+#[test]
+fn optimized_cpu_work_and_promotion_gates_are_frozen() {
+    let geometry = InstructionClaimGeometry::new(INSTRUCTION_CLAIM_TARGET_ROWS)
+        .expect("the target geometry is valid");
+    let cpu = InstructionClaimCpuWorkPlan::new(geometry).expect("the CPU plan is valid");
+    assert_eq!(cpu.combined_useful_products, 268_435_456);
+    assert_eq!(cpu.combined_scalar_fmadds, 469_762_048);
+    assert_eq!(cpu.message_useful_products, 201_670_728);
+    assert_eq!(cpu.bind_useful_products, 67_108_915);
+    assert_eq!(cpu.opening_useful_products, 335_585_280);
+    assert_eq!(cpu.useful_field_products(), 872_800_379);
+    assert_eq!(cpu.visible_payload_bytes(), 17_716_740_016);
+
+    let alias =
+        InstructionClaimPromotionGates::target(InstructionClaimOpeningArchitecture::Aliased)
+            .expect("the target gates are valid");
+    assert_eq!(alias.cpu_median_ns, 306_683_705);
+    assert_eq!(alias.five_x_wall_ns, 61_336_741);
+    assert_eq!(alias.eight_x_wall_ns, 38_335_463);
+    assert_eq!(alias.materialize_active_ns, 13_371_209);
+    assert_eq!(alias.transitions_active_ns, 8_914_139);
+    assert_eq!(alias.opening_active_ns, 5_132_844);
+    assert_eq!(alias.total_active_ns, 27_418_192);
+
+    let standalone =
+        InstructionClaimPromotionGates::target(InstructionClaimOpeningArchitecture::CoreAndRecover)
+            .expect("the standalone gates are valid");
+    assert_eq!(standalone.opening_active_ns, 10_265_687);
+    assert_eq!(standalone.total_active_ns, 32_551_035);
+}

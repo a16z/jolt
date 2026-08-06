@@ -22,6 +22,7 @@ mod booleanity;
 mod booleanity_address;
 mod bytecode_cycle;
 mod bytecode_row;
+pub mod instruction_claim_reduction;
 mod instruction_input;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
