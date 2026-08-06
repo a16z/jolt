@@ -11,12 +11,13 @@ ROOT = Path(__file__).resolve().parents[2]
 class IterationProfileTests(unittest.TestCase):
     def test_outer_closure_is_reconstructed_from_the_exact_fragments(self) -> None:
         suffix = "\n// iteration profile test nonce\n"
-        closure = iteration_profile._outer_closure(ROOT, suffix, 275)
+        offset = iteration_profile.ITERATION_PROFILE_SOLINAS_OFFSET
+        closure = iteration_profile._outer_closure(ROOT, suffix, offset)
         payloads = [
             (ROOT / record["path"]).read_bytes()
             for record in closure["source_fragments"]
         ]
-        prefix = b"#define SOLINAS_OFFSET 275u\n"
+        prefix = f"#define SOLINAS_OFFSET {offset}u\n".encode()
         parent = prefix + b"\n".join(payloads)
         candidate = prefix + b"\n".join(
             [*payloads[:-1], payloads[-1] + suffix.encode()]
@@ -26,6 +27,10 @@ class IterationProfileTests(unittest.TestCase):
         self.assertEqual(
             closure["parent_assembled_source_sha256"],
             iteration_profile.sha256(parent),
+        )
+        self.assertEqual(
+            closure["parent_assembled_source_sha256"],
+            "749e79bc85bdcf0338834edb5fc756fe3326c1463fa65dae241def4a257f95e1",
         )
         self.assertEqual(
             closure["candidate_assembled_source_sha256"],

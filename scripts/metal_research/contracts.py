@@ -56,6 +56,7 @@ ITERATION_PROFILE_SOURCE_PATHS = (
     "crates/jolt-kernels/src/metal/solinas/spartan_outer_common.metal",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
 )
+ITERATION_PROFILE_SOLINAS_OFFSET = 0xFFFF_A7F7
 
 
 def _relative_file(root: Path, value: Any, description: str) -> Path:
@@ -1076,7 +1077,7 @@ def _validate_iteration_profile(
         raise ValueError("minimal closure evidence is invalid")
     if is_v3 and (
         type(closure["solinas_offset"]) is not int
-        or closure["solinas_offset"] != 275
+        or closure["solinas_offset"] != ITERATION_PROFILE_SOLINAS_OFFSET
     ):
         raise ValueError("minimal closure Solinas offset is invalid")
     expected_paths = list(ITERATION_PROFILE_SOURCE_PATHS)

@@ -28,6 +28,7 @@ from .binaries import (
 )
 from .contracts import (
     ITERATION_PROFILE_CONTROLLER_PATHS,
+    ITERATION_PROFILE_SOLINAS_OFFSET,
     ITERATION_PROFILE_SOURCE_PATHS,
     phase_checkpoint_record,
 )
@@ -328,7 +329,7 @@ def generate_iteration_profile(
     suffix = (
         f"\n// iteration profile {phase['id']} {secrets.token_hex(8)}\n"
     )
-    closure = _outer_closure(root, suffix, 275)
+    closure = _outer_closure(root, suffix, ITERATION_PROFILE_SOLINAS_OFFSET)
 
     with tempfile.TemporaryDirectory(prefix="jolt-metal-iteration-profile-") as directory:
         run_dir = Path(directory)
