@@ -4,6 +4,16 @@ Schema 2 is the only contract allowed to initialize a new Metal kernel search.
 Schema-1 templates, runs, and evidence remain readable by
 `scripts/metal_autoresearch.py` for existing-run inspection, recovery, trials, and
 production validation; they are never fresh parents or reinterpreted as schema 2.
+Retired schema-2 templates are also inspection-only. Their historical iteration
+profiles are not revalidated against migrated controller or source paths, while a
+fresh-init template must still match every live preflight digest before a run can
+start.
+
+Production kernel families use
+`src/metal/solinas/<family>/{mod.rs,shader.metal}`. Shared arithmetic and assembly
+fragments stay at the Solinas root; host protocol adapters, benchmarks, evaluators,
+contracts, and evidence stay in their existing layers. A layout migration retires
+all pre-migration runs instead of rewriting their immutable records.
 
 ## Acceptance policy
 

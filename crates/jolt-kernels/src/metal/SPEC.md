@@ -43,6 +43,16 @@ Non-goals:
 - No stable public prover API. The current Rust surface exists to test and measure the
   kernels.
 
+## Source ownership
+
+Reusable field arithmetic and source fragments live directly in `solinas/`. Each
+production kernel family owns a directory containing `mod.rs` and `shader.metal`;
+larger families may add narrowly owned storage, sequence, and test modules there.
+The host protocol adapter remains in `metal/<slot>.rs`, and benchmarks, evaluators,
+and research contracts remain outside the production source tree. This keeps a
+kernel's Rust dispatch and Metal entry points together without duplicating shared
+arithmetic or coupling the library layout to an experiment.
+
 ## Representation and host boundary
 
 `metal::solinas::Fp128` is a buffer ABI, not a second host field implementation. It is

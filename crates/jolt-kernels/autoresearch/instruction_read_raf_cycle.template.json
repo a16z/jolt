@@ -66,8 +66,8 @@
   "schema_version": 1,
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/product5.metal",
-      "crates/jolt-kernels/src/metal/solinas/product5.rs"
+      "crates/jolt-kernels/src/metal/solinas/product5/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/product5/mod.rs"
     ],
     "frozen": [
       "crates/jolt-kernels/examples/metal-kernel-eval.rs",

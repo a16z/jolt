@@ -49,7 +49,7 @@ installing the producer and retention slots while leaving stage 7 on the optimiz
 CPU leaves the private row carry allocated until the `ProofSession` is dropped.
 
 The integration phase changed the Hamming host adapter, row lifetime, configuration,
-evaluator, and tests without changing the accepted `booleanity_address.metal`
+evaluator, and tests without changing the accepted `booleanity_address/shader.metal`
 shader. Shader tuning, if measurement requires it, is a separate logged phase.
 
 The implementation map is:

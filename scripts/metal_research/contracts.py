@@ -934,6 +934,7 @@ def _validate_iteration_profile(
     proxy: dict[str, Any],
     phase: dict[str, Any],
     verify_editable_sources: bool,
+    verify_live_sources: bool,
 ) -> None:
     required = {
         "profile_base_revision",
@@ -1009,17 +1010,17 @@ def _validate_iteration_profile(
                 "sha256",
             }:
                 raise ValueError("iteration profile controller source is invalid")
+            if type(record["bytes"]) is not int or record["bytes"] <= 0:
+                raise ValueError("iteration profile controller source is invalid")
+            digest = _hex_digest(
+                record["sha256"], "iteration controller source digest"
+            )
+            if not verify_live_sources:
+                continue
             payload = _relative_file(
                 root, record["path"], "iteration profile controller source"
             ).read_bytes()
-            if (
-                type(record["bytes"]) is not int
-                or record["bytes"] != len(payload)
-                or _hex_digest(
-                    record["sha256"], "iteration controller source digest"
-                )
-                != sha256(payload)
-            ):
+            if record["bytes"] != len(payload) or digest != sha256(payload):
                 raise ValueError(
                     "iteration profile controller changed since profiling"
                 )
@@ -1124,14 +1125,16 @@ def _validate_iteration_profile(
     for fragment in fragments:
         if not isinstance(fragment, dict) or set(fragment) != {"path", "bytes", "sha256"}:
             raise ValueError("minimal closure source fragment is invalid")
-        source = _relative_file(root, fragment["path"], "minimal closure source")
         if type(fragment["bytes"]) is not int or fragment["bytes"] <= 0:
             raise ValueError("minimal closure source fragment size is invalid")
         fragment_digest = _hex_digest(
             fragment["sha256"], "minimal closure source digest"
         )
-        if fragment["path"] in editable and not verify_editable_sources:
+        if not verify_live_sources or (
+            fragment["path"] in editable and not verify_editable_sources
+        ):
             continue
+        source = _relative_file(root, fragment["path"], "minimal closure source")
         payload = source.read_bytes()
         fragment_payloads[fragment["path"]] = payload
         if (
@@ -1366,6 +1369,7 @@ def validate_template(
     *,
     verify_editable_profile_sources: bool = True,
     verify_iteration_profile: bool = True,
+    verify_iteration_profile_sources: bool = True,
 ) -> None:
     required = {
         "schema_version",
@@ -1573,6 +1577,7 @@ def validate_template(
             proxy,
             template["mechanism_phase"],
             verify_editable_profile_sources,
+            verify_iteration_profile_sources,
         )
     holdout = executable["holdout"]
     portfolio = goal["portfolio_acceptance"]

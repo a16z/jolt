@@ -28,6 +28,7 @@ OUTER_V2_TEMPLATE = (
     ROOT / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
 )
 REAL_RESOLVE_TEMPLATE_BINDING = metal_kernel_registry.resolve_template_binding
+REAL_VALIDATE_TEMPLATE = validate_template
 
 
 def resolve_test_fresh_outer_binding(
@@ -41,6 +42,13 @@ def resolve_test_fresh_outer_binding(
             "fresh_init_eligible": True,
         }
     return binding
+
+
+def validate_test_outer_template(
+    template: dict[str, object], root: Path, **kwargs: object
+) -> None:
+    kwargs["verify_iteration_profile_sources"] = False
+    REAL_VALIDATE_TEMPLATE(template, root, **kwargs)
 
 
 def evaluator() -> dict[str, object]:
@@ -2184,6 +2192,13 @@ class RunnerIntegrationTests(unittest.TestCase):
         )
         self.binding_patch.start()
         self.addCleanup(self.binding_patch.stop)
+        self.template_patch = mock.patch.object(
+            runner,
+            "validate_template",
+            side_effect=validate_test_outer_template,
+        )
+        self.template_patch.start()
+        self.addCleanup(self.template_patch.stop)
         self.sealing_patch = mock.patch.object(
             runner,
             "_continue_binary_sealing",
@@ -2805,7 +2820,11 @@ class RunnerIntegrationTests(unittest.TestCase):
             "required_guards": ["all_exact"],
         }
         template["evaluation"]["tiers"].insert(0, correctness)
-        validate_template(template, ROOT)
+        validate_template(
+            template,
+            ROOT,
+            verify_iteration_profile_sources=False,
+        )
         original_search_tiers = runner._search_tiers
 
         def search_tiers(sealed_template: dict[str, object]):
@@ -5007,6 +5026,10 @@ class DispatchAndGoalTests(unittest.TestCase):
             metal_kernel_registry,
             "resolve_template_binding",
             side_effect=resolve_test_fresh_outer_binding,
+        ), mock.patch.object(
+            runner,
+            "validate_template",
+            side_effect=validate_test_outer_template,
         ), mock.patch.object(runner, "_continue_binary_sealing") as seal:
             with self.assertRaisesRegex(ValueError, "baseline snapshot changed"):
                 runner.init_run(

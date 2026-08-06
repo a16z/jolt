@@ -2865,7 +2865,7 @@ class MetalAutoresearchTests(unittest.TestCase):
             / "crates/jolt-kernels/autoresearch/instruction_input.template.json"
         )
         template["scope"]["editable"].append(
-            "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.metal"
+            "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence/shader.metal"
         )
         with self.assertRaisesRegex(ValueError, "shader-only"):
             metal_autoresearch.validate_template(template)
@@ -4302,7 +4302,7 @@ class MetalAutoresearchTests(unittest.TestCase):
         metal_autoresearch.validate_params(template, template["baseline_params"])
         self.assertEqual(
             template["scope"]["editable"],
-            ["crates/jolt-kernels/src/metal/solinas/booleanity_address.metal"],
+            ["crates/jolt-kernels/src/metal/solinas/booleanity_address/shader.metal"],
         )
         gate = template["final_validation"]["production_gate"]
         self.assertEqual(gate["evaluator"]["schema_version"], 7)

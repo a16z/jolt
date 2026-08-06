@@ -38,8 +38,8 @@ RELEVANT_PATHS = (
     "crates/jolt-kernels/examples/metal-instruction-input-residency-eval.rs",
     "crates/jolt-kernels/examples/support/instruction_input.rs",
     "crates/jolt-kernels/src/metal/instruction_input.rs",
-    "crates/jolt-kernels/src/metal/solinas/instruction_input.metal",
-    "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
+    "crates/jolt-kernels/src/metal/solinas/instruction_input/shader.metal",
+    "crates/jolt-kernels/src/metal/solinas/instruction_input/mod.rs",
     "crates/jolt-kernels/src/optimized/instruction_input.rs",
     "scripts/metal_instruction_input_residency_eval.py",
 )

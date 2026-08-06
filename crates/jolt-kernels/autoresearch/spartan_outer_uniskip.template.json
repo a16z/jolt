@@ -61,8 +61,8 @@
   "schema_version": 1,
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.metal",
-      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.rs"
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip/mod.rs"
     ],
     "frozen": [
       "crates/jolt-kernels/examples/metal-spartan-outer-uniskip-eval.rs",

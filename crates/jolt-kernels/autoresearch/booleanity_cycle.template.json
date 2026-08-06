@@ -67,8 +67,8 @@
   "schema_version": 1,
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/booleanity.metal",
-      "crates/jolt-kernels/src/metal/solinas/booleanity.rs"
+      "crates/jolt-kernels/src/metal/solinas/booleanity/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/booleanity/mod.rs"
     ],
     "frozen": [
       "crates/jolt-kernels/examples/metal-booleanity-eval.rs",

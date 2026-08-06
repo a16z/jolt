@@ -14,8 +14,10 @@ from scripts.metal_research.budget import (
 )
 from scripts.metal_research.contracts import (
     validate_goal_contract,
-    validate_template,
+    validate_template as validate_template_contract,
 )
+from scripts.metal_research import runner
+from scripts import metal_kernel_registry
 from scripts.metal_research.paired import (
     paired_summary,
     validate_paired_result,
@@ -24,6 +26,14 @@ from scripts.metal_research.paired import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def validate_template(
+    template: dict[str, object], root: Path, **kwargs: object
+) -> None:
+    """Validate the retired Outer fixture without reinterpreting its preflight."""
+    kwargs.setdefault("verify_iteration_profile_sources", False)
+    validate_template_contract(template, root, **kwargs)
 
 
 def replication(pairs: int = 5) -> dict[str, object]:
@@ -425,56 +435,32 @@ class VersionedContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "evidence contract"):
             validate_template(tampered, ROOT)
 
-    def test_live_profile_validation_skips_only_the_editable_fragment(self) -> None:
-        template = json.loads(
-            (
-                ROOT
-                / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
-            ).read_text()
+    def test_retired_profile_is_inspectable_but_cannot_become_fresh(self) -> None:
+        template_path = (
+            ROOT
+            / "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json"
         )
-        editable = ROOT / template["scope"]["editable"][0]
-        frozen = ROOT / "crates/jolt-kernels/src/metal/solinas/fp128.metal"
-        original_read_bytes = Path.read_bytes
+        result = runner.validate_template_file(ROOT, template_path)
+        self.assertFalse(result["fresh_init_eligible"])
 
-        def changed_editable(path: Path) -> bytes:
-            payload = original_read_bytes(path)
-            return payload + b"\n// candidate" if path == editable else payload
+        real_resolve = metal_kernel_registry.resolve_template_binding
 
-        with mock.patch.object(Path, "read_bytes", changed_editable):
-            with self.assertRaisesRegex(ValueError, "changed since profiling"):
-                validate_template(template, ROOT)
-            validate_template(
-                template, ROOT, verify_editable_profile_sources=False
-            )
+        def resolve_as_fresh(
+            root: Path, registry: dict[str, object], path: Path
+        ) -> dict[str, object]:
+            binding = real_resolve(root, registry, path)
+            return {
+                **binding,
+                "lifecycle": "fresh_init",
+                "fresh_init_eligible": True,
+            }
 
-        def changed_frozen(path: Path) -> bytes:
-            payload = original_read_bytes(path)
-            return payload + b"\n// tampered" if path == frozen else payload
-
-        with mock.patch.object(Path, "read_bytes", changed_frozen):
-            with self.assertRaisesRegex(ValueError, "changed since profiling"):
-                validate_template(
-                    template, ROOT, verify_editable_profile_sources=False
-                )
-
-        controller = ROOT / "scripts/metal_research/iteration_profile.py"
-
-        def changed_controller(path: Path) -> bytes:
-            payload = original_read_bytes(path)
-            return payload + b"\n# tampered" if path == controller else payload
-
-        with mock.patch.object(Path, "read_bytes", changed_controller):
-            with self.assertRaisesRegex(ValueError, "controller changed"):
-                validate_template(
-                    template, ROOT, verify_editable_profile_sources=False
-                )
-
-        tampered = copy.deepcopy(template)
-        tampered["iteration_profile"]["evidence_sha256"] = "0" * 64
-        with self.assertRaisesRegex(ValueError, "evidence digest"):
-            validate_template(
-                tampered, ROOT, verify_editable_profile_sources=False
-            )
+        with mock.patch.object(
+            metal_kernel_registry,
+            "resolve_template_binding",
+            side_effect=resolve_as_fresh,
+        ), self.assertRaisesRegex(ValueError, "controller changed"):
+            runner.validate_template_file(ROOT, template_path)
 
     def test_runtime_artifact_contract_closes_source_plan_and_env(self) -> None:
         template = json.loads(

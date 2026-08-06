@@ -159,17 +159,17 @@
   "schema_version": 1,
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.metal",
-      "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.rs",
-      "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.metal",
-      "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.rs"
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence/mod.rs"
     ],
     "frozen": [
       "crates/jolt-kernels/examples/metal-instruction-ra-eval.rs",
       "crates/jolt-kernels/examples/support/instruction_ra.rs",
       "crates/jolt-kernels/src/metal/instruction_ra_virtualization.rs",
       "crates/jolt-kernels/src/optimized/instruction_ra_virtualization.rs",
-      "crates/jolt-kernels/src/metal/solinas/address_sequence.rs",
+      "crates/jolt-kernels/src/metal/solinas/address_sequence/mod.rs",
       "crates/jolt-field/src/akita.rs",
       "crates/jolt-kernels/autoresearch/piop_goal.json",
       "scripts/metal_autoresearch.py",

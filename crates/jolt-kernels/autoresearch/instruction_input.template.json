@@ -69,9 +69,9 @@
       "crates/jolt-kernels/examples/support/instruction_input.rs",
       "crates/jolt-kernels/src/metal/INSTRUCTION_INPUT.md",
       "crates/jolt-kernels/src/metal/instruction_input.rs",
-      "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
-      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.metal",
-      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.rs",
+      "crates/jolt-kernels/src/metal/solinas/instruction_input/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip/mod.rs",
       "crates/jolt-kernels/src/metal/spartan_outer.rs",
       "crates/jolt-kernels/src/optimized/instruction_input.rs",
       "crates/jolt-kernels/src/optimized/spartan_outer.rs",
@@ -259,7 +259,7 @@
   "schema_version": 1,
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/instruction_input.metal"
+      "crates/jolt-kernels/src/metal/solinas/instruction_input/shader.metal"
     ],
     "frozen": [
       "crates/jolt-field/src/akita.rs",
@@ -273,12 +273,12 @@
       "crates/jolt-kernels/src/metal/INSTRUCTION_INPUT.md",
       "crates/jolt-kernels/src/backend.rs",
       "crates/jolt-kernels/src/metal/instruction_input.rs",
-      "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
+      "crates/jolt-kernels/src/metal/solinas/instruction_input/mod.rs",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
       "crates/jolt-kernels/src/metal/solinas/runtime.rs",
       "crates/jolt-kernels/src/metal/solinas/source.rs",
-      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.metal",
-      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.rs",
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip/mod.rs",
       "crates/jolt-kernels/src/metal/spartan_outer.rs",
       "crates/jolt-kernels/src/optimized/instruction_input.rs",
       "crates/jolt-kernels/src/optimized/spartan_outer.rs",

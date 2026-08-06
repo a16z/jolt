@@ -2005,17 +2005,32 @@ def _continue_binary_sealing(
     return _continue_initialization(root, run_dir, state)
 
 
+def _resolve_template_registry_binding(
+    root: Path, template_path: Path, template: dict[str, Any]
+) -> dict[str, Any]:
+    registry_contract = template.get("registry_contract")
+    if not isinstance(registry_contract, str) or not registry_contract:
+        raise ValueError("template registry contract must be a nonempty path")
+    registry_path = (root / registry_contract).resolve()
+    _relative(root, registry_path)
+    registry = _registry().read_registry(registry_path)
+    _registry().validate_registry(root, registry)
+    binding = _registry().resolve_template_binding(root, registry, template_path)
+    if binding["slot_id"] != template.get("slot_id"):
+        raise ValueError("template registry slot does not match its registered binding")
+    return binding
+
+
 def validate_template_file(root: Path, template_path: Path) -> dict[str, Any]:
     root = root.resolve()
     template_path = template_path.resolve()
     template = read_json(template_path)
-    validate_template(template, root)
-    registry_path = root / template["registry_contract"]
-    registry = _registry().read_registry(registry_path)
-    _registry().validate_registry(root, registry)
-    binding = _registry().resolve_template_binding(root, registry, template_path)
-    if binding["slot_id"] != template["slot_id"]:
-        raise ValueError("template registry slot does not match its registered binding")
+    binding = _resolve_template_registry_binding(root, template_path, template)
+    validate_template(
+        template,
+        root,
+        verify_iteration_profile_sources=binding["fresh_init_eligible"],
+    )
     return {
         "schema_version": RUN_SCHEMA_VERSION,
         "template": _relative(root, template_path),
@@ -2032,15 +2047,10 @@ def init_run(root: Path, template_path: Path, run_dir: Path) -> dict[str, Any]:
     root = root.resolve()
     template_path = template_path.resolve()
     template = read_json(template_path)
-    validate_template(template, root)
-    registry_path = root / template["registry_contract"]
-    registry = _registry().read_registry(registry_path)
-    _registry().validate_registry(root, registry)
-    binding = _registry().resolve_template_binding(root, registry, template_path)
-    if binding["slot_id"] != template["slot_id"]:
-        raise ValueError("template registry slot does not match its registered binding")
+    binding = _resolve_template_registry_binding(root, template_path, template)
     if not binding["fresh_init_eligible"]:
         raise ValueError("template is existing-run-only and cannot initialize a fresh run")
+    validate_template(template, root)
 
     if run_dir.exists():
         raise FileExistsError(run_dir)

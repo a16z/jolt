@@ -1121,7 +1121,7 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
                 "the Booleanity address result contract requires every launch parameter in the search space and baseline"
             )
         if template.get("scope", {}).get("editable") != [
-            "crates/jolt-kernels/src/metal/solinas/booleanity_address.metal"
+            "crates/jolt-kernels/src/metal/solinas/booleanity_address/shader.metal"
         ]:
             raise ValueError(
                 "the Booleanity address search scope must remain shader-only"
@@ -1172,7 +1172,7 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
                 "the Hamming-weight result contract requires every launch parameter in the search space and baseline"
             )
         if template.get("scope", {}).get("editable") != [
-            "crates/jolt-kernels/src/metal/solinas/booleanity_address.metal"
+            "crates/jolt-kernels/src/metal/solinas/booleanity_address/shader.metal"
         ]:
             raise ValueError("the Hamming-weight search scope must remain shader-only")
         final_validation = template.get("final_validation")
@@ -1269,7 +1269,7 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
                 "the InstructionInput final-validation contract targets the wrong scale"
             )
         if template.get("scope", {}).get("editable") != [
-            "crates/jolt-kernels/src/metal/solinas/instruction_input.metal"
+            "crates/jolt-kernels/src/metal/solinas/instruction_input/shader.metal"
         ]:
             raise ValueError(
                 "the InstructionInput search scope must remain shader-only"

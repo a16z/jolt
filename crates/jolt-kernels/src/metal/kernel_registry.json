@@ -83,7 +83,7 @@
     },
     {
       "id": "address_raf",
-      "path": "crates/jolt-kernels/src/metal/solinas/address_raf.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/address_raf/shader.metal",
       "role": "kernel",
       "requires": ["fp128"],
       "source_constant": "ADDRESS_RAF_SOURCE",
@@ -96,7 +96,7 @@
     },
     {
       "id": "address_raf_direct",
-      "path": "crates/jolt-kernels/src/metal/solinas/address_raf_direct.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/address_raf_direct/shader.metal",
       "role": "kernel",
       "requires": ["deferred_sum"],
       "source_constant": "ADDRESS_RAF_DIRECT_SOURCE",
@@ -107,7 +107,7 @@
     },
     {
       "id": "address_suffix",
-      "path": "crates/jolt-kernels/src/metal/solinas/address_suffix.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/address_suffix/shader.metal",
       "role": "kernel",
       "requires": ["fp128"],
       "source_constant": "ADDRESS_SUFFIX_SOURCE",
@@ -118,7 +118,7 @@
     },
     {
       "id": "address_suffix_full",
-      "path": "crates/jolt-kernels/src/metal/solinas/address_suffix_full.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/address_suffix_full/shader.metal",
       "role": "kernel",
       "requires": ["fp128"],
       "source_constant": "ADDRESS_SUFFIX_FULL_SOURCE",
@@ -129,7 +129,7 @@
     },
     {
       "id": "address_cycle",
-      "path": "crates/jolt-kernels/src/metal/solinas/address_cycle.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/address_sequence/shader.metal",
       "role": "kernel",
       "requires": ["product5"],
       "source_constant": "ADDRESS_CYCLE_SOURCE",
@@ -160,7 +160,7 @@
     },
     {
       "id": "product5",
-      "path": "crates/jolt-kernels/src/metal/solinas/product5.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/product5/shader.metal",
       "role": "kernel",
       "requires": ["fp128", "simd_reduce"],
       "source_constant": "PRODUCT5_SOURCE",
@@ -172,7 +172,7 @@
     },
     {
       "id": "booleanity",
-      "path": "crates/jolt-kernels/src/metal/solinas/booleanity.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/booleanity/shader.metal",
       "role": "kernel",
       "requires": ["booleanity_common", "fp128", "simd_reduce"],
       "source_constant": "BOOLEANITY_SOURCE",
@@ -185,7 +185,7 @@
     },
     {
       "id": "booleanity_address",
-      "path": "crates/jolt-kernels/src/metal/solinas/booleanity_address.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/booleanity_address/shader.metal",
       "role": "kernel",
       "requires": ["booleanity_common", "deferred_sum"],
       "source_constant": "BOOLEANITY_ADDRESS_SOURCE",
@@ -211,7 +211,7 @@
     },
     {
       "id": "instruction_ra_virtualization",
-      "path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization/shader.metal",
       "role": "kernel",
       "requires": ["instruction_ra_common"],
       "source_constant": "INSTRUCTION_RA_SOURCE",
@@ -222,7 +222,7 @@
     },
     {
       "id": "instruction_ra_sequence",
-      "path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence/shader.metal",
       "role": "kernel",
       "requires": ["instruction_ra_common"],
       "source_constant": "INSTRUCTION_RA_SEQUENCE_SOURCE",
@@ -239,7 +239,7 @@
     },
     {
       "id": "instruction_input",
-      "path": "crates/jolt-kernels/src/metal/solinas/instruction_input.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/instruction_input/shader.metal",
       "role": "kernel",
       "requires": ["simd_reduce", "spartan_outer_common"],
       "source_constant": "INSTRUCTION_INPUT_SOURCE",
@@ -252,7 +252,7 @@
     },
     {
       "id": "bytecode_cycle",
-      "path": "crates/jolt-kernels/src/metal/solinas/bytecode_cycle.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/bytecode_cycle/shader.metal",
       "role": "kernel",
       "requires": ["fp128", "simd_reduce"],
       "source_constant": "BYTECODE_CYCLE_SOURCE",
@@ -263,7 +263,7 @@
     },
     {
       "id": "bytecode_row",
-      "path": "crates/jolt-kernels/src/metal/solinas/bytecode_row.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/bytecode_row/shader.metal",
       "role": "kernel",
       "requires": ["booleanity_common", "bytecode_cycle"],
       "source_constant": "BYTECODE_ROW_SOURCE",
@@ -275,7 +275,7 @@
     },
     {
       "id": "spartan_outer_uniskip",
-      "path": "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.metal",
+      "path": "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip/shader.metal",
       "role": "kernel",
       "requires": ["simd_reduce", "spartan_outer_common"],
       "source_constant": "SPARTAN_OUTER_UNISKIP_SOURCE",
@@ -342,7 +342,7 @@
     {
       "id": "address_raf_scan",
       "status": "diagnostic",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_raf.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_raf/mod.rs",
       "rust_symbols": ["AddressRafScanInvocation", "AddressRafScanConfig"],
       "source_ids": ["fp128", "address_raf"],
       "pipeline_entry_points": [
@@ -356,7 +356,7 @@
     {
       "id": "address_raf_direct",
       "status": "production_shared",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_raf_direct.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_raf_direct/mod.rs",
       "rust_symbols": ["AddressRafDirectInvocation"],
       "source_ids": ["fp128", "deferred_sum", "address_raf_direct"],
       "pipeline_entry_points": [
@@ -368,7 +368,7 @@
     {
       "id": "address_suffix_one",
       "status": "diagnostic",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_suffix.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_suffix/mod.rs",
       "rust_symbols": ["AddressSuffixOneInvocation", "AddressSuffixOneSums"],
       "source_ids": ["fp128", "address_suffix"],
       "pipeline_entry_points": [
@@ -380,7 +380,7 @@
     {
       "id": "address_suffix_full",
       "status": "production_shared",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_suffix_full.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_suffix_full/mod.rs",
       "rust_symbols": ["AddressSuffixFullInvocation", "AddressSuffixFullSums"],
       "source_ids": ["fp128", "address_suffix_full"],
       "pipeline_entry_points": [
@@ -392,7 +392,7 @@
     {
       "id": "product5",
       "status": "production_shared",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/product5.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/product5/mod.rs",
       "rust_symbols": ["Product5Invocation", "Product5Sequence"],
       "source_ids": ["fp128", "product5"],
       "pipeline_entry_points": [
@@ -405,7 +405,7 @@
     {
       "id": "address_phase_sequence",
       "status": "production",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_sequence.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/address_sequence/mod.rs",
       "rust_symbols": ["AddressPhaseSequence", "AddressPhaseSequenceConfig"],
       "source_ids": [
         "fp128",
@@ -435,7 +435,7 @@
     {
       "id": "booleanity_sequence",
       "status": "production",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/booleanity.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/booleanity/mod.rs",
       "rust_symbols": ["BooleanityRows", "BooleanitySequence"],
       "source_ids": ["fp128", "booleanity"],
       "pipeline_entry_points": [
@@ -449,7 +449,7 @@
     {
       "id": "booleanity_address_pushforward",
       "status": "production_shared",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/booleanity_address.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/booleanity_address/mod.rs",
       "rust_symbols": ["BooleanityAddressPushforward", "BooleanityAddressPushforwardConfig"],
       "source_ids": ["fp128", "deferred_sum", "booleanity", "booleanity_address"],
       "pipeline_entry_points": [
@@ -476,7 +476,7 @@
     {
       "id": "instruction_ra_first_message",
       "status": "diagnostic",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization/mod.rs",
       "rust_symbols": ["InstructionRaFirstMessageInvocation", "InstructionRaFirstMessageConfig"],
       "source_ids": ["fp128", "instruction_ra_virtualization"],
       "pipeline_entry_points": [
@@ -488,7 +488,7 @@
     {
       "id": "instruction_ra_sequence",
       "status": "production",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/instruction_ra_sequence/mod.rs",
       "rust_symbols": ["InstructionRaSequence", "InstructionRaSequenceConfig"],
       "source_ids": ["fp128", "instruction_ra_virtualization", "instruction_ra_sequence"],
       "pipeline_entry_points": [
@@ -508,7 +508,7 @@
     {
       "id": "instruction_input_sequence",
       "status": "production",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/instruction_input.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/instruction_input/mod.rs",
       "rust_symbols": ["InstructionInputSequence", "InstructionInputRows"],
       "source_ids": ["fp128", "spartan_outer_uniskip", "instruction_input"],
       "pipeline_entry_points": [
@@ -522,7 +522,7 @@
     {
       "id": "bytecode_cycle_sequence",
       "status": "production_shared",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/bytecode_cycle.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/bytecode_cycle/mod.rs",
       "rust_symbols": ["BytecodeCycleSequence", "BytecodeCycleSequenceConfig"],
       "source_ids": ["fp128", "instruction_ra_virtualization", "bytecode_cycle"],
       "pipeline_entry_points": [
@@ -535,7 +535,7 @@
     {
       "id": "bytecode_row_sequence",
       "status": "production",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/bytecode_row.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/bytecode_row/mod.rs",
       "rust_symbols": ["BytecodeCycleRowSequence"],
       "source_ids": ["fp128", "booleanity", "bytecode_row"],
       "pipeline_entry_points": [
@@ -548,7 +548,7 @@
     {
       "id": "spartan_outer_uniskip",
       "status": "production_shared",
-      "rust_path": "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip.rs",
+      "rust_path": "crates/jolt-kernels/src/metal/solinas/spartan_outer_uniskip/mod.rs",
       "rust_symbols": ["SpartanOuterUniskipInvocation", "SpartanOuterUniskipRows"],
       "source_ids": ["fp128", "spartan_outer_uniskip"],
       "pipeline_entry_points": [

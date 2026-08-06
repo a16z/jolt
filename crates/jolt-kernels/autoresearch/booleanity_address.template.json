@@ -55,9 +55,9 @@
       "crates/jolt-kernels/src/metal/BOOLEANITY_ADDRESS.md",
       "crates/jolt-kernels/src/metal/booleanity.rs",
       "crates/jolt-kernels/src/metal/mod.rs",
-      "crates/jolt-kernels/src/metal/solinas/booleanity.metal",
-      "crates/jolt-kernels/src/metal/solinas/booleanity.rs",
-      "crates/jolt-kernels/src/metal/solinas/booleanity_address.rs",
+      "crates/jolt-kernels/src/metal/solinas/booleanity/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/booleanity/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/booleanity_address/mod.rs",
       "crates/jolt-kernels/src/metal/solinas/deferred_sum.metal",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
       "crates/jolt-kernels/src/metal/solinas/runtime.rs",
@@ -247,7 +247,7 @@
   "schema_version": 1,
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/booleanity_address.metal"
+      "crates/jolt-kernels/src/metal/solinas/booleanity_address/shader.metal"
     ],
     "frozen": [
       "crates/jolt-field/src/akita.rs",
@@ -256,9 +256,9 @@
       "crates/jolt-kernels/src/metal/BOOLEANITY_ADDRESS.md",
       "crates/jolt-kernels/src/metal/booleanity.rs",
       "crates/jolt-kernels/src/metal/mod.rs",
-      "crates/jolt-kernels/src/metal/solinas/booleanity.metal",
-      "crates/jolt-kernels/src/metal/solinas/booleanity.rs",
-      "crates/jolt-kernels/src/metal/solinas/booleanity_address.rs",
+      "crates/jolt-kernels/src/metal/solinas/booleanity/shader.metal",
+      "crates/jolt-kernels/src/metal/solinas/booleanity/mod.rs",
+      "crates/jolt-kernels/src/metal/solinas/booleanity_address/mod.rs",
       "crates/jolt-kernels/src/metal/solinas/deferred_sum.metal",
       "crates/jolt-kernels/src/metal/solinas/mod.rs",
       "crates/jolt-kernels/src/metal/solinas/runtime.rs",
