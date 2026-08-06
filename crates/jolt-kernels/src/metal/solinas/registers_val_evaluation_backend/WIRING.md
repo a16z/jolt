@@ -7,15 +7,16 @@ dense state back, and finishes with the actual optimized CPU kernel. It is
 withheld from `with_metal_compute` until the resident-input and performance
 gates pass. Its integration test matches every round polynomial, running
 claim, derived LT scalar, and output claim at odd and even trace logs. Complete
-log-26 member timing is still pending, so this is not yet a speedup result.
+log-26 diagnostic timing is `1.98x`, so the adapter remains unregistered and
+is not a qualifying speedup result.
 
 The current integration eagerly materializes the increment table during
 stage-5 preparation, reclaims the stage-4 `rd` index carry when available,
 and copies both into sequence-owned Metal buffers. It does not yet implement
 the target stage-4 resident owner. The first message is submitted during
 `prepare` and joined on the member's first active round, so its execution can
-overlap the inactive batch prefix. A test-only direct first-message candidate was measured at
-log 26, rejected, and removed; the exact screening artifact is
+overlap the inactive batch prefix. A test-only direct first-message candidate
+was measured at log 26, rejected, and removed; the exact screening artifact is
 `autoresearch/evidence/registers_val_direct_log26_rejected_85c57314d.json`.
 The existing low-level implementation in `solinas/registers_val/` owns the
 four retained factorized entry points:
@@ -28,7 +29,8 @@ solinas_registers_val_reduce
 ```
 
 The module and config compile in the Metal backend, but the production selector
-does not install this member.
+does not install this member. The rejected complete-member diagnostic is in
+`autoresearch/evidence/registers_val_async_log26_rejected_81a084bd7.json`.
 The removed candidate and the retained factorized control both matched the
 dense scalar oracle with zero shader audit counters before timing. The direct
 candidate cleared its absolute active-time cap, but was 37.05% slower in wall
@@ -86,6 +88,23 @@ suffix of the much longer stage batch.
 The artifact's current `metal` arm has a `318.612627-ms` median for this seam,
 but it still selects the optimized CPU implementation. It is a CPU-control
 sample, not Metal evidence.
+
+## First complete-member diagnostic
+
+The executable adapter was temporarily installed in a detached worktree at
+revision `81a084bd77e58eac1f5ec2fd74aa1792180a94d0` and run for one
+optimized-first log-26 diagnostic pair. The complete member measured
+`354.775048 ms` on optimized CPU and `179.552587 ms` on Metal-hybrid, or
+`1.9759x`. This is a rejection result, not promotion evidence.
+
+The first-message overlap worked: its join span was `0.017625 ms`. The
+remaining charged spans were `102.393500 ms` prepare, `28.127625 ms` native
+transition, `22.504250 ms` across nine dense transitions, `0.817583 ms`
+readback, and `5.820414 ms` CPU tail. Removing the entire charged prepare span
+would still leave `77.159087 ms`, `9.751462 ms` above the frozen 5x cap.
+Therefore another scheduling-only change cannot qualify this architecture.
+The next slice must remove late input construction with a stage-4 resident
+owner and reduce transition service before another complete-member run.
 
 ## Exact relation, point, and consumers
 
@@ -534,11 +553,15 @@ preregistered screen; thread-width tuning of the deleted design is not enough.
    and join, native transition, dense rounds, readback, and CPU tail.
    The current adapter emits prepare, phase, readback, and CPU-tail spans; the
    complete evaluator parser remains.
-6. **Next:** add a parser that requires 26 outer rounds, selects the 26 enclosing
+6. **Partial:** generic attribution measured the complete member and phase spans
+   in the rejected diagnostic. Add a promotion parser that requires 26 outer
+   rounds, selects the 26 enclosing
    Fiat--Shamir spans, checks the configured device/CPU topology, validates
    zero round allocations, input identities, command completion, and exact
    readback, and computes complete service and member walls separately.
-7. **Next:** run the cutoff sweep once, freeze the winner, then run five alternating
+7. **Blocked on architecture:** after resident inputs and transition service
+   make the 5x cap plausible, run the cutoff sweep once, freeze the winner,
+   then run five alternating
    optimized/Metal log-26 pairs from one stable binary. Whole-PIOP proof bytes,
    verifier acceptance, transcript state, and every member-local message must
    match.
