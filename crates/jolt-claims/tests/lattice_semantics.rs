@@ -15,9 +15,9 @@ use jolt_claims::protocols::jolt::lattice::{
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_field::{Fr, FromPrimitiveInt, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
-use jolt_poly::math::Math;
 use jolt_poly::{boolean_point_msb, eq_index_msb, EqPolynomial, Polynomial};
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_utils::Math;
 
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)

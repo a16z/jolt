@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl<T: TraceSource + Clone> TraceBackend<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<T> {
     pub(crate) fn materialize_trusted_advice<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
         materialize_advice(
             "trusted",

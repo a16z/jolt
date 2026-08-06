@@ -204,6 +204,28 @@ pub trait StreamingCommitment: CommitmentScheme {
         Self::feed(partial, &values, setup);
     }
 
+    /// Feed a batch of consecutive `row_width`-wide rows, with values
+    /// produced by `value` per flat index (`count` a multiple of
+    /// `row_width`) — equivalent to calling [`feed_i128`](Self::feed_i128)
+    /// on each window in order. Each row's commitment is independent and
+    /// only the append order is sequenced, so schemes may override this to
+    /// compute the windows in parallel; the closure lets callers feed
+    /// straight off a packed source without staging the whole batch.
+    fn feed_i128_rows_with(
+        partial: &mut Self::PartialCommitment,
+        value: impl Fn(usize) -> i128 + Sync,
+        count: usize,
+        row_width: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        let mut row = Vec::with_capacity(row_width);
+        for base in (0..count).step_by(row_width) {
+            row.clear();
+            row.extend((base..base + row_width).map(&value));
+            Self::feed_i128(partial, &row, setup);
+        }
+    }
+
     fn begin_one_hot_column_major_stream(
         setup: &Self::ProverSetup,
         row_width: usize,
@@ -215,6 +237,33 @@ pub trait StreamingCommitment: CommitmentScheme {
         one_hot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::OneHotChunkCommitment;
+
+    /// Process a batch of consecutive `chunk_width`-column one-hot chunks,
+    /// with hot addresses produced by `hot_address` per flat index —
+    /// equivalent to calling
+    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk) on each window
+    /// in order and collecting the results. Chunk commitments are
+    /// independent, so schemes may override this to compute the windows in
+    /// parallel; the closure lets callers feed straight off a packed source
+    /// without staging the whole batch.
+    fn process_one_hot_chunks_with(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        hot_address: impl Fn(usize) -> Option<usize> + Sync,
+        count: usize,
+        chunk_width: usize,
+    ) -> Vec<Self::OneHotChunkCommitment> {
+        let mut chunk = Vec::with_capacity(chunk_width);
+        (0..count)
+            .step_by(chunk_width)
+            .map(|base| {
+                chunk.clear();
+                chunk.extend((base..(base + chunk_width).min(count)).map(&hot_address));
+                Self::process_one_hot_chunk(context, setup, one_hot_k, &chunk)
+            })
+            .collect()
+    }
 
     fn finish_with_hint(
         partial: Self::PartialCommitment,

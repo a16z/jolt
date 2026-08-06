@@ -16,7 +16,7 @@
 //! legacy-side guest compile/decode (the modular stack has no host
 //! toolchain), legacy preprocessing → verifier preprocessing, modular trace
 //! (`TracerBackend`), derived `ProverConfig`, `TraceBackend` witness, the
-//! compiled protocol's prove — `dory::prove` over the selected backend, or
+//! compiled protocol's prove over the selected backend — `dory::prove`, or
 //! `akita::prove` on the packed build (artifact names gain an `_akita`
 //! suffix so the two protocols' runs never collide) — and a full
 //! `jolt_verifier::verify` as the correctness gate. Only `prove` is measured
@@ -34,6 +34,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use clap::ValueEnum;
@@ -95,13 +96,16 @@ const PROTOCOL_SUFFIX: &str = "";
 #[cfg(feature = "akita")]
 const PROTOCOL_SUFFIX: &str = "_akita";
 
-/// The run identity `modular_{workload}{suffix}_{scale}` — the trace-name
-/// stem shared by the run directory, the `latest_` link (which the sweep's
-/// resume check reads), and the artifact lock.
-fn trace_name(workload: Workload, scale: u32) -> String {
+/// The run identity `modular_{workload}{protocol}_{scale}{backend}` — the
+/// trace-name stem shared by the run directory, the `latest_` link (which
+/// the sweep's resume check reads), and the artifact lock. The reference
+/// Dory names stay bare `modular_{workload}_{scale}` — the deterministic
+/// paths `jolt-eval` telemetry reads.
+fn trace_name(workload: Workload, scale: u32, backend: BackendKind) -> String {
     format!(
-        "modular_{}{PROTOCOL_SUFFIX}_{scale}",
-        workload.as_str().replace('-', "_")
+        "modular_{}{PROTOCOL_SUFFIX}_{scale}{}",
+        workload.as_str().replace('-', "_"),
+        backend.trace_suffix()
     )
 }
 
@@ -190,21 +194,35 @@ impl OutputFormat {
     }
 }
 
-/// Prover backend selector. `reference` is the only backend today and is a
-/// test oracle: absolute numbers are provisional, attribution is meaningful
-/// relatively, and optimized backends slot into the same instrumented seams.
+/// Prover backend selector. `reference` is the naive test oracle (absolute
+/// numbers provisional, attribution meaningful relatively); `optimized` is
+/// the performance tier, slotting into the same instrumented seams. The
+/// packed (akita) build supports `reference` only.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
 pub enum BackendKind {
     Reference,
+    Optimized,
 }
 
 impl BackendKind {
     /// The canonical name — the `run.backend` value telemetry consumers key
-    /// on. Adding a backend variant forces an arm here, which keeps the
-    /// summary metadata honest without a hand-maintained string elsewhere.
+    /// on, and the CSV identity column. Adding a backend variant forces an
+    /// arm here, which keeps the summary metadata honest without a
+    /// hand-maintained string elsewhere.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Reference => "reference",
+            Self::Optimized => "optimized",
+        }
+    }
+
+    /// Artifact-name suffix: reference keeps the bare `modular_{name}_{scale}`
+    /// identity (the deterministic path `jolt-eval` telemetry reads);
+    /// optimized runs get their own artifact set next to it.
+    const fn trace_suffix(self) -> &'static str {
+        match self {
+            Self::Reference => "",
+            Self::Optimized => "_optimized",
         }
     }
 }
@@ -253,6 +271,9 @@ pub struct BenchmarkArgs {
 
     #[clap(long, value_enum, default_value = "chrome")]
     pub format: OutputFormat,
+
+    #[clap(long, value_enum, default_value = "reference")]
+    pub backend: BackendKind,
 }
 
 /// Artifact paths of one profile run (`None` unless `--format chrome`).
@@ -321,7 +342,7 @@ impl Drop for RunLock {
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
-    let trace_name = trace_name(args.name, scale);
+    let trace_name = trace_name(args.name, scale, args.backend);
     let _run_lock = RunLock::acquire(&trace_name);
 
     // One directory per run — benchmark-runs/{timestamp}_{trace_name}/ —
@@ -446,9 +467,13 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
         println!("=== Running benchmarks at scale 2^{scale} ===");
         for &workload in &workloads {
             let name = workload.as_str();
+            let backend = args.backend.as_str();
             // A completed run flips the `latest_` link, so its presence is
             // the resume marker (dangling links read as absent).
-            let latest_link = format!("benchmark-runs/latest_{}", trace_name(workload, scale));
+            let latest_link = format!(
+                "benchmark-runs/latest_{}",
+                trace_name(workload, scale, args.backend)
+            );
             if args.resume && std::path::Path::new(&latest_link).exists() {
                 println!("  ⏭ Skipping {name} (found {latest_link})");
                 skipped += 1;
@@ -457,7 +482,7 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
 
             let scale_arg = scale.to_string();
             let command_line = format!(
-                "{} profile --name {name} --scale {scale_arg} --format {}",
+                "{} profile --name {name} --scale {scale_arg} --format {} --backend {backend}",
                 exe.display(),
                 args.format.as_cli_str(),
             );
@@ -470,6 +495,8 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
                     &scale_arg,
                     "--format",
                     args.format.as_cli_str(),
+                    "--backend",
+                    backend,
                 ])
                 .status();
             match status {
@@ -519,6 +546,7 @@ struct ProvenRun {
 
 fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
     let bench_name = workload.as_str();
+    let backend_label = backend.as_str();
     let max_trace_length = 1usize << scale;
     let bench_target = (max_trace_length as f64 * SAFETY_MARGIN) as usize;
     tracing::info!("Running modular {bench_name} profile at scale 2^{scale}");
@@ -536,7 +564,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     drop(legacy_trace);
     let elf_contents = program.get_elf_contents().expect("elf contents");
     let memory_layout = io_device.memory_layout.clone();
-    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
 
     // --- Modular trace (unmeasured, like legacy's `gen_from_elf` emulation).
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
@@ -562,7 +590,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
     let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
     println!(
-        "modular {} (2^{}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
+        "modular {} (2^{}, {backend_label}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -571,21 +599,21 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     );
     if let Some(peak) = peak_rss_bytes() {
         println!(
-            "modular {} (2^{}): Peak RSS {}",
+            "modular {} (2^{}, {backend_label}): Peak RSS {}",
             bench_name,
             scale,
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
     }
 
-    // The same 7-field CSV line the legacy harness writes, in the run
-    // directory. Field 7 (`proof_size_compressed`)
+    // The legacy harness's 7 CSV fields plus a trailing backend column, in
+    // the run directory. Field 7 (`proof_size_compressed`)
     // duplicates the raw size exactly as legacy does — its
     // `prove_example_with_trace` returns `proof_size` for both fields, the
     // compressed encoding having been retired — so the columns stay
     // directly comparable across the two harnesses.
     let summary_line = format!(
-        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{}\n",
+        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label}\n",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -610,7 +638,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     } else {
         format!(
             "benchmark_name,scale,prover_time_s,trace_length,proving_hz,\
-             proof_size,proof_size_compressed\n{summary_line}"
+             proof_size,proof_size_compressed,backend\n{summary_line}"
         )
     };
     if let Err(e) = fs::OpenOptions::new()
@@ -625,12 +653,12 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
 
 /// The homomorphic (Dory) arm: legacy preprocessing → verifier
 /// preprocessing, derived config, `TraceBackend` witness, RLC setup, and
-/// `dory::prove` + `jolt_verifier::verify` — exactly as in the byte-diff
-/// tests. Only the prove is measured.
+/// `dory::prove` over the selected backend + `jolt_verifier::verify` —
+/// exactly as in the byte-diff tests. Only the prove is measured.
 #[cfg(not(feature = "akita"))]
 fn prove_workload(
     program: &mut host::Program,
-    jolt_program: &JoltProgram,
+    jolt_program: &Arc<JoltProgram>,
     memory_layout: &common::jolt_device::MemoryLayout,
     max_trace_length: usize,
     trace_output: TraceOutput<OwnedTrace>,
@@ -650,9 +678,8 @@ fn prove_workload(
     let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
     let program_preprocessing = verifier_preprocessing
         .program
-        .as_full()
-        .expect("full program preprocessing")
-        .clone();
+        .as_full_arc()
+        .expect("full program preprocessing");
 
     let config = ProverConfig::derive::<Fr>(
         trace_output.trace.rows(),
@@ -665,14 +692,14 @@ fn prove_workload(
     let public_io = trace_output.device.clone();
     let padded_output = pad_trace(trace_output, config.trace_length);
 
-    let witness = TraceBackend::new(
+    let witness = Arc::new(TraceBackend::new(
         JoltVmWitnessConfig::new(
             config.trace_length.ilog2() as usize,
             config.ram_K,
             config.one_hot_config,
         ),
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, padded_output),
-    );
+    ));
 
     // PCS setup sized like the byte-diff harness: the main one-hot matrix
     // maxed with both advice candidates (always included in setup sizing,
@@ -688,6 +715,7 @@ fn prove_workload(
     };
     let backend = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
     };
 
     // --- The measured window: the full modular prove (witness
@@ -700,7 +728,7 @@ fn prove_workload(
         &prover_preprocessing,
         &config,
         None,
-        &witness,
+        Arc::clone(&witness),
         &public_io,
     )
     .expect("modular prove");
@@ -728,11 +756,12 @@ fn prove_workload(
 /// The packed (Akita) arm: packed legacy preprocessing, the transparent
 /// `OneHotTrace` setup derived from the config + program shape (no legacy
 /// prover instance), and `akita::prove` + `jolt_verifier::verify`. Only the
-/// prove is measured.
+/// prove is measured. Reference backend only — the packed path has no
+/// optimized kernel tier yet.
 #[cfg(feature = "akita")]
 fn prove_workload(
     program: &mut host::Program,
-    jolt_program: &JoltProgram,
+    jolt_program: &Arc<JoltProgram>,
     memory_layout: &common::jolt_device::MemoryLayout,
     max_trace_length: usize,
     trace_output: TraceOutput<OwnedTrace>,
@@ -742,6 +771,14 @@ fn prove_workload(
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, AkitaField, AkitaPackedScheme, AkitaScheme, AkitaTranscript,
         AkitaVc,
+    };
+
+    let backend = match backend {
+        BackendKind::Reference => crate::akita::JoltAkitaBackend::reference(),
+        BackendKind::Optimized => panic!(
+            "--backend optimized is not available on the packed (akita) build: \
+             the packed path has no optimized kernel tier yet"
+        ),
     };
 
     let (bytecode, init_memory_state, _, entry_address) = program.decode();
@@ -785,9 +822,8 @@ fn prove_workload(
         akita_verifier_preprocessing(&legacy_preprocessing, verifier_setup, None);
     let program_preprocessing = verifier_preprocessing
         .program
-        .as_full()
-        .expect("full program preprocessing")
-        .clone();
+        .as_full_arc()
+        .expect("full program preprocessing");
 
     let public_io = trace_output.device.clone();
     let padded_output = pad_trace(trace_output, config.trace_length);
@@ -803,9 +839,6 @@ fn prove_workload(
         verifier: verifier_preprocessing,
         pcs_setup: object_setup,
         committed_program: None,
-    };
-    let backend = match backend {
-        BackendKind::Reference => crate::akita::JoltAkitaBackend::reference(),
     };
 
     // --- The measured window: the full packed prove (OneHotTrace assembly
@@ -876,7 +909,9 @@ fn pad_trace(
     trace_output: TraceOutput<OwnedTrace>,
     trace_length: usize,
 ) -> TraceOutput<OwnedTrace> {
-    let mut rows = trace_output.trace.rows().to_vec();
+    let source = trace_output.trace.rows();
+    let mut rows = Vec::with_capacity(trace_length.max(source.len()));
+    rows.extend_from_slice(source);
     rows.resize(trace_length, TraceRow::default());
     TraceOutput::new(
         OwnedTrace::new(rows),

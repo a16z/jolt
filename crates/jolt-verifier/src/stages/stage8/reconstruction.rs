@@ -39,10 +39,10 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::{Field, FixedByteSize};
-use jolt_poly::math::Math;
 use jolt_poly::{eq_index_msb, try_eq_mle};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
+use jolt_utils::Math;
 
 use crate::stages::relations::{ConcreteSumcheck, SumcheckBatch};
 use crate::stages::stage6b::Stage6bClearOutput;

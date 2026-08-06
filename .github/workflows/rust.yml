@@ -188,11 +188,6 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
-      # The MODULAR prover's clear-mode acceptance suites: the byte-diff
-      # ratchets asserting wire-for-wire equality with the legacy prover,
-      # plus the engine/driver twins.
-      - name: Run jolt-prover tests with fixtures
-        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
 
   test-prover-zk:
     runs-on: ubuntu-latest
@@ -473,6 +468,17 @@ jobs:
       - name: Test lookup table prover ABI
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
+      # jolt-witness's parallel feature is not a default, so the shard loop
+      # above tests only the serial paths; the shipped provers enable it
+      # (via jolt-kernels' default), so test the rayon fast paths directly.
+      - name: Test jolt-witness with parallel
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-witness --features test-utils,parallel --cargo-quiet
+      # Same non-default-parallel pattern: jolt-utils' latch/collector tests
+      # only exist behind its parallel feature.
+      - name: Test jolt-utils with parallel
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
@@ -499,6 +505,47 @@ jobs:
             echo "Shard result: ${{ needs.test-crates-shard.result }}"
             exit 1
           fi
+
+  # The byte-parity ratchet vs the legacy prover: every real byte_diff arm
+  # is behind jolt-prover's prover-fixtures feature (the default crate shard
+  # only discovers the ignored stub), so without this lane optimized
+  # proof/transcript divergence could merge green. Runs the whole
+  # prover-fixtures surface of jolt-prover: the stage-granular muldiv
+  # ratchet, the mode × trace-order whole-proof arms (both backends), the
+  # 2^17 chunk-boundary arm (slice-backed + forced chunk walk), and the
+  # {8, 32} wide one-hot geometry arm.
+  test-byte-parity:
+    runs-on: ubuntu-latest
+    name: Byte parity vs legacy prover
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run the jolt-prover byte-parity suite
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures --cargo-quiet
 
   test-akita-schedules:
     name: Akita schedule catalog drift

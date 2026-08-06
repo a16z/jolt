@@ -513,8 +513,8 @@ mod tests {
     use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::ProgramImageReconstructionOutputClaims;
     use jolt_claims::protocols::jolt::BytecodeRegisterLane;
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_poly::math::Math;
     use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+    use jolt_utils::Math;
 
     use super::super::reconstruction::{ReconstructionOutputClaims, ReconstructionOutputPoints};
     use crate::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;

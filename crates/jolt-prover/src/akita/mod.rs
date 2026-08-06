@@ -72,7 +72,7 @@ where
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        _source: &dyn jolt_witness::RowSource,
+        _source: &dyn jolt_witness::JoltWitnessPlane<F>,
         _ids: &[jolt_claims::protocols::jolt::JoltCommittedPolynomial],
         _grid: jolt_kernels::CommitmentGrid,
         _setup: &PCS::ProverSetup,

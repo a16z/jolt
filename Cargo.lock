@@ -1731,7 +1731,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2258,9 +2258,9 @@ dependencies = [
 
 [[package]]
 name = "dory-pcs"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c6a5b6aa708db35ced06eeef3d2b4408004c76279091e0bc387f8fd42796555"
+checksum = "bc655754c8ddb6b75f528efcfcddf2cd8db59bdea777de157400d642048bd2f4"
 dependencies = [
  "ark-bn254 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3240,6 +3240,7 @@ dependencies = [
  "jolt-r1cs",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-utils",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
@@ -3260,6 +3261,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-riscv",
+ "jolt-utils",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -3309,6 +3311,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
+ "jolt-optimizations",
  "jolt-poly",
  "jolt-transcript",
  "rand_chacha 0.3.1",
@@ -3541,18 +3544,24 @@ name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "common",
  "jolt-claims",
+ "jolt-dory",
  "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-program",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-utils",
  "jolt-verifier",
  "jolt-witness",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "rayon",
  "thiserror 2.0.18",
  "tracing",
@@ -3599,6 +3608,7 @@ dependencies = [
  "jolt-hyperkzg",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-utils",
  "rand 0.8.7",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
@@ -3642,6 +3652,7 @@ dependencies = [
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
+ "jolt-utils",
  "num-traits",
  "rand 0.8.7",
  "rand_chacha 0.3.1",
@@ -3765,6 +3776,7 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-utils",
  "jolt-verifier",
  "light-poseidon",
  "memory-stats",
@@ -3886,6 +3898,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-utils"
+version = "0.1.0"
+dependencies = [
+ "jolt-field",
+ "num-traits",
+ "rayon",
+]
+
+[[package]]
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
@@ -3908,6 +3929,7 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-utils",
  "jolt-verifier-derive",
  "num-traits",
  "postcard",
@@ -3935,6 +3957,7 @@ dependencies = [
  "jolt-lookup-tables",
  "jolt-program",
  "jolt-riscv",
+ "jolt-utils",
  "jolt-witness-derive",
  "rayon",
  "thiserror 2.0.18",
