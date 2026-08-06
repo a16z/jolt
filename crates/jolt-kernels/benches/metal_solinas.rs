@@ -53,6 +53,10 @@ mod instruction_input;
 mod instruction_claim_reduction;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/half_width_probe.rs"]
+mod half_width_probe;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/product5.rs"]
 mod product5;
 
@@ -114,9 +118,9 @@ mod macos {
 
     use super::{
         address_raf, address_suffix, booleanity, booleanity_address, bytecode_cycle, cpu, cycle,
-        instruction_claim_reduction, instruction_input, instruction_ra, instruction_ra_sequence,
-        product5, product_remainder, product_uniskip, ram_output_check, ram_raf_evaluation,
-        ram_val_check,
+        half_width_probe, instruction_claim_reduction, instruction_input, instruction_ra,
+        instruction_ra_sequence, product5, product_remainder, product_uniskip, ram_output_check,
+        ram_raf_evaluation, ram_val_check,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         registers_read_write, registers_read_write_dense, registers_val, spartan_outer_uniskip,
         spartan_shift,
@@ -199,6 +203,7 @@ mod macos {
                 "instruction-claim-reduction" => {
                     instruction_claim_reduction::bench(c, &context);
                 }
+                "half-width-probe" => half_width_probe::bench(c, &context),
                 "instruction-read-raf-address" => address_raf::bench(c, &context),
                 "instruction-read-raf-address-condensed" => {
                     address_raf::bench_condensed(c, &context);
