@@ -8,21 +8,17 @@
 //! checkpoints seed trace-mode chunk replays.
 //!
 //! Usage:
-//!   cargo run --release -p jolt-prover-legacy --features host --example trace_lockstep -- [filter]
+//!   cargo run --release -p tracer --example trace_lockstep -- [filter]
 
 // Link inline crates so their inventory registrations reach the tracer.
 extern crate jolt_inlines_keccak256 as _;
 extern crate jolt_inlines_sha2 as _;
 
-use jolt_prover_legacy::host;
-use tracer::instruction::Cycle;
+#[path = "support/mod.rs"]
+mod support;
 
-/// Input encoding for the `(input: [u8; 32], num_iters: u32)` chain guests.
-fn chain_input(iters: u32) -> Vec<u8> {
-    let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
-    input.extend(postcard::to_stdvec(&iters).unwrap());
-    input
-}
+use support::chain_input;
+use tracer::instruction::Cycle;
 
 /// Same (guest, input) pairs as the golden-trace gate.
 fn golden_cases() -> Vec<(&'static str, Vec<u8>)> {
@@ -41,8 +37,7 @@ fn golden_cases() -> Vec<(&'static str, Vec<u8>)> {
 /// Lockstep-runs the guest in both modes; returns the tick count on success,
 /// or the first divergence report.
 fn run_case(guest: &str, input: &[u8]) -> Result<usize, String> {
-    let mut program = host::Program::new(guest);
-    let (elf, memory_config) = program.elf_and_memory_config();
+    let (elf, _, memory_config) = support::build_guest(guest);
 
     let mut em_trace = tracer::create_emulator(&elf, None, input, &[], &[], &memory_config, None);
     let mut em_exec = tracer::create_emulator(&elf, None, input, &[], &[], &memory_config, None);

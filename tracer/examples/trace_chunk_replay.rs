@@ -10,22 +10,18 @@
 //!   (c) final memory and JoltDevice outputs/panic to match trace()'s.
 //!
 //! Usage:
-//!   cargo run --release -p jolt-prover-legacy --features host --example trace_chunk_replay -- [filter]
+//!   cargo run --release -p tracer --example trace_chunk_replay -- [filter]
 
 // Link inline crates so their inventory registrations reach the tracer.
 extern crate jolt_inlines_keccak256 as _;
 extern crate jolt_inlines_sha2 as _;
 
-use jolt_prover_legacy::host;
+#[path = "support/mod.rs"]
+mod support;
+
+use support::chain_input;
 use tracer::instruction::Cycle;
 use tracer::parallel::{ChunkWorker, PassOne, SnapshotPool};
-
-/// Input encoding for the `(input: [u8; 32], num_iters: u32)` chain guests.
-fn chain_input(iters: u32) -> Vec<u8> {
-    let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
-    input.extend(postcard::to_stdvec(&iters).unwrap());
-    input
-}
 
 /// Same (guest, input) pairs as the golden-trace gate, plus per-guest chunk
 /// sizes in ticks (chosen to force multiple chunks; muldiv gets a tiny one).
@@ -52,8 +48,7 @@ fn golden_cases() -> Vec<(&'static str, Vec<u8>, usize)> {
 }
 
 fn run_case(guest: &str, input: &[u8], chunk_ticks: usize) -> Result<(usize, usize), String> {
-    let mut program = host::Program::new(guest);
-    let (elf, memory_config) = program.elf_and_memory_config();
+    let (elf, _, memory_config) = support::build_guest(guest);
 
     // Serial reference.
     let (_, serial_rows, serial_memory, serial_device, _) =

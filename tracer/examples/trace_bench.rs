@@ -1,6 +1,6 @@
 //! Tracer throughput benchmark: measures emulation/trace-generation rate only.
 //!
-//! Run: cargo run --release -p jolt-prover-legacy --features host --example trace_bench [-- <filter>]
+//! Run: cargo run --release -p tracer --example trace_bench [-- <filter>]
 //!
 //! The optional positional argument is a substring filter over guest names
 //! (e.g. `sha2-chain`, `fib`). No argument runs every guest.
@@ -16,10 +16,14 @@
 extern crate jolt_inlines_keccak256 as _;
 extern crate jolt_inlines_sha2 as _;
 
-use jolt_prover_legacy::host;
-use std::time::Instant;
+#[path = "support/mod.rs"]
+mod support;
 
-// Empirically measured cycles per operation (see benches/e2e_profiling.rs).
+use std::time::Instant;
+use support::chain_input;
+
+// Empirically measured cycles per operation (see
+// crates/jolt-prover-legacy/benches/e2e_profiling.rs).
 const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
@@ -40,13 +44,6 @@ fn ops_for_target(cycles_per_op: f64) -> u32 {
     (TARGET_CYCLES * bench_scale() / cycles_per_op).ceil() as u32
 }
 
-/// Input encoding for the `(input: [u8; 32], num_iters: u32)` chain guests.
-fn chain_input(iters: u32) -> Vec<u8> {
-    let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
-    input.extend(postcard::to_stdvec(&iters).unwrap());
-    input
-}
-
 fn parallel_workers() -> usize {
     match std::env::var("TRACER_PARALLEL")
         .ok()
@@ -65,21 +62,29 @@ fn median(mut times: Vec<f64>) -> f64 {
 }
 
 fn bench(guest: &str, input: Vec<u8>, runs: usize) {
-    let mut program = host::Program::new(guest);
-    // Build guest + decode once (excluded from timing)
-    let _ = program.decode();
+    // Build guest once (excluded from timing)
+    let (_, elf_path, _) = support::build_guest(guest);
+    // Each run re-reads and re-decodes the ELF, matching what the legacy
+    // host::Program::trace timed region did — keeps MHz comparable with
+    // numbers measured through that harness.
+    let run_trace = |input: &[u8]| {
+        let (elf, memory_config) = support::load_guest(&elf_path);
+        let (_, trace, _, _, _) =
+            tracer::trace(&elf, Some(&elf_path), input, &[], &[], &memory_config, None);
+        trace
+    };
 
     // Serial arm (explicitly, regardless of ambient env).
     std::env::remove_var("TRACER_PARALLEL");
     // Warmup trace
-    let (_, trace, _, _) = program.trace(&input, &[], &[]);
+    let trace = run_trace(&input);
     let len = trace.len();
     drop(trace);
 
     let mut times = Vec::new();
     for _ in 0..runs {
         let start = Instant::now();
-        let (_, trace, _, _) = program.trace(&input, &[], &[]);
+        let trace = run_trace(&input);
         let dt = start.elapsed().as_secs_f64();
         assert_eq!(trace.len(), len);
         drop(trace);
@@ -97,7 +102,16 @@ fn bench(guest: &str, input: Vec<u8>, runs: usize) {
     let mut exec_times = Vec::new();
     for _ in 0..runs {
         let start = Instant::now();
-        let executed = program.execute(&input, &[], &[]);
+        let (elf, memory_config) = support::load_guest(&elf_path);
+        let (executed, _, _) = tracer::execute(
+            &elf,
+            Some(&elf_path),
+            &input,
+            &[],
+            &[],
+            &memory_config,
+            None,
+        );
         let dt = start.elapsed().as_secs_f64();
         assert_eq!(executed, len);
         exec_times.push(dt);
@@ -113,13 +127,13 @@ fn bench(guest: &str, input: Vec<u8>, runs: usize) {
     if workers > 1 {
         std::env::set_var("TRACER_PARALLEL", workers.to_string());
         // Warmup (thread/pool/page state)
-        let (_, trace, _, _) = program.trace(&input, &[], &[]);
+        let trace = run_trace(&input);
         assert_eq!(trace.len(), len);
         drop(trace);
         let mut par_times = Vec::new();
         for _ in 0..runs {
             let start = Instant::now();
-            let (_, trace, _, _) = program.trace(&input, &[], &[]);
+            let trace = run_trace(&input);
             let dt = start.elapsed().as_secs_f64();
             assert_eq!(trace.len(), len);
             drop(trace);

@@ -6,8 +6,8 @@
 //! against fixtures recorded from the unmodified tracer.
 //!
 //! Usage:
-//!   cargo run --release -p jolt-prover-legacy --features host --example trace_golden -- record [filter]
-//!   cargo run --release -p jolt-prover-legacy --features host --example trace_golden -- check [filter]
+//!   cargo run --release -p tracer --example trace_golden -- record [filter]
+//!   cargo run --release -p tracer --example trace_golden -- check [filter]
 //!
 //! `record` (re)writes matching fixture entries; `check` re-runs and prints
 //! PASS/FAIL per guest, exiting non-zero on any mismatch. The optional filter
@@ -17,11 +17,14 @@
 extern crate jolt_inlines_keccak256 as _;
 extern crate jolt_inlines_sha2 as _;
 
-use jolt_prover_legacy::host;
+#[path = "support/mod.rs"]
+mod support;
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
+use support::chain_input;
 
 const FIXTURE_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -37,13 +40,6 @@ struct GoldenRecord {
     memory_hash: String,
     /// blake3 over postcard of the final `JoltDevice` (inputs, outputs, panic, layout).
     io_hash: String,
-}
-
-/// Input encoding for the `(input: [u8; 32], num_iters: u32)` chain guests.
-fn chain_input(iters: u32) -> Vec<u8> {
-    let mut input = postcard::to_stdvec(&[5u8; 32]).unwrap();
-    input.extend(postcard::to_stdvec(&iters).unwrap());
-    input
 }
 
 /// Fixed (guest, input) pairs. Sizes target ~1M cycles except muldiv, which is
@@ -67,8 +63,9 @@ fn golden_cases() -> Vec<(&'static str, Vec<u8>)> {
 }
 
 fn run_case(guest: &str, input: &[u8]) -> GoldenRecord {
-    let mut program = host::Program::new(guest);
-    let (_, trace, memory, io_device) = program.trace(input, &[], &[]);
+    let (elf, elf_path, memory_config) = support::build_guest(guest);
+    let (_, trace, memory, io_device, _) =
+        tracer::trace(&elf, Some(&elf_path), input, &[], &[], &memory_config, None);
 
     let mut hasher = blake3::Hasher::new();
     let mut buf: Vec<u8> = Vec::with_capacity(256);
