@@ -648,9 +648,11 @@ impl CheckpointingTracer {
         let mmu = self.emulator_state.get_mut_cpu().get_mut_mmu();
         mmu.memory.memory.data.start_saving_checkpoints();
         // Replay needs every executed instruction's text bytes present in the
-        // chunk's first-touch memory image; the decode cache would skip those
-        // fetches, so it must be off for the whole checkpointed run.
-        mmu.decode_cache.disable();
+        // chunk's first-touch memory image, so each interval must start with
+        // an empty decode cache (a cache hit skips the recorded fetch). The
+        // cache is cleared again at every save_checkpoint; within an interval
+        // it works normally.
+        mmu.decode_cache.clear_entries();
     }
 
     /// Save the recorded memory traces to a new [`Checkpoint`] and reset the hashmap to which
@@ -681,14 +683,11 @@ impl CheckpointingTracer {
         );
 
         // Store the hashmap of memory assignments since the last chunk
-        let data = self
-            .emulator_state
-            .get_mut_cpu()
-            .get_mut_mmu()
-            .memory
-            .memory
-            .data
-            .save_checkpoint();
+        let mmu = self.emulator_state.get_mut_cpu().get_mut_mmu();
+        let data = mmu.memory.memory.data.save_checkpoint();
+        // The next interval's first-touch map must see each PC's first fetch
+        // re-recorded (see start_saving_checkpoints).
+        mmu.decode_cache.clear_entries();
         new_processor_state.set_memory_state(data, self.trace_steps_since_last_checkpoint);
         self.trace_steps_since_last_checkpoint = 0;
 
