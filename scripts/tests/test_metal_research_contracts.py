@@ -271,6 +271,22 @@ class VersionedContractTests(unittest.TestCase):
             ).read_text()
         )
         validate_template(template, ROOT)
+        self.assertIn(
+            "scripts/metal_research/artifacts.py",
+            template["scope"]["frozen"],
+        )
+
+        tampered = copy.deepcopy(template)
+        tampered["scope"]["frozen"].remove(
+            "scripts/metal_research/artifacts.py"
+        )
+        with self.assertRaisesRegex(ValueError, "controller must be frozen"):
+            validate_template(tampered, ROOT)
+
+        tampered = copy.deepcopy(template)
+        tampered["runtime_artifact"]["kind"] = "unknown_v1"
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            validate_template(tampered, ROOT)
 
         tampered = copy.deepcopy(template)
         tampered["slot_id"] = "OuterRemainder"

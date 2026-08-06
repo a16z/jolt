@@ -6,6 +6,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .artifacts import (
+    runtime_artifact_controller_paths,
+    runtime_artifact_result_adapter,
+    runtime_artifact_result_adapters,
+    validate_runtime_artifact_contract,
+)
 from .attempt import unsafe_environment_name
 from .budget import RESOURCE_DIMENSIONS, validate_budget
 from .paired import validate_replication
@@ -21,10 +27,9 @@ _ROLES = {"correctness", "proxy", "representative", "holdout", "transfer"}
 _RESULT_ADAPTERS = {
     "outer_remainder_screen_v1",
     "outer_remainder_successor_v1",
-    "outer_remainder_successor_v2",
     "outer_remainder_v3",
     "metal_piop_v7",
-}
+} | runtime_artifact_result_adapters()
 
 
 def _relative_file(root: Path, value: Any, description: str) -> Path:
@@ -544,31 +549,16 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         raise ValueError("the kernel registry must be frozen")
 
     runtime_artifact = template.get("runtime_artifact")
+    runtime_artifact_adapter = None
     if runtime_artifact is not None:
-        fields = {
-            "kind",
-            "source_path",
-            "plan_parameter",
-            "plans",
-            "tier_id",
-        }
-        if not isinstance(runtime_artifact, dict) or set(runtime_artifact) != fields:
-            raise ValueError("runtime artifact contract is invalid")
-        if runtime_artifact["kind"] != "outer_msl_v1":
-            raise ValueError("runtime artifact kind is unsupported")
-        source_path = runtime_artifact["source_path"]
-        _relative_file(root, source_path, "runtime artifact source")
-        plan_parameter = runtime_artifact["plan_parameter"]
-        plans = runtime_artifact["plans"]
-        if (
-            editable != {source_path}
-            or not isinstance(plan_parameter, str)
-            or plan_parameter not in search_space
-            or plans != ["b_only_v1"]
-            or search_space[plan_parameter] != plans
-            or baseline[plan_parameter] not in plans
-        ):
-            raise ValueError("runtime artifact source or plans are not closed")
+        validate_runtime_artifact_contract(
+            root, runtime_artifact, editable, search_space, baseline
+        )
+        runtime_artifact_adapter = runtime_artifact_result_adapter(
+            runtime_artifact
+        )
+        if not set(runtime_artifact_controller_paths(runtime_artifact)) <= frozen:
+            raise ValueError("runtime artifact controller must be frozen")
 
     validate_budget(template["budget"])
     evaluation = template["evaluation"]
@@ -592,12 +582,12 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
         if tier.get("applicable") is True:
             roles.add(tier["role"])
             ordered_roles.append(tier["role"])
-    successor_tiers = [
+    runtime_artifact_tiers = [
         tier
         for tier in tiers
         if tier.get("applicable") is True
         and tier["evaluator"]["result_adapter"]
-        == "outer_remainder_successor_v2"
+        in runtime_artifact_result_adapters()
     ]
     if any(
         tier.get("applicable") is True
@@ -618,12 +608,12 @@ def validate_template(template: dict[str, Any], root: Path) -> None:
             raise ValueError("runtime artifact must bind one executable proxy tier")
         if (
             artifact_tiers[0]["evaluator"]["result_adapter"]
-            != "outer_remainder_successor_v2"
+            != runtime_artifact_adapter
         ):
             raise ValueError("runtime artifact proxy must use its sealed adapter")
-        if successor_tiers != artifact_tiers:
+        if runtime_artifact_tiers != artifact_tiers:
             raise ValueError("successor adapter is not bound to runtime artifacts")
-    elif successor_tiers:
+    elif runtime_artifact_tiers:
         raise ValueError("successor adapter requires runtime artifacts")
     _validate_sealed_binaries(template, root, tiers, frozen)
     if not {"representative", "holdout", "transfer"} <= roles:

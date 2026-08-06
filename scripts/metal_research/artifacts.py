@@ -6,8 +6,9 @@ import os
 import shutil
 import stat
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 
 OUTER_ARTIFACT_SCHEMA = "jolt_outer_artifact_v1"
@@ -360,3 +361,314 @@ def materialize_outer_artifact(
     record = verify_outer_artifact(target)
     record["artifact_path"] = target.relative_to(run_dir).as_posix()
     return record
+
+
+RuntimeArtifactContext = dict[str, Any]
+RuntimeArtifactMaterializer = Callable[
+    [
+        Path,
+        dict[str, Any],
+        Path,
+        dict[str, str],
+        Path,
+        dict[str, str],
+    ],
+    tuple[dict[str, str], RuntimeArtifactContext],
+]
+
+
+@dataclass(frozen=True)
+class _RuntimeArtifactHandler:
+    result_adapter: str
+    controller_paths: tuple[str, ...]
+    validate_contract: Callable[
+        [
+            Path,
+            dict[str, Any],
+            set[str],
+            dict[str, Any],
+            dict[str, Any],
+        ],
+        None,
+    ]
+    materialize: RuntimeArtifactMaterializer
+    verify: Callable[[Path, dict[str, Any]], None]
+    validate_output: Callable[[dict[str, Any], dict[str, Any]], None]
+
+
+def _validate_outer_runtime_artifact_contract(
+    root: Path,
+    contract: dict[str, Any],
+    editable: set[str],
+    search_space: dict[str, Any],
+    baseline: dict[str, Any],
+) -> None:
+    fields = {
+        "kind",
+        "source_path",
+        "plan_parameter",
+        "plans",
+        "tier_id",
+    }
+    if set(contract) != fields:
+        raise ValueError("runtime artifact contract is invalid")
+    source_path = contract["source_path"]
+    if not isinstance(source_path, str) or not source_path:
+        raise ValueError("runtime artifact source path is invalid")
+    relative = Path(source_path)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or not (root / relative).is_file()
+    ):
+        raise ValueError("runtime artifact source path does not exist")
+    plan_parameter = contract["plan_parameter"]
+    plans = contract["plans"]
+    if (
+        editable != {source_path}
+        or not isinstance(plan_parameter, str)
+        or plan_parameter not in search_space
+        or plans != ["b_only_v1"]
+        or search_space[plan_parameter] != plans
+        or baseline[plan_parameter] not in plans
+    ):
+        raise ValueError("runtime artifact source or plans are not closed")
+
+
+def _materialize_outer_runtime_artifact_context(
+    run_dir: Path,
+    contract: dict[str, Any],
+    parent_root: Path,
+    parent_params: dict[str, str],
+    candidate_root: Path,
+    candidate_params: dict[str, str],
+) -> tuple[dict[str, str], RuntimeArtifactContext]:
+    source_path = Path(contract["source_path"])
+    plan_parameter = contract["plan_parameter"]
+    parent = materialize_outer_artifact(
+        run_dir,
+        parent_root / source_path,
+        str(parent_params[plan_parameter]),
+        outer_dispatch_from_params(parent_params),
+    )
+    candidate = materialize_outer_artifact(
+        run_dir,
+        candidate_root / source_path,
+        str(candidate_params[plan_parameter]),
+        outer_dispatch_from_params(candidate_params),
+    )
+    return (
+        {
+            "JOLT_AUTORESEARCH_PARENT_ARTIFACT": str(
+                (run_dir / parent["artifact_path"]).resolve()
+            ),
+            "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT": str(
+                (run_dir / candidate["artifact_path"]).resolve()
+            ),
+        },
+        {
+            "kind": contract["kind"],
+            "parent": parent,
+            "candidate": candidate,
+        },
+    )
+
+
+def _verify_outer_runtime_artifact_context(
+    run_dir: Path, context: dict[str, Any]
+) -> None:
+    if set(context) != {"kind", "parent", "candidate"}:
+        raise ValueError("runtime artifact context is invalid")
+    verify_artifact_store(run_dir)
+    for role in ("parent", "candidate"):
+        expected = context[role]
+        if not isinstance(expected, dict) or set(expected) != {
+            "artifact_sha256",
+            "artifact_path",
+            "manifest",
+        }:
+            raise ValueError(f"{role} runtime artifact record is invalid")
+        relative = Path(expected["artifact_path"])
+        if relative.parts != (
+            "artifacts",
+            expected["artifact_sha256"],
+        ):
+            raise ValueError(f"{role} runtime artifact path is invalid")
+        observed = verify_outer_artifact(run_dir / relative)
+        sealed = dict(expected)
+        sealed.pop("artifact_path")
+        if canonical_json(observed) != canonical_json(sealed):
+            raise ValueError(f"{role} runtime artifact changed")
+
+
+def _validate_outer_runtime_artifact_output(
+    output: dict[str, Any], context: dict[str, Any]
+) -> None:
+    fingerprint = output.get("fingerprint")
+    if not isinstance(fingerprint, dict):
+        raise ValueError("runtime artifact fingerprint is missing")
+    expected = {
+        "parent_artifact_sha256": context["parent"]["artifact_sha256"],
+        "candidate_artifact_sha256": context["candidate"][
+            "artifact_sha256"
+        ],
+    }
+    if any(fingerprint.get(name) != value for name, value in expected.items()):
+        raise ValueError(
+            "runtime artifact fingerprint does not match the controller"
+        )
+    if output.get("schema") != "outer_remainder_successor_v2":
+        return
+
+    parent_manifest = context["parent"]["manifest"]
+    candidate_manifest = context["candidate"]["manifest"]
+    telemetry = output.get("telemetry", {})
+    if (
+        parent_manifest["dispatch"]["cpu_tail_elements"]
+        != candidate_manifest["dispatch"]["cpu_tail_elements"]
+        or parent_manifest["dispatch"]["trace_cutoff_elements"]
+        != candidate_manifest["dispatch"]["trace_cutoff_elements"]
+        or telemetry.get("parent_binding_plan")
+        != parent_manifest["binding_plan"]
+        or telemetry.get("candidate_binding_plan")
+        != candidate_manifest["binding_plan"]
+        or telemetry.get("parent_source_sha256")
+        != parent_manifest["outer_source_sha256"]
+        or telemetry.get("candidate_source_sha256")
+        != candidate_manifest["outer_source_sha256"]
+    ):
+        raise ValueError(
+            "runtime artifact telemetry does not match the controller"
+        )
+    expected_tail = parent_manifest["dispatch"]["cpu_tail_elements"]
+    warmup = output.get("excluded_warmup")
+    samples = output.get("samples")
+    if not isinstance(warmup, dict) or not isinstance(samples, list):
+        raise ValueError("runtime artifact arm evidence is missing")
+    records = [warmup] + samples
+    if any(
+        not isinstance(record, dict)
+        or not isinstance(record.get(role), dict)
+        or record[role].get("tail_elements") != expected_tail
+        for record in records
+        for role in ("parent", "candidate")
+    ):
+        raise ValueError(
+            "runtime artifact CPU tail does not match the controller"
+        )
+
+
+_RUNTIME_ARTIFACT_HANDLERS = {
+    "outer_msl_v1": _RuntimeArtifactHandler(
+        result_adapter="outer_remainder_successor_v2",
+        controller_paths=("scripts/metal_research/artifacts.py",),
+        validate_contract=_validate_outer_runtime_artifact_contract,
+        materialize=_materialize_outer_runtime_artifact_context,
+        verify=_verify_outer_runtime_artifact_context,
+        validate_output=_validate_outer_runtime_artifact_output,
+    )
+}
+
+
+def _runtime_artifact_handler(kind: Any) -> _RuntimeArtifactHandler:
+    if not isinstance(kind, str):
+        raise ValueError("runtime artifact kind is invalid")
+    try:
+        return _RUNTIME_ARTIFACT_HANDLERS[kind]
+    except KeyError as error:
+        raise ValueError(f"unsupported runtime artifact kind: {kind}") from error
+
+
+def validate_runtime_artifact_contract(
+    root: Path,
+    contract: dict[str, Any],
+    editable: set[str],
+    search_space: dict[str, Any],
+    baseline: dict[str, Any],
+) -> None:
+    if not isinstance(contract, dict):
+        raise ValueError("runtime artifact contract is invalid")
+    handler = _runtime_artifact_handler(contract.get("kind"))
+    handler.validate_contract(root, contract, editable, search_space, baseline)
+
+
+def runtime_artifact_result_adapter(contract: dict[str, Any]) -> str:
+    if not isinstance(contract, dict):
+        raise ValueError("runtime artifact contract is invalid")
+    return _runtime_artifact_handler(contract.get("kind")).result_adapter
+
+
+def runtime_artifact_result_adapters() -> set[str]:
+    return {
+        handler.result_adapter
+        for handler in _RUNTIME_ARTIFACT_HANDLERS.values()
+    }
+
+
+def runtime_artifact_controller_paths(
+    contract: dict[str, Any],
+) -> tuple[str, ...]:
+    if not isinstance(contract, dict):
+        raise ValueError("runtime artifact contract is invalid")
+    return _runtime_artifact_handler(contract.get("kind")).controller_paths
+
+
+def materialize_runtime_artifact_context(
+    run_dir: Path,
+    contract: dict[str, Any],
+    parent_root: Path,
+    parent_params: dict[str, str],
+    candidate_root: Path,
+    candidate_params: dict[str, str],
+) -> tuple[dict[str, str], RuntimeArtifactContext]:
+    handler = _runtime_artifact_handler(contract.get("kind"))
+    return handler.materialize(
+        run_dir,
+        contract,
+        parent_root,
+        parent_params,
+        candidate_root,
+        candidate_params,
+    )
+
+
+def verify_runtime_artifact_context(
+    run_dir: Path,
+    expected_kind: Optional[str],
+    context: Optional[RuntimeArtifactContext],
+) -> None:
+    if context is None:
+        if expected_kind is not None:
+            raise ValueError("required runtime artifact context is missing")
+        return
+    if not isinstance(context, dict):
+        raise ValueError("runtime artifact context is invalid")
+    if expected_kind is None:
+        raise ValueError("runtime artifact context is unexpected")
+    handler = _runtime_artifact_handler(expected_kind)
+    if context.get("kind") != expected_kind:
+        raise ValueError(
+            "runtime artifact context kind does not match the sealed template"
+        )
+    handler.verify(run_dir, context)
+
+
+def validate_runtime_artifact_output(
+    output: dict[str, Any],
+    expected_kind: Optional[str],
+    context: Optional[RuntimeArtifactContext],
+) -> None:
+    if context is None:
+        if expected_kind is not None:
+            raise ValueError("required runtime artifact context is missing")
+        return
+    if not isinstance(context, dict):
+        raise ValueError("runtime artifact context is invalid")
+    if expected_kind is None:
+        raise ValueError("runtime artifact context is unexpected")
+    handler = _runtime_artifact_handler(expected_kind)
+    if context.get("kind") != expected_kind:
+        raise ValueError(
+            "runtime artifact context kind does not match the sealed template"
+        )
+    handler.validate_output(output, context)

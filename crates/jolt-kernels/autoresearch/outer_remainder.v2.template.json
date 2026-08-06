@@ -518,6 +518,7 @@
       "scripts/metal_piop_eval.py",
       "scripts/metal_autoresearch.py",
       "scripts/metal_kernel_registry.py",
+      "scripts/metal_research/artifacts.py",
       "scripts/metal_research/attempt.py",
       "scripts/metal_research/binaries.py",
       "scripts/metal_research/budget.py",

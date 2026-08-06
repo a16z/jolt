@@ -13,6 +13,7 @@ from unittest import mock
 
 from scripts.metal_research.attempt import EvaluatorLeaseTimeout, run_attempt
 from scripts.metal_research import attempt as attempt_runtime
+from scripts.metal_research import artifacts as runtime_artifacts
 from scripts.metal_research import binaries as binary_artifacts
 from scripts.metal_research import process_wrapper
 from scripts.metal_research.contracts import validate_template
@@ -638,6 +639,14 @@ class ArtifactContextTests(unittest.TestCase):
                 environment["JOLT_AUTORESEARCH_PARENT_ARTIFACT"],
                 environment["JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT"],
             )
+            self.assertEqual(
+                set(environment),
+                {
+                    "JOLT_AUTORESEARCH_PARENT_ARTIFACT",
+                    "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT",
+                },
+            )
+            self.assertEqual(set(record), {"kind", "parent", "candidate"})
 
     def test_candidate_artifact_uses_live_source_and_its_own_params(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -699,10 +708,14 @@ class ArtifactContextTests(unittest.TestCase):
             }
         }
 
-        runner._validate_execution_fingerprint(output, context)
+        runtime_artifacts.validate_runtime_artifact_output(
+            output, "outer_msl_v1", context
+        )
         output["fingerprint"]["candidate_artifact_sha256"] = "c" * 64
         with self.assertRaisesRegex(ValueError, "does not match"):
-            runner._validate_execution_fingerprint(output, context)
+            runtime_artifacts.validate_runtime_artifact_output(
+                output, "outer_msl_v1", context
+            )
 
     def test_nonzero_attempt_records_artifact_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -710,8 +723,10 @@ class ArtifactContextTests(unittest.TestCase):
             (run_dir / "artifacts").mkdir()
             source = run_dir / "candidate.metal"
             source.write_text("kernel void candidate() {}")
-            dispatch = runner.outer_dispatch_from_params(self.PARAMS)
-            artifact = runner.materialize_outer_artifact(
+            dispatch = runtime_artifacts.outer_dispatch_from_params(
+                self.PARAMS
+            )
+            artifact = runtime_artifacts.materialize_outer_artifact(
                 run_dir, source, "b_only_v1", dispatch
             )
             context = {
@@ -726,12 +741,26 @@ class ArtifactContextTests(unittest.TestCase):
             attempt = {"outcome": "nonzero_exit", "error": "status 7"}
 
             valid = runner._seal_attempt_artifacts(
-                run_dir, context, attempt
+                run_dir, "outer_msl_v1", context, attempt
             )
 
         self.assertFalse(valid)
         self.assertEqual(attempt["outcome"], "artifact_changed")
         self.assertEqual(attempt["evaluator_outcome"], "nonzero_exit")
+
+    def test_required_runtime_context_cannot_fail_open(self) -> None:
+        attempt = {"outcome": "success"}
+
+        valid = runner._seal_attempt_artifacts(
+            Path("unused"), "outer_msl_v1", None, attempt
+        )
+
+        self.assertFalse(valid)
+        self.assertEqual(attempt["outcome"], "artifact_changed")
+        self.assertEqual(attempt["evaluator_outcome"], "success")
+        self.assertEqual(
+            attempt["error"], "required runtime artifact context is missing"
+        )
 
     def test_recovery_rejects_attempt_and_inflight_context_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -739,11 +768,11 @@ class ArtifactContextTests(unittest.TestCase):
             (run_dir / "artifacts").mkdir()
             source = run_dir / "candidate.metal"
             source.write_text("kernel void candidate() {}")
-            artifact = runner.materialize_outer_artifact(
+            artifact = runtime_artifacts.materialize_outer_artifact(
                 run_dir,
                 source,
                 "b_only_v1",
-                runner.outer_dispatch_from_params(self.PARAMS),
+                runtime_artifacts.outer_dispatch_from_params(self.PARAMS),
             )
             context = {
                 "kind": "outer_msl_v1",
@@ -752,12 +781,42 @@ class ArtifactContextTests(unittest.TestCase):
             }
             error = runner._recovery_execution_context_error(
                 run_dir,
-                {"template": {"runtime_artifact": {"tier_id": "screen"}}},
+                {
+                    "template": {
+                        "runtime_artifact": {
+                            "kind": "outer_msl_v1",
+                            "tier_id": "screen",
+                        }
+                    }
+                },
                 {"tier_id": "screen", "execution_context": context},
                 {"execution_context": None},
             )
 
         self.assertEqual(error, "attempt and inflight artifact contexts differ")
+
+    def test_recovery_rejects_context_kind_mismatch(self) -> None:
+        state = {
+            "template": {
+                "runtime_artifact": {
+                    "kind": "outer_msl_v1",
+                    "tier_id": "screen",
+                }
+            }
+        }
+        inflight = {
+            "tier_id": "screen",
+            "execution_context": {"kind": "unknown_v1"},
+        }
+
+        error = runner._recovery_execution_context_error(
+            Path("unused"), state, inflight, None
+        )
+
+        self.assertEqual(
+            error,
+            "runtime artifact context kind does not match the sealed template",
+        )
 
 
 class SealedBinaryContextTests(unittest.TestCase):
@@ -2870,11 +2929,11 @@ class RunnerIntegrationTests(unittest.TestCase):
                 / "crates/jolt-kernels/src/metal/solinas/outer_remainder/"
                 "shader.metal"
             )
-            artifact = runner.materialize_outer_artifact(
+            artifact = runtime_artifacts.materialize_outer_artifact(
                 run_dir,
                 source,
                 "b_only_v1",
-                runner.outer_dispatch_from_params(params),
+                runtime_artifacts.outer_dispatch_from_params(params),
             )
             context = {
                 "kind": "outer_msl_v1",

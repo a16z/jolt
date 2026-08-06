@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import tempfile
@@ -6,8 +7,13 @@ from pathlib import Path
 
 from scripts.metal_research.artifacts import (
     MAX_OUTER_SOURCE_BYTES,
+    materialize_runtime_artifact_context,
     materialize_outer_artifact,
     outer_dispatch_from_params,
+    runtime_artifact_result_adapter,
+    validate_runtime_artifact_output,
+    validate_runtime_artifact_contract,
+    verify_runtime_artifact_context,
     verify_outer_artifact,
 )
 
@@ -27,6 +33,49 @@ def prepare_store(root: Path) -> None:
 
 
 class OuterArtifactTests(unittest.TestCase):
+    def test_runtime_handler_dispatch_rejects_unknown_kinds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            template = {
+                "runtime_artifact": {
+                    "kind": "unknown_v1",
+                    "tier_id": "screen",
+                }
+            }
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                validate_runtime_artifact_contract(
+                    root, template["runtime_artifact"], set(), {}, {}
+                )
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                runtime_artifact_result_adapter(template["runtime_artifact"])
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                materialize_runtime_artifact_context(
+                    root,
+                    template["runtime_artifact"],
+                    root,
+                    {},
+                    root,
+                    {},
+                )
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                verify_runtime_artifact_context(
+                    root, "unknown_v1", {"kind": "unknown_v1"}
+                )
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                validate_runtime_artifact_output(
+                    {}, "unknown_v1", {"kind": "unknown_v1"}
+                )
+            with self.assertRaisesRegex(ValueError, "context is missing"):
+                verify_runtime_artifact_context(
+                    root, "outer_msl_v1", None
+                )
+            with self.assertRaisesRegex(ValueError, "context is missing"):
+                validate_runtime_artifact_output(
+                    {}, "outer_msl_v1", None
+                )
+            verify_runtime_artifact_context(root, None, None)
+            validate_runtime_artifact_output({}, None, None)
+
     def test_materializes_and_reuses_a_content_addressed_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -48,6 +97,67 @@ class OuterArtifactTests(unittest.TestCase):
             self.assertEqual(
                 first["manifest"]["binding_plan"], "b_only_v1"
             )
+
+    def test_runtime_output_is_bound_to_manifest_telemetry_and_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prepare_store(root)
+            source = root / "candidate.metal"
+            source.write_text("kernel void candidate() {}")
+            artifact = materialize_outer_artifact(
+                root, source, "b_only_v1", DISPATCH
+            )
+            context = {
+                "kind": "outer_msl_v1",
+                "parent": artifact,
+                "candidate": copy.deepcopy(artifact),
+            }
+            manifest = artifact["manifest"]
+            arm = {"tail_elements": DISPATCH["cpu_tail_elements"]}
+            output = {
+                "schema": "outer_remainder_successor_v2",
+                "fingerprint": {
+                    "parent_artifact_sha256": artifact["artifact_sha256"],
+                    "candidate_artifact_sha256": artifact[
+                        "artifact_sha256"
+                    ],
+                },
+                "telemetry": {
+                    "parent_binding_plan": manifest["binding_plan"],
+                    "candidate_binding_plan": manifest["binding_plan"],
+                    "parent_source_sha256": manifest[
+                        "outer_source_sha256"
+                    ],
+                    "candidate_source_sha256": manifest[
+                        "outer_source_sha256"
+                    ],
+                },
+                "excluded_warmup": {
+                    "parent": copy.deepcopy(arm),
+                    "candidate": copy.deepcopy(arm),
+                },
+                "samples": [],
+            }
+
+            validate_runtime_artifact_output(
+                output, "outer_msl_v1", context
+            )
+            for field in (
+                "candidate_binding_plan",
+                "candidate_source_sha256",
+            ):
+                tampered = copy.deepcopy(output)
+                tampered["telemetry"][field] = "tampered"
+                with self.assertRaisesRegex(ValueError, "telemetry"):
+                    validate_runtime_artifact_output(
+                        tampered, "outer_msl_v1", context
+                    )
+            tampered = copy.deepcopy(output)
+            tampered["excluded_warmup"]["candidate"]["tail_elements"] //= 2
+            with self.assertRaisesRegex(ValueError, "CPU tail"):
+                validate_runtime_artifact_output(
+                    tampered, "outer_msl_v1", context
+                )
 
     def test_rejects_the_retired_split_plan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

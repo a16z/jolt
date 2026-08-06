@@ -22,10 +22,9 @@ from .attempt import (
     stop_recorded_process_group,
 )
 from .artifacts import (
-    materialize_outer_artifact,
-    outer_dispatch_from_params,
-    verify_artifact_store,
-    verify_outer_artifact,
+    materialize_runtime_artifact_context,
+    validate_runtime_artifact_output,
+    verify_runtime_artifact_context,
 )
 from .binaries import (
     declared_source_sha256,
@@ -1002,6 +1001,15 @@ def _arm_process_tracking(
     }
 
 
+def _runtime_artifact_contract(
+    template: dict[str, Any], tier_id: str
+) -> Optional[dict[str, Any]]:
+    contract = template.get("runtime_artifact")
+    if not isinstance(contract, dict) or contract.get("tier_id") != tier_id:
+        return None
+    return contract
+
+
 def _runtime_artifact_context(
     root: Path,
     run_dir: Path,
@@ -1009,13 +1017,9 @@ def _runtime_artifact_context(
     tier: dict[str, Any],
     params: dict[str, str],
 ) -> tuple[dict[str, str], Optional[dict[str, Any]]]:
-    contract = state["template"].get("runtime_artifact")
-    if contract is None or tier["id"] != contract["tier_id"]:
+    contract = _runtime_artifact_contract(state["template"], tier["id"])
+    if contract is None:
         return {}, None
-    if contract["kind"] != "outer_msl_v1":
-        raise ValueError("unsupported runtime artifact kind")
-    source_path = Path(contract["source_path"])
-    plan_parameter = contract["plan_parameter"]
     accepted = state.get("accepted_parent")
     if accepted is None:
         parent_snapshot = "baseline"
@@ -1025,33 +1029,13 @@ def _runtime_artifact_context(
         parent_snapshot = accepted["snapshot"]
         parent_params = accepted["params"]
         candidate_root = root
-    parent_root = run_dir / "snapshots" / parent_snapshot
-    parent = materialize_outer_artifact(
+    return materialize_runtime_artifact_context(
         run_dir,
-        parent_root / source_path,
-        str(parent_params[plan_parameter]),
-        outer_dispatch_from_params(parent_params),
-    )
-    candidate = materialize_outer_artifact(
-        run_dir,
-        candidate_root / source_path,
-        str(params[plan_parameter]),
-        outer_dispatch_from_params(params),
-    )
-    return (
-        {
-            "JOLT_AUTORESEARCH_PARENT_ARTIFACT": str(
-                (run_dir / parent["artifact_path"]).resolve()
-            ),
-            "JOLT_AUTORESEARCH_CANDIDATE_ARTIFACT": str(
-                (run_dir / candidate["artifact_path"]).resolve()
-            ),
-        },
-        {
-            "kind": contract["kind"],
-            "parent": parent,
-            "candidate": candidate,
-        },
+        contract,
+        run_dir / "snapshots" / parent_snapshot,
+        parent_params,
+        candidate_root,
+        params,
     )
 
 
@@ -1125,86 +1109,6 @@ def _publish_evaluation_contexts(
     write_inflight(run_dir, inflight)
 
 
-def _verify_execution_context(
-    run_dir: Path, context: Optional[dict[str, Any]]
-) -> None:
-    if context is None:
-        return
-    if set(context) != {"kind", "parent", "candidate"}:
-        raise ValueError("runtime artifact context is invalid")
-    if context["kind"] != "outer_msl_v1":
-        raise ValueError("runtime artifact context kind is invalid")
-    verify_artifact_store(run_dir)
-    for role in ("parent", "candidate"):
-        expected = context[role]
-        if not isinstance(expected, dict) or set(expected) != {
-            "artifact_sha256",
-            "artifact_path",
-            "manifest",
-        }:
-            raise ValueError(f"{role} runtime artifact record is invalid")
-        relative = Path(expected["artifact_path"])
-        if relative.parts != (
-            "artifacts",
-            expected["artifact_sha256"],
-        ):
-            raise ValueError(f"{role} runtime artifact path is invalid")
-        observed = verify_outer_artifact(run_dir / relative)
-        sealed = dict(expected)
-        sealed.pop("artifact_path")
-        if canonical_json(observed) != canonical_json(sealed):
-            raise ValueError(f"{role} runtime artifact changed")
-
-
-def _validate_execution_fingerprint(
-    output: dict[str, Any], context: Optional[dict[str, Any]]
-) -> None:
-    if context is None:
-        return
-    fingerprint = output.get("fingerprint")
-    if not isinstance(fingerprint, dict):
-        raise ValueError("runtime artifact fingerprint is missing")
-    expected = {
-        "parent_artifact_sha256": context["parent"]["artifact_sha256"],
-        "candidate_artifact_sha256": context["candidate"]["artifact_sha256"],
-    }
-    if any(fingerprint.get(name) != value for name, value in expected.items()):
-        raise ValueError("runtime artifact fingerprint does not match the controller")
-    if output.get("schema") == "outer_remainder_successor_v2":
-        parent_manifest = context["parent"]["manifest"]
-        candidate_manifest = context["candidate"]["manifest"]
-        telemetry = output.get("telemetry", {})
-        if (
-            parent_manifest["dispatch"]["cpu_tail_elements"]
-            != candidate_manifest["dispatch"]["cpu_tail_elements"]
-            or parent_manifest["dispatch"]["trace_cutoff_elements"]
-            != candidate_manifest["dispatch"]["trace_cutoff_elements"]
-            or telemetry.get("parent_binding_plan")
-            != parent_manifest["binding_plan"]
-            or telemetry.get("candidate_binding_plan")
-            != candidate_manifest["binding_plan"]
-            or telemetry.get("parent_source_sha256")
-            != parent_manifest["outer_source_sha256"]
-            or telemetry.get("candidate_source_sha256")
-            != candidate_manifest["outer_source_sha256"]
-        ):
-            raise ValueError("runtime artifact telemetry does not match the controller")
-        expected_tail = parent_manifest["dispatch"]["cpu_tail_elements"]
-        warmup = output.get("excluded_warmup")
-        samples = output.get("samples")
-        if not isinstance(warmup, dict) or not isinstance(samples, list):
-            raise ValueError("runtime artifact arm evidence is missing")
-        records = [warmup] + samples
-        if any(
-            not isinstance(record, dict)
-            or not isinstance(record.get(role), dict)
-            or record[role].get("tail_elements") != expected_tail
-            for record in records
-            for role in ("parent", "candidate")
-        ):
-            raise ValueError("runtime artifact CPU tail does not match the controller")
-
-
 def _verify_sealed_binary_context(
     run_dir: Path,
     state: dict[str, Any],
@@ -1251,13 +1155,12 @@ def _validate_sealed_binary_fingerprint(
 
 def _seal_attempt_artifacts(
     run_dir: Path,
+    expected_kind: Optional[str],
     context: Optional[dict[str, Any]],
     attempt: dict[str, Any],
 ) -> bool:
-    if context is None:
-        return True
     try:
-        _verify_execution_context(run_dir, context)
+        verify_runtime_artifact_context(run_dir, expected_kind, context)
     except (OSError, ValueError) as error:
         attempt["evaluator_outcome"] = attempt["outcome"]
         attempt["outcome"] = "artifact_changed"
@@ -1343,6 +1246,12 @@ def execute_tier(
     evaluation_dir = run_dir / "evaluations" / evaluation_id
     context_record = None
     sealed_binary_context = None
+    runtime_artifact = _runtime_artifact_contract(
+        state["template"], tier["id"]
+    )
+    runtime_artifact_kind = (
+        runtime_artifact["kind"] if runtime_artifact is not None else None
+    )
     resolved_evaluator = tier["evaluator"]
     contexts_admitted = False
     try:
@@ -1376,7 +1285,9 @@ def execute_tier(
         process_tracking = _arm_process_tracking(run_dir, evaluation_id)
 
         def verify_admitted_contexts() -> None:
-            _verify_execution_context(run_dir, context_record)
+            verify_runtime_artifact_context(
+                run_dir, runtime_artifact_kind, context_record
+            )
             _verify_sealed_binary_context(
                 run_dir, state, tier, sealed_binary_context
             )
@@ -1395,7 +1306,9 @@ def execute_tier(
             prelaunch_check=verify_admitted_contexts,
         )
     if contexts_admitted:
-        if not _seal_attempt_artifacts(run_dir, context_record, attempt):
+        if not _seal_attempt_artifacts(
+            run_dir, runtime_artifact_kind, context_record, attempt
+        ):
             output = None
         if not _seal_attempt_binaries(
             run_dir, state, tier, sealed_binary_context, attempt
@@ -1406,7 +1319,9 @@ def execute_tier(
     result = None
     if attempt["outcome"] == "success" and output is not None:
         try:
-            _validate_execution_fingerprint(output, context_record)
+            validate_runtime_artifact_output(
+                output, runtime_artifact_kind, context_record
+            )
             _validate_sealed_binary_fingerprint(
                 output, state, tier, sealed_binary_context
             )
@@ -2734,15 +2649,18 @@ def _recovery_execution_context_error(
     attempt: Optional[dict[str, Any]],
 ) -> Optional[str]:
     context = inflight.get("execution_context")
-    runtime_artifact = state["template"].get("runtime_artifact")
-    context_required = (
-        isinstance(runtime_artifact, dict)
-        and runtime_artifact.get("tier_id") == inflight.get("tier_id")
+    runtime_artifact = _runtime_artifact_contract(
+        state["template"], inflight["tier_id"]
     )
+    context_required = runtime_artifact is not None
     if context_required and context is None:
         return "required runtime artifact context was not published"
     try:
-        _verify_execution_context(run_dir, context)
+        verify_runtime_artifact_context(
+            run_dir,
+            runtime_artifact["kind"] if runtime_artifact is not None else None,
+            context,
+        )
     except (OSError, ValueError) as error:
         return str(error)
     if attempt is not None and canonical_json(
