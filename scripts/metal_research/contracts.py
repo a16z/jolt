@@ -38,6 +38,24 @@ PHASE_CHECKPOINT_FIELDS = {
     "dense_rounds_gpu_active_ms": "dense_rounds",
     "openings_gpu_active_ms": "openings",
 }
+ITERATION_PROFILE_CONTROLLER_PATHS = (
+    "scripts/metal_autoresearch.py",
+    "scripts/metal_research/artifacts.py",
+    "scripts/metal_research/attempt.py",
+    "scripts/metal_research/binaries.py",
+    "scripts/metal_research/contracts.py",
+    "scripts/metal_research/iteration_profile.py",
+    "scripts/metal_research/paired.py",
+    "scripts/metal_research/results.py",
+    "scripts/metal_research/runner.py",
+    "scripts/metal_research/versions.py",
+)
+ITERATION_PROFILE_SOURCE_PATHS = (
+    "crates/jolt-kernels/src/metal/solinas/fp128.metal",
+    "crates/jolt-kernels/src/metal/solinas/simd_reduce.metal",
+    "crates/jolt-kernels/src/metal/solinas/spartan_outer_common.metal",
+    "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+)
 
 
 def _relative_file(root: Path, value: Any, description: str) -> Path:
@@ -136,6 +154,37 @@ def phase_checkpoint_record(
     record["metrics"] = metrics
     record["passed"] = passed
     return record
+
+
+def iteration_profile_evaluator_fingerprint(
+    profile: dict[str, Any], root: Path
+) -> dict[str, str]:
+    path = _relative_file(
+        root, profile["evidence_path"], "iteration profile evidence"
+    )
+    payload = path.read_bytes()
+    if sha256(payload) != _hex_digest(
+        profile["evidence_sha256"], "iteration evidence digest"
+    ):
+        raise ValueError("iteration profile evidence digest does not match")
+    try:
+        evidence = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("iteration profile evidence is invalid JSON") from error
+    evaluator = evidence.get("evaluator") if isinstance(evidence, dict) else None
+    if not isinstance(evaluator, dict):
+        raise ValueError("iteration profile evaluator is incomplete")
+    result = {
+        "runner_binary_sha256": _hex_digest(
+            evaluator.get("runner_binary_sha256"), "iteration runner digest"
+        )
+    }
+    source_digest = evaluator.get("runner_source_sha256")
+    if source_digest is not None:
+        result["runner_source_sha256"] = _hex_digest(
+            source_digest, "iteration runner source digest"
+        )
+    return result
 
 
 def validate_goal_contract(contract: dict[str, Any]) -> None:
@@ -882,27 +931,65 @@ def _validate_iteration_profile(
         evidence = json.loads(encoded)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("iteration profile evidence is invalid JSON") from error
+    schema = evidence.get("schema") if isinstance(evidence, dict) else None
+    schema_version = (
+        evidence.get("schema_version") if isinstance(evidence, dict) else None
+    )
+    is_v2 = schema == "outer_remainder_iteration_profile_v2" and schema_version == 2
+    is_v3 = schema == "outer_remainder_iteration_profile_v3" and schema_version == 3
+    evidence_fields = {
+        "schema",
+        "schema_version",
+        "created_at",
+        "profile_base_revision",
+        "machine",
+        "evaluator",
+        "minimal_closure",
+        "cold_cycle",
+        "warm_cycle",
+    }
+    if is_v3:
+        evidence_fields.add("controller_sources")
     if (
         not isinstance(evidence, dict)
-        or set(evidence)
-        != {
-            "schema",
-            "schema_version",
-            "created_at",
-            "profile_base_revision",
-            "machine",
-            "evaluator",
-            "minimal_closure",
-            "cold_cycle",
-            "warm_cycle",
-        }
-        or evidence["schema"] != "outer_remainder_iteration_profile_v2"
-        or evidence["schema_version"] != 2
+        or set(evidence) != evidence_fields
+        or not (is_v2 or is_v3)
         or evidence["profile_base_revision"] != revision
         or not isinstance(evidence["created_at"], str)
         or not evidence["created_at"]
     ):
         raise ValueError("iteration profile evidence contract is invalid")
+
+    if is_v3:
+        controller_sources = evidence["controller_sources"]
+        if (
+            not isinstance(controller_sources, list)
+            or [record.get("path") for record in controller_sources]
+            != list(ITERATION_PROFILE_CONTROLLER_PATHS)
+            or not set(ITERATION_PROFILE_CONTROLLER_PATHS) <= frozen
+        ):
+            raise ValueError("iteration profile controller sources are invalid")
+        for record in controller_sources:
+            if not isinstance(record, dict) or set(record) != {
+                "path",
+                "bytes",
+                "sha256",
+            }:
+                raise ValueError("iteration profile controller source is invalid")
+            payload = _relative_file(
+                root, record["path"], "iteration profile controller source"
+            ).read_bytes()
+            if (
+                type(record["bytes"]) is not int
+                or record["bytes"] != len(payload)
+                or _hex_digest(
+                    record["sha256"], "iteration controller source digest"
+                )
+                != sha256(payload)
+            ):
+                raise ValueError(
+                    "iteration profile controller changed since profiling"
+                )
 
     machine = evidence["machine"]
     machine_fields = {
@@ -941,9 +1028,16 @@ def _validate_iteration_profile(
         "parent_outer_source_sha256",
         "candidate_outer_source_sha256",
     }
+    if is_v3:
+        evaluator_fields.add("runner_source_sha256")
     if not isinstance(evaluator, dict) or set(evaluator) != evaluator_fields:
         raise ValueError("iteration profile evaluator is incomplete")
     _hex_digest(evaluator["runner_binary_sha256"], "iteration runner digest")
+    if is_v3:
+        _hex_digest(
+            evaluator["runner_source_sha256"],
+            "iteration runner source digest",
+        )
     _hex_digest(evaluator["parent_artifact_sha256"], "parent artifact digest")
     _hex_digest(evaluator["candidate_artifact_sha256"], "candidate artifact digest")
     _hex_digest(evaluator["parent_outer_source_sha256"], "parent source digest")
@@ -972,18 +1066,20 @@ def _validate_iteration_profile(
         "candidate_assembled_source_sha256",
         "candidate_source_suffix",
     }
+    if is_v3:
+        closure_fields.add("solinas_offset")
     if (
         not isinstance(closure, dict)
         or set(closure) != closure_fields
         or closure["dependency_model"] != "outer_only_shader_closure_v1"
     ):
         raise ValueError("minimal closure evidence is invalid")
-    expected_paths = [
-        "crates/jolt-kernels/src/metal/solinas/fp128.metal",
-        "crates/jolt-kernels/src/metal/solinas/simd_reduce.metal",
-        "crates/jolt-kernels/src/metal/solinas/spartan_outer_common.metal",
-        "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
-    ]
+    if is_v3 and (
+        type(closure["solinas_offset"]) is not int
+        or closure["solinas_offset"] != 275
+    ):
+        raise ValueError("minimal closure Solinas offset is invalid")
+    expected_paths = list(ITERATION_PROFILE_SOURCE_PATHS)
     fragments = closure["source_fragments"]
     if not isinstance(fragments, list) or [item.get("path") for item in fragments] != expected_paths:
         raise ValueError("minimal closure source fragments are invalid")
@@ -1022,6 +1118,30 @@ def _validate_iteration_profile(
         candidate_source = fragment_payloads[expected_paths[-1]] + suffix.encode()
         if evaluator["candidate_outer_source_sha256"] != sha256(candidate_source):
             raise ValueError("minimal closure candidate nonce is invalid")
+        if is_v3:
+            offset = closure["solinas_offset"]
+            prefix = f"#define SOLINAS_OFFSET {offset}u\n".encode()
+            parent_source = prefix + b"\n".join(
+                fragment_payloads[path] for path in expected_paths
+            )
+            candidate_assembled = prefix + b"\n".join(
+                [
+                    *(fragment_payloads[path] for path in expected_paths[:-1]),
+                    candidate_source,
+                ]
+            )
+            for role, assembled in (
+                ("parent", parent_source),
+                ("candidate", candidate_assembled),
+            ):
+                if (
+                    closure[f"{role}_assembled_source_bytes"] != len(assembled)
+                    or closure[f"{role}_assembled_source_sha256"]
+                    != sha256(assembled)
+                ):
+                    raise ValueError(
+                        "minimal closure assembled source does not match its fragments"
+                    )
     for field in ("parent_assembled_source_bytes", "candidate_assembled_source_bytes"):
         if type(closure[field]) is not int or closure[field] <= 0:
             raise ValueError("minimal closure assembled source size is invalid")
@@ -1212,6 +1332,7 @@ def validate_template(
     root: Path,
     *,
     verify_editable_profile_sources: bool = True,
+    verify_iteration_profile: bool = True,
 ) -> None:
     required = {
         "schema_version",
@@ -1389,15 +1510,16 @@ def validate_template(
         != template["mechanism_phase"]["checkpoint"]["scale_log_n"]
     ):
         raise ValueError("phase checkpoint scale must match the proxy tier")
-    _validate_iteration_profile(
-        template["iteration_profile"],
-        root,
-        editable,
-        frozen,
-        proxy,
-        template["mechanism_phase"],
-        verify_editable_profile_sources,
-    )
+    if verify_iteration_profile:
+        _validate_iteration_profile(
+            template["iteration_profile"],
+            root,
+            editable,
+            frozen,
+            proxy,
+            template["mechanism_phase"],
+            verify_editable_profile_sources,
+        )
     holdout = executable["holdout"]
     portfolio = goal["portfolio_acceptance"]
     if (

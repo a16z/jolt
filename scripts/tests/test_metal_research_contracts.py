@@ -373,6 +373,12 @@ class VersionedContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "phase evidence"):
                     validate_template(tampered, ROOT)
 
+        validate_template(
+            checkpoint_mismatches[0],
+            ROOT,
+            verify_iteration_profile=False,
+        )
+
         tampered = copy.deepcopy(template)
         tampered["mechanism_phase"]["checkpoint"]["metrics"].append(
             copy.deepcopy(

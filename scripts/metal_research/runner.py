@@ -39,6 +39,7 @@ from .binaries import (
 )
 from .budget import BudgetExhausted, admit_tier, charge_attempt, empty_usage
 from .contracts import (
+    iteration_profile_evaluator_fingerprint,
     phase_checkpoint_record,
     validate_goal_contract,
     validate_template,
@@ -1855,6 +1856,44 @@ def _record_binary_build_gpu_usage(attempt: dict[str, Any]) -> None:
     }
 
 
+def _validate_profiled_binary(
+    root: Path, state: dict[str, Any]
+) -> None:
+    profile = state["template"].get("iteration_profile")
+    if not isinstance(profile, dict):
+        return
+    proxies = [
+        tier
+        for tier in state["template"]["evaluation"]["tiers"]
+        if tier.get("applicable") is True and tier.get("role") == "proxy"
+    ]
+    if len(proxies) != 1:
+        raise ValueError("iteration profile requires exactly one proxy tier")
+    binary_ids = _sealed_binary_ids_for_tier(
+        state["template"], proxies[0]["id"]
+    )
+    if len(binary_ids) != 1:
+        raise ValueError("iteration profile requires one sealed proxy evaluator")
+    record = state["sealed_binaries"].get(binary_ids[0])
+    if not isinstance(record, dict):
+        raise ValueError("profiled sealed evaluator is missing")
+    expected = iteration_profile_evaluator_fingerprint(profile, root)
+    manifest = record.get("manifest")
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("binary_sha256")
+        != expected["runner_binary_sha256"]
+        or (
+            "runner_source_sha256" in expected
+            and manifest.get("source_sha256")
+            != expected["runner_source_sha256"]
+        )
+    ):
+        raise ValueError(
+            "sealed proxy evaluator does not match its iteration profile"
+        )
+
+
 def _continue_binary_sealing(
     root: Path, run_dir: Path, state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1954,6 +1993,12 @@ def _continue_binary_sealing(
         write_state(run_dir, state)
         (run_dir / "inflight.json").unlink()
 
+    try:
+        _validate_profiled_binary(root, state)
+    except ValueError:
+        state["status"] = "sealed_binary_invalid"
+        write_state(run_dir, state)
+        raise
     seal_sealed_binary_store(run_dir)
     state["status"] = "initializing"
     write_state(run_dir, state)
@@ -4279,6 +4324,9 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("run_dir")
     validate = commands.add_parser("validate-template")
     validate.add_argument("template")
+    profile = commands.add_parser("profile-iteration")
+    profile.add_argument("template")
+    profile.add_argument("output_prefix")
     resume = commands.add_parser("resume-init")
     resume.add_argument("run_dir")
     calibrate = commands.add_parser("calibrate-proxy")
@@ -4319,6 +4367,21 @@ def main(argv: Optional[list[str]] = None) -> int:
             value = init_run(root, Path(args.template), Path(args.run_dir).resolve())
         elif args.command == "validate-template":
             value = validate_template_file(root, Path(args.template))
+        elif args.command == "profile-iteration":
+            from .iteration_profile import generate_iteration_profile
+
+            template = read_json(Path(args.template))
+            validate_template(
+                template,
+                root,
+                verify_iteration_profile=False,
+            )
+            value = generate_iteration_profile(
+                root,
+                template,
+                Path(args.output_prefix),
+                _validate_closed_result,
+            )
         elif args.command == "resume-init":
             value = resume_initialization(root, Path(args.run_dir).resolve())
         elif args.command == "calibrate-proxy":

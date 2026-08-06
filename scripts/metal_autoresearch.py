@@ -7356,6 +7356,9 @@ def parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate-template")
     validate.add_argument("template")
     validate.set_defaults(handler=command_validate_template)
+    profile = commands.add_parser("profile-iteration")
+    profile.add_argument("template")
+    profile.add_argument("output_prefix")
     resume = commands.add_parser("resume-init")
     resume.add_argument("run_dir")
     resume.set_defaults(handler=command_resume_init)
@@ -7416,7 +7419,7 @@ def main() -> int:
 
 def command_uses_v2(args: argparse.Namespace) -> bool:
     try:
-        if args.command in {"init", "validate-template"}:
+        if args.command in {"init", "validate-template", "profile-iteration"}:
             path = Path(args.template)
         elif args.command in {
             "trial",

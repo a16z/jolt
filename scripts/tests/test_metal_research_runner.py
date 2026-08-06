@@ -965,6 +965,54 @@ class SealedBinaryContextTests(unittest.TestCase):
                     output, state, self.tier(), context
                 )
 
+    def test_profiled_evaluator_must_match_the_newly_sealed_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence_path = root / "profile.json"
+            evidence = {
+                "evaluator": {
+                    "runner_binary_sha256": "a" * 64,
+                    "runner_source_sha256": "b" * 64,
+                }
+            }
+            payload = runner.canonical_json(evidence)
+            evidence_path.write_bytes(payload)
+            state = {
+                "template": {
+                    "iteration_profile": {
+                        "evidence_path": "profile.json",
+                        "evidence_sha256": runner.sha256(payload),
+                    },
+                    "evaluation": {
+                        "tiers": [
+                            {
+                                "id": "screen",
+                                "role": "proxy",
+                                "applicable": True,
+                            }
+                        ]
+                    },
+                    "sealed_binaries": {
+                        self.BINARY_ID: {"consumer_tiers": ["screen"]}
+                    },
+                },
+                "sealed_binaries": {
+                    self.BINARY_ID: {
+                        "manifest": {
+                            "binary_sha256": "a" * 64,
+                            "source_sha256": "b" * 64,
+                        }
+                    }
+                },
+            }
+
+            runner._validate_profiled_binary(root, state)
+            state["sealed_binaries"][self.BINARY_ID]["manifest"][
+                "binary_sha256"
+            ] = "c" * 64
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                runner._validate_profiled_binary(root, state)
+
     def test_recovery_requires_matching_published_context(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)
