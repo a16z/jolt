@@ -34,6 +34,7 @@ mod ram_raf_evaluation;
 mod ram_val_check;
 mod registers_read_write;
 mod registers_val;
+pub mod registers_val_evaluation_backend;
 mod runtime;
 mod source;
 mod spartan_outer_uniskip;
