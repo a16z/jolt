@@ -425,6 +425,17 @@ impl JoltField for AkitaFp128 {
         ))
     }
 
+    /// The shared Solinas fp128 scalar-challenge convention is unreversed
+    /// little-endian (unlike BN254's reversed legacy convention); the modular
+    /// verifier decodes with the shared `from_scalar_challenge_bytes`, so the
+    /// legacy prover must match it or every `challenge_scalar` value diverges
+    /// while the transcript byte stream stays in sync (both consume 16
+    /// bytes), which surfaces as StageClaimOutputMismatch at the first
+    /// batched-claim check of the packed pipeline.
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self(<AkitaField as CanonicalEncoding>::from_scalar_challenge_bytes(bytes))
+    }
+
     #[inline]
     fn num_bits(&self) -> u32 {
         <AkitaField as CanonicalEncoding>::num_bits(&self.0)

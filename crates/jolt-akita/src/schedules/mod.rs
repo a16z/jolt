@@ -221,14 +221,26 @@ pub mod emit {
                 K16_NUM_VARS,
                 output_dir.clone(),
             ),
-            spec::<JoltD64OneHotK256>(
-                "jolt_fp128_d64_onehot_k256",
-                "JOLT_FP128_D64_ONEHOT_K256_SCHEDULES",
-                "jolt-fp128-d64-onehot-k256",
-                K256_NUM_POLYS,
-                K256_NUM_VARS,
-                output_dir,
-            ),
+            {
+                // The forced-K256 e2e (jolt-prover-legacy packed tests) runs
+                // the K=256 regime at the minimum muldiv trace (20 vars),
+                // below the production window; its setup sizing needs
+                // catalog rows there.
+                let mut k256 = spec::<JoltD64OneHotK256>(
+                    "jolt_fp128_d64_onehot_k256",
+                    "JOLT_FP128_D64_ONEHOT_K256_SCHEDULES",
+                    "jolt-fp128-d64-onehot-k256",
+                    K256_NUM_POLYS,
+                    K256_NUM_VARS,
+                    output_dir,
+                );
+                for key in keys(K256_NUM_POLYS, (20, 20)) {
+                    if !k256.keys.contains(&key) {
+                        k256.keys.push(key);
+                    }
+                }
+                k256
+            },
         ]
     }
 }
