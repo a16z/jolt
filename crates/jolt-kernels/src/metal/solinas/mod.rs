@@ -29,6 +29,7 @@ mod outer_remainder;
 mod product5;
 mod product_remainder;
 mod product_uniskip;
+mod ram_output_check;
 mod ram_raf_evaluation;
 mod ram_val_check;
 mod registers_read_write;
@@ -114,6 +115,22 @@ pub use product_uniskip::{
     ProductUniskipInvocation, ProductUniskipKnownNodes, ProductUniskipShapeError,
     ProductUniskipStorageLayout, PRODUCT_UNISKIP_EXTENDED_NODES,
     PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS, PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
+};
+pub use ram_output_check::{
+    fold_low_prefix as ram_output_check_fold_low_prefix,
+    fold_public_segments as ram_output_check_fold_public_segments,
+    fold_u64_low_prefix as ram_output_check_fold_u64_low_prefix,
+    folded_range_mask as ram_output_check_folded_range_mask,
+    low_binding_weights as ram_output_check_low_binding_weights, DenseRamOutputOracle,
+    RamOutputCheckCost, RamOutputCheckFold, RamOutputCheckFoldParams, RamOutputCheckHybridPlan,
+    RamOutputCheckPlanError, RamOutputCheckStorage, RamOutputPublicSegment,
+    ResidentRamFinalMetadata, ResidentRamFinalValues, RAM_OUTPUT_CHECK_COMPONENT_GATE_NS,
+    RAM_OUTPUT_CHECK_FIVE_X_CAP_NS, RAM_OUTPUT_CHECK_FOLD_PIPELINE,
+    RAM_OUTPUT_CHECK_REDUCE_PIPELINE, RAM_OUTPUT_CHECK_RELATION_CPU_NS,
+    RAM_OUTPUT_CHECK_RELATION_FIVE_X_CAP_NS, RAM_OUTPUT_CHECK_SIMD_WIDTH,
+    RAM_OUTPUT_CHECK_TARGET_ADDRESSES, RAM_OUTPUT_CHECK_TARGET_CPU_NS,
+    RAM_OUTPUT_CHECK_TARGET_LOG_K, RAM_OUTPUT_CHECK_TARGET_MASK_END,
+    RAM_OUTPUT_CHECK_TARGET_MASK_START,
 };
 pub use ram_raf_evaluation::{
     address_opening_point as ram_raf_address_opening_point, dense_pushforward_oracle,
@@ -498,6 +515,24 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
+    #[error(transparent)]
+    RamOutputCheck(#[from] ram_output_check::RamOutputCheckPlanError),
+    #[error("RAM output-check values belong to Metal device {got}, expected {expected}")]
+    RamOutputCheckValuesDevice { expected: u64, got: u64 },
+    #[error("invalid resident RAM output-check state: {0}")]
+    InvalidRamOutputCheckState(&'static str),
+    #[error(
+        "RAM output-check pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedRamOutputCheckExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "RAM output-check fold needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
+    )]
+    RamOutputCheckThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(transparent)]
     RamValCheckShape(#[from] ram_val_check::RamValCheckShapeError),
     #[error(transparent)]

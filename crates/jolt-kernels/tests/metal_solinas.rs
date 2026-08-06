@@ -8,13 +8,13 @@ use jolt_kernels::metal::solinas::{
 };
 use jolt_kernels::metal::solinas::{
     evaluate_product_uniskip_extensions_cpu, BooleanityRow, BooleanitySelector,
-    BooleanitySequenceConfig, DispatchConfig, Fp128, InstructionRaFirstMessageConfig, MetalError,
-    Probe, Product5Config, Product5SequenceConfig, ProductRemainderRow,
-    ProductRemainderSequenceConfig, ProductUniskipConfig, RamRafConfig, RamValCheckConfig,
-    RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan, RegisterAccessRow,
-    RegistersReadWriteMessageConfig, RegistersValDenseConfig, RegistersValFirstMessageConfig,
-    RegistersValTransitionConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
-    RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
+    BooleanitySequenceConfig, DenseRamOutputOracle, DispatchConfig, Fp128,
+    InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
+    ProductRemainderRow, ProductRemainderSequenceConfig, ProductUniskipConfig,
+    RamOutputCheckHybridPlan, RamRafConfig, RamValCheckConfig, RamValCheckDenseRow,
+    RamValCheckNativeRow, RamValCheckPlan, RegisterAccessRow, RegistersReadWriteMessageConfig,
+    RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValTransitionConfig,
+    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
@@ -377,6 +377,72 @@ fn ram_raf_pushforward_matches_independent_dense_oracles() {
         .expect("RAM RAF pushforward should replay");
     assert_eq!(replay.masses, observation.masses);
     assert_eq!(replay.counters, observation.counters);
+}
+
+#[test]
+fn ram_output_check_resident_prefix_matches_dense_binding() {
+    let plan = RamOutputCheckHybridPlan::target();
+    let output_point = (0..plan.log_k())
+        .map(|index| {
+            AkitaField::from_u64(
+                0x9e37_79b9_7f4a_7c15_u64.wrapping_mul(index as u64 + 11) & ((1 << 56) - 1),
+            )
+        })
+        .collect::<Vec<_>>();
+    let prefix_challenges = (0..plan.zero_rounds())
+        .map(|index| match index {
+            0 => AkitaField::from_u64(0),
+            1 => AkitaField::from_u64(1),
+            _ => AkitaField::from_u64(
+                0xbf58_476d_1ce4_e5b9_u64.wrapping_mul(index as u64 + 7) & ((1 << 56) - 1),
+            ),
+        })
+        .collect::<Vec<_>>();
+    let native = (0..plan.addresses())
+        .map(|index| match index % 17 {
+            0 => u64::MAX,
+            1 => 0,
+            _ => (index as u64)
+                .wrapping_mul(0x94d0_49bb_1331_11eb)
+                .rotate_left((index % 63) as u32),
+        })
+        .collect::<Vec<_>>();
+    let mut val_io = vec![AkitaField::from_u64(0); plan.addresses()];
+    let mut io_mask = vec![AkitaField::from_u64(0); plan.addresses()];
+    for index in plan.mask_start()..plan.mask_end() {
+        val_io[index] = AkitaField::from_u64(native[index]);
+        io_mask[index] = AkitaField::from_u64(1);
+    }
+    let val_final = native
+        .iter()
+        .map(|&value| AkitaField::from_u64(value))
+        .collect::<Vec<_>>();
+    let mut dense = DenseRamOutputOracle::new(
+        EqPolynomial::<AkitaField>::evals(&output_point, None),
+        io_mask,
+        val_io,
+        val_final,
+    )
+    .expect("dense RAM output oracle should initialize");
+    dense
+        .defer_zero_prefix(&prefix_challenges)
+        .expect("the certified output prefix should be identically zero");
+    let expected = dense.val_final().to_vec();
+
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let resident = context
+        .prepare_ram_output_check_values(&native, true, plan)
+        .expect("certified RAM final values should prepare");
+    let allocation = resident.allocation_identity();
+    let fold = context
+        .prepare_ram_output_check_fold(&resident, &prefix_challenges, plan)
+        .expect("RAM output fold should prepare");
+    assert_eq!(fold.source_allocation_identity(), allocation);
+    assert_eq!(fold.execute_device_buffer_allocations(), 0);
+    assert_eq!(
+        fold.execute().expect("RAM output fold should execute"),
+        expected
+    );
 }
 
 fn assert_product_remainder_sequence(row_count: usize) {
