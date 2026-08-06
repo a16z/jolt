@@ -2,14 +2,15 @@
 #![expect(clippy::expect_used, reason = "integration test")]
 
 use jolt_field::{AkitaField, FromPrimitiveInt};
-use jolt_kernels::metal::solinas::product_remainder_reference;
 use jolt_kernels::metal::solinas::{
-    BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128,
-    InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
-    ProductRemainderRow, ProductRemainderSequenceConfig, RegisterAccessRow,
+    evaluate_product_uniskip_extensions_cpu, BooleanityRow, BooleanitySelector,
+    BooleanitySequenceConfig, DispatchConfig, Fp128, InstructionRaFirstMessageConfig, MetalError,
+    Probe, Product5Config, Product5SequenceConfig, ProductRemainderRow,
+    ProductRemainderSequenceConfig, ProductUniskipConfig, RegisterAccessRow,
     RegistersReadWriteMessageConfig, RegistersValDenseConfig, RegistersValFirstMessageConfig,
     RegistersValTransitionConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
+use jolt_kernels::metal::solinas::{product_remainder_reference, product_uniskip_reference};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
 mod support;
@@ -72,6 +73,105 @@ fn product_remainder_sequence_matches_cpu_at_every_boundary() {
     for rows in [1 << 8, 1 << 9] {
         assert_product_remainder_sequence(rows);
     }
+}
+
+#[test]
+fn product_uniskip_matches_cpu_and_reuses_product_rows() {
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let row_count = 1 << 10;
+    let modulus_minus_one = AkitaField::from_u128(u128::MAX - AKITA_OFFSET_FFFFA7F7 as u128);
+    let rows = (0..row_count)
+        .map(|index| {
+            let right_input = match index % 5 {
+                0 => i128::MIN,
+                1 => i128::MAX,
+                2 => -1,
+                3 => 0,
+                _ => index as i128 * 0x1_0000_0001 - 0x1234_5678,
+            };
+            ProductRemainderRow::new(
+                (index as u64)
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .rotate_left((index % 63) as u32),
+                right_input,
+                index & 1 != 0,
+                index % 3 == 0,
+                (!(index as u64)).wrapping_mul(0xbf58_476d_1ce4_e5b9),
+                index % 5 == 0,
+                index % 7 == 0,
+                index % 11 == 0,
+            )
+        })
+        .collect::<Vec<_>>();
+    let weights = |length: usize, salt: usize| {
+        (0..length)
+            .map(|index| match (index + salt) % 4 {
+                0 => AkitaField::from_u64(0),
+                1 => AkitaField::from_u64(1),
+                2 => modulus_minus_one,
+                _ => AkitaField::from_u64(
+                    (index as u64)
+                        .wrapping_mul(0x94d0_49bb_1331_11eb)
+                        .wrapping_add(salt as u64),
+                ),
+            })
+            .collect::<Vec<_>>()
+    };
+    let e_in = weights(32, 7);
+    let e_out = weights(32, 11);
+    let expected = product_uniskip_reference::extended_node_values(&rows, &e_in, &e_out)
+        .expect("CPU uni-skip should be well-shaped");
+    assert_eq!(
+        evaluate_product_uniskip_extensions_cpu(&rows, &e_in, &e_out)
+            .expect("optimized CPU uni-skip should be well-shaped"),
+        expected
+    );
+    let resident_rows = context
+        .prepare_product_remainder_rows(&rows)
+        .expect("product rows should prepare once");
+
+    for threads_per_threadgroup in [32, 128] {
+        let invocation = context
+            .prepare_product_uniskip(
+                &resident_rows,
+                &e_in,
+                &e_out,
+                ProductUniskipConfig {
+                    threads_per_threadgroup: Some(threads_per_threadgroup),
+                },
+            )
+            .expect("product uni-skip should prepare");
+        assert_eq!(
+            invocation.row_allocation_identity(),
+            resident_rows.allocation_identity()
+        );
+        assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+        assert_eq!(
+            invocation.execute().expect("uni-skip should execute"),
+            expected
+        );
+        assert_eq!(
+            invocation
+                .execute_timed()
+                .expect("uni-skip should replay")
+                .0,
+            expected
+        );
+    }
+
+    let sequence = context
+        .prepare_product_remainder_sequence_with_rows(
+            resident_rows.clone(),
+            [AkitaField::from_u64(0); 3],
+            32,
+            32,
+            ProductRemainderSequenceConfig::default(),
+        )
+        .expect("product remainder should consume the resident rows");
+    assert_eq!(
+        sequence.row_allocation_identity(),
+        resident_rows.allocation_identity()
+    );
 }
 
 fn assert_product_remainder_sequence(row_count: usize) {

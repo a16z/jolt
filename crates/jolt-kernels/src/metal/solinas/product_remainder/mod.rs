@@ -6,8 +6,8 @@ use std::{
 
 use jolt_field::{AkitaField, Field};
 use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 use thiserror::Error;
 
@@ -243,6 +243,39 @@ impl From<&SpartanProductRow> for ProductRemainderRow {
 impl Default for ProductRemainderRow {
     fn default() -> Self {
         Self::new(0, 0, false, false, 0, false, false, false)
+    }
+}
+
+#[derive(Clone)]
+pub struct ProductRemainderRows {
+    buffer: Buffer,
+    len: usize,
+    device_registry_id: u64,
+}
+
+impl ProductRemainderRows {
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub const fn device_registry_id(&self) -> u64 {
+        self.device_registry_id
+    }
+
+    pub fn allocation_identity(&self) -> usize {
+        self.buffer.as_ptr() as usize
+    }
+
+    pub const fn resident_bytes(&self) -> usize {
+        self.len * size_of::<ProductRemainderRow>()
+    }
+
+    pub(crate) fn buffer(&self) -> &Buffer {
+        &self.buffer
     }
 }
 
@@ -526,7 +559,7 @@ enum ProductRemainderPhase {
 }
 
 struct ProductRemainderBuffers {
-    rows: Buffer,
+    rows: ProductRemainderRows,
     lagrange: Buffer,
     state_a: Buffer,
     state_b: Buffer,
@@ -558,6 +591,27 @@ pub struct ProductRemainderSequence {
 }
 
 impl SolinasMetal {
+    pub fn prepare_product_remainder_rows(
+        &self,
+        rows: &[ProductRemainderRow],
+    ) -> Result<ProductRemainderRows, MetalError> {
+        validate_rows(rows.len())?;
+        for (index, row) in rows.iter().copied().enumerate() {
+            row.validate()
+                .map_err(|source| MetalError::InvalidProductRemainderRow { index, source })?;
+        }
+        let row_bytes = checked_product("rows", rows.len(), size_of::<ProductRemainderRow>())?;
+        let row_bytes =
+            u64::try_from(row_bytes).map_err(|_| MetalError::InputTooLong(rows.len()))?;
+        self.validate_buffer_length(row_bytes)?;
+        self.validate_additional_working_set(row_bytes)?;
+        Ok(ProductRemainderRows {
+            buffer: buffer_from_slice(&self.device, rows),
+            len: rows.len(),
+            device_registry_id: self.device_registry_id(),
+        })
+    }
+
     pub fn prepare_product_remainder_sequence(
         &self,
         rows: &[ProductRemainderRow],
@@ -566,17 +620,35 @@ impl SolinasMetal {
         e_out_capacity: usize,
         config: ProductRemainderSequenceConfig,
     ) -> Result<ProductRemainderSequence, MetalError> {
-        let layout = ProductRemainderStorageLayout::new(rows.len(), e_in_capacity, e_out_capacity)?;
-        let resident_bytes = u64::try_from(layout.resident_bytes())
-            .map_err(|_| MetalError::InputTooLong(layout.resident_bytes()))?;
-        self.validate_additional_working_set(resident_bytes)?;
-        let row_bytes = u64::try_from(layout.row_bytes())
-            .map_err(|_| MetalError::InputTooLong(layout.row_bytes()))?;
-        self.validate_buffer_length(row_bytes)?;
-        for (index, row) in rows.iter().copied().enumerate() {
-            row.validate()
-                .map_err(|source| MetalError::InvalidProductRemainderRow { index, source })?;
+        let rows = self.prepare_product_remainder_rows(rows)?;
+        self.prepare_product_remainder_sequence_with_rows(
+            rows,
+            lagrange_weights,
+            e_in_capacity,
+            e_out_capacity,
+            config,
+        )
+    }
+
+    pub fn prepare_product_remainder_sequence_with_rows(
+        &self,
+        rows: ProductRemainderRows,
+        lagrange_weights: [AkitaField; 3],
+        e_in_capacity: usize,
+        e_out_capacity: usize,
+        config: ProductRemainderSequenceConfig,
+    ) -> Result<ProductRemainderSequence, MetalError> {
+        if rows.device_registry_id() != self.device_registry_id() {
+            return Err(MetalError::ProductRemainderRowsDevice {
+                expected: self.device_registry_id(),
+                got: rows.device_registry_id(),
+            });
         }
+        let row_count = rows.len();
+        let layout = ProductRemainderStorageLayout::new(row_count, e_in_capacity, e_out_capacity)?;
+        let workspace_bytes = u64::try_from(layout.workspace_bytes())
+            .map_err(|_| MetalError::InputTooLong(layout.workspace_bytes()))?;
+        self.validate_additional_working_set(workspace_bytes)?;
 
         let materialize_pipeline = self.compile_named_pipeline(MATERIALIZE_PIPELINE)?;
         let transition_pipeline = self.compile_named_pipeline(TRANSITION_PIPELINE)?;
@@ -630,7 +702,7 @@ impl SolinasMetal {
             openings_limits,
             reduction_limits,
             buffers: ProductRemainderBuffers {
-                rows: buffer_from_slice(&self.device, rows),
+                rows,
                 lagrange: buffer_from_slice(&self.device, &lagrange),
                 state_a: self.new_product_remainder_buffer(layout.state_a_fields())?,
                 state_b: self.new_product_remainder_buffer(layout.state_b_fields())?,
@@ -643,7 +715,7 @@ impl SolinasMetal {
             materialize_threads_per_threadgroup,
             transition_threads_per_threadgroup,
             openings_threads_per_threadgroup,
-            current_elements: rows.len(),
+            current_elements: row_count,
             source_in_a: true,
             phase: ProductRemainderPhase::Raw,
             gpu_active_time: Duration::ZERO,
@@ -732,7 +804,7 @@ impl ProductRemainderSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.materialize_pipeline);
-            encoder.set_buffer(0, Some(&self.buffers.rows), 0);
+            encoder.set_buffer(0, Some(self.buffers.rows.buffer()), 0);
             encoder.set_buffer(1, Some(&self.buffers.lagrange), 0);
             encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
             encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
@@ -919,7 +991,7 @@ impl ProductRemainderSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.openings_pipeline);
-            encoder.set_buffer(0, Some(&self.buffers.rows), 0);
+            encoder.set_buffer(0, Some(self.buffers.rows.buffer()), 0);
             encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
             encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
             encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
@@ -968,6 +1040,10 @@ impl ProductRemainderSequence {
 
     pub const fn resident_buffer_count(&self) -> usize {
         8
+    }
+
+    pub fn row_allocation_identity(&self) -> usize {
+        self.buffers.rows.allocation_identity()
     }
 
     pub const fn round_device_buffer_allocations(&self) -> usize {

@@ -1,9 +1,10 @@
 # Spartan product uni-skip wiring contract
 
-This directory is an isolated implementation slice for the first round of
+This directory implements the low-level first round of
 `SpartanProductUniskip`. It fixes the two-node algebra, the reusable row ABI,
-the shader entry points, checked storage accounting, and a CPU oracle. It is
-not yet connected to the shared Metal source library or prover backend.
+the shader entry points, checked storage accounting, an optimized CPU mirror,
+and an independent CPU oracle. It is connected to the shared Metal source
+library and Criterion harness, but not yet to the prover backend.
 
 ## Two-node first round
 
@@ -61,7 +62,7 @@ part of the shared ABI.
 
 ## Source and pipeline registration
 
-When promoted, concatenate sources in this order:
+The shared source library concatenates these sources in order:
 
 1. `fp128.metal`
 2. `simd_reduce.metal`
@@ -86,7 +87,8 @@ The block pipeline buffer order is:
 ```
 
 Dispatch exactly `e_out_length` threadgroups. Threads per threadgroup must be a
-nonzero multiple of 32. Dynamic threadgroup memory is
+nonzero multiple of 32. The measured default is 64 threads. Dynamic
+threadgroup memory is
 `2 * (threads_per_threadgroup / 32) * sizeof(Fp128)`.
 
 The reduction pipeline buffer order is:
@@ -111,19 +113,24 @@ is 2.5 GiB. Equality tables and both two-column partial buffers use 0.75 MiB in
 total. Retain the row allocation after this kernel because ProductRemainder
 consumes the same rows.
 
-Kernel preparation may upload the rows and equality tables before the prover
-reaches the first-round barrier. The host draws `tau_high`, waits for the two
-endpoint results, assembles the five `t1` values, constructs the full
-degree-six round polynomial, and runs the existing clear or ZK uni-skip proof.
-The transcript absorbs the same polynomial as the CPU path; this is a prover
-implementation change, not a protocol change.
+`prepare_product_remainder_rows` uploads and validates the native rows once.
+Both `prepare_product_uniskip` and
+`prepare_product_remainder_sequence_with_rows` retain that same Metal buffer;
+the parity test compares its allocation identity at both consumers. The host
+draws `tau_high`, waits for the two endpoint results, assembles the five `t1`
+values, constructs the full degree-six round polynomial, and runs the existing
+clear or ZK uni-skip proof. The transcript absorbs the same polynomial as the
+CPU path; this is a prover implementation change, not a protocol change.
 
 ## Fair CPU rebaseline
 
-The current optimized CPU implementation also computes all five extended-node
-sums even though stage 1 already supplied three of them. Comparing a two-node
-Metal kernel against that avoidable work would overstate the backend gain.
-Before accepting a result, make the same algebraic reduction on CPU:
+The production optimized CPU implementation still computes all five
+extended-node sums even though stage 1 already supplied three of them.
+Comparing against that avoidable work would overstate the backend gain. The
+benchmark therefore uses `evaluate_product_uniskip_extensions_cpu`, a parallel
+two-node integer-accumulator implementation of the same work as Metal, and
+checks it against the independent field oracle before timing. Prover promotion
+still requires the same algebraic reduction in the production CPU path:
 
 1. Change `UniskipKernel::first_round_poly` in `uniskip.rs` to accept known
    base-domain evaluations.
@@ -134,16 +141,14 @@ Before accepting a result, make the same algebraic reduction on CPU:
    stage-1 caller on the existing no-known-nodes behavior.
 4. Assemble all five values immediately before interpolation and preserve the
    reference implementation as a parity oracle.
-5. Measure a new same-machine CPU median before setting the final speedup gate.
+5. Confirm the production member against the low-level two-node CPU median.
 
-The frozen pre-optimization CPU median is 293.429 ms. Linear work scaling
-projects the two-node CPU path near 117.387 ms, but that number is not evidence
-and must not become the denominator. The final hard gate is
-`metal_hybrid <= measured_reoptimized_cpu / 5`. The old frozen 5x gate is
-58.686 ms. Until the fair CPU rebaseline exists, use 20.435 ms as the active
-implementation bar. The projected fair-CPU 5x and 8x limits are 23.477 ms and
-14.673 ms, respectively. If measurements show that substantially more than 5x
-is feasible, continue toward the measured roof rather than stopping at 5x.
+The frozen five-node production CPU median is 293.429 ms. At `T = 2^26`, the
+measured two-node CPU median is 161.46 ms, giving a fair 5x wall cap of 32.292
+ms and an 8x cap of 20.183 ms. The retained CPU-first Metal wall median is
+11.080 ms, or 14.57x. A short Metal-only screen measured 9.537 ms at 64
+threads. That standalone number selects the launch shape; the CPU-first result
+is the conservative ratio.
 
 ## Roofline at `T = 2^26`
 
@@ -163,15 +168,44 @@ Fiat-Shamir. Exclude witness generation and stage-1 claims shared by both
 implementations. Report GPU-active time separately, but enforce the 5x gate on
 the complete PIOP seam.
 
+## Log-26 observation
+
+The native row allocation is 2,684,354,560 bytes. Equality and reduction
+scratch bring the retained set to 2,685,140,992 bytes. The retained CPU-first
+Criterion run measured 24.229 billion useful products/s from the 11.080 ms
+wall median. The
+short launch screen was:
+
+| Threads | Resident wall median |
+| ---: | ---: |
+| 32 | 9.647 ms |
+| 64 | 9.537 ms |
+| 256 | 10.018 ms |
+| 512 | 9.692 ms |
+
+At 64 threads, dynamic threadgroup storage is only 64 bytes, static
+threadgroup storage is zero, the device SIMD width is 32, and 8,192 independent
+threadgroups expose ample grid parallelism. Threadgroup memory and grid size
+therefore do not limit theoretical residency. Metal does not expose the final
+register allocation through this harness, so register-limited occupancy still
+requires a captured pipeline artifact before calling occupancy proven.
+
+The measured host-to-Metal row upload was 185.084 ms and is not included in the
+resident ratio. Paying it inside this member would make the path slower than
+the fair CPU kernel. Promotion therefore depends on the upstream producer
+filling the shared resident row allocation, not on hiding or amortizing a copy
+inside this benchmark.
+
 ## Deliberately unfinished promotion work
 
-- shared `solinas/mod.rs`, `source.rs`, and kernel-registry wiring;
-- runtime pipeline creation, checked dispatch, and command-buffer ownership;
-- asynchronous preparation and ProductRemainder allocation reuse;
-- the uni-skip API change and fair two-node CPU rebaseline;
+- kernel-registry and high-level backend wiring;
+- producer-owned construction of the shared ProductUniskip/ProductRemainder
+  row allocation;
+- the production uni-skip API change to accept the known three base nodes;
 - clear and ZK CPU/Metal parity integration tests;
-- Criterion stage benchmarks and hybrid switchover measurement;
-- occupancy, command-latency, and `2^26` GPU validation.
+- host polynomial/Fiat-Shamir timing and complete-member hybrid measurement;
+- register capture, hybrid switchover, and log-27 transfer validation.
 
-Those omissions are explicit promotion stages. This isolated slice has not
-been compiled or run.
+Those omissions are explicit promotion stages. The low-level Rust, MSL,
+independent oracle, optimized CPU mirror, source assembly, direct allocation
+handoff, edge-case parity, and log-26 Criterion measurement are complete.

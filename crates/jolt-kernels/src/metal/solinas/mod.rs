@@ -28,6 +28,7 @@ mod instruction_ra_virtualization;
 mod outer_remainder;
 mod product5;
 mod product_remainder;
+mod product_uniskip;
 mod registers_read_write;
 mod registers_val;
 mod runtime;
@@ -100,9 +101,17 @@ pub use product5::{
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;
 pub use product_remainder::{
-    ProductRemainderRow, ProductRemainderRowError, ProductRemainderSequence,
+    ProductRemainderRow, ProductRemainderRowError, ProductRemainderRows, ProductRemainderSequence,
     ProductRemainderSequenceConfig, ProductRemainderShapeError, ProductRemainderStorageLayout,
     PRODUCT_REMAINDER_MESSAGE_COLUMNS, PRODUCT_REMAINDER_OPENINGS, PRODUCT_REMAINDER_SIMD_WIDTH,
+};
+#[cfg(feature = "test-utils")]
+pub use product_uniskip::reference as product_uniskip_reference;
+pub use product_uniskip::{
+    evaluate_product_uniskip_extensions_cpu, ProductUniskipConfig, ProductUniskipExtendedNodes,
+    ProductUniskipInvocation, ProductUniskipKnownNodes, ProductUniskipShapeError,
+    ProductUniskipStorageLayout, PRODUCT_UNISKIP_EXTENDED_NODES,
+    PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS, PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
 };
 pub use registers_read_write::{
     RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
@@ -448,6 +457,20 @@ pub enum MetalError {
     InvalidProductRemainderRow {
         index: usize,
         source: product_remainder::ProductRemainderRowError,
+    },
+    #[error("product remainder rows belong to Metal device {got}, expected {expected}")]
+    ProductRemainderRowsDevice { expected: u64, got: u64 },
+    #[error(transparent)]
+    ProductUniskipShape(#[from] product_uniskip::ProductUniskipShapeError),
+    #[error("product uni-skip rows belong to Metal device {got}, expected {expected}")]
+    ProductUniskipRowsDevice { expected: u64, got: u64 },
+    #[error(
+        "product uni-skip pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedProductUniskipExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
     },
     #[error("invalid resident product remainder state: {0}")]
     InvalidProductRemainderState(&'static str),
