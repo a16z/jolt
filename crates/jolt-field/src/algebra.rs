@@ -170,7 +170,13 @@ pub trait Field: Ring {
         self.inverse().unwrap_or_else(Self::zero)
     }
 
-    /// Samples a random element (RNG-backed, for tests and witnesses).
+    /// Samples an exactly uniform element using canonical rejection sampling.
+    ///
+    /// Prime fields consume the minimum whole-byte candidate width covering
+    /// the modulus, clear unused high bits, and reject candidates outside the
+    /// canonical range. This byte-consumption contract is deterministic for a
+    /// fixed [`RngCore`] stream. Extension fields sample their base
+    /// coefficients independently through the same contract.
     fn random<R: RngCore>(rng: &mut R) -> Self;
 
     /// The multiplicative inverse of two.

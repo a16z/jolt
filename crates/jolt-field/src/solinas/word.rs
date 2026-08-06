@@ -367,7 +367,7 @@ define_solinas_prime!(
     double: u64,
     mul_wide_raw: mul_wide_u32(u32),
     mul(a, b): Self::reduce_product((a as u64) * (b as u64)),
-    random(rng): Self(Self::reduce_double(rng.next_u64())),
+    random(rng): Self(super::sample_uniform_below(rng, P as u128, Self::BITS) as u32),
 );
 
 define_solinas_prime!(
@@ -385,11 +385,7 @@ define_solinas_prime!(
             Self::reduce_product((a as u128) * (b as u128))
         }
     },
-    random(rng): {
-        let lo = rng.next_u64() as u128;
-        let hi = rng.next_u64() as u128;
-        Self(Self::reduce_u128(lo | (hi << 64)))
-    },
+    random(rng): Self(super::sample_uniform_below(rng, P as u128, Self::BITS) as u64),
 );
 
 /// Whether the two-fold product reduction stays entirely in `u64` for the

@@ -686,17 +686,12 @@ impl<const P: u128> Field for Fp128<P> {
         Self(split(join(candidate.0) & mask))
     }
 
-    /// Rejection sampling: draws `(lo, hi)` until the value is canonical.
-    /// The rejection probability is `C / 2^128 < 2^-96` per draw.
+    /// Canonical rejection sampling: each attempt reads exactly 16
+    /// little-endian bytes and rejects non-canonical candidates (probability
+    /// `C / 2^128 < 2^-96` per draw).
     #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
-        loop {
-            let lo = rng.next_u64();
-            let hi = rng.next_u64();
-            if join(pack(lo, hi)) < P {
-                return Self(pack(lo, hi));
-            }
-        }
+        Self(split(super::sample_uniform_below(rng, P, u128::BITS)))
     }
 
     /// Halving via shift: `(x + (x odd)·p) / 2`, computed as
