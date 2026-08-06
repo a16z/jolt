@@ -322,13 +322,19 @@ class VersionedContractTests(unittest.TestCase):
         validate_template(template, ROOT)
 
         phase = template["mechanism_phase"]
-        self.assertEqual(phase["id"], "opening_row_owner_v1")
+        self.assertEqual(phase["id"], "opening_padded_56_v1")
         self.assertLess(
             phase["analytical_ceiling"]["best_case_member_ms"],
             phase["analytical_ceiling"]["parent_member_ms"],
         )
-        self.assertEqual(phase["timebox"]["max_candidates_admitted"], 2)
+        self.assertEqual(phase["timebox"]["max_candidates_admitted"], 1)
         self.assertEqual(phase["checkpoint"]["after_candidates"], 1)
+        self.assertEqual(
+            phase["candidate_params"][
+                "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
+            ],
+            "b_only_padded_56_v1",
+        )
 
         iteration = template["iteration_profile"]
         self.assertGreaterEqual(
@@ -353,10 +359,7 @@ class VersionedContractTests(unittest.TestCase):
 
         checkpoint_mismatches = []
         tampered = copy.deepcopy(template)
-        tampered["mechanism_phase"]["id"] = "opening_row_owner_v2"
-        checkpoint_mismatches.append(tampered)
-        tampered = copy.deepcopy(template)
-        tampered["mechanism_phase"]["checkpoint"]["after_candidates"] = 2
+        tampered["mechanism_phase"]["id"] = "opening_padded_56_v2"
         checkpoint_mismatches.append(tampered)
         tampered = copy.deepcopy(template)
         tampered["mechanism_phase"]["checkpoint"]["metrics"][0][
@@ -394,7 +397,7 @@ class VersionedContractTests(unittest.TestCase):
             validate_template(tampered, ROOT)
 
         tampered = copy.deepcopy(template)
-        tampered["budget"]["total"]["max_calendar_seconds"] = 10_000
+        tampered["budget"]["total"]["max_calendar_seconds"] = 5_000
         with self.assertRaisesRegex(ValueError, "timebox"):
             validate_template(tampered, ROOT)
 
@@ -481,25 +484,11 @@ class VersionedContractTests(unittest.TestCase):
             ).read_text()
         )
         plan_parameter = "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
-        plans = ["b_only_v1"]
-        template["search_space"][plan_parameter] = plans
-        template["baseline_params"][plan_parameter] = "b_only_v1"
-        template["runtime_artifact"] = {
-            "kind": "outer_msl_v1",
-            "source_path": (
-                "crates/jolt-kernels/src/metal/solinas/outer_remainder/"
-                "shader.metal"
-            ),
-            "plan_parameter": plan_parameter,
-            "plans": plans,
-            "tier_id": "screen",
-        }
+        plans = ["b_only_v1", "b_only_padded_56_v1"]
+        self.assertEqual(template["search_space"][plan_parameter], plans)
+        self.assertEqual(template["runtime_artifact"]["plans"], plans)
         source_path = template["runtime_artifact"]["source_path"]
-        host_paths = set(template["scope"]["editable"]) - {source_path}
-        template["scope"]["editable"] = [source_path]
-        template["scope"]["frozen"] = sorted(
-            set(template["scope"]["frozen"]) | host_paths
-        )
+        self.assertEqual(template["scope"]["editable"], [source_path])
         screen = next(
             tier
             for tier in template["evaluation"]["tiers"]
@@ -844,8 +833,12 @@ class VersionedContractTests(unittest.TestCase):
         self.assertEqual(
             editable,
             {
-                "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
+                "crates/jolt-kernels/src/metal/solinas/outer_remainder/opening_padded_56.metal"
             },
+        )
+        self.assertIn(
+            "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+            template["scope"]["frozen"],
         )
         self.assertIn(
             "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",

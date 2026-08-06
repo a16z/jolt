@@ -241,6 +241,7 @@ OUTER_REMAINDER_METAL_CONFIG_RE = re.compile(
     r"transition_threads=(?P<transition_threads>\d+) "
     r"output_threads=(?P<output_threads>\d+) "
     r"max_threadgroups=(?P<max_threadgroups>\d+) "
+    r"binding_plan=(?P<binding_plan>\S+) "
     r"storage_initialization=(?P<storage_initialization>\S+)$"
 )
 PIOP_EXECUTION_CONFIG_RE = re.compile(
@@ -640,6 +641,7 @@ def validate_outer_remainder_stdout(
     output_threads: int = 256,
     cutoff_log2: int = 16,
     trace_cutoff_log2: int = 18,
+    binding_plan: str = "b_only_v1",
 ) -> Optional[dict[str, Any]]:
     configs = [
         match
@@ -666,6 +668,7 @@ def validate_outer_remainder_stdout(
             )
         },
         "storage_initialization": raw["storage_initialization"],
+        "binding_plan": raw["binding_plan"],
     }
     expected = {
         "trace_cutoff": 1 << trace_cutoff_log2,
@@ -675,6 +678,7 @@ def validate_outer_remainder_stdout(
         "output_threads": output_threads,
         "max_threadgroups": 8192,
         "storage_initialization": "full",
+        "binding_plan": binding_plan,
     }
     if config != expected:
         raise ValueError(f"unexpected OuterRemainder Metal config: {config}")
@@ -3344,6 +3348,7 @@ def run_backend(
     outer_remainder_output_threads: int,
     outer_remainder_cutoff_log2: int,
     outer_remainder_trace_cutoff_log2: int,
+    outer_remainder_binding_plan: str,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -3409,6 +3414,8 @@ def run_backend(
         str(outer_remainder_cutoff_log2),
         "--outer-remainder-metal-trace-cutoff-log2",
         str(outer_remainder_trace_cutoff_log2),
+        "--outer-remainder-metal-binding-plan",
+        outer_remainder_binding_plan,
     ]
     if backend == "metal":
         benchmark_command.extend(
@@ -3483,6 +3490,7 @@ def run_backend(
         outer_remainder_output_threads,
         outer_remainder_cutoff_log2,
         outer_remainder_trace_cutoff_log2,
+        outer_remainder_binding_plan,
     )
     source = trace_path(root, workload, log_n, backend)
     if not source.is_file() or source.stat().st_mtime_ns <= started_ns:
@@ -3867,6 +3875,11 @@ def parser() -> argparse.ArgumentParser:
         choices=[18, 20, 22, 24, 25, 26, 27, 28],
         default=18,
     )
+    result.add_argument(
+        "--outer-remainder-metal-binding-plan",
+        choices=["b_only_v1", "b_only_padded_56_v1"],
+        default="b_only_v1",
+    )
     result.add_argument("--trace", type=Path)
     return result
 
@@ -4000,6 +4013,7 @@ def main() -> int:
                     args.outer_remainder_metal_output_threads,
                     args.outer_remainder_metal_cutoff_log2,
                     args.outer_remainder_metal_trace_cutoff_log2,
+                    args.outer_remainder_metal_binding_plan,
                     index + 1,
                     args.timeout_seconds,
                 )
@@ -4874,6 +4888,7 @@ def main() -> int:
                 "outer_remainder_metal_trace_cutoff_log2": args.outer_remainder_metal_trace_cutoff_log2,
                 "outer_remainder_metal_trace_cutoff_elements": 1
                 << args.outer_remainder_metal_trace_cutoff_log2,
+                "outer_remainder_metal_binding_plan": args.outer_remainder_metal_binding_plan,
                 "span": PIOP_SPAN,
                 "orders": orders,
             },

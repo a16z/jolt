@@ -420,6 +420,7 @@ def fixture(
             "output_threads": 256,
             "cutoff_log2": 16,
             "trace_cutoff_log2": 18,
+            "binding_plan": "b_only_v1",
             "storage_initialization": "full",
         },
         "warmup": runner_pairs[0],

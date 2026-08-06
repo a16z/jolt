@@ -5,10 +5,34 @@ use super::api::{
     OuterRemainderSequenceConfig, DEVICE_BUFFERS, OUTER_REMAINDER_OPENINGS,
     OUTER_REMAINDER_STREAM_ROWS,
 };
+use super::artifact::OuterBindingPlan;
 
-pub(super) const OUTER_REMAINDER_TILE_ROWS: usize = 64;
-pub(super) const OUTER_REMAINDER_ROW_WORDS: usize = 20;
 pub(super) const SIMD_WIDTH: usize = 32;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct OpeningLayout {
+    pub(super) tile_rows: usize,
+    pub(super) source_row_words: usize,
+    pub(super) row_stride_words: usize,
+    pub(super) shard_sums: bool,
+}
+
+pub(super) const fn opening_layout(plan: OuterBindingPlan) -> OpeningLayout {
+    match plan {
+        OuterBindingPlan::BOnlyV1 => OpeningLayout {
+            tile_rows: 64,
+            source_row_words: 20,
+            row_stride_words: 20,
+            shard_sums: true,
+        },
+        OuterBindingPlan::BOnlyPadded56V1 => OpeningLayout {
+            tile_rows: 56,
+            source_row_words: 20,
+            row_stride_words: 21,
+            shard_sums: false,
+        },
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct StorageGeometry {
@@ -41,17 +65,15 @@ pub(crate) fn outer_remainder_sequence_max_buffer_bytes_with_config(
 pub(super) fn validate_opening_threadgroup_memory(
     context: &SolinasMetal,
     limits: PipelineLimits,
+    plan: OuterBindingPlan,
     threads: usize,
 ) -> Result<(), MetalError> {
-    let shards = threads / OUTER_REMAINDER_OPENINGS;
-    let dynamic = OUTER_REMAINDER_TILE_ROWS
-        .checked_mul(OUTER_REMAINDER_ROW_WORDS)
-        .and_then(|words| words.checked_mul(size_of::<u64>()))
-        .and_then(|bytes| bytes.checked_add(OUTER_REMAINDER_TILE_ROWS * size_of::<Fp128>()))
-        .and_then(|bytes| bytes.checked_add(OUTER_REMAINDER_OPENINGS * shards * size_of::<Fp128>()))
+    let dynamic = opening_threadgroup_memory_lengths(plan, threads)?
+        .into_iter()
+        .try_fold(0u64, |total, bytes| total.checked_add(bytes))
         .ok_or(MetalError::InvalidOuterRemainderConfig(
             "opening threadgroup byte count overflowed",
-        ))? as u64;
+        ))?;
     let requested = limits
         .static_threadgroup_memory_length
         .checked_add(dynamic)
@@ -63,6 +85,36 @@ pub(super) fn validate_opening_threadgroup_memory(
         return Err(MetalError::OuterRemainderThreadgroupMemory { requested, maximum });
     }
     Ok(())
+}
+
+pub(super) fn opening_threadgroup_memory_lengths(
+    plan: OuterBindingPlan,
+    threads: usize,
+) -> Result<[u64; 3], MetalError> {
+    let layout = opening_layout(plan);
+    let row_words = layout
+        .tile_rows
+        .checked_mul(layout.row_stride_words)
+        .ok_or(MetalError::InvalidOuterRemainderConfig(
+            "opening threadgroup byte count overflowed",
+        ))?;
+    let row_bytes = row_words.checked_mul(size_of::<u64>());
+    let weight_bytes = layout.tile_rows.checked_mul(size_of::<Fp128>());
+    let shard_bytes = if layout.shard_sums {
+        OUTER_REMAINDER_OPENINGS
+            .checked_mul(threads / OUTER_REMAINDER_OPENINGS)
+            .and_then(|elements| elements.checked_mul(size_of::<Fp128>()))
+    } else {
+        Some(0)
+    };
+    let [Some(row_bytes), Some(weight_bytes), Some(shard_bytes)] =
+        [row_bytes, weight_bytes, shard_bytes]
+    else {
+        return Err(MetalError::InvalidOuterRemainderConfig(
+            "opening threadgroup byte count overflowed",
+        ));
+    };
+    Ok([row_bytes as u64, weight_bytes as u64, shard_bytes as u64])
 }
 
 pub(super) fn storage_geometry(

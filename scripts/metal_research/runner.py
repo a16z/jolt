@@ -2766,12 +2766,21 @@ def trial(
         ]
     )
     params = dict(state["accepted_parent"]["params"])
+    fixed_candidate = state["template"]["mechanism_phase"].get(
+        "candidate_params"
+    )
+    if fixed_candidate is not None:
+        params = {name: str(value) for name, value in fixed_candidate.items()}
     for override in overrides:
         if "=" not in override:
             raise ValueError("parameter overrides must use NAME=VALUE")
         name, value = override.split("=", 1)
         params[name] = value
     params = _validate_params(state["template"], params)
+    if fixed_candidate is not None and params != {
+        name: str(value) for name, value in fixed_candidate.items()
+    }:
+        raise ValueError("trial parameters differ from the fixed mechanism candidate")
     if state.get("search_started_at") is None:
         state["search_started_at"] = utc_now()
         write_state(run_dir, state)

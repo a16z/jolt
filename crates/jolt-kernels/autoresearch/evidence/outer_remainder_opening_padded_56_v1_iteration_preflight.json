@@ -1,0 +1,273 @@
+{
+  "schema": "outer_remainder_iteration_profile_v3",
+  "schema_version": 3,
+  "created_at": "2026-08-06T12:12:32.083167Z",
+  "profile_base_revision": "88608f8a23dab7317d09a59b5742b5128e0fb567",
+  "machine": {
+    "device_name": "Apple M4 Max",
+    "os_product_version": "26.6",
+    "os_build_version": "25G72",
+    "macos_sdk_version": "15.2",
+    "rustc_release": "1.95.0",
+    "rustc_commit_hash": "59807616e1fa2540724bfbac14d7976d7e4a3860",
+    "rustc_host": "aarch64-apple-darwin",
+    "llvm_version": "22.1.2",
+    "cargo_release": "1.95.0"
+  },
+  "controller_sources": [
+    {
+      "path": "scripts/metal_autoresearch.py",
+      "bytes": 312018,
+      "sha256": "8a11535fffe8a10d18d9be306d9b7c8c489d37df8c9a1a9a3cd5a36638cb08b9"
+    },
+    {
+      "path": "scripts/metal_research/artifacts.py",
+      "bytes": 25000,
+      "sha256": "24bbbd249c864e3c77fd744aa27ff52da850e424c0ebd900e807f9d2d9c91e74"
+    },
+    {
+      "path": "scripts/metal_research/attempt.py",
+      "bytes": 16974,
+      "sha256": "c82a264083253aaa6c92736ba82d07006ad596ec71781ad30d3d018b07644c73"
+    },
+    {
+      "path": "scripts/metal_research/binaries.py",
+      "bytes": 12288,
+      "sha256": "2f3fd1cdb0c397495423efe882b606bb7399e15f65bf251d7599001bbd38808d"
+    },
+    {
+      "path": "scripts/metal_research/contracts.py",
+      "bytes": 63541,
+      "sha256": "63af76ef852d14d4429d96b01c0845b04940d63afb91a2b638231a6676b2f658"
+    },
+    {
+      "path": "scripts/metal_research/iteration_profile.py",
+      "bytes": 17249,
+      "sha256": "e09e83a25acd54514c7eb7f7fdeb56632250ec21abffafc92b19174459085268"
+    },
+    {
+      "path": "scripts/metal_research/paired.py",
+      "bytes": 7181,
+      "sha256": "5bfa186f93543842c2165df5396f637ba9e4230130f65066693672c590917e37"
+    },
+    {
+      "path": "scripts/metal_research/results.py",
+      "bytes": 26290,
+      "sha256": "1f109fd1333bbe71f28623056da54274a3520a8cb9e27793b2fd9d7216b9bc1d"
+    },
+    {
+      "path": "scripts/metal_research/runner.py",
+      "bytes": 169680,
+      "sha256": "09eca70c7d53a48e5106c208ee433d75e41ebb4c1159f564594c1938ccac45fe"
+    },
+    {
+      "path": "scripts/metal_research/versions.py",
+      "bytes": 215,
+      "sha256": "255fc76b0a42e8baa3a0fd890b557695cf6f2e548e16e21d3ead4fb9a3878044"
+    }
+  ],
+  "evaluator": {
+    "result_adapter": "outer_remainder_successor_v2",
+    "runner_binary_sha256": "3be3630addcd10b1fcbc79b18247c5506fdfdb6e52d29ddb537590feee324aa7",
+    "runner_source_sha256": "3886b938a51c6f9200a42ee1953952aa66ed377c1ae3cdee63ec333d82eafc9d",
+    "log_n": 25,
+    "pairs": 4,
+    "excluded_warmup_pairs": 1,
+    "rayon_threads": 16,
+    "binding_plan": "b_only_v1",
+    "cpu_tail_elements": 65536,
+    "trace_cutoff_elements": 262144,
+    "parent_artifact_sha256": "1ef30560a1bda61bf8ffe27f0832e11f485d7efaccdb81e9df96743192d56756",
+    "candidate_artifact_sha256": "3ac4098fd0f57764cbfc006da2e955a0f71ad838858fde8931da10c3577f7655",
+    "parent_outer_source_sha256": "1631c8a98d1b2966c18d0b1e0f4156ed0326d94c1ae84751fb5286e731e30b8c",
+    "candidate_outer_source_sha256": "78629f09f2354ce21fd5ec685930989ddc4421fce9a3f936dde5ce5877b82569"
+  },
+  "minimal_closure": {
+    "dependency_model": "outer_only_shader_closure_v1",
+    "source_fragments": [
+      {
+        "path": "crates/jolt-kernels/src/metal/solinas/fp128.metal",
+        "bytes": 3915,
+        "sha256": "f0ec911239ac524d8d977fa67b57431e8b0bc4d349212c9ceb3d20651c68286d"
+      },
+      {
+        "path": "crates/jolt-kernels/src/metal/solinas/simd_reduce.metal",
+        "bytes": 276,
+        "sha256": "05623908c1ed877253fd27c37df8557eee7a5f9ee188a43694cdf45ab8ceacc3"
+      },
+      {
+        "path": "crates/jolt-kernels/src/metal/solinas/spartan_outer_common.metal",
+        "bytes": 4723,
+        "sha256": "97772137f0b3801fc6b4e7f39ad64a9d4c4a9f3ce8bc70def767586b57de50a8"
+      },
+      {
+        "path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+        "bytes": 30550,
+        "sha256": "39cc30443fb69992f353016a568f29da4002a3250931651d98e90e2fc6242996"
+      },
+      {
+        "path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/opening_padded_56.metal",
+        "bytes": 9036,
+        "sha256": "1631c8a98d1b2966c18d0b1e0f4156ed0326d94c1ae84751fb5286e731e30b8c"
+      }
+    ],
+    "solinas_offset": 4294944759,
+    "parent_assembled_source_bytes": 48539,
+    "parent_assembled_source_sha256": "7a9224023d73777ff1fd3ae5cee284c8aa585b4752dbc07a4980bff5430fb745",
+    "candidate_assembled_source_bytes": 48599,
+    "candidate_assembled_source_sha256": "9d7664e05ae8267472d764e92c95f5b7ec2bb19153e4aa24a917f125edcb04f3",
+    "candidate_source_suffix": "\n// iteration profile opening_padded_56_v1 a35ccb42b2bb1921\n"
+  },
+  "cold_cycle": {
+    "controller_wall_ns": 2255029833,
+    "subprocess_wall_ns": 2253485333,
+    "parse_validate_checkpoint_ns": 194458,
+    "controller_overhead_ns": 1544500,
+    "raw_result_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.cold.raw.json",
+    "raw_result_sha256": "c6f96e844b8aaded8d0cf9f4fd657c52435416411cd38d2b690521b30e480ab0",
+    "result_bytes": 8336,
+    "successor_speedup": 1.0021950185057256,
+    "gpu_active_total_ns": 1156729043,
+    "output_sha256": "9efbdf2c2bdac96cc9eebb621a5b614238924816efe746ad010888a2f0c99678",
+    "candidate_phase_gpu_active_ns": {
+      "materialize": 49746041.5,
+      "first_bind": 20271187.5,
+      "dense_rounds": 7635833.0,
+      "openings": 31875416.5
+    },
+    "compilation": {
+      "candidate": {
+        "assembled_source_sha256": "9d7664e05ae8267472d764e92c95f5b7ec2bb19153e4aa24a917f125edcb04f3",
+        "library_compile_ns": 146088000,
+        "pipeline_set_ns": [
+          324125,
+          33375,
+          22750,
+          24500,
+          37791
+        ],
+        "pipeline_set_total_ns": 442541,
+        "source_assembly_ns": 4417,
+        "source_bytes": 48599
+      },
+      "context_order": [
+        "parent",
+        "candidate"
+      ],
+      "parent": {
+        "assembled_source_sha256": "7a9224023d73777ff1fd3ae5cee284c8aa585b4752dbc07a4980bff5430fb745",
+        "library_compile_ns": 673542,
+        "pipeline_set_ns": [
+          844250,
+          26667,
+          30875,
+          24125,
+          35041
+        ],
+        "pipeline_set_total_ns": 960958,
+        "source_assembly_ns": 24708,
+        "source_bytes": 48539
+      }
+    },
+    "guards": {
+      "all_exact": true,
+      "correctness_exact": true,
+      "gpu_timestamps_exact": true,
+      "metal_phase_schedule_exact": true,
+      "resident_row_handle_lifecycle_exact": true,
+      "runtime_artifacts_exact": true,
+      "target_scale": true
+    },
+    "checkpoint": {
+      "phase_id": "opening_padded_56_v1",
+      "after_candidates": 1,
+      "due": true,
+      "passed": false,
+      "metrics": [
+        {
+          "name": "openings_gpu_active_ms",
+          "comparison": "lte",
+          "threshold": 27.73,
+          "observed_ms": 31.8754165,
+          "passed": false
+        }
+      ]
+    }
+  },
+  "warm_cycle": {
+    "controller_wall_ns": 1939123417,
+    "subprocess_wall_ns": 1937619417,
+    "parse_validate_checkpoint_ns": 242375,
+    "controller_overhead_ns": 1504000,
+    "raw_result_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.warm.raw.json",
+    "raw_result_sha256": "5eef429c7b16841c5dd809db397baf34e4f89e0bd005bd35e07af250122de075",
+    "result_bytes": 8330,
+    "successor_speedup": 1.0017462004924784,
+    "gpu_active_total_ns": 1155959085,
+    "output_sha256": "9efbdf2c2bdac96cc9eebb621a5b614238924816efe746ad010888a2f0c99678",
+    "candidate_phase_gpu_active_ns": {
+      "materialize": 50047646.0,
+      "first_bind": 20357479.0,
+      "dense_rounds": 7737063.0,
+      "openings": 31668271.0
+    },
+    "compilation": {
+      "candidate": {
+        "assembled_source_sha256": "9d7664e05ae8267472d764e92c95f5b7ec2bb19153e4aa24a917f125edcb04f3",
+        "library_compile_ns": 137208,
+        "pipeline_set_ns": [
+          247125,
+          32333,
+          27958,
+          33041,
+          31583
+        ],
+        "pipeline_set_total_ns": 372040,
+        "source_assembly_ns": 4584,
+        "source_bytes": 48599
+      },
+      "context_order": [
+        "parent",
+        "candidate"
+      ],
+      "parent": {
+        "assembled_source_sha256": "7a9224023d73777ff1fd3ae5cee284c8aa585b4752dbc07a4980bff5430fb745",
+        "library_compile_ns": 749875,
+        "pipeline_set_ns": [
+          867167,
+          31000,
+          33958,
+          26875,
+          34292
+        ],
+        "pipeline_set_total_ns": 993292,
+        "source_assembly_ns": 6667,
+        "source_bytes": 48539
+      }
+    },
+    "guards": {
+      "all_exact": true,
+      "correctness_exact": true,
+      "gpu_timestamps_exact": true,
+      "metal_phase_schedule_exact": true,
+      "resident_row_handle_lifecycle_exact": true,
+      "runtime_artifacts_exact": true,
+      "target_scale": true
+    },
+    "checkpoint": {
+      "phase_id": "opening_padded_56_v1",
+      "after_candidates": 1,
+      "due": true,
+      "passed": false,
+      "metrics": [
+        {
+          "name": "openings_gpu_active_ms",
+          "comparison": "lte",
+          "threshold": 27.73,
+          "observed_ms": 31.668271,
+          "passed": false
+        }
+      ]
+    }
+  }
+}

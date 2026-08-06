@@ -11,21 +11,27 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 
-OUTER_ARTIFACT_SCHEMA = "jolt_outer_artifact_v1"
-OUTER_ARTIFACT_SCHEMA_VERSION = 1
+OUTER_ARTIFACT_SCHEMA = "jolt_outer_artifact_v2"
+OUTER_ARTIFACT_SCHEMA_VERSION = 2
 OUTER_SOURCE_FILE = "outer.metal"
 MAX_OUTER_SOURCE_BYTES = 2 * 1024 * 1024
 MAX_MANIFEST_BYTES = 64 * 1024
 
 _COMMON_ENTRYPOINTS = {
     "dense_bind": "solinas_outer_remainder_bind_and_message",
-    "opening": "solinas_outer_remainder_opening_tiles",
     "reduction": "solinas_outer_remainder_reduce_columns",
 }
 OUTER_BINDING_PLANS = {
     "b_only_v1": {
         **_COMMON_ENTRYPOINTS,
         "materialize": "solinas_outer_remainder_materialize_b_and_message",
+        "opening": "solinas_outer_remainder_opening_tiles",
+        "stream_bind": "solinas_outer_remainder_stream_bind_and_message",
+    },
+    "b_only_padded_56_v1": {
+        **_COMMON_ENTRYPOINTS,
+        "materialize": "solinas_outer_remainder_materialize_b_and_message",
+        "opening": "solinas_outer_remainder_opening_tiles_padded_56",
         "stream_bind": "solinas_outer_remainder_stream_bind_and_message",
     },
 }
@@ -110,10 +116,30 @@ def _plan_manifest(binding_plan: str) -> dict[str, Any]:
     entrypoints = OUTER_BINDING_PLANS.get(binding_plan)
     if entrypoints is None:
         raise ValueError(f"unsupported Outer binding plan: {binding_plan}")
+    layout = {
+        "b_only_v1": {
+            "row_stride_words": 20,
+            "source_row_words": 20,
+            "tile_rows": 64,
+            "uses_shard_sums": True,
+        },
+        "b_only_padded_56_v1": {
+            "row_stride_words": 21,
+            "source_row_words": 20,
+            "tile_rows": 56,
+            "uses_shard_sums": False,
+        },
+    }[binding_plan]
+    abi = {
+        "opening_layout": layout,
+        "required_entrypoints": entrypoints,
+    }
     return {
         "binding_plan": binding_plan,
         "binding_plan_sha256": sha256(binding_plan.encode()),
-        "outer_abi_sha256": sha256(canonical_json(entrypoints)),
+        "opening_layout": layout,
+        "opening_layout_sha256": sha256(canonical_json(layout)),
+        "outer_abi_sha256": sha256(canonical_json(abi)),
         "required_entrypoints": entrypoints,
     }
 
@@ -428,7 +454,8 @@ def _validate_outer_runtime_artifact_contract(
         editable != {source_path}
         or not isinstance(plan_parameter, str)
         or plan_parameter not in search_space
-        or plans != ["b_only_v1"]
+        or not isinstance(plans, list)
+        or plans != list(OUTER_BINDING_PLANS)
         or search_space[plan_parameter] != plans
         or baseline[plan_parameter] not in plans
     ):

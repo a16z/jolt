@@ -97,7 +97,9 @@ SOURCE_PATHS = (
     "crates/jolt-kernels/src/metal/solinas/instruction_ra_virtualization.metal",
     "crates/jolt-kernels/src/metal/solinas/mod.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder/api.rs",
+    "crates/jolt-kernels/src/metal/solinas/outer_remainder/artifact.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
+    "crates/jolt-kernels/src/metal/solinas/outer_remainder/opening_padded_56.metal",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
@@ -706,7 +708,10 @@ def parse_outer_remainder_result(
         "cutoff_log2",
         "trace_cutoff_log2",
     }
-    if set(parameters) != integer_parameter_names | {"storage_initialization"}:
+    if set(parameters) != integer_parameter_names | {
+        "binding_plan",
+        "storage_initialization",
+    }:
         raise ValueError("runner output has the wrong parameter fingerprint")
     parameters = {
         name: trace_int(parameters[name], name, positive=True)
@@ -718,6 +723,10 @@ def parse_outer_remainder_result(
     if storage_initialization != "full":
         raise ValueError("frozen evaluator requires full storage initialization")
     parameters["storage_initialization"] = storage_initialization
+    binding_plan = trace_string(runner["parameters"]["binding_plan"], "binding_plan")
+    if binding_plan not in {"b_only_v1", "b_only_padded_56_v1"}:
+        raise ValueError("runner binding plan is unsupported")
+    parameters["binding_plan"] = binding_plan
     cutoff_log2 = parameters["cutoff_log2"]
     trace_cutoff_log2 = parameters["trace_cutoff_log2"]
     if trace_cutoff_log2 > LOG_N or cutoff_log2 < 2 or cutoff_log2 >= ROUNDS - 1:
@@ -1096,6 +1105,13 @@ def parser() -> argparse.ArgumentParser:
         choices=[18],
         default=env_int("JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2", 18),
     )
+    result.add_argument(
+        "--binding-plan",
+        choices=["b_only_v1", "b_only_padded_56_v1"],
+        default=os.environ.get(
+            "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN", "b_only_v1"
+        ),
+    )
     result.add_argument("--timeout-seconds", type=int, default=7200)
     result.add_argument("--artifact-dir", type=Path)
     return result
@@ -1151,6 +1167,8 @@ def main() -> int:
         str(args.cutoff_log2),
         "--trace-cutoff-log2",
         str(args.trace_cutoff_log2),
+        "--binding-plan",
+        args.binding_plan,
     ]
     environment = os.environ.copy()
     environment.update(RAYON_NUM_THREADS=str(RAYON_THREADS), RUST_LOG="warn")

@@ -2271,16 +2271,18 @@ class RunnerIntegrationTests(unittest.TestCase):
         ) -> tuple[dict[str, object], dict[str, object]]:
             evaluation_dir.mkdir(parents=True, exist_ok=False)
             launches.append(tier_id)
-            tier_output = (
-                self.screen_output(
+            if tier_id == "screen":
+                tier_output = self.screen_output(
                     output,
                     _params,
                     _kwargs["context_record"],
                     _kwargs["sealed_binary_context"],
                 )
-                if tier_id == "screen"
-                else output
-            )
+            else:
+                tier_output = copy.deepcopy(output)
+                tier_output["fingerprint"]["binding_plan"] = _params[
+                    "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
+                ]
             return (
                 {
                     "schema_version": 1,
@@ -4148,6 +4150,8 @@ class RunnerIntegrationTests(unittest.TestCase):
             ), mock.patch.object(
                 runner, "execute_tier", side_effect=execute
             ), mock.patch.object(
+                runner, "_require_search_phase_budget"
+            ), mock.patch.object(
                 runner, "_promotion_pass", return_value=(True, "promoted")
             ), mock.patch.object(
                 runner, "_phase_success", return_value=(True, "phase passed")
@@ -4363,6 +4367,8 @@ class RunnerIntegrationTests(unittest.TestCase):
                 runner, "_validate_live_state"
             ), mock.patch.object(
                 runner, "execute_tier", side_effect=execute
+            ), mock.patch.object(
+                runner, "_require_search_phase_budget"
             ), mock.patch.object(
                 runner,
                 "_successor_screen_disposition",
@@ -4953,17 +4959,17 @@ class DispatchAndGoalTests(unittest.TestCase):
             "template": template,
             "usage": {
                 "calendar_seconds": 0.0,
-                "candidates_admitted": 2,
+                "candidates_admitted": 1,
             },
         }
         with self.assertRaisesRegex(runner.BudgetExhausted, "phase candidate"):
             runner._require_search_phase_budget(state)
 
-        state["usage"]["candidates_admitted"] = 1
+        state["usage"]["candidates_admitted"] = 0
         with mock.patch.object(
             runner,
             "_phase_calendar_seconds",
-            return_value=10801.0,
+            return_value=5401.0,
         ), self.assertRaisesRegex(runner.BudgetExhausted, "phase calendar"):
             runner._require_search_phase_budget(state)
 

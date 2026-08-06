@@ -919,12 +919,14 @@ class MetalPiopEvalTests(unittest.TestCase):
         stdout = (
             "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff=262144 "
             "cutoff=65536 materialize_threads=256 transition_threads=128 "
-            "output_threads=256 max_threadgroups=8192 storage_initialization=full"
+            "output_threads=256 max_threadgroups=8192 binding_plan=b_only_v1 "
+            "storage_initialization=full"
         )
         config = metal_piop_eval.validate_outer_remainder_stdout(
             stdout, "metal"
         )
         self.assertEqual(config["cutoff"], 1 << 16)
+        self.assertEqual(config["binding_plan"], "b_only_v1")
         self.assertIsNone(
             metal_piop_eval.validate_outer_remainder_stdout("", "optimized")
         )

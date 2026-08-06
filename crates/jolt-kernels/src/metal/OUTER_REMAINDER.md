@@ -13,9 +13,9 @@ Metal-first strata were 4.03127x and 3.98379x. This agrees with the historical
 A schema-1 snapshot may resume only its existing run; it cannot parent a fresh v2
 phase.
 
-The latest fresh parent measured 4.05147x: 880.068 ms on optimized CPU and
-216.493 ms on Metal. Its CPU-first and Metal-first strata were 4.07200x and
-4.04936x. This is the parent for the opening-ownership phase below.
+The latest fresh parent measured a 4.16672x paired median: 900.272 ms median on
+optimized CPU and 216.470 ms median on Metal. Its CPU-first and Metal-first strata
+were 4.16672x and 4.17303x. This is the parent for the padded-opening phase below.
 
 The member is a better next target than the slightly larger registers read/write
 member because its input rows already exist on the device. Stage 1's Metal uni-skip
@@ -35,8 +35,9 @@ The implementation boundary is intentionally narrow:
 - `spartan_outer.rs` is the backend adapter and protocol owner;
 - `solinas/outer_remainder/` owns reusable planning, storage, artifact, dispatch,
   sealing, and shader modules;
-- `solinas/outer_remainder/shader.metal` is the only editable candidate source in
-  the current phase;
+- `solinas/outer_remainder/shader.metal` is the frozen legacy implementation;
+- `solinas/outer_remainder/opening_padded_56.metal` is the only editable source
+  in the current phase and is appended as a separate entrypoint;
 - `metal-outer-remainder-successor-eval.rs` is the reduced exact proxy evaluator;
 - `metal-outer-remainder-eval.rs` is the production-fixture representative
   evaluator;
@@ -270,17 +271,19 @@ fixed sentinels calibrate proxy ordering against log 26, and every second proxy
 rejection is audited. A material inversion or false negative disables proxy
 ranking. The screen cannot accept a candidate or satisfy the 5x floor.
 
-The frozen iteration preflight records one cold and one warm exact proxy cycle for
-an inert shader nonce. They took 2.218 and 1.924 seconds end to end, including
-source assembly, library and pipeline compilation, fixture/device setup,
-evaluation, result validation, and checkpoint computation. Controller overhead
-was below 0.07%; the cold cycle implies 1,623 proxy cycles/hour, and the contract
-uses a 1,200-cycle/hour floor. Version-3 evidence also binds the controller source
-closure, exact reconstructed Akita offset and assembled shader sources, and the
-sealed runner binary and source. These figures measure evaluator capacity, not
-the time to design a candidate or run the representative and production tiers.
-The summary and raw outputs live under
-`autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight*`.
+The frozen iteration preflight records one cold and one warm exact legacy A/A
+proxy cycle for an inert nonce in the padded fragment. It measures controller
+capacity, including source assembly, library and pipeline compilation,
+fixture/device setup, evaluation, result validation, and checkpoint computation.
+The cold and warm cycles took 2.255 and 1.939 seconds; controller overhead stayed
+below 0.08%, and the cold result supports 1,596 cycles/hour against the frozen
+1,200-cycle/hour floor.
+It does not exercise the mixed legacy-to-padded plan change; the focused
+runtime-artifact test and the `log_t = 12` Metal/CPU parity test cover that branch.
+Version-3 evidence also binds the controller source closure, reconstructed Akita
+offset, assembled shader sources, and sealed runner binary. The summary and raw
+outputs live under
+`autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight*`.
 
 A candidate can become a search parent only by improving beyond the fixed log-26
 noise threshold. Production promotion additionally requires at least 5x in both
@@ -307,39 +310,40 @@ pre-registered kill rule stopped the phase before candidate two. The live shader
 was restored. The parent, candidate hashes, exact result, and failure are retained
 in `autoresearch/evidence/outer_remainder_b_fold_straight_line_v1_rejected.json`.
 
-The active phase is `opening_row_owner_v1`. The parent opening scan costs
-62.018 ms GPU-active. Reaching the retained 47.39-ms arithmetic floor would reduce
-the complete member to about 201.864 ms, or 4.35970x against the 880.068-ms CPU
-control. A 5x member would require 176.014 ms, equivalent to an impossible
-21.539-ms opening if every other phase stayed fixed. Opening work therefore has
-enough headroom for a useful parent improvement, but cannot finish the portfolio
-on its own.
+The `opening_row_owner_v1` phase is also exhausted. Its only candidate was exact,
+but the log-25 opening scan took 34.727 ms against the 28-ms checkpoint and the
+complete successor ratio was 0.9773x. The kill rule stopped the phase before a
+representative run. Its parent, candidate, screen result, and restored-source
+hashes are retained in
+`autoresearch/evidence/outer_remainder_opening_row_owner_v1_rejected.json`.
 
-Candidate one is a shader-only row-first ownership rewrite. It preserves the ABI,
-64-by-20 staging tile, 256-thread group with eight SIMD groups, nine accumulators,
-barriers, reduction order, and currently unused two-element threadgroup scratch.
-SIMD group `g` owns columns `c = g + 8s`; lane `l` owns rows `l` and `l + 32`.
-For the 35 outputs, the scan model reduces repeated common-row loads from 140 to
-32 and weight and derived-bundle loads from 35 to 8 each. It preserves 17 weighted
-field multiplications and 18 boolean additions per output row and does not change
-global traffic. Register spills are the primary risk; occupancy is not claimed
-until Instruments or ISA evidence measures it.
+The active phase is `opening_padded_56_v1`. It leaves the legacy source byte-for-
+byte unchanged and adds a separately named opening entrypoint. The artifact-v2
+manifest binds the selected plan to its entrypoints and opening layout, so the
+host allocation and shader ABI cannot drift independently. `b_only_v1` remains
+the default; only a sealed artifact can select `b_only_padded_56_v1`.
 
-The first candidate is also the one-shot log-25 checkpoint: opening GPU-active
-time must be at most 28.0 ms. A candidate that passes may run the log-26
-representative, where it must improve the 216.493-ms parent by at least 3% and
-reach at most 209.998 ms. The phase admits at most two candidates and three search
-hours. The direct lane is mandatory because the predecessor's unchanged proxy
-calibration measured Kendall tau-b 0.3333; log 25 is retained only as the exact
-checkpoint probe.
+The legacy opening stages 64 rows with 20 words per row and allocates dynamic
+threadgroup buffers of `[10,240, 1,024, 3,920]` bytes. The candidate stages 56
+rows with a 21-word padded stride, removes the unused shard-sum buffer, and uses
+`[9,408, 896, 0]` bytes. This lowers the dynamic footprint from 15,184 to 10,304
+bytes. It may permit three resident groups where the legacy layout permits two,
+but that is a hypothesis until device evidence reports residency, registers, and
+spills.
 
-If candidate one passes the checkpoint but misses representative promotion,
-candidate two may only reduce the row-owner design's live ranges. Any 56-row
-padded layout is a separate cross-Rust phase because it changes the 21-word row
-stride, plan, sequence, shader, and tests; that phase may also remove the unused
-threadgroup scratch. A checkpoint miss or two-candidate exhaustion seals this
-phase and moves to the next measured bottleneck. Production promotion still
-requires at least 5x and at most 170.5 ms.
+The smaller tile has a structural cost. At `E_in = 8192`, it issues 293 row-vector
+passes for every 256 legacy passes, a 1.1445x masked-lane multiplier. Applying that
+tax gives an optimistic 54.237-ms log-26 opening and a 208.749-ms complete member,
+or 4.313x against the 900.272-ms CPU control. This phase can create a useful parent
+but cannot by itself reach 5x.
+
+The phase admits exactly one causal candidate: switch the binding plan from
+legacy to padded-56 while retaining materialize/output threads 256, transition
+threads 128, and cutoffs 16/18. Log-25 opening GPU-active must be at most 27.73 ms.
+If it passes, the log-26 representative must improve by at least 3% beyond noise
+and take at most 209.976 ms. A miss seals the phase immediately; neighboring tile
+sizes and dispatch tuning belong to a new analytical phase. Final kernel
+acceptance still requires at least 5x and at most 170.5 ms.
 
 Before promotion, Instruments or ISA evidence must report threadgroup memory,
 register pressure, spills, active SIMD groups, achieved occupancy, and dispatch

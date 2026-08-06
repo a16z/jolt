@@ -28,7 +28,8 @@
       "spartan_outer_uniskip",
       "instruction_input",
       "address_cycle",
-      "outer_remainder"
+      "outer_remainder",
+      "outer_remainder_padded_56"
     ]
   },
   "sources": [
@@ -296,6 +297,16 @@
         "solinas_outer_remainder_opening_tiles",
         "solinas_outer_remainder_reduce_columns"
       ]
+    },
+    {
+      "id": "outer_remainder_padded_56",
+      "path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/opening_padded_56.metal",
+      "role": "kernel",
+      "requires": ["outer_remainder"],
+      "source_constant": "OUTER_REMAINDER_PADDED_56_SOURCE",
+      "entry_points": [
+        "solinas_outer_remainder_opening_tiles_padded_56"
+      ]
     }
   ],
   "components": [
@@ -551,12 +562,18 @@
       "status": "production",
       "rust_path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/mod.rs",
       "rust_symbols": ["OuterRemainderSequence", "OuterRemainderSequenceConfig"],
-      "source_ids": ["fp128", "spartan_outer_uniskip", "outer_remainder"],
+      "source_ids": [
+        "fp128",
+        "spartan_outer_uniskip",
+        "outer_remainder",
+        "outer_remainder_padded_56"
+      ],
       "pipeline_entry_points": [
         "solinas_outer_remainder_materialize_b_and_message",
         "solinas_outer_remainder_stream_bind_and_message",
         "solinas_outer_remainder_bind_and_message",
         "solinas_outer_remainder_opening_tiles",
+        "solinas_outer_remainder_opening_tiles_padded_56",
         "solinas_outer_remainder_reduce_columns"
       ],
       "uses_components": ["field_runtime", "spartan_outer_uniskip"]
@@ -602,7 +619,9 @@
           "outer_remainder_local_evidence",
           "outer_remainder_b_fold_iteration_preflight",
           "outer_remainder_b_fold_rejection",
-          "outer_remainder_opening_iteration_preflight"
+          "outer_remainder_opening_iteration_preflight",
+          "outer_remainder_opening_row_owner_rejection",
+          "outer_remainder_opening_padded_56_iteration_preflight"
         ]
       }
     },
@@ -1170,6 +1189,11 @@
       {
         "id": "outer_remainder_opening_row_owner_rejection",
         "path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_rejected.json",
+        "covers_slots": ["spartan_outer_remainder"]
+      },
+      {
+        "id": "outer_remainder_opening_padded_56_iteration_preflight",
+        "path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.json",
         "covers_slots": ["spartan_outer_remainder"]
       }
     ]

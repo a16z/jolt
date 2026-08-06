@@ -173,6 +173,7 @@ PRODUCTION_LOCAL_KERNELS = {
                 "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS",
                 "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2",
                 "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2",
+                "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN",
             }
         ),
         "required_guards": COMMON_PRODUCTION_GUARDS
@@ -267,6 +268,9 @@ OUTER_REMAINDER_LOCAL_FINGERPRINT_PARAMETERS = {
     "output_threads": "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS",
     "cutoff_log2": "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2",
     "trace_cutoff_log2": "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2",
+}
+OUTER_REMAINDER_LOCAL_FINGERPRINT_STRING_PARAMETERS = {
+    "binding_plan": "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN",
 }
 OUTER_REMAINDER_LOCAL_FINGERPRINT_ENV = {
     "log_n": "JOLT_METAL_EVAL_LOG_N",
@@ -1300,15 +1304,22 @@ def validate_template(template: dict[str, Any], root: Optional[Path] = None) -> 
         if log_n != 26 or pairs != 5 or rayon_threads != 16:
             raise ValueError("the OuterRemainder evaluator launch geometry is not frozen")
         required_params = set(OUTER_REMAINDER_LOCAL_FINGERPRINT_PARAMETERS.values())
+        if template.get("schema_version") == 2:
+            required_params |= set(
+                OUTER_REMAINDER_LOCAL_FINGERPRINT_STRING_PARAMETERS.values()
+            )
         if required_params - set(template["search_space"]) or required_params - set(
             template.get("baseline_params", {})
         ):
             raise ValueError(
                 "the OuterRemainder result contract requires every launch parameter"
             )
-        if template.get("scope", {}).get("editable") != [
-            "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
-        ]:
+        expected_editable = [
+            "crates/jolt-kernels/src/metal/solinas/outer_remainder/opening_padded_56.metal"
+            if template.get("schema_version") == 2
+            else "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
+        ]
+        if template.get("scope", {}).get("editable") != expected_editable:
             raise ValueError("the OuterRemainder search scope must remain shader-only")
         final_validation = template.get("final_validation")
         if not isinstance(final_validation, dict) or set(final_validation) != {
@@ -3270,6 +3281,12 @@ def validate_outer_remainder_local_result(
                 for field, name in OUTER_REMAINDER_LOCAL_FINGERPRINT_PARAMETERS.items()
             }
         )
+        expected.update(
+            {
+                field: str(params.get(name, "b_only_v1"))
+                for field, name in OUTER_REMAINDER_LOCAL_FINGERPRINT_STRING_PARAMETERS.items()
+            }
+        )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("OuterRemainder evaluator launch parameters are incomplete") from error
     if (
@@ -3281,6 +3298,8 @@ def validate_outer_remainder_local_result(
         or expected["output_threads"] not in {128, 256, 512}
         or expected["cutoff_log2"] not in {14, 15, 16, 17, 18}
         or expected["trace_cutoff_log2"] != 18
+        or expected["binding_plan"]
+        not in {"b_only_v1", "b_only_padded_56_v1"}
     ):
         raise ValueError("OuterRemainder evaluator launch geometry is invalid")
 
@@ -3304,6 +3323,7 @@ def validate_outer_remainder_local_result(
         "output_threads",
         "cutoff_log2",
         "trace_cutoff_log2",
+        "binding_plan",
         "storage_initialization",
         "member_span",
         "rounds",
@@ -3314,6 +3334,14 @@ def validate_outer_remainder_local_result(
     if not isinstance(fingerprint, dict) or set(fingerprint) != fingerprint_fields:
         raise ValueError("OuterRemainder evaluator fingerprint is incomplete")
     for name, value in expected.items():
+        if name == "binding_plan":
+            if fingerprint.get(name) != value or not isinstance(
+                fingerprint.get(name), str
+            ):
+                raise ValueError(
+                    f"OuterRemainder evaluator fingerprint does not match {name}"
+                )
+            continue
         if fingerprint.get(name) != value or type(fingerprint.get(name)) is not int:
             raise ValueError(f"OuterRemainder evaluator fingerprint does not match {name}")
     if (
@@ -6002,12 +6030,16 @@ def validate_production_result(
             trace_cutoff_log2 = int(
                 expected_params["JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2"]
             )
+            binding_plan = expected_params[
+                "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
+            ]
         except (KeyError, ValueError) as error:
             raise ValueError("accepted OuterRemainder parameters are incomplete") from error
         if (
             type(log_n) is not int
             or not 1 <= cutoff_log2 < log_n
             or not 1 <= trace_cutoff_log2 <= log_n
+            or binding_plan not in {"b_only_v1", "b_only_padded_56_v1"}
         ):
             raise ValueError("production OuterRemainder geometry is invalid")
         decision = metrics.get("outer_remainder_decision")

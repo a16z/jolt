@@ -1,4 +1,5 @@
 pub(in super::super) const SOURCE: &str = include_str!("shader.metal");
+pub(in super::super) const PADDED_56_SOURCE: &str = include_str!("opening_padded_56.metal");
 
 use super::artifact::OuterBindingPlan;
 
@@ -16,6 +17,8 @@ pub(super) const B_ONLY_STREAM_BIND_PIPELINE: &str =
     "solinas_outer_remainder_stream_bind_and_message";
 pub(super) const TRANSITION_PIPELINE: &str = "solinas_outer_remainder_bind_and_message";
 pub(super) const OPENING_PIPELINE: &str = "solinas_outer_remainder_opening_tiles";
+pub(super) const PADDED_56_OPENING_PIPELINE: &str =
+    "solinas_outer_remainder_opening_tiles_padded_56";
 pub(super) const REDUCTION_PIPELINE: &str = "solinas_outer_remainder_reduce_columns";
 
 pub(super) const fn pipeline_names(plan: OuterBindingPlan) -> PipelineNames {
@@ -27,6 +30,13 @@ pub(super) const fn pipeline_names(plan: OuterBindingPlan) -> PipelineNames {
             opening: OPENING_PIPELINE,
             reduction: REDUCTION_PIPELINE,
         },
+        OuterBindingPlan::BOnlyPadded56V1 => PipelineNames {
+            materialize: B_ONLY_MATERIALIZE_PIPELINE,
+            stream_bind: B_ONLY_STREAM_BIND_PIPELINE,
+            transition: TRANSITION_PIPELINE,
+            opening: PADDED_56_OPENING_PIPELINE,
+            reduction: REDUCTION_PIPELINE,
+        },
     }
 }
 
@@ -34,7 +44,8 @@ pub(super) const fn pipeline_names(plan: OuterBindingPlan) -> PipelineNames {
 mod tests {
     use super::{
         pipeline_names, B_ONLY_MATERIALIZE_PIPELINE, B_ONLY_STREAM_BIND_PIPELINE, OPENING_PIPELINE,
-        REDUCTION_PIPELINE, SOURCE, TRANSITION_PIPELINE,
+        PADDED_56_OPENING_PIPELINE, PADDED_56_SOURCE, REDUCTION_PIPELINE, SOURCE,
+        TRANSITION_PIPELINE,
     };
     use crate::metal::solinas::OuterBindingPlan;
 
@@ -45,20 +56,52 @@ mod tests {
             B_ONLY_STREAM_BIND_PIPELINE,
             TRANSITION_PIPELINE,
             OPENING_PIPELINE,
+            PADDED_56_OPENING_PIPELINE,
             REDUCTION_PIPELINE,
         ] {
             let declaration = format!("kernel void {name}(");
-            assert_eq!(SOURCE.matches(&declaration).count(), 1, "{name}");
+            let count = SOURCE.matches(&declaration).count()
+                + PADDED_56_SOURCE.matches(&declaration).count();
+            assert_eq!(count, 1, "{name}");
         }
         assert_eq!(
             SOURCE
                 .matches("kernel void solinas_outer_remainder_")
-                .count(),
-            5,
+                .count()
+                + PADDED_56_SOURCE
+                    .matches("kernel void solinas_outer_remainder_")
+                    .count(),
+            6,
         );
         assert_eq!(
             pipeline_names(OuterBindingPlan::BOnlyV1).materialize,
             B_ONLY_MATERIALIZE_PIPELINE
         );
+        assert_eq!(
+            pipeline_names(OuterBindingPlan::BOnlyPadded56V1).opening,
+            PADDED_56_OPENING_PIPELINE
+        );
+    }
+
+    #[test]
+    fn padded_56_shader_closes_its_opening_layout() {
+        for declaration in [
+            "#define OUTER_REMAINDER_PADDED_TILE_ROWS 56u",
+            "#define OUTER_REMAINDER_PADDED_SOURCE_WORDS 20u",
+            "#define OUTER_REMAINDER_PADDED_ROW_STRIDE_WORDS 21u",
+        ] {
+            assert_eq!(
+                PADDED_56_SOURCE.matches(declaration).count(),
+                1,
+                "{declaration}"
+            );
+        }
+        assert_eq!(
+            PADDED_56_SOURCE
+                .matches(&format!("kernel void {PADDED_56_OPENING_PIPELINE}("))
+                .count(),
+            1,
+        );
+        assert!(!PADDED_56_SOURCE.contains("[[threadgroup(2)]]"));
     }
 }

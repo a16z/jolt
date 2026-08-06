@@ -55,6 +55,7 @@ ITERATION_PROFILE_SOURCE_PATHS = (
     "crates/jolt-kernels/src/metal/solinas/simd_reduce.metal",
     "crates/jolt-kernels/src/metal/solinas/spartan_outer_common.metal",
     "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+    "crates/jolt-kernels/src/metal/solinas/outer_remainder/opening_padded_56.metal",
 )
 ITERATION_PROFILE_SOLINAS_OFFSET = 0xFFFF_A7F7
 
@@ -427,11 +428,11 @@ def _validate_tier(tier: dict[str, Any], goal_floor: float) -> None:
         < goal_floor
     ):
         raise ValueError(f"tier {tier_id} local-kernel promotion is invalid")
-    if role == "representative" and _speedup(
-        promotion.get("minimum_accepted_speedup"), "tier acceptance floor"
-    ) < goal_floor:
-        raise ValueError(f"tier {tier_id} must retain the 5x acceptance floor")
     if role == "representative":
+        if _speedup(
+            promotion.get("minimum_accepted_speedup"), "tier acceptance floor"
+        ) < goal_floor:
+            raise ValueError(f"tier {tier_id} must retain the 5x acceptance floor")
         _positive(
             promotion.get("maximum_treatment_ms"),
             "representative latency bar",
@@ -601,7 +602,12 @@ def _validate_mechanism_phase(
         "success",
         "kill_or_redesign",
     }
-    if not isinstance(phase, dict) or set(phase) != required:
+    optional = {"candidate_params"}
+    if (
+        not isinstance(phase, dict)
+        or not required <= set(phase)
+        or set(phase) - required - optional
+    ):
         raise ValueError("mechanism phase fields are incomplete")
     if not isinstance(phase["id"], str) or _ID.fullmatch(phase["id"]) is None:
         raise ValueError("mechanism phase id is invalid")
@@ -1402,8 +1408,17 @@ def validate_template(
     frozen = set(scope["frozen"])
     if not editable or editable & frozen:
         raise ValueError("template editable and frozen scopes are invalid")
+    profile_path = Path(template["iteration_profile"]["evidence_path"])
+    refresh_outputs = {
+        profile_path.as_posix(),
+        profile_path.with_name(f"{profile_path.stem}.cold.raw.json").as_posix(),
+        profile_path.with_name(f"{profile_path.stem}.warm.raw.json").as_posix(),
+    }
     for path in editable | frozen:
-        _relative_file(root, path, "scope")
+        if not verify_iteration_profile and path in refresh_outputs:
+            _relative_path(path, "iteration profile refresh output")
+        else:
+            _relative_file(root, path, "scope")
     if template["portfolio_contract"] not in frozen:
         raise ValueError("the goal contract must be frozen")
     if template["registry_contract"] not in frozen:
@@ -1411,6 +1426,18 @@ def validate_template(
 
     validate_budget(template["budget"])
     _validate_mechanism_phase(template["mechanism_phase"], template["budget"])
+    candidate_params = template["mechanism_phase"].get("candidate_params")
+    if candidate_params is not None:
+        if (
+            not isinstance(candidate_params, dict)
+            or set(candidate_params) != set(search_space)
+            or any(
+                candidate_params[name] not in search_space[name]
+                for name in search_space
+            )
+            or candidate_params == baseline
+        ):
+            raise ValueError("mechanism phase fixed candidate is invalid")
     _validate_search_policy(
         template["search_policy"],
         template["collaboration"],

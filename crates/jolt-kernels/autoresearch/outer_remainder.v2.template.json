@@ -206,6 +206,10 @@
             {
               "flag": "--outer-remainder-metal-trace-cutoff-log2",
               "parameter": "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2"
+            },
+            {
+              "flag": "--outer-remainder-metal-binding-plan",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
             }
           ],
           "result_adapter": "metal_piop_v7",
@@ -301,6 +305,10 @@
             {
               "flag": "--outer-remainder-metal-trace-cutoff-log2",
               "parameter": "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2"
+            },
+            {
+              "flag": "--outer-remainder-metal-binding-plan",
+              "parameter": "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN"
             }
           ],
           "result_adapter": "metal_piop_v7",
@@ -357,22 +365,30 @@
     ]
   },
   "goal": "reach at least 5x exact OuterRemainder complete-member throughput at log 26, then pursue any materially higher measured ceiling",
-  "hypothesis": "row-first opening ownership can reuse each staged row's common words and weight across a SIMD group's columns without changing global traffic, ABI, or protocol",
+  "hypothesis": "a 56-row opening tile with a 21-word padded stride can remove shared-memory bank conflicts and unused shard scratch, potentially increasing resident threadgroups without changing global traffic or protocol outputs",
   "iteration_profile": {
-    "evidence_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.json",
-    "evidence_sha256": "8b4205223b31db909605f17f7eed576f1ee35a99a1dd931330f3319676d408fe",
+    "evidence_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.json",
+    "evidence_sha256": "37f5b6cfea7719559fb25761ada33a9737481f4fe997d4edae287894dd03c056",
     "maximum_controller_overhead_fraction": 0.01,
     "minimum_valid_proxy_cycles_per_hour": 1200.0,
-    "profile_base_revision": "23e9c12dfe89c0532262eb85797326626ce83204"
+    "profile_base_revision": "88608f8a23dab7317d09a59b5742b5128e0fb567"
   },
   "kernel": "outer_remainder",
   "mechanism_phase": {
     "analytical_ceiling": {
-      "basis": "the opening scan is 62.018292 ms GPU-active at log 26; retaining its 47.39 ms useful-arithmetic floor while removing repeated staged-row extraction gives a 201.864292 ms complete-member floor, with register spills as the principal risk",
-      "best_case_member_ms": 201.864292,
-      "best_case_speedup": 4.359702665987,
-      "control_ms": 880.068292,
-      "parent_member_ms": 216.492584
+      "basis": "the 56-row schedule issues 293 row-vector passes for every 256 legacy passes; applying that masked-lane tax to the measured opening path gives a 54.236959 ms log-26 floor and a 208.749125 ms complete-member best case, conditional on the smaller 10,304-byte dynamic threadgroup footprint improving residency without spills",
+      "best_case_member_ms": 208.749125,
+      "best_case_speedup": 4.312700510721,
+      "control_ms": 900.272458,
+      "parent_member_ms": 216.469958
+    },
+    "candidate_params": {
+      "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": "b_only_padded_56_v1",
+      "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": 16,
+      "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": 256,
+      "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": 256,
+      "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2": 18,
+      "JOLT_METAL_OUTER_REMAINDER_TRANSITION_THREADS": 128
     },
     "checkpoint": {
       "after_candidates": 1,
@@ -381,20 +397,20 @@
         {
           "comparison": "lte",
           "name": "openings_gpu_active_ms",
-          "threshold": 28.0
+          "threshold": 27.73
         }
       ]
     },
-    "hypothesis": "make each lane own staged rows before iterating its SIMD group's columns so flags, rs2, memory words, derived RAM values, and the row weight are loaded once per group-row rather than once per column-row",
-    "id": "opening_row_owner_v1",
-    "kill_or_redesign": "end the phase if the first exact row-owner candidate misses 28 ms at log 25; if it passes but misses representative promotion, admit only one lower-live-range row-owner variant before moving padded-56 layout work to a separate cross-Rust phase",
+    "hypothesis": "select the separately sealed 56-row, 21-word-stride opening entrypoint so dynamic threadgroup memory falls from 15,184 to 10,304 bytes while the same 35 claims, reduction, and global row traffic remain exact",
+    "id": "opening_padded_56_v1",
+    "kill_or_redesign": "end and seal the phase after the first exact padded-56 candidate if log-25 opening GPU-active exceeds 27.73 ms or the log-26 representative misses either 3% relative improvement or 209.976 ms; do not tune tile width or dispatch parameters inside this phase",
     "success": {
-      "maximum_member_ms": 209.998,
+      "maximum_member_ms": 209.976,
       "minimum_relative_improvement": 0.03
     },
     "timebox": {
-      "max_candidates_admitted": 2,
-      "max_search_calendar_seconds": 10800
+      "max_candidates_admitted": 1,
+      "max_search_calendar_seconds": 5400
     }
   },
   "metric": {
@@ -409,9 +425,10 @@
     "kind": "outer_msl_v1",
     "plan_parameter": "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN",
     "plans": [
-      "b_only_v1"
+      "b_only_v1",
+      "b_only_padded_56_v1"
     ],
-    "source_path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
+    "source_path": "crates/jolt-kernels/src/metal/solinas/outer_remainder/opening_padded_56.metal",
     "tier_id": "screen"
   },
   "sealed_binaries": {
@@ -477,6 +494,7 @@
         "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
         "crates/jolt-kernels/src/metal/solinas/outer_remainder/sealed.rs",
         "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
+        "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
         "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.rs",
         "crates/jolt-kernels/src/metal/solinas/outer_remainder/storage.rs",
         "crates/jolt-kernels/src/metal/solinas/probes.metal",
@@ -492,7 +510,7 @@
   },
   "scope": {
     "editable": [
-      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal"
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/opening_padded_56.metal"
     ],
     "frozen": [
       "Cargo.lock",
@@ -510,6 +528,10 @@
       "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.cold.raw.json",
       "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.json",
       "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.warm.raw.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_rejected.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.cold.raw.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_padded_56_v1_iteration_preflight.warm.raw.json",
       "crates/jolt-kernels/autoresearch/outer_remainder.template.json",
       "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
       "crates/jolt-kernels/autoresearch/piop_goal.v2.json",
@@ -545,6 +567,7 @@
       "crates/jolt-kernels/src/metal/solinas/outer_remainder/plan.rs",
       "crates/jolt-kernels/src/metal/solinas/outer_remainder/sealed.rs",
       "crates/jolt-kernels/src/metal/solinas/outer_remainder/sequence.rs",
+      "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.metal",
       "crates/jolt-kernels/src/metal/solinas/outer_remainder/shader.rs",
       "crates/jolt-kernels/src/metal/solinas/outer_remainder/storage.rs",
       "crates/jolt-kernels/src/metal/solinas/outer_remainder/tests.rs",
@@ -579,7 +602,8 @@
   },
   "search_space": {
     "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": [
-      "b_only_v1"
+      "b_only_v1",
+      "b_only_padded_56_v1"
     ],
     "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": [
       16

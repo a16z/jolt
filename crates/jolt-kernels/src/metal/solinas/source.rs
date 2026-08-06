@@ -20,6 +20,7 @@ const BYTECODE_CYCLE_SOURCE: &str = include_str!("bytecode_cycle.metal");
 const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip.metal");
 const OUTER_REMAINDER_SOURCE: &str = super::outer_remainder::SOURCE;
+const OUTER_REMAINDER_PADDED_56_SOURCE: &str = super::outer_remainder::PADDED_56_SOURCE;
 
 struct SourceFragment {
     id: &'static str,
@@ -55,6 +56,10 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("instruction_input", INSTRUCTION_INPUT_SOURCE),
     SourceFragment::new("address_cycle", ADDRESS_CYCLE_SOURCE),
     SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
+    SourceFragment::new(
+        "outer_remainder_padded_56",
+        OUTER_REMAINDER_PADDED_56_SOURCE,
+    ),
 ];
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -63,6 +68,10 @@ const OUTER_LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("simd_reduce", SIMD_REDUCE_SOURCE),
     SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
     SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
+    SourceFragment::new(
+        "outer_remainder_padded_56",
+        OUTER_REMAINDER_PADDED_56_SOURCE,
+    ),
 ];
 
 pub(super) fn library_source(offset: u32) -> String {
@@ -74,7 +83,7 @@ pub(super) fn library_source_with_outer(offset: u32, outer_source: &str) -> Stri
     assemble_library_source(
         offset,
         LIBRARY_SOURCE_FRAGMENTS,
-        Some(("outer_remainder", outer_source)),
+        Some(("outer_remainder_padded_56", outer_source)),
     )
 }
 
@@ -83,7 +92,7 @@ pub(super) fn outer_library_source_with_outer(offset: u32, outer_source: &str) -
     assemble_library_source(
         offset,
         OUTER_LIBRARY_SOURCE_FRAGMENTS,
-        Some(("outer_remainder", outer_source)),
+        Some(("outer_remainder_padded_56", outer_source)),
     )
 }
 
@@ -108,13 +117,13 @@ mod tests {
 
     fn expected_library_source(offset: u32) -> String {
         format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{BOOLEANITY_COMMON_SOURCE}\n{INSTRUCTION_RA_COMMON_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}\n{OUTER_REMAINDER_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{BOOLEANITY_COMMON_SOURCE}\n{INSTRUCTION_RA_COMMON_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{OUTER_REMAINDER_PADDED_56_SOURCE}"
         )
     }
 
     fn expected_outer_library_source(offset: u32, outer_source: &str) -> String {
         format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{outer_source}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{outer_source}"
         )
     }
 
@@ -134,7 +143,8 @@ mod tests {
         let source = outer_library_source_with_outer(275, replacement);
 
         assert_eq!(source, expected_outer_library_source(275, replacement));
-        assert!(!source.contains(OUTER_REMAINDER_SOURCE));
+        assert!(source.contains(OUTER_REMAINDER_SOURCE));
+        assert!(!source.contains(OUTER_REMAINDER_PADDED_56_SOURCE));
         assert!(!source.contains(INSTRUCTION_INPUT_SOURCE));
     }
 
@@ -144,7 +154,8 @@ mod tests {
         let source = library_source_with_outer(275, replacement);
 
         assert!(source.contains(replacement));
-        assert!(!source.contains(OUTER_REMAINDER_SOURCE));
+        assert!(source.contains(OUTER_REMAINDER_SOURCE));
+        assert!(!source.contains(OUTER_REMAINDER_PADDED_56_SOURCE));
         assert!(source.contains(INSTRUCTION_INPUT_SOURCE));
         assert!(source.ends_with(replacement));
     }

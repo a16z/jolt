@@ -98,6 +98,63 @@ class OuterArtifactTests(unittest.TestCase):
                 first["manifest"]["binding_plan"], "b_only_v1"
             )
 
+    def test_padded_56_plan_is_content_addressed_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prepare_store(root)
+            source = root / "candidate.metal"
+            source.write_text("kernel void candidate() {}")
+
+            legacy = materialize_outer_artifact(
+                root, source, "b_only_v1", DISPATCH
+            )
+            padded = materialize_outer_artifact(
+                root, source, "b_only_padded_56_v1", DISPATCH
+            )
+
+            self.assertNotEqual(
+                legacy["artifact_sha256"], padded["artifact_sha256"]
+            )
+            self.assertEqual(
+                padded["manifest"]["binding_plan"],
+                "b_only_padded_56_v1",
+            )
+            self.assertEqual(
+                padded["manifest"]["schema"], "jolt_outer_artifact_v2"
+            )
+            self.assertEqual(padded["manifest"]["schema_version"], 2)
+            self.assertEqual(
+                padded["manifest"]["opening_layout"],
+                {
+                    "row_stride_words": 21,
+                    "source_row_words": 20,
+                    "tile_rows": 56,
+                    "uses_shard_sums": False,
+                },
+            )
+            self.assertEqual(
+                padded["manifest"]["required_entrypoints"]["opening"],
+                "solinas_outer_remainder_opening_tiles_padded_56",
+            )
+            self.assertNotEqual(
+                legacy["manifest"]["opening_layout_sha256"],
+                padded["manifest"]["opening_layout_sha256"],
+            )
+            self.assertNotEqual(
+                legacy["manifest"]["outer_abi_sha256"],
+                padded["manifest"]["outer_abi_sha256"],
+            )
+
+            artifact_dir = root / padded["artifact_path"]
+            manifest_path = artifact_dir / "manifest.json"
+            manifest = copy.deepcopy(padded["manifest"])
+            manifest["opening_layout"]["tile_rows"] = 55
+            manifest_path.write_text(
+                json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+            )
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                verify_outer_artifact(artifact_dir)
+
     def test_runtime_output_is_bound_to_manifest_telemetry_and_tail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -152,6 +209,49 @@ class OuterArtifactTests(unittest.TestCase):
                     validate_runtime_artifact_output(
                         tampered, "outer_msl_v1", context
                     )
+
+    def test_runtime_output_accepts_a_closed_legacy_to_padded_plan_change(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prepare_store(root)
+            source = root / "candidate.metal"
+            source.write_text("kernel void candidate() {}")
+            parent = materialize_outer_artifact(
+                root, source, "b_only_v1", DISPATCH
+            )
+            candidate = materialize_outer_artifact(
+                root, source, "b_only_padded_56_v1", DISPATCH
+            )
+            context = {
+                "kind": "outer_msl_v1",
+                "parent": parent,
+                "candidate": candidate,
+            }
+            arm = {"tail_elements": DISPATCH["cpu_tail_elements"]}
+            output = {
+                "schema": "outer_remainder_successor_v2",
+                "fingerprint": {
+                    "parent_artifact_sha256": parent["artifact_sha256"],
+                    "candidate_artifact_sha256": candidate["artifact_sha256"],
+                },
+                "telemetry": {
+                    "parent_binding_plan": "b_only_v1",
+                    "candidate_binding_plan": "b_only_padded_56_v1",
+                    "parent_source_sha256": parent["manifest"][
+                        "outer_source_sha256"
+                    ],
+                    "candidate_source_sha256": candidate["manifest"][
+                        "outer_source_sha256"
+                    ],
+                },
+                "excluded_warmup": {
+                    "parent": copy.deepcopy(arm),
+                    "candidate": copy.deepcopy(arm),
+                },
+                "samples": [],
+            }
+
+            validate_runtime_artifact_output(output, "outer_msl_v1", context)
             tampered = copy.deepcopy(output)
             tampered["excluded_warmup"]["candidate"]["tail_elements"] //= 2
             with self.assertRaisesRegex(ValueError, "CPU tail"):

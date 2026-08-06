@@ -213,7 +213,12 @@ impl SolinasMetal {
                 "opening threadgroup needs at least 128 threads",
             ));
         }
-        validate_opening_threadgroup_memory(self, limits.opening, threads.opening)?;
+        validate_opening_threadgroup_memory(
+            self,
+            limits.opening,
+            config.binding_plan,
+            threads.opening,
+        )?;
 
         for elements in geometry.element_counts {
             let bytes = field_bytes(elements)?;

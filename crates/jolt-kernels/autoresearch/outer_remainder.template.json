@@ -6,6 +6,7 @@
     "timed_member": "OuterRemainder::complete_member from preparation through 35 output claims, including host Fiat-Shamir and the CPU tail"
   },
   "baseline_params": {
+    "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": "b_only_v1",
     "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": "16",
     "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": "256",
     "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": "256",
@@ -113,12 +114,22 @@
             "flag": "--outer-remainder-metal-trace-cutoff-log2",
             "parameter": "JOLT_METAL_OUTER_REMAINDER_TRACE_CUTOFF_LOG2",
             "value_format": "{}"
+          },
+          {
+            "destination": "argument",
+            "flag": "--outer-remainder-metal-binding-plan",
+            "parameter": "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN",
+            "value_format": "{}"
           }
         ],
         "schema_version": 7,
         "timeout_seconds": 7200
       },
       "expected_fingerprint": {
+        "outer_remainder_metal_binding_plan": {
+          "parameter": "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN",
+          "type": "str"
+        },
         "outer_remainder_metal_cutoff_log2": {
           "parameter": "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2",
           "type": "int"
@@ -241,6 +252,7 @@
     ]
   },
   "search_space": {
+    "JOLT_METAL_OUTER_REMAINDER_BINDING_PLAN": ["b_only_v1"],
     "JOLT_METAL_OUTER_REMAINDER_CUTOFF_LOG2": [14, 15, 16, 17, 18],
     "JOLT_METAL_OUTER_REMAINDER_MATERIALIZE_THREADS": [128, 256, 512],
     "JOLT_METAL_OUTER_REMAINDER_OUTPUT_THREADS": [128, 256, 512],

@@ -1,17 +1,14 @@
 use std::mem::size_of;
 
-use super::super::Fp128;
 use super::{
-    api::{
-        OuterRemainderPhase, OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
-        OUTER_REMAINDER_OPENINGS,
-    },
+    api::{OuterRemainderPhase, OuterRemainderSequenceConfig, OuterRemainderStorageInitialization},
     plan::{
-        field_bytes, message_threadgroup_bytes,
+        field_bytes, message_threadgroup_bytes, opening_layout, opening_threadgroup_memory_lengths,
         outer_remainder_sequence_max_buffer_bytes_with_config,
         outer_remainder_sequence_storage_bytes_with_config, storage_geometry,
     },
     sequence::{OpeningParams, PhaseParams, ReduceParams},
+    OuterBindingPlan,
 };
 
 #[test]
@@ -36,13 +33,35 @@ fn initial_log_26_gruen_shape_excludes_the_active_variable() {
 }
 
 #[test]
-fn opening_tile_memory_is_below_16_kib_at_256_threads() {
-    let shards = 256 / OUTER_REMAINDER_OPENINGS;
-    let bytes = 64 * 20 * size_of::<u64>()
-        + 64 * size_of::<Fp128>()
-        + OUTER_REMAINDER_OPENINGS * shards * size_of::<Fp128>();
-    assert_eq!(shards, 7);
-    assert!(bytes < 16 * 1024);
+fn opening_layouts_close_their_dynamic_threadgroup_memory() {
+    let legacy_layout = opening_layout(OuterBindingPlan::BOnlyV1);
+    assert_eq!(legacy_layout.tile_rows, 64);
+    assert_eq!(legacy_layout.source_row_words, 20);
+    assert_eq!(legacy_layout.row_stride_words, 20);
+    assert!(legacy_layout.shard_sums);
+
+    let padded_layout = opening_layout(OuterBindingPlan::BOnlyPadded56V1);
+    assert_eq!(padded_layout.tile_rows, 56);
+    assert_eq!(padded_layout.source_row_words, 20);
+    assert_eq!(padded_layout.row_stride_words, 21);
+    assert!(!padded_layout.shard_sums);
+
+    let legacy = opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256).unwrap();
+    let padded =
+        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyPadded56V1, 256).unwrap();
+
+    assert_eq!(legacy, [10_240, 1_024, 3_920]);
+    assert_eq!(legacy.into_iter().sum::<u64>(), 15_184);
+    assert_eq!(padded, [9_408, 896, 0]);
+    assert_eq!(padded.into_iter().sum::<u64>(), 10_304);
+}
+
+#[test]
+fn default_sequence_keeps_the_legacy_binding_plan() {
+    assert_eq!(
+        OuterRemainderSequenceConfig::default().binding_plan,
+        OuterBindingPlan::BOnlyV1,
+    );
 }
 
 #[test]

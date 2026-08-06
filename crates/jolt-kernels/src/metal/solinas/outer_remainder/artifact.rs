@@ -11,18 +11,21 @@ use super::super::MetalError;
 pub enum OuterBindingPlan {
     #[default]
     BOnlyV1,
+    BOnlyPadded56V1,
 }
 
 impl OuterBindingPlan {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BOnlyV1 => "b_only_v1",
+            Self::BOnlyPadded56V1 => "b_only_padded_56_v1",
         }
     }
 
     pub fn from_id(value: &str) -> Option<Self> {
         match value {
             "b_only_v1" => Some(Self::BOnlyV1),
+            "b_only_padded_56_v1" => Some(Self::BOnlyPadded56V1),
             _ => None,
         }
     }
@@ -137,7 +140,7 @@ impl OuterKernelArtifact {
 
     #[doc(hidden)]
     pub fn embedded(binding_plan: OuterBindingPlan) -> Result<Self, MetalError> {
-        Self::new(super::shader::SOURCE.to_owned(), binding_plan)
+        Self::new(super::shader::PADDED_56_SOURCE.to_owned(), binding_plan)
     }
 
     pub(crate) fn source(&self) -> &str {
@@ -171,6 +174,18 @@ mod tests {
         assert_eq!(artifact.binding_plan(), OuterBindingPlan::BOnlyV1);
         assert_ne!(artifact.source_sha256(), [0; 32]);
         assert_eq!(artifact.source(), "kernel void candidate() {}");
+    }
+
+    #[test]
+    fn binding_plan_ids_are_stable() {
+        for (id, plan) in [
+            ("b_only_v1", OuterBindingPlan::BOnlyV1),
+            ("b_only_padded_56_v1", OuterBindingPlan::BOnlyPadded56V1),
+        ] {
+            assert_eq!(plan.as_str(), id);
+            assert_eq!(OuterBindingPlan::from_id(id), Some(plan));
+        }
+        assert_eq!(OuterBindingPlan::from_id("split_ab_v1"), None);
     }
 
     #[test]

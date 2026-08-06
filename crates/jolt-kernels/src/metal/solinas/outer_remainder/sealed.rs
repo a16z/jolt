@@ -13,12 +13,13 @@ use sha2::{Digest, Sha256};
 use super::{
     api::{OuterRemainderSequenceConfig, OuterRemainderStorageInitialization},
     artifact::{OuterBindingPlan, OuterKernelArtifact},
+    plan::opening_layout,
     shader::pipeline_names,
 };
 use crate::metal::solinas::{MetalError, SolinasMetal};
 
-const ARTIFACT_SCHEMA: &str = "jolt_outer_artifact_v1";
-const ARTIFACT_SCHEMA_VERSION: u32 = 1;
+const ARTIFACT_SCHEMA: &str = "jolt_outer_artifact_v2";
+const ARTIFACT_SCHEMA_VERSION: u32 = 2;
 const SOURCE_FILE: &str = "outer.metal";
 const MANIFEST_FILE: &str = "manifest.json";
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
@@ -32,6 +33,21 @@ struct Entrypoints {
     opening: String,
     reduction: String,
     stream_bind: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct OpeningLayout {
+    row_stride_words: usize,
+    source_row_words: usize,
+    tile_rows: usize,
+    uses_shard_sums: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct OuterAbi<'a> {
+    opening_layout: OpeningLayout,
+    required_entrypoints: &'a Entrypoints,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -65,6 +81,8 @@ struct Manifest {
     dispatch_sha256: String,
     binding_plan: String,
     binding_plan_sha256: String,
+    opening_layout: OpeningLayout,
+    opening_layout_sha256: String,
     outer_abi_sha256: String,
     required_entrypoints: Entrypoints,
 }
@@ -235,15 +253,33 @@ fn validate_manifest(manifest: &Manifest, source: &[u8]) -> Result<(), MetalErro
     }
     let binding_plan = OuterBindingPlan::from_id(&manifest.binding_plan)
         .ok_or_else(|| invalid("binding plan is unsupported"))?;
+    let entrypoints = expected_entrypoints(binding_plan);
+    let layout = expected_opening_layout(binding_plan);
+    let abi = OuterAbi {
+        opening_layout: layout,
+        required_entrypoints: &entrypoints,
+    };
     if manifest.binding_plan_sha256 != digest_parts(&[manifest.binding_plan.as_bytes()])
-        || manifest.required_entrypoints != expected_entrypoints(binding_plan)
-        || manifest.outer_abi_sha256
-            != canonical_digest(&manifest.required_entrypoints, "entrypoint ABI")?
+        || manifest.required_entrypoints != entrypoints
+        || manifest.opening_layout != layout
+        || manifest.opening_layout_sha256
+            != canonical_digest(&manifest.opening_layout, "opening layout")?
+        || manifest.outer_abi_sha256 != canonical_digest(&abi, "entrypoint ABI")?
         || manifest.dispatch_sha256 != canonical_digest(&manifest.dispatch, "dispatch")?
     {
         return Err(invalid("manifest ABI or dispatch digest is invalid"));
     }
     validate_dispatch(manifest.dispatch)
+}
+
+fn expected_opening_layout(plan: OuterBindingPlan) -> OpeningLayout {
+    let layout = opening_layout(plan);
+    OpeningLayout {
+        row_stride_words: layout.row_stride_words,
+        source_row_words: layout.source_row_words,
+        tile_rows: layout.tile_rows,
+        uses_shard_sums: layout.shard_sums,
+    }
 }
 
 fn expected_entrypoints(plan: OuterBindingPlan) -> Entrypoints {

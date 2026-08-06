@@ -1717,7 +1717,12 @@ mod tests {
         assert_eq!(factored, dense);
     }
 
-    fn adapter_parity_case(log_t: usize, cpu_tail_elements: usize, source: OuterSource) {
+    fn adapter_parity_case(
+        log_t: usize,
+        cpu_tail_elements: usize,
+        source: OuterSource,
+        binding_plan: OuterBindingPlan,
+    ) {
         let cycles = 1usize << log_t;
         with_sample_backend_at_log_t(log_t, 4, |witness| {
             let tau = (0..log_t + 2)
@@ -1762,6 +1767,7 @@ mod tests {
                 spartan_outer_remainder: SpartanOuterRemainderMetalConfig {
                     trace_cutoff_elements: 4,
                     dispatch: OuterRemainderSequenceConfig {
+                        binding_plan,
                         max_threadgroups: 2,
                         cpu_tail_elements,
                         ..Default::default()
@@ -1774,7 +1780,7 @@ mod tests {
                 #[cfg(feature = "test-utils")]
                 OuterSource::RuntimeArtifact => MetalBackend::new_with_outer_artifact(
                     config,
-                    &OuterKernelArtifact::embedded(OuterBindingPlan::BOnlyV1).unwrap(),
+                    &OuterKernelArtifact::embedded(binding_plan).unwrap(),
                 ),
             }
             .unwrap();
@@ -1849,18 +1855,34 @@ mod tests {
 
     #[test]
     fn outer_remainder_adapter_matches_optimized_cpu_all_rounds_and_openings() {
-        adapter_parity_case(5, 8, OuterSource::Embedded);
+        adapter_parity_case(5, 8, OuterSource::Embedded, OuterBindingPlan::BOnlyV1);
     }
 
     #[cfg(feature = "test-utils")]
     #[test]
     fn runtime_outer_artifact_matches_optimized_cpu_all_rounds_and_openings() {
-        adapter_parity_case(5, 8, OuterSource::RuntimeArtifact);
+        adapter_parity_case(
+            5,
+            8,
+            OuterSource::RuntimeArtifact,
+            OuterBindingPlan::BOnlyV1,
+        );
+    }
+
+    #[cfg(feature = "test-utils")]
+    #[test]
+    fn padded_56_runtime_artifact_matches_cpu_across_a_full_tile_and_tail() {
+        adapter_parity_case(
+            12,
+            8,
+            OuterSource::RuntimeArtifact,
+            OuterBindingPlan::BOnlyPadded56V1,
+        );
     }
 
     #[test]
     fn outer_remainder_handoff_waits_for_the_stream_bind() {
-        adapter_parity_case(3, 16, OuterSource::Embedded);
+        adapter_parity_case(3, 16, OuterSource::Embedded, OuterBindingPlan::BOnlyV1);
     }
 
     #[test]

@@ -26,5 +26,5 @@ pub(crate) use plan::{
 #[cfg(feature = "test-utils")]
 pub use sealed::SealedOuterArtifact;
 pub use sequence::OuterRemainderSequence;
-pub(super) use shader::SOURCE;
+pub(super) use shader::{PADDED_56_SOURCE, SOURCE};
 pub(crate) use storage::OuterRemainderSequenceStorage;

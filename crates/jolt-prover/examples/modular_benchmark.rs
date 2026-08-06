@@ -545,6 +545,25 @@ mod akita_benchmark {
         }
     }
 
+    #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
+    enum OuterRemainderBindingPlan {
+        #[default]
+        #[value(name = "b_only_v1")]
+        BOnlyV1,
+        #[value(name = "b_only_padded_56_v1")]
+        BOnlyPadded56V1,
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    impl OuterRemainderBindingPlan {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::BOnlyV1 => "b_only_v1",
+                Self::BOnlyPadded56V1 => "b_only_padded_56_v1",
+            }
+        }
+    }
+
     #[derive(Debug, Clone, Copy)]
     struct BytecodeMetalTuning {
         message_threads: usize,
@@ -588,6 +607,7 @@ mod akita_benchmark {
         output_threads: usize,
         cutoff_log2: u32,
         trace_cutoff_log2: u32,
+        binding_plan: OuterRemainderBindingPlan,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -703,6 +723,9 @@ mod akita_benchmark {
 
         #[clap(long, default_value_t = 18)]
         outer_remainder_metal_trace_cutoff_log2: u32,
+
+        #[clap(long, value_enum, default_value = "b_only_v1")]
+        outer_remainder_metal_binding_plan: OuterRemainderBindingPlan,
     }
 
     pub fn run() {
@@ -776,6 +799,7 @@ mod akita_benchmark {
                 output_threads: cli.outer_remainder_metal_output_threads,
                 cutoff_log2: cli.outer_remainder_metal_cutoff_log2,
                 trace_cutoff_log2: cli.outer_remainder_metal_trace_cutoff_log2,
+                binding_plan: cli.outer_remainder_metal_binding_plan,
             },
         };
         run_benchmark(cli.name, scale, cli.target_trace_size, backend_config);
@@ -831,6 +855,7 @@ mod akita_benchmark {
                     output_threads: outer_remainder_metal_output_threads,
                     cutoff_log2: outer_remainder_metal_cutoff_log2,
                     trace_cutoff_log2: outer_remainder_metal_trace_cutoff_log2,
+                    binding_plan: outer_remainder_metal_binding_plan,
                 },
         } = backend_config;
         let bench_name = bench.as_str();
@@ -979,6 +1004,7 @@ mod akita_benchmark {
             outer_remainder_metal_output_threads,
             outer_remainder_metal_cutoff_log2,
             outer_remainder_metal_trace_cutoff_log2,
+            outer_remainder_metal_binding_plan,
         );
         let optimized_bytecode_algebra = match bytecode_cycle_algebra {
             BytecodeCycleAlgebra::Generic => jolt_kernels::optimized::BytecodeCycleAlgebra::Generic,
@@ -1109,6 +1135,15 @@ mod akita_benchmark {
                     .spartan_outer_remainder
                     .dispatch
                     .opening_threads_per_threadgroup = Some(outer_remainder_metal_output_threads);
+                config.spartan_outer_remainder.dispatch.binding_plan =
+                    match outer_remainder_metal_binding_plan {
+                        OuterRemainderBindingPlan::BOnlyV1 => {
+                            jolt_kernels::metal::solinas::OuterBindingPlan::BOnlyV1
+                        }
+                        OuterRemainderBindingPlan::BOnlyPadded56V1 => {
+                            jolt_kernels::metal::solinas::OuterBindingPlan::BOnlyPadded56V1
+                        }
+                    };
                 config.spartan_outer_remainder.dispatch.cpu_tail_elements = 1usize
                     .checked_shl(outer_remainder_metal_cutoff_log2)
                     .expect("outer-remainder Metal cutoff log2 must fit usize");
@@ -1156,13 +1191,14 @@ mod akita_benchmark {
                     hamming_weight_metal_finalize_threads,
                 );
                 println!(
-                    "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} materialize_threads={} transition_threads={} output_threads={} max_threadgroups={} storage_initialization={}",
+                    "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} materialize_threads={} transition_threads={} output_threads={} max_threadgroups={} binding_plan={} storage_initialization={}",
                     config.spartan_outer_remainder.trace_cutoff_elements,
                     config.spartan_outer_remainder.dispatch.cpu_tail_elements,
                     outer_remainder_metal_materialize_threads,
                     outer_remainder_metal_transition_threads,
                     outer_remainder_metal_output_threads,
                     config.spartan_outer_remainder.dispatch.max_threadgroups,
+                    outer_remainder_metal_binding_plan.as_str(),
                     config
                         .spartan_outer_remainder
                         .dispatch

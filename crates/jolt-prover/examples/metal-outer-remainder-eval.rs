@@ -19,6 +19,7 @@ use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYO
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
+use jolt_kernels::metal::solinas::OuterBindingPlan;
 use jolt_openings::CommitmentScheme;
 use jolt_profiling::{setup_tracing_with_trace_path, TracingFormat};
 use jolt_program::execution::{
@@ -72,6 +73,9 @@ struct Cli {
 
     #[clap(long, default_value_t = 18)]
     trace_cutoff_log2: u32,
+
+    #[clap(long, default_value = "b_only_v1")]
+    binding_plan: String,
 }
 
 struct Fixture<W> {
@@ -84,6 +88,8 @@ struct Fixture<W> {
 
 fn main() {
     let cli = Cli::parse();
+    let binding_plan = OuterBindingPlan::from_id(&cli.binding_plan)
+        .expect("outer-remainder binding plan must be supported");
     assert!(
         matches!(cli.log_n, 25 | 26),
         "the evaluators target log_n=25 or log_n=26"
@@ -124,6 +130,7 @@ fn main() {
         .spartan_outer_remainder
         .dispatch
         .opening_threads_per_threadgroup = Some(cli.output_threads);
+    metal_config.spartan_outer_remainder.dispatch.binding_plan = binding_plan;
     metal_config
         .spartan_outer_remainder
         .dispatch
@@ -185,6 +192,7 @@ fn main() {
                 "output_threads": cli.output_threads,
                 "cutoff_log2": cli.cutoff_log2,
                 "trace_cutoff_log2": cli.trace_cutoff_log2,
+                "binding_plan": binding_plan.as_str(),
                 "storage_initialization": "full",
             },
             "warmup": warmup,

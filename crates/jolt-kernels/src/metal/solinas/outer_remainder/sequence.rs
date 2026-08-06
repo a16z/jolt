@@ -13,10 +13,7 @@ use super::{
         OuterRemainderStorageInitializationStats, OuterRemainderStorageStats,
         OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_STREAM_ROWS,
     },
-    plan::{
-        message_threadgroup_bytes, to_u32, OUTER_REMAINDER_ROW_WORDS, OUTER_REMAINDER_TILE_ROWS,
-        SIMD_WIDTH,
-    },
+    plan::{message_threadgroup_bytes, opening_threadgroup_memory_lengths, to_u32, SIMD_WIDTH},
     storage::{write_fields, DenseBuffers, OuterRemainderSequenceStorage, Storage},
 };
 
@@ -395,7 +392,8 @@ impl OuterRemainderSequence {
         };
         let rows = self.rows()?;
         let threads = self.storage.threads.opening;
-        let shards = threads / OUTER_REMAINDER_OPENINGS;
+        let threadgroup_memory =
+            opening_threadgroup_memory_lengths(self.config.binding_plan, threads)?;
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
         autoreleasepool(|| {
@@ -407,18 +405,11 @@ impl OuterRemainderSequence {
             encoder.set_buffer(3, Some(&self.storage.buffers.e_out), 0);
             encoder.set_buffer(4, Some(&self.storage.buffers.opening_partials), 0);
             set_inline_bytes(encoder, 5, &params);
-            encoder.set_threadgroup_memory_length(
-                0,
-                (OUTER_REMAINDER_TILE_ROWS * OUTER_REMAINDER_ROW_WORDS * size_of::<u64>()) as u64,
-            );
-            encoder.set_threadgroup_memory_length(
-                1,
-                (OUTER_REMAINDER_TILE_ROWS * size_of::<Fp128>()) as u64,
-            );
-            encoder.set_threadgroup_memory_length(
-                2,
-                (OUTER_REMAINDER_OPENINGS * shards * size_of::<Fp128>()) as u64,
-            );
+            for (index, bytes) in threadgroup_memory.into_iter().enumerate() {
+                if bytes != 0 {
+                    encoder.set_threadgroup_memory_length(index as u64, bytes);
+                }
+            }
             dispatch(encoder, blocks, threads);
             self.encode_reduction(
                 encoder,
