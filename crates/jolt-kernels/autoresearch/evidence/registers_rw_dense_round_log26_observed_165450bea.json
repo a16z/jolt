@@ -1,0 +1,55 @@
+{
+  "schema": "metal_kernel_screen_v1",
+  "recorded_at": "2026-08-06T23:41:46Z",
+  "status": "primitive_active_bar_pass_member_integration_pending",
+  "artifact": {
+    "git_revision": "165450bea753a8233e8ff394688f433771c514bb",
+    "binary": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "f5315ccbe34468d54eaae74f07a8693e13df8e1483735b248777bc4c7d47ea9e",
+    "criterion_root": "target/criterion/metal_sumcheck_registers_read_write_dense_round"
+  },
+  "contract": {
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "trace_elements": 67108864,
+    "source_rows": 262144,
+    "columns": 128,
+    "round": 9,
+    "threadgroup_width": 128,
+    "global_evaluator_lock": "/private/tmp/jolt-metal-autoresearch-evaluator.lock",
+    "warmup_ms": 100,
+    "measurement_ms": 300,
+    "samples": 10
+  },
+  "storage": {
+    "total_bytes": 2422612096,
+    "execute_device_buffer_allocations": 0,
+    "source_and_destination_distinct": true,
+    "dynamic_threadgroup_bytes": 288
+  },
+  "observed": {
+    "setup_wall_ms": 82.991,
+    "cold_gpu_active_ms": 13.308,
+    "warm_wall_mean_ms": 5.853885222539683,
+    "warm_wall_median_ms": 5.862458607142857,
+    "warm_wall_slope_ms": 5.863607794805195,
+    "warm_gpu_active_mean_ms": 5.624690870476191,
+    "warm_gpu_active_median_ms": 5.616250041666666,
+    "warm_gpu_active_slope_ms": 5.6185429688311685
+  },
+  "gate": {
+    "pre_registered_active_80_percent_cap_ms": 6.704877,
+    "active_slope_pass": true,
+    "active_headroom_fraction": 0.1620319575
+  },
+  "correctness": {
+    "scalar_oracle_test": "passed",
+    "log26_storage_test": "passed",
+    "metal_clippy": "passed"
+  },
+  "decision": {
+    "primitive": "retain",
+    "production_registration": "blocked",
+    "reason": "The warm resident round clears its active-time bar, but setup and cold service do not. Promotion requires a proof-scoped resident handoff, a multi-round ping-pong sequence, exact full-member parity, and a complete RegistersReadWriteChecking time below its five-pair 5x cap."
+  }
+}
