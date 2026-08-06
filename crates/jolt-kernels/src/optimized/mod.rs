@@ -50,7 +50,7 @@ pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
-mod ram_trace;
+pub(crate) mod ram_trace;
 pub mod ram_val_check;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;

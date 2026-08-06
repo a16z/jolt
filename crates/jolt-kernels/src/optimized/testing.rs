@@ -76,6 +76,14 @@ pub(crate) fn with_ram_fixture<R>(
     with_ram_fixture_init(shape, Vec::new(), ops, f)
 }
 
+pub(crate) fn with_ram_fixture_backend<R>(
+    shape: FixtureShape,
+    ops: Vec<RamOp>,
+    f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
+    with_ram_fixture_init_backend(shape, Vec::new(), ops, f)
+}
+
 /// [`with_ram_fixture`] with nonzero initial RAM values: `init_words[i]`
 /// seeds word `2 + i` (the reserved panic/termination words stay zero). The
 /// values ride in as trusted-advice bytes, which the witness backend
@@ -91,6 +99,15 @@ pub(crate) fn with_ram_fixture_init<R>(
     init_words: Vec<u64>,
     ops: Vec<RamOp>,
     f: impl FnOnce(&dyn jolt_witness::JoltWitnessPlane<Fr>) -> R,
+) -> R {
+    with_ram_fixture_init_backend(shape, init_words, ops, |backend| f(backend))
+}
+
+fn with_ram_fixture_init_backend<R>(
+    shape: FixtureShape,
+    init_words: Vec<u64>,
+    ops: Vec<RamOp>,
+    f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
 ) -> R {
     assert!(ops.len() < 1usize << shape.log_t, "script too long");
     assert!(

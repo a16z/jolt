@@ -11,6 +11,7 @@ use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::instruction_read_raf::InstructionReadRafMetalConfig;
+use super::ram_raf_evaluation::RamRafEvaluationMetalConfig;
 use super::registers_val_evaluation::RegistersValEvaluationMetalConfig;
 #[cfg(feature = "test-utils")]
 use super::solinas::OuterKernelArtifact;
@@ -31,6 +32,8 @@ pub struct MetalConfig {
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-5 registers value-evaluation settings.
     pub registers_val_evaluation: RegistersValEvaluationMetalConfig,
+    /// Stage-2 RAM RAF-evaluation settings.
+    pub ram_raf_evaluation: RamRafEvaluationMetalConfig,
     /// Stage-6a Booleanity address settings.
     pub booleanity_address: BooleanityAddressMetalConfig,
     /// Stage-6b Booleanity cycle settings.
@@ -104,6 +107,7 @@ impl MetalBackend {
             config.instruction_input.cutoff_elements,
             config.registers_val_evaluation.trace_cutoff_elements,
             config.registers_val_evaluation.cutoff_elements,
+            config.ram_raf_evaluation.dispatch.trace_cutoff,
             config.booleanity_address.trace_cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
@@ -171,6 +175,7 @@ where
         self.spartan_outer_uniskip = Box::new(metal.clone());
         self.spartan_outer_remainder = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
+        self.ram_raf_evaluation = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
         self.booleanity_address = Box::new(metal.clone());
         self.bytecode_read_raf_cycle = Box::new(metal.clone());

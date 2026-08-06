@@ -44,6 +44,18 @@ impl RamRafAddressPlane {
     }
 }
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RamRafAddressPlane {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_addresses"),
+            self.resident_bytes(),
+        );
+        visitor.exit();
+    }
+}
+
 struct RamRafBuffers {
     e_lo: Buffer,
     e_hi: Buffer,

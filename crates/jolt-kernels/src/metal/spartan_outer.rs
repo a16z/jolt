@@ -318,6 +318,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         witness: &dyn JoltWitnessPlane<AkitaField>,
     ) -> Result<(), KernelError<AkitaField>> {
         let cycles = 1usize << log_t;
+        self.prepare_ram_raf_witness(session, log_t, witness)?;
         let (stage1_eligible, instruction_input_eligible) =
             resident_row_consumers(cycles, &self.config);
         let instruction_ra_dispatch = self.config.instruction_ra_virtualization.dispatch;

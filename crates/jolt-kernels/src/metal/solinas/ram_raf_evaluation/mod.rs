@@ -855,6 +855,11 @@ impl<F: Field> RamRafAffineTail<F> {
         self.rounds_bound
     }
 
+    #[cfg(feature = "allocative")]
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.ra.capacity() * size_of::<F>()
+    }
+
     pub fn input_claim(&self) -> F {
         self.ra
             .iter()
