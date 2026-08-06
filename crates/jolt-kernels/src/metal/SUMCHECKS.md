@@ -361,6 +361,24 @@ Under that historical schema-1 contract, the CPU denominator permitted at most
 2.810 s from the 7.630-s median. The next port is selected by conservative
 recoverable wall time, not by span rank alone.
 
+The first clean profile after exhausting the schema-2 Outer opening-layout phase is
+recorded in
+`autoresearch/evidence/piop_log26_5f520c21e_production.json`. Five alternating,
+exact `2^26` pairs at revision `5f520c21e` measured a 19.642-s optimized-CPU median,
+a 6.642-s Metal-hybrid median, and a 2.976x median paired PIOP speedup. Relative MAD
+was 0.50%; the optimized-first and Metal-first strata measured 2.945x and 2.983x.
+All ten proofs verified. The diagnostic boundary including backend witness
+preparation measured 2.788x.
+
+A 5x portfolio result permits 3.928 s of Metal PIOP, leaving 2.713 s to remove. The
+largest conservative saving to its own 5x floor is now
+`RegistersReadWriteChecking`: its optimized control is 934.7 ms and the unported
+Metal-backend seam is 940.2 ms. A 5x implementation would save 753.2 ms, project the
+PIOP to 3.336x, and close 27.8% of the remaining latency gap. It is therefore the
+next mechanism phase. `ProductRemainder` ranks second at 356.1 ms recoverable, while
+the already-ported `InstructionReadRaf` ranks third at 310.8 ms. These projections
+select work; only fresh exact complete-kernel and PIOP measurements can promote it.
+
 ### Instruction-read address worksheet
 
 There are 16 eight-variable address phases. In every phase the RAF scan reads one
