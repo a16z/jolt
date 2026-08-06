@@ -101,8 +101,8 @@ pub use registers_read_write::{
     RegistersReadWriteSecondMessageInvocation,
 };
 pub use registers_val::{
-    RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
-    RegistersValFirstTransitionInvocation, RegistersValTransitionConfig,
+    RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
+    RegistersValFirstTransitionInvocation, RegistersValSequence, RegistersValTransitionConfig,
 };
 pub use spartan_outer_uniskip::{
     evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,
@@ -420,6 +420,10 @@ pub enum MetalError {
     },
     #[error("registers value evaluation LT-low table has length {got}, expected {expected}")]
     RegistersValLtLength { expected: usize, got: usize },
+    #[error(
+        "registers value evaluation cannot continue split-LT binding from length {0}; hand off to the dense tail"
+    )]
+    RegistersValSplitLtExhausted(usize),
     #[error("registers value evaluation index {0} is outside the 128-register domain")]
     InvalidRegistersValIndex(u8),
     #[error(

@@ -5,8 +5,9 @@ use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
     BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128,
     InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
-    RegisterAccessRow, RegistersReadWriteMessageConfig, RegistersValFirstMessageConfig,
-    RegistersValTransitionConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+    RegisterAccessRow, RegistersReadWriteMessageConfig, RegistersValDenseConfig,
+    RegistersValFirstMessageConfig, RegistersValTransitionConfig, SolinasMetal,
+    AKITA_OFFSET_FFFFA7F7, OFFSET_275,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
@@ -215,6 +216,7 @@ fn registers_val_transition_handles_odd_even_splits_and_edge_challenges() {
         (4, AkitaField::from_u64(0)),
         (4, AkitaField::from_u64(1)),
         (5, modulus_minus_one),
+        (8, AkitaField::from_u64(1)),
         (9, AkitaField::from_u64(0x0123_4567_89ab_cdef)),
     ] {
         let cycles = 1_usize << log_cycles;
@@ -288,18 +290,18 @@ fn registers_val_transition_handles_odd_even_splits_and_edge_challenges() {
                 continue;
             }
 
-            let bind = |values: &[AkitaField]| {
+            let bind = |values: &[AkitaField], challenge: AkitaField| {
                 values
                     .chunks_exact(2)
                     .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
                     .collect::<Vec<_>>()
             };
-            let dense_inc = bind(&inc);
-            let dense_wa = bind(&wa);
-            let dense_lt = bind(&lt);
+            let mut dense_inc = bind(&inc, challenge);
+            let mut dense_wa = bind(&wa, challenge);
+            let mut dense_lt = bind(&lt, challenge);
             let mid = r_cycle.len() / 2;
             let (_, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
-            let bound_lt_lo = bind(&LtPolynomial::<AkitaField>::evaluations(r_lo));
+            let mut bound_lt_lo = bind(&LtPolynomial::<AkitaField>::evaluations(r_lo), challenge);
             let next_expected = registers_val_dense_message(&dense_inc, &dense_wa, &dense_lt);
             let transition = invocation
                 .into_first_transition(
@@ -332,6 +334,58 @@ fn registers_val_transition_handles_odd_even_splits_and_edge_challenges() {
                 expected_state,
                 "log={log_cycles}, tg={threads_per_threadgroup}"
             );
+
+            let mut sequence = transition
+                .into_sequence(RegistersValDenseConfig {
+                    threads_per_threadgroup: Some(threads_per_threadgroup),
+                })
+                .expect("registers value dense sequence should prepare");
+            assert_eq!(sequence.round_device_buffer_allocations(), 0);
+            let dense_challenges = if log_cycles % 2 == 0 {
+                [AkitaField::from_u64(0), AkitaField::from_u64(1)]
+            } else {
+                [
+                    modulus_minus_one,
+                    AkitaField::from_u64(0x0fed_cba9_8765_4321),
+                ]
+            };
+            for (round, dense_challenge) in dense_challenges.into_iter().enumerate() {
+                if bound_lt_lo.len() < 4 {
+                    break;
+                }
+                dense_inc = bind(&dense_inc, dense_challenge);
+                dense_wa = bind(&dense_wa, dense_challenge);
+                dense_lt = bind(&dense_lt, dense_challenge);
+                bound_lt_lo = bind(&bound_lt_lo, dense_challenge);
+                let expected = registers_val_dense_message(&dense_inc, &dense_wa, &dense_lt);
+                let actual = sequence
+                    .bind_and_message(dense_challenge, &bound_lt_lo)
+                    .expect("registers value dense transition should execute");
+                assert_eq!(
+                    actual, expected,
+                    "log={log_cycles}, tg={threads_per_threadgroup}, dense_round={round}"
+                );
+                let expected_state = dense_inc
+                    .iter()
+                    .copied()
+                    .zip(dense_wa.iter().copied())
+                    .map(|(inc, wa)| [inc, wa])
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    sequence
+                        .read_current_dense_state()
+                        .expect("registers value resident state should be readable"),
+                    expected_state,
+                    "log={log_cycles}, tg={threads_per_threadgroup}, dense_round={round}"
+                );
+            }
+            if bound_lt_lo.len() == 2 {
+                let exhausted_lt = bind(&bound_lt_lo, AkitaField::from_u64(2));
+                assert!(matches!(
+                    sequence.bind_and_message(AkitaField::from_u64(2), &exhausted_lt),
+                    Err(MetalError::RegistersValSplitLtExhausted(2))
+                ));
+            }
         }
     }
 }

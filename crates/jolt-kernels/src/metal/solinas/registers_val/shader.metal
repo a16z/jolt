@@ -278,6 +278,71 @@ kernel void solinas_registers_val_native_transition(
         high, lane, simdgroup, threads);
 }
 
+kernel void solinas_registers_val_dense_transition(
+    device const RegistersValDenseRow* source [[buffer(0)]],
+    device RegistersValDenseRow* destination [[buffer(1)]],
+    device const SolinasFp128* lt_lo [[buffer(2)]],
+    device const SolinasFp128* lt_hi [[buffer(3)]],
+    device const SolinasFp128* eq_hi [[buffer(4)]],
+    device SolinasFp128* partials [[buffer(5)]],
+    constant SolinasFp128& challenge [[buffer(6)]],
+    constant RegistersValMessageParams& params [[buffer(7)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint thread_index [[thread_index_in_threadgroup]],
+    uint high [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    SolinasFp128 a[REGISTERS_VAL_SAMPLES];
+    SolinasFp128 b[REGISTERS_VAL_SAMPLES];
+    for (uint sample = 0u; sample < REGISTERS_VAL_SAMPLES; sample++) {
+        a[sample] = solinas_zero();
+        b[sample] = solinas_zero();
+    }
+
+    uint low_pairs = params.lt_lo_length / 2u;
+    uint source_high_base = high * 2u * params.lt_lo_length;
+    uint destination_high_base = high * params.lt_lo_length;
+    for (uint low_pair = thread_index; low_pair < low_pairs; low_pair += threads) {
+        uint source_index = source_high_base + 4u * low_pair;
+        uint destination_index = destination_high_base + 2u * low_pair;
+        RegistersValDenseRow low;
+        low.inc = registers_val_bind(
+            source[source_index].inc,
+            source[source_index + 1u].inc,
+            challenge);
+        low.wa = registers_val_bind(
+            source[source_index].wa,
+            source[source_index + 1u].wa,
+            challenge);
+        RegistersValDenseRow high_value;
+        high_value.inc = registers_val_bind(
+            source[source_index + 2u].inc,
+            source[source_index + 3u].inc,
+            challenge);
+        high_value.wa = registers_val_bind(
+            source[source_index + 2u].wa,
+            source[source_index + 3u].wa,
+            challenge);
+        destination[destination_index] = low;
+        destination[destination_index + 1u] = high_value;
+        registers_val_accumulate_pair(
+            low.inc,
+            high_value.inc,
+            low.wa,
+            high_value.wa,
+            lt_lo[2u * low_pair],
+            lt_lo[2u * low_pair + 1u],
+            a,
+            b);
+    }
+
+    registers_val_finish_high(
+        a, b, lt_hi, eq_hi, partials, params, shared,
+        high, lane, simdgroup, threads);
+}
+
 kernel void solinas_registers_val_reduce(
     device const SolinasFp128* input [[buffer(0)]],
     device SolinasFp128* output [[buffer(1)]],

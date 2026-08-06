@@ -17,6 +17,7 @@ const ADDRESS_BITS: usize = 7;
 const ABSENT_REGISTER: u8 = u8::MAX;
 const MESSAGE_PIPELINE: &str = "solinas_registers_val_first_message_factorized";
 const NATIVE_TRANSITION_PIPELINE: &str = "solinas_registers_val_native_transition";
+const DENSE_TRANSITION_PIPELINE: &str = "solinas_registers_val_dense_transition";
 const REDUCTION_PIPELINE: &str = "solinas_registers_val_reduce";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +42,19 @@ impl Default for RegistersValTransitionConfig {
     fn default() -> Self {
         Self {
             threads_per_threadgroup: Some(32),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegistersValDenseConfig {
+    pub threads_per_threadgroup: Option<usize>,
+}
+
+impl Default for RegistersValDenseConfig {
+    fn default() -> Self {
+        Self {
+            threads_per_threadgroup: Some(64),
         }
     }
 }
@@ -75,6 +89,8 @@ struct Buffers {
     lt_lo: Buffer,
     lt_hi: Buffer,
     eq_hi: Buffer,
+    dense_a: Buffer,
+    dense_b: Buffer,
     partial_a: Buffer,
     partial_b: Buffer,
 }
@@ -82,8 +98,12 @@ struct Buffers {
 pub struct RegistersValFirstMessageInvocation {
     context: SolinasMetal,
     message_pipeline: ComputePipelineState,
+    native_transition_pipeline: ComputePipelineState,
+    dense_transition_pipeline: ComputePipelineState,
     reduction_pipeline: ComputePipelineState,
     message_limits: PipelineLimits,
+    native_transition_limits: PipelineLimits,
+    dense_transition_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
     params: MessageParams,
@@ -102,7 +122,8 @@ struct TransitionBuffers {
     lt_lo: Buffer,
     lt_hi: Buffer,
     eq_hi: Buffer,
-    dense: Buffer,
+    dense_a: Buffer,
+    dense_b: Buffer,
     partial_a: Buffer,
     partial_b: Buffer,
 }
@@ -110,17 +131,48 @@ struct TransitionBuffers {
 pub struct RegistersValFirstTransitionInvocation {
     context: SolinasMetal,
     transition_pipeline: ComputePipelineState,
+    dense_transition_pipeline: ComputePipelineState,
     reduction_pipeline: ComputePipelineState,
     transition_limits: PipelineLimits,
+    dense_transition_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: TransitionBuffers,
     params: MessageParams,
     reduction_steps: Vec<ReductionStep>,
     cycles: usize,
+    lt_lo_capacity: usize,
     threadgroups: usize,
     threads_per_threadgroup: usize,
     final_in_a: bool,
     completed: Cell<bool>,
+}
+
+struct SequenceBuffers {
+    lt_lo: Buffer,
+    lt_hi: Buffer,
+    eq_hi: Buffer,
+    dense_a: Buffer,
+    dense_b: Buffer,
+    partial_a: Buffer,
+    partial_b: Buffer,
+}
+
+pub struct RegistersValSequence {
+    context: SolinasMetal,
+    transition_pipeline: ComputePipelineState,
+    reduction_pipeline: ComputePipelineState,
+    transition_limits: PipelineLimits,
+    reduction_limits: PipelineLimits,
+    buffers: SequenceBuffers,
+    reduction_steps: Vec<ReductionStep>,
+    current_elements: usize,
+    current_lt_lo_length: usize,
+    lt_lo_capacity: usize,
+    threadgroups: usize,
+    threads_per_threadgroup: usize,
+    source_in_a: bool,
+    final_in_a: bool,
+    gpu_active_time: Duration,
 }
 
 impl SolinasMetal {
@@ -158,11 +210,17 @@ impl SolinasMetal {
         }
 
         let message_pipeline = self.compile_named_pipeline(MESSAGE_PIPELINE)?;
+        let native_transition_pipeline = self.compile_named_pipeline(NATIVE_TRANSITION_PIPELINE)?;
+        let dense_transition_pipeline = self.compile_named_pipeline(DENSE_TRANSITION_PIPELINE)?;
         let reduction_pipeline = self.compile_named_pipeline(REDUCTION_PIPELINE)?;
         let message_limits = Self::limits(&message_pipeline);
+        let native_transition_limits = Self::limits(&native_transition_pipeline);
+        let dense_transition_limits = Self::limits(&dense_transition_pipeline);
         let reduction_limits = Self::limits(&reduction_pipeline);
         for (pipeline, limits) in [
             (MESSAGE_PIPELINE, message_limits),
+            (NATIVE_TRANSITION_PIPELINE, native_transition_limits),
+            (DENSE_TRANSITION_PIPELINE, dense_transition_limits),
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != SIMD_WIDTH {
@@ -220,6 +278,8 @@ impl SolinasMetal {
             .ok_or(MetalError::InputTooLong(partial_count))?;
         let partial_a = self.new_registers_val_buffer(partial_elements)?;
         let partial_b = self.new_registers_val_buffer(partial_elements)?;
+        let dense_a = self.new_registers_val_buffer(inc.len())?;
+        let dense_b = self.new_registers_val_buffer(inc.len() / 2)?;
 
         let mut reduction_steps = Vec::new();
         let mut input_count = partial_count;
@@ -245,8 +305,12 @@ impl SolinasMetal {
         Ok(RegistersValFirstMessageInvocation {
             context: self.clone(),
             message_pipeline,
+            native_transition_pipeline,
+            dense_transition_pipeline,
             reduction_pipeline,
             message_limits,
+            native_transition_limits,
+            dense_transition_limits,
             reduction_limits,
             buffers: Buffers {
                 inc: buffer_from_slice(&self.device, &inc),
@@ -255,6 +319,8 @@ impl SolinasMetal {
                 lt_lo: buffer_from_slice(&self.device, &lt_lo),
                 lt_hi: buffer_from_slice(&self.device, &lt_hi),
                 eq_hi: buffer_from_slice(&self.device, &eq_hi),
+                dense_a,
+                dense_b,
                 partial_a,
                 partial_b,
             },
@@ -296,29 +362,15 @@ impl RegistersValFirstMessageInvocation {
                 got: bound_lt_lo.len(),
             });
         }
-        let bound_lt_lo = bound_lt_lo
-            .iter()
-            .map(Fp128::from_jolt_field)
-            .collect::<Vec<_>>();
-        self.context
-            .validate_inputs("registers val bound lt lo", &bound_lt_lo)?;
-
-        let transition_pipeline = self
-            .context
-            .compile_named_pipeline(NATIVE_TRANSITION_PIPELINE)?;
-        let transition_limits = SolinasMetal::limits(&transition_pipeline);
-        if transition_limits.thread_execution_width != SIMD_WIDTH {
-            return Err(MetalError::UnsupportedRegistersValExecutionWidth {
-                pipeline: NATIVE_TRANSITION_PIPELINE,
-                expected: SIMD_WIDTH,
-                got: transition_limits.thread_execution_width,
-            });
-        }
         let threads_per_threadgroup = SolinasMetal::resolve_threadgroup_width(
             config.threads_per_threadgroup,
-            transition_limits,
+            self.native_transition_limits,
         )?;
-        let dense = self.context.new_registers_val_buffer(self.cycles)?;
+        write_registers_val_fields(
+            &self.buffers.lt_lo,
+            self.params.lt_lo_length as usize,
+            bound_lt_lo,
+        )?;
         let params = MessageParams {
             cycles: u32::try_from(self.cycles / 2)
                 .map_err(|_| MetalError::InputTooLong(self.cycles / 2))?,
@@ -327,37 +379,42 @@ impl RegistersValFirstMessageInvocation {
                 .map_err(|_| MetalError::InputTooLong(bound_lt_lo.len()))?,
             _reserved: 0,
         };
-        let bound_lt_lo = buffer_from_slice(&self.context.device, &bound_lt_lo);
         let Buffers {
             inc,
             rd,
             eq_address,
-            lt_lo: _,
+            lt_lo,
             lt_hi,
             eq_hi,
+            dense_a,
+            dense_b,
             partial_a,
             partial_b,
         } = self.buffers;
         Ok(RegistersValFirstTransitionInvocation {
             context: self.context,
-            transition_pipeline,
+            transition_pipeline: self.native_transition_pipeline,
+            dense_transition_pipeline: self.dense_transition_pipeline,
             reduction_pipeline: self.reduction_pipeline,
-            transition_limits,
+            transition_limits: self.native_transition_limits,
+            dense_transition_limits: self.dense_transition_limits,
             reduction_limits: self.reduction_limits,
             buffers: TransitionBuffers {
                 inc,
                 rd,
                 eq_address,
-                lt_lo: bound_lt_lo,
+                lt_lo,
                 lt_hi,
                 eq_hi,
-                dense,
+                dense_a,
+                dense_b,
                 partial_a,
                 partial_b,
             },
             params,
             reduction_steps: self.reduction_steps,
             cycles: self.cycles,
+            lt_lo_capacity: self.params.lt_lo_length as usize,
             threadgroups: self.threadgroups,
             threads_per_threadgroup,
             final_in_a: self.final_in_a,
@@ -430,29 +487,13 @@ impl RegistersValFirstMessageInvocation {
                 },
             );
 
-            for step in &self.reduction_steps {
-                encoder.set_compute_pipeline_state(&self.reduction_pipeline);
-                let (input, output) = if step.input_a {
-                    (&self.buffers.partial_a, &self.buffers.partial_b)
-                } else {
-                    (&self.buffers.partial_b, &self.buffers.partial_a)
-                };
-                encoder.set_buffer(0, Some(input), 0);
-                encoder.set_buffer(1, Some(output), 0);
-                encoder.set_buffer(2, Some(&step.params), 0);
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: step.output_count as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: SIMD_WIDTH as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-            }
+            encode_reductions(
+                encoder,
+                &self.reduction_pipeline,
+                &self.reduction_steps,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+            );
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
@@ -489,6 +530,58 @@ impl RegistersValFirstMessageInvocation {
 }
 
 impl RegistersValFirstTransitionInvocation {
+    pub fn into_sequence(
+        self,
+        config: RegistersValDenseConfig,
+    ) -> Result<RegistersValSequence, MetalError> {
+        if !self.completed.get() {
+            return Err(MetalError::NotExecuted);
+        }
+        let threads_per_threadgroup = SolinasMetal::resolve_threadgroup_width(
+            config.threads_per_threadgroup,
+            self.dense_transition_limits,
+        )?;
+        let current_elements = self.current_elements();
+        let TransitionBuffers {
+            inc: _,
+            rd: _,
+            eq_address: _,
+            lt_lo,
+            lt_hi,
+            eq_hi,
+            dense_a,
+            dense_b,
+            partial_a,
+            partial_b,
+        } = self.buffers;
+        let current_lt_lo_length = self.params.lt_lo_length as usize;
+        Ok(RegistersValSequence {
+            context: self.context,
+            transition_pipeline: self.dense_transition_pipeline,
+            reduction_pipeline: self.reduction_pipeline,
+            transition_limits: self.dense_transition_limits,
+            reduction_limits: self.reduction_limits,
+            buffers: SequenceBuffers {
+                lt_lo,
+                lt_hi,
+                eq_hi,
+                dense_a,
+                dense_b,
+                partial_a,
+                partial_b,
+            },
+            reduction_steps: self.reduction_steps,
+            current_elements,
+            current_lt_lo_length,
+            lt_lo_capacity: self.lt_lo_capacity,
+            threadgroups: self.threadgroups,
+            threads_per_threadgroup,
+            source_in_a: true,
+            final_in_a: self.final_in_a,
+            gpu_active_time: Duration::ZERO,
+        })
+    }
+
     pub const fn name(&self) -> &'static str {
         NATIVE_TRANSITION_PIPELINE
     }
@@ -540,7 +633,7 @@ impl RegistersValFirstTransitionInvocation {
             encoder.set_buffer(3, Some(&self.buffers.lt_lo), 0);
             encoder.set_buffer(4, Some(&self.buffers.lt_hi), 0);
             encoder.set_buffer(5, Some(&self.buffers.eq_hi), 0);
-            encoder.set_buffer(6, Some(&self.buffers.dense), 0);
+            encoder.set_buffer(6, Some(&self.buffers.dense_a), 0);
             encoder.set_buffer(7, Some(&self.buffers.partial_a), 0);
             set_inline_bytes(encoder, 8, &challenge);
             set_inline_bytes(encoder, 9, &self.params);
@@ -559,29 +652,13 @@ impl RegistersValFirstTransitionInvocation {
                 },
             );
 
-            for step in &self.reduction_steps {
-                encoder.set_compute_pipeline_state(&self.reduction_pipeline);
-                let (input, output) = if step.input_a {
-                    (&self.buffers.partial_a, &self.buffers.partial_b)
-                } else {
-                    (&self.buffers.partial_b, &self.buffers.partial_a)
-                };
-                encoder.set_buffer(0, Some(input), 0);
-                encoder.set_buffer(1, Some(output), 0);
-                encoder.set_buffer(2, Some(&step.params), 0);
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: step.output_count as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: SIMD_WIDTH as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-            }
+            encode_reductions(
+                encoder,
+                &self.reduction_pipeline,
+                &self.reduction_steps,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+            );
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
@@ -624,7 +701,7 @@ impl RegistersValFirstTransitionInvocation {
         // SAFETY: the transition writes two fields for every current element.
         let values = unsafe {
             slice::from_raw_parts(
-                self.buffers.dense.contents().cast::<Fp128>(),
+                self.buffers.dense_a.contents().cast::<Fp128>(),
                 2 * self.current_elements(),
             )
         };
@@ -635,6 +712,267 @@ impl RegistersValFirstTransitionInvocation {
             .map(|row| [row[0].into_jolt_field(), row[1].into_jolt_field()])
             .collect())
     }
+}
+
+impl RegistersValSequence {
+    /// Binds the current dense `inc` and write-address tables, then evaluates
+    /// the next round message against the host-bound LT-low table.
+    pub fn bind_and_message(
+        &mut self,
+        challenge: AkitaField,
+        bound_lt_lo: &[AkitaField],
+    ) -> Result<[AkitaField; SAMPLES], MetalError> {
+        self.bind_and_message_timed(challenge, bound_lt_lo)
+            .map(|(message, _)| message)
+    }
+
+    pub fn bind_and_message_timed(
+        &mut self,
+        challenge: AkitaField,
+        bound_lt_lo: &[AkitaField],
+    ) -> Result<([AkitaField; SAMPLES], Duration), MetalError> {
+        let (message, active_time, next_elements, next_lt_lo_length) =
+            self.execute_current_bind_and_message(challenge, bound_lt_lo)?;
+        self.current_elements = next_elements;
+        self.current_lt_lo_length = next_lt_lo_length;
+        self.source_in_a = !self.source_in_a;
+        self.gpu_active_time += active_time;
+        Ok((message, active_time))
+    }
+
+    /// Replays the current dense transition without advancing the resident
+    /// sequence. This is intended for stable kernel microbenchmarks.
+    #[doc(hidden)]
+    pub fn replay_current_bind_and_message_timed(
+        &self,
+        challenge: AkitaField,
+        bound_lt_lo: &[AkitaField],
+    ) -> Result<([AkitaField; SAMPLES], Duration), MetalError> {
+        self.execute_current_bind_and_message(challenge, bound_lt_lo)
+            .map(|(message, active_time, _, _)| (message, active_time))
+    }
+
+    fn execute_current_bind_and_message(
+        &self,
+        challenge: AkitaField,
+        bound_lt_lo: &[AkitaField],
+    ) -> Result<([AkitaField; SAMPLES], Duration, usize, usize), MetalError> {
+        if self.current_lt_lo_length < 4 {
+            return Err(MetalError::RegistersValSplitLtExhausted(
+                self.current_lt_lo_length,
+            ));
+        }
+        let expected_lt_lo_length = self.current_lt_lo_length / 2;
+        if bound_lt_lo.len() != expected_lt_lo_length {
+            return Err(MetalError::RegistersValLtLength {
+                expected: expected_lt_lo_length,
+                got: bound_lt_lo.len(),
+            });
+        }
+        let next_elements = self.current_elements / 2;
+        let covered = self
+            .threadgroups
+            .checked_mul(expected_lt_lo_length)
+            .ok_or(MetalError::InputTooLong(next_elements))?;
+        if covered != next_elements {
+            return Err(MetalError::RegistersValLtLength {
+                expected: next_elements / self.threadgroups,
+                got: expected_lt_lo_length,
+            });
+        }
+        write_registers_val_fields(&self.buffers.lt_lo, self.lt_lo_capacity, bound_lt_lo)?;
+        let challenge = Fp128::from_jolt_field(&challenge);
+        self.context
+            .validate_inputs("registers val dense transition challenge", &[challenge])?;
+        let params = MessageParams {
+            cycles: u32::try_from(next_elements)
+                .map_err(|_| MetalError::InputTooLong(next_elements))?,
+            high_blocks: u32::try_from(self.threadgroups)
+                .map_err(|_| MetalError::InputTooLong(self.threadgroups))?,
+            lt_lo_length: u32::try_from(expected_lt_lo_length)
+                .map_err(|_| MetalError::InputTooLong(expected_lt_lo_length))?,
+            _reserved: 0,
+        };
+
+        let (message, active_time) = autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.transition_pipeline);
+            encoder.set_buffer(0, Some(self.source_buffer()), 0);
+            encoder.set_buffer(1, Some(self.destination_buffer()), 0);
+            encoder.set_buffer(2, Some(&self.buffers.lt_lo), 0);
+            encoder.set_buffer(3, Some(&self.buffers.lt_hi), 0);
+            encoder.set_buffer(4, Some(&self.buffers.eq_hi), 0);
+            encoder.set_buffer(5, Some(&self.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 6, &challenge);
+            set_inline_bytes(encoder, 7, &params);
+            encoder
+                .set_threadgroup_memory_length(0, self.dynamic_threadgroup_memory_bytes() as u64);
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: self.threadgroups as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.threads_per_threadgroup as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+
+            encode_reductions(
+                encoder,
+                &self.reduction_pipeline,
+                &self.reduction_steps,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+            );
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            let status = command_buffer.status();
+            if status != MTLCommandBufferStatus::Completed {
+                return Err(MetalError::CommandFailed(status));
+            }
+            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+                return Err(MetalError::InvalidGpuTimestamps { start, end });
+            }
+            let final_buffer = if self.final_in_a {
+                &self.buffers.partial_a
+            } else {
+                &self.buffers.partial_b
+            };
+            // SAFETY: the dispatch and reductions completed and leave three
+            // fields at the front of the selected shared buffer.
+            let values =
+                unsafe { slice::from_raw_parts(final_buffer.contents().cast::<Fp128>(), SAMPLES) };
+            self.context
+                .validate_inputs("registers val dense message", values)?;
+            let message = std::array::from_fn(|index| values[index].into_jolt_field());
+            Ok((message, Duration::from_secs_f64(end - start)))
+        })?;
+
+        Ok((message, active_time, next_elements, expected_lt_lo_length))
+    }
+
+    pub const fn current_elements(&self) -> usize {
+        self.current_elements
+    }
+
+    pub const fn current_lt_lo_length(&self) -> usize {
+        self.current_lt_lo_length
+    }
+
+    pub const fn threads_per_threadgroup(&self) -> usize {
+        self.threads_per_threadgroup
+    }
+
+    pub const fn pipeline_limits(&self) -> PipelineLimits {
+        self.transition_limits
+    }
+
+    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
+        self.reduction_limits
+    }
+
+    pub const fn round_device_buffer_allocations(&self) -> usize {
+        0
+    }
+
+    pub const fn gpu_active_time(&self) -> Duration {
+        self.gpu_active_time
+    }
+
+    pub const fn dynamic_threadgroup_memory_bytes(&self) -> usize {
+        2 * SAMPLES * (self.threads_per_threadgroup / SIMD_WIDTH) * size_of::<Fp128>()
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn read_current_dense_state(&self) -> Result<Vec<[AkitaField; 2]>, MetalError> {
+        let elements = 2 * self.current_elements;
+        // SAFETY: each dense buffer has capacity for at least `elements`
+        // fields and the preceding command completed before state changes.
+        let values = unsafe {
+            slice::from_raw_parts(self.source_buffer().contents().cast::<Fp128>(), elements)
+        };
+        self.context
+            .validate_inputs("registers val resident dense state", values)?;
+        Ok(values
+            .chunks_exact(2)
+            .map(|row| [row[0].into_jolt_field(), row[1].into_jolt_field()])
+            .collect())
+    }
+
+    fn source_buffer(&self) -> &Buffer {
+        if self.source_in_a {
+            &self.buffers.dense_a
+        } else {
+            &self.buffers.dense_b
+        }
+    }
+
+    fn destination_buffer(&self) -> &Buffer {
+        if self.source_in_a {
+            &self.buffers.dense_b
+        } else {
+            &self.buffers.dense_a
+        }
+    }
+}
+
+fn encode_reductions(
+    encoder: &metal::ComputeCommandEncoderRef,
+    pipeline: &ComputePipelineState,
+    steps: &[ReductionStep],
+    partial_a: &Buffer,
+    partial_b: &Buffer,
+) {
+    for step in steps {
+        encoder.set_compute_pipeline_state(pipeline);
+        let (input, output) = if step.input_a {
+            (partial_a, partial_b)
+        } else {
+            (partial_b, partial_a)
+        };
+        encoder.set_buffer(0, Some(input), 0);
+        encoder.set_buffer(1, Some(output), 0);
+        encoder.set_buffer(2, Some(&step.params), 0);
+        encoder.dispatch_thread_groups(
+            MTLSize {
+                width: step.output_count as u64,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: SIMD_WIDTH as u64,
+                height: 1,
+                depth: 1,
+            },
+        );
+    }
+}
+
+fn write_registers_val_fields(
+    buffer: &Buffer,
+    capacity: usize,
+    values: &[AkitaField],
+) -> Result<(), MetalError> {
+    if values.len() > capacity {
+        return Err(MetalError::RegistersValLtLength {
+            expected: capacity,
+            got: values.len(),
+        });
+    }
+    // SAFETY: the shared buffer holds `capacity` fields and no command buffer
+    // is active while the host updates the LT-low prefix.
+    let output = unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), capacity) };
+    for (output, value) in output.iter_mut().zip(values) {
+        *output = Fp128::from_jolt_field(value);
+    }
+    Ok(())
 }
 
 fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {

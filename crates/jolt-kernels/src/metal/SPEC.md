@@ -283,6 +283,49 @@ buffers are allocated before timing, and its products accumulate through
 `AkitaAccumulator`. Correctness compares every round message, transcript challenge,
 final table, final claim, and transcript state exactly.
 
+### Registers-value split-LT sequence
+
+The registers-value member starts from raw `inc` fields and one-byte `rd` indices.
+The first transition binds both columns into a 32-byte `{inc, wa}` row and computes
+the following message without rereading the new row. Later split-LT rounds ping-pong
+that dense state between arenas sized for `T/2` and `T/4` rows. All pipelines, both
+arenas, the LT prefix buffer, and reduction scratch are allocated before the first
+message; a round performs no device allocation. Fiat--Shamir and the small LT bind
+remain on the host.
+
+For a dense transition whose source has `N` rows and whose high split has `H` entries,
+the shader binds two fields per output row and evaluates the relation at `0, 2, 3`.
+Its dominant optimistic counts are
+
+```text
+useful field multiplications = 2.5N + 6H
+resident traffic             = 32N bytes read + 16N bytes written
+```
+
+At `T = 2^26`, `H = 8192`. The nine dense transitions from source length `2^25`
+through `2^17` therefore perform 167,886,848 useful multiplications and move just
+under 3 GiB of row data. The measured 18.1-Gproduct/s distributed arithmetic rate
+gives a 9.28-ms compute floor; the 420.68-GiB/s copy roof gives a 7.12-ms traffic
+floor. The retained 80%-of-roof target is at most 11.6 ms GPU-active for the ladder,
+with 5.80 ms allotted to its first transition.
+
+On the M4 Max, 64 threads is retained for dense transitions: the first transition
+measured 4.23--4.64 ms active, while 128 threads took 7.38 ms. A nine-round direct
+run measured 11.95 ms active, and the sum of Criterion medians was 12.64 ms. The
+first-round and aggregate results respectively clear and narrowly miss the 80% roof
+targets. Host-visible timings were substantially noisier (roughly 20--29 ms for a
+warm ladder, with larger cold outliers), so the production cutoff must be selected by
+paired complete-member measurements rather than GPU-active time. The complete member
+has a 67.408-ms wall budget against the frozen 337.04-ms optimized CPU result; its
+first message, native transition, dense ladder, readback, and CPU tail all count
+toward that budget.
+
+The split representation is valid only while the LT-low table has at least four
+entries before a bind. At length two, the backend must hand the resident dense state
+to the CPU tail instead of treating the high split as fixed. Parity tests chain both
+arena directions and compare every row plus every message lane for odd and even trace
+logs and challenges `0`, `1`, and `p - 1`.
+
 ## Correctness and measurement procedure
 
 Correctness runs before every timed probe. Vectors cover zero, one, `p - 1`, carry and

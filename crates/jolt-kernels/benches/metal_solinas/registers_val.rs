@@ -1,9 +1,14 @@
-use std::{env, hint::black_box, time::Duration};
+use std::{
+    env,
+    hint::black_box,
+    time::{Duration, Instant},
+};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_field::{AdditiveAccumulator, AkitaAccumulator, AkitaField, RingAccumulator};
 use jolt_kernels::metal::solinas::{
-    RegistersValFirstMessageConfig, RegistersValTransitionConfig, SolinasMetal,
+    RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValTransitionConfig,
+    SolinasMetal,
 };
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use rayon::prelude::*;
@@ -55,6 +60,12 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
             value
                 .parse()
                 .expect("JOLT_METAL_REGISTERS_VAL_THREADS should be a positive integer")
+        });
+    let dense_threads_per_threadgroup =
+        env::var("JOLT_METAL_REGISTERS_VAL_DENSE_THREADS").map_or(64, |value| {
+            value
+                .parse()
+                .expect("JOLT_METAL_REGISTERS_VAL_DENSE_THREADS should be a positive integer")
         });
     let cpu_threads = std::thread::available_parallelism().map_or(1, |count| count.get());
     let mut group = c.benchmark_group("metal_sumcheck/registers_val_first_message");
@@ -242,6 +253,78 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
                     active
                 });
             },
+        );
+
+        let cutoff = env::var("JOLT_METAL_REGISTERS_VAL_CUTOFF").map_or(1 << 16, |value| {
+            value
+                .parse()
+                .expect("JOLT_METAL_REGISTERS_VAL_CUTOFF should be a positive integer")
+        });
+        let mut sequence = transition
+            .into_sequence(RegistersValDenseConfig {
+                threads_per_threadgroup: Some(dense_threads_per_threadgroup),
+            })
+            .expect("registers value dense sequence should prepare");
+        let mut current_lt = bound_lt;
+        let mut dense_round = 0_u64;
+        let mut dense_ladder_wall = Duration::ZERO;
+        while sequence.current_elements() > cutoff && current_lt.lo.len() >= 4 {
+            let dense_challenge =
+                AkitaField::from_u64(0x9e37_79b9_7f4a_7c15_u64.wrapping_mul(dense_round + 1));
+            let host_start = Instant::now();
+            let next_lt = current_lt.bind_lo(dense_challenge);
+            dense_ladder_wall += host_start.elapsed();
+            let current_elements = sequence.current_elements();
+            let _ = group.throughput(Throughput::Elements(current_elements as u64));
+            let dense_suffix = format!(
+                "r{dense_round}_n{current_elements}_tg{}_cpu{cpu_threads}",
+                sequence.threads_per_threadgroup()
+            );
+            let replay = sequence
+                .replay_current_bind_and_message_timed(dense_challenge, &next_lt.lo)
+                .expect("registers value dense transition should replay")
+                .0;
+            let _ = group.bench_function(
+                BenchmarkId::new("metal_wall_resident_dense_transition", &dense_suffix),
+                |bench| {
+                    bench.iter(|| {
+                        black_box(
+                            sequence
+                                .replay_current_bind_and_message_timed(dense_challenge, &next_lt.lo)
+                                .expect("registers value dense transition should replay")
+                                .0,
+                        )
+                    });
+                },
+            );
+            let _ = group.bench_function(
+                BenchmarkId::new("metal_active_resident_dense_transition", &dense_suffix),
+                |bench| {
+                    bench.iter_custom(|iterations| {
+                        let mut active = Duration::ZERO;
+                        for _ in 0..iterations {
+                            active += sequence
+                                .replay_current_bind_and_message_timed(dense_challenge, &next_lt.lo)
+                                .expect("timed registers value dense transition should replay")
+                                .1;
+                        }
+                        active
+                    });
+                },
+            );
+            let round_start = Instant::now();
+            let advanced = sequence
+                .bind_and_message(dense_challenge, &next_lt.lo)
+                .expect("registers value dense transition should advance");
+            dense_ladder_wall += round_start.elapsed();
+            assert_eq!(advanced, replay);
+            current_lt = next_lt;
+            dense_round += 1;
+        }
+        eprintln!(
+            "registers-val dense ladder n={elements} cutoff={} rounds={dense_round} active={:?} wall={dense_ladder_wall:?}",
+            sequence.current_elements(),
+            sequence.gpu_active_time(),
         );
     }
     group.finish();
