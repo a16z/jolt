@@ -1,12 +1,14 @@
 {
   "schema": "metal_kernel_screen_v1",
-  "recorded_at": "2026-08-06T23:41:46Z",
-  "status": "primitive_active_bar_pass_member_integration_pending",
+  "recorded_at": "2026-08-06T23:42:19Z",
+  "status": "rejected_dense_representation",
   "artifact": {
     "git_revision": "165450bea753a8233e8ff394688f433771c514bb",
     "binary": "target/release/deps/metal_solinas-9c8279d8148405e7",
     "binary_sha256": "f5315ccbe34468d54eaae74f07a8693e13df8e1483735b248777bc4c7d47ea9e",
-    "criterion_root": "target/criterion/metal_sumcheck_registers_read_write_dense_round"
+    "criterion_root": "target/criterion/metal_sumcheck_registers_read_write_dense_round",
+    "wall_estimates_sha256": "3a679408c87e1e9b01d45bac66b21d3a274e3ee795e2c4d34c46b5ee7a99c6df",
+    "active_estimates_sha256": "aa4944e75d02ad17447c2b04f9fed32cd5e5ed5435d4cf6bf88b3ca6b8c92cc3"
   },
   "contract": {
     "device": "Apple M4 Max",
@@ -16,9 +18,11 @@
     "columns": 128,
     "round": 9,
     "threadgroup_width": 128,
-    "global_evaluator_lock": "/private/tmp/jolt-metal-autoresearch-evaluator.lock",
-    "warmup_ms": 100,
-    "measurement_ms": 300,
+    "source_state_resident_before_timing": true,
+    "allocations_reused_between_samples": true,
+    "timed_work": "one fused bind/message command and its two-column reductions",
+    "warmup_ms": 200,
+    "measurement_ms": 1000,
     "samples": 10
   },
   "storage": {
@@ -27,9 +31,9 @@
     "source_and_destination_distinct": true,
     "dynamic_threadgroup_bytes": 288
   },
-  "observed": {
-    "setup_wall_ms": 82.991,
-    "cold_gpu_active_ms": 13.308,
+  "metal_observed": {
+    "setup_wall_ms": 86.405,
+    "cold_gpu_active_ms": 13.304,
     "warm_wall_mean_ms": 5.853885222539683,
     "warm_wall_median_ms": 5.862458607142857,
     "warm_wall_slope_ms": 5.863607794805195,
@@ -37,19 +41,43 @@
     "warm_gpu_active_median_ms": 5.616250041666666,
     "warm_gpu_active_slope_ms": 5.6185429688311685
   },
-  "gate": {
-    "pre_registered_active_80_percent_cap_ms": 6.704877,
-    "active_slope_pass": true,
-    "active_headroom_fraction": 0.1620319575
+  "roofline": {
+    "traffic_floor_ms": 5.363901,
+    "active_80_percent_cap_ms": 6.704877,
+    "active_cap_pass": true,
+    "active_over_traffic_floor": 1.0470458052202427,
+    "traffic_roof_fraction": 0.9550680543432893
+  },
+  "optimized_cpu_control": {
+    "source_artifact": "benchmark-runs/metal-piop-eval/20260806-133709-697013",
+    "source_git_revision": "5f520c21e338632aa0bf5936ceb02be6c22fa40f",
+    "optimized_kernel_unchanged_through_candidate_revision": true,
+    "round": 9,
+    "round_wall_ms_samples": [
+      3.0374160000011325,
+      4.050375,
+      3.9675,
+      4.8011669999957085,
+      3.697332999996841
+    ],
+    "round_wall_ms_median": 3.9675,
+    "five_x_cap_ms": 0.7935
+  },
+  "comparison": {
+    "cpu_over_metal_wall": 0.6767638402028071,
+    "cpu_over_metal_active": 0.7064322226690986,
+    "metal_wall_over_five_x_cap": 7.388101584301017,
+    "metal_wall_miss_ms": 5.068958607142857
   },
   "correctness": {
-    "scalar_oracle_test": "passed",
+    "independent_unfactored_scalar_oracle_test": "passed",
     "log26_storage_test": "passed",
     "metal_clippy": "passed"
   },
   "decision": {
-    "primitive": "retain",
-    "production_registration": "blocked",
-    "reason": "The warm resident round clears its active-time bar, but setup and cold service do not. Promotion requires a proof-scoped resident handoff, a multi-round ping-pong sequence, exact full-member parity, and a complete RegistersReadWriteChecking time below its five-pair 5x cap."
+    "primitive": "retain_as_negative_control_only",
+    "production_registration": "rejected",
+    "next_architecture": "sparse resident topology",
+    "reason": "The shader is within 4.7% of its traffic floor, yet the optimized CPU sparse round is faster. Tuning cannot recover the 7.39x gap to the per-round five-times cap; the state representation must change."
   }
 }
