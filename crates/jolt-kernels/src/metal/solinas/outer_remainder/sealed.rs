@@ -115,7 +115,7 @@ impl SealedOuterArtifact {
     }
 
     pub fn compile_akita(&self) -> Result<SolinasMetal, MetalError> {
-        SolinasMetal::for_akita_with_outer_artifact(&self.kernel)
+        SolinasMetal::for_akita_outer_only_with_artifact(&self.kernel)
     }
 
     pub fn sequence_config(&self) -> OuterRemainderSequenceConfig {

@@ -57,17 +57,42 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
 ];
 
+#[cfg(any(test, feature = "test-utils"))]
+const OUTER_LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
+    SourceFragment::new("fp128", FIELD_SOURCE),
+    SourceFragment::new("simd_reduce", SIMD_REDUCE_SOURCE),
+    SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
+    SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
+];
+
 pub(super) fn library_source(offset: u32) -> String {
-    assemble_library_source(offset, None)
+    assemble_library_source(offset, LIBRARY_SOURCE_FRAGMENTS, None)
 }
 
 #[cfg(any(test, feature = "test-utils"))]
 pub(super) fn library_source_with_outer(offset: u32, outer_source: &str) -> String {
-    assemble_library_source(offset, Some(("outer_remainder", outer_source)))
+    assemble_library_source(
+        offset,
+        LIBRARY_SOURCE_FRAGMENTS,
+        Some(("outer_remainder", outer_source)),
+    )
 }
 
-fn assemble_library_source(offset: u32, replacement: Option<(&str, &str)>) -> String {
-    let fragments = LIBRARY_SOURCE_FRAGMENTS
+#[cfg(any(test, feature = "test-utils"))]
+pub(super) fn outer_library_source_with_outer(offset: u32, outer_source: &str) -> String {
+    assemble_library_source(
+        offset,
+        OUTER_LIBRARY_SOURCE_FRAGMENTS,
+        Some(("outer_remainder", outer_source)),
+    )
+}
+
+fn assemble_library_source(
+    offset: u32,
+    source_fragments: &[SourceFragment],
+    replacement: Option<(&str, &str)>,
+) -> String {
+    let fragments = source_fragments
         .iter()
         .map(|fragment| match replacement {
             Some((id, source)) if fragment.id == id => source,
@@ -87,6 +112,12 @@ mod tests {
         )
     }
 
+    fn expected_outer_library_source(offset: u32, outer_source: &str) -> String {
+        format!(
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{outer_source}"
+        )
+    }
+
     #[test]
     fn source_assembly_puts_the_runtime_fragment_last() {
         for offset in [275, 0xffff_a7f7] {
@@ -98,14 +129,22 @@ mod tests {
     }
 
     #[test]
-    fn source_assembly_replaces_only_the_outer_fragment() {
+    fn outer_source_assembly_closes_the_minimal_dependency_set() {
+        let replacement = "kernel void replacement_outer() {}";
+        let source = outer_library_source_with_outer(275, replacement);
+
+        assert_eq!(source, expected_outer_library_source(275, replacement));
+        assert!(!source.contains(OUTER_REMAINDER_SOURCE));
+        assert!(!source.contains(INSTRUCTION_INPUT_SOURCE));
+    }
+
+    #[test]
+    fn full_source_assembly_replaces_only_the_outer_fragment() {
         let replacement = "kernel void replacement_outer() {}";
         let source = library_source_with_outer(275, replacement);
 
         assert!(source.contains(replacement));
         assert!(!source.contains(OUTER_REMAINDER_SOURCE));
-        assert!(source.contains(FIELD_SOURCE));
-        assert!(source.contains(SPARTAN_OUTER_COMMON_SOURCE));
         assert!(source.contains(INSTRUCTION_INPUT_SOURCE));
         assert!(source.ends_with(replacement));
     }

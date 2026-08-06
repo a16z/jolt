@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 
 #[cfg(feature = "test-utils")]
-use super::source::library_source_with_outer;
+use super::source::{library_source_with_outer, outer_library_source_with_outer};
 #[cfg(feature = "test-utils")]
 use super::OuterKernelArtifact;
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
@@ -85,6 +85,15 @@ impl SolinasMetal {
     ) -> Result<Self, MetalError> {
         let assembly_started = Instant::now();
         let source = library_source_with_outer(AKITA_OFFSET_FFFFA7F7, artifact.source());
+        Self::new_with_source(AKITA_OFFSET_FFFFA7F7, source, assembly_started.elapsed())
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub(crate) fn for_akita_outer_only_with_artifact(
+        artifact: &OuterKernelArtifact,
+    ) -> Result<Self, MetalError> {
+        let assembly_started = Instant::now();
+        let source = outer_library_source_with_outer(AKITA_OFFSET_FFFFA7F7, artifact.source());
         Self::new_with_source(AKITA_OFFSET_FFFFA7F7, source, assembly_started.elapsed())
     }
 
