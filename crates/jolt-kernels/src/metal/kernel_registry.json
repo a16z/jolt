@@ -598,7 +598,10 @@
         "evaluators": ["outer_remainder_local", "piop_production"],
         "templates": ["outer_remainder_search", "outer_remainder_search_v2"],
         "documents": ["outer_remainder_design", "sumchecks_design"],
-        "evidence": ["outer_remainder_local_evidence"]
+        "evidence": [
+          "outer_remainder_local_evidence",
+          "outer_remainder_iteration_preflight"
+        ]
       }
     },
     {
@@ -1145,6 +1148,11 @@
       {
         "id": "outer_remainder_local_evidence",
         "path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_ddcbc0443_local_search.json",
+        "covers_slots": ["spartan_outer_remainder"]
+      },
+      {
+        "id": "outer_remainder_iteration_preflight",
+        "path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.json",
         "covers_slots": ["spartan_outer_remainder"]
       }
     ]

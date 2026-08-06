@@ -48,15 +48,22 @@ Each search uses ordered tiers:
 
 The OuterRemainder successor uses an exact log-25 proxy with one excluded warmup
 and four alternating pairs. Log 25 is the smallest cheaper scale that retains
-the log-26 cap of 8,192 threadgroups; log 24 changes the launch geometry. Its 1%
-screen is deliberately more permissive than the representative noise gate, and
-every passing candidate immediately runs the unchanged five-pair log-26 tier.
-It cannot accept a candidate or satisfy the 5x floor. A scale-dependent layout,
-cutoff, or occupancy change invalidates the proxy and requires a successor
-contract. A failed transfer resumes from the accepted holdout; it does not rerun
-representative or holdout evidence. Continuing the portfolio opens a linked
-successor run with a freshly sealed holdout; a terminal run is never reopened
-for tuning.
+the log-26 cap of 8,192 threadgroups; log 24 changes the launch geometry. Three
+fixed sentinels calibrate its ordering against the unchanged five-pair log-26
+tier. Kendall tau-b must be at least 0.8 with no material inversion. Every second
+proxy rejection is audited at log 26; a material false negative disables proxy
+ranking for the phase. The proxy cannot accept a candidate or satisfy the 5x
+floor.
+
+A direct representative lane is available for a high-confidence mechanism or a
+disabled proxy. The caller supplies both the flag and a reason. If the one-shot
+phase checkpoint is pending, the direct lane first runs log 25 only as the
+checkpoint probe and ignores its ranking; after the checkpoint passes it goes
+straight to log 26. A scale-dependent layout, cutoff, or occupancy change
+invalidates the proxy. A failed transfer resumes from the accepted holdout; it
+does not rerun representative or holdout evidence. Continuing the portfolio
+opens a linked successor run with a freshly sealed holdout; a terminal run is
+never reopened for tuning.
 
 ## Time and resource accounting
 
@@ -109,27 +116,45 @@ Before freezing a fresh mechanism phase, profile one cold and one warm exact
 controller cycle. Separate source assembly, compilation, fixture/device setup,
 queueing, evaluation, parsing, and checkpointing; freeze a valid-candidates-per-hour
 target. Compile a reduced evaluator only from its sealed transitive dependency
-closure and only after cold-path exact equivalence with the full path. Each phase's
-existing wall and candidate budgets are its timebox; its contract also names an
-analytical ceiling, progress checkpoint, and kill or redesign action. Missing that
-checkpoint ends the phase rather than spending its remaining budget by default.
+closure and only after its exact result contract has been validated.
+
+The current OuterRemainder profile records 2.135 seconds cold and 1.945 seconds
+warm for an exact log-25 controller cycle. Controller overhead is below 0.04%,
+and the cold cycle implies 1,686 cycles/hour; the contract freezes a conservative
+1,200-cycle/hour floor. This is controller capacity for the proxy evaluator, not
+candidate-development throughput or the cadence of log-26, holdout, and transfer
+runs. Each phase's wall and candidate budgets are its timebox; its contract also
+names an analytical ceiling, progress checkpoint, and kill or redesign action.
+Missing that checkpoint seals `phase_exhausted` rather than spending the remaining
+phase budget by default.
 
 ## Durable records
 
-A schema-2 run contains an atomically replaced, self-digested `run.json`,
-append-only baseline, candidate, tier, decision, and kernel-validation ledgers,
-per-evaluation raw output and attempt telemetry, and snapshots of accepted
-editable paths. `inflight.json` makes an interrupted evaluation recoverable. If
-an attempt did not seal telemetry, recovery first drains its tracked process
-group, then conservatively charges the observed in-flight interval before
-restoring the accepted parent.
+A schema-2 run contains an immutable, self-digested `run.json` contract and an
+atomically replaced, self-digested `state.json`. Baseline, candidate, tier,
+decision, proxy, and kernel-validation ledgers are append-only. Per-evaluation raw
+output and attempt telemetry bind their digests, and accepted editable paths are
+snapshotted. Initialization publishes the complete run directory by atomic rename;
+a failed initialization removes only its private staging directory.
+
+`inflight.json` is written before candidate admission and before every evaluator
+launch. It makes admission, evaluation, and promotion recoverable. If an attempt
+did not seal telemetry, recovery first drains its tracked process group, then
+conservatively charges the observed in-flight interval before restoring the
+accepted parent. A passed or failed phase checkpoint is stored once in
+`state.json`, bound to its candidate, evaluation, and result digest, and verified
+rather than rerun after interruption.
 
 Initialization moves from `initializing` to `active`; interrupted or failed
-baseline evaluation becomes `initialization_retryable`, and `resume-init`
-reuses accepted tiers while assigning a fresh ID to each missing retry. Kernel
-validation then moves from `active` through `holdout_retryable` after a sealed
-revalidation is recovered or when an invalid holdout may repeat,
-`kernel_accepted`, and `kernel_transferred`. A valid failed holdout ends at
+baseline evaluation becomes `initialization_retryable`, and `resume-init` reuses
+accepted tiers while assigning a fresh ID to each missing retry. Proxy state moves
+from `pending_calibration` to `enabled` or `disabled`, with one terminal event in
+`proxy-events.jsonl`. A missed mechanism checkpoint moves the run to
+`phase_exhausted`.
+
+Kernel validation moves from `active` through `holdout_retryable` after a sealed
+revalidation is recovered or when an invalid holdout may repeat, then to
+`kernel_accepted` and `kernel_transferred`. A valid failed holdout ends at
 `holdout_rejected`. Trial admission is legal only in `active`. Successful stages
 are reused after interruption; attempt identifiers are never reused.
 
@@ -146,8 +171,10 @@ The canonical controller dispatches by contract version:
 python3 scripts/metal_autoresearch.py init TEMPLATE RUN_DIR
 python3 scripts/metal_autoresearch.py validate-template TEMPLATE
 python3 scripts/metal_autoresearch.py resume-init RUN_DIR
+python3 scripts/metal_autoresearch.py calibrate-proxy RUN_DIR
 python3 scripts/metal_autoresearch.py candidate-context RUN_DIR
 python3 scripts/metal_autoresearch.py trial RUN_DIR --summary TEXT --param NAME=VALUE
+python3 scripts/metal_autoresearch.py trial RUN_DIR --summary TEXT --direct-to-representative --direct-reason REASON
 python3 scripts/metal_autoresearch.py status RUN_DIR
 python3 scripts/metal_autoresearch.py recover RUN_DIR
 python3 scripts/metal_autoresearch.py validate-production RUN_DIR

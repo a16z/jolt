@@ -26,6 +26,19 @@ The protocol and transcript stay unchanged. The device computes only determinist
 field arithmetic. The host still constructs every degree-three round polynomial,
 absorbs it, samples the challenge, and checks the running claim.
 
+The implementation boundary is intentionally narrow:
+
+- `spartan_outer.rs` is the backend adapter and protocol owner;
+- `solinas/outer_remainder/` owns reusable planning, storage, artifact, dispatch,
+  sealing, and shader modules;
+- `solinas/outer_remainder/shader.metal` is the only editable candidate source in
+  the current phase;
+- `metal-outer-remainder-successor-eval.rs` is the reduced exact proxy evaluator;
+- `metal-outer-remainder-eval.rs` is the production-fixture representative
+  evaluator;
+- `outer_remainder.v2.template.json`, `HARNESS.md`, and the evidence bundle own the
+  experiment contract rather than kernel code.
+
 At `T = 2^26`, the relation has `2T = 2^27` `(cycle, stream)` cells and 27 rounds.
 The optimized member currently has three material components:
 
@@ -246,14 +259,22 @@ scratch-preparation wall and a conservative `member + scratch preparation` cold
 diagnostic; neither replaces the resident PIOP metric.
 
 One excluded warmup precedes five alternating CPU/Metal pairs with Rayon fixed at
-16 threads. A candidate first passes an exact four-pair log-25 screen. That scale
-retains the same 8,192-threadgroup cap, fixed cutoffs, shader, proof oracle, and
-lifecycle checks while halving the domain; log 24 does not retain the launch
-geometry. Its 1% relative gate is only a permissive filter. A pass always reaches
-the unchanged log-26 evaluator, and the screen cannot accept a candidate or
-satisfy the 5x floor. The estimated first-candidate cost is about 398 seconds
-instead of the fresh log-26 baseline's 728 seconds; actual controller accounting
-supersedes that estimate.
+16 threads. The ranking proxy uses four exact log-25 pairs. That scale retains the
+same 8,192-threadgroup cap, fixed cutoffs, shader, proof oracle, and lifecycle
+checks while halving the domain; log 24 does not retain the launch geometry. Three
+fixed sentinels calibrate proxy ordering against log 26, and every second proxy
+rejection is audited. A material inversion or false negative disables proxy
+ranking. The screen cannot accept a candidate or satisfy the 5x floor.
+
+The frozen iteration preflight records one cold and one warm exact proxy cycle for
+an inert shader nonce. They took 2.135 and 1.945 seconds end to end, including
+source assembly, library and pipeline compilation, fixture/device setup,
+evaluation, result validation, and checkpoint computation. Controller overhead
+was below 0.04%; the cold cycle implies 1,686 proxy cycles/hour, and the contract
+uses a 1,200-cycle/hour floor. These figures measure evaluator capacity, not the
+time to design a candidate or run the representative and production tiers. The
+summary and raw outputs live under
+`autoresearch/evidence/outer_remainder_iteration_preflight*`.
 
 A candidate can become a search parent only by improving beyond the fixed log-26
 noise threshold. Production promotion additionally requires at least 5x in both
@@ -274,23 +295,27 @@ search parent until fresh revalidation, holdout, and transfer all pass.
 
 ## Fresh v2 experiment order
 
-The first candidate retains both `A` and `B` stream state: materialization writes
-`A` into the otherwise unused second ping-pong allocation, and the stream bind
-reads and overwrites it in place. This adds no allocation and removes the second
-full `A` fold. It requires both `shader.metal` and `sequence.rs`; the initial
-shader-only v2 scope was therefore superseded after its baseline and must not be
-used for candidate work. Pre-register at most 17.83 ms for first-bind GPU time,
-at most 88 ms for materialization, and about 212--216 ms for the uncontended
-member. Reject it if first bind stays above 20 ms or materialization absorbs the
-gain.
+The active phase is `b_fold_straight_line_v1`. It specializes the 19 dynamic
+`B`-row folds into straight-line, stream-local shader code so common flags and row
+words can remain live once per cycle. It adds no global traffic and changes only
+`shader.metal`. The analytical best case is a 206-ms member, or 4.277x against the
+880.991-ms control, with register pressure and instruction footprint as the main
+failure risks.
 
-If retained `A` loses, materialization emits a packed flag plane. That changes the
-later 48-byte-stride compact-row walk into an 8-byte coalesced read and removes
-roughly 2 GiB of conservative traffic at `2^26`. Next, opening ownership removes
-the unused 3,920-byte shard scratch and tests direct or cached weight access, with
-47.39 ms as the phase target. Only then should materialization transpose or unroll
-the 19 `B` folds to reuse extraction and common subexpressions. Cutoff and launch
-geometry are last because late underfilled rounds offer less headroom.
+The first admitted candidate is also the one-shot exact log-25 checkpoint:
+materialization GPU-active time must be at most 38 ms. A miss immediately seals
+the phase as exhausted. A retained candidate must improve the 222.318-ms parent by
+at least 3% and reach at most 212 ms on the unchanged log-26 representative. The
+phase admits at most two candidates and four search hours. These are phase-progress
+gates; production promotion still requires at least 5x and at most 170.5 ms.
+
+The sole binding plan remains `b_only_v1`. The removed alternative plan and the
+retained-`A` dataflow are not reopened in this phase. If straight-line folding
+misses its checkpoint or exhausts the two-candidate timebox, preserve the negative
+result and start a new phase around opening work ownership. That phase should
+remove unused shard scratch and test direct or cached weight access against the
+47.39-ms opening target. Cutoff and launch geometry remain later work because
+underfilled late rounds offer less headroom.
 
 Before promotion, Instruments or ISA evidence must report threadgroup memory,
 register pressure, spills, active SIMD groups, achieved occupancy, and dispatch
