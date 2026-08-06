@@ -4020,7 +4020,7 @@ class RunnerIntegrationTests(unittest.TestCase):
             screen_result, _ = adapt_result(
                 screen,
                 ResultAdapterTests().uniform_successor_v2_output(
-                    100_000_000, 100_000_000
+                    240_000_000, 240_000_000
                 ),
                 "outer_remainder",
             )
@@ -4768,7 +4768,7 @@ class RunnerIntegrationTests(unittest.TestCase):
             screen_result, _ = adapt_result(
                 screen,
                 ResultAdapterTests().uniform_successor_v2_output(
-                    100_000_000, 100_000_000
+                    240_000_000, 240_000_000
                 ),
                 "outer_remainder",
             )
@@ -4904,13 +4904,13 @@ class DispatchAndGoalTests(unittest.TestCase):
             metric["name"]: metric["observed_ms"]
             for metric in checkpoint["metrics"]
         }
-        self.assertEqual(observed["materialize_gpu_active_ms"], 0.00005)
+        self.assertEqual(observed["openings_gpu_active_ms"], 0.000013)
 
         next(
             metric
             for metric in template["mechanism_phase"]["checkpoint"]["metrics"]
-            if metric["name"] == "materialize_gpu_active_ms"
-        )["threshold"] = 0.000049
+            if metric["name"] == "openings_gpu_active_ms"
+        )["threshold"] = 0.000012
         failed = runner._phase_checkpoint(state, result)
         self.assertFalse(failed["passed"])
 
@@ -4927,7 +4927,7 @@ class DispatchAndGoalTests(unittest.TestCase):
             "primary": {"value": 4.2},
             "replication": {
                 "pairs": [
-                    {"arms": {"treatment": {"primary_ns": 210_000_000}}}
+                    {"arms": {"treatment": {"primary_ns": 209_000_000}}}
                     for _ in range(5)
                 ]
             },
@@ -4936,7 +4936,7 @@ class DispatchAndGoalTests(unittest.TestCase):
         self.assertTrue(passed)
 
         for pair in result["replication"]["pairs"]:
-            pair["arms"]["treatment"]["primary_ns"] = 213_000_000
+            pair["arms"]["treatment"]["primary_ns"] = 211_000_000
         passed, reason = runner._phase_success(state, result, parent)
         self.assertFalse(passed)
         self.assertIn("latency", reason)
@@ -4963,7 +4963,7 @@ class DispatchAndGoalTests(unittest.TestCase):
         with mock.patch.object(
             runner,
             "_phase_calendar_seconds",
-            return_value=14401.0,
+            return_value=10801.0,
         ), self.assertRaisesRegex(runner.BudgetExhausted, "phase calendar"):
             runner._require_search_phase_budget(state)
 

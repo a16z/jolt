@@ -357,22 +357,22 @@
     ]
   },
   "goal": "reach at least 5x exact OuterRemainder complete-member throughput at log 26, then pursue any materially higher measured ceiling",
-  "hypothesis": "resident rows and sequence storage make one internally paired evaluator invocation sufficient; nested controller repeats add cost without independent evidence",
+  "hypothesis": "row-first opening ownership can reuse each staged row's common words and weight across a SIMD group's columns without changing global traffic, ABI, or protocol",
   "iteration_profile": {
-    "evidence_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.json",
-    "evidence_sha256": "1577cafad0c48472af9e7c1d4291d3c4aeacaddf8c6fda114684cc5f61ad0f70",
+    "evidence_path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.json",
+    "evidence_sha256": "8b4205223b31db909605f17f7eed576f1ee35a99a1dd931330f3319676d408fe",
     "maximum_controller_overhead_fraction": 0.01,
     "minimum_valid_proxy_cycles_per_hour": 1200.0,
-    "profile_base_revision": "8df5f87f0181172e2e06dd6c48893267e300617b"
+    "profile_base_revision": "23e9c12dfe89c0532262eb85797326626ce83204"
   },
   "kernel": "outer_remainder",
   "mechanism_phase": {
     "analytical_ceiling": {
-      "basis": "straight-line B-row folds can remove dynamic row switches and repeated common-load extraction without adding global traffic; the remaining risk is register pressure and instruction footprint",
-      "best_case_member_ms": 206.0,
-      "best_case_speedup": 4.276655339806,
-      "control_ms": 880.991,
-      "parent_member_ms": 222.318
+      "basis": "the opening scan is 62.018292 ms GPU-active at log 26; retaining its 47.39 ms useful-arithmetic floor while removing repeated staged-row extraction gives a 201.864292 ms complete-member floor, with register spills as the principal risk",
+      "best_case_member_ms": 201.864292,
+      "best_case_speedup": 4.359702665987,
+      "control_ms": 880.068292,
+      "parent_member_ms": 216.492584
     },
     "checkpoint": {
       "after_candidates": 1,
@@ -380,21 +380,21 @@
       "metrics": [
         {
           "comparison": "lte",
-          "name": "materialize_gpu_active_ms",
-          "threshold": 38.0
+          "name": "openings_gpu_active_ms",
+          "threshold": 28.0
         }
       ]
     },
-    "hypothesis": "specialize the B-row fold into straight-line stream-local code so common flags and row words stay live once per cycle instead of passing through dynamic row dispatch",
-    "id": "b_fold_straight_line_v1",
-    "kill_or_redesign": "end the phase if materialization misses the first exact checkpoint; retain the negative result and move to opening work ownership",
+    "hypothesis": "make each lane own staged rows before iterating its SIMD group's columns so flags, rs2, memory words, derived RAM values, and the row weight are loaded once per group-row rather than once per column-row",
+    "id": "opening_row_owner_v1",
+    "kill_or_redesign": "end the phase if the first exact row-owner candidate misses 28 ms at log 25; if it passes but misses representative promotion, admit only one lower-live-range row-owner variant before moving padded-56 layout work to a separate cross-Rust phase",
     "success": {
-      "maximum_member_ms": 212.0,
+      "maximum_member_ms": 209.998,
       "minimum_relative_improvement": 0.03
     },
     "timebox": {
       "max_candidates_admitted": 2,
-      "max_search_calendar_seconds": 14400
+      "max_search_calendar_seconds": 10800
     }
   },
   "metric": {
@@ -503,9 +503,13 @@
       "crates/jolt-field/src/lib.rs",
       "crates/jolt-kernels/Cargo.toml",
       "crates/jolt-kernels/autoresearch/HARNESS.md",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_b_fold_straight_line_v1_rejected.json",
       "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.cold.raw.json",
       "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.json",
       "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.warm.raw.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.cold.raw.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.json",
+      "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.warm.raw.json",
       "crates/jolt-kernels/autoresearch/outer_remainder.template.json",
       "crates/jolt-kernels/autoresearch/outer_remainder.v2.template.json",
       "crates/jolt-kernels/autoresearch/piop_goal.v2.json",
@@ -565,6 +569,7 @@
       "scripts/metal_research/binaries.py",
       "scripts/metal_research/budget.py",
       "scripts/metal_research/contracts.py",
+      "scripts/metal_research/iteration_profile.py",
       "scripts/metal_research/paired.py",
       "scripts/metal_research/process_wrapper.py",
       "scripts/metal_research/results.py",

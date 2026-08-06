@@ -23,6 +23,14 @@ class MetalKernelRegistryTests(unittest.TestCase):
             "outer_remainder_b_fold_rejection",
             outer["artifacts"]["evidence"],
         )
+        self.assertIn(
+            "outer_remainder_b_fold_iteration_preflight",
+            outer["artifacts"]["evidence"],
+        )
+        self.assertIn(
+            "outer_remainder_opening_iteration_preflight",
+            outer["artifacts"]["evidence"],
+        )
 
     def test_duplicate_module_id_is_rejected(self) -> None:
         registry = metal_kernel_registry.read_registry(REGISTRY)

@@ -600,8 +600,9 @@
         "documents": ["outer_remainder_design", "sumchecks_design"],
         "evidence": [
           "outer_remainder_local_evidence",
-          "outer_remainder_iteration_preflight",
-          "outer_remainder_b_fold_rejection"
+          "outer_remainder_b_fold_iteration_preflight",
+          "outer_remainder_b_fold_rejection",
+          "outer_remainder_opening_iteration_preflight"
         ]
       }
     },
@@ -1152,13 +1153,18 @@
         "covers_slots": ["spartan_outer_remainder"]
       },
       {
-        "id": "outer_remainder_iteration_preflight",
+        "id": "outer_remainder_b_fold_iteration_preflight",
         "path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_iteration_preflight.json",
         "covers_slots": ["spartan_outer_remainder"]
       },
       {
         "id": "outer_remainder_b_fold_rejection",
         "path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_b_fold_straight_line_v1_rejected.json",
+        "covers_slots": ["spartan_outer_remainder"]
+      },
+      {
+        "id": "outer_remainder_opening_iteration_preflight",
+        "path": "crates/jolt-kernels/autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight.json",
         "covers_slots": ["spartan_outer_remainder"]
       }
     ]

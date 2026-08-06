@@ -322,7 +322,7 @@ class VersionedContractTests(unittest.TestCase):
         validate_template(template, ROOT)
 
         phase = template["mechanism_phase"]
-        self.assertEqual(phase["id"], "b_fold_straight_line_v1")
+        self.assertEqual(phase["id"], "opening_row_owner_v1")
         self.assertLess(
             phase["analytical_ceiling"]["best_case_member_ms"],
             phase["analytical_ceiling"]["parent_member_ms"],
@@ -353,7 +353,7 @@ class VersionedContractTests(unittest.TestCase):
 
         checkpoint_mismatches = []
         tampered = copy.deepcopy(template)
-        tampered["mechanism_phase"]["id"] = "opening_row_owner_v1"
+        tampered["mechanism_phase"]["id"] = "opening_row_owner_v2"
         checkpoint_mismatches.append(tampered)
         tampered = copy.deepcopy(template)
         tampered["mechanism_phase"]["checkpoint"]["after_candidates"] = 2
@@ -361,12 +361,12 @@ class VersionedContractTests(unittest.TestCase):
         tampered = copy.deepcopy(template)
         tampered["mechanism_phase"]["checkpoint"]["metrics"][0][
             "threshold"
-        ] = 37.0
+        ] = 27.0
         checkpoint_mismatches.append(tampered)
         tampered = copy.deepcopy(template)
         tampered["mechanism_phase"]["checkpoint"]["metrics"][0][
             "name"
-        ] = "openings_gpu_active_ms"
+        ] = "materialize_gpu_active_ms"
         checkpoint_mismatches.append(tampered)
         for tampered in checkpoint_mismatches:
             with self.subTest(tampered=tampered["mechanism_phase"]):
@@ -394,8 +394,8 @@ class VersionedContractTests(unittest.TestCase):
             validate_template(tampered, ROOT)
 
         tampered = copy.deepcopy(template)
-        tampered["budget"]["total"]["max_calendar_seconds"] = 60_000
-        with self.assertRaisesRegex(ValueError, "calendar"):
+        tampered["budget"]["total"]["max_calendar_seconds"] = 10_000
+        with self.assertRaisesRegex(ValueError, "timebox"):
             validate_template(tampered, ROOT)
 
         tampered = copy.deepcopy(template)
@@ -450,6 +450,18 @@ class VersionedContractTests(unittest.TestCase):
 
         with mock.patch.object(Path, "read_bytes", changed_frozen):
             with self.assertRaisesRegex(ValueError, "changed since profiling"):
+                validate_template(
+                    template, ROOT, verify_editable_profile_sources=False
+                )
+
+        controller = ROOT / "scripts/metal_research/iteration_profile.py"
+
+        def changed_controller(path: Path) -> bytes:
+            payload = original_read_bytes(path)
+            return payload + b"\n# tampered" if path == controller else payload
+
+        with mock.patch.object(Path, "read_bytes", changed_controller):
+            with self.assertRaisesRegex(ValueError, "controller changed"):
                 validate_template(
                     template, ROOT, verify_editable_profile_sources=False
                 )
