@@ -1,11 +1,12 @@
 # Registers value-evaluation Metal backend contract
 
-This directory is an isolated continuation design for the high-level
-`RegistersValEvaluation` member. It does not register a backend or shader
-source fragment and has no benchmark, GPU test, or production integration
-test. Its Rust-only ABI, model, and oracle have unit tests. The existing
-low-level implementation in `solinas/registers_val/` is a read-only input to
-this design and already owns the four factorized entry points:
+This directory contains the continuation design for the high-level
+`RegistersValEvaluation` member. Its Rust ABI, model, and oracle have unit
+tests. A test-only direct first-message candidate was measured at log 26,
+rejected, and removed; the exact screening artifact is
+`autoresearch/evidence/registers_val_direct_log26_rejected_85c57314d.json`.
+The existing low-level implementation in `solinas/registers_val/` owns the
+four retained factorized entry points:
 
 ```text
 solinas_registers_val_first_message_factorized
@@ -14,11 +15,12 @@ solinas_registers_val_dense_transition
 solinas_registers_val_reduce
 ```
 
-The isolated `shader.metal` adds only
-`solinas_registers_val_direct_first_message`, the decisive first slice of the
-three-accumulator stretch candidate. It is intentionally unregistered and
-uncompiled. The checked ABI, model, and dense scalar oracle freeze the
-integration boundary without consuming GPU test time.
+Nothing in this directory is registered with the production Metal backend.
+The removed candidate and the retained factorized control both matched the
+dense scalar oracle with zero shader audit counters before timing. The direct
+candidate was 24.30% slower in active time and missed its absolute active-time
+cap by 4.20%, so the preregistered rule closed the experiment after the first
+order. Native and dense direct-LT variants are not authorized.
 
 The production relation was traced through:
 
@@ -114,8 +116,9 @@ from their big-endian defining formulas, then runs a fully dense three-table
 sumcheck. It does not call the optimized split-LT or sparse-WA code. It also
 constructs the output point as
 `r_address || reverse(bind_challenges)`. This is the intended parity oracle
-for native, direct, dense, handoff, and terminal comparisons. No GPU or
-production integration test compares a kernel against it yet.
+for native, dense, handoff, and terminal comparisons. The rejected
+first-message screen compared both candidates against it before timing. No
+complete-sequence or production integration test uses it yet.
 
 The kernel's fully bound LT scalar must equal
 
@@ -380,33 +383,21 @@ product per sample. Its work is:
 | Dense ladder | `3.25(N - 2C)` | `48(N - 2C)` |
 
 Using the unmatched `32.33-Gproduct/s` best relevant low-pressure control,
-the target's projected 80%-roof caps are `11.676072`, `8.432719`, and
-`8.896729 ms`, or `29.005520 ms` total. Direct LT is projected to beat the
-factorized form only if the actual low-pressure/high-pressure rate ratio is
-greater than `1.5` for the first message and `1.3` for transitions. The
-retained controls satisfy those inequalities, but this exact shader has not
-been measured.
+the target's projected 80%-roof caps were `11.676072`, `8.432719`, and
+`8.896729 ms`, or `29.005520 ms` total. Direct LT was projected to beat the
+factorized form only if the actual low-pressure/high-pressure rate ratio was
+greater than `1.5` for the first message and `1.3` for transitions. That
+source-level projection justified one measurement but did not survive it.
 
-With the same producer, CPU suffix, and export charges, direct LT accounts for
-39.320093 ms before commands and host work. The 8x cap is 42.129765 ms, so the
-stretch path has only 2.809672 ms for every remaining boundary. Eight times is
-plausible, not established; the first slice below decides whether the rest is
-worth writing.
+With the same producer, CPU suffix, and export charges, the analytical direct
+path accounted for 39.320093 ms before commands and host work. The 8x cap is
+42.129765 ms, so even the projection left only 2.809672 ms for every remaining
+boundary. That stretch hypothesis is now falsified for this design.
 
-Therefore direct LT is the only shader experiment justified by this analysis.
-It loses immediately if the measured rate ratio misses those thresholds, if
-extra factor loads defeat the cache model, or if complete wall does not
-improve. Do not add variants that merely duplicate the existing
-factorization.
+### Rejected first-kernel screen
 
-### First kernel slice
-
-`shader.metal` contains only
-`solinas_registers_val_direct_first_message`. It consumes the exact resident
-SoA and writes sample-major partials for `t = 0, 2, 3`:
-
-The eventual source order is `fp128.metal`, `simd_reduce.metal`, then this
-file. No other experimental fragment is required.
+The removed `solinas_registers_val_direct_first_message` consumed the exact
+resident SoA and wrote sample-major partials for `t = 0, 2, 3`:
 
 | Buffer | Contents |
 | ---: | --- |
@@ -420,7 +411,7 @@ file. No other experimental fragment is required.
 | 7 | 32-byte `RegistersValDirectFirstParams` |
 | 8 | two atomic audit counters |
 
-The initial dispatch is 8,192 groups by 128 threads. Its checked launch takes
+The measured dispatch used 8,192 groups by 128 threads. Its checked launch took
 the compiled pipeline execution width and maximum threadgroup width as
 inputs. It derives the exact 1,048,576-thread grid, 393,216-byte partial
 buffer, and 192-byte dynamic threadgroup allocation with checked arithmetic;
@@ -431,18 +422,21 @@ requested dispatch dimensions. The shader compares them with
 `threads_per_threadgroup` before reading a row, and uses a 64-bit grid stride
 after the host has proved the product fits `u32`.
 
-The 33,554,432 cycle pairs divide evenly over the grid, so every lane
-evaluates exactly 32 pairs. Each lane owns three field accumulators; four
-SIMD-group results are reduced in threadgroup memory. The kernel issues
-exactly 301,989,888 useful full products, reads `17T` compulsory native bytes,
-writes 393,216 partial bytes, and performs no valid-path atomics.
+The 33,554,432 cycle pairs divided evenly over the grid, so every lane
+evaluated exactly 32 pairs. Each lane owned three field accumulators; four
+SIMD-group results were reduced in threadgroup memory. The kernel issued
+exactly 301,989,888 useful full products, read `17T` compulsory native bytes,
+wrote 393,216 partial bytes, and performed no valid-path atomics.
 
-The existing reduction kernel finishes the three sums. Exact parity against
-the independent dense oracle and zero audit counters are mandatory before
-timing. Retain the slice only if it has no spills, clears its 11.676072-ms
-active cap, and beats the matched factorized first-message active time in both
-orders. Otherwise delete the slice and integrate only the factorized path;
-native and dense direct-LT kernels are not authorized by a failed first test.
+The screen used the same resident input buffers, partial buffers, reduction
+steps, threadgroup count, command status checks, and timing boundaries for
+both variants. The retained factorized control used 32 threads and the direct
+candidate used 128. Exact parity and zero audit counters passed. In the
+preregistered factorized-first order, the factorized active estimate was
+`9.787774 ms`; direct was `12.166069 ms`, or 24.30% slower. Direct also exceeded
+its `11.676072-ms` active cap by 4.20%. Because it failed both necessary gates,
+the second order was not run and the executable slice was deleted. Continue
+only with the factorized resident sequence.
 
 ## Crossover
 
@@ -493,11 +487,9 @@ wall improves in both benchmark orders. A phase below 80% of its matched roof
 requires an occupancy, dependency, or bandwidth explanation before more
 algebra variants are tried.
 
-The direct first slice has a separate, stronger lane gate: the fixed log-26
-shape gives every one of its 1,048,576 lanes exactly 32 pairs. A capture that
-shows masked arithmetic, fewer than the requested 8,192 groups, spills, or a
-compiled maximum below 128 threads falsifies the proposed geometry rather
-than licensing a nominal-occupancy claim.
+The rejected direct slice does not remain an occupancy work item. Any future
+alternative requires a different algorithmic hypothesis and a new
+preregistered screen; thread-width tuning of the deleted design is not enough.
 
 ## Integration steps
 
@@ -525,9 +517,9 @@ than licensing a nominal-occupancy claim.
    optimized/Metal log-26 pairs from one stable binary. Whole-PIOP proof bytes,
    verifier acceptance, transcript state, and every member-local message must
    match.
-8. If factorized wall clears 5x and the direct-LT capture still projects a
-   material stretch gain, run that single controlled variant. Otherwise move
-   to the next member.
+8. Close the direct-LT branch. Integrate and tune only the factorized sequence;
+   after it clears 5x, move to the next measured bottleneck unless a materially
+   different algorithmic hypothesis is derived.
 
 ## Parity and falsification gates
 

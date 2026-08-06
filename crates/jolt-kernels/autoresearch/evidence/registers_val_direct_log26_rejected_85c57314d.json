@@ -1,0 +1,66 @@
+{
+  "schema": "metal_registers_val_direct_first_message_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-06",
+  "evidence_stage": "rejected_screening",
+  "candidate": {
+    "base_git_revision": "85c57314de7a50851d87beae11a6f8e0c5c9907a",
+    "worktree_dirty": true,
+    "shader_sha256": "54091057c8495a76fe487be88ec92ee08fa8059423983cfd687bdf91d1f96291",
+    "binary_path": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "2bbc5688488a2cfa7c1ddf5190e6b81d1f904ace6cdb41a267c3b5478a920d2a"
+  },
+  "contract": {
+    "command": "JOLT_SOLINAS_BENCH_FAMILY=registers-val-first-message-direct JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_SOLINAS_BENCH_ORDER=factorized-first cargo bench -p jolt-kernels --bench metal_solinas --features metal,parallel,test-utils -- --noplot",
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "elements": 67108864,
+    "field_offset": 4294944759,
+    "factorized_threads_per_threadgroup": 32,
+    "direct_threads_per_threadgroup": 128,
+    "threadgroups": 8192,
+    "resident_buffer_bytes": 1142032440,
+    "direct_active_cap_ns": 11676072,
+    "retention_rule": "direct must clear its active cap and beat factorized in both orders",
+    "acceptance_eligible": false,
+    "reason_not_acceptance_eligible": "single-order mechanism screen on a dirty worktree; the candidate failed before a second order or promotion holdout was warranted"
+  },
+  "criterion_slope_ns": {
+    "factorized_wall_resident": {
+      "point_estimate": 8508361.676839827,
+      "confidence_interval_95": [8166274.245370052, 8811804.097128829]
+    },
+    "factorized_active_resident": {
+      "point_estimate": 9787773.55974026,
+      "confidence_interval_95": [9553717.493, 10113412.103311257]
+    },
+    "direct_wall_resident": {
+      "point_estimate": 12261703.242532467,
+      "confidence_interval_95": [12237601.654455103, 12273139.785347812]
+    },
+    "direct_active_resident": {
+      "point_estimate": 12166068.71525974,
+      "confidence_interval_95": [12157894.592195382, 12185115.327205881]
+    }
+  },
+  "decision": {
+    "direct_over_factorized_active_ratio": 1.242986327891978,
+    "direct_active_percent_slower": 24.298632789197793,
+    "direct_over_active_cap_ratio": 1.0419658867519608,
+    "direct_active_percent_over_cap": 4.196588675196078,
+    "clears_active_cap": false,
+    "beats_factorized_in_first_order": false,
+    "run_second_order": false,
+    "status": "rejected"
+  },
+  "correctness": {
+    "focused_test": "metal::solinas::registers_val_evaluation_backend::runtime::tests::direct_and_factorized_first_messages_match_dense_oracle",
+    "initial_red_failure": "Metal launch signature mixed scalar and vector grid attributes",
+    "corrected_test_result": "pass",
+    "factorized_matches_dense_oracle": true,
+    "direct_matches_dense_oracle": true,
+    "shader_audit_counters": [0, 0],
+    "execute_device_buffer_allocations": 0
+  },
+  "disposition": "remove the failed direct executable slice and continue with the existing factorized resident sequence"
+}
