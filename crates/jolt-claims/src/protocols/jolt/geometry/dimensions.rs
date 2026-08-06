@@ -476,6 +476,10 @@ fn ceil_log_2(value: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::super::claim_reductions::advice::AdviceClaimReductionLayout;

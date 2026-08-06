@@ -218,6 +218,10 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[test]
+    #[expect(
+        clippy::unreachable,
+        reason = "test fixture slice has exactly eleven values"
+    )]
     fn fused_increment_terms_extend_the_ra_reduction() {
         let layout = JoltRaPolynomialLayout::new(0, 0, 1).unwrap();
         let relation = LatticeHammingWeightClaimReduction::new(

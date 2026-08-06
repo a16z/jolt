@@ -204,7 +204,10 @@ where
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
 
-    transcript.append(&LabelWithCount(b"rlc_claims", opening_claims.len() as u64));
+    transcript.append(&LabelWithCount(
+        b"rlc_claims",
+        crate::num::u64_from_usize(opening_claims.len()),
+    ));
     for claim in &opening_claims {
         claim.evaluation.value.append_to_transcript(transcript);
     }
@@ -292,6 +295,42 @@ where
         committed_program.map(|committed| committed.bytecode_chunk_count()),
     );
 
+    // Resolves one member of an indexed one-hot RA family: its commitment from
+    // the family's commitment list and, in clear mode, its opening claim.
+    fn ra_family_entry<'c, F: Field, O>(
+        commitment_list: &'c [O],
+        claim_list: Option<&[F]>,
+        index: usize,
+        polynomial: JoltCommittedPolynomial,
+        id: JoltOpeningId,
+    ) -> Result<(&'c O, Option<F>), VerifierError> {
+        let commitment = commitment_list
+            .get(index)
+            .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
+        let opening_claim = claim_list
+            .map(|claims| {
+                claims
+                    .get(index)
+                    .copied()
+                    .ok_or(VerifierError::MissingOpeningClaim { id })
+            })
+            .transpose()?;
+        Ok((commitment, opening_claim))
+    }
+
+    // Pairs a precommitted polynomial's final opening with its commitment.
+    fn precommitted_entry<'c, F: Field, O>(
+        opening: Option<&'c PrecommittedFinalOpening<F>>,
+        commitment: Option<&'c O>,
+        polynomial: JoltCommittedPolynomial,
+        id: JoltOpeningId,
+    ) -> Result<(&'c O, &'c [F], Option<F>), VerifierError> {
+        let opening = opening.ok_or(VerifierError::MissingOpeningClaim { id })?;
+        let commitment =
+            commitment.ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
+        Ok((commitment, opening.point.as_slice(), opening.opening_claim))
+    }
+
     let mut entries = Vec::with_capacity(order.len());
     // The prover's final PCS batch order intentionally differs from proof payload order.
     for polynomial in order {
@@ -308,66 +347,70 @@ where
                     inc_opening_point,
                     clear_claims.map(|(stage6, _)| stage6.inc_claim_reduction.rd_inc),
                 ),
-                JoltCommittedPolynomial::InstructionRa(index)
-                | JoltCommittedPolynomial::BytecodeRa(index)
-                | JoltCommittedPolynomial::RamRa(index) => {
-                    let (commitment_list, claim_list): (&[PCS::Output], Option<&[F]>) =
-                        match polynomial {
-                            JoltCommittedPolynomial::InstructionRa(_) => (
-                                &commitments.instruction_ra,
-                                clear_claims.map(|(_, stage7)| {
-                                    stage7
-                                        .hamming_weight_claim_reduction
-                                        .instruction_ra
-                                        .as_slice()
-                                }),
-                            ),
-                            JoltCommittedPolynomial::BytecodeRa(_) => (
-                                &commitments.bytecode_ra,
-                                clear_claims.map(|(_, stage7)| {
-                                    stage7.hamming_weight_claim_reduction.bytecode_ra.as_slice()
-                                }),
-                            ),
-                            JoltCommittedPolynomial::RamRa(_) => (
-                                &commitments.ram_ra,
-                                clear_claims.map(|(_, stage7)| {
-                                    stage7.hamming_weight_claim_reduction.ram_ra.as_slice()
-                                }),
-                            ),
-                            _ => unreachable!("outer arm matches only the one-hot RA families"),
-                        };
-                    let commitment = commitment_list
-                        .get(index)
-                        .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    let opening_claim = claim_list
-                        .map(|claims| {
-                            claims
-                                .get(index)
-                                .copied()
-                                .ok_or(VerifierError::MissingOpeningClaim { id })
-                        })
-                        .transpose()?;
+                JoltCommittedPolynomial::InstructionRa(index) => {
+                    let (commitment, opening_claim) = ra_family_entry(
+                        &commitments.instruction_ra,
+                        clear_claims.map(|(_, stage7)| {
+                            stage7
+                                .hamming_weight_claim_reduction
+                                .instruction_ra
+                                .as_slice()
+                        }),
+                        index,
+                        polynomial,
+                        id,
+                    )?;
                     (commitment, hamming_opening_point, opening_claim)
                 }
-                JoltCommittedPolynomial::TrustedAdvice
-                | JoltCommittedPolynomial::UntrustedAdvice
-                | JoltCommittedPolynomial::BytecodeChunk(_)
-                | JoltCommittedPolynomial::ProgramImageInit => {
-                    let opening = precommitted_final(polynomial)
-                        .ok_or(VerifierError::MissingOpeningClaim { id })?;
-                    let commitment = match polynomial {
-                        JoltCommittedPolynomial::TrustedAdvice => trusted_advice_commitment,
-                        JoltCommittedPolynomial::UntrustedAdvice => untrusted_advice_commitment,
-                        JoltCommittedPolynomial::BytecodeChunk(index) => committed_program
-                            .and_then(|committed| committed.bytecode_chunk_commitments.get(index)),
-                        JoltCommittedPolynomial::ProgramImageInit => {
-                            committed_program.map(|committed| &committed.program_image_commitment)
-                        }
-                        _ => unreachable!("outer arm matches only precommitted polynomials"),
-                    }
-                    .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
-                    (commitment, opening.point.as_slice(), opening.opening_claim)
+                JoltCommittedPolynomial::BytecodeRa(index) => {
+                    let (commitment, opening_claim) = ra_family_entry(
+                        &commitments.bytecode_ra,
+                        clear_claims.map(|(_, stage7)| {
+                            stage7.hamming_weight_claim_reduction.bytecode_ra.as_slice()
+                        }),
+                        index,
+                        polynomial,
+                        id,
+                    )?;
+                    (commitment, hamming_opening_point, opening_claim)
                 }
+                JoltCommittedPolynomial::RamRa(index) => {
+                    let (commitment, opening_claim) = ra_family_entry(
+                        &commitments.ram_ra,
+                        clear_claims.map(|(_, stage7)| {
+                            stage7.hamming_weight_claim_reduction.ram_ra.as_slice()
+                        }),
+                        index,
+                        polynomial,
+                        id,
+                    )?;
+                    (commitment, hamming_opening_point, opening_claim)
+                }
+                JoltCommittedPolynomial::TrustedAdvice => precommitted_entry(
+                    precommitted_final(polynomial),
+                    trusted_advice_commitment,
+                    polynomial,
+                    id,
+                )?,
+                JoltCommittedPolynomial::UntrustedAdvice => precommitted_entry(
+                    precommitted_final(polynomial),
+                    untrusted_advice_commitment,
+                    polynomial,
+                    id,
+                )?,
+                JoltCommittedPolynomial::BytecodeChunk(index) => precommitted_entry(
+                    precommitted_final(polynomial),
+                    committed_program
+                        .and_then(|committed| committed.bytecode_chunk_commitments.get(index)),
+                    polynomial,
+                    id,
+                )?,
+                JoltCommittedPolynomial::ProgramImageInit => precommitted_entry(
+                    precommitted_final(polynomial),
+                    committed_program.map(|committed| &committed.program_image_commitment),
+                    polynomial,
+                    id,
+                )?,
                 JoltCommittedPolynomial::UnsignedIncChunk(_)
                 | JoltCommittedPolynomial::UnsignedIncMsb
                 | JoltCommittedPolynomial::TrustedAdviceBytes
@@ -405,7 +448,15 @@ fn require_commitment_layout<C>(
     commitments: &JoltCommitments<C>,
     layout: JoltRaPolynomialLayout,
 ) -> Result<(), VerifierError> {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "layout totals are small per-polynomial chunk counts; the sum cannot overflow usize"
+    )]
     let expected = 2 + layout.total();
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "a sum of in-memory commitment counts and a small constant cannot overflow usize"
+    )]
     let got = 2
         + commitments.instruction_ra.len()
         + commitments.bytecode_ra.len()

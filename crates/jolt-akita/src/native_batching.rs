@@ -231,6 +231,10 @@ macro_rules! prove_dense_backend {
 
 /// The one-hot backend consumes the point in reversed variable order and uses
 /// the dedicated one-hot setup pair.
+#[expect(
+    clippy::unreachable,
+    reason = "one-hot K parameters are validated at setup; later dispatch only sees those values"
+)]
 fn prove_one_hot(
     setup: &AkitaProverSetup,
     point: &[AkitaField],
@@ -375,6 +379,10 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         Ok(proof)
     }
 
+    #[expect(
+        clippy::unreachable,
+        reason = "one-hot K parameters are validated at setup; later dispatch only sees those values"
+    )]
     fn verify_batch<T>(
         setup: &Self::VerifierSetup,
         statement: &Self::Statement,

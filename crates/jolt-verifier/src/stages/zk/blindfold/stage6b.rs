@@ -10,7 +10,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     VC::Output: Clone,
 {
-    let log_t = input.checked.trace_length.ilog2() as usize;
+    let log_t = crate::num::ilog2(input.checked.trace_length);
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
@@ -163,6 +163,10 @@ where
     )
 }
 
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "fail-closed: unmatched opening ids yield no alias and are reported missing below"
+)]
 fn stage6_cycle_output_openings_and_aliases<F: Field>(
     formula_dimensions: JoltFormulaDimensions,
     bytecode_ra_opening_points: &[Vec<F>],

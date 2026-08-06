@@ -358,6 +358,10 @@ impl ReducingBytes for Fr {
 
 impl TranscriptChallenge for Fr {
     #[inline]
+    #[expect(
+        clippy::unreachable,
+        reason = "the high limb is masked to 125 bits, below the BN254 Fr modulus"
+    )]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         let mut buf = [0u8; 16];
         let len = bytes.len().min(buf.len());

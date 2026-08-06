@@ -790,6 +790,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside a Result-returning test"
+    )]
     fn terminal_virtual_instruction_marks_last_in_sequence() -> Result<(), JoltInstructionKind> {
         fn flags_for(
             row: JoltInstructionRow,

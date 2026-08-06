@@ -499,6 +499,11 @@ fn leaf_claims<F: Field>(
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
