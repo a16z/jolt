@@ -7,7 +7,7 @@ use std::{env, error::Error, fmt::Write as _, fs, path::PathBuf, time::Duration}
 
 use jolt_field::FixedBytes;
 use jolt_kernels::metal::solinas::{
-    OuterRemainderDispatchCounts, PipelineLimits, SealedOuterArtifact, SolinasMetal,
+    OuterRemainderDispatchCounts, SealedOuterArtifact, SolinasMetal,
 };
 use jolt_kernels::metal::{
     OuterRemainderEvalFixture, OuterRemainderEvalResult, OuterRemainderEvalSample,
@@ -58,6 +58,13 @@ fn main() -> EvalResult<()> {
     let fixture = OuterRemainderEvalFixture::new(&parent_context, log_n, SEED)?;
     let parent_config = parent_artifact.sequence_config();
     let candidate_config = candidate_artifact.sequence_config();
+    if parent_config.cpu_tail_elements != candidate_config.cpu_tail_elements
+        || parent_artifact.trace_cutoff_elements() != candidate_artifact.trace_cutoff_elements()
+    {
+        return Err(failure(
+            "successor comparison requires identical CPU and trace cutoffs",
+        ));
+    }
 
     let mut oracle: Option<OuterRemainderEvalResult> = None;
     let (warmup_parent, warmup_candidate) = run_pair(
@@ -148,7 +155,7 @@ fn main() -> EvalResult<()> {
             "correctness_exact": true,
             "target_scale": fixture.log_t() == log_n && fixture.cycles() == cycles,
             "runtime_artifacts_exact": true,
-            "resident_row_lifecycle_exact": true,
+            "resident_row_handle_lifecycle_exact": true,
             "metal_phase_schedule_exact": true,
             "gpu_timestamps_exact": true,
         },
@@ -165,6 +172,7 @@ fn main() -> EvalResult<()> {
             "candidate_binding_plan": candidate_artifact.binding_plan().as_str(),
             "parent_source_sha256": parent_artifact.outer_source_sha256(),
             "candidate_source_sha256": candidate_artifact.outer_source_sha256(),
+            "production_last_owner_release_deferred": true,
         },
     });
     println!("{result}");
@@ -281,7 +289,6 @@ fn arm_record(sample: &OuterRemainderEvalSample) -> EvalResult<Value> {
         "tail_elements": sample.tail_elements,
         "output_sha256": output_digest(&sample.result),
         "dispatch_counts": dispatch_counts(sample.dispatch_counts),
-        "pipeline_limits": sample.pipeline_limits.map(pipeline_limits),
     }))
 }
 
@@ -293,14 +300,6 @@ fn dispatch_counts(counts: OuterRemainderDispatchCounts) -> Value {
         "cpu_tail_exports": counts.cpu_tail_exports,
         "opening_scans": counts.opening_scans,
         "command_buffers": counts.command_buffers,
-    })
-}
-
-fn pipeline_limits(limits: PipelineLimits) -> Value {
-    json!({
-        "thread_execution_width": limits.thread_execution_width,
-        "max_total_threads_per_threadgroup": limits.max_total_threads_per_threadgroup,
-        "static_threadgroup_memory_length": limits.static_threadgroup_memory_length,
     })
 }
 

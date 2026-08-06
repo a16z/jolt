@@ -21,8 +21,8 @@ use rayon::prelude::*;
 
 use super::{MetalOuterRemainderKernel, MetalOuterResidentMetadata, OUTER_DOMAIN, OUTER_VARIABLES};
 use crate::metal::solinas::{
-    MetalError, OuterRemainderDispatchCounts, OuterRemainderSequence, OuterRemainderSequenceConfig,
-    PipelineLimits, SolinasMetal, SpartanOuterUniskipRow, SpartanOuterUniskipRows,
+    MetalError, OuterRemainderDispatchCounts, OuterRemainderSequenceConfig, SolinasMetal,
+    SpartanOuterUniskipRow, SpartanOuterUniskipRows,
 };
 use crate::{KernelError, SumcheckKernel as _, SumcheckKernelError};
 
@@ -62,7 +62,6 @@ pub struct OuterRemainderEvalSample {
     pub storage_owned_bytes: u64,
     pub tail_elements: usize,
     pub round_device_buffer_allocations: usize,
-    pub pipeline_limits: [PipelineLimits; 5],
 }
 
 pub struct OuterRemainderEvalFixture {
@@ -156,15 +155,6 @@ impl OuterRemainderEvalFixture {
         let storage = context.prepare_outer_remainder_sequence_storage(self.cycles(), config)?;
         let initialization = storage.initialization();
         let storage_owned_bytes = storage.owned_bytes();
-        let metadata = MetalOuterResidentMetadata {
-            compact_rows_storage_id: self.rows.instruction_input_allocation_identity(),
-            residual_rows_storage_id: self.rows.allocation_identity(),
-            device_registry_id: self.rows.device_registry_id(),
-            resident_rows: self.cycles(),
-            compact_retained: false,
-        };
-        let sequence = storage.attach(self.rows.clone())?;
-        let pipeline_limits = pipeline_limits(&sequence);
         let setup_wall = setup_started.elapsed();
 
         let sumchecks = Stage1BatchSumchecks {
@@ -197,6 +187,14 @@ impl OuterRemainderEvalFixture {
         let (prelude, coefficients) = sumchecks
             .begin_batch(&inputs, &challenges, &mut recorder, &mut transcript)
             .map_err(protocol_error)?;
+        let metadata = MetalOuterResidentMetadata {
+            compact_rows_storage_id: self.rows.instruction_input_allocation_identity(),
+            residual_rows_storage_id: self.rows.allocation_identity(),
+            device_registry_id: self.rows.device_registry_id(),
+            resident_rows: self.cycles(),
+            compact_retained: false,
+        };
+        let sequence = storage.attach(self.rows.clone())?;
         let kernel = MetalOuterRemainderKernel::from_attached_sequence(
             self.log_t,
             &self.tau,
@@ -226,6 +224,24 @@ impl OuterRemainderEvalFixture {
             .inner
             .output_claims(&inputs.outer_remainder)
             .map_err(protocol_error)?;
+        let member_gpu_active = member
+            .inner
+            .completed_gpu_active
+            .ok_or_else(|| protocol_error("kernel did not retain completed GPU time"))?;
+        let dispatch_counts = member
+            .inner
+            .completed_dispatch_counts
+            .ok_or_else(|| protocol_error("kernel did not retain completed dispatch counts"))?;
+        let tail_elements = member
+            .inner
+            .completed_tail_elements
+            .ok_or_else(|| protocol_error("kernel did not retain its CPU-tail boundary"))?;
+        let round_device_buffer_allocations = member
+            .inner
+            .completed_round_device_buffer_allocations
+            .ok_or_else(|| protocol_error("kernel did not retain its allocation count"))?;
+        let round_polynomials = std::mem::take(&mut member.round_polynomials);
+        drop(member);
         let output_claims = Stage1BatchOutputClaims {
             outer_remainder: member_output_claims,
         };
@@ -250,29 +266,13 @@ impl OuterRemainderEvalFixture {
         let recorded = recorder
             .finish(&output_claim_values, &mut transcript)
             .map_err(protocol_error)?;
+        let member_wall = member_started.elapsed();
         if recorded.committed_witness.is_some() {
             return Err(protocol_error(
                 "clear evaluator retained a committed witness",
             ));
         }
         let transcript_state = transcript.state();
-        let member_wall = member_started.elapsed();
-        let member_gpu_active = member
-            .inner
-            .completed_gpu_active
-            .ok_or_else(|| protocol_error("kernel did not retain completed GPU time"))?;
-        let dispatch_counts = member
-            .inner
-            .completed_dispatch_counts
-            .ok_or_else(|| protocol_error("kernel did not retain completed dispatch counts"))?;
-        let tail_elements = member
-            .inner
-            .completed_tail_elements
-            .ok_or_else(|| protocol_error("kernel did not retain its CPU-tail boundary"))?;
-        let round_device_buffer_allocations = member
-            .inner
-            .completed_round_device_buffer_allocations
-            .ok_or_else(|| protocol_error("kernel did not retain its allocation count"))?;
 
         verify_clear_twin(
             self.input_claim,
@@ -290,7 +290,7 @@ impl OuterRemainderEvalFixture {
             result: OuterRemainderEvalResult {
                 input_claim: self.input_claim,
                 coefficient: coefficients.outer_remainder,
-                round_polynomials: member.round_polynomials,
+                round_polynomials,
                 challenges: proved.challenges.clone(),
                 final_claim: proved.final_claim,
                 member_claims: proved.member_claims,
@@ -309,7 +309,6 @@ impl OuterRemainderEvalFixture {
             storage_owned_bytes,
             tail_elements,
             round_device_buffer_allocations,
-            pipeline_limits,
         })
     }
 }
@@ -419,16 +418,6 @@ fn verify_clear_twin(
         ));
     }
     Ok(())
-}
-
-fn pipeline_limits(sequence: &OuterRemainderSequence) -> [PipelineLimits; 5] {
-    [
-        sequence.materialize_pipeline_limits(),
-        sequence.stream_bind_pipeline_limits(),
-        sequence.transition_pipeline_limits(),
-        sequence.opening_pipeline_limits(),
-        sequence.reduction_pipeline_limits(),
-    ]
 }
 
 fn synthetic_row(index: usize, seed: u64) -> SpartanOuterUniskipRow {
