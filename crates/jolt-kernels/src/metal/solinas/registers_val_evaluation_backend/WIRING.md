@@ -18,9 +18,10 @@ solinas_registers_val_reduce
 Nothing in this directory is registered with the production Metal backend.
 The removed candidate and the retained factorized control both matched the
 dense scalar oracle with zero shader audit counters before timing. The direct
-candidate was 24.30% slower in active time and missed its absolute active-time
-cap by 4.20%, so the preregistered rule closed the experiment after the first
-order. Native and dense direct-LT variants are not authorized.
+candidate cleared its absolute active-time cap, but was 37.05% slower in wall
+time and 26.20% slower in active time than the factorized control. The
+preregistered rule therefore closed the experiment after the first order.
+Native and dense direct-LT variants are not authorized.
 
 The production relation was traced through:
 
@@ -432,11 +433,14 @@ The screen used the same resident input buffers, partial buffers, reduction
 steps, threadgroup count, command status checks, and timing boundaries for
 both variants. The retained factorized control used 32 threads and the direct
 candidate used 128. Exact parity and zero audit counters passed. In the
-preregistered factorized-first order, the factorized active estimate was
-`9.787774 ms`; direct was `12.166069 ms`, or 24.30% slower. Direct also exceeded
-its `11.676072-ms` active cap by 4.20%. Because it failed both necessary gates,
-the second order was not run and the executable slice was deleted. Continue
-only with the factorized resident sequence.
+preregistered factorized-first order, factorized measured `8.3942 ms` wall and
+`9.0639 ms` active; direct measured `11.504 ms` wall and `11.439 ms` active.
+Direct was therefore 37.05% slower in wall time and 26.20% slower in active
+time. It cleared its `11.676072-ms` active cap by `0.237072 ms`, but retention
+also required it to beat factorized in both orders. One clear order loss makes
+that conjunction impossible, so the second order was not run and the
+executable slice was deleted. Continue only with the factorized resident
+sequence.
 
 ## Crossover
 

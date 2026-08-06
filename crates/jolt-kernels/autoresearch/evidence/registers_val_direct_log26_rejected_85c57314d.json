@@ -11,7 +11,8 @@
     "binary_sha256": "2bbc5688488a2cfa7c1ddf5190e6b81d1f904ace6cdb41a267c3b5478a920d2a"
   },
   "contract": {
-    "command": "JOLT_SOLINAS_BENCH_FAMILY=registers-val-first-message-direct JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_SOLINAS_BENCH_ORDER=factorized-first cargo bench -p jolt-kernels --bench metal_solinas --features metal,parallel,test-utils -- --noplot",
+    "command": "JOLT_SOLINAS_BENCH_FAMILY=registers-val-first-message-direct JOLT_SOLINAS_BENCH_ELEMENTS=67108864 target/release/deps/metal_solinas-9c8279d8148405e7 --bench --noplot",
+    "run_order": "factorized-first",
     "device": "Apple M4 Max",
     "macos": "26.6",
     "elements": 67108864,
@@ -25,37 +26,44 @@
     "acceptance_eligible": false,
     "reason_not_acceptance_eligible": "single-order mechanism screen on a dirty worktree; the candidate failed before a second order or promotion holdout was warranted"
   },
-  "criterion_slope_ns": {
+  "criterion_time_ns": {
     "factorized_wall_resident": {
-      "point_estimate": 8508361.676839827,
-      "confidence_interval_95": [8166274.245370052, 8811804.097128829]
+      "point_estimate": 8394200,
+      "confidence_interval_95": [8047700, 8744200]
     },
     "factorized_active_resident": {
-      "point_estimate": 9787773.55974026,
-      "confidence_interval_95": [9553717.493, 10113412.103311257]
+      "point_estimate": 9063900,
+      "confidence_interval_95": [8783500, 9405000]
     },
     "direct_wall_resident": {
-      "point_estimate": 12261703.242532467,
-      "confidence_interval_95": [12237601.654455103, 12273139.785347812]
+      "point_estimate": 11504000,
+      "confidence_interval_95": [11442000, 11560000]
     },
     "direct_active_resident": {
-      "point_estimate": 12166068.71525974,
-      "confidence_interval_95": [12157894.592195382, 12185115.327205881]
+      "point_estimate": 11439000,
+      "confidence_interval_95": [11372000, 11494000]
     }
   },
   "decision": {
-    "direct_over_factorized_active_ratio": 1.242986327891978,
-    "direct_active_percent_slower": 24.298632789197793,
-    "direct_over_active_cap_ratio": 1.0419658867519608,
-    "direct_active_percent_over_cap": 4.196588675196078,
-    "clears_active_cap": false,
+    "direct_over_factorized_wall_ratio": 1.3704700864882895,
+    "direct_wall_percent_slower": 37.04700864882895,
+    "direct_over_factorized_active_ratio": 1.2620395194121736,
+    "direct_active_percent_slower": 26.203951941217362,
+    "direct_over_active_cap_ratio": 0.9796959114332287,
+    "direct_active_cap_margin_ns": 237072,
+    "clears_active_cap": true,
     "beats_factorized_in_first_order": false,
     "run_second_order": false,
     "status": "rejected"
   },
+  "useful_product_rate_giga_per_second": {
+    "factorized_wall": 23.989867289318816,
+    "factorized_active": 22.21733955582034,
+    "direct_wall": 26.250859527121,
+    "direct_active": 26.400025177025963
+  },
   "correctness": {
     "focused_test": "metal::solinas::registers_val_evaluation_backend::runtime::tests::direct_and_factorized_first_messages_match_dense_oracle",
-    "initial_red_failure": "Metal launch signature mixed scalar and vector grid attributes",
     "corrected_test_result": "pass",
     "factorized_matches_dense_oracle": true,
     "direct_matches_dense_oracle": true,
