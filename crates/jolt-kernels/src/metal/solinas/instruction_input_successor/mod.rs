@@ -1,8 +1,7 @@
 //! Experimental successor kernels for the InstructionInput Metal backend.
 //!
-//! The materializer is available to tests and evaluator builds. The production
-//! backend still selects the existing fused transition, and the dense-message
-//! successor does not yet have a host dispatch path.
+//! The split phases are available to tests and evaluator builds. The
+//! production backend still selects the existing fused transition.
 
 mod abi;
 pub mod model;

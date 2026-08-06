@@ -13,8 +13,9 @@ use metal::{
 
 #[cfg(any(test, feature = "test-utils"))]
 use super::instruction_input_successor::{
-    model::checked_materialize_shape, INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH,
-    MATERIALIZE_PIPELINE as SUCCESSOR_MATERIALIZE_PIPELINE,
+    model::{checked_dense_message_shape, checked_materialize_shape},
+    DENSE_MESSAGE_PIPELINE as SUCCESSOR_DENSE_MESSAGE_PIPELINE,
+    INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH, MATERIALIZE_PIPELINE as SUCCESSOR_MATERIALIZE_PIPELINE,
 };
 use super::{command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal};
 
@@ -24,6 +25,8 @@ const INSTRUCTION_INPUT_DEVICE_BUFFERS: usize = 6;
 const INSTRUCTION_INPUT_ROW_WORDS: usize = 6;
 #[cfg(any(test, feature = "test-utils"))]
 const INSTRUCTION_INPUT_SUCCESSOR_MATERIALIZE_THREADS: usize = 256;
+#[cfg(any(test, feature = "test-utils"))]
+const INSTRUCTION_INPUT_SUCCESSOR_DENSE_MESSAGE_THREADS: usize = 128;
 #[cfg(any(test, feature = "test-utils"))]
 const INSTRUCTION_INPUT_SUCCESSOR_PRIMER_SOURCE_ELEMENTS: usize = 64;
 #[cfg(any(test, feature = "test-utils"))]
@@ -232,6 +235,18 @@ pub struct InstructionInputSuccessorMaterializeStats {
     pub pipeline_limits: PipelineLimits,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstructionInputSuccessorDenseMessageStats {
+    pub table_elements: usize,
+    pub e_in_elements: usize,
+    pub e_out_elements: usize,
+    pub wall: Duration,
+    pub gpu_active: Duration,
+    pub dense_buffer_identity: usize,
+    pub dynamic_threadgroup_memory_length: usize,
+    pub pipeline_limits: PipelineLimits,
+}
+
 struct InstructionInputNativePrimerCommand {
     command_buffer: CommandBuffer,
     submitted_at: Instant,
@@ -371,6 +386,8 @@ struct Pipelines {
     reduction: ComputePipelineState,
     #[cfg(any(test, feature = "test-utils"))]
     successor_materialize: ComputePipelineState,
+    #[cfg(any(test, feature = "test-utils"))]
+    successor_dense_message: ComputePipelineState,
 }
 
 struct Buffers {
@@ -480,6 +497,8 @@ pub(crate) struct InstructionInputSequenceStorage {
     reduction_limits: PipelineLimits,
     #[cfg(any(test, feature = "test-utils"))]
     successor_materialize_limits: PipelineLimits,
+    #[cfg(any(test, feature = "test-utils"))]
+    successor_dense_message_limits: PipelineLimits,
     buffers: Buffers,
     rows: usize,
     e_in_capacity: usize,
@@ -489,6 +508,8 @@ pub(crate) struct InstructionInputSequenceStorage {
     dense_transition_threads: usize,
     #[cfg(any(test, feature = "test-utils"))]
     successor_materialize_threads: usize,
+    #[cfg(any(test, feature = "test-utils"))]
+    successor_dense_message_threads: usize,
     config: InstructionInputSequenceConfig,
     initialization: InstructionInputStorageInitializationStats,
     owned_bytes: u64,
@@ -624,6 +645,9 @@ impl SolinasMetal {
             reduction: self.compile_named_pipeline(REDUCTION_PIPELINE)?,
             #[cfg(any(test, feature = "test-utils"))]
             successor_materialize: self.compile_named_pipeline(SUCCESSOR_MATERIALIZE_PIPELINE)?,
+            #[cfg(any(test, feature = "test-utils"))]
+            successor_dense_message: self
+                .compile_named_pipeline(SUCCESSOR_DENSE_MESSAGE_PIPELINE)?,
         };
         let native_message_limits = Self::limits(&pipelines.native_message);
         let native_transition_limits = Self::limits(&pipelines.native_transition);
@@ -631,6 +655,8 @@ impl SolinasMetal {
         let reduction_limits = Self::limits(&pipelines.reduction);
         #[cfg(any(test, feature = "test-utils"))]
         let successor_materialize_limits = Self::limits(&pipelines.successor_materialize);
+        #[cfg(any(test, feature = "test-utils"))]
+        let successor_dense_message_limits = Self::limits(&pipelines.successor_dense_message);
         for (pipeline, limits) in [
             (NATIVE_MESSAGE_PIPELINE, native_message_limits),
             (NATIVE_TRANSITION_PIPELINE, native_transition_limits),
@@ -646,14 +672,20 @@ impl SolinasMetal {
             }
         }
         #[cfg(any(test, feature = "test-utils"))]
-        if successor_materialize_limits.thread_execution_width
-            != INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH
-        {
-            return Err(MetalError::UnsupportedInstructionInputExecutionWidth {
-                pipeline: SUCCESSOR_MATERIALIZE_PIPELINE,
-                expected: INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH,
-                got: successor_materialize_limits.thread_execution_width,
-            });
+        for (pipeline, limits) in [
+            (SUCCESSOR_MATERIALIZE_PIPELINE, successor_materialize_limits),
+            (
+                SUCCESSOR_DENSE_MESSAGE_PIPELINE,
+                successor_dense_message_limits,
+            ),
+        ] {
+            if limits.thread_execution_width != INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH {
+                return Err(MetalError::UnsupportedInstructionInputExecutionWidth {
+                    pipeline,
+                    expected: INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH,
+                    got: limits.thread_execution_width,
+                });
+            }
         }
         let native_message_threads = Self::resolve_threadgroup_width(
             config.native_message_threads_per_threadgroup,
@@ -671,6 +703,11 @@ impl SolinasMetal {
         let successor_materialize_threads = Self::resolve_threadgroup_width(
             Some(INSTRUCTION_INPUT_SUCCESSOR_MATERIALIZE_THREADS),
             successor_materialize_limits,
+        )?;
+        #[cfg(any(test, feature = "test-utils"))]
+        let successor_dense_message_threads = Self::resolve_threadgroup_width(
+            Some(INSTRUCTION_INPUT_SUCCESSOR_DENSE_MESSAGE_THREADS),
+            successor_dense_message_limits,
         )?;
 
         let device = self.device_info();
@@ -709,6 +746,8 @@ impl SolinasMetal {
             reduction_limits,
             #[cfg(any(test, feature = "test-utils"))]
             successor_materialize_limits,
+            #[cfg(any(test, feature = "test-utils"))]
+            successor_dense_message_limits,
             buffers,
             rows,
             e_in_capacity,
@@ -718,6 +757,8 @@ impl SolinasMetal {
             dense_transition_threads,
             #[cfg(any(test, feature = "test-utils"))]
             successor_materialize_threads,
+            #[cfg(any(test, feature = "test-utils"))]
+            successor_dense_message_threads,
             config,
             initialization,
             owned_bytes: layout.owned_bytes,
@@ -1201,6 +1242,132 @@ impl InstructionInputSequence {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn run_successor_dense_message(
+        &mut self,
+        gamma: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<
+        (
+            [AkitaField; INSTRUCTION_INPUT_COEFFICIENTS],
+            InstructionInputSuccessorDenseMessageStats,
+        ),
+        MetalError,
+    > {
+        if self.phase != SequencePhase::BeforeMessage || !self.successor_materialized {
+            return Err(MetalError::InvalidInstructionInputState(
+                "the successor dense-message probe requires materialized tables",
+            ));
+        }
+        let table_elements = self.storage.rows / 2;
+        let shape = checked_dense_message_shape(
+            table_elements,
+            e_in.len(),
+            e_out.len(),
+            self.storage.successor_dense_message_threads,
+            self.storage.context.device.max_buffer_length(),
+        )?;
+        if self.storage.buffers.dense_a.length() != shape.table_bytes() {
+            return Err(MetalError::InvalidInstructionInputState(
+                "the successor dense-message source differs from dense A",
+            ));
+        }
+        let requested_threadgroup_bytes = u64::try_from(shape.threadgroup_bytes())
+            .map_err(|_| MetalError::InputTooLong(shape.threadgroup_bytes()))?
+            .checked_add(
+                self.storage
+                    .successor_dense_message_limits
+                    .static_threadgroup_memory_length,
+            )
+            .ok_or(MetalError::InputTooLong(shape.threadgroup_bytes()))?;
+        let maximum_threadgroup_bytes = self.storage.context.device.max_threadgroup_memory_length();
+        if requested_threadgroup_bytes > maximum_threadgroup_bytes {
+            return Err(MetalError::InstructionInputSuccessorThreadgroupMemory {
+                requested: requested_threadgroup_bytes,
+                maximum: maximum_threadgroup_bytes,
+            });
+        }
+
+        let started = Instant::now();
+        write_fields(&self.storage.buffers.e_in, self.storage.e_in_capacity, e_in)?;
+        write_fields(
+            &self.storage.buffers.e_out,
+            self.storage.e_out_capacity,
+            e_out,
+        )?;
+        let gamma = Fp128::from_jolt_field(&gamma);
+        self.storage
+            .context
+            .validate_inputs("instruction input successor gamma", &[gamma])?;
+        let command_buffer = self.storage.context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.storage.pipelines.successor_dense_message);
+            encoder.set_buffer(0, Some(&self.storage.buffers.dense_a), 0);
+            encoder.set_buffer(1, Some(&self.storage.buffers.e_in), 0);
+            encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
+            encoder.set_buffer(3, Some(&self.storage.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 4, &gamma);
+            set_inline_bytes(encoder, 5, &shape.params());
+            encoder.set_threadgroup_memory_length(0, shape.threadgroup_bytes() as u64);
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: shape.grid_threadgroups() as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.storage.successor_dense_message_threads as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            self.encode_reductions(encoder, e_out.len());
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let gpu_start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+        let gpu_end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
+        {
+            return Err(MetalError::InvalidGpuTimestamps {
+                start: gpu_start,
+                end: gpu_end,
+            });
+        }
+        let final_buffer = self.final_partial_buffer(e_out.len());
+        // SAFETY: the completed recursive reduction leaves three canonical
+        // fields at the start of the selected partial buffer.
+        let values = unsafe {
+            slice::from_raw_parts(
+                final_buffer.contents().cast::<Fp128>(),
+                INSTRUCTION_INPUT_COEFFICIENTS,
+            )
+        };
+        self.storage
+            .context
+            .validate_inputs("instruction input successor dense message", values)?;
+        let descriptors = std::array::from_fn(|index| values[index].into_jolt_field());
+        Ok((
+            descriptors,
+            InstructionInputSuccessorDenseMessageStats {
+                table_elements,
+                e_in_elements: e_in.len(),
+                e_out_elements: e_out.len(),
+                wall: started.elapsed(),
+                gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
+                dense_buffer_identity: self.storage.buffers.dense_a.as_ptr() as usize,
+                dynamic_threadgroup_memory_length: shape.threadgroup_bytes(),
+                pipeline_limits: self.storage.successor_dense_message_limits,
+            },
+        ))
+    }
+
     pub const fn current_elements(&self) -> usize {
         match self.phase {
             SequencePhase::BeforeMessage | SequencePhase::Native => self.storage.rows,
@@ -1251,6 +1418,11 @@ impl InstructionInputSequence {
     #[cfg(any(test, feature = "test-utils"))]
     pub const fn successor_materialize_pipeline_limits(&self) -> PipelineLimits {
         self.storage.successor_materialize_limits
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub const fn successor_dense_message_pipeline_limits(&self) -> PipelineLimits {
+        self.storage.successor_dense_message_limits
     }
 
     fn execute(
@@ -1652,7 +1824,7 @@ mod tests {
     };
     use crate::metal::solinas::{
         instruction_input_successor::{
-            oracle::{materialize_first_bind, row_fields},
+            oracle::{dense_message, materialize_first_bind, row_fields},
             InstructionInputSuccessorRow,
         },
         MetalError, SolinasMetal, SpartanOuterUniskipRow,
@@ -1841,6 +2013,8 @@ mod tests {
             .map(|index| AkitaField::from_u64(5 + 2 * u64::from(index)))
             .collect::<Vec<_>>();
         let gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
+        let mut bound_gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
+        bound_gruen.bind(challenge);
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
         let mut sequence = context
             .prepare_instruction_input_sequence(
@@ -1855,6 +2029,15 @@ mod tests {
         let buffer_identities = sequence.static_buffer_identity();
         let mut actual = vec![AkitaField::zero(); expected.len()];
 
+        assert!(matches!(
+            sequence.run_successor_dense_message(
+                gamma,
+                bound_gruen.e_in_current(),
+                bound_gruen.e_out_current(),
+            ),
+            Err(MetalError::InvalidInstructionInputState(_))
+        ));
+
         let stats = sequence
             .probe_successor_materialize(challenge, &mut actual)
             .expect("the successor materializer should execute");
@@ -1868,6 +2051,38 @@ mod tests {
         assert!(stats.pipeline_limits.max_total_threads_per_threadgroup >= 256);
         assert!(stats.gpu_active > Duration::ZERO);
         assert!(stats.gpu_active <= stats.wall);
+        assert_eq!(sequence.resident_row_identity(), resident_identity);
+        assert_eq!(sequence.static_buffer_identity(), buffer_identities);
+
+        let expected_dense_message = dense_message(
+            &expected,
+            rows.len() / 2,
+            bound_gruen.e_in_current(),
+            bound_gruen.e_out_current(),
+            gamma,
+        )
+        .unwrap()
+        .values();
+        let (actual_dense_message, dense_stats) = sequence
+            .run_successor_dense_message(
+                gamma,
+                bound_gruen.e_in_current(),
+                bound_gruen.e_out_current(),
+            )
+            .expect("the successor dense message should execute");
+        assert_eq!(actual_dense_message, expected_dense_message);
+        assert_eq!(dense_stats.table_elements, rows.len() / 2);
+        assert_eq!(dense_stats.dense_buffer_identity, buffer_identities[0]);
+        assert_eq!(dense_stats.dynamic_threadgroup_memory_length, 192);
+        assert_eq!(dense_stats.pipeline_limits.thread_execution_width, 32);
+        assert!(
+            dense_stats
+                .pipeline_limits
+                .max_total_threads_per_threadgroup
+                >= 128
+        );
+        assert!(dense_stats.gpu_active > Duration::ZERO);
+        assert!(dense_stats.gpu_active <= dense_stats.wall);
         assert_eq!(sequence.resident_row_identity(), resident_identity);
         assert_eq!(sequence.static_buffer_identity(), buffer_identities);
 

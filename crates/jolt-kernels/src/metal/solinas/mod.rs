@@ -79,8 +79,8 @@ pub use instruction_input::{
     InstructionInputPrimerStats, InstructionInputRow, InstructionInputRows,
     InstructionInputSequence, InstructionInputSequenceConfig,
     InstructionInputStorageInitialization, InstructionInputStorageInitializationStats,
-    InstructionInputSuccessorMaterializeStats, INSTRUCTION_INPUT_COEFFICIENTS,
-    INSTRUCTION_INPUT_TABLES,
+    InstructionInputSuccessorDenseMessageStats, InstructionInputSuccessorMaterializeStats,
+    INSTRUCTION_INPUT_COEFFICIENTS, INSTRUCTION_INPUT_TABLES,
 };
 pub(crate) use instruction_ra_sequence::{
     instruction_ra_weight_capacities, InstructionRaSequenceStorage,
@@ -588,6 +588,10 @@ pub enum MetalError {
     },
     #[error(transparent)]
     InstructionInputSuccessor(#[from] instruction_input_successor::InstructionInputSuccessorError),
+    #[error(
+        "InstructionInput successor dense message needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
+    )]
+    InstructionInputSuccessorThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(transparent)]
     RamValCheckShape(#[from] ram_val_check::RamValCheckShapeError),
     #[error(transparent)]

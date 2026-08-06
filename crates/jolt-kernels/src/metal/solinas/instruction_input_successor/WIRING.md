@@ -1,24 +1,27 @@
 # InstructionInput Metal successor
 
-Status: executable experimental materializer; static dense-message design.
-The module and MSL fragment are registered with the Solinas source assembler.
-With `test-utils` (or unit tests), sequence preparation compiles the
-materializer pipeline, its asynchronous primer dispatches the same pipeline on
-a 64-row prefix, and the diagnostic host path borrows the production
-`InstructionInputRows` allocation and existing dense A buffer. The checked GPU
-test compares all eight tables with the independent oracle and attests both
-allocation identities. The benchmark charges command creation, submission,
-completion, and timestamps, while row production, allocation, and pipeline
-setup remain outside its phase timer.
+Status: executable experimental split phases. The module and MSL fragment are
+registered with the Solinas source assembler. With `test-utils` (or unit
+tests), sequence preparation compiles both successor pipelines. The
+materializer's asynchronous primer dispatches that same entry point on a
+64-row prefix. The diagnostic paths borrow the production
+`InstructionInputRows` allocation, existing dense A, equality-weight, and
+reduction buffers. The checked GPU test compares all eight tables and the
+three dense-message descriptors with independent scalar oracles and attests
+the allocation identities. Phase wall time charges command and encoder
+creation, submission, completion, and timestamps; the dense phase also charges
+weight writes and its three-field output validation. The target materializer
+timer intentionally omits full-table readback, which is covered by the small
+validation fixture. Row production, data-buffer allocation, and pipeline setup
+remain outside.
 
-This is not a production transition yet. The diagnostic runs only in
-`BeforeMessage`, does not advance sequence state, and cannot consume the
-Fiat-Shamir challenge that follows the production first message. The current
-backend still dispatches the old fused native transition. The successor dense
-message has source and static fixtures but no pipeline state or host dispatch.
-All complete-service times below remain analytical targets. The duplicate row
-type in this directory freezes bytes only; runtime dispatch uses the actual
-production allocation.
+This is not a production transition yet. Both diagnostics run only in
+`BeforeMessage`, do not advance sequence state, and use separate command
+buffers and waits. They cannot yet consume the Fiat-Shamir challenge that
+follows the production first message. The current backend still dispatches
+the old fused native transition. All complete-service times below remain
+analytical targets. The duplicate row type in this directory freezes bytes
+only; runtime dispatch uses the actual production allocation.
 
 ## Exact relation and orientation
 
@@ -152,16 +155,17 @@ The charged asynchronous primer currently exercises the materializer on a
 fixed 64-row prefix in the same command as the existing zero-weight native
 message primer and leaves protocol state unchanged. It may overwrite that
 dense prefix because the real materializer overwrites the complete active
-range before the message reads it. Once the dense-message dispatch exists, the
-same primer must exercise it with zero weights and check a zero descriptor.
+range before the message reads it. Before production integration, the same
+primer must exercise the now-executable dense-message pipeline with zero
+weights and check a zero descriptor.
 
 `shader.metal` is appended after the production InstructionInput fragment
 because it deliberately reuses `InstructionInputRow`, native conversions,
-Solinas bind arithmetic, and the three-lane reduction. The first experiment is
-now implemented for the materializer alone: it compares all eight dense tables
-with `materialize_first_bind`. The checked dense-message oracle remains a
-separate direct relation implementation, not shader output fed back as its own
-oracle.
+Solinas bind arithmetic, and the three-lane reduction. The two isolated phase
+experiments are implemented: the materializer compares all eight dense tables
+with `materialize_first_bind`, and the dense message compares all three
+descriptors with a separate direct relation implementation rather than shader
+output fed back as its own oracle.
 
 ## Launch and occupancy sketch
 
@@ -297,21 +301,15 @@ the same samples used for confirmation.
 
 | Invariant | Isolated realization | Required promotion evidence |
 |---|---|---|
-| 48-byte resident ABI and signed immediate | `abi.rs` | compile-time size/alignment plus production buffer identity |
-| low-to-high first bind and table order | `oracle.rs::materialize_first_bind` | all-element GPU parity |
-| quadratic relation descriptors | `oracle.rs::dense_message` and independent direct walk | `q(0)..q(3)` parity on adversarial/random rows |
+| 48-byte resident ABI and signed immediate | `abi.rs` plus production parity test | full producer-to-stage-3 identity telemetry |
+| low-to-high first bind and table order | `oracle.rs::materialize_first_bind` plus checked GPU test | target-scale randomized parity evidence |
+| quadratic relation descriptors | `oracle.rs::dense_message`, independent direct walk, and checked GPU test | target-scale `q(0)..q(3)` parity evidence |
 | checked work, roofs, 5x/8x gates | `model.rs` | parser-derived fresh paired evidence |
-| compiler-visible candidate | `shader.metal` | compiled source/ISA and occupancy capture |
+| compiler-visible candidate | compiled `shader.metal` pipelines | ISA and occupancy capture |
 | transcript/output seam | this document | optimized-backend differential proof |
-
-Registration must add a word-for-word, size, and alignment parity test against
-the production `InstructionInputRow`; the isolated ABI test currently checks
-only the frozen duplicate type.
 
 Open integration choices are explicit:
 
-- derive `E_in`/`E_out` lengths from the live Gruen split and validate
-  `2 * E_in * E_out == table_elements`; never hardcode the log-26 split;
 - select encoder boundary versus buffer barrier only after compiling both, but
   neither may add a host wait;
 - the half-width Solinas primitive is unpromoted and is not assumed here;
@@ -320,8 +318,9 @@ Open integration choices are explicit:
 - the 8x route beyond the split is selected from measured phase loss, not from
   another simultaneous shader search.
 
-Integration must append the source, register the two pipelines, byte-assert
-the successor row view against production, add CPU/GPU differential tests,
-prime both new pipelines on a fixed overwritten prefix, and only then run the
-phase and service gates. None of those shared-file steps belongs to this
-isolated packet.
+The runtime already derives live `E_in`/`E_out` lengths and validates
+`2 * E_in * E_out == table_elements`; it never hardcodes the log-26 split.
+Remaining integration must fuse the two dispatches without a host wait, prime
+the dense-message entry point on the same overwritten prefix, transition the
+real sequence from `Native` to `Dense`, run full optimized-backend proof parity,
+and then evaluate the complete service gates.

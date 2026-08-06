@@ -133,7 +133,7 @@ pub struct DenseMessageShape {
 }
 
 impl DenseMessageShape {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) const fn params(self) -> InstructionInputSuccessorDenseMessageParams {
         self.params
     }

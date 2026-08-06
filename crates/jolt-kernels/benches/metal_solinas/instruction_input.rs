@@ -8,8 +8,8 @@ use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId, Criterion, T
 use jolt_field::AkitaField;
 #[cfg(feature = "test-utils")]
 use jolt_kernels::metal::solinas::instruction_input_successor::{
-    oracle::materialize_first_bind, InstructionInputSuccessorRow,
-    InstructionInputSuccessorSelectors,
+    oracle::{dense_message, materialize_first_bind},
+    InstructionInputSuccessorRow, InstructionInputSuccessorSelectors,
 };
 use jolt_kernels::metal::solinas::{
     InstructionInputSequence, InstructionInputStorageInitialization, SolinasMetal,
@@ -122,6 +122,106 @@ pub fn bench_successor_materializer(c: &mut Criterion, context: &SolinasMetal) {
                         .expect("InstructionInput successor materialization should run");
                     measured += stats.gpu_active;
                     let _ = black_box(stats.dense_buffer_identity);
+                }
+                measured
+            });
+        });
+    }
+    group.finish();
+}
+
+#[cfg(feature = "test-utils")]
+pub fn bench_successor_dense_message(c: &mut Criterion, context: &SolinasMetal) {
+    validate_successor_materializer(context);
+    let dispatch = dispatch();
+    let mut group = comparison_group(
+        c,
+        "metal_sumcheck/instruction_input_successor_dense_message",
+    );
+    for rows in cases() {
+        let setup_started = Instant::now();
+        let (workload, mut sequence) = prepare_case(context, rows, dispatch, 0xbb67_ae85);
+        let setup_wall = setup_started.elapsed();
+        let initialization = sequence.storage_initialization();
+        let challenge = AkitaField::from_u64(0x1234_5678_9abc_def0);
+        let materialize = sequence
+            .run_successor_materialize(challenge)
+            .expect("InstructionInput successor materialization should run");
+        let mut gruen = GruenSplitEqPolynomial::new(&workload.point, BindingOrder::LowToHigh);
+        gruen.bind(challenge);
+        let (first_descriptors, first_stats) = sequence
+            .run_successor_dense_message(
+                workload.gamma,
+                gruen.e_in_current(),
+                gruen.e_out_current(),
+            )
+            .expect("InstructionInput successor first dense message should run");
+        let (warm_descriptors, warm_stats) = sequence
+            .run_successor_dense_message(
+                workload.gamma,
+                gruen.e_in_current(),
+                gruen.e_out_current(),
+            )
+            .expect("InstructionInput successor warm dense message should run");
+        assert_eq!(first_descriptors, warm_descriptors);
+        eprintln!(
+            "instruction_input_successor_dense_message rows={rows} table_elements={} e_in_elements={} e_out_elements={} setup={:?} initialization={} materialize_wall={:?} materialize_active={:?} first_wall={:?} first_active={:?} warm_wall={:?} warm_active={:?} dense_id={} execution_width={} max_threads={} dynamic_tg_bytes={} static_tg_bytes={}",
+            first_stats.table_elements,
+            first_stats.e_in_elements,
+            first_stats.e_out_elements,
+            setup_wall,
+            initialization.mode.as_str(),
+            materialize.wall,
+            materialize.gpu_active,
+            first_stats.wall,
+            first_stats.gpu_active,
+            warm_stats.wall,
+            warm_stats.gpu_active,
+            first_stats.dense_buffer_identity,
+            first_stats.pipeline_limits.thread_execution_width,
+            first_stats.pipeline_limits.max_total_threads_per_threadgroup,
+            first_stats.dynamic_threadgroup_memory_length,
+            first_stats.pipeline_limits.static_threadgroup_memory_length,
+        );
+
+        let suffix = format!(
+            "n{rows}_tg128_init-{}_post-materialize",
+            initialization.mode.as_str()
+        );
+        let _ = group.throughput(Throughput::Elements(successor_dense_message_useful_muls(
+            rows,
+            first_stats.e_out_elements,
+        )));
+        let _ = group.bench_function(BenchmarkId::new("metal_wall", &suffix), |bench| {
+            bench.iter_custom(|iterations| {
+                let mut measured = Duration::ZERO;
+                for _ in 0..iterations {
+                    let (descriptors, stats) = sequence
+                        .run_successor_dense_message(
+                            workload.gamma,
+                            gruen.e_in_current(),
+                            gruen.e_out_current(),
+                        )
+                        .expect("InstructionInput successor dense message should run");
+                    measured += stats.wall;
+                    let _ = black_box(descriptors);
+                }
+                measured
+            });
+        });
+        let _ = group.bench_function(BenchmarkId::new("metal_active", &suffix), |bench| {
+            bench.iter_custom(|iterations| {
+                let mut measured = Duration::ZERO;
+                for _ in 0..iterations {
+                    let (descriptors, stats) = sequence
+                        .run_successor_dense_message(
+                            workload.gamma,
+                            gruen.e_in_current(),
+                            gruen.e_out_current(),
+                        )
+                        .expect("InstructionInput successor dense message should run");
+                    measured += stats.gpu_active;
+                    let _ = black_box(descriptors);
                 }
                 measured
             });
@@ -620,6 +720,21 @@ fn validate_successor_materializer(context: &SolinasMetal) {
     assert_eq!(actual, expected);
     assert_eq!(stats.source_elements, rows);
     assert_eq!(stats.bound_elements, rows / 2);
+    let mut gruen = GruenSplitEqPolynomial::new(&workload.point, BindingOrder::LowToHigh);
+    gruen.bind(challenge);
+    let expected_message = dense_message(
+        &expected,
+        rows / 2,
+        gruen.e_in_current(),
+        gruen.e_out_current(),
+        workload.gamma,
+    )
+    .expect("InstructionInput successor dense-message oracle should run")
+    .values();
+    let (actual_message, _) = sequence
+        .run_successor_dense_message(workload.gamma, gruen.e_in_current(), gruen.e_out_current())
+        .expect("InstructionInput successor dense message should run");
+    assert_eq!(actual_message, expected_message);
 }
 
 fn prepare_case(
@@ -704,6 +819,10 @@ fn message_useful_muls(rows: usize, e_out_elements: usize) -> u64 {
 
 fn transition_useful_muls(rows: usize, e_out_elements: usize) -> u64 {
     17 * rows as u64 / 2 + 3 * e_out_elements as u64
+}
+
+fn successor_dense_message_useful_muls(rows: usize, e_out_elements: usize) -> u64 {
+    9 * rows as u64 / 2 + 3 * e_out_elements as u64
 }
 
 fn comparison_group<'a>(c: &'a mut Criterion, name: &str) -> BenchmarkGroup<'a, WallTime> {

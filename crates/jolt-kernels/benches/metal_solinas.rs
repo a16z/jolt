@@ -175,6 +175,10 @@ mod macos {
                 "instruction-input-successor-materializer" => {
                     instruction_input::bench_successor_materializer(c, &context);
                 }
+                #[cfg(feature = "test-utils")]
+                "instruction-input-successor-dense-message" => {
+                    instruction_input::bench_successor_dense_message(c, &context);
+                }
                 "instruction-input" => instruction_input::bench(c, &context),
                 "instruction-claim-reduction" => {
                     instruction_claim_reduction::bench(c, &context);
