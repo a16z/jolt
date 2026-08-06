@@ -78,7 +78,7 @@ constructed; at the proof level a fabricated misaligned address fails the alignm
 lookups (`AssertLookupOne`, constraint 11) or, for `LD`/`SD` (which carry **no** assert row),
 becomes unrepresentable under the RAF-evaluation identity below. Notably the underlying
 emulator memory is already byte-capable and misalignment-safe (`tracer/src/emulator/memory.rs`
-falls back to byte-by-byte across doubleword boundaries); only the MMU asserts and two latent
+falls back to byte-by-byte across doubleword boundaries); only the MMU asserts and three latent
 trace-recording bugs stand in the way (see Implementation notes).
 
 Key protocol anchors:
@@ -222,7 +222,11 @@ committed regardless. Repurpose it:
    `RamAddress_claim − OffsetOrZero_claim` (both opened at the Spartan-outer cycle point).
    `UnmapRamAddressPolynomial` itself is untouched. This is the *entire* Twist-side change;
    BlindFold `input_claim_constraint` supports sum-of-products terms and updates in lockstep,
-   as does the akita mirror.
+   as does the akita mirror. Two details verified in code: the input claim carries a
+   `mul_pow_2(phase3_cycle_rounds())` renormalization (`raf_evaluation.rs:125-133`) that the
+   new term must share, and the non-zk `input_output_claims()` path
+   (`raf_evaluation.rs:461-475`) must gain the same `− OffsetOrZero` term alongside the zk
+   constraint.
 4. Introduce offset-tolerant virtual loads/stores (`VirtualLoadDw`/`VirtualStoreDw`): identical
    to `LD`/`SD` except carrying an `AddressOffset` variant table — the one-hot `ra` encodes
    `floor((ea − lowest)/8)` (which `remap_address` already computes by truncation) and the
@@ -498,14 +502,18 @@ arithmetic. Fallback if dual-expansion mapping proves uglier than expected.
       tests and fuzz targets.
 - [ ] Guard-doubleword bounds: crossing access at the top of the heap neither panics nor
       escapes `ram_K`.
-- [ ] The RISC-V arch-test `misaligned-ldst-01` — currently a tracked known-failure
-      deliberately absent from `skip.txt` (`tests/arch-tests/README.md:113`) — passes, and
-      `tests/arch-tests/jolt/sail.json` is flipped to `"misaligned": {"supported": true}` with
-      Zicclsm declared.
-- [ ] The two latent MMU trace-recording bugs currently masked by alignment asserts are fixed:
-      `trace_load` truncates the address with `& !3` (4-byte!) while recording an 8-byte value
-      (`tracer/src/emulator/mmu.rs:517-543`), and `trace_store_byte` merges an 8-byte
-      `pre_value` with 32-bit masks, zeroing the top half (`mmu.rs:548-585`).
+- [ ] The RISC-V arch-test `misaligned-ldst-01` (ACT4 submodule) passes, and
+      `tests/arch-tests/jolt/sail.json` is flipped to `"misaligned": {"supported": true}`
+      (plus `load_address_misaligned` / `samo_address_misaligned`) with Zicclsm declared.
+      (The test name at `tests/arch-tests/README.md:113` is a sample-output placeholder, not a
+      known-failure registry; per the README policy a failing non-privileged test reds CI.)
+- [ ] The three latent MMU trace-recording bugs currently masked by alignment asserts are
+      fixed: `trace_load` truncates the address to 4 bytes (`(ea >> 2) << 2`) while recording
+      an 8-byte value (`tracer/src/emulator/mmu.rs:517-543`); `trace_store_byte` merges an
+      8-byte `pre_value` with 32-bit masks under a `% 4` dispatch, zeroing the top half
+      (`mmu.rs:548-585`); `trace_store_halfword` has the same truncation and 32-bit-mask
+      defect (`mmu.rs:590-629`). Relatedly, `trace_store` (`mmu.rs:632-663`, used by
+      `store_word`) records an 8-byte write for a 4-byte store — audit it in the same pass.
 
 ### Testing Strategy
 
@@ -527,10 +535,14 @@ Both-mode (`host`, `host,zk`) CI lanes as per `CLAUDE.md`; akita lane for the pa
 
 ## Implementation notes (verified traps)
 
-- **Three copies of `remap_address`** must change together:
-  `crates/jolt-prover-legacy/src/zkvm/ram/mod.rs:120`, `common/src/jolt_device.rs:440-463`,
-  `crates/jolt-prover/src/config.rs:129-142` — all truncate silently today, which is exactly
-  right for floor addressing but means nothing rejects misalignment there.
+- **Three copies of the address remapper** must change together: `remap_address`
+  (`crates/jolt-prover-legacy/src/zkvm/ram/mod.rs:120`), `remap_word_address`
+  (`common/src/jolt_device.rs:444-463` — different name; a grep for `remap_address` misses
+  it), and `remap_address` (`crates/jolt-prover/src/config.rs:129-137`) — all truncate by 8
+  silently, which is exactly right for floor addressing but means nothing rejects
+  misalignment there. They diverge on the below-`lowest_address` case (panic vs
+  `Err(AddressBelowLowest)` vs `assert!`), which matters for the Tier 2 guard-doubleword
+  bounds.
 - **Recipe temp budget is 8** (`expand/grammar.rs:208-218`, hard error) and max sequence length
   is 64 (`materialize.rs:19`). Current narrow stores use 4 temps; crossing-store variants need
   ~5–6 — fits, but audit. Loads are `HAS_SIDE_EFFECTS = true`, so `rd = x0` loads consume a
@@ -550,7 +562,7 @@ Both-mode (`host`, `host,zk`) CI lanes as per `CLAUDE.md`; akita lane for the pa
 - **Existing guest-side workarounds** become removable perf wins: `jolt-sdk/src/lib.rs:493-494`
   steps u8→u16→u32 to reach 8-byte alignment; `jolt-inlines/keccak256` carries
   `absorb_unaligned`.
-- `expand_byte_load` (`memory/shared.rs:29-83`) already assumes nothing about alignment — it is
+- `expand_byte_load` (`memory/shared.rs:35-83`) already assumes nothing about alignment — it is
   the shape the Tier-1 lowering generalizes.
 - The `TrapType::*AddressMisaligned` variants exist but are never constructed; this design
   keeps it that way (no trap machinery).
