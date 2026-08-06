@@ -14,6 +14,15 @@ class MetalKernelRegistryTests(unittest.TestCase):
     def test_repository_registry_is_complete(self) -> None:
         registry = metal_kernel_registry.read_registry(REGISTRY)
         metal_kernel_registry.validate_registry(ROOT, registry)
+        outer = next(
+            slot
+            for slot in registry["slots"]
+            if slot["id"] == "spartan_outer_remainder"
+        )
+        self.assertIn(
+            "outer_remainder_b_fold_rejection",
+            outer["artifacts"]["evidence"],
+        )
 
     def test_duplicate_module_id_is_rejected(self) -> None:
         registry = metal_kernel_registry.read_registry(REGISTRY)
