@@ -53,6 +53,10 @@ mod instruction_input;
 mod product5;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/registers_read_write.rs"]
+mod registers_read_write;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/spartan_outer_uniskip.rs"]
 mod spartan_outer_uniskip;
 
@@ -76,7 +80,7 @@ mod macos {
         address_raf, address_suffix, booleanity, booleanity_address, bytecode_cycle, cpu, cycle,
         instruction_input, instruction_ra, instruction_ra_sequence, product5,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
-        spartan_outer_uniskip,
+        registers_read_write, spartan_outer_uniskip,
     };
 
     const STREAM_ELEMENTS: usize = 1 << 20;
@@ -119,6 +123,9 @@ mod macos {
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
                 "instruction-ra-first-message" => instruction_ra::bench(c, &context),
                 "instruction-ra-sequence" => instruction_ra_sequence::bench(c, &context),
+                "registers-read-write-first-message" => {
+                    registers_read_write::bench(c, &context);
+                }
                 "instruction-input-message" => instruction_input::bench_message(c, &context),
                 "instruction-input-transition" => {
                     instruction_input::bench_transition(c, &context);

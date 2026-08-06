@@ -11,6 +11,7 @@ const ADDRESS_SUFFIX_FULL_SOURCE: &str = include_str!("address_suffix_full/shade
 const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_sequence/shader.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5/shader.metal");
+const REGISTERS_READ_WRITE_SOURCE: &str = include_str!("registers_read_write/shader.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity/shader.metal");
 const BOOLEANITY_ADDRESS_SOURCE: &str = include_str!("booleanity_address/shader.metal");
 const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization/shader.metal");
@@ -46,6 +47,7 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("address_suffix_full", ADDRESS_SUFFIX_FULL_SOURCE),
     SourceFragment::new("probes", PROBE_SOURCE),
     SourceFragment::new("product5", PRODUCT5_SOURCE),
+    SourceFragment::new("registers_read_write", REGISTERS_READ_WRITE_SOURCE),
     SourceFragment::new("booleanity", BOOLEANITY_SOURCE),
     SourceFragment::new("booleanity_address", BOOLEANITY_ADDRESS_SOURCE),
     SourceFragment::new("instruction_ra_virtualization", INSTRUCTION_RA_SOURCE),
@@ -117,7 +119,7 @@ mod tests {
 
     fn expected_library_source(offset: u32) -> String {
         format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{BOOLEANITY_COMMON_SOURCE}\n{INSTRUCTION_RA_COMMON_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{OUTER_REMAINDER_PADDED_56_SOURCE}"
+            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{BOOLEANITY_COMMON_SOURCE}\n{INSTRUCTION_RA_COMMON_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{REGISTERS_READ_WRITE_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{ADDRESS_CYCLE_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{OUTER_REMAINDER_PADDED_56_SOURCE}"
         )
     }
 

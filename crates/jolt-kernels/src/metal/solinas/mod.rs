@@ -27,6 +27,7 @@ mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
 mod outer_remainder;
 mod product5;
+mod registers_read_write;
 mod runtime;
 mod source;
 mod spartan_outer_uniskip;
@@ -93,6 +94,10 @@ pub use outer_remainder::{
 pub use outer_remainder::{OuterKernelArtifact, SealedOuterArtifact};
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
+};
+pub use registers_read_write::{
+    RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
+    RegistersReadWriteSecondMessageInvocation,
 };
 pub use spartan_outer_uniskip::{
     evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,
@@ -374,6 +379,22 @@ pub enum MetalError {
         "Instruction RA pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
     UnsupportedInstructionRaExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error("registers read/write needs a power-of-two row count of at least two, got {0}")]
+    InvalidRegistersReadWriteRows(usize),
+    #[error("registers read/write inc has length {got}, expected {expected}")]
+    RegistersReadWriteIncLength { expected: usize, got: usize },
+    #[error("registers read/write split weights cover {covered} pairs, expected {expected}")]
+    RegistersReadWriteWeightShape { expected: usize, covered: usize },
+    #[error("registers read/write index {0} is outside the 128-register domain")]
+    InvalidRegistersReadWriteIndex(u8),
+    #[error(
+        "registers read/write pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedRegistersReadWriteExecutionWidth {
         pipeline: &'static str,
         expected: usize,
         got: usize,

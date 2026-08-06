@@ -5,7 +5,8 @@ use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
     BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128,
     InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
-    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+    RegisterAccessRow, RegistersReadWriteMessageConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
+    OFFSET_275,
 };
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
@@ -256,6 +257,284 @@ fn instruction_ra_first_message_matches_cpu() {
             .read_message()
             .expect("Instruction RA message should read"),
         expected
+    );
+}
+
+fn registers_rw_cell(
+    row: RegisterAccessRow,
+    column: u8,
+    gamma: AkitaField,
+) -> Option<(AkitaField, u64, AkitaField, bool, bool)> {
+    let rs1 = row.rs1().filter(|(index, _)| *index == column);
+    let rs2 = row.rs2().filter(|(index, _)| *index == column);
+    let rd = row.rd().filter(|(index, ..)| *index == column);
+    if rs1.is_none() && rs2.is_none() && rd.is_none() {
+        return None;
+    }
+    let value = rs1
+        .map(|(_, value)| value)
+        .or_else(|| rs2.map(|(_, value)| value))
+        .unwrap_or_else(|| rd.expect("present cell has an access").1);
+    let mut ra = AkitaField::from_u64(0);
+    if rs1.is_some() {
+        ra += gamma;
+    }
+    if rs2.is_some() {
+        ra += gamma * gamma;
+    }
+    Some((
+        AkitaField::from_u64(value),
+        rd.map_or(value, |(_, _, post)| post),
+        ra,
+        rs1.is_some() || rs2.is_some(),
+        rd.is_some(),
+    ))
+}
+
+fn registers_rw_first_message_cpu(
+    rows: &[RegisterAccessRow],
+    inc: &[AkitaField],
+    gamma: AkitaField,
+    e_in: &[AkitaField],
+    e_out: &[AkitaField],
+) -> [AkitaField; 2] {
+    let mut result = [AkitaField::from_u64(0); 2];
+    for (x_out, &outer_weight) in e_out.iter().enumerate() {
+        for (x_in, &inner_weight) in e_in.iter().enumerate() {
+            let pair = x_out * e_in.len() + x_in;
+            let lo = rows[2 * pair];
+            let hi = rows[2 * pair + 1];
+            let inc_zero = inc[2 * pair];
+            let inc_infinity = inc[2 * pair + 1] - inc_zero;
+            let mut q = [AkitaField::from_u64(0); 2];
+            for column in 0..128u8 {
+                let even = registers_rw_cell(lo, column, gamma);
+                let odd = registers_rw_cell(hi, column, gamma);
+                if even.is_none() && odd.is_none() {
+                    continue;
+                }
+                if let Some((value, _, ra, read, write)) = even {
+                    if read {
+                        q[0] += ra * value;
+                    }
+                    if write {
+                        q[0] += value + inc_zero;
+                    }
+                }
+                let value_infinity = match (even, odd) {
+                    (Some((even_value, ..)), Some((odd_value, ..))) => odd_value - even_value,
+                    (Some((even_value, next, ..)), None) => AkitaField::from_u64(next) - even_value,
+                    (None, Some(_)) => AkitaField::from_u64(0),
+                    (None, None) => unreachable!("untouched column was skipped"),
+                };
+                let even_ra = even.map_or(AkitaField::from_u64(0), |cell| cell.2);
+                let odd_ra = odd.map_or(AkitaField::from_u64(0), |cell| cell.2);
+                if even.is_some_and(|cell| cell.3) || odd.is_some_and(|cell| cell.3) {
+                    q[1] += (odd_ra - even_ra) * value_infinity;
+                }
+                let even_write = even.is_some_and(|cell| cell.4);
+                let odd_write = odd.is_some_and(|cell| cell.4);
+                let write_term = value_infinity + inc_infinity;
+                if odd_write && !even_write {
+                    q[1] += write_term;
+                } else if even_write && !odd_write {
+                    q[1] -= write_term;
+                }
+            }
+            result[0] += outer_weight * inner_weight * q[0];
+            result[1] += outer_weight * inner_weight * q[1];
+        }
+    }
+    result
+}
+
+fn registers_rw_second_message_cpu(
+    rows: &[RegisterAccessRow],
+    inc: &[AkitaField],
+    gamma: AkitaField,
+    first_challenge: AkitaField,
+    e_in: &[AkitaField],
+    e_out: &[AkitaField],
+) -> [AkitaField; 2] {
+    const REGISTERS: usize = 128;
+    let mut state = [0u64; REGISTERS];
+    let mut val = vec![AkitaField::from_u64(0); rows.len() * REGISTERS];
+    let mut ra = vec![AkitaField::from_u64(0); rows.len() * REGISTERS];
+    let mut wa = vec![AkitaField::from_u64(0); rows.len() * REGISTERS];
+    for (cycle, row) in rows.iter().copied().enumerate() {
+        for register in 0..REGISTERS {
+            val[cycle * REGISTERS + register] = AkitaField::from_u64(state[register]);
+        }
+        if let Some((register, _)) = row.rs1() {
+            ra[cycle * REGISTERS + register as usize] += gamma;
+        }
+        if let Some((register, _)) = row.rs2() {
+            ra[cycle * REGISTERS + register as usize] += gamma * gamma;
+        }
+        if let Some((register, _, post)) = row.rd() {
+            wa[cycle * REGISTERS + register as usize] = AkitaField::from_u64(1);
+            state[register as usize] = post;
+        }
+    }
+
+    let blocks = rows.len() / 2;
+    let mut bound_val = vec![AkitaField::from_u64(0); blocks * REGISTERS];
+    let mut bound_ra = vec![AkitaField::from_u64(0); blocks * REGISTERS];
+    let mut bound_wa = vec![AkitaField::from_u64(0); blocks * REGISTERS];
+    for block in 0..blocks {
+        for register in 0..REGISTERS {
+            let bind = |table: &[AkitaField]| {
+                let lo = table[(2 * block) * REGISTERS + register];
+                let hi = table[(2 * block + 1) * REGISTERS + register];
+                lo + first_challenge * (hi - lo)
+            };
+            bound_val[block * REGISTERS + register] = bind(&val);
+            bound_ra[block * REGISTERS + register] = bind(&ra);
+            bound_wa[block * REGISTERS + register] = bind(&wa);
+        }
+    }
+    let bound_inc = inc
+        .chunks_exact(2)
+        .map(|pair| pair[0] + first_challenge * (pair[1] - pair[0]))
+        .collect::<Vec<_>>();
+
+    let mut result = [AkitaField::from_u64(0); 2];
+    for (x_out, &outer_weight) in e_out.iter().enumerate() {
+        for (x_in, &inner_weight) in e_in.iter().enumerate() {
+            let pair = x_out * e_in.len() + x_in;
+            let lo_block = 2 * pair;
+            let hi_block = lo_block + 1;
+            let inc_zero = bound_inc[lo_block];
+            let inc_infinity = bound_inc[hi_block] - inc_zero;
+            let mut q = [AkitaField::from_u64(0); 2];
+            for register in 0..REGISTERS {
+                let lo = lo_block * REGISTERS + register;
+                let hi = hi_block * REGISTERS + register;
+                q[0] += bound_ra[lo] * bound_val[lo] + bound_wa[lo] * (bound_val[lo] + inc_zero);
+                let val_infinity = bound_val[hi] - bound_val[lo];
+                q[1] += (bound_ra[hi] - bound_ra[lo]) * val_infinity
+                    + (bound_wa[hi] - bound_wa[lo]) * (val_infinity + inc_infinity);
+            }
+            result[0] += outer_weight * inner_weight * q[0];
+            result[1] += outer_weight * inner_weight * q[1];
+        }
+    }
+    result
+}
+
+#[test]
+fn registers_read_write_first_message_matches_cpu() {
+    const LOG_T: usize = 11;
+    const ROWS: usize = 1 << LOG_T;
+
+    let mut state = [0u64; 128];
+    let rows = (0..ROWS)
+        .map(|cycle| {
+            let rs1_index = ((13 * cycle) & 127) as u8;
+            let rs2_index = if cycle % 7 == 0 {
+                rs1_index
+            } else {
+                ((29 * cycle + 5) & 127) as u8
+            };
+            let rd_index = if cycle % 5 == 0 {
+                rs2_index
+            } else {
+                ((47 * cycle + 11) & 127) as u8
+            };
+            let rs1 = (cycle % 9 != 0).then_some((rs1_index, state[rs1_index as usize]));
+            let rs2 = (cycle % 6 != 0).then_some((rs2_index, state[rs2_index as usize]));
+            let rd = if cycle % 4 == 0 {
+                None
+            } else {
+                let pre = state[rd_index as usize];
+                let post = pre.wrapping_add((cycle as u64) | 1);
+                state[rd_index as usize] = post;
+                Some((rd_index, pre, post))
+            };
+            RegisterAccessRow::new(rs1, rs2, rd)
+        })
+        .collect::<Vec<_>>();
+    let inc = (0..ROWS)
+        .map(|row| AkitaField::from_u64((17 * row + 3) as u64))
+        .collect::<Vec<_>>();
+    let gamma = AkitaField::from_u64(0x1234_5678_9abc_def0);
+    let point = (0..LOG_T)
+        .map(|round| AkitaField::from_u64((1009 + 37 * round) as u64))
+        .collect::<Vec<_>>();
+    let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let expected = registers_rw_first_message_cpu(
+        &rows,
+        &inc,
+        gamma,
+        gruen.e_in_current(),
+        gruen.e_out_current(),
+    );
+
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let invocation = context
+        .prepare_registers_read_write_first_message(
+            &rows,
+            &inc,
+            gamma,
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+            RegistersReadWriteMessageConfig::default(),
+        )
+        .expect("registers read/write pipelines should compile");
+    assert_eq!(invocation.rows(), ROWS);
+    assert_eq!(invocation.threads_per_threadgroup(), 128);
+    assert_eq!(invocation.dynamic_threadgroup_memory_bytes(), 128);
+    assert_eq!(invocation.logical_row_bytes(), 40 * ROWS as u64);
+    assert_eq!(invocation.logical_inc_bytes(), 16 * ROWS as u64);
+    assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+    assert!(matches!(
+        invocation.read_message(),
+        Err(MetalError::NotExecuted)
+    ));
+
+    invocation
+        .execute()
+        .expect("registers read/write first message should execute");
+    assert_eq!(
+        invocation
+            .read_message()
+            .expect("registers read/write message should read"),
+        expected
+    );
+
+    let first_challenge = AkitaField::from_u64(0xfeed_beef_cafe_babe);
+    gruen.bind(first_challenge);
+    let second_expected = registers_rw_second_message_cpu(
+        &rows,
+        &inc,
+        gamma,
+        first_challenge,
+        gruen.e_in_current(),
+        gruen.e_out_current(),
+    );
+    let second = invocation
+        .prepare_second_message(
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+            RegistersReadWriteMessageConfig::default(),
+        )
+        .expect("second registers read/write pipeline should compile");
+    assert_eq!(second.rows(), ROWS);
+    assert_eq!(second.threads_per_threadgroup(), 128);
+    assert_eq!(second.dynamic_threadgroup_memory_bytes(), 128);
+    assert_eq!(second.execute_device_buffer_allocations(), 0);
+    assert!(matches!(
+        second.read_message(),
+        Err(MetalError::NotExecuted)
+    ));
+    second
+        .execute(first_challenge)
+        .expect("second registers read/write message should execute");
+    assert_eq!(
+        second
+            .read_message()
+            .expect("second registers read/write message should read"),
+        second_expected
     );
 }
 
