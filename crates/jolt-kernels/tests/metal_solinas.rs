@@ -3,16 +3,18 @@
 
 use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
+    dense_pushforward_oracle, product_remainder_reference, product_uniskip_reference,
+    ram_raf_split_equality, ram_val_check_oracle, split_pushforward_oracle,
+};
+use jolt_kernels::metal::solinas::{
     evaluate_product_uniskip_extensions_cpu, BooleanityRow, BooleanitySelector,
     BooleanitySequenceConfig, DispatchConfig, Fp128, InstructionRaFirstMessageConfig, MetalError,
     Probe, Product5Config, Product5SequenceConfig, ProductRemainderRow,
-    ProductRemainderSequenceConfig, ProductUniskipConfig, RamValCheckConfig, RamValCheckDenseRow,
-    RamValCheckNativeRow, RamValCheckPlan, RegisterAccessRow, RegistersReadWriteMessageConfig,
-    RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValTransitionConfig,
-    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
-};
-use jolt_kernels::metal::solinas::{
-    product_remainder_reference, product_uniskip_reference, ram_val_check_oracle,
+    ProductRemainderSequenceConfig, ProductUniskipConfig, RamRafConfig, RamValCheckConfig,
+    RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan, RegisterAccessRow,
+    RegistersReadWriteMessageConfig, RegistersValDenseConfig, RegistersValFirstMessageConfig,
+    RegistersValTransitionConfig, SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+    RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
@@ -315,6 +317,66 @@ fn ram_val_check_sequence_matches_cpu_at_every_boundary() {
     assert!(sequence.at_cpu_handoff());
     assert_eq!(sequence.current_elements(), config.cpu_tail_elements);
     assert_eq!(sequence.current_lt_lo_length(), lt_lo.len());
+}
+
+#[test]
+fn ram_raf_pushforward_matches_independent_dense_oracles() {
+    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+    let rows = 1usize << 16;
+    let point = (0..rows.ilog2() as usize)
+        .map(|index| {
+            AkitaField::from_u64(
+                0x9e37_79b9_7f4a_7c15_u64.wrapping_mul(index as u64 + 3) & ((1 << 56) - 1),
+            )
+        })
+        .collect::<Vec<_>>();
+    let addresses = (0..rows)
+        .map(|index| match index % 19 {
+            0 => RAM_RAF_NO_ACCESS,
+            1..=9 => 0,
+            _ => ((index * 37 + index / 11) % RAM_RAF_ADDRESS_DOMAIN) as u32,
+        })
+        .collect::<Vec<_>>();
+    let config = RamRafConfig {
+        trace_cutoff: 1 << 15,
+        ..RamRafConfig::default()
+    };
+    let plane = context
+        .prepare_ram_raf_addresses(&addresses, config)
+        .expect("RAM RAF address plane should prepare");
+    let storage_id = plane.storage_id();
+    let sequence = context
+        .prepare_ram_raf_sequence(plane, &point, config)
+        .expect("RAM RAF sequence should prepare");
+    assert_eq!(sequence.address_storage_id(), storage_id);
+    assert_eq!(sequence.round_device_buffer_allocations(), 0);
+
+    let observation = sequence
+        .execute_timed()
+        .expect("RAM RAF pushforward should execute");
+    let dense_eq = EqPolynomial::<AkitaField>::evals(&point, None);
+    let dense = dense_pushforward_oracle(&addresses, &dense_eq, RAM_RAF_ADDRESS_DOMAIN)
+        .expect("dense RAM RAF oracle should execute");
+    let (e_lo, e_hi) = ram_raf_split_equality(&point).expect("split equality should prepare");
+    let split = split_pushforward_oracle(&addresses, &e_lo, &e_hi, RAM_RAF_ADDRESS_DOMAIN)
+        .expect("split RAM RAF oracle should execute");
+    assert_eq!(split, dense);
+    assert_eq!(observation.masses, dense);
+    assert_eq!(observation.counters.invalid_rows, 0);
+    assert_eq!(observation.counters.unsupported_dispatches, 0);
+    assert_eq!(
+        observation.counters.accessed_rows as usize,
+        addresses
+            .iter()
+            .filter(|&&address| address != RAM_RAF_NO_ACCESS)
+            .count()
+    );
+
+    let replay = sequence
+        .execute_timed()
+        .expect("RAM RAF pushforward should replay");
+    assert_eq!(replay.masses, observation.masses);
+    assert_eq!(replay.counters, observation.counters);
 }
 
 fn assert_product_remainder_sequence(row_count: usize) {
