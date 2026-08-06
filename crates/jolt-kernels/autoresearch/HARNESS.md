@@ -91,11 +91,12 @@ lease is released or reacquired.
 
 ## Agent and machine ownership
 
-Up to three proposal agents may work in parallel on independent analysis or
-isolated candidate artifacts. The root agent alone modifies the shared
-worktree, reconciles proposals, runs builds and tests, and owns the serialized
-CPU/GPU evaluator lease. Proposal agents do not run Cargo, CPU controls, or GPU
-evaluators.
+Up to three proposal agents may work in parallel, but their roles are distinct:
+one derives the ceiling and bottleneck model, one sketches the candidate, and
+one tries to falsify the model and design. They do not repeat the same broad
+analysis. The root agent alone modifies the shared worktree, reconciles the
+proposals, runs builds and tests, and owns the serialized CPU/GPU evaluator
+lease. Proposal agents do not run Cargo, CPU controls, or GPU evaluators.
 
 Candidate analysis should contain:
 
@@ -112,21 +113,38 @@ test file needed by the first pre-registered dataflow candidate and the next
 ranked phase candidates. Discovering a missing implementation file after the
 baseline supersedes the run; frozen scope is never widened in place.
 
+A phase covers one mechanism family and normally admits at most two candidates:
+the primary design and one pre-registered risk-reduction variant. Its first
+candidate has a one-shot, phase-local checkpoint at the cheapest exact scale.
+A miss seals the negative result immediately. Expensive representative runs are
+reserved for candidates that pass that checkpoint. A layout or dependency-closure
+change opens a separate phase rather than widening the frozen scope.
+
 Before freezing a fresh mechanism phase, profile one cold and one warm exact
 controller cycle. Separate source assembly, compilation, fixture/device setup,
 queueing, evaluation, parsing, and checkpointing; freeze a valid-candidates-per-hour
 target. Compile a reduced evaluator only from its sealed transitive dependency
-closure and only after its exact result contract has been validated.
+closure and only after its exact result contract has been validated. Version-3
+preflight evidence binds the controller source closure, the exact reconstructed
+shader fragments and assembled sources, and the sealed runner binary and source.
+A revision label alone is not sufficient provenance.
 
-The current OuterRemainder profile records 2.135 seconds cold and 1.945 seconds
-warm for an exact log-25 controller cycle. Controller overhead is below 0.04%,
-and the cold cycle implies 1,686 cycles/hour; the contract freezes a conservative
+The current OuterRemainder profile records 2.218 seconds cold and 1.924 seconds
+warm for an exact log-25 controller cycle. Controller overhead is below 0.07%,
+and the cold cycle implies 1,623 cycles/hour; the contract freezes a conservative
 1,200-cycle/hour floor. This is controller capacity for the proxy evaluator, not
 candidate-development throughput or the cadence of log-26, holdout, and transfer
 runs. Each phase's wall and candidate budgets are its timebox; its contract also
 names an analytical ceiling, progress checkpoint, and kill or redesign action.
 Missing that checkpoint seals `phase_exhausted` rather than spending the remaining
 phase budget by default.
+
+If an inherited proxy is already known to misrank the representative evaluator,
+do not spend a new phase recalibrating the unchanged proxy. Record the inherited
+evidence and use the direct lane, retaining the cheap scale only for the one-shot
+checkpoint. Rejected implementation code is restored out of the live shader;
+the phase summary, exact hashes, and measured failure remain in the evidence
+registry.
 
 ## Durable records
 
@@ -168,6 +186,7 @@ event names a successor run; it does not reactivate the terminal kernel run.
 The canonical controller dispatches by contract version:
 
 ```text
+python3 scripts/metal_autoresearch.py profile-iteration TEMPLATE OUTPUT_PREFIX
 python3 scripts/metal_autoresearch.py init TEMPLATE RUN_DIR
 python3 scripts/metal_autoresearch.py validate-template TEMPLATE
 python3 scripts/metal_autoresearch.py resume-init RUN_DIR

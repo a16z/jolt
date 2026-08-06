@@ -13,6 +13,10 @@ Metal-first strata were 4.03127x and 3.98379x. This agrees with the historical
 A schema-1 snapshot may resume only its existing run; it cannot parent a fresh v2
 phase.
 
+The latest fresh parent measured 4.05147x: 880.068 ms on optimized CPU and
+216.493 ms on Metal. Its CPU-first and Metal-first strata were 4.07200x and
+4.04936x. This is the parent for the opening-ownership phase below.
+
 The member is a better next target than the slightly larger registers read/write
 member because its input rows already exist on the device. Stage 1's Metal uni-skip
 uses a 48-byte `InstructionInputRow` and a 112-byte residual row for every cycle.
@@ -267,14 +271,16 @@ rejection is audited. A material inversion or false negative disables proxy
 ranking. The screen cannot accept a candidate or satisfy the 5x floor.
 
 The frozen iteration preflight records one cold and one warm exact proxy cycle for
-an inert shader nonce. They took 2.135 and 1.945 seconds end to end, including
+an inert shader nonce. They took 2.218 and 1.924 seconds end to end, including
 source assembly, library and pipeline compilation, fixture/device setup,
 evaluation, result validation, and checkpoint computation. Controller overhead
-was below 0.04%; the cold cycle implies 1,686 proxy cycles/hour, and the contract
-uses a 1,200-cycle/hour floor. These figures measure evaluator capacity, not the
-time to design a candidate or run the representative and production tiers. The
-summary and raw outputs live under
-`autoresearch/evidence/outer_remainder_iteration_preflight*`.
+was below 0.07%; the cold cycle implies 1,623 proxy cycles/hour, and the contract
+uses a 1,200-cycle/hour floor. Version-3 evidence also binds the controller source
+closure, exact reconstructed Akita offset and assembled shader sources, and the
+sealed runner binary and source. These figures measure evaluator capacity, not
+the time to design a candidate or run the representative and production tiers.
+The summary and raw outputs live under
+`autoresearch/evidence/outer_remainder_opening_row_owner_v1_iteration_preflight*`.
 
 A candidate can become a search parent only by improving beyond the fixed log-26
 noise threshold. Production promotion additionally requires at least 5x in both
@@ -295,27 +301,45 @@ search parent until fresh revalidation, holdout, and transfer all pass.
 
 ## Fresh v2 experiment order
 
-The active phase is `b_fold_straight_line_v1`. It specializes the 19 dynamic
-`B`-row folds into straight-line, stream-local shader code so common flags and row
-words can remain live once per cycle. It adds no global traffic and changes only
-`shader.metal`. The analytical best case is a 206-ms member, or 4.277x against the
-880.991-ms control, with register pressure and instruction footprint as the main
-failure risks.
+The `b_fold_straight_line_v1` phase is exhausted. Its exact first candidate made
+materialization slower, 51.531 ms versus the 38-ms one-shot checkpoint, so the
+pre-registered kill rule stopped the phase before candidate two. The live shader
+was restored. The parent, candidate hashes, exact result, and failure are retained
+in `autoresearch/evidence/outer_remainder_b_fold_straight_line_v1_rejected.json`.
 
-The first admitted candidate is also the one-shot exact log-25 checkpoint:
-materialization GPU-active time must be at most 38 ms. A miss immediately seals
-the phase as exhausted. A retained candidate must improve the 222.318-ms parent by
-at least 3% and reach at most 212 ms on the unchanged log-26 representative. The
-phase admits at most two candidates and four search hours. These are phase-progress
-gates; production promotion still requires at least 5x and at most 170.5 ms.
+The active phase is `opening_row_owner_v1`. The parent opening scan costs
+62.018 ms GPU-active. Reaching the retained 47.39-ms arithmetic floor would reduce
+the complete member to about 201.864 ms, or 4.35970x against the 880.068-ms CPU
+control. A 5x member would require 176.014 ms, equivalent to an impossible
+21.539-ms opening if every other phase stayed fixed. Opening work therefore has
+enough headroom for a useful parent improvement, but cannot finish the portfolio
+on its own.
 
-The sole binding plan remains `b_only_v1`. The removed alternative plan and the
-retained-`A` dataflow are not reopened in this phase. If straight-line folding
-misses its checkpoint or exhausts the two-candidate timebox, preserve the negative
-result and start a new phase around opening work ownership. That phase should
-remove unused shard scratch and test direct or cached weight access against the
-47.39-ms opening target. Cutoff and launch geometry remain later work because
-underfilled late rounds offer less headroom.
+Candidate one is a shader-only row-first ownership rewrite. It preserves the ABI,
+64-by-20 staging tile, 256-thread group with eight SIMD groups, nine accumulators,
+barriers, reduction order, and currently unused two-element threadgroup scratch.
+SIMD group `g` owns columns `c = g + 8s`; lane `l` owns rows `l` and `l + 32`.
+For the 35 outputs, the scan model reduces repeated common-row loads from 140 to
+32 and weight and derived-bundle loads from 35 to 8 each. It preserves 17 weighted
+field multiplications and 18 boolean additions per output row and does not change
+global traffic. Register spills are the primary risk; occupancy is not claimed
+until Instruments or ISA evidence measures it.
+
+The first candidate is also the one-shot log-25 checkpoint: opening GPU-active
+time must be at most 28.0 ms. A candidate that passes may run the log-26
+representative, where it must improve the 216.493-ms parent by at least 3% and
+reach at most 209.998 ms. The phase admits at most two candidates and three search
+hours. The direct lane is mandatory because the predecessor's unchanged proxy
+calibration measured Kendall tau-b 0.3333; log 25 is retained only as the exact
+checkpoint probe.
+
+If candidate one passes the checkpoint but misses representative promotion,
+candidate two may only reduce the row-owner design's live ranges. Any 56-row
+padded layout is a separate cross-Rust phase because it changes the 21-word row
+stride, plan, sequence, shader, and tests; that phase may also remove the unused
+threadgroup scratch. A checkpoint miss or two-candidate exhaustion seals this
+phase and moves to the next measured bottleneck. Production promotion still
+requires at least 5x and at most 170.5 ms.
 
 Before promotion, Instruments or ISA evidence must report threadgroup memory,
 register pressure, spills, active SIMD groups, achieved occupancy, and dispatch
