@@ -22,6 +22,7 @@ mod booleanity;
 mod booleanity_address;
 mod bytecode_cycle;
 mod bytecode_row;
+pub mod half_width_probe;
 pub mod instruction_claim_reduction;
 mod instruction_input;
 pub mod instruction_input_successor;
@@ -70,6 +71,11 @@ pub use bytecode_cycle::{
     BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
+pub use half_width_probe::{
+    HalfWidthDomain, HalfWidthOperand, HalfWidthProbe, HalfWidthProbeInvocation,
+    HalfWidthProbeShape, HALF_WIDTH_AKITA_OFFSET, MINIMUM_HALF_WIDTH_PRODUCTS_PER_SECOND,
+    TARGET_CHAIN_ELEMENTS, TARGET_CHAIN_ITERATIONS,
+};
 pub(crate) use instruction_input::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
     instruction_input_weight_capacities, InstructionInputSequenceStorage,
@@ -349,6 +355,8 @@ pub enum MetalError {
     MisalignedElementCount { probe: &'static str, ilp: usize },
     #[error("iteration count must be nonzero")]
     ZeroIterations,
+    #[error(transparent)]
+    HalfWidthProbe(#[from] half_width_probe::HalfWidthProbeError),
     #[error("Spartan outer uni-skip shape mismatch: rows={rows}, e_in={e_in}, e_out={e_out}")]
     SpartanOuterUniskipShape {
         rows: usize,
