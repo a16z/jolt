@@ -13,6 +13,7 @@ jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-transcript.workspace = true
+jolt-utils.workspace = true
 rayon.workspace = true
 serde.workspace = true
 thiserror.workspace = true

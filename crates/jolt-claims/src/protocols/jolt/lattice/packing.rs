@@ -6,8 +6,8 @@
 
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_openings::PrefixPacking;
-use jolt_poly::math::Math;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_utils::Math;
 
 use super::super::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use super::super::geometry::ra::JoltRaPolynomialLayout;

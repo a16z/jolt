@@ -41,8 +41,6 @@
 //!
 //! - [`lagrange`]: Lagrange interpolation, integer-domain power sums, polynomial
 //!   multiplication, Newton-form interpolation over integer domains
-//! - [`math`]: Bit-manipulation utilities on `usize` via the `Math` trait (`pow2`, `log_2`)
-//! - [`thread`]: `drop_in_background_thread` (rayon) and `unsafe_allocate_zero_vec` (zero-init allocation)
 
 mod binding;
 mod compressed_univariate;
@@ -52,13 +50,11 @@ mod eq_plus_one;
 mod identity;
 pub mod lagrange;
 mod lt;
-pub mod math;
 mod mle;
 mod multilinear;
 mod one_hot;
 mod point;
 mod split_eq;
-pub mod thread;
 mod univariate;
 
 pub use binding::BindingOrder;

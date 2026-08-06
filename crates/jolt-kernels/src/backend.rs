@@ -8,6 +8,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
@@ -224,6 +225,11 @@ pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
     v.capacity() * size_of::<T>()
 }
 
+#[cfg(feature = "allocative")]
+pub(crate) fn arc_vec_heap_bytes<T>(v: &Arc<Vec<T>>) -> usize {
+    size_of::<Vec<T>>() + v.capacity() * size_of::<T>()
+}
+
 /// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
 /// inner reservation.
 #[cfg(feature = "allocative")]
@@ -264,9 +270,22 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
 #[derive(Default)]
 pub struct ProofSession {
     state: HashMap<TypeId, Carry>,
+    witness: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl ProofSession {
+    /// Retain the proof's witness plane for kernels whose state outlives
+    /// their `prepare` borrow.
+    pub fn set_witness<F: Field>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
+        self.witness = Some(Box::new(witness));
+    }
+
+    /// The retained witness plane for `F`, when the proof was started from
+    /// an owned plane.
+    pub fn witness<F: Field>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
+        self.witness.as_ref()?.downcast_ref()
+    }
+
     /// The calling backend's private state, created by `init` on first
     /// access. `T` is the backend-private key: choose one type per backend
     /// family.

@@ -15,6 +15,7 @@ jolt-openings = { workspace = true }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true }
 dory = { workspace = true }
+jolt-optimizations = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
