@@ -68,6 +68,7 @@ pub struct MaterializeShape {
 }
 
 impl MaterializeShape {
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) const fn params(self) -> InstructionInputSuccessorMaterializeParams {
         self.params
     }
@@ -132,6 +133,7 @@ pub struct DenseMessageShape {
 }
 
 impl DenseMessageShape {
+    #[cfg(test)]
     pub(crate) const fn params(self) -> InstructionInputSuccessorDenseMessageParams {
         self.params
     }

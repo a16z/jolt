@@ -67,7 +67,7 @@ tracing-subscriber.workspace = true
 [[bench]]
 name = "metal_solinas"
 harness = false
-required-features = ["metal", "parallel"]
+required-features = ["metal", "parallel", "test-utils"]
 
 [[example]]
 name = "metal-kernel-eval"

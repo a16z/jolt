@@ -138,12 +138,7 @@ fn split_descriptors_match_an_independent_direct_walk() {
         .collect();
     let first_challenge = AkitaField::from_u64(0x1234_5678_9abc_def0);
     let gamma = AkitaField::from_u64(0xfeed_face_cafe_beef);
-    let e_in = [
-        AkitaField::from_u64(3),
-        AkitaField::from_u64(5),
-        AkitaField::from_u64(7),
-        AkitaField::from_u64(11),
-    ];
+    let e_in = [AkitaField::from_u64(3), AkitaField::from_u64(5)];
     let e_out = [AkitaField::from_u64(13), AkitaField::from_u64(17)];
 
     let descriptors =

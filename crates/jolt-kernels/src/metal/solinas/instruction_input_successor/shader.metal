@@ -37,12 +37,12 @@ inline SolinasFp128 instruction_input_successor_boolean_bind(
 {
     SolinasFp128 zero = solinas_zero();
     SolinasFp128 one = instruction_input_from_u64(1ul);
-    SolinasFp128 constant = solinas_select(low != 0u, one, zero);
+    SolinasFp128 constant_value = solinas_select(low != 0u, one, zero);
     SolinasFp128 different = solinas_select(
         low != 0u,
         solinas_sub(one, challenge),
         challenge);
-    return solinas_select(low == high, constant, different);
+    return solinas_select(low == high, constant_value, different);
 }
 
 inline InstructionInputSuccessorQuadratic

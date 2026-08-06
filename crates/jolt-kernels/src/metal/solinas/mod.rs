@@ -24,6 +24,7 @@ mod bytecode_cycle;
 mod bytecode_row;
 pub mod instruction_claim_reduction;
 mod instruction_input;
+pub mod instruction_input_successor;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
 mod outer_remainder;
@@ -78,7 +79,8 @@ pub use instruction_input::{
     InstructionInputPrimerStats, InstructionInputRow, InstructionInputRows,
     InstructionInputSequence, InstructionInputSequenceConfig,
     InstructionInputStorageInitialization, InstructionInputStorageInitializationStats,
-    INSTRUCTION_INPUT_COEFFICIENTS, INSTRUCTION_INPUT_TABLES,
+    InstructionInputSuccessorMaterializeStats, INSTRUCTION_INPUT_COEFFICIENTS,
+    INSTRUCTION_INPUT_TABLES,
 };
 pub(crate) use instruction_ra_sequence::{
     instruction_ra_weight_capacities, InstructionRaSequenceStorage,
@@ -584,6 +586,8 @@ pub enum MetalError {
         requested: u64,
         maximum: u64,
     },
+    #[error(transparent)]
+    InstructionInputSuccessor(#[from] instruction_input_successor::InstructionInputSuccessorError),
     #[error(transparent)]
     RamValCheckShape(#[from] ram_val_check::RamValCheckShapeError),
     #[error(transparent)]

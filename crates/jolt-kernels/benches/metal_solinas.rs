@@ -171,6 +171,10 @@ mod macos {
                     instruction_input::bench_transition(c, &context);
                 }
                 "instruction-input-service" => instruction_input::bench_service(c, &context),
+                #[cfg(feature = "test-utils")]
+                "instruction-input-successor-materializer" => {
+                    instruction_input::bench_successor_materializer(c, &context);
+                }
                 "instruction-input" => instruction_input::bench(c, &context),
                 "instruction-claim-reduction" => {
                     instruction_claim_reduction::bench(c, &context);

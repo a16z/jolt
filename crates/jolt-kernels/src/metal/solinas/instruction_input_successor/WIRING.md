@@ -1,14 +1,24 @@
 # InstructionInput Metal successor
 
-Status: isolated static design. Nothing in this directory is registered with
-the backend or source assembler. The MSL has not been compiled, run, or timed,
-and the Rust fixtures have not been added to a Cargo target. All projected
-times below are analytical targets, not successor results. In particular,
-this packet is not yet an executable materializer slice: integration must
-borrow the production `InstructionInputRows` buffer and the existing dense A
-buffer, register the source and dispatch path, and attest their allocation
-identities. The duplicate row type here freezes bytes only; it cannot borrow a
-production GPU allocation.
+Status: executable experimental materializer; static dense-message design.
+The module and MSL fragment are registered with the Solinas source assembler.
+With `test-utils` (or unit tests), sequence preparation compiles the
+materializer pipeline, its asynchronous primer dispatches the same pipeline on
+a 64-row prefix, and the diagnostic host path borrows the production
+`InstructionInputRows` allocation and existing dense A buffer. The checked GPU
+test compares all eight tables with the independent oracle and attests both
+allocation identities. The benchmark charges command creation, submission,
+completion, and timestamps, while row production, allocation, and pipeline
+setup remain outside its phase timer.
+
+This is not a production transition yet. The diagnostic runs only in
+`BeforeMessage`, does not advance sequence state, and cannot consume the
+Fiat-Shamir challenge that follows the production first message. The current
+backend still dispatches the old fused native transition. The successor dense
+message has source and static fixtures but no pipeline state or host dispatch.
+All complete-service times below remain analytical targets. The duplicate row
+type in this directory freezes bytes only; runtime dispatch uses the actual
+production allocation.
 
 ## Exact relation and orientation
 
@@ -87,8 +97,9 @@ incremental producer cost instead.
 
 The successor reuses the six existing proof-scoped sequence buffers
 (6,443,433,984 owned bytes at log 26), including dense A/B, equality weights,
-and reduction partials. It adds no persistent allocation and no per-round
-allocation. Its first dispatch overwrites dense A completely before the second
+and reduction partials. It adds no persistent or per-round data-buffer
+allocation; command-buffer and encoder creation remain in the measured wall
+time. Its first dispatch overwrites dense A completely before the second
 dispatch reads it. The CPU handoff remains eight `2^16` tables, or 8 MiB.
 
 Exact entry-point bindings are:
@@ -137,19 +148,20 @@ An encoder boundary or explicit buffer barrier may implement the dependency;
 a command-buffer completion may not. The full sequence retains 11 protocol
 command buffers and 11 round waits.
 
-The charged asynchronous primer must exercise both new pipelines on a fixed
-64-row prefix with zero weights, check a zero descriptor, and leave protocol
-state unchanged. It may overwrite that dense prefix because the real
-materializer overwrites the complete active range before the message reads it.
+The charged asynchronous primer currently exercises the materializer on a
+fixed 64-row prefix in the same command as the existing zero-weight native
+message primer and leaves protocol state unchanged. It may overwrite that
+dense prefix because the real materializer overwrites the complete active
+range before the message reads it. Once the dense-message dispatch exists, the
+same primer must exercise it with zero weights and check a zero descriptor.
 
-`shader.metal` must be appended after the production InstructionInput fragment
+`shader.metal` is appended after the production InstructionInput fragment
 because it deliberately reuses `InstructionInputRow`, native conversions,
-Solinas bind arithmetic, and the three-lane reduction. The smallest first
-experiment is the materializer alone: register that one entry point, compare
-all eight dense tables with `materialize_first_bind`, and capture traffic and
-spills before enabling the dense-message entry point. The checked dense
-message oracle is a separate direct relation implementation, not shader output
-fed back as its own oracle.
+Solinas bind arithmetic, and the three-lane reduction. The first experiment is
+now implemented for the materializer alone: it compares all eight dense tables
+with `materialize_first_bind`. The checked dense-message oracle remains a
+separate direct relation implementation, not shader output fed back as its own
+oracle.
 
 ## Launch and occupancy sketch
 

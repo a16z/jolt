@@ -1,6 +1,8 @@
-//! Isolated successor design for the InstructionInput Metal backend.
+//! Experimental successor kernels for the InstructionInput Metal backend.
 //!
-//! This module is deliberately not registered with the production backend.
+//! The materializer is available to tests and evaluator builds. The production
+//! backend still selects the existing fused transition, and the dense-message
+//! successor does not yet have a host dispatch path.
 
 mod abi;
 pub mod model;

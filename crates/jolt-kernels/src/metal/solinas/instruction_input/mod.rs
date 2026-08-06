@@ -11,12 +11,24 @@ use metal::{
     ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
+#[cfg(any(test, feature = "test-utils"))]
+use super::instruction_input_successor::{
+    model::checked_materialize_shape, INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH,
+    MATERIALIZE_PIPELINE as SUCCESSOR_MATERIALIZE_PIPELINE,
+};
 use super::{command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal};
 
 pub const INSTRUCTION_INPUT_TABLES: usize = 8;
 pub const INSTRUCTION_INPUT_COEFFICIENTS: usize = 3;
 const INSTRUCTION_INPUT_DEVICE_BUFFERS: usize = 6;
 const INSTRUCTION_INPUT_ROW_WORDS: usize = 6;
+#[cfg(any(test, feature = "test-utils"))]
+const INSTRUCTION_INPUT_SUCCESSOR_MATERIALIZE_THREADS: usize = 256;
+#[cfg(any(test, feature = "test-utils"))]
+const INSTRUCTION_INPUT_SUCCESSOR_PRIMER_SOURCE_ELEMENTS: usize = 64;
+#[cfg(any(test, feature = "test-utils"))]
+const INSTRUCTION_INPUT_SUCCESSOR_PRIMER_BOUND_ELEMENTS: usize =
+    INSTRUCTION_INPUT_SUCCESSOR_PRIMER_SOURCE_ELEMENTS / 2;
 
 const ROW_RS1: usize = 0;
 const ROW_UNEXPANDED_PC: usize = 1;
@@ -209,6 +221,17 @@ pub struct InstructionInputPrimerStats {
     pub storage_buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstructionInputSuccessorMaterializeStats {
+    pub source_elements: usize,
+    pub bound_elements: usize,
+    pub wall: Duration,
+    pub gpu_active: Duration,
+    pub resident_row_identity: usize,
+    pub dense_buffer_identity: usize,
+    pub pipeline_limits: PipelineLimits,
+}
+
 struct InstructionInputNativePrimerCommand {
     command_buffer: CommandBuffer,
     submitted_at: Instant,
@@ -346,6 +369,8 @@ struct Pipelines {
     native_transition: ComputePipelineState,
     dense_transition: ComputePipelineState,
     reduction: ComputePipelineState,
+    #[cfg(any(test, feature = "test-utils"))]
+    successor_materialize: ComputePipelineState,
 }
 
 struct Buffers {
@@ -453,6 +478,8 @@ pub(crate) struct InstructionInputSequenceStorage {
     native_transition_limits: PipelineLimits,
     dense_transition_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
+    #[cfg(any(test, feature = "test-utils"))]
+    successor_materialize_limits: PipelineLimits,
     buffers: Buffers,
     rows: usize,
     e_in_capacity: usize,
@@ -460,6 +487,8 @@ pub(crate) struct InstructionInputSequenceStorage {
     native_message_threads: usize,
     native_transition_threads: usize,
     dense_transition_threads: usize,
+    #[cfg(any(test, feature = "test-utils"))]
+    successor_materialize_threads: usize,
     config: InstructionInputSequenceConfig,
     initialization: InstructionInputStorageInitializationStats,
     owned_bytes: u64,
@@ -497,6 +526,8 @@ pub struct InstructionInputSequence {
     phase: SequencePhase,
     dense_elements: usize,
     dense_in_a: bool,
+    #[cfg(any(test, feature = "test-utils"))]
+    successor_materialized: bool,
     gpu_active_time: Duration,
 }
 
@@ -591,11 +622,15 @@ impl SolinasMetal {
             native_transition: self.compile_named_pipeline(NATIVE_TRANSITION_PIPELINE)?,
             dense_transition: self.compile_named_pipeline(DENSE_TRANSITION_PIPELINE)?,
             reduction: self.compile_named_pipeline(REDUCTION_PIPELINE)?,
+            #[cfg(any(test, feature = "test-utils"))]
+            successor_materialize: self.compile_named_pipeline(SUCCESSOR_MATERIALIZE_PIPELINE)?,
         };
         let native_message_limits = Self::limits(&pipelines.native_message);
         let native_transition_limits = Self::limits(&pipelines.native_transition);
         let dense_transition_limits = Self::limits(&pipelines.dense_transition);
         let reduction_limits = Self::limits(&pipelines.reduction);
+        #[cfg(any(test, feature = "test-utils"))]
+        let successor_materialize_limits = Self::limits(&pipelines.successor_materialize);
         for (pipeline, limits) in [
             (NATIVE_MESSAGE_PIPELINE, native_message_limits),
             (NATIVE_TRANSITION_PIPELINE, native_transition_limits),
@@ -610,6 +645,16 @@ impl SolinasMetal {
                 });
             }
         }
+        #[cfg(any(test, feature = "test-utils"))]
+        if successor_materialize_limits.thread_execution_width
+            != INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH
+        {
+            return Err(MetalError::UnsupportedInstructionInputExecutionWidth {
+                pipeline: SUCCESSOR_MATERIALIZE_PIPELINE,
+                expected: INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH,
+                got: successor_materialize_limits.thread_execution_width,
+            });
+        }
         let native_message_threads = Self::resolve_threadgroup_width(
             config.native_message_threads_per_threadgroup,
             native_message_limits,
@@ -621,6 +666,11 @@ impl SolinasMetal {
         let dense_transition_threads = Self::resolve_threadgroup_width(
             config.dense_transition_threads_per_threadgroup,
             dense_transition_limits,
+        )?;
+        #[cfg(any(test, feature = "test-utils"))]
+        let successor_materialize_threads = Self::resolve_threadgroup_width(
+            Some(INSTRUCTION_INPUT_SUCCESSOR_MATERIALIZE_THREADS),
+            successor_materialize_limits,
         )?;
 
         let device = self.device_info();
@@ -657,6 +707,8 @@ impl SolinasMetal {
             native_transition_limits,
             dense_transition_limits,
             reduction_limits,
+            #[cfg(any(test, feature = "test-utils"))]
+            successor_materialize_limits,
             buffers,
             rows,
             e_in_capacity,
@@ -664,6 +716,8 @@ impl SolinasMetal {
             native_message_threads,
             native_transition_threads,
             dense_transition_threads,
+            #[cfg(any(test, feature = "test-utils"))]
+            successor_materialize_threads,
             config,
             initialization,
             owned_bytes: layout.owned_bytes,
@@ -722,6 +776,11 @@ impl InstructionInputSequenceStorage {
             reserved: [0; 2],
         };
         let gamma = Fp128::from_jolt_field(&AkitaField::zero());
+        #[cfg(any(test, feature = "test-utils"))]
+        let successor_shape = checked_materialize_shape(
+            INSTRUCTION_INPUT_SUCCESSOR_PRIMER_SOURCE_ELEMENTS,
+            self.context.device.max_buffer_length(),
+        )?;
         let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
@@ -766,6 +825,30 @@ impl InstructionInputSequenceStorage {
                     depth: 1,
                 },
             );
+            #[cfg(any(test, feature = "test-utils"))]
+            {
+                encoder.set_compute_pipeline_state(&self.pipelines.successor_materialize);
+                encoder.set_buffer(0, Some(resident_rows.buffer()), 0);
+                encoder.set_buffer(1, Some(&self.buffers.dense_a), 0);
+                set_inline_bytes(encoder, 2, &gamma);
+                set_inline_bytes(encoder, 3, &successor_shape.params());
+                encoder.set_threadgroup_memory_length(0, 0);
+                encoder.dispatch_thread_groups(
+                    MTLSize {
+                        width: successor_shape
+                            .grid_threads()
+                            .div_ceil(self.successor_materialize_threads)
+                            as u64,
+                        height: 1,
+                        depth: 1,
+                    },
+                    MTLSize {
+                        width: self.successor_materialize_threads as u64,
+                        height: 1,
+                        depth: 1,
+                    },
+                );
+            }
             encoder.end_encoding();
             command_buffer.commit();
         });
@@ -827,6 +910,21 @@ impl InstructionInputSequenceStorage {
                 "native pipeline primer produced a nonzero message",
             ));
         }
+        #[cfg(any(test, feature = "test-utils"))]
+        {
+            let successor_values =
+                INSTRUCTION_INPUT_TABLES * INSTRUCTION_INPUT_SUCCESSOR_PRIMER_BOUND_ELEMENTS;
+            // SAFETY: the completed successor primer initialized the compact
+            // 64-row fixture at the start of dense A.
+            let output = unsafe {
+                slice::from_raw_parts(
+                    self.buffers.dense_a.contents().cast::<Fp128>(),
+                    successor_values,
+                )
+            };
+            self.context
+                .validate_inputs("instruction input successor primer", output)?;
+        }
         let join_wall = join_started.elapsed();
         Ok(InstructionInputPrimerStats {
             source_elements: INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
@@ -862,6 +960,8 @@ impl InstructionInputSequenceStorage {
             phase: SequencePhase::BeforeMessage,
             dense_elements: 0,
             dense_in_a: true,
+            #[cfg(any(test, feature = "test-utils"))]
+            successor_materialized: false,
             gpu_active_time: Duration::ZERO,
         })
     }
@@ -877,6 +977,10 @@ impl InstructionInputSequence {
         self.phase = SequencePhase::BeforeMessage;
         self.dense_elements = 0;
         self.dense_in_a = true;
+        #[cfg(any(test, feature = "test-utils"))]
+        {
+            self.successor_materialized = false;
+        }
         self.gpu_active_time = Duration::ZERO;
     }
 
@@ -973,6 +1077,130 @@ impl InstructionInputSequence {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn probe_successor_materialize(
+        &mut self,
+        challenge: AkitaField,
+        output: &mut [AkitaField],
+    ) -> Result<InstructionInputSuccessorMaterializeStats, MetalError> {
+        let stats = self.run_successor_materialize(challenge)?;
+        self.read_successor_materialized_tables(output)?;
+        Ok(stats)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn run_successor_materialize(
+        &mut self,
+        challenge: AkitaField,
+    ) -> Result<InstructionInputSuccessorMaterializeStats, MetalError> {
+        if self.phase != SequencePhase::BeforeMessage {
+            return Err(MetalError::InvalidInstructionInputState(
+                "the successor materializer probe requires unbound resident rows",
+            ));
+        }
+        self.successor_materialized = false;
+        let shape = checked_materialize_shape(
+            self.storage.rows,
+            self.storage.context.device.max_buffer_length(),
+        )?;
+        if self.storage.buffers.dense_a.length() != shape.dense_table_bytes() {
+            return Err(MetalError::InvalidInstructionInputState(
+                "the successor materializer target differs from dense A",
+            ));
+        }
+
+        let started = Instant::now();
+        let challenge = Fp128::from_jolt_field(&challenge);
+        self.storage
+            .context
+            .validate_inputs("instruction input successor challenge", &[challenge])?;
+        let command_buffer = self.storage.context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.storage.pipelines.successor_materialize);
+            encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
+            encoder.set_buffer(1, Some(&self.storage.buffers.dense_a), 0);
+            set_inline_bytes(encoder, 2, &challenge);
+            set_inline_bytes(encoder, 3, &shape.params());
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: shape
+                        .grid_threads()
+                        .div_ceil(self.storage.successor_materialize_threads)
+                        as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.storage.successor_materialize_threads as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let gpu_start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+        let gpu_end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
+        {
+            return Err(MetalError::InvalidGpuTimestamps {
+                start: gpu_start,
+                end: gpu_end,
+            });
+        }
+        self.successor_materialized = true;
+        Ok(InstructionInputSuccessorMaterializeStats {
+            source_elements: self.storage.rows,
+            bound_elements: shape.grid_threads(),
+            wall: started.elapsed(),
+            gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
+            resident_row_identity: self.resident_rows.allocation_identity(),
+            dense_buffer_identity: self.storage.buffers.dense_a.as_ptr() as usize,
+            pipeline_limits: self.storage.successor_materialize_limits,
+        })
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn read_successor_materialized_tables(
+        &self,
+        output: &mut [AkitaField],
+    ) -> Result<(), MetalError> {
+        if self.phase != SequencePhase::BeforeMessage || !self.successor_materialized {
+            return Err(MetalError::InvalidInstructionInputState(
+                "the successor materializer read requires a completed diagnostic dispatch",
+            ));
+        }
+        let expected = INSTRUCTION_INPUT_TABLES
+            .checked_mul(self.storage.rows / 2)
+            .ok_or(MetalError::InputTooLong(self.storage.rows))?;
+        if output.len() != expected {
+            return Err(MetalError::InstructionInputStorageLength {
+                expected,
+                got: output.len(),
+            });
+        }
+        // SAFETY: a completed successor materializer initializes exactly
+        // `expected` fields at the front of dense A.
+        let values = unsafe {
+            slice::from_raw_parts(
+                self.storage.buffers.dense_a.contents().cast::<Fp128>(),
+                expected,
+            )
+        };
+        self.storage
+            .context
+            .validate_inputs("instruction input successor tables", values)?;
+        for (output, value) in output.iter_mut().zip(values) {
+            *output = value.into_jolt_field();
+        }
+        Ok(())
+    }
+
     pub const fn current_elements(&self) -> usize {
         match self.phase {
             SequencePhase::BeforeMessage | SequencePhase::Native => self.storage.rows,
@@ -1018,6 +1246,11 @@ impl InstructionInputSequence {
 
     pub const fn dense_transition_pipeline_limits(&self) -> PipelineLimits {
         self.storage.dense_transition_limits
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub const fn successor_materialize_pipeline_limits(&self) -> PipelineLimits {
+        self.storage.successor_materialize_limits
     }
 
     fn execute(
@@ -1401,7 +1634,11 @@ fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, va
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, reason = "test module")]
 mod tests {
-    use std::{mem::size_of, slice, time::Duration};
+    use std::{
+        mem::{align_of, size_of},
+        slice,
+        time::Duration,
+    };
 
     use jolt_field::AkitaField;
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
@@ -1413,7 +1650,13 @@ mod tests {
         InstructionInputSequenceConfig, InstructionInputStorageInitialization, ReductionParams,
         INSTRUCTION_INPUT_DEVICE_BUFFERS, INSTRUCTION_INPUT_TABLES,
     };
-    use crate::metal::solinas::{MetalError, SolinasMetal, SpartanOuterUniskipRow};
+    use crate::metal::solinas::{
+        instruction_input_successor::{
+            oracle::{materialize_first_bind, row_fields},
+            InstructionInputSuccessorRow,
+        },
+        MetalError, SolinasMetal, SpartanOuterUniskipRow,
+    };
 
     #[test]
     fn weight_capacities_cover_initial_pairs() {
@@ -1548,15 +1791,98 @@ mod tests {
     fn compact_rows_preserve_all_instruction_input_fields() {
         for row in packed_rows(16) {
             let compact = InstructionInputRow::from_full_words(row.words());
+            let successor = InstructionInputSuccessorRow::from_words(compact.words());
             assert_eq!(
                 compact.fields::<AkitaField>(),
                 row.instruction_input_fields::<AkitaField>()
             );
+            assert_eq!(successor.words(), compact.words());
+            assert_eq!(
+                row_fields::<AkitaField>(successor).unwrap(),
+                compact.fields()
+            );
         }
+        assert_eq!(
+            size_of::<InstructionInputSuccessorRow>(),
+            size_of::<InstructionInputRow>()
+        );
+        assert_eq!(
+            align_of::<InstructionInputSuccessorRow>(),
+            align_of::<InstructionInputRow>()
+        );
         assert_eq!(instruction_input_row_bytes(1 << 26).unwrap(), 3_221_225_472);
         assert_eq!(
             instruction_input_row_bytes(1 << 28).unwrap(),
             12_884_901_888
+        );
+    }
+
+    #[test]
+    fn successor_materializer_matches_the_production_rows_without_advancing_state() {
+        let rows = packed_rows(4096);
+        let successor_rows = rows
+            .iter()
+            .map(|row| {
+                InstructionInputSuccessorRow::from_words(
+                    InstructionInputRow::from_full_words(row.words()).words(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let initial_tables = (0..INSTRUCTION_INPUT_TABLES)
+            .flat_map(|table| {
+                rows.iter()
+                    .map(move |row| row.instruction_input_fields::<AkitaField>()[table])
+            })
+            .collect::<Vec<_>>();
+        let challenge = AkitaField::from_u64(0x1234_5678_9abc_def0);
+        let expected = materialize_first_bind(&successor_rows, challenge).unwrap();
+        let gamma = AkitaField::from_u64(0xC001_CAFE);
+        let r_product = (0..rows.len().ilog2())
+            .map(|index| AkitaField::from_u64(5 + 2 * u64::from(index)))
+            .collect::<Vec<_>>();
+        let gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
+        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+        let mut sequence = context
+            .prepare_instruction_input_sequence(
+                &rows,
+                InstructionInputSequenceConfig {
+                    storage_initialization: InstructionInputStorageInitialization::Minimal,
+                    ..InstructionInputSequenceConfig::default()
+                },
+            )
+            .expect("sequence should prepare");
+        let resident_identity = sequence.resident_row_identity();
+        let buffer_identities = sequence.static_buffer_identity();
+        let mut actual = vec![AkitaField::zero(); expected.len()];
+
+        let stats = sequence
+            .probe_successor_materialize(challenge, &mut actual)
+            .expect("the successor materializer should execute");
+
+        assert_eq!(actual, expected);
+        assert_eq!(stats.source_elements, rows.len());
+        assert_eq!(stats.bound_elements, rows.len() / 2);
+        assert_eq!(stats.resident_row_identity, resident_identity);
+        assert_eq!(stats.dense_buffer_identity, buffer_identities[0]);
+        assert_eq!(stats.pipeline_limits.thread_execution_width, 32);
+        assert!(stats.pipeline_limits.max_total_threads_per_threadgroup >= 256);
+        assert!(stats.gpu_active > Duration::ZERO);
+        assert!(stats.gpu_active <= stats.wall);
+        assert_eq!(sequence.resident_row_identity(), resident_identity);
+        assert_eq!(sequence.static_buffer_identity(), buffer_identities);
+
+        let expected_message = descriptors(
+            &initial_tables,
+            rows.len(),
+            gamma,
+            gruen.e_in_current(),
+            gruen.e_out_current(),
+        );
+        assert_eq!(
+            sequence
+                .message(gamma, gruen.e_in_current(), gruen.e_out_current())
+                .expect("the production message should still be first"),
+            expected_message
         );
     }
 
