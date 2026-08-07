@@ -395,7 +395,6 @@ pub struct TopologyScheduleReceipt {
     pub long_occurrences: u64,
     pub short_runs: u64,
     pub long_runs: u64,
-    pub short_batches: u64,
     pub padded_short_lanes: u64,
     pub padded_long_lanes: u64,
     pub maximum_run: u64,
@@ -434,38 +433,12 @@ impl TopologyScheduleReceipt {
         }
 
         if self.short_runs == 0 {
-            if self.short_occurrences != 0
-                || self.short_batches != 0
-                || self.padded_short_lanes != 0
-            {
+            if self.short_occurrences != 0 || self.padded_short_lanes != 0 {
                 return Err(CarrierError::InvalidTopology);
             }
         } else {
-            let minimum_batches = self.short_runs.div_ceil(simd);
-            let minimum_padded = self
-                .short_occurrences
-                .div_ceil(simd)
-                .checked_mul(simd)
-                .ok_or(CarrierError::Overflow("minimum short padding"))?;
-            let maximum_padded_by_occurrences = mul(
-                "maximum short occurrence padding",
-                simd,
-                self.short_occurrences,
-            )?;
-            let minimum_batch_lanes = mul("minimum short batch lanes", simd, self.short_batches)?;
-            let maximum_batch_lanes = mul(
-                "maximum short batch lanes",
-                mul("short batch tile", simd, short_threshold)?,
-                self.short_batches,
-            )?;
-            if self.short_batches < minimum_batches
-                || self.short_batches > self.short_runs
-                || !self.padded_short_lanes.is_multiple_of(simd)
-                || self.padded_short_lanes < minimum_padded
-                || self.padded_short_lanes < minimum_batch_lanes
-                || self.padded_short_lanes > maximum_padded_by_occurrences
-                || self.padded_short_lanes > maximum_batch_lanes
-            {
+            let expected_padded = mul("short run lanes", simd, self.short_runs)?;
+            if self.padded_short_lanes != expected_padded {
                 return Err(CarrierError::InvalidTopology);
             }
         }
@@ -782,8 +755,7 @@ mod tests {
             long_occurrences: 67_107_625,
             short_runs: 1_059,
             long_runs: 18_949,
-            short_batches: 1_059,
-            padded_short_lanes: 39_648,
+            padded_short_lanes: 33_888,
             padded_long_lanes: 67_695_040,
             maximum_run: 32_768,
         }

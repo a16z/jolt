@@ -1,4 +1,4 @@
-//! Exact work, traffic, and receipt-bound roof model for the v2 carrier.
+//! Exact work, traffic, and receipt-bound roof model for the tiled worker.
 
 use core::fmt;
 
@@ -79,10 +79,7 @@ impl MeasuredTopology {
     pub fn schedule_bounds(self, shape: AddressMajorShape) -> Result<ScheduleBounds, ModelError> {
         self.validate(shape)?;
         let simd = SIMD_WIDTH as u64;
-        let minimum_short_batches = self.short_runs.div_ceil(simd);
-        let minimum_short_padding =
-            round_up("minimum short padding", self.short_occurrences, simd)?;
-        let maximum_short_padding = mul("maximum short padding", simd, self.short_occurrences)?;
+        let short_padding = mul("short run padding", simd, self.short_runs)?;
         let minimum_long_padding = round_up("minimum long padding", self.long_occurrences, simd)?;
         let maximum_long_padding = add(
             "maximum long padding",
@@ -91,13 +88,8 @@ impl MeasuredTopology {
         )? / simd
             * simd;
 
-        let optimistic = self.with_schedule(
-            minimum_short_batches,
-            minimum_short_padding,
-            minimum_long_padding,
-        );
-        let pessimistic =
-            self.with_schedule(self.short_runs, maximum_short_padding, maximum_long_padding);
+        let optimistic = self.with_schedule(short_padding, minimum_long_padding);
+        let pessimistic = self.with_schedule(short_padding, maximum_long_padding);
         optimistic.validate(shape)?;
         pessimistic.validate(shape)?;
         Ok(ScheduleBounds {
@@ -108,7 +100,6 @@ impl MeasuredTopology {
 
     const fn with_schedule(
         self,
-        short_batches: u64,
         padded_short_lanes: u64,
         padded_long_lanes: u64,
     ) -> TopologyScheduleReceipt {
@@ -117,7 +108,6 @@ impl MeasuredTopology {
             long_occurrences: self.long_occurrences,
             short_runs: self.short_runs,
             long_runs: self.long_runs,
-            short_batches,
             padded_short_lanes,
             padded_long_lanes,
             maximum_run: self.maximum_run,
@@ -168,17 +158,22 @@ pub struct MemoryFootprint {
     pub magnitude: u64,
     pub equality_lo: u64,
     pub equality_hi: u64,
+    pub partials: u64,
     pub pushforwards: u64,
     pub carrier_and_worker_owned: u64,
     pub aggregate_with_shared_rows: u64,
 }
 
-pub fn memory_footprint(shape: AddressMajorShape) -> Result<MemoryFootprint, ModelError> {
+pub fn memory_footprint(
+    shape: AddressMajorShape,
+    outer_tiles: u64,
+) -> Result<MemoryFootprint, ModelError> {
     let rows = as_u64("rows", shape.rows()?)?;
     let cells = as_u64("cells", shape.cells()?)?;
     let inner = as_u64("inner length", shape.inner_length()?)?;
     let outer = as_u64("outer length", shape.outer_length()?)?;
     let addresses = as_u64("addresses", shape.addresses()?)?;
+    validate_outer_tiles(outer, outer_tiles)?;
     let shared_rows = mul("shared rows", RESIDENT_ROW_BYTES as u64, rows)?;
     let packed_cells = mul("packed cells", CELL_BYTES as u64, cells)?;
     let inner_sign = mul("inner/sign stream", INNER_SIGN_BYTES as u64, rows)?;
@@ -193,6 +188,15 @@ pub fn memory_footprint(shape: AddressMajorShape) -> Result<MemoryFootprint, Mod
         mul("stage fields", FIELD_BYTES, STAGES)?,
         outer,
     )?;
+    let partials = mul(
+        "tile partials",
+        mul(
+            "tile partial fields",
+            mul("stage addresses", STAGES, addresses)?,
+            outer_tiles,
+        )?,
+        FIELD_BYTES,
+    )?;
     let pushforwards = mul(
         "pushforwards",
         mul("stage fields", FIELD_BYTES, STAGES)?,
@@ -204,6 +208,7 @@ pub fn memory_footprint(shape: AddressMajorShape) -> Result<MemoryFootprint, Mod
         magnitude,
         equality_lo,
         equality_hi,
+        partials,
         pushforwards,
     ])?;
     Ok(MemoryFootprint {
@@ -213,6 +218,7 @@ pub fn memory_footprint(shape: AddressMajorShape) -> Result<MemoryFootprint, Mod
         magnitude,
         equality_lo,
         equality_hi,
+        partials,
         pushforwards,
         carrier_and_worker_owned,
         aggregate_with_shared_rows: add(
@@ -231,7 +237,10 @@ pub struct Work {
     pub issued_base_update_lanes: u64,
     pub issued_fused_update_lanes: u64,
     pub issued_outer_product_lanes: u64,
-    pub equality_generation_products: u64,
+    pub host_equality_generation_products: u64,
+    pub simd_run_reduction_lanes: u64,
+    pub threadgroup_reduction_lanes: u64,
+    pub tile_reduction_lanes: u64,
     pub issued_reduction_addition_lanes: u64,
     pub producer_count_cursor_atomics: u64,
     pub member_output_atomics: u64,
@@ -240,23 +249,18 @@ pub struct Work {
 pub fn work(
     shape: AddressMajorShape,
     topology: TopologyScheduleReceipt,
+    outer_tiles: u64,
 ) -> Result<Work, ModelError> {
     topology.validate(shape)?;
     let rows = as_u64("rows", shape.rows()?)?;
     let addresses = as_u64("addresses", shape.addresses()?)?;
     let inner = as_u64("inner length", shape.inner_length()?)?;
     let outer = as_u64("outer length", shape.outer_length()?)?;
+    validate_outer_tiles(outer, outer_tiles)?;
     let padded = topology.padded_lanes()?;
     let runs = topology.runs()?;
-    let issued_outer_product_lanes = add(
-        "issued outer products",
-        mul(
-            "short outer products",
-            STAGES * SIMD_WIDTH as u64,
-            topology.short_batches,
-        )?,
-        mul("long outer products", SIMD_WIDTH as u64, topology.long_runs)?,
-    )?;
+    let issued_outer_product_lanes =
+        mul("issued outer products", STAGES * SIMD_WIDTH as u64, runs)?;
     let equality_nodes = add(
         "equality nodes",
         inner
@@ -266,10 +270,16 @@ pub fn work(
             .checked_sub(1)
             .ok_or(ModelError::Overflow("high equality nodes"))?,
     )?;
-    let reduction_groups = add(
-        "reduction groups",
-        topology.short_batches,
-        topology.long_runs,
+    let simd_run_reduction_lanes = mul("run reductions", 1_440, runs)?;
+    let threadgroup_reduction_lanes = mul(
+        "threadgroup reductions",
+        512,
+        mul("address tile groups", addresses, outer_tiles)?,
+    )?;
+    let tile_reduction_lanes = mul(
+        "tile reductions",
+        STAGES,
+        mul("address tile fields", addresses, outer_tiles)?,
     )?;
     Ok(Work {
         useful_base_updates: mul("useful base updates", BASE_STAGES, rows)?,
@@ -278,12 +288,19 @@ pub fn work(
         issued_base_update_lanes: mul("issued base updates", BASE_STAGES, padded)?,
         issued_fused_update_lanes: mul("issued fused updates", FUSED_STAGES, padded)?,
         issued_outer_product_lanes,
-        equality_generation_products: mul("equality products", 2 * STAGES, equality_nodes)?,
-        issued_reduction_addition_lanes: add(
-            "reduction additions",
-            mul("run reductions", 1_440, reduction_groups)?,
-            mul("final address reductions", 256, addresses)?,
+        host_equality_generation_products: mul(
+            "host equality products",
+            2 * STAGES,
+            equality_nodes,
         )?,
+        simd_run_reduction_lanes,
+        threadgroup_reduction_lanes,
+        tile_reduction_lanes,
+        issued_reduction_addition_lanes: sum(&[
+            simd_run_reduction_lanes,
+            threadgroup_reduction_lanes,
+            tile_reduction_lanes,
+        ])?,
         producer_count_cursor_atomics: mul("producer atomics", 2, rows)?,
         member_output_atomics: 0,
     })
@@ -291,12 +308,16 @@ pub fn work(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Traffic {
-    pub producer_target_requested: u64,
+    pub producer_cursor_requested: u64,
+    pub producer_rank_scatter_requested: u64,
+    pub producer_rank_whole_piop_requested: u64,
     pub member_source_row_bytes: u64,
     pub packed_cell_bytes: u64,
+    pub packed_cell_read_bytes: u64,
     pub compact_read_bytes: u64,
     pub equality_lo_requested: u64,
     pub equality_hi_requested: u64,
+    pub partial_write_read_bytes: u64,
     pub output_write_bytes: u64,
     pub worker_forced_streaming_floor: u64,
     pub worker_physical_unique_minimum: u64,
@@ -307,43 +328,66 @@ pub fn traffic(
     shape: AddressMajorShape,
     topology: TopologyScheduleReceipt,
     tiling: StageTiling,
+    outer_tiles: u64,
 ) -> Result<Traffic, ModelError> {
     topology.validate(shape)?;
     let rows = as_u64("rows", shape.rows()?)?;
     let cells = as_u64("cells", shape.cells()?)?;
     let addresses = as_u64("addresses", shape.addresses()?)?;
-    let memory = memory_footprint(shape)?;
+    let outer = as_u64("outer length", shape.outer_length()?)?;
+    validate_outer_tiles(outer, outer_tiles)?;
+    let memory = memory_footprint(shape, outer_tiles)?;
     let packed_cell_bytes = mul("packed-cell bytes", CELL_BYTES as u64, cells)?;
+    let packed_cell_read_bytes = mul(
+        "packed-cell reads",
+        tiling.occurrence_passes(),
+        packed_cell_bytes,
+    )?;
     let compact_read_bytes = mul("compact reads", tiling.compact_bytes_per_row(), rows)?;
     let equality_lo_requested = mul("E_lo requests", FIELD_BYTES * STAGES, rows)?;
     let equality_hi_requested = mul("E_hi requests", FIELD_BYTES * STAGES, topology.runs()?)?;
+    let partial_write_read_bytes = mul("partial write/read", 2, memory.partials)?;
     let output_write_bytes = mul("output writes", FIELD_BYTES * STAGES, addresses)?;
     let worker_forced_streaming_floor = sum(&[
-        packed_cell_bytes,
+        packed_cell_read_bytes,
         compact_read_bytes,
         memory.equality_lo,
         memory.equality_hi,
+        partial_write_read_bytes,
         output_write_bytes,
     ])?;
     Ok(Traffic {
-        producer_target_requested: add(
-            "producer target bytes",
+        producer_cursor_requested: add(
+            "cursor producer bytes",
             mul("producer row bytes", 28, rows)?,
+            packed_cell_bytes,
+        )?,
+        producer_rank_scatter_requested: add(
+            "rank scatter bytes",
+            mul("rank scatter row bytes", 30, rows)?,
+            packed_cell_bytes,
+        )?,
+        producer_rank_whole_piop_requested: add(
+            "rank whole-PIOP bytes",
+            mul("rank whole-PIOP row bytes", 32, rows)?,
             packed_cell_bytes,
         )?,
         member_source_row_bytes: 0,
         packed_cell_bytes,
+        packed_cell_read_bytes,
         compact_read_bytes,
         equality_lo_requested,
         equality_hi_requested,
+        partial_write_read_bytes,
         output_write_bytes,
         worker_forced_streaming_floor,
         worker_physical_unique_minimum: memory.carrier_and_worker_owned,
         worker_shader_requested: sum(&[
-            packed_cell_bytes,
+            packed_cell_read_bytes,
             compact_read_bytes,
             equality_lo_requested,
             equality_hi_requested,
+            partial_write_read_bytes,
             output_write_bytes,
         ])?,
     })
@@ -391,7 +435,6 @@ pub struct MatchedRates {
     pub base_update_lanes_per_second: u64,
     pub fused_update_lanes_per_second: u64,
     pub outer_full_products_per_second: u64,
-    pub equality_full_products_per_second: u64,
     pub reduction_addition_lanes_per_second: u64,
 }
 
@@ -402,7 +445,6 @@ impl MatchedRates {
             ("base updates", self.base_update_lanes_per_second),
             ("fused updates", self.fused_update_lanes_per_second),
             ("outer products", self.outer_full_products_per_second),
-            ("equality products", self.equality_full_products_per_second),
             (
                 "reduction additions",
                 self.reduction_addition_lanes_per_second,
@@ -454,10 +496,10 @@ impl HostCosts {
 pub struct ReceiptBoundRoof {
     pub product_path: ProductPath,
     pub tiling: StageTiling,
+    pub outer_tiles: u64,
     pub base_update_floor_ns: u64,
     pub fused_update_floor_ns: u64,
     pub outer_product_floor_ns: u64,
-    pub equality_floor_ns: u64,
     pub reduction_floor_ns: u64,
     pub compute_floor_ns: u64,
     pub traffic_floor_ns: u64,
@@ -474,6 +516,7 @@ pub struct ReceiptBoundRoof {
 pub fn receipt_bound_roof(
     carrier: ValidatedAddressMajorCarrier,
     tiling: StageTiling,
+    outer_tiles: u64,
     rates: MatchedRates,
     host: HostCosts,
     utilization_percent: u64,
@@ -483,8 +526,8 @@ pub fn receipt_bound_roof(
         return Err(ModelError::InvalidUtilization(utilization_percent));
     }
     let shape = carrier.shape();
-    let work = work(shape, carrier.topology())?;
-    let traffic = traffic(shape, carrier.topology(), tiling)?;
+    let work = work(shape, carrier.topology(), outer_tiles)?;
+    let traffic = traffic(shape, carrier.topology(), tiling, outer_tiles)?;
     if traffic.member_source_row_bytes != 0 {
         return Err(ModelError::MemberSourceScan);
     }
@@ -500,10 +543,6 @@ pub fn receipt_bound_roof(
         work.issued_outer_product_lanes,
         rates.outer_full_products_per_second,
     )?;
-    let equality_floor_ns = rate_ns(
-        work.equality_generation_products,
-        rates.equality_full_products_per_second,
-    )?;
     let reduction_floor_ns = rate_ns(
         work.issued_reduction_addition_lanes,
         rates.reduction_addition_lanes_per_second,
@@ -512,7 +551,6 @@ pub fn receipt_bound_roof(
         base_update_floor_ns,
         fused_update_floor_ns,
         outer_product_floor_ns,
-        equality_floor_ns,
         reduction_floor_ns,
     ])?;
     let traffic_floor_ns = rate_ns(
@@ -533,10 +571,10 @@ pub fn receipt_bound_roof(
     Ok(ReceiptBoundRoof {
         product_path: rates.product_path,
         tiling,
+        outer_tiles,
         base_update_floor_ns,
         fused_update_floor_ns,
         outer_product_floor_ns,
-        equality_floor_ns,
         reduction_floor_ns,
         compute_floor_ns,
         traffic_floor_ns,
@@ -563,6 +601,7 @@ pub struct IncompleteScreen {
     pub hard_target_headroom_ns: i64,
     pub missing_accumulation_lanes: u64,
     pub missing_reduction_lanes: u64,
+    pub unpriced_host_equality_products: u64,
     pub complete: bool,
 }
 
@@ -570,21 +609,18 @@ pub fn incomplete_product_screen(
     shape: AddressMajorShape,
     topology: TopologyScheduleReceipt,
     tiling: StageTiling,
+    outer_tiles: u64,
     product_path: ProductPath,
 ) -> Result<IncompleteScreen, ModelError> {
-    let work = work(shape, topology)?;
-    let traffic = traffic(shape, topology, tiling)?;
-    let outer_and_equality = add(
-        "outer/equality products",
-        work.issued_outer_product_lanes,
-        work.equality_generation_products,
-    )?;
+    let work = work(shape, topology, outer_tiles)?;
+    let traffic = traffic(shape, topology, tiling, outer_tiles)?;
+    let outer_products = work.issued_outer_product_lanes;
     let product_floor_ns = match product_path {
         ProductPath::FullWidth => rate_ns(
             add(
                 "full-width products",
                 work.issued_fused_update_lanes,
-                outer_and_equality,
+                outer_products,
             )?,
             FULL_FIELD_CONSERVATIVE_PRODUCTS_PER_SECOND,
         )?,
@@ -594,10 +630,7 @@ pub fn incomplete_product_screen(
                 work.issued_fused_update_lanes,
                 SIGNED_U64_ADMISSION_TERMS_PER_SECOND,
             )?,
-            rate_ns(
-                outer_and_equality,
-                FULL_FIELD_CONSERVATIVE_PRODUCTS_PER_SECOND,
-            )?,
+            rate_ns(outer_products, FULL_FIELD_CONSERVATIVE_PRODUCTS_PER_SECOND)?,
         )?,
     };
     let traffic_floor_ns = rate_ns(traffic.worker_forced_streaming_floor, COPY_BYTES_PER_SECOND)?;
@@ -618,6 +651,7 @@ pub fn incomplete_product_screen(
             work.issued_fused_update_lanes,
         )?,
         missing_reduction_lanes: work.issued_reduction_addition_lanes,
+        unpriced_host_equality_products: work.host_equality_generation_products,
         complete: false,
     })
 }
@@ -626,6 +660,7 @@ pub fn incomplete_product_screen(
 pub enum ModelError {
     Carrier(CarrierError),
     InvalidTopology,
+    InvalidOuterTiles { tiles: u64, outer_length: u64 },
     InvalidUtilization(u64),
     MemberSourceScan,
     ZeroRate(&'static str),
@@ -643,6 +678,13 @@ impl fmt::Display for ModelError {
         match self {
             Self::Carrier(error) => error.fmt(f),
             Self::InvalidTopology => f.write_str("invalid measured topology"),
+            Self::InvalidOuterTiles {
+                tiles,
+                outer_length,
+            } => write!(
+                f,
+                "invalid outer tile count {tiles} for {outer_length} outer blocks"
+            ),
             Self::InvalidUtilization(value) => write!(f, "invalid utilization {value}%"),
             Self::MemberSourceScan => f.write_str("receipt admitted a member source-row scan"),
             Self::ZeroRate(name) => write!(f, "{name} rate is zero"),
@@ -652,6 +694,17 @@ impl fmt::Display for ModelError {
 }
 
 impl std::error::Error for ModelError {}
+
+fn validate_outer_tiles(outer_length: u64, tiles: u64) -> Result<(), ModelError> {
+    if tiles == 0 || tiles > outer_length {
+        Err(ModelError::InvalidOuterTiles {
+            tiles,
+            outer_length,
+        })
+    } else {
+        Ok(())
+    }
+}
 
 fn as_u64(name: &'static str, value: usize) -> Result<u64, ModelError> {
     u64::try_from(value).map_err(|_| ModelError::Overflow(name))
@@ -787,11 +840,9 @@ mod tests {
         let bounds = MeasuredTopology::FIBONACCI_LOG26
             .schedule_bounds(AddressMajorShape::LOG26)
             .unwrap();
-        assert_eq!(bounds.optimistic.short_batches, 34);
-        assert_eq!(bounds.optimistic.padded_short_lanes, 1_248);
+        assert_eq!(bounds.optimistic.padded_short_lanes, 33_888);
         assert_eq!(bounds.optimistic.padded_long_lanes, 67_107_648);
-        assert_eq!(bounds.pessimistic.short_batches, 1_059);
-        assert_eq!(bounds.pessimistic.padded_short_lanes, 39_648);
+        assert_eq!(bounds.pessimistic.padded_short_lanes, 33_888);
         assert_eq!(bounds.pessimistic.padded_long_lanes, 67_695_040);
     }
 
@@ -801,17 +852,20 @@ mod tests {
             .schedule_bounds(AddressMajorShape::LOG26)
             .unwrap()
             .pessimistic;
-        let work = work(AddressMajorShape::LOG26, topology).unwrap();
+        let work = work(AddressMajorShape::LOG26, topology, 8).unwrap();
         assert_eq!(work.useful_fused_updates, 268_435_456);
         assert_eq!(work.useful_outer_products, 180_072);
-        assert_eq!(work.issued_fused_update_lanes, 270_938_752);
-        assert_eq!(work.issued_outer_product_lanes, 911_360);
-        assert_eq!(work.equality_generation_products, 626_652);
+        assert_eq!(work.issued_fused_update_lanes, 270_915_712);
+        assert_eq!(work.issued_outer_product_lanes, 5_762_304);
+        assert_eq!(work.host_equality_generation_products, 626_652);
         assert_eq!(
             work.issued_base_update_lanes + work.issued_fused_update_lanes,
-            609_612_192
+            609_560_352
         );
-        assert_eq!(work.issued_reduction_addition_lanes, 30_908_672);
+        assert_eq!(work.simd_run_reduction_lanes, 28_811_520);
+        assert_eq!(work.threadgroup_reduction_lanes, 33_554_432);
+        assert_eq!(work.tile_reduction_lanes, 589_824);
+        assert_eq!(work.issued_reduction_addition_lanes, 62_955_776);
         assert_eq!(work.producer_count_cursor_atomics, 134_217_728);
         assert_eq!(work.member_output_atomics, 0);
     }
@@ -826,21 +880,27 @@ mod tests {
             AddressMajorShape::LOG26,
             topology,
             StageTiling::FiveThenFour,
+            8,
         )
         .unwrap();
         let single = traffic(
             AddressMajorShape::LOG26,
             topology,
             StageTiling::NineSinglePass,
+            8,
         )
         .unwrap();
-        assert_eq!(split.producer_target_requested, 1_946_157_056);
+        assert_eq!(split.producer_cursor_requested, 1_946_157_056);
+        assert_eq!(split.producer_rank_scatter_requested, 2_080_374_784);
+        assert_eq!(split.producer_rank_whole_piop_requested, 2_214_592_512);
         assert_eq!(split.member_source_row_bytes, 0);
-        assert_eq!(split.worker_physical_unique_minimum, 878_608_384);
-        assert_eq!(split.worker_forced_streaming_floor, 1_147_043_840);
-        assert_eq!(split.worker_shader_requested, 10_808_587_904);
-        assert_eq!(single.worker_forced_streaming_floor, 878_608_384);
-        assert_eq!(single.worker_shader_requested, 10_540_152_448);
+        assert_eq!(split.packed_cell_read_bytes, 134_217_728);
+        assert_eq!(split.partial_write_read_bytes, 18_874_368);
+        assert_eq!(split.worker_physical_unique_minimum, 888_045_568);
+        assert_eq!(split.worker_forced_streaming_floor, 1_233_027_072);
+        assert_eq!(split.worker_shader_requested, 10_894_571_136);
+        assert_eq!(single.worker_forced_streaming_floor, 897_482_752);
+        assert_eq!(single.worker_shader_requested, 10_559_026_816);
         assert_eq!(
             split.compact_read_bytes - single.compact_read_bytes,
             268_435_456
@@ -857,6 +917,7 @@ mod tests {
             AddressMajorShape::LOG26,
             topology,
             StageTiling::FiveThenFour,
+            8,
             ProductPath::FullWidth,
         )
         .unwrap();
@@ -864,20 +925,22 @@ mod tests {
             AddressMajorShape::LOG26,
             topology,
             StageTiling::FiveThenFour,
+            8,
             ProductPath::ExactU64,
         )
         .unwrap();
-        assert_eq!(full.product_floor_ns, 15_053_965);
-        assert_eq!(full.traffic_floor_ns, 2_539_384);
-        assert_eq!(full.partial_member_ns, 26_876_708);
-        assert_eq!(full.hard_target_headroom_ns, 823_292);
-        assert_eq!(exact.product_floor_ns, 10_397_808);
-        assert_eq!(exact.partial_member_ns, 21_056_511);
-        assert_eq!(exact.hard_target_headroom_ns, 6_643_489);
+        assert_eq!(full.product_floor_ns, 15_286_079);
+        assert_eq!(full.traffic_floor_ns, 2_729_738);
+        assert_eq!(full.partial_member_ns, 27_166_850);
+        assert_eq!(full.hard_target_headroom_ns, 533_150);
+        assert_eq!(exact.product_floor_ns, 10_630_317);
+        assert_eq!(exact.partial_member_ns, 21_347_148);
+        assert_eq!(exact.hard_target_headroom_ns, 6_352_852);
         assert!(!full.complete);
         assert!(!exact.complete);
-        assert_eq!(full.missing_accumulation_lanes, 609_612_192);
-        assert_eq!(full.missing_reduction_lanes, 30_908_672);
+        assert_eq!(full.missing_accumulation_lanes, 609_560_352);
+        assert_eq!(full.missing_reduction_lanes, 62_955_776);
+        assert_eq!(full.unpriced_host_equality_products, 626_652);
     }
 
     #[test]
@@ -890,7 +953,6 @@ mod tests {
             base_update_lanes_per_second: 500_000_000_000,
             fused_update_lanes_per_second: 500_000_000_000,
             outer_full_products_per_second: 50_000_000_000,
-            equality_full_products_per_second: 50_000_000_000,
             reduction_addition_lanes_per_second: 500_000_000_000,
         };
         let host = HostCosts {
@@ -902,7 +964,7 @@ mod tests {
             command_boundary_ns: COMMAND_BOUNDARY_NS,
         };
         let complete =
-            receipt_bound_roof(carrier, StageTiling::FiveThenFour, rates, host, 80).unwrap();
+            receipt_bound_roof(carrier, StageTiling::FiveThenFour, 8, rates, host, 80).unwrap();
         assert!(complete.evidence_complete);
         assert!(complete.clears_hard_target);
         assert_eq!(
@@ -913,6 +975,7 @@ mod tests {
         let analytical = receipt_bound_roof(
             carrier,
             StageTiling::FiveThenFour,
+            8,
             MatchedRates {
                 evidence: EvidenceClass::AnalyticalControl,
                 ..rates

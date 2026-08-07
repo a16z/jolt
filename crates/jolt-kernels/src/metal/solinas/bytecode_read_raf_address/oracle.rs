@@ -96,6 +96,57 @@ impl HostAddressMajorCarrier {
         Ok(carrier)
     }
 
+    #[doc(hidden)]
+    pub fn balanced_probe(
+        shape: AddressMajorShape,
+        active_addresses: usize,
+        fused_inc_magnitude: u64,
+    ) -> Result<Self, OracleError> {
+        shape.validate()?;
+        let rows = shape.rows()?;
+        let addresses = shape.addresses()?;
+        let inner_length = shape.inner_length()?;
+        let outer_length = shape.outer_length()?;
+        if active_addresses == 0 || active_addresses > addresses {
+            return Err(OracleError::InvalidPc);
+        }
+
+        let mut cells = vec![PackedCell::default(); shape.cells()?];
+        let mut inner_sign = Vec::with_capacity(rows);
+        let magnitude = vec![fused_inc_magnitude; rows];
+        for outer in 0..outer_length {
+            let mut start = 0usize;
+            for address in 0..addresses {
+                let count = if address < active_addresses {
+                    inner_length / active_addresses
+                        + usize::from(address < inner_length % active_addresses)
+                } else {
+                    0
+                };
+                cells[address * outer_length + outer] = PackedCell::new(start, count)?;
+                start = start.checked_add(count).ok_or(OracleError::Overflow)?;
+            }
+            if start != inner_length {
+                return Err(OracleError::InvalidLayout);
+            }
+            for inner in 0..inner_length {
+                inner_sign.push(PackedInnerSign::new(
+                    inner,
+                    (outer + inner).is_multiple_of(3),
+                )?);
+            }
+        }
+
+        let topology = schedule_from_cells(shape, &cells)?;
+        Ok(Self {
+            shape,
+            cells,
+            inner_sign,
+            magnitude,
+            topology,
+        })
+    }
+
     pub const fn shape(&self) -> AddressMajorShape {
         self.shape
     }
@@ -194,41 +245,32 @@ fn schedule_from_cells(
     let mut long_occurrences = 0u64;
     let mut short_runs = 0u64;
     let mut long_runs = 0u64;
-    let mut short_batches = 0u64;
     let mut padded_short_lanes = 0u64;
     let mut padded_long_lanes = 0u64;
     let mut maximum_run = 0u64;
 
     for address in 0..addresses {
-        for batch_start in (0..outer_length).step_by(SIMD_WIDTH) {
-            let batch_end = (batch_start + SIMD_WIDTH).min(outer_length);
-            let mut maximum_short = 0usize;
-            for outer in batch_start..batch_end {
-                let count = cells[address * outer_length + outer].count();
-                maximum_run = maximum_run.max(count as u64);
-                if count == 0 {
-                    continue;
-                }
-                if count <= SHORT_THRESHOLD {
-                    short_runs += 1;
-                    short_occurrences = short_occurrences
-                        .checked_add(count as u64)
-                        .ok_or(OracleError::Overflow)?;
-                    maximum_short = maximum_short.max(count);
-                } else {
-                    long_runs += 1;
-                    long_occurrences = long_occurrences
-                        .checked_add(count as u64)
-                        .ok_or(OracleError::Overflow)?;
-                    padded_long_lanes = padded_long_lanes
-                        .checked_add(round_up_usize(count, SIMD_WIDTH)? as u64)
-                        .ok_or(OracleError::Overflow)?;
-                }
+        for outer in 0..outer_length {
+            let count = cells[address * outer_length + outer].count();
+            maximum_run = maximum_run.max(count as u64);
+            if count == 0 {
+                continue;
             }
-            if maximum_short != 0 {
-                short_batches += 1;
+            if count <= SHORT_THRESHOLD {
+                short_runs += 1;
+                short_occurrences = short_occurrences
+                    .checked_add(count as u64)
+                    .ok_or(OracleError::Overflow)?;
                 padded_short_lanes = padded_short_lanes
-                    .checked_add((SIMD_WIDTH * maximum_short) as u64)
+                    .checked_add(SIMD_WIDTH as u64)
+                    .ok_or(OracleError::Overflow)?;
+            } else {
+                long_runs += 1;
+                long_occurrences = long_occurrences
+                    .checked_add(count as u64)
+                    .ok_or(OracleError::Overflow)?;
+                padded_long_lanes = padded_long_lanes
+                    .checked_add(round_up_usize(count, SIMD_WIDTH)? as u64)
                     .ok_or(OracleError::Overflow)?;
             }
         }
@@ -239,7 +281,6 @@ fn schedule_from_cells(
         long_occurrences,
         short_runs,
         long_runs,
-        short_batches,
         padded_short_lanes,
         padded_long_lanes,
         maximum_run,
@@ -325,7 +366,7 @@ mod tests {
         assert_eq!(carrier.topology().long_occurrences, 104);
         assert_eq!(carrier.topology().short_runs, 1);
         assert_eq!(carrier.topology().long_runs, 2);
-        assert_eq!(carrier.topology().padded_short_lanes, 768);
+        assert_eq!(carrier.topology().padded_short_lanes, 32);
         assert_eq!(carrier.topology().padded_long_lanes, 128);
         assert_eq!(carrier.topology().maximum_run, 64);
         carrier.validate_against_rows(&rows).unwrap();

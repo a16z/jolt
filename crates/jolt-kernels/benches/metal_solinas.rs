@@ -29,6 +29,10 @@ mod booleanity_address;
 mod bytecode_cycle;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/bytecode_read_raf_address.rs"]
+mod bytecode_read_raf_address;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/cpu.rs"]
 mod cpu;
 
@@ -129,11 +133,11 @@ mod macos {
     use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
     use super::{
-        address_raf, address_suffix, booleanity, booleanity_address, bytecode_cycle, cpu, cycle,
-        half_width_probe, instruction_claim_reduction, instruction_input, instruction_ra,
-        instruction_ra_sequence, instruction_read_raf_dense_transition, product5,
-        product_remainder, product_uniskip, ram_output_check, ram_ra_claim_reduction,
-        ram_raf_evaluation, ram_val_check,
+        address_raf, address_suffix, booleanity, booleanity_address, bytecode_cycle,
+        bytecode_read_raf_address, cpu, cycle, half_width_probe, instruction_claim_reduction,
+        instruction_input, instruction_ra, instruction_ra_sequence,
+        instruction_read_raf_dense_transition, product5, product_remainder, product_uniskip,
+        ram_output_check, ram_ra_claim_reduction, ram_raf_evaluation, ram_val_check,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         registers_claim_reduction, registers_read_write, registers_read_write_dense, registers_val,
         spartan_outer_uniskip, spartan_shift,
@@ -257,6 +261,9 @@ mod macos {
                     booleanity_address::bench_hamming(c, &context);
                 }
                 "bytecode-cycle-dense" => bytecode_cycle::bench(c, &context),
+                "bytecode-read-raf-address-major" => {
+                    bytecode_read_raf_address::bench(c, &context);
+                }
                 "spartan-outer-uniskip" => spartan_outer_uniskip::bench(c, &context),
                 "spartan-shift" => spartan_shift::bench(c, &context),
                 "product5" => {

@@ -27,7 +27,7 @@ mod bytecode_cycle;
 #[doc(hidden)]
 pub mod bytecode_read_raf;
 #[doc(hidden)]
-pub mod bytecode_read_raf_v2;
+pub mod bytecode_read_raf_address;
 #[doc(hidden)]
 pub mod bytecode_read_raf_v3;
 mod bytecode_row;
