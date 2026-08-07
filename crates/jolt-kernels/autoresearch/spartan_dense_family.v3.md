@@ -364,10 +364,24 @@ Therefore:
 
 - Slice 0 is successful as a bridge if it produces exact complete-member
   evidence, even if it is slow; it is not promotable evidence.
-- the co-produced Phase-A promotion target is 22--26 ms, a realistic
+- the co-produced Phase-A critical-path target is 22--26 ms, a realistic
   `5.0--6.0x`, with five alternating pairs and no hidden warm-up;
+- report both command lifecycle and critical-path service. Overlap is credited
+  only to the complete Stage-3 family that supplies it, and that family must
+  clear 5x before Phase A is promoted;
 - a median above 26.210324 ms stops Phase B until ownership/service, rather
   than shader arithmetic, explains the miss.
+
+The Slice-0 log-26 diagnostic at revision `05b3b4033` made this distinction
+concrete. Shift's named-span critical service was 22.101711 ms versus
+135.438958 ms CPU (`6.128x`), but its two command lifecycles totaled
+106.033875 ms (`1.277x`). The prefix hid 90.825041 ms under
+`RegistersClaimReduction::prepare`; the complete Shift + InstructionInput +
+RegistersClaimReduction family was 205.127920 ms versus 951.482375 ms
+(`4.638x`). The separate witness projection added 41.730917 ms outside PIOP.
+This validates the bridge and rejects standalone or family promotion. The
+source of record is
+`evidence/spartan_shift_projection_bridge_log26_05b3b4033.json`.
 
 ### Shift Phase B
 
@@ -563,9 +577,10 @@ Performance promotion requires five fresh alternating CPU/Metal pairs at log
 GPU-active and exposed join time per command, uploads/copies/allocations/waits,
 producer before/after wall, peak resident bytes, achieved useful rate and
 bytes/s, compiler register allocation, local-memory spills, resident SIMD
-groups, and active cores. Product must reproduce at least 10x; Phase A shift
-must clear 5x; Phase B targets 8x while its component evidence leaves that
-route physically credible.
+groups, and active cores. Product must reproduce at least 10x. Phase A's
+critical Shift contribution and the complete three-member Stage-3 family must
+both clear 5x; command lifecycle remains a mandatory diagnostic. Phase B
+targets 8x while its component evidence leaves that route physically credible.
 
 ## Highest-leverage first implementation
 
