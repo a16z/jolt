@@ -1,0 +1,94 @@
+{
+  "schema": "ram_output_check_successor_screening_evidence_v1",
+  "schema_version": 1,
+  "evidence_stage": "screening_only",
+  "target": {
+    "workload": "fibonacci",
+    "log_t": 26,
+    "log_k": 13,
+    "addresses": 8192,
+    "mask_start": 1024,
+    "mask_end": 4096,
+    "deferred_zero_rounds": 10,
+    "cpu_tail_rounds": 3,
+    "device": "Apple M4 Max",
+    "macos": "26.6"
+  },
+  "cpu_control": {
+    "evidence": "crates/jolt-kernels/autoresearch/evidence/ram_output_check_cpu_deferred_log13_observed_821665b4b.json",
+    "evidence_sha256": "ebf03a8f4ea5acadca7f3ae8e32e8469d9de14f4f34127ec913b1dfb6dc5bb3f",
+    "candidate_revision": "821665b4b553ae82ca4a1332d438866066b92b0c",
+    "criterion_interval_ns": [
+      274207.64498227666,
+      276099.96633663366,
+      278486.0977280679
+    ],
+    "rounded_screening_point_ns": 276100,
+    "five_x_screen_cap_ns": 55220,
+    "eight_x_screen_cap_ns": 34512,
+    "boundary": "complete optimized deferred CPU helper",
+    "promotion_eligible": false
+  },
+  "predecessor_metal_control": {
+    "evidence": "crates/jolt-kernels/autoresearch/evidence/ram_output_check_log13_rejected_5da0a82d6.json",
+    "evidence_sha256": "f5747dc502706d0b0a89ef5989507bbe5b6733154dfbe385f5ca588ad47047ac",
+    "candidate_revision": "5da0a82d6c861ef07229ca74f764e3f00413dddd",
+    "one_shot_resident_cpu_fold_ns": 22750,
+    "one_shot_warm_metal_active_ns": 31458,
+    "one_shot_warm_metal_wall_ns": 524667,
+    "criterion_resident_cpu_fold_point_ns": 30939,
+    "criterion_metal_active_point_ns": 52321,
+    "criterion_metal_wall_point_ns": 830270,
+    "command_service_control_ns": 155334,
+    "topology": {
+      "threads_per_threadgroup": 128,
+      "partial_threadgroups": 64,
+      "simdgroups": 256,
+      "dispatches": 2,
+      "command_buffers": 1,
+      "device_products": 8192
+    }
+  },
+  "retained_roofs": {
+    "copy_bytes_per_second": 451701710520,
+    "full_field_products_per_second": 45709000000,
+    "half_width_products_per_second": 86592000000,
+    "half_width_source": "crates/jolt-kernels/src/metal/solinas/half_width_probe/WIRING.md, log2(elements)=21 unsigned chain screen"
+  },
+  "successor_screen": {
+    "selected_schedule": "incremental host weights, one coalesced partial dispatch, host reduction and tail",
+    "host_weight_products": 1023,
+    "device_full_field_products": 0,
+    "device_half_width_products": 8192,
+    "partial_threadgroups": 64,
+    "simdgroups": 256,
+    "new_command_buffers": 0,
+    "new_waits": 0,
+    "dispatches": 1,
+    "partial_readback_bytes": 1024,
+    "perfect_cache_semantic_bytes": 100352,
+    "no_weight_cache_semantic_bytes": 215040,
+    "device_arithmetic_floor_ns": 95,
+    "perfect_cache_traffic_floor_ns": 223,
+    "component_caps_ns": {
+      "incremental_host_weights": 6000,
+      "partial_dispatch_incremental_active": 18000,
+      "host_reduce_tail_and_outputs": 8000,
+      "complete_incremental_member": 32000
+    },
+    "screening_speedup_at_complete_cap": 8.628125
+  },
+  "standalone_rejection": {
+    "status": "analytically_rejected",
+    "reason": "Both retained command-wall controls exceed the current CPU member's 5x cap before useful work and tail handling.",
+    "favorable_warm_wall_to_five_x_cap": 9.501394,
+    "command_service_to_five_x_cap": 2.813727
+  },
+  "limitations": [
+    "The CPU observation, predecessor Metal control, and successor source are different revisions and support screening only.",
+    "The successor shader is unregistered, uncompiled, and unmeasured.",
+    "The current stage-2 driver has no qualifying batch-owned command at the first active output-check round.",
+    "No production producer currently publishes the required certified native RamValFinal allocation.",
+    "Promotion requires five alternating current-revision complete-member pairs, exact transcript parity, counter-delimited incremental GPU time, and compiled spill/residency evidence."
+  ]
+}
