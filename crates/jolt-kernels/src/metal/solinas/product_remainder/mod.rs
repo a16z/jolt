@@ -699,6 +699,11 @@ impl PendingProductRemainderInitialMessage {
             .ok_or(MetalError::InvalidProductRemainderState(
                 "the pending first message lost its resident sequence",
             ))?;
+        if !sequence.is_primed() {
+            return Err(MetalError::InvalidProductRemainderState(
+                "the pending first message lost its primed sequence state",
+            ));
+        }
         let command = self
             .command
             .take()
@@ -1083,8 +1088,7 @@ impl ProductRemainderSequence {
         ),
         MetalError,
     > {
-        if !self.is_primed() || command.sequence_identity != self.buffers.state_a.as_ptr() as usize
-        {
+        if command.sequence_identity != self.buffers.state_a.as_ptr() as usize {
             return Err(MetalError::InvalidProductRemainderState(
                 "the pending first message belongs to a different product sequence",
             ));
