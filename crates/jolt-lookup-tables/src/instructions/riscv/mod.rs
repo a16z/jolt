@@ -31,7 +31,6 @@ pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod sd;
-pub mod slliw;
 pub mod slt;
 pub mod slti;
 pub mod sltiu;
@@ -42,7 +41,7 @@ pub mod xor;
 pub mod xori;
 
 #[inline]
-fn sign_extend_half_word<const XLEN: usize>(value: u64) -> u64 {
+pub(in crate::instructions) fn sign_extend_half_word<const XLEN: usize>(value: u64) -> u64 {
     let half_word_size = XLEN / 2;
     let lower_mask = (1u128 << half_word_size).wrapping_sub(1) as u64;
     let lower_half = value & lower_mask;

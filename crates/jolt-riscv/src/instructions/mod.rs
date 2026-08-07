@@ -108,6 +108,7 @@ pub use m::RemUW;
 pub use m::RemW;
 pub use virt::MovSign;
 pub use virt::MulI;
+pub use virt::MulIW;
 pub use virt::Pow2;
 pub use virt::Pow2I;
 pub use virt::Pow2IW;
@@ -346,7 +347,6 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     Mul(Mul<T>),
     MulHU(MulHU<T>),
     MulW(MulW<T>),
-    SllIW(SllIW<T>),
     And(And<T>),
     AndI(AndI<T>),
     Or(Or<T>),
@@ -381,6 +381,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     Pow2W(Pow2W<T>),
     Pow2IW(Pow2IW<T>),
     MulI(MulI<T>),
+    MulIW(MulIW<T>),
     MovSign(MovSign<T>),
     VirtualRev8W(VirtualRev8W<T>),
     VirtualChangeDivisor(VirtualChangeDivisor<T>),
@@ -553,7 +554,6 @@ impl_jolt_instructions_flags! {
     Mul => MUL,
     MulHU => MULHU,
     MulW => MULW,
-    SllIW => SLLIW,
     And => AND,
     AndI => ANDI,
     Or => OR,
@@ -588,6 +588,7 @@ impl_jolt_instructions_flags! {
     Pow2W => VirtualPow2W,
     Pow2IW => VirtualPow2IW,
     MulI => VirtualMULI,
+    MulIW => VirtualMULIW,
     MovSign => VirtualMovsign,
     VirtualRev8W => VirtualRev8W,
     VirtualChangeDivisor => VirtualChangeDivisor,

@@ -137,6 +137,7 @@ macro_rules! for_each_instruction_kind {
                 VirtualPow2IW => Pow2IW => "jolt.virtual.pow2_iw",
                 VirtualMovsign => MovSign => "jolt.virtual.movsign",
                 VirtualMULI => MulI => "jolt.virtual.muli",
+                VirtualMULIW => MulIW => "jolt.virtual.muliw",
                 VirtualPow2 => Pow2 => "jolt.virtual.pow2",
                 VirtualPow2I => Pow2I => "jolt.virtual.pow2_i",
                 VirtualRev8W => VirtualRev8W => "jolt.virtual.rev8_w",
@@ -253,7 +254,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 ADDIW => AddiW => (0x008a, "rv64.addiw"),
                 SUBW => SubW => (0x008b, "rv64.subw"),
                 MULW => MulW => (0x008c, "rv64.mulw"),
-                SLLIW => SllIW => (0x008d, "rv64.slliw"),
+                VirtualMULIW => MulIW => (0x008e, "jolt.virtual.muliw"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

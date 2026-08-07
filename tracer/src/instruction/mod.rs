@@ -138,6 +138,7 @@ use virtual_change_divisor::VirtualChangeDivisor;
 use virtual_change_divisor_w::VirtualChangeDivisorW;
 use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
+use virtual_muliw::VirtualMULIW;
 use virtual_pow2::VirtualPow2;
 use virtual_pow2_w::VirtualPow2W;
 use virtual_pow2i::VirtualPow2I;
@@ -324,6 +325,7 @@ pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_muliw;
 pub mod virtual_pow2;
 pub mod virtual_pow2_w;
 pub mod virtual_pow2i;
@@ -714,8 +716,7 @@ macro_rules! define_rv64imac_enums {
                             Ok(JoltInstructionRow {
                                 instruction_kind,
                                 address: instr.address as usize,
-                                operands: jolt_riscv::NormalizedOperands::from(instr.operands)
-                                    .materialize_for_jolt(instruction_kind),
+                                operands: instr.operands.into(),
                                 virtual_sequence_remaining: instr.virtual_sequence_remaining,
                                 is_first_in_sequence: instr.is_first_in_sequence,
                                 is_compressed: instr.is_compressed,
@@ -984,14 +985,12 @@ macro_rules! impl_final_jolt_row_data {
             $(#[$meta])*
             impl From<$instr> for JoltInstructionRow {
                 fn from(instr: $instr) -> JoltInstructionRow {
-                    let instruction_kind = jolt_riscv::JoltInstruction::$marker(
-                        jolt_riscv::instructions::$marker(())
-                    );
                     JoltInstructionRow {
-                        instruction_kind,
+                        instruction_kind: jolt_riscv::JoltInstruction::$marker(
+                            jolt_riscv::instructions::$marker(())
+                        ),
                         address: instr.address as usize,
-                        operands: jolt_riscv::NormalizedOperands::from(instr.operands)
-                            .materialize_for_jolt(instruction_kind),
+                        operands: instr.operands.into(),
                         is_compressed: instr.is_compressed,
                         virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         is_first_in_sequence: instr.is_first_in_sequence,
@@ -1002,23 +1001,6 @@ macro_rules! impl_final_jolt_row_data {
     };
 
     (@from_row VirtualAdvice) => {};
-
-    (@from_row SLLIW) => {
-        impl From<JoltInstructionRow> for SLLIW {
-            fn from(row: JoltInstructionRow) -> Self {
-                let mut operands = row.operands;
-                debug_assert!(operands.imm > 0 && (operands.imm as u128).is_power_of_two());
-                operands.imm = (operands.imm as u128).trailing_zeros() as i128;
-                Self {
-                    address: row.address as u64,
-                    operands: operands.into(),
-                    virtual_sequence_remaining: row.virtual_sequence_remaining,
-                    is_first_in_sequence: row.is_first_in_sequence,
-                    is_compressed: row.is_compressed,
-                }
-            }
-        }
-    };
 
     (@from_row $instr:ident) => {
         impl From<JoltInstructionRow> for $instr {

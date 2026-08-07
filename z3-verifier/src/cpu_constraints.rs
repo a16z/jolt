@@ -59,6 +59,7 @@ use tracer::instruction::{
     virtual_change_divisor::VirtualChangeDivisor,
     virtual_movsign::VirtualMovsign,
     virtual_muli::VirtualMULI,
+    virtual_muliw::VirtualMULIW,
     virtual_pow2::VirtualPow2,
     virtual_pow2_w::VirtualPow2W,
     virtual_pow2i::VirtualPow2I,
@@ -522,6 +523,7 @@ test_instruction_constraints!(VirtualAssertWordAlignment, FormatAssert);
 test_instruction_constraints!(VirtualChangeDivisor, FormatR);
 test_instruction_constraints!(VirtualMovsign, FormatI);
 test_instruction_constraints!(VirtualMULI, FormatI);
+test_instruction_constraints!(VirtualMULIW, FormatI);
 test_instruction_constraints!(VirtualPow2, FormatI);
 test_instruction_constraints!(VirtualPow2I, FormatJ);
 test_instruction_constraints!(VirtualPow2IW, FormatJ);

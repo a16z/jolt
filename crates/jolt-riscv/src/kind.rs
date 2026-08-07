@@ -382,6 +382,9 @@ macro_rules! source_extension_for_marker {
     (MulI) => {
         Some(SourceExtension::JoltCustom)
     };
+    (MulIW) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (Pow2) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -811,6 +814,9 @@ macro_rules! source_side_effects_for_marker {
     (MulI) => {
         false
     };
+    (MulIW) => {
+        false
+    };
     (Pow2) => {
         false
     };
@@ -943,9 +949,6 @@ macro_rules! jolt_target_extension_for_marker {
     (SubW) => {
         Some(JoltTargetExtension::IntegerCore)
     };
-    (SllIW) => {
-        Some(JoltTargetExtension::IntegerCore)
-    };
     (Xor) => {
         Some(JoltTargetExtension::IntegerCore)
     };
@@ -1049,6 +1052,9 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (MulI) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (MulIW) => {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (Pow2) => {
@@ -1261,9 +1267,6 @@ macro_rules! jolt_side_effects_for_marker {
     (SubW) => {
         false
     };
-    (SllIW) => {
-        false
-    };
     (Xor) => {
         false
     };
@@ -1319,6 +1322,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (MulI) => {
+        false
+    };
+    (MulIW) => {
         false
     };
     (Pow2) => {

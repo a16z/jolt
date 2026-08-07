@@ -17,17 +17,6 @@ pub struct NormalizedOperands {
     pub imm: i128,
 }
 
-impl NormalizedOperands {
-    /// Converts decoded source operands into the representation bound by the final Jolt row.
-    #[inline]
-    pub fn materialize_for_jolt(mut self, instruction_kind: JoltInstructionKind) -> Self {
-        if instruction_kind == JoltInstructionKind::SLLIW {
-            self.imm = 1i128 << (self.imm & 0x1f);
-        }
-        self
-    }
-}
-
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
@@ -62,7 +51,7 @@ pub struct SourceInstructionRow {
 impl SourceInstructionRow {
     #[inline]
     pub fn jolt_instruction_row(self, instruction_kind: JoltInstructionKind) -> JoltInstructionRow {
-        let mut operands = self.operands.materialize_for_jolt(instruction_kind);
+        let mut operands = self.operands;
         if let Some(inline) = self.inline {
             operands.imm = inline.packed() as i128;
         }
