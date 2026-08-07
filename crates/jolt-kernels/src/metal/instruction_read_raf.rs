@@ -73,6 +73,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         });
         let resident_rows_requested = trace_elements
             >= self.config.booleanity_address.trace_cutoff_elements
+            || trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff
             || trace_elements >= self.config.booleanity_cycle.trace_cutoff_elements
             || trace_elements >= self.config.bytecode_read_raf_cycle.trace_cutoff_elements
             || hamming_rows_requested;

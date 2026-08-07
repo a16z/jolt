@@ -22,7 +22,6 @@ mod booleanity;
 mod booleanity_address;
 pub mod booleanity_address_successor;
 mod bytecode_cycle;
-#[cfg(any(test, feature = "test-utils"))]
 #[doc(hidden)]
 pub mod bytecode_read_raf;
 mod bytecode_row;

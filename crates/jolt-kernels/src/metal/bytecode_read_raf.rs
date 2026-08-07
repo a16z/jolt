@@ -4,6 +4,7 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
+use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::{
     BytecodeReadRafCycle, BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
 };
@@ -13,18 +14,44 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::backend::MetalBackend;
+use super::solinas::bytecode_read_raf::{
+    split_stage_eq_tables, BytecodeReadRafConfig, BytecodeReadRafFusedProductPath,
+};
 use super::solinas::{
     BooleanityRows, BytecodeCycleRowInputs, BytecodeCycleRowSequence, BytecodeCycleSequenceConfig,
     BytecodeCycleTablesMut, MetalError,
 };
 use crate::optimized::bytecode_read_raf::{
-    prepare_metal_bytecode_cycle_shell, BytecodeCycleAlgebra, BytecodeCycleDenseState, CycleKernel,
-    MetalBytecodeCycleInputs, OptimizedBytecodeReadRafCycle,
+    prepare_bytecode_read_raf_address, prepare_metal_bytecode_cycle_shell, BytecodeCycleAlgebra,
+    BytecodeCycleDenseState, CycleKernel, MetalBytecodeCycleInputs, OptimizedBytecodeReadRafCycle,
 };
 use crate::optimized::instruction_read_raf::{collect_instruction_cycle_rows, InstructionCycleRow};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BytecodeReadRafAddressImplementation {
+    Cpu,
+    CsrShadow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BytecodeReadRafAddressMetalConfig {
+    pub implementation: BytecodeReadRafAddressImplementation,
+    pub dispatch: BytecodeReadRafConfig,
+    pub product_path: BytecodeReadRafFusedProductPath,
+}
+
+impl Default for BytecodeReadRafAddressMetalConfig {
+    fn default() -> Self {
+        Self {
+            implementation: BytecodeReadRafAddressImplementation::CsrShadow,
+            dispatch: BytecodeReadRafConfig::default(),
+            product_path: BytecodeReadRafFusedProductPath::FullWidth,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BytecodeReadRafMetalConfig {
@@ -187,6 +214,164 @@ fn exact_bytecode_cycle_input_claim(
     #[cfg(not(feature = "parallel"))]
     let claim = (0..rows.len()).fold(AkitaField::zero(), |sum, index| sum + term(index));
     Ok(claim)
+}
+
+impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for MetalBackend {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+        inputs: ProverInputs<'_, AkitaField, BytecodeReadRafAddressPhase<AkitaField>>,
+    ) -> Result<
+        Box<dyn SumcheckKernel<AkitaField, Relation = BytecodeReadRafAddressPhase<AkitaField>>>,
+        KernelError<AkitaField>,
+    > {
+        let relation = inputs.relation;
+        let cpu_inputs = || ProverInputs {
+            relation,
+            claims: inputs.claims,
+            points: inputs.points,
+            challenges: inputs.challenges,
+        };
+        let cpu = |session: &mut ProofSession| {
+            prepare_bytecode_read_raf_address(session, witness, cpu_inputs())
+        };
+        let config = self.config.bytecode_read_raf_address;
+        if config.implementation == BytecodeReadRafAddressImplementation::Cpu {
+            return Ok(Box::new(cpu(session)?));
+        }
+
+        let dimensions = relation.dimensions();
+        let trace_elements = 1usize << dimensions.log_t();
+        let address_elements = 1usize << dimensions.log_k();
+        if trace_elements < config.dispatch.trace_cutoff {
+            return Ok(Box::new(cpu(session)?));
+        }
+        let Some(rows) = session.state::<BooleanityRows>().cloned() else {
+            return Ok(Box::new(cpu(session)?));
+        };
+        if rows.len() != trace_elements || self.context.validate_booleanity_rows(&rows).is_err() {
+            return Ok(Box::new(cpu(session)?));
+        }
+
+        let stage_points = relation
+            .stage_cycle_points()
+            .iter()
+            .chain(relation.fused_inc_cycle_points())
+            .cloned()
+            .collect::<Vec<_>>();
+        let prepare_span =
+            tracing::info_span!("MetalBytecodeReadRafAddress::shadow_prepare").entered();
+        let shape = match config.dispatch.validate(trace_elements, address_elements) {
+            Ok(shape) => shape,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "bytecode address CSR shape unavailable; using the optimized CPU kernel"
+                );
+                return Ok(Box::new(cpu(session)?));
+            }
+        };
+        let tables = split_stage_eq_tables(&stage_points, shape).map_err(|error| {
+            KernelError::Sumcheck(metal_error(format!(
+                "bytecode address equality-table preparation failed: {error}"
+            )))
+        })?;
+        let invocation = match self.context.prepare_bytecode_read_raf_csr(
+            rows.clone(),
+            &tables,
+            config.dispatch,
+            config.product_path,
+        ) {
+            Ok(invocation) => invocation,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "bytecode address CSR preparation unavailable; using the optimized CPU kernel"
+                );
+                return Ok(Box::new(cpu(session)?));
+            }
+        };
+        let resident_rows_storage_id = rows.allocation_identity();
+        let pending = match invocation.submit() {
+            Ok(pending) => pending,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "bytecode address CSR submission unavailable; using the optimized CPU kernel"
+                );
+                return Ok(Box::new(cpu(session)?));
+            }
+        };
+        drop(prepare_span);
+
+        let prepared_cpu = cpu(session)?;
+        let _join_span = tracing::info_span!("MetalBytecodeReadRafAddress::shadow_join").entered();
+        let (_, observation) = match pending.join() {
+            Ok(completed) => completed,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "bytecode address CSR completion failed; retaining optimized CPU output"
+                );
+                return Ok(Box::new(prepared_cpu));
+            }
+        };
+        if observation.source_rows_storage_id != resident_rows_storage_id
+            || observation.source_rows_device_registry_id != rows.device_registry_id()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode address CSR source identity changed",
+            });
+        }
+        let expected_output_elements = prepared_cpu
+            .pushforward_tables()
+            .len()
+            .checked_mul(address_elements)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode address pushforward size overflow",
+            })?;
+        if observation.output.len() != expected_output_elements {
+            return Err(KernelError::TableSizeMismatch {
+                table: "Metal bytecode address pushforwards".to_owned(),
+                expected: expected_output_elements,
+                got: observation.output.len(),
+            });
+        }
+        for (stage, cpu_table) in prepared_cpu.pushforward_tables().enumerate() {
+            let start = stage * address_elements;
+            let gpu_table = &observation.output[start..start + address_elements];
+            if let Some(index) = cpu_table
+                .iter()
+                .zip(gpu_table)
+                .position(|(cpu, gpu)| cpu != gpu)
+            {
+                tracing::error!(stage, index, "bytecode address CSR parity mismatch");
+                return Err(KernelError::InvariantViolation {
+                    reason: "bytecode address CSR pushforward mismatch",
+                });
+            }
+        }
+        tracing::info!(
+            target: "jolt::metal",
+            submit_ns = observation.submit_wall.as_nanos() as u64,
+            overlap_ns = observation.overlap_wall.as_nanos() as u64,
+            join_ns = observation.join_wall.as_nanos() as u64,
+            total_ns = observation.total_wall.as_nanos() as u64,
+            gpu_active_ns = observation.gpu_active.as_nanos() as u64,
+            completed_before_join = observation.completed_before_join,
+            short_runs = observation.telemetry.status.short_runs,
+            long_runs = observation.telemetry.status.long_runs,
+            short_occurrences = observation.telemetry.diagnostics.short_occurrences,
+            long_occurrences = observation.telemetry.diagnostics.long_occurrences,
+            maximum_run = observation.telemetry.diagnostics.maximum_run,
+            resident_rows_storage_id,
+            row_allocations = 0u64,
+            row_upload_bytes = 0u64,
+            "Metal bytecode address CSR shadow matched the optimized CPU tables"
+        );
+        Ok(Box::new(prepared_cpu))
+    }
 }
 
 impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBackend {
@@ -434,15 +619,19 @@ fn bytecode_prepare_can_fallback(error: &MetalError) -> bool {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+    use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
+    use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
+    use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
         BytecodeReadRafInputClaims, READ_RAF_CYCLE_STAGES,
     };
     use jolt_witness::testing::with_sample_backend_at_geometry;
     use jolt_witness::witnesses::FusedInc;
+    use jolt_witness::ProgramSource;
 
     use super::*;
-    use crate::optimized::harness::probe_input_claim;
+    use crate::optimized::harness::{probe_input_claim, run_lockstep};
     use crate::optimized::instruction_read_raf::{
         collect_instruction_cycle_rows, InstructionCycleRow,
     };
@@ -482,6 +671,88 @@ mod tests {
                 reason: "Bytecode evaluator mapped PC exceeds the address domain"
             })
         ));
+    }
+
+    #[test]
+    fn bytecode_address_shadow_matches_the_optimized_host_shell() {
+        let log_t = 15;
+        with_sample_backend_at_geometry(log_t, 13, 8, |witness| {
+            assert_eq!(
+                witness.program_preprocessing().bytecode.bytecode.len(),
+                1 << 13
+            );
+            let dimensions = BytecodeReadRafDimensions::new(log_t, 13, 2);
+            let relation = BytecodeReadRafAddressPhase::new(
+                dimensions,
+                true,
+                BytecodeStagePoints {
+                    stage_cycle_points: std::array::from_fn(|stage| {
+                        point(log_t, 11 + stage as u64)
+                    }),
+                    register_read_write_point: point(7 + log_t, 31),
+                    register_val_evaluation_point: point(7 + log_t, 37),
+                    fused_inc_cycle_points: (0..4)
+                        .map(|stage| point(log_t, 43 + stage as u64))
+                        .collect(),
+                },
+                0,
+            );
+            let challenges = BytecodeReadRafAddressPhaseChallenges {
+                gamma: AkitaField::from_u64(3),
+                stage1_gamma: AkitaField::from_u64(5),
+                stage2_gamma: AkitaField::from_u64(7),
+                stage3_gamma: AkitaField::from_u64(11),
+                stage4_gamma: AkitaField::from_u64(13),
+                stage5_gamma: AkitaField::from_u64(17),
+            };
+            let claims = LatticeReadRafAddressPhaseInputClaims::<AkitaField>::default();
+            let points = LatticeReadRafAddressPhaseInputClaims::<Vec<AkitaField>>::default();
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+
+            let mut reference = ReferenceBackend
+                .prepare(&mut ProofSession::default(), witness, inputs())
+                .unwrap();
+            let mut expected =
+                prepare_bytecode_read_raf_address(&mut ProofSession::default(), witness, inputs())
+                    .unwrap();
+            let metal = MetalBackend::new(super::super::MetalConfig {
+                bytecode_read_raf_address: BytecodeReadRafAddressMetalConfig {
+                    implementation: BytecodeReadRafAddressImplementation::CsrShadow,
+                    dispatch: BytecodeReadRafConfig {
+                        trace_cutoff: 1 << log_t,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap();
+            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+            let resident = metal
+                .context
+                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                .unwrap();
+            let mut session = ProofSession::default();
+            session.park(resident);
+            let mut actual = <MetalBackend as PrepareKernel<
+                AkitaField,
+                BytecodeReadRafAddressPhase<AkitaField>,
+            >>::prepare(&metal, &mut session, witness, inputs())
+            .unwrap();
+
+            let claim = probe_input_claim(reference.as_mut());
+            let round_challenges = point(dimensions.log_k(), 101);
+            run_lockstep(&mut expected, actual.as_mut(), claim, &round_challenges);
+            assert_eq!(
+                expected.output_claims(&claims).unwrap(),
+                actual.output_claims(&claims).unwrap()
+            );
+        });
     }
 
     #[test]

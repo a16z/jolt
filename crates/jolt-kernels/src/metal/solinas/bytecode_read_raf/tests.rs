@@ -6,6 +6,7 @@ use super::abi::{
     PACKED_INC_SIGN_SHIFT, PACKED_PC_MASK, PACKED_RAF_SHIFT, PACKED_TABLE_MASK, PACKED_TABLE_SHIFT,
 };
 use super::*;
+use crate::metal::solinas::SolinasMetal;
 
 type F = AkitaField;
 
@@ -779,6 +780,79 @@ fn long_worker_slice_contract_matches_the_direct_relation() {
     assert_eq!(
         build_long_worker_slice_topology(&mixed_outer, shape, BYTECODE_ADDRESS_SHORT_THRESHOLD,),
         Err(BytecodeReadRafError::TopologyInvariant)
+    );
+}
+
+#[test]
+fn async_csr_execution_matches_the_direct_oracle() {
+    let shape = BytecodeReadRafShape::new(1 << 15, BYTECODE_ADDRESS_DOMAIN).unwrap();
+    let rows = (0..shape.rows())
+        .map(|row| {
+            let mapped_pc = if row.is_multiple_of(29) {
+                None
+            } else {
+                Some(((17 * row + row / 31) % BYTECODE_ADDRESS_DOMAIN) as u64)
+            };
+            let increment = match row % 7 {
+                0 => 0,
+                1 => 1,
+                2 => -1,
+                3 => u64::MAX as i128,
+                4 => -(u64::MAX as i128),
+                5 => 37,
+                _ => -53,
+            };
+            BytecodeReadRafRowWords::new(row as u128, mapped_pc, None, increment).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let stage_points = (0..BYTECODE_ADDRESS_STAGES)
+        .map(|stage| {
+            (0..shape.rows().ilog2() as usize)
+                .map(|variable| wide_f((1 + stage * 41 + variable * 13) as u64))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let tables = split_stage_eq_tables(&stage_points, shape).unwrap();
+    let expected = direct_pushforward_oracle(&rows, &tables.e_lo, &tables.e_hi, shape).unwrap();
+    let producer_rows = rows
+        .iter()
+        .map(|row| crate::metal::solinas::BooleanityRow::from_words(row.words()))
+        .collect::<Vec<_>>();
+
+    let context = SolinasMetal::for_akita().unwrap();
+    let resident_rows = context.prepare_booleanity_rows(&producer_rows).unwrap();
+    let source_rows_storage_id = resident_rows.allocation_identity();
+    let source_rows_device_registry_id = resident_rows.device_registry_id();
+    let config = BytecodeReadRafConfig {
+        trace_cutoff: shape.rows(),
+        ..Default::default()
+    };
+    let pending = context
+        .prepare_bytecode_read_raf_csr(
+            resident_rows,
+            &tables,
+            config,
+            BytecodeReadRafFusedProductPath::FullWidth,
+        )
+        .unwrap()
+        .submit()
+        .unwrap();
+    let (_, observation) = pending.join().unwrap();
+
+    assert_eq!(observation.output, expected);
+    assert_eq!(observation.source_rows_storage_id, source_rows_storage_id);
+    assert_eq!(
+        observation.source_rows_device_registry_id,
+        source_rows_device_registry_id
+    );
+    assert_eq!(
+        observation.telemetry.status.occurrence_rows as usize,
+        shape.rows()
+    );
+    assert_eq!(
+        observation.telemetry.diagnostics.short_occurrences
+            + observation.telemetry.diagnostics.long_occurrences,
+        shape.rows() as u32
     );
 }
 

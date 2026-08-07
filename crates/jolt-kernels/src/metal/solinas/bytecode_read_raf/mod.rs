@@ -3,14 +3,12 @@
 mod abi;
 mod model;
 mod oracle;
-#[cfg(feature = "test-utils")]
 mod runtime;
 mod slice;
 
 pub use abi::*;
 pub use model::*;
 pub use oracle::*;
-#[cfg(feature = "test-utils")]
 pub use runtime::*;
 pub use slice::*;
 

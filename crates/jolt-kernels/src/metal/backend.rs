@@ -6,7 +6,7 @@ use jolt_field::AkitaField;
 use jolt_openings::CommitmentScheme;
 
 use super::booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
-use super::bytecode_read_raf::BytecodeReadRafMetalConfig;
+use super::bytecode_read_raf::{BytecodeReadRafAddressMetalConfig, BytecodeReadRafMetalConfig};
 use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_claim_reduction::InstructionClaimReductionMetalConfig;
 use super::instruction_input::InstructionInputMetalConfig;
@@ -45,6 +45,8 @@ pub struct MetalConfig {
     pub ram_val_check: RamValCheckMetalConfig,
     /// Stage-6a Booleanity address settings.
     pub booleanity_address: BooleanityAddressMetalConfig,
+    /// Stage-6a bytecode read-RAF address settings.
+    pub bytecode_read_raf_address: BytecodeReadRafAddressMetalConfig,
     /// Stage-6b Booleanity cycle settings.
     pub booleanity_cycle: BooleanityMetalConfig,
     /// Stage-6b bytecode read-RAF cycle settings.
@@ -132,6 +134,7 @@ impl MetalBackend {
             config.ram_raf_evaluation.dispatch.trace_cutoff,
             config.ram_val_check.trace_cutoff_elements,
             config.booleanity_address.trace_cutoff_elements,
+            config.bytecode_read_raf_address.dispatch.trace_cutoff,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
             config.bytecode_read_raf_cycle.trace_cutoff_elements,
@@ -251,6 +254,7 @@ where
         self.ram_val_check = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
         self.booleanity_address = Box::new(metal.clone());
+        self.bytecode_read_raf_address = Box::new(metal.clone());
         self.bytecode_read_raf_cycle = Box::new(metal.clone());
         self.booleanity_cycle = Box::new(metal.clone());
         self.instruction_ra_virtualization = Box::new(metal.clone());

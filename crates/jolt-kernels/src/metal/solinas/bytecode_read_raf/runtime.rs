@@ -1,9 +1,14 @@
-use std::{cell::Cell, mem::size_of, slice, time::Duration};
+use std::{
+    cell::Cell,
+    mem::size_of,
+    slice,
+    time::{Duration, Instant},
+};
 
 use jolt_field::AkitaField;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
 use super::super::{
@@ -103,6 +108,47 @@ pub struct BytecodeReadRafCsrExecution {
     pub telemetry: BytecodeReadRafCsrTelemetry,
 }
 
+/// Result of one complete asynchronous CSR execution.
+///
+/// `output` is stage-major and contains `9 * shape.addresses()` canonical
+/// fields. The wall timings include output validation and host readback.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BytecodeReadRafCsrObservation {
+    pub output: Vec<AkitaField>,
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
+    pub total_wall: Duration,
+    pub gpu_active: Duration,
+    pub completed_before_join: bool,
+    pub telemetry: BytecodeReadRafCsrTelemetry,
+    pub source_rows_device_registry_id: u64,
+    pub source_rows_storage_id: usize,
+    pub static_buffer_identities: [usize; 9],
+}
+
+struct BytecodeReadRafCsrSubmittedCommand {
+    command_buffer: CommandBuffer,
+    submitted_at: Instant,
+    submit_wall: Duration,
+    source_rows_device_registry_id: u64,
+    source_rows_storage_id: usize,
+    static_buffer_identities: [usize; 9],
+}
+
+struct BytecodeReadRafCsrCompletion {
+    submitted_at: Instant,
+    join_started: Instant,
+    submit_wall: Duration,
+    overlap_wall: Duration,
+    gpu_active: Duration,
+    completed_before_join: bool,
+    telemetry: BytecodeReadRafCsrTelemetry,
+    source_rows_device_registry_id: u64,
+    source_rows_storage_id: usize,
+    static_buffer_identities: [usize; 9],
+}
+
 pub struct BytecodeReadRafCsrInvocation {
     context: SolinasMetal,
     csr_pipeline: ComputePipelineState,
@@ -122,6 +168,71 @@ pub struct BytecodeReadRafCsrInvocation {
     finalize_threads: usize,
     owned_bytes: usize,
     completed: Cell<bool>,
+}
+
+/// Owns every resource referenced by an in-flight CSR command.
+#[must_use = "a submitted bytecode read/RAF CSR execution must be joined"]
+pub struct PendingBytecodeReadRafCsrExecution {
+    invocation: Option<BytecodeReadRafCsrInvocation>,
+    command: Option<BytecodeReadRafCsrSubmittedCommand>,
+}
+
+impl Drop for PendingBytecodeReadRafCsrExecution {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl PendingBytecodeReadRafCsrExecution {
+    pub const fn submit_wall(&self) -> Duration {
+        match &self.command {
+            Some(command) => command.submit_wall,
+            None => Duration::ZERO,
+        }
+    }
+
+    pub fn source_rows_storage_id(&self) -> Option<usize> {
+        self.command
+            .as_ref()
+            .map(|command| command.source_rows_storage_id)
+    }
+
+    pub fn source_rows_device_registry_id(&self) -> Option<u64> {
+        self.command
+            .as_ref()
+            .map(|command| command.source_rows_device_registry_id)
+    }
+
+    pub fn static_buffer_identities(&self) -> Option<[usize; 9]> {
+        self.command
+            .as_ref()
+            .map(|command| command.static_buffer_identities)
+    }
+
+    /// Waits for completion and returns the reusable invocation with its exact output.
+    pub fn join(
+        mut self,
+    ) -> Result<
+        (BytecodeReadRafCsrInvocation, BytecodeReadRafCsrObservation),
+        BytecodeReadRafSliceRuntimeError,
+    > {
+        let invocation =
+            self.invocation
+                .take()
+                .ok_or(BytecodeReadRafSliceRuntimeError::InvalidState(
+                    "pending CSR execution lost its invocation",
+                ))?;
+        let command = self
+            .command
+            .take()
+            .ok_or(BytecodeReadRafSliceRuntimeError::InvalidState(
+                "pending CSR execution lost its command buffer",
+            ))?;
+        let observation = invocation.complete_async(command)?;
+        Ok((invocation, observation))
+    }
 }
 
 pub struct BytecodeReadRafLongWorkerSliceInvocation {
@@ -536,32 +647,128 @@ impl BytecodeReadRafCsrInvocation {
     pub fn execute_timed(
         &self,
     ) -> Result<BytecodeReadRafCsrExecution, BytecodeReadRafSliceRuntimeError> {
+        let command = self.submit_command()?;
+        let completion = self.complete_submission(command)?;
+        Ok(BytecodeReadRafCsrExecution {
+            gpu_active: completion.gpu_active,
+            telemetry: completion.telemetry,
+        })
+    }
+
+    /// Submits the full CSR sequence without waiting for it.
+    ///
+    /// The invocation moves into the pending ticket so its buffers cannot be
+    /// reused until [`PendingBytecodeReadRafCsrExecution::join`] returns.
+    pub fn submit(
+        self,
+    ) -> Result<PendingBytecodeReadRafCsrExecution, BytecodeReadRafSliceRuntimeError> {
+        let command = self.submit_command()?;
+        Ok(PendingBytecodeReadRafCsrExecution {
+            invocation: Some(self),
+            command: Some(command),
+        })
+    }
+
+    fn submit_command(
+        &self,
+    ) -> Result<BytecodeReadRafCsrSubmittedCommand, BytecodeReadRafSliceRuntimeError> {
+        self.context.validate_booleanity_rows(&self.buffers.rows)?;
         self.completed.set(false);
+        let submitted_at = Instant::now();
+        let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
-            let command_buffer = self.context.queue.new_command_buffer();
-            self.encode_clear(command_buffer, true);
-            self.encode_csr(command_buffer);
-            self.encode_dispatch(command_buffer);
+            self.encode_clear(&command_buffer, true);
+            self.encode_csr(&command_buffer);
+            self.encode_dispatch(&command_buffer);
             self.encode_worker(
-                command_buffer,
+                &command_buffer,
                 &self.short_pipeline,
                 0,
                 self.config.short_threads,
             );
             self.encode_worker(
-                command_buffer,
+                &command_buffer,
                 &self.long_pipeline,
                 std::mem::offset_of!(BytecodeReadRafDispatchArgs, long_runs) as u64,
                 self.config.long_threads,
             );
-            self.encode_finalize(command_buffer);
-            let gpu_active = complete_command(command_buffer)?;
-            let telemetry = self.read_telemetry()?;
-            self.completed.set(true);
-            Ok(BytecodeReadRafCsrExecution {
-                gpu_active,
-                telemetry,
-            })
+            self.encode_finalize(&command_buffer);
+            command_buffer.commit();
+        });
+        Ok(BytecodeReadRafCsrSubmittedCommand {
+            command_buffer,
+            submitted_at,
+            submit_wall: submitted_at.elapsed(),
+            source_rows_device_registry_id: self.buffers.rows.device_registry_id(),
+            source_rows_storage_id: self.source_rows_storage_id(),
+            static_buffer_identities: self.static_buffer_identities(),
+        })
+    }
+
+    fn complete_submission(
+        &self,
+        command: BytecodeReadRafCsrSubmittedCommand,
+    ) -> Result<BytecodeReadRafCsrCompletion, BytecodeReadRafSliceRuntimeError> {
+        let completed_before_join =
+            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(command.submitted_at)
+            .saturating_sub(command.submit_wall);
+        command.command_buffer.wait_until_completed();
+        let status = command.command_buffer.status();
+        if status != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(status).into());
+        }
+        if command.source_rows_device_registry_id != self.buffers.rows.device_registry_id()
+            || command.source_rows_storage_id != self.source_rows_storage_id()
+            || command.static_buffer_identities != self.static_buffer_identities()
+        {
+            return Err(BytecodeReadRafSliceRuntimeError::InvalidState(
+                "CSR resources changed after submission",
+            ));
+        }
+        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end }.into());
+        }
+        let telemetry = self.read_telemetry()?;
+        self.completed.set(true);
+        Ok(BytecodeReadRafCsrCompletion {
+            submitted_at: command.submitted_at,
+            join_started,
+            submit_wall: command.submit_wall,
+            overlap_wall,
+            gpu_active: Duration::from_secs_f64(end - start),
+            completed_before_join,
+            telemetry,
+            source_rows_device_registry_id: command.source_rows_device_registry_id,
+            source_rows_storage_id: command.source_rows_storage_id,
+            static_buffer_identities: command.static_buffer_identities,
+        })
+    }
+
+    fn complete_async(
+        &self,
+        command: BytecodeReadRafCsrSubmittedCommand,
+    ) -> Result<BytecodeReadRafCsrObservation, BytecodeReadRafSliceRuntimeError> {
+        let completion = self.complete_submission(command)?;
+        let output = self.read_output()?;
+        let join_wall = completion.join_started.elapsed();
+        let total_wall = completion.submitted_at.elapsed();
+        Ok(BytecodeReadRafCsrObservation {
+            output,
+            submit_wall: completion.submit_wall,
+            overlap_wall: completion.overlap_wall,
+            join_wall,
+            total_wall,
+            gpu_active: completion.gpu_active,
+            completed_before_join: completion.completed_before_join,
+            telemetry: completion.telemetry,
+            source_rows_device_registry_id: completion.source_rows_device_registry_id,
+            source_rows_storage_id: completion.source_rows_storage_id,
+            static_buffer_identities: completion.static_buffer_identities,
         })
     }
 
