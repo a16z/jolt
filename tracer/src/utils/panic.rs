@@ -1,15 +1,21 @@
 use crate::emulator::cpu::get_register_name;
 use crate::emulator::Emulator;
-use crate::instruction::format::NormalizedOperands;
 use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 
 /// Represents a single function call for stack trace
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct CallFrame {
     pub call_site: u64,
-    /// register snapshot
-    pub x: [i64; REGISTER_COUNT as usize],
-    pub operands: NormalizedOperands,
+    /// Register snapshot; captured only when `JOLT_BACKTRACE=full`, since
+    /// that's the only mode that displays it. Keeping capture opt-in avoids a
+    /// bulk register copy on every call instruction.
+    ///
+    /// Boxed because the snapshot is 1 KiB (`REGISTER_COUNT` = 128) and
+    /// `[i64; _]` has no niche, so an unboxed `Option` would still cost 1032
+    /// bytes per frame. `Option<Box<_>>` is pointer-sized, keeping `CallFrame`
+    /// at 24 bytes and the `MAX_CALL_STACK_DEPTH`-deep ring buffer — written on
+    /// every call instruction — a few cache lines instead of ~33 KiB.
+    pub x: Option<Box<[i64; REGISTER_COUNT as usize]>>,
     /// cycle count at the time of call
     pub cycle_count: usize,
 }
@@ -214,16 +220,18 @@ fn print_resolved_frame(resolved: &ResolvedFrame) {
 }
 
 fn print_extended_frame_info(frame: &CallFrame) {
-    let mut regs = vec![];
-    for i in 0..RISCV_REGISTER_COUNT {
-        let i = i as usize;
-        if frame.x[i] != 0 || i == 2 {
-            // Always show sp
-            regs.push(format!("{}={:#x}", get_register_name(i), frame.x[i]));
+    if let Some(x) = frame.x.as_deref() {
+        let mut regs = vec![];
+        for i in 0..RISCV_REGISTER_COUNT {
+            let i = i as usize;
+            if x[i] != 0 || i == 2 {
+                // Always show sp
+                regs.push(format!("{}={:#x}", get_register_name(i), x[i]));
+            }
         }
-    }
-    if !regs.is_empty() {
-        println!("                   registers: {}", regs.join(", "));
+        if !regs.is_empty() {
+            println!("                   registers: {}", regs.join(", "));
+        }
     }
     println!("                   cycle: {}", frame.cycle_count);
     println!();

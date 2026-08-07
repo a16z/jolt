@@ -7039,6 +7039,7 @@ version = "0.2.0"
 dependencies = [
  "addr2line 0.27.0",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "blake3",
  "clap",
  "common",
  "derive_more",
@@ -7046,6 +7047,8 @@ dependencies = [
  "inventory",
  "itertools 0.15.0",
  "jolt-field",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",
