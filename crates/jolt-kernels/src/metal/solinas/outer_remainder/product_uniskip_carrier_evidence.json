@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "candidate": "stage1_outer_opening_product_uniskip_endpoint_carrier",
+  "revision": "b4817bdb5f3d5376a9d5a2b549a5a6d57f680e37",
+  "binary_sha256": "d9726a01953cef34bff22bd5c1fe00f3df98a2ae1d40b6e14a37c5e1f0708255",
+  "machine": "Apple M4 Max, 40-core GPU",
+  "rayon_threads": 16,
+  "contract": {
+    "outer_opening_outputs": 37,
+    "standalone_product_uniskip_dispatches": 0,
+    "standalone_product_uniskip_readbacks": 0,
+    "fiat_shamir_location": "host",
+    "proofs_exact": true
+  },
+  "log_26_production": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260807-055000-164312/result.json",
+    "artifact_sha256": "bdc63cfb13fe93e04f5377c22e20d41851f6609f3e807995777fafa76ee16bb6",
+    "pairs": 5,
+    "orders": "alternating",
+    "cpu_family_ms_median": 1536.449044000022,
+    "metal_family_ms_median": 280.9193320000097,
+    "family_speedup": 5.433013745702648,
+    "paired_family_speedups": [
+      5.077391208369927,
+      5.679541185865919,
+      5.46096941075253,
+      4.992397347546235,
+      5.433013745702648
+    ],
+    "optimized_first_median_speedup": 5.433013745702648,
+    "metal_first_median_speedup": 5.335969266706076,
+    "outer_remainder_speedup": 3.9403375895927852,
+    "product_remainder_speedup": 9.72529129362384,
+    "piop_speedup": 3.658532689020749,
+    "fixed_decision_clears": true,
+    "proofs_verified": true,
+    "carrier_provenance_exact": true,
+    "execution_path_exact": true,
+    "stable_source_and_binary": true
+  },
+  "log_27_holdout": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260807-060008-805244/result.json",
+    "artifact_sha256": "9cb0ac7d2b98cc20253e9b5407dc77795b75774b323b7ec6c839f96b64af518d",
+    "pairs": 1,
+    "orders": "optimized-then-metal",
+    "run_class": "diagnostic",
+    "cpu_family_ms": 3275.4770409999746,
+    "metal_family_ms": 697.4458319999874,
+    "family_speedup": 4.696389154132953,
+    "outer_remainder_speedup": 4.109620248641286,
+    "product_remainder_speedup": 4.5559161412601945,
+    "piop_speedup": 3.526248042526777,
+    "proofs_verified": true,
+    "carrier_provenance_exact": true,
+    "execution_path_exact": true,
+    "stable_source_and_binary": true
+  },
+  "same_revision_diagnostics": [
+    {
+      "log_n": 25,
+      "carrier_artifact": "benchmark-runs/metal-piop-eval/20260807-053638-685924/result.json",
+      "carrier_artifact_sha256": "b14352e392ce84ddb26c1bd3fce1b01d9bb56759032ad7dfa54a7d8c48a6ec4c",
+      "control_artifact": "benchmark-runs/metal-piop-eval/20260807-054310-336633/result.json",
+      "control_artifact_sha256": "ed2547a270dc86fca337f36847318a928f7c3a0ae654e3ad43b03ae052a7811d",
+      "carrier_metal_family_ms": 148.94182900000624,
+      "control_metal_family_ms": 155.81620999999774,
+      "metal_wall_improvement_ms": 6.874380999991496
+    },
+    {
+      "log_n": 26,
+      "carrier_artifact": "benchmark-runs/metal-piop-eval/20260807-054445-414205/result.json",
+      "carrier_artifact_sha256": "58c3df0552ef1c5c93880777ceb32e4d5ab35638391c3b1d0fed29291f541664",
+      "control_artifact": "benchmark-runs/metal-piop-eval/20260807-054715-872912/result.json",
+      "control_artifact_sha256": "d675f197c526d1bcc44881e5a04077c2da8ede1ae2551bc93f8be43a645d1165",
+      "carrier_metal_family_ms": 281.34733399999885,
+      "control_metal_family_ms": 283.79387799999546,
+      "metal_wall_improvement_ms": 2.4465439999966188
+    }
+  ],
+  "decision": {
+    "status": "retained_opt_in_log26_qualified_log27_below_floor",
+    "minimum_speedup": 5.0,
+    "promote_default": false,
+    "reason": "The carrier removes the standalone uni-skip path and clears the paired log-26 family gate, but the exact log-27 holdout is 4.6964x. Further work belongs in OuterRemainder and ProductRemainder rather than the carrier."
+  }
+}
