@@ -40,6 +40,17 @@ struct BooleanityRowsInner {
 #[derive(Clone)]
 pub struct BooleanityRows(Arc<BooleanityRowsInner>);
 
+struct HammingHotRowsInner {
+    buffer: Buffer,
+    len: usize,
+    device_registry_id: u64,
+    source_rows_storage_id: usize,
+}
+
+/// Device-private selector bytes produced while stage 6a scans Booleanity rows.
+#[derive(Clone)]
+pub struct HammingHotRows(Arc<HammingHotRowsInner>);
+
 impl BooleanityRows {
     pub(crate) fn buffer(&self) -> &Buffer {
         &self.0.buffer
@@ -67,6 +78,46 @@ impl BooleanityRows {
     }
 }
 
+impl HammingHotRows {
+    pub(super) fn new(
+        buffer: Buffer,
+        len: usize,
+        device_registry_id: u64,
+        source_rows_storage_id: usize,
+    ) -> Self {
+        Self(Arc::new(HammingHotRowsInner {
+            buffer,
+            len,
+            device_registry_id,
+            source_rows_storage_id,
+        }))
+    }
+
+    pub(crate) fn buffer(&self) -> &Buffer {
+        &self.0.buffer
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn device_registry_id(&self) -> u64 {
+        self.0.device_registry_id
+    }
+
+    pub fn source_rows_storage_id(&self) -> usize {
+        self.0.source_rows_storage_id
+    }
+
+    pub fn allocation_identity(&self) -> usize {
+        self.0.buffer.as_ptr() as usize
+    }
+}
+
 #[cfg(feature = "allocative")]
 impl allocative::Allocative for BooleanityRows {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
@@ -84,6 +135,26 @@ impl allocative::Allocative for BooleanityRows {
                 allocative::Key::new("device_rows"),
                 self.len() * size_of::<BooleanityRow>(),
             );
+            shared.exit();
+        }
+        visitor.exit();
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for HammingHotRows {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(mut shared) = visitor.enter_shared(
+            allocative::Key::new("rows"),
+            size_of::<*const HammingHotRowsInner>(),
+            Arc::as_ptr(&self.0).cast(),
+        ) {
+            shared.visit_simple(
+                allocative::Key::new("ArcInner"),
+                2 * size_of::<usize>() + size_of::<HammingHotRowsInner>(),
+            );
+            shared.visit_simple(allocative::Key::new("device_rows"), self.len() * 29);
             shared.exit();
         }
         visitor.exit();

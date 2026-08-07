@@ -20,6 +20,7 @@ mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
 mod booleanity_address;
+pub mod booleanity_address_successor;
 mod bytecode_cycle;
 mod bytecode_row;
 pub mod half_width_probe;
@@ -71,10 +72,10 @@ pub use address_suffix::{
     AddressSuffixOneInvocation, AddressSuffixOneSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
 };
 pub use address_suffix_full::{AddressSuffixFullInvocation, AddressSuffixFullSums};
-pub use booleanity::BooleanityRows;
 pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
 };
+pub use booleanity::{BooleanityRows, HammingHotRows};
 pub use booleanity_address::{BooleanityAddressPushforward, BooleanityAddressPushforwardConfig};
 pub use bytecode_cycle::{
     BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables,
