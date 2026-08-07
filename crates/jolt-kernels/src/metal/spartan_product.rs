@@ -24,8 +24,7 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::backend::MetalBackend;
 use super::solinas::{
-    MetalError, ProductRemainderRow, ProductRemainderRows, ProductRemainderSequence,
-    ProductRemainderSequenceConfig,
+    MetalError, ProductRemainderRow, ProductRemainderSequence, ProductRemainderSequenceConfig,
 };
 use crate::optimized::spartan_product::{
     discard_product_uniskip_carry, product_uniskip_carry_metadata, OptimizedProductRemainder,
@@ -74,6 +73,10 @@ impl MetalBackend {
             row_bytes = cycles.saturating_mul(std::mem::size_of::<ProductRemainderRow>()),
             collect_wall_ns = tracing::field::Empty,
             upload_wall_ns = tracing::field::Empty,
+            sequence_prepare_wall_ns = tracing::field::Empty,
+            workspace_bytes = tracing::field::Empty,
+            storage_initialization_wall_ns = tracing::field::Empty,
+            storage_initialization_gpu_active_ns = tracing::field::Empty,
             resident_rows_storage_id = tracing::field::Empty,
             admitted = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
@@ -89,18 +92,8 @@ impl MetalBackend {
         let _ = span.record("collect_wall_ns", duration_nanos(started.elapsed()));
 
         let started = Instant::now();
-        match self.context.prepare_product_remainder_rows(&packed) {
-            Ok(rows) => {
-                let _ = span.record("upload_wall_ns", duration_nanos(started.elapsed()));
-                let _ = span.record(
-                    "resident_rows_storage_id",
-                    rows.allocation_identity() as u64,
-                );
-                let _ = span.record("admitted", true);
-                let _ = span.record("fallback_reason", "none");
-                session.park(rows);
-                Ok(())
-            }
+        let rows = match self.context.prepare_product_remainder_rows(&packed) {
+            Ok(rows) => rows,
             Err(error) if error.is_capacity_error() => {
                 let _ = span.record("upload_wall_ns", duration_nanos(started.elapsed()));
                 let _ = span.record("admitted", false);
@@ -110,10 +103,80 @@ impl MetalBackend {
                     error = %error,
                     "product-remainder resident rows were not admitted; using optimized CPU"
                 );
-                Ok(())
+                return Ok(());
             }
-            Err(error) => Err(metal_prepare_error(error)),
+            Err(error) => return Err(metal_prepare_error(error)),
+        };
+        let _ = span.record("upload_wall_ns", duration_nanos(started.elapsed()));
+        let row_storage_id = rows.allocation_identity();
+        let _ = span.record("resident_rows_storage_id", row_storage_id as u64);
+        drop(packed);
+
+        let e_in_capacity = 1usize << (log_t / 2);
+        let e_out_capacity = cycles / e_in_capacity;
+        let started = Instant::now();
+        let sequence = self.context.prepare_product_remainder_sequence_with_rows(
+            rows,
+            [AkitaField::zero(); DOMAIN],
+            e_in_capacity,
+            e_out_capacity,
+            self.config.spartan_product_remainder.dispatch,
+        );
+        let _ = span.record(
+            "sequence_prepare_wall_ns",
+            duration_nanos(started.elapsed()),
+        );
+        let sequence = match sequence {
+            Ok(sequence) => sequence,
+            Err(error) if error.is_capacity_error() => {
+                let _ = span.record("admitted", false);
+                let _ = span.record("fallback_reason", "capacity");
+                tracing::warn!(
+                    target: "jolt::metal",
+                    error = %error,
+                    "product-remainder workspace was not admitted; using optimized CPU"
+                );
+                return Ok(());
+            }
+            Err(error) => return Err(metal_prepare_error(error)),
+        };
+        let _ = span.record(
+            "workspace_bytes",
+            sequence.storage_layout().workspace_bytes(),
+        );
+        let initialization = match sequence.initialize_storage() {
+            Ok(initialization) => initialization,
+            Err(error) if product_prepare_fallback_reason(&error).is_some() => {
+                let _ = span.record("admitted", false);
+                let _ = span.record("fallback_reason", "storage_initialization");
+                tracing::warn!(
+                    target: "jolt::metal",
+                    error = %error,
+                    "product-remainder workspace initialization failed; using optimized CPU"
+                );
+                return Ok(());
+            }
+            Err(error) => return Err(metal_prepare_error(error)),
+        };
+        let _ = span.record(
+            "storage_initialization_wall_ns",
+            duration_nanos(initialization.wall()),
+        );
+        let _ = span.record(
+            "storage_initialization_gpu_active_ns",
+            duration_nanos(initialization.gpu_active()),
+        );
+        if initialization.bytes() != sequence.storage_layout().workspace_bytes()
+            || sequence.row_allocation_identity() != row_storage_id
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "product-remainder workspace initialization changed its layout",
+            });
         }
+        let _ = span.record("admitted", true);
+        let _ = span.record("fallback_reason", "none");
+        session.park(sequence);
+        Ok(())
     }
 }
 
@@ -134,9 +197,9 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                 reason: "Spartan product trace length overflows usize",
             })?;
         let use_metal = cycles >= self.config.spartan_product_remainder.trace_cutoff_elements
-            && session.state::<ProductRemainderRows>().is_some();
+            && session.state::<ProductRemainderSequence>().is_some();
         if !use_metal {
-            drop(session.take::<ProductRemainderRows>());
+            drop(session.take::<ProductRemainderSequence>());
             return OptimizedProductRemainder.prepare(session, witness, inputs);
         }
 
@@ -151,20 +214,21 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             inputs.relation.uniskip_challenge(),
             inputs.relation.tau_high(),
         )?;
-        let rows = session.state::<ProductRemainderRows>().cloned().ok_or(
-            KernelError::InvariantViolation {
-                reason: "Metal product remainder lost its resident row owner",
-            },
-        )?;
-        if rows.len() != cycles || rows.device_registry_id() != self.context.device_registry_id() {
+        let mut sequence =
+            session
+                .take::<ProductRemainderSequence>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "Metal product remainder lost its preinitialized sequence",
+                })?;
+        if sequence.storage_layout().rows() != cycles
+            || sequence.device_registry_id() != self.context.device_registry_id()
+        {
             return Err(KernelError::InvariantViolation {
-                reason: "Metal product-remainder rows have the wrong shape or device",
+                reason: "Metal product-remainder sequence has the wrong shape or device",
             });
         }
-        let row_storage_id = rows.allocation_identity();
+        let row_storage_id = sequence.row_allocation_identity();
         let (e_in, e_out) = host.current_weights();
-        let e_in_capacity = 1usize << (rounds / 2);
-        let e_out_capacity = cycles / e_in_capacity;
         let prepare_span = tracing::info_span!(
             "MetalProductRemainder::prepare",
             cycles,
@@ -172,36 +236,15 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             resident_rows_storage_id = row_storage_id as u64,
             row_upload_bytes = 0u64,
             round_device_buffer_allocations = 0u64,
-            sequence_prepare_wall_ns = tracing::field::Empty,
+            preinitialized_device_bytes = sequence.storage_layout().workspace_bytes(),
+            sequence_prepare_wall_ns = 0u64,
             materialize_wall_ns = tracing::field::Empty,
             materialize_gpu_active_ns = tracing::field::Empty,
         );
         let _entered = prepare_span.enter();
-        let started = Instant::now();
-        let sequence = self.context.prepare_product_remainder_sequence_with_rows(
-            rows,
-            host.lagrange_weights,
-            e_in_capacity,
-            e_out_capacity,
-            self.config.spartan_product_remainder.dispatch,
-        );
-        let _ = prepare_span.record(
-            "sequence_prepare_wall_ns",
-            duration_nanos(started.elapsed()),
-        );
-        let mut sequence = match sequence {
-            Ok(sequence) => sequence,
-            Err(error) if product_prepare_fallback_reason(&error).is_some() => {
-                tracing::warn!(
-                    target: "jolt::metal",
-                    error = %error,
-                    "product-remainder Metal sequence preparation failed; using optimized CPU"
-                );
-                drop(session.take::<ProductRemainderRows>());
-                return OptimizedProductRemainder.prepare(session, witness, inputs);
-            }
-            Err(error) => return Err(metal_prepare_error(error)),
-        };
+        sequence
+            .set_lagrange_weights(host.lagrange_weights)
+            .map_err(metal_prepare_error)?;
         let started = Instant::now();
         let first_message = sequence.message_timed(e_in, e_out);
         let materialize_wall = started.elapsed();
@@ -213,7 +256,6 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                     error = %error,
                     "product-remainder Metal materialization failed; using optimized CPU"
                 );
-                drop(session.take::<ProductRemainderRows>());
                 return OptimizedProductRemainder.prepare(session, witness, inputs);
             }
             Err(error) => return Err(metal_prepare_error(error)),
@@ -228,7 +270,6 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                 reason: "product-remainder sequence changed the resident row allocation",
             });
         }
-        drop(session.take::<ProductRemainderRows>());
         discard_product_uniskip_carry(session, carry_log_t, &tau_low)?;
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self

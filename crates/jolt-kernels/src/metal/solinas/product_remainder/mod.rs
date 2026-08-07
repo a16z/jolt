@@ -1,13 +1,13 @@
 use std::{
     mem::{align_of, size_of},
     slice,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use jolt_field::{AkitaField, Field};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 use thiserror::Error;
 
@@ -602,6 +602,27 @@ pub struct ProductRemainderSequence {
     gpu_active_time: Duration,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProductRemainderStorageInitializationStats {
+    bytes: usize,
+    wall: Duration,
+    gpu_active: Duration,
+}
+
+impl ProductRemainderStorageInitializationStats {
+    pub(crate) const fn bytes(self) -> usize {
+        self.bytes
+    }
+
+    pub(crate) const fn wall(self) -> Duration {
+        self.wall
+    }
+
+    pub(crate) const fn gpu_active(self) -> Duration {
+        self.gpu_active
+    }
+}
+
 #[cfg(feature = "allocative")]
 impl allocative::Allocative for ProductRemainderSequence {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
@@ -760,6 +781,69 @@ impl SolinasMetal {
 }
 
 impl ProductRemainderSequence {
+    pub(crate) fn initialize_storage(
+        &self,
+    ) -> Result<ProductRemainderStorageInitializationStats, MetalError> {
+        if self.phase != ProductRemainderPhase::Raw
+            || self.current_elements != self.layout.rows()
+            || !self.source_in_a
+        {
+            return Err(MetalError::InvalidProductRemainderState(
+                "storage initialization requires a fresh sequence",
+            ));
+        }
+        let buffers = [
+            &self.buffers.lagrange,
+            &self.buffers.state_a,
+            &self.buffers.state_b,
+            &self.buffers.e_in,
+            &self.buffers.e_out,
+            &self.buffers.partial_a,
+            &self.buffers.partial_b,
+        ];
+        let started = Instant::now();
+        let command_buffer = self.context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_blit_command_encoder();
+            for buffer in buffers {
+                encoder.fill_buffer(buffer, NSRange::new(0, buffer.length()), 0);
+            }
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        Ok(ProductRemainderStorageInitializationStats {
+            bytes: self.layout.workspace_bytes(),
+            wall: started.elapsed(),
+            gpu_active: Duration::from_secs_f64(end - start),
+        })
+    }
+
+    pub(crate) fn set_lagrange_weights(
+        &mut self,
+        weights: [AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS + 1],
+    ) -> Result<(), MetalError> {
+        if self.phase != ProductRemainderPhase::Raw {
+            return Err(MetalError::InvalidProductRemainderState(
+                "Lagrange weights must be installed before materialization",
+            ));
+        }
+        write_product_remainder_fields(
+            &self.buffers.lagrange,
+            PRODUCT_REMAINDER_MESSAGE_COLUMNS + 1,
+            &weights,
+            "Lagrange weights",
+        )
+    }
+
     pub fn message(
         &mut self,
         e_in: &[AkitaField],
@@ -1069,6 +1153,10 @@ impl ProductRemainderSequence {
 
     pub fn row_allocation_identity(&self) -> usize {
         self.buffers.rows.allocation_identity()
+    }
+
+    pub(crate) fn device_registry_id(&self) -> u64 {
+        self.context.device_registry_id()
     }
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
