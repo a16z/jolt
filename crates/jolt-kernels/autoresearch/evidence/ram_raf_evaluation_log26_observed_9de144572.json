@@ -1,0 +1,93 @@
+{
+  "schema": "metal_ram_raf_evaluation_observation_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-06",
+  "evidence_stage": "observed",
+  "candidate": {
+    "git_revision": "9de144572cb4fe79bb7467fa406b16443a5331c9",
+    "clean_worktree": "/private/tmp/jolt-ram-raf-9de144572",
+    "binary_path": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "63331551c43c90a05e3d5c96142e112d4d72b803419629f81ea9daf08c6fd784",
+    "benchmark_source_sha256": "1d9ba85fc4971029bedbcaf3dea4fff28c94367c1b36dbec78b31ab2d2c6d5e7",
+    "production_adapter_sha256": "2982b72541f0dddb2bb50d8419ae1f496e5b82e1c33833d58220d9018f0e868f",
+    "rust_runtime_sha256": "a6e0fc0a75cb9687acb02bf3881c798f6ed2a42d9e9c2fed9afb5625374721eb",
+    "shader_source_sha256": "dd5b2723d7991c3fa75ff605058e0f2a56863495a4b3917706d6c8390f2c3444"
+  },
+  "contract": {
+    "retained_command": "JOLT_SOLINAS_BENCH_FAMILY=ram-raf JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_METAL_RAM_RAF_THREADS=1024 JOLT_METAL_RAM_RAF_WARMUP_MS=500 JOLT_METAL_RAM_RAF_MEASUREMENT_MS=2000 cargo bench -p jolt-kernels --bench metal_solinas --features metal,test-utils -- metal_wall_hybrid_no_fs",
+    "elements": 67108864,
+    "address_domain": 8192,
+    "threads_per_threadgroup": 1024,
+    "device": "Apple M4 Max",
+    "topology": "random",
+    "cpu_reference": "frozen optimized RamRafEvaluation complete member",
+    "cpu_reference_ms": 74.870252,
+    "five_x_wall_cap_ms": 14.9740504,
+    "pursuit_wall_target_ms": 11.5,
+    "primary_metric": "resident one-command Metal service plus exact affine CPU tail, excluding host Fiat-Shamir and shared witness-owner upload",
+    "mandatory_secondary_metric": "shared owner preparation plus resident service"
+  },
+  "clean_log26_observation": {
+    "address_plane_generation_ms": 14.406458,
+    "standalone_address_upload_ms": 30.475833,
+    "sequence_setup_ms": 0.729875,
+    "cold_fold_finalize_readback_wall_ms": 15.342708,
+    "cold_gpu_active_ms": 14.6315,
+    "warm_one_shot_wall_ms": 6.540292,
+    "warm_gpu_active_ms": 6.3445,
+    "specialized_cpu_tail_no_fiat_shamir_ms": 0.177958,
+    "one_shot_hybrid_no_fiat_shamir_ms": 6.71825,
+    "criterion_slope_ms": 6.2663503766,
+    "criterion_interval_ms": [6.2492, 6.2664, 6.2853],
+    "criterion_throughput_gelements_per_second": [10.677, 10.709, 10.739],
+    "speedup_at_criterion_slope": 11.947983675,
+    "setup_plus_criterion_service_ms": 6.9962253766,
+    "speedup_including_sequence_setup": 10.701520887,
+    "setup_plus_one_shot_service_ms": 7.448125,
+    "speedup_including_sequence_setup_one_shot": 10.052228178,
+    "owner_upload_plus_setup_plus_criterion_service_ms": 37.4720583766,
+    "speedup_if_upload_is_fully_charged_to_member": 1.998,
+    "five_x_cap_headroom_fraction_including_setup": 0.5328
+  },
+  "production_integration": {
+    "owner_prepare_location": "jolt_prover::backend_witness_prepare",
+    "owner_prepare_inside_primary_piop": false,
+    "submission_location": "stage-2 RamReadWriteChecking prepare after tau is available",
+    "join_location": "first active RamRafEvaluation local round",
+    "command_buffers_per_sequence": 1,
+    "round_device_allocations": 0,
+    "host_fiat_shamir_included_in_observation": false,
+    "full_piop_overlap_measured": false,
+    "exact_adapter_lockstep_test": "metal::ram_raf_evaluation::tests::prepared_resident_kernel_matches_optimized_cpu",
+    "exact_adapter_lockstep_passed": true,
+    "lockstep_elements": 32768,
+    "lockstep_address_domain": 8192,
+    "lockstep_checks": [
+      "all round polynomials",
+      "terminal output claim",
+      "derived UnmapAddress claim"
+    ]
+  },
+  "accounting": {
+    "primary_piop_interpretation": "The immutable address-plane owner is created before the primary PIOP boundary and is shared state, so its standalone upload is excluded from the member service ratio.",
+    "owner_inclusive_interpretation": "If the current 256-MiB Vec-to-Metal copy is charged entirely to this member, the observed result is only about 2.0x. This diagnostic must remain visible until the owner is produced directly in shared storage or amortized by its consumers.",
+    "overlap_interpretation": "The asynchronous ticket proves exact scheduling and avoids an eager wait, but no speedup credit is assigned to overlap until a full production PIOP trace measures submit-to-join work and the marginal join wall.",
+    "comparison_limit": "This artifact is a calibrated no-Fiat-Shamir service result, not a full Metal-hybrid PIOP promotion result."
+  },
+  "guards": {
+    "source_clean_benchmark_worktree": true,
+    "same_binary_cpu_and_metal": true,
+    "global_evaluator_lock_held": true,
+    "resident_address_identity_checked": true,
+    "pending_submission_identity_checked": true,
+    "pending_submission_waits_on_drop": true,
+    "incompatible_address_domain_falls_back_to_cpu": true,
+    "cargo_check_all_targets_metal_parallel_test_utils_passed": true,
+    "clippy_status": "The RAM RAF source passed before unrelated concurrent registers-claim work introduced warnings in the shared main worktree."
+  },
+  "verdict": {
+    "status": "production_adapter_exact_service_pass_full_piop_pending",
+    "reason": "At the exact production-adapter revision, resident setup plus the Criterion service slope is 6.996 ms, or 10.70x over the frozen optimized CPU member, while exact round and terminal claims match. Host Fiat-Shamir, actual submit-to-join overlap, and full proof-level PIOP timing remain unmeasured.",
+    "next_test": "Run one paired production Fibonacci log-26 PIOP diagnostic from this clean revision, inspect MetalRamRafEvaluation submit/join spans and proof equality, then decide whether owner production must move directly into shared Metal storage before five-pair promotion."
+  }
+}
