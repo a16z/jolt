@@ -58,6 +58,19 @@ mod abi;
 mod model;
 mod oracle;
 
+pub(super) const SOURCE: &str = include_str!("shader.metal");
+
+pub(crate) const ATOM_MASS_PHASE_PIPELINE: &str =
+    "solinas_instruction_read_raf_v3_atom_mass_phase";
+pub(crate) const ATOM_MASS_FINALIZE_PIPELINE: &str =
+    "solinas_instruction_read_raf_v3_atom_mass_finalize";
+pub(crate) const ATOM_PHASE_PIPELINE: &str = "solinas_instruction_read_raf_v3_atom_phase";
+pub(crate) const FINALIZE_RAF_PIPELINE: &str = "solinas_instruction_read_raf_v3_finalize_raf";
+pub(crate) const FINALIZE_SUFFIX_PIPELINE: &str =
+    "solinas_instruction_read_raf_v3_finalize_suffix";
+pub(crate) const OPEN_FLAGS_PIPELINE: &str = "solinas_instruction_read_raf_v3_open_flags";
+pub(crate) const REDUCE_PIPELINE: &str = "solinas_instruction_read_raf_v3_reduce";
+
 pub(crate) use abi::{
     AddressAtomTopologyReceipt, AddressStateReceipt, CycleFactorReceipt, HostRoundBoundary,
     InstructionReadRafGeometry, PlaneDescriptor, ProducerIdentity, ReductionEqReceipt,
