@@ -25,7 +25,7 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
@@ -61,6 +61,8 @@ INSTRUCTION_INPUT_METAL_PHASES = (
     "cpu_tail",
 )
 INSTRUCTION_INPUT_MIN_SPEEDUP = 5.0
+INSTRUCTION_READ_RAF_KERNEL = "InstructionReadRaf"
+INSTRUCTION_READ_RAF_MIN_SPEEDUP = 5.0
 BOOLEANITY_ADDRESS_KERNEL = "BooleanityAddressPhase"
 BOOLEANITY_ADDRESS_COMPONENTS = (
     "prepare",
@@ -139,6 +141,12 @@ METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF = (
 )
 PRODUCTION_PAIRS = 5
 LOCAL_KERNELS = {
+    INSTRUCTION_READ_RAF_KERNEL: {
+        "name": INSTRUCTION_READ_RAF_KERNEL,
+        "metric": "instruction_read_raf_speedup",
+        "paired_metric": "paired_instruction_read_raf_speedups",
+        "backend_prefix": "MetalInstructionReadRaf::",
+    },
     "OuterRemainder": {
         "name": OUTER_REMAINDER_KERNEL,
         "metric": "outer_remainder_speedup",
@@ -4081,6 +4089,14 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     metal_instruction_input = [
         float(pair["metal_instruction_input_us"]) for pair in pairs
     ]
+    cpu_instruction_read_raf = [
+        float(pair.get("cpu_instruction_read_raf_us", pair["cpu_hamming_weight_us"]))
+        for pair in pairs
+    ]
+    metal_instruction_read_raf = [
+        float(pair.get("metal_instruction_read_raf_us", pair["metal_hamming_weight_us"]))
+        for pair in pairs
+    ]
     cpu_booleanity_address = [
         float(pair["cpu_booleanity_address_us"]) for pair in pairs
     ]
@@ -4218,6 +4234,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_bytecode
         + cpu_instruction_input
         + metal_instruction_input
+        + cpu_instruction_read_raf
+        + metal_instruction_read_raf
         + cpu_booleanity_address
         + metal_booleanity_address
         + cpu_booleanity_address_service
@@ -4259,6 +4277,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             metal_instruction_input,
             INSTRUCTION_INPUT_MIN_SPEEDUP,
         )
+    )
+    (
+        instruction_read_raf_speedups,
+        instruction_read_raf_improvements,
+        instruction_read_raf_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_instruction_read_raf,
+        metal_instruction_read_raf,
+        INSTRUCTION_READ_RAF_MIN_SPEEDUP,
     )
     (
         booleanity_address_speedups,
@@ -4421,6 +4449,9 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "instruction_input_kernel_service_speedup": statistics.median(
             instruction_input_speedups
         ),
+        "instruction_read_raf_speedup": statistics.median(
+            instruction_read_raf_speedups
+        ),
         "booleanity_address_phase_speedup": statistics.median(
             booleanity_address_speedups
         ),
@@ -4467,6 +4498,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_bytecode_read_raf_cycle_fractional_improvements": bytecode_improvements,
         "paired_instruction_input_kernel_service_speedups": instruction_input_speedups,
         "paired_instruction_input_kernel_service_fractional_improvements": instruction_input_improvements,
+        "paired_instruction_read_raf_speedups": instruction_read_raf_speedups,
+        "paired_instruction_read_raf_fractional_improvements": instruction_read_raf_improvements,
         "paired_booleanity_address_phase_speedups": booleanity_address_speedups,
         "paired_booleanity_address_phase_fractional_improvements": booleanity_address_improvements,
         "paired_booleanity_address_phase_service_speedups": booleanity_address_service_speedups,
@@ -4518,6 +4551,12 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         ],
         "metal_instruction_input_kernel_service_ms_samples": [
             value / 1000.0 for value in metal_instruction_input
+        ],
+        "cpu_instruction_read_raf_ms_samples": [
+            value / 1000.0 for value in cpu_instruction_read_raf
+        ],
+        "metal_instruction_read_raf_ms_samples": [
+            value / 1000.0 for value in metal_instruction_read_raf
         ],
         "cpu_booleanity_address_phase_ms_samples": [
             value / 1000.0 for value in cpu_booleanity_address
@@ -4589,6 +4628,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             value / 1000.0 for value in metal_product_instruction_claim
         ],
         "instruction_input_kernel_service_decision": instruction_input_decision,
+        "instruction_read_raf_decision": instruction_read_raf_decision,
         "booleanity_address_phase_decision": booleanity_address_decision,
         "hamming_weight_claim_reduction_decision": hamming_weight_decision,
         "booleanity_hamming_family_decision": booleanity_hamming_decision,
@@ -4717,6 +4757,8 @@ def local_kernel_primary_us(result: dict[str, Any], kernel: str) -> float:
     elif kernel == PRODUCT_REMAINDER_KERNEL:
         value = kernel_wall_us(result["attribution"], kernel)
     elif kernel == INSTRUCTION_CLAIM_KERNEL:
+        value = kernel_wall_us(result["attribution"], kernel)
+    elif kernel == INSTRUCTION_READ_RAF_KERNEL:
         value = kernel_wall_us(result["attribution"], kernel)
     else:
         raise ValueError(f"unsupported local kernel {kernel}")
@@ -5557,6 +5599,14 @@ def main() -> int:
                             "service_us"
                         ]
                     ),
+                    "cpu_instruction_read_raf_us": kernel_wall_us(
+                        results["optimized"]["attribution"],
+                        INSTRUCTION_READ_RAF_KERNEL,
+                    ),
+                    "metal_instruction_read_raf_us": kernel_wall_us(
+                        results["metal"]["attribution"],
+                        INSTRUCTION_READ_RAF_KERNEL,
+                    ),
                     "cpu_booleanity_address_us": float(
                         booleanity_address_records["optimized"][
                             "normalized_member_ns"
@@ -5867,6 +5917,9 @@ def main() -> int:
                 "bytecode_local_gate": metrics["bytecode_read_raf_cycle_decision"][
                     "clears"
                 ],
+                "instruction_read_raf_local_gate": metrics[
+                    "instruction_read_raf_decision"
+                ]["clears"],
                 "instruction_input_cpu_control": all(
                     not any(
                         sample["instruction_input"]["optimized_member"]["metal_counts"].values()

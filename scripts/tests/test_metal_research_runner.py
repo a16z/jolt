@@ -2089,6 +2089,41 @@ class ResultAdapterTests(unittest.TestCase):
         self.assertEqual(observed["control_first_median"], 5.0)
         self.assertEqual(observed["treatment_first_median"], 5.0)
 
+        instruction_output = copy.deepcopy(output)
+        instruction_output["schema_version"] = 10
+        instruction_output["local_kernel"] = "InstructionReadRaf"
+        instruction_output["local_metric"] = {
+            "metric": "instruction_read_raf_speedup",
+            "paired_metric": "paired_instruction_read_raf_speedups",
+        }
+        instruction_output["metrics"]["instruction_read_raf_speedup"] = 5.0
+        instruction_output["metrics"][
+            "paired_instruction_read_raf_speedups"
+        ] = [5.0] * 5
+        for pair in instruction_output["pairs"]:
+            pair["arms"]["optimized"]["local"]["kernel"] = "InstructionReadRaf"
+            pair["arms"]["metal"]["local"]["kernel"] = "InstructionReadRaf"
+        instruction_tier = copy.deepcopy(tier)
+        instruction_tier["evaluator"]["result_adapter"] = "metal_piop_v10"
+        instruction_tier["promotion"]["local_kernel"] = "InstructionReadRaf"
+        instruction_tier["promotion"][
+            "local_metric"
+        ] = "instruction_read_raf_speedup"
+
+        instruction_result, _ = adapt_result(
+            instruction_tier, instruction_output, "instruction_read_raf"
+        )
+        instruction_observed = validate_tier_result(
+            instruction_result, instruction_tier
+        )
+
+        self.assertEqual(instruction_result["result_contract"], "metal_piop_v10")
+        self.assertEqual(instruction_result["primary"]["name"], "piop_speedup")
+        self.assertEqual(instruction_result["local"]["kernel"], "InstructionReadRaf")
+        self.assertEqual(instruction_observed["median"], 5.0)
+        with self.assertRaisesRegex(ValueError, "wrong contract"):
+            adapt_result(tier, instruction_output, "outer_remainder")
+
     def test_piop_closure_delegates_to_the_full_schema_seven_validator(self) -> None:
         template = json.loads(
             (

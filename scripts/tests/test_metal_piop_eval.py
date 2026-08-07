@@ -2990,6 +2990,81 @@ class MetalPiopEvalTests(unittest.TestCase):
             ],
         )
 
+    def test_instruction_read_raf_is_a_local_kernel(self) -> None:
+        self.assertEqual(
+            metal_piop_eval.LOCAL_KERNELS["InstructionReadRaf"],
+            {
+                "name": "InstructionReadRaf",
+                "metric": "instruction_read_raf_speedup",
+                "paired_metric": "paired_instruction_read_raf_speedups",
+                "backend_prefix": "MetalInstructionReadRaf::",
+            },
+        )
+        result = {
+            "attribution": {
+                "kernels": [
+                    {
+                        "kernel": "InstructionReadRaf",
+                        "wall_ms": 12.5,
+                    }
+                ]
+            }
+        }
+        self.assertEqual(
+            metal_piop_eval.local_kernel_primary_us(result, "InstructionReadRaf"),
+            12_500.0,
+        )
+
+    def test_instruction_read_raf_summary_uses_complete_member_wall(self) -> None:
+        base = {
+            "cpu_us": 20_000.0,
+            "metal_us": 4_000.0,
+            "cpu_prepare_us": 10.0,
+            "metal_prepare_us": 20.0,
+            "cpu_instruction_ra_us": 700.0,
+            "metal_instruction_ra_us": 100.0,
+            "cpu_bytecode_us": 1_000.0,
+            "metal_bytecode_us": 200.0,
+            "cpu_instruction_input_us": 800.0,
+            "metal_instruction_input_us": 160.0,
+            "cpu_instruction_read_raf_us": 3_750.0,
+            "metal_instruction_read_raf_us": 750.0,
+            "cpu_booleanity_address_us": 1_000.0,
+            "metal_booleanity_address_us": 200.0,
+            "cpu_hamming_weight_us": 900.0,
+            "metal_hamming_weight_us": 180.0,
+            "cpu_hamming_weight_service_us": 990.0,
+            "metal_hamming_weight_service_us": 180.0,
+            "cpu_outer_remainder_us": 600.0,
+            "metal_outer_remainder_us": 120.0,
+            "cpu_product_uniskip_us": 200.0,
+            "metal_product_uniskip_us": 10.0,
+            "cpu_product_remainder_us": 400.0,
+            "metal_product_remainder_us": 40.0,
+            "cpu_instruction_claim_us": 300.0,
+            "metal_instruction_claim_us": 30.0,
+            "metal_instruction_claim_isolated_service_us": 80.0,
+        }
+        pairs = [
+            {
+                **base,
+                "order": ["optimized", "metal"]
+                if index % 2 == 0
+                else ["metal", "optimized"],
+            }
+            for index in range(5)
+        ]
+        metrics = metal_piop_eval.summarize_pairs(pairs)
+        self.assertEqual(metrics["instruction_read_raf_speedup"], 5.0)
+        self.assertEqual(metrics["paired_instruction_read_raf_speedups"], [5.0] * 5)
+        self.assertEqual(
+            metrics["cpu_instruction_read_raf_ms_samples"], [3.75] * 5
+        )
+        self.assertEqual(
+            metrics["metal_instruction_read_raf_ms_samples"], [0.75] * 5
+        )
+        self.assertTrue(metrics["instruction_read_raf_decision"]["clears"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -77,7 +77,8 @@ def _envelope(
         "primary": {
             "name": (
                 "piop_speedup"
-                if tier["evaluator"]["result_adapter"] == "metal_piop_v7"
+                if tier["evaluator"]["result_adapter"]
+                in {"metal_piop_v7", "metal_piop_v10"}
                 else (
                     "successor_speedup"
                     if tier["evaluator"]["result_adapter"]
@@ -558,9 +559,17 @@ def _adapt_outer_successor_v2(
 
 
 def _adapt_piop(
-    tier: dict[str, Any], output: dict[str, Any], kernel: str
+    tier: dict[str, Any],
+    output: dict[str, Any],
+    kernel: str,
+    *,
+    adapter: str,
+    schema_version: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if output.get("schema_version") != 7 or output.get("kernel") != "akita_piop":
+    if (
+        output.get("schema_version") != schema_version
+        or output.get("kernel") != "akita_piop"
+    ):
         raise ValueError("PIOP evaluator returned the wrong contract")
     records = output.get("pairs")
     if not isinstance(records, list):
@@ -622,7 +631,7 @@ def _adapt_piop(
                 "metal",
             )
         )
-    result = _envelope(tier, kernel, "metal_piop_v7", output, pairs, [])
+    result = _envelope(tier, kernel, adapter, output, pairs, [])
     reported = output.get("metrics", {}).get("piop_speedup")
     if isinstance(reported, bool) or not isinstance(reported, (int, float)):
         raise ValueError("PIOP primary metric is invalid")
@@ -689,7 +698,13 @@ def adapt_result(
     if adapter in {"outer_remainder_v3", "outer_remainder_screen_v1"}:
         return _adapt_outer(tier, output, kernel)
     if adapter == "metal_piop_v7":
-        return _adapt_piop(tier, output, kernel)
+        return _adapt_piop(
+            tier, output, kernel, adapter="metal_piop_v7", schema_version=7
+        )
+    if adapter == "metal_piop_v10":
+        return _adapt_piop(
+            tier, output, kernel, adapter="metal_piop_v10", schema_version=10
+        )
     raise ValueError(f"unsupported evaluator result adapter: {adapter}")
 
 
