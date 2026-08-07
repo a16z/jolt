@@ -7,6 +7,7 @@
 mod model;
 mod oracle;
 mod owner;
+mod ram_ra_claim_reduction;
 mod ram_val_check;
 mod selector;
 mod topology;
@@ -19,6 +20,10 @@ pub use oracle::DenseRamValCheckOracle;
 pub use owner::{
     OwnerConfig, OwnerError, RamAccessRecord, RamCycleFamilyOwner, RamCycleFamilyOwnerBuilder,
     RamCycleFamilyReceipt, RamCycleRow, RamIncrementRecord, RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+};
+pub use ram_ra_claim_reduction::{
+    estimated_ram_ra_claim_products, HostSparseRamRaClaimReduction, RamRaClaimError,
+    RamRaClaimMessage, RamRaClaimTerminal,
 };
 pub use ram_val_check::{
     HostSparseRamValCheck, RamValError, RamValFrontierEntry, RamValMessage, RamValTerminalFactors,

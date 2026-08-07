@@ -11,6 +11,7 @@ mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
 mod ram_cycle_family;
+mod ram_ra_claim_reduction;
 mod ram_raf_evaluation;
 mod ram_read_write;
 mod ram_val_check;
