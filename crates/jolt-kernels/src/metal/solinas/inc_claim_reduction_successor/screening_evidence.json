@@ -1,0 +1,190 @@
+{
+  "schema": "metal_inc_claim_reduction_successor_screen_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-07",
+  "evidence_stage": "analytical",
+  "registered": false,
+  "decision": "akita_fused_read_raf_owns_increment_claims",
+  "target": {
+    "device": "Apple M4 Max 40-core GPU",
+    "log_t": 26,
+    "rows": 67108864,
+    "fiat_shamir": "host"
+  },
+  "fused_owner_denominator": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260806-133709-697013/result.json",
+    "artifact_sha256": "587e00a65bde003a7c3481f58b1ea047ed2c908b0e3d9808bbc7eec6f894b2df",
+    "revision": "5f520c21e338632aa0bf5936ceb02be6c22fa40f",
+    "binary_sha256": "a8b5f918c4a86ebdd2e4be3da10511ea071df4ea4949a23e02e5b286397d0e8b",
+    "workload": "fibonacci",
+    "rayon_threads": 16,
+    "alternating_pairs": 5,
+    "members": [
+      "BytecodeReadRafAddressPhase",
+      "BytecodeReadRafCycle"
+    ],
+    "optimized_cpu_samples_ns": [
+      1156804791,
+      1254933123,
+      1168671791,
+      1206041790,
+      1203638208
+    ],
+    "optimized_cpu_median_ns": 1203638208,
+    "five_x_cap_ns": 240727641,
+    "eight_x_cap_ns": 150454776,
+    "metal_arm_samples_ns": [
+      350824336,
+      363178339,
+      349465502,
+      348842671,
+      341891626
+    ],
+    "metal_arm_median_ns": 349465502,
+    "screening_speedup": 3.444226114,
+    "metal_arm_limit": "cycle phase used Metal while address phase remained CPU"
+  },
+  "standalone_denominator": {
+    "status": "unavailable",
+    "reason": "IncClaimReduction is absent under akita and the current metal feature selects akita",
+    "selector_default": "cpu",
+    "cutoff_elements": null,
+    "historical_noncomparable_evidence": {
+      "revision": "1a6c6ff58920cb947571c8179db2a1648e2f1e94",
+      "field": "BN254 Fr",
+      "log_t": 27,
+      "prepare_ns": 1790498542,
+      "use_for_promotion": false
+    }
+  },
+  "retained_controls": {
+    "copy_bytes_per_second": 451701710520.0,
+    "signed_half_products_per_second": 26272000000.0,
+    "promotion_fraction": 0.8
+  },
+  "base_two_scan_log26": {
+    "prefix_elements": 8192,
+    "suffix_elements": 8192,
+    "q_partitions": 8,
+    "dense_homogeneous": {
+      "useful_q_products": 134217728,
+      "useful_fold_products": 67108864,
+      "issued_q_products": 134217728,
+      "issued_fold_products": 67108864,
+      "perfect_bytes": 2156658688,
+      "cache_unique_bytes": 2157051904,
+      "requested_bytes": 3297509376,
+      "perfect_80_percent_gate_ms": 9.578952,
+      "cache_unique_80_percent_gate_ms": 9.578952,
+      "requested_80_percent_gate_ms": 12.329453
+    },
+    "dense_maximally_mixed": {
+      "useful_q_products": 134217728,
+      "useful_fold_products": 67108864,
+      "issued_q_products": 268435456,
+      "issued_fold_products": 67108864,
+      "cache_unique_bytes": 2157314048,
+      "requested_bytes": 3364618240,
+      "cache_unique_80_percent_gate_ms": 15.964921,
+      "requested_80_percent_gate_ms": 18.715423
+    },
+    "readback_bytes": 786432,
+    "sequence_owned_bytes": 5636128,
+    "borrowed_row_bytes": 1073741824,
+    "q_incremental_bytes_with_shared_row_read": 8912896,
+    "command_completions": 2
+  },
+  "launch_and_occupancy": {
+    "q_groups": 2048,
+    "q_reduce_groups": 256,
+    "fold_groups": 8192,
+    "q_groups_per_gpu_core": 51.2,
+    "q_reduce_groups_per_gpu_core": 6.4,
+    "fold_groups_per_gpu_core": 204.8,
+    "q_structural_accumulator_words_per_lane": 16,
+    "fold_structural_accumulator_words_per_lane": 8,
+    "promotion_requires": [
+      "compiled register count",
+      "resident SIMD groups",
+      "no spills or thread-local memory",
+      "all 40 cores active outside tails",
+      "at least 80 percent of topology-matched signed-product roof"
+    ]
+  },
+  "candidate_screen": [
+    {
+      "name": "akita_fused_read_raf_owner",
+      "verdict": "selected",
+      "reason": "the protocol already consumes all four claims and returns one FusedInc opening without a standalone sumcheck"
+    },
+    {
+      "name": "base_two_scan_projection",
+      "verdict": "deferred_base_fallback",
+      "reason": "two challenge-separated scans minimize full-domain traffic and use only two completions"
+    },
+    {
+      "name": "precommitted_alias_aware_round_service",
+      "verdict": "rejected",
+      "compulsory_bytes_through_first_suffix_message": 6441664512,
+      "traffic_floor_ms": 14.260881,
+      "command_completions": 14,
+      "reason": "traffic alone is almost three times the two-scan floor before factors, products, reductions, or waits"
+    },
+    {
+      "name": "four_independent_precommitted_lanes",
+      "verdict": "rejected",
+      "reason": "duplicates the two aliased increment states"
+    },
+    {
+      "name": "full_table_dense_rounds",
+      "verdict": "rejected",
+      "reason": "builds and ping-pongs four T-field tables for a one-value-per-row witness"
+    }
+  ],
+  "aliases": {
+    "row_producer": "stage5 InstructionCycleRow or a reviewed 16-byte base IncRow carrier",
+    "stage6a_q_owner_candidates": [
+      "BooleanityAddress resident-row pass",
+      "BytecodeReadRafAddress resident-row pass"
+    ],
+    "midpoint_command_owner": "BytecodeReadRafCycle global round command",
+    "upstream_points": [
+      "RamReadWriteChecking.RamInc",
+      "RamValCheck.RamInc",
+      "RegistersReadWriteChecking.RdInc",
+      "RegistersValEvaluation.RdInc"
+    ],
+    "producer_cost_rule": "charge each row construction, upload, and full-domain read once in a paired boundary"
+  },
+  "falsification": {
+    "fused_owner_five_x_cap_ns": 240727641,
+    "fused_owner_eight_x_cap_ns": 150454776,
+    "base_phase_roof_fraction": 0.8,
+    "max_new_base_completions": 2,
+    "max_unrelated_fused_owner_regression_fraction": 0.02,
+    "reject_on_standalone_akita_member": true,
+    "reject_on_unattributed_producer_or_row_read": true,
+    "required_parity": [
+      "all round messages",
+      "RamInc and RdInc output order",
+      "reversed opening point",
+      "transcript bytes",
+      "clear proof bytes and verification",
+      "ZK proof bytes and verification"
+    ]
+  },
+    "unverified": [
+    "compiled occupancy and spills",
+    "physical cache-line traffic",
+    "best stage6a Q fusion owner",
+    "base Solinas optimized CPU denominator",
+    "log27 transfer and capacity",
+        "clear and ZK end-to-end parity"
+    ],
+    "root_validation": [
+        "rustc --edition=2024 --test model.rs: 6 passed",
+        "initial oracle run exposed missing low-equality scaling at the midpoint",
+        "suffix weights corrected to gamma_power times the bound low equality leaf",
+        "corrected rustc --edition=2024 --test oracle.rs: 4 passed"
+    ]
+}
