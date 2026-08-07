@@ -28,6 +28,8 @@ mod bytecode_cycle;
 pub mod bytecode_read_raf;
 #[doc(hidden)]
 pub mod bytecode_read_raf_v2;
+#[doc(hidden)]
+pub mod bytecode_read_raf_v3;
 mod bytecode_row;
 pub mod half_width_probe;
 #[cfg(feature = "test-utils")]
