@@ -25,7 +25,7 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
@@ -79,6 +79,7 @@ BOOLEANITY_ADDRESS_MIN_SPEEDUP = 5.0
 HAMMING_WEIGHT_KERNEL = "HammingWeightClaimReduction"
 HAMMING_WEIGHT_METAL_PHASES = BOOLEANITY_ADDRESS_METAL_PHASES
 HAMMING_WEIGHT_MIN_SPEEDUP = 5.0
+BOOLEANITY_HAMMING_MIN_SPEEDUP = 5.0
 OUTER_REMAINDER_KERNEL = "OuterRemainder"
 OUTER_REMAINDER_COMPLETE_MEMBER = "OuterRemainder::complete_member"
 OUTER_REMAINDER_METAL_PHASES = (
@@ -118,6 +119,8 @@ METAL_BOOLEANITY_ROWS_STAGE6B_RETAIN = (
 METAL_BOOLEANITY_ROWS_STAGE7_HAMMING_USE = (
     "MetalBooleanityRows::stage7_hamming_use"
 )
+METAL_HAMMING_HOT_STAGE6B_RETAIN = "MetalHammingHotRows::stage6b_retain_for_stage7"
+METAL_HAMMING_HOT_STAGE7_USE = "MetalHammingHotRows::stage7_terminal_use"
 OPTIMIZED_INSTRUCTION_INPUT_ROWS_PREPARE = "OptimizedInstructionInput::rows_prepare"
 OPTIMIZED_INSTRUCTION_INPUT_ROWS_STAGE3_USE = (
     "OptimizedInstructionInput::rows_stage3_use"
@@ -242,6 +245,9 @@ BOOLEANITY_ADDRESS_METAL_CONFIG_RE = re.compile(
     r"tile_threads=(?P<tile_threads>\d+) "
     r"finalize_threads=(?P<finalize_threads>\d+)$"
 )
+BOOLEANITY_ADDRESS_METAL_IMPLEMENTATION_RE = re.compile(
+    r"^BOOLEANITY_ADDRESS_METAL_IMPLEMENTATION value=(?P<implementation>accepted|packed-hot)$"
+)
 HAMMING_WEIGHT_METAL_CONFIG_RE = re.compile(
     r"^HAMMING_WEIGHT_METAL_CONFIG backend=metal "
     r"trace_cutoff=(?P<trace_cutoff>\d+) "
@@ -249,6 +255,9 @@ HAMMING_WEIGHT_METAL_CONFIG_RE = re.compile(
     r"selectors_per_tile=(?P<selectors_per_tile>\d+) "
     r"tile_threads=(?P<tile_threads>\d+) "
     r"finalize_threads=(?P<finalize_threads>\d+)$"
+)
+HAMMING_WEIGHT_METAL_IMPLEMENTATION_RE = re.compile(
+    r"^HAMMING_WEIGHT_METAL_IMPLEMENTATION value=(?P<implementation>accepted-rows|retained-hot)$"
 )
 OUTER_REMAINDER_METAL_CONFIG_RE = re.compile(
     r"^OUTER_REMAINDER_METAL_CONFIG backend=metal "
@@ -585,29 +594,38 @@ def validate_booleanity_address_stdout(
     tile_threads: int = 512,
     finalize_threads: int = 1024,
     trace_cutoff_log2: int = 18,
+    implementation: str = "accepted",
 ) -> Optional[dict[str, Any]]:
     configs = [
         match
         for line in stdout.splitlines()
         if (match := BOOLEANITY_ADDRESS_METAL_CONFIG_RE.fullmatch(line)) is not None
     ]
+    implementations = [
+        match
+        for line in stdout.splitlines()
+        if (match := BOOLEANITY_ADDRESS_METAL_IMPLEMENTATION_RE.fullmatch(line))
+        is not None
+    ]
     if backend == "optimized":
-        if configs:
+        if configs or implementations:
             raise ValueError(
                 "optimized evaluator emitted a Booleanity address Metal config"
             )
         return None
-    if len(configs) != 1:
+    if len(configs) != 1 or len(implementations) != 1:
         raise ValueError(
             "Metal evaluator must emit exactly one Booleanity address Metal config"
         )
     config = {name: int(value) for name, value in configs[0].groupdict().items()}
+    config["implementation"] = implementations[0].group("implementation")
     expected = {
         "trace_cutoff": 1 << trace_cutoff_log2,
         "inner_log2": inner_log2,
         "selectors_per_tile": selectors_per_tile,
         "tile_threads": tile_threads,
         "finalize_threads": finalize_threads,
+        "implementation": implementation,
     }
     if config != expected:
         raise ValueError(f"unexpected Booleanity address Metal config: {config}")
@@ -622,27 +640,35 @@ def validate_hamming_weight_stdout(
     tile_threads: int = 512,
     finalize_threads: int = 1024,
     trace_cutoff_log2: int = 18,
+    implementation: str = "accepted-rows",
 ) -> Optional[dict[str, Any]]:
     configs = [
         match
         for line in stdout.splitlines()
         if (match := HAMMING_WEIGHT_METAL_CONFIG_RE.fullmatch(line)) is not None
     ]
+    implementations = [
+        match
+        for line in stdout.splitlines()
+        if (match := HAMMING_WEIGHT_METAL_IMPLEMENTATION_RE.fullmatch(line)) is not None
+    ]
     if backend == "optimized":
-        if configs:
+        if configs or implementations:
             raise ValueError("optimized evaluator emitted a Hamming-weight Metal config")
         return None
-    if len(configs) != 1:
+    if len(configs) != 1 or len(implementations) != 1:
         raise ValueError(
             "Metal evaluator must emit exactly one Hamming-weight Metal config"
         )
     config = {name: int(value) for name, value in configs[0].groupdict().items()}
+    config["implementation"] = implementations[0].group("implementation")
     expected = {
         "trace_cutoff": 1 << trace_cutoff_log2,
         "inner_log2": inner_log2,
         "selectors_per_tile": selectors_per_tile,
         "tile_threads": tile_threads,
         "finalize_threads": finalize_threads,
+        "implementation": implementation,
     }
     if config != expected:
         raise ValueError(f"unexpected Hamming-weight Metal config: {config}")
@@ -2290,6 +2316,632 @@ def hamming_weight_member_breakdown(
     )
 
 
+def booleanity_outer_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    kernel: str,
+    row_source_span: str,
+) -> dict[str, Any]:
+    outer_names = {
+        f"{kernel}::{component}" for component in BOOLEANITY_ADDRESS_COMPONENTS
+    }
+    intervals = strict_named_intervals(
+        events,
+        outer_names
+        | {
+            PIOP_SPAN,
+            SUMCHECK_ROUND_SPAN,
+            SUMCHECK_HOST_FIAT_SHAMIR_SPAN,
+            row_source_span,
+        },
+    )
+    if len(intervals[PIOP_SPAN]) != 1:
+        raise ValueError("trace must contain exactly one positive PIOP span")
+    piop = intervals[PIOP_SPAN][0]
+    by_component = {
+        component: sorted(intervals[f"{kernel}::{component}"])
+        for component in BOOLEANITY_ADDRESS_COMPONENTS
+    }
+    outer_counts = {
+        component: len(component_intervals)
+        for component, component_intervals in by_component.items()
+    }
+    expected_outer_counts = {
+        "prepare": 1,
+        "prove_round": 8,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }
+    if outer_counts != expected_outer_counts:
+        raise ValueError(
+            f"{kernel} member span counts {outer_counts}, expected {expected_outer_counts}"
+        )
+
+    prepare = by_component["prepare"][0]
+    rounds = by_component["prove_round"]
+    finish = by_component["finish_rounds"][0]
+    output = by_component["output_claims"][0]
+    ordered = [prepare, *rounds, finish, output]
+    if any(start < piop[0] or end > piop[1] for start, end in ordered):
+        raise ValueError(f"a {kernel} member span lies outside PIOP")
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError(f"{kernel} member spans overlap or appear out of order")
+
+    host_fiat_shamir = []
+    for member_round in rounds:
+        containing_rounds = [
+            interval
+            for interval in intervals[SUMCHECK_ROUND_SPAN]
+            if interval[0] <= member_round[0] and member_round[1] <= interval[1]
+        ]
+        if len(containing_rounds) != 1:
+            raise ValueError(f"a {kernel} round lacks one enclosing sumcheck round")
+        sumcheck_round = containing_rounds[0]
+        round_fiat_shamir = [
+            interval
+            for interval in intervals[SUMCHECK_HOST_FIAT_SHAMIR_SPAN]
+            if sumcheck_round[0] <= interval[0] and interval[1] <= sumcheck_round[1]
+        ]
+        if len(round_fiat_shamir) != 1:
+            raise ValueError(f"a {kernel} round lacks one host Fiat-Shamir span")
+        fiat_shamir = round_fiat_shamir[0]
+        if member_round[1] > fiat_shamir[0]:
+            raise ValueError(f"{kernel} host Fiat-Shamir precedes its round polynomial")
+        host_fiat_shamir.append(fiat_shamir)
+    if len(set(host_fiat_shamir)) != len(rounds):
+        raise ValueError(f"{kernel} rounds reuse a host Fiat-Shamir span")
+
+    row_sources = intervals[row_source_span]
+    if backend == "optimized":
+        if len(row_sources) != 1:
+            raise ValueError(f"optimized {kernel} must contain one row-source span")
+        require_contained(row_sources[0], prepare, f"optimized {kernel} row source")
+    elif backend == "metal":
+        if row_sources:
+            raise ValueError(f"Metal {kernel} contains an optimized row-source span")
+    else:
+        raise ValueError(f"unsupported {kernel} backend {backend!r}")
+
+    round_durations = [interval_duration_us(interval) for interval in rounds]
+    host_fiat_shamir_durations = [
+        interval_duration_us(interval) for interval in host_fiat_shamir
+    ]
+    prepare_us = interval_duration_us(prepare)
+    row_source_us = interval_duration_us(row_sources[0]) if row_sources else 0.0
+    components = {
+        "prepare_us": prepare_us,
+        "row_source_us": row_source_us,
+        "normalized_prepare_us": prepare_us - row_source_us,
+        "rounds_us": round_durations,
+        "rounds_total_us": sum(round_durations),
+        "host_fiat_shamir_us": host_fiat_shamir_durations,
+        "host_fiat_shamir_total_us": sum(host_fiat_shamir_durations),
+        "finish_us": interval_duration_us(finish),
+        "output_claims_us": interval_duration_us(output),
+    }
+    components["member_us"] = (
+        components["prepare_us"]
+        + components["rounds_total_us"]
+        + components["host_fiat_shamir_total_us"]
+        + components["finish_us"]
+        + components["output_claims_us"]
+    )
+    components["normalized_member_us"] = components["member_us"] - row_source_us
+    positive = (
+        "prepare_us",
+        "normalized_prepare_us",
+        "rounds_total_us",
+        "host_fiat_shamir_total_us",
+        "finish_us",
+        "output_claims_us",
+        "member_us",
+        "normalized_member_us",
+    )
+    if any(
+        not math.isfinite(components[name]) or components[name] <= 0.0
+        for name in positive
+    ) or not math.isfinite(row_source_us) or row_source_us < 0.0:
+        raise ValueError(f"trace contains a non-positive {kernel} duration")
+    return {
+        "components": components,
+        "outer_counts": outer_counts,
+        "prepare_interval": prepare,
+    }
+
+
+def retained_hamming_lifecycle(
+    events: list[dict[str, Any]], log_n: int
+) -> dict[str, Any]:
+    raw_names = {
+        METAL_BOOLEANITY_ROWS_STAGE5_PREPARE,
+        METAL_BOOLEANITY_ROWS_STAGE6A_USE,
+        METAL_BOOLEANITY_ROWS_STAGE6B_USE,
+    }
+    hot_names = {METAL_HAMMING_HOT_STAGE6B_RETAIN, METAL_HAMMING_HOT_STAGE7_USE}
+    parent_names = {
+        "InstructionReadRaf::prepare",
+        f"{BOOLEANITY_ADDRESS_KERNEL}::prepare",
+        "Booleanity::prepare",
+        f"{HAMMING_WEIGHT_KERNEL}::prepare",
+    }
+    intervals = strict_named_intervals(events, raw_names | hot_names | parent_names)
+    if any(len(intervals[name]) != 1 for name in raw_names | hot_names | parent_names):
+        raise ValueError("retained Hamming lifecycle is incomplete")
+
+    raw_intervals = {
+        "stage5": intervals[METAL_BOOLEANITY_ROWS_STAGE5_PREPARE][0],
+        "stage6a": intervals[METAL_BOOLEANITY_ROWS_STAGE6A_USE][0],
+        "stage6b": intervals[METAL_BOOLEANITY_ROWS_STAGE6B_USE][0],
+    }
+    hot_intervals = {
+        "stage6b_retain": intervals[METAL_HAMMING_HOT_STAGE6B_RETAIN][0],
+        "stage7": intervals[METAL_HAMMING_HOT_STAGE7_USE][0],
+    }
+    require_contained(
+        raw_intervals["stage5"],
+        intervals["InstructionReadRaf::prepare"][0],
+        "retained Hamming stage-5 source",
+    )
+    require_contained(
+        raw_intervals["stage6a"],
+        intervals[f"{BOOLEANITY_ADDRESS_KERNEL}::prepare"][0],
+        "retained Hamming stage-6a source use",
+    )
+    require_contained(
+        raw_intervals["stage6b"],
+        intervals["Booleanity::prepare"][0],
+        "retained Hamming stage-6b source use",
+    )
+    require_contained(
+        hot_intervals["stage6b_retain"],
+        intervals["Booleanity::prepare"][0],
+        "retained Hamming projection retention",
+    )
+    require_contained(
+        hot_intervals["stage7"],
+        intervals[f"{HAMMING_WEIGHT_KERNEL}::prepare"][0],
+        "retained Hamming terminal projection use",
+    )
+    ordered = [
+        raw_intervals["stage5"],
+        raw_intervals["stage6a"],
+        raw_intervals["stage6b"],
+        hot_intervals["stage6b_retain"],
+        hot_intervals["stage7"],
+    ]
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError("retained Hamming lifecycle is out of order")
+
+    raw_fields = {
+        "resident_rows_storage_id",
+        "resident_rows",
+        "resident_row_bytes",
+        "device_registry_id",
+        "row_allocations",
+        "row_upload_bytes",
+    }
+    raw_args = {
+        "stage5": exact_span_args(
+            events, METAL_BOOLEANITY_ROWS_STAGE5_PREPARE, raw_fields
+        ),
+        "stage6a": exact_span_args(
+            events, METAL_BOOLEANITY_ROWS_STAGE6A_USE, raw_fields
+        ),
+        "stage6b": exact_span_args(
+            events, METAL_BOOLEANITY_ROWS_STAGE6B_USE, raw_fields
+        ),
+    }
+    raw = {
+        stage: {
+            field: booleanity_trace_integer(value, f"{stage} {field}", allow_zero=True)
+            for field, value in args.items()
+        }
+        for stage, args in raw_args.items()
+    }
+    rows = 1 << log_n
+    source_ids = [raw[stage]["resident_rows_storage_id"] for stage in raw]
+    registries = [raw[stage]["device_registry_id"] for stage in raw]
+    if (
+        any(identity <= 0 for identity in source_ids)
+        or len(set(source_ids)) != 1
+        or any(registry <= 0 for registry in registries)
+        or len(set(registries)) != 1
+        or any(
+            raw[stage]["resident_rows"] != rows
+            or raw[stage]["resident_row_bytes"] != 40
+            for stage in raw
+        )
+        or raw["stage5"]["row_allocations"] != 1
+        or raw["stage5"]["row_upload_bytes"] != rows * 40
+        or any(
+            raw[stage]["row_allocations"] != 0
+            or raw[stage]["row_upload_bytes"] != 0
+            for stage in ("stage6a", "stage6b")
+        )
+    ):
+        raise ValueError("retained Hamming source-row lifecycle is inconsistent")
+
+    retain_fields = {
+        "hot_rows_storage_id",
+        "source_rows_storage_id",
+        "hot_rows",
+        "hot_row_bytes",
+        "device_registry_id",
+        "row_allocations",
+        "row_upload_bytes",
+    }
+    terminal_fields = {
+        "hot_rows_storage_id",
+        "source_rows_storage_id",
+        "hot_rows",
+        "hot_row_bytes",
+        "device_registry_id",
+        "row_allocations",
+        "row_upload_bytes",
+        "terminal_consumer",
+        "terminal_carry_removed",
+    }
+    retain_args = exact_span_args(
+        events, METAL_HAMMING_HOT_STAGE6B_RETAIN, retain_fields
+    )
+    terminal_args = exact_span_args(events, METAL_HAMMING_HOT_STAGE7_USE, terminal_fields)
+    retain = {
+        field: booleanity_trace_integer(value, f"retained {field}", allow_zero=True)
+        for field, value in retain_args.items()
+    }
+    terminal = {
+        field: booleanity_trace_integer(value, f"terminal {field}", allow_zero=True)
+        for field, value in terminal_args.items()
+        if field not in {"terminal_consumer", "terminal_carry_removed"}
+    }
+    terminal_consumer = trace_boolean(terminal_args["terminal_consumer"])
+    terminal_carry_removed = trace_boolean(
+        terminal_args["terminal_carry_removed"]
+    )
+    if (
+        retain["hot_rows_storage_id"] <= 0
+        or retain["hot_rows_storage_id"] != terminal["hot_rows_storage_id"]
+        or retain["source_rows_storage_id"] != source_ids[0]
+        or terminal["source_rows_storage_id"] != source_ids[0]
+        or retain["hot_rows"] != rows
+        or terminal["hot_rows"] != rows
+        or retain["hot_row_bytes"] != 29
+        or terminal["hot_row_bytes"] != 29
+        or retain["device_registry_id"] != registries[0]
+        or terminal["device_registry_id"] != registries[0]
+        or retain["row_allocations"] != 0
+        or retain["row_upload_bytes"] != 0
+        or terminal["row_allocations"] != 0
+        or terminal["row_upload_bytes"] != 0
+        or terminal_consumer is not True
+        or terminal_carry_removed is not True
+    ):
+        raise ValueError("retained Hamming projection lifecycle is inconsistent")
+
+    return {
+        "kind": "metal_hamming_hot",
+        "rows": rows,
+        "source_row_bytes": 40,
+        "hot_row_bytes": 29,
+        "device_registry_id": registries[0],
+        "source_rows_storage_id": source_ids[0],
+        "hot_rows_storage_id": retain["hot_rows_storage_id"],
+        "stage5": {
+            "row_allocations": raw["stage5"]["row_allocations"],
+            "row_upload_bytes": raw["stage5"]["row_upload_bytes"],
+        },
+        "stage6a": {
+            "row_allocations": raw["stage6a"]["row_allocations"],
+            "row_upload_bytes": raw["stage6a"]["row_upload_bytes"],
+        },
+        "stage6b": {
+            "row_allocations": raw["stage6b"]["row_allocations"],
+            "row_upload_bytes": raw["stage6b"]["row_upload_bytes"],
+        },
+        "stage6b_retain": {
+            "row_allocations": retain["row_allocations"],
+            "row_upload_bytes": retain["row_upload_bytes"],
+        },
+        "stage7": {
+            "row_allocations": terminal["row_allocations"],
+            "row_upload_bytes": terminal["row_upload_bytes"],
+            "terminal_consumer": True,
+            "terminal_carry_removed": True,
+        },
+    }
+
+
+def packed_hot_booleanity_address_member_breakdown(
+    events: list[dict[str, Any]], backend: str, log_n: int
+) -> dict[str, Any]:
+    if backend != "metal":
+        raise ValueError("packed-hot Booleanity parsing requires the Metal arm")
+    outer = booleanity_outer_member_breakdown(
+        events,
+        backend,
+        BOOLEANITY_ADDRESS_KERNEL,
+        OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE,
+    )
+    lifecycle = retained_hamming_lifecycle(events, log_n)
+    names = {
+        "prepare": "MetalBooleanityAddressPhase::prepare",
+        "sequence": "MetalBooleanityAddressPhase::packed_hot_sequence",
+        "dispatch": "MetalBooleanityAddressPhase::packed_hot_dispatch",
+        "readback": "MetalBooleanityAddressPhase::packed_hot_readback",
+    }
+    intervals = strict_named_intervals(events, set(names.values()))
+    if any(len(intervals[name]) != 1 for name in names.values()):
+        raise ValueError("packed-hot Booleanity trace is incomplete")
+    prepare = intervals[names["prepare"]][0]
+    sequence_interval = intervals[names["sequence"]][0]
+    dispatch_interval = intervals[names["dispatch"]][0]
+    readback_interval = intervals[names["readback"]][0]
+    require_contained(prepare, outer["prepare_interval"], "packed-hot prepare")
+    for interval, description in (
+        (sequence_interval, "packed-hot sequence"),
+        (dispatch_interval, "packed-hot dispatch"),
+        (readback_interval, "packed-hot readback"),
+    ):
+        require_contained(interval, prepare, description)
+    if sequence_interval[1] > dispatch_interval[0] or dispatch_interval[1] > readback_interval[0]:
+        raise ValueError("packed-hot sequence, dispatch, and readback are out of order")
+
+    sequence_fields = {
+        "resident_rows_storage_id",
+        "hot_rows_storage_id",
+        "rows",
+        "resident_row_bytes",
+        "hot_bytes",
+        "validity_bytes",
+        "e_in_fields",
+        "e_out_fields",
+        "partial_fields",
+        "output_fields",
+        "owned_bytes",
+        "current_device_bytes",
+        "recommended_device_bytes",
+        "command_buffers",
+        "dispatches",
+        "readbacks",
+    }
+    sequence = {
+        field: booleanity_trace_integer(value, f"packed-hot {field}", allow_zero=True)
+        for field, value in exact_span_args(
+            events, names["sequence"], sequence_fields
+        ).items()
+    }
+    rows = 1 << log_n
+    e_in = 1 << 15
+    e_out = rows // e_in
+    partial_fields = e_out * 29 * 256
+    output_fields = 29 * 256
+    owned_bytes = (
+        29 * rows
+        + rows
+        + 16 * (e_in + e_out + partial_fields + output_fields)
+    )
+    expected_sequence = {
+        "resident_rows_storage_id": lifecycle["source_rows_storage_id"],
+        "hot_rows_storage_id": lifecycle["hot_rows_storage_id"],
+        "rows": rows,
+        "resident_row_bytes": 40,
+        "hot_bytes": 29 * rows,
+        "validity_bytes": rows,
+        "e_in_fields": e_in,
+        "e_out_fields": e_out,
+        "partial_fields": partial_fields,
+        "output_fields": output_fields,
+        "owned_bytes": owned_bytes,
+        "command_buffers": 1,
+        "dispatches": 3,
+        "readbacks": 1,
+    }
+    observed_sequence = {
+        field: value
+        for field, value in sequence.items()
+        if field not in {"current_device_bytes", "recommended_device_bytes"}
+    }
+    if (
+        observed_sequence != expected_sequence
+        or sequence["current_device_bytes"] + owned_bytes
+        > sequence["recommended_device_bytes"]
+    ):
+        raise ValueError(f"packed-hot sequence geometry is inconsistent: {sequence}")
+
+    dispatch_fields = {
+        "command_buffers",
+        "dispatches",
+        "command_completed",
+        "gpu_active_ns",
+        "resident_rows_storage_id",
+        "hot_rows_storage_id",
+    }
+    dispatch_args = exact_span_args(events, names["dispatch"], dispatch_fields)
+    dispatch = {
+        field: booleanity_trace_integer(value, f"packed-hot {field}", allow_zero=True)
+        for field, value in dispatch_args.items()
+        if field != "command_completed"
+    }
+    dispatch["command_completed"] = trace_boolean(dispatch_args["command_completed"])
+    if (
+        dispatch["command_buffers"] != 1
+        or dispatch["dispatches"] != 3
+        or dispatch["command_completed"] is not True
+        or dispatch["gpu_active_ns"] <= 0
+        or dispatch["resident_rows_storage_id"] != lifecycle["source_rows_storage_id"]
+        or dispatch["hot_rows_storage_id"] != lifecycle["hot_rows_storage_id"]
+    ):
+        raise ValueError("packed-hot dispatch accounting is inconsistent")
+
+    readback = {
+        field: booleanity_trace_integer(value, f"packed-hot readback {field}")
+        for field, value in exact_span_args(
+            events, names["readback"], {"elements", "bytes", "readbacks"}
+        ).items()
+    }
+    expected_readback = {
+        "elements": output_fields,
+        "bytes": output_fields * 16,
+        "readbacks": 1,
+    }
+    if readback != expected_readback:
+        raise ValueError("packed-hot readback accounting is inconsistent")
+    return {
+        "components": outer["components"],
+        "outer_counts": outer["outer_counts"],
+        "metal_counts": {phase: 1 for phase in names},
+        "resource_observation": {
+            "implementation": "packed-hot",
+            "sequence": sequence,
+            "dispatch": dispatch,
+            "readback": readback,
+        },
+        "row_lifecycle": lifecycle,
+    }
+
+
+def retained_hot_hamming_weight_member_breakdown(
+    events: list[dict[str, Any]], backend: str, log_n: int
+) -> dict[str, Any]:
+    if backend != "metal":
+        raise ValueError("retained-hot Hamming parsing requires the Metal arm")
+    outer = booleanity_outer_member_breakdown(
+        events,
+        backend,
+        HAMMING_WEIGHT_KERNEL,
+        OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE,
+    )
+    lifecycle = retained_hamming_lifecycle(events, log_n)
+    names = {
+        "sequence": "MetalHammingWeightClaimReduction::retained_sequence",
+        "dispatch": "MetalHammingWeightClaimReduction::retained_dispatch",
+        "readback": "MetalHammingWeightClaimReduction::retained_readback",
+    }
+    intervals = strict_named_intervals(events, set(names.values()))
+    if any(len(intervals[name]) != 1 for name in names.values()):
+        raise ValueError("retained-hot Hamming trace is incomplete")
+    for name in names.values():
+        require_contained(
+            intervals[name][0], outer["prepare_interval"], f"retained-hot {name}"
+        )
+    if (
+        intervals[names["sequence"]][0][1] > intervals[names["dispatch"]][0][0]
+        or intervals[names["dispatch"]][0][1] > intervals[names["readback"]][0][0]
+    ):
+        raise ValueError("retained-hot sequence, dispatch, and readback are out of order")
+
+    sequence_fields = {
+        "hot_rows_storage_id",
+        "source_rows_storage_id",
+        "rows",
+        "hot_bytes",
+        "e_in_fields",
+        "e_out_fields",
+        "partial_fields",
+        "output_fields",
+        "owned_bytes",
+        "current_device_bytes",
+        "recommended_device_bytes",
+        "command_buffers",
+        "encoders",
+        "dispatches",
+        "tile_threadgroups",
+        "finalize_threadgroups",
+        "readbacks",
+    }
+    sequence = {
+        field: booleanity_trace_integer(value, f"retained-hot {field}", allow_zero=True)
+        for field, value in exact_span_args(
+            events, names["sequence"], sequence_fields
+        ).items()
+    }
+    rows = 1 << log_n
+    e_in = 1 << 15
+    e_out = rows // e_in
+    partial_fields = e_out * 6 * 256
+    output_fields = 29 * 256
+    owned_bytes = 16 * (e_in + e_out + partial_fields + output_fields)
+    expected_sequence = {
+        "hot_rows_storage_id": lifecycle["hot_rows_storage_id"],
+        "source_rows_storage_id": lifecycle["source_rows_storage_id"],
+        "rows": rows,
+        "hot_bytes": 29 * rows,
+        "e_in_fields": e_in,
+        "e_out_fields": e_out,
+        "partial_fields": partial_fields,
+        "output_fields": output_fields,
+        "owned_bytes": owned_bytes,
+        "command_buffers": 1,
+        "encoders": 10,
+        "dispatches": 10,
+        "tile_threadgroups": e_out * 5,
+        "finalize_threadgroups": 29,
+        "readbacks": 1,
+    }
+    observed_sequence = {
+        field: value
+        for field, value in sequence.items()
+        if field not in {"current_device_bytes", "recommended_device_bytes"}
+    }
+    if (
+        observed_sequence != expected_sequence
+        or sequence["current_device_bytes"] + owned_bytes
+        > sequence["recommended_device_bytes"]
+    ):
+        raise ValueError(f"retained-hot sequence geometry is inconsistent: {sequence}")
+
+    dispatch_fields = {
+        "command_buffers",
+        "tile_dispatches",
+        "finalize_dispatches",
+        "command_completed",
+        "gpu_active_ns",
+        "hot_rows_storage_id",
+    }
+    dispatch_args = exact_span_args(events, names["dispatch"], dispatch_fields)
+    dispatch = {
+        field: booleanity_trace_integer(value, f"retained-hot {field}", allow_zero=True)
+        for field, value in dispatch_args.items()
+        if field != "command_completed"
+    }
+    dispatch["command_completed"] = trace_boolean(dispatch_args["command_completed"])
+    if (
+        dispatch["command_buffers"] != 1
+        or dispatch["tile_dispatches"] != 5
+        or dispatch["finalize_dispatches"] != 5
+        or dispatch["command_completed"] is not True
+        or dispatch["gpu_active_ns"] <= 0
+        or dispatch["hot_rows_storage_id"] != lifecycle["hot_rows_storage_id"]
+    ):
+        raise ValueError("retained-hot dispatch accounting is inconsistent")
+
+    readback = {
+        field: booleanity_trace_integer(value, f"retained-hot readback {field}")
+        for field, value in exact_span_args(
+            events, names["readback"], {"elements", "bytes", "readbacks"}
+        ).items()
+    }
+    expected_readback = {
+        "elements": output_fields,
+        "bytes": output_fields * 16,
+        "readbacks": 1,
+    }
+    if readback != expected_readback:
+        raise ValueError("retained-hot readback accounting is inconsistent")
+    return {
+        "components": outer["components"],
+        "outer_counts": outer["outer_counts"],
+        "metal_counts": {phase: 1 for phase in names},
+        "resource_observation": {
+            "implementation": "retained-hot",
+            "sequence": sequence,
+            "dispatch": dispatch,
+            "readback": readback,
+        },
+        "row_lifecycle": lifecycle,
+    }
+
+
 def instruction_input_member_breakdown(
     events: list[dict[str, Any]],
     backend: str,
@@ -3397,6 +4049,28 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             cpu_hamming_weight_service, metal_hamming_weight_service
         )
     ]
+    cpu_booleanity_hamming = [
+        booleanity + hamming
+        for booleanity, hamming in zip(
+            cpu_booleanity_address, cpu_hamming_weight
+        )
+    ]
+    metal_booleanity_hamming = [
+        booleanity + hamming
+        for booleanity, hamming in zip(
+            metal_booleanity_address, metal_hamming_weight
+        )
+    ]
+    (
+        booleanity_hamming_speedups,
+        booleanity_hamming_improvements,
+        booleanity_hamming_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_booleanity_hamming,
+        metal_booleanity_hamming,
+        BOOLEANITY_HAMMING_MIN_SPEEDUP,
+    )
     (
         outer_remainder_speedups,
         outer_remainder_improvements,
@@ -3508,6 +4182,9 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "hamming_weight_claim_reduction_service_speedup": statistics.median(
             hamming_weight_service_speedups
         ),
+        "booleanity_hamming_family_speedup": statistics.median(
+            booleanity_hamming_speedups
+        ),
         "outer_remainder_speedup": statistics.median(outer_remainder_speedups),
         "product_remainder_speedup": statistics.median(product_remainder_speedups),
         "instruction_claim_reduction_critical_path_speedup": statistics.median(
@@ -3536,6 +4213,10 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_hamming_weight_claim_reduction_speedups": hamming_weight_speedups,
         "paired_hamming_weight_claim_reduction_fractional_improvements": hamming_weight_improvements,
         "paired_hamming_weight_claim_reduction_service_speedups": hamming_weight_service_speedups,
+        "paired_booleanity_hamming_family_speedups": booleanity_hamming_speedups,
+        "paired_booleanity_hamming_family_fractional_improvements": (
+            booleanity_hamming_improvements
+        ),
         "paired_outer_remainder_speedups": outer_remainder_speedups,
         "paired_outer_remainder_fractional_improvements": outer_remainder_improvements,
         "paired_product_remainder_speedups": product_remainder_speedups,
@@ -3592,6 +4273,12 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_hamming_weight_claim_reduction_service_ms_samples": [
             value / 1000.0 for value in metal_hamming_weight_service
         ],
+        "cpu_booleanity_hamming_family_ms_samples": [
+            value / 1000.0 for value in cpu_booleanity_hamming
+        ],
+        "metal_booleanity_hamming_family_ms_samples": [
+            value / 1000.0 for value in metal_booleanity_hamming
+        ],
         "cpu_outer_remainder_ms_samples": [
             value / 1000.0 for value in cpu_outer_remainder
         ],
@@ -3622,6 +4309,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "instruction_input_kernel_service_decision": instruction_input_decision,
         "booleanity_address_phase_decision": booleanity_address_decision,
         "hamming_weight_claim_reduction_decision": hamming_weight_decision,
+        "booleanity_hamming_family_decision": booleanity_hamming_decision,
         "outer_remainder_decision": outer_remainder_decision,
         "product_remainder_decision": product_remainder_decision,
         "instruction_claim_reduction_critical_path_decision": instruction_claim_decision,
@@ -3784,11 +4472,13 @@ def run_backend(
     booleanity_address_tile_threads: int,
     booleanity_address_finalize_threads: int,
     booleanity_address_trace_cutoff_log2: int,
+    booleanity_address_implementation: str,
     hamming_weight_inner_log2: int,
     hamming_weight_selectors_per_tile: int,
     hamming_weight_tile_threads: int,
     hamming_weight_finalize_threads: int,
     hamming_weight_trace_cutoff_log2: int,
+    hamming_weight_implementation: str,
     outer_remainder_materialize_threads: int,
     outer_remainder_transition_threads: int,
     outer_remainder_output_threads: int,
@@ -3840,6 +4530,8 @@ def run_backend(
         str(booleanity_address_finalize_threads),
         "--booleanity-address-metal-trace-cutoff-log2",
         str(booleanity_address_trace_cutoff_log2),
+        "--booleanity-address-metal-implementation",
+        booleanity_address_implementation,
         "--hamming-weight-metal-inner-log2",
         str(hamming_weight_inner_log2),
         "--hamming-weight-metal-selectors-per-tile",
@@ -3850,6 +4542,8 @@ def run_backend(
         str(hamming_weight_finalize_threads),
         "--hamming-weight-metal-trace-cutoff-log2",
         str(hamming_weight_trace_cutoff_log2),
+        "--hamming-weight-metal-implementation",
+        hamming_weight_implementation,
         "--outer-remainder-metal-materialize-threads",
         str(outer_remainder_materialize_threads),
         "--outer-remainder-metal-transition-threads",
@@ -3918,6 +4612,7 @@ def run_backend(
         booleanity_address_tile_threads,
         booleanity_address_finalize_threads,
         booleanity_address_trace_cutoff_log2,
+        booleanity_address_implementation,
     )
     hamming_weight_config = validate_hamming_weight_stdout(
         result.stdout,
@@ -3927,6 +4622,7 @@ def run_backend(
         hamming_weight_tile_threads,
         hamming_weight_finalize_threads,
         hamming_weight_trace_cutoff_log2,
+        hamming_weight_implementation,
     )
     outer_remainder_config = validate_outer_remainder_stdout(
         result.stdout,
@@ -3959,24 +4655,34 @@ def run_backend(
     instruction_input_member = instruction_input_member_breakdown(
         events, backend, log_n, instruction_input_cutoff_log2
     )
-    booleanity_address_member = booleanity_address_member_breakdown(
-        events,
-        backend,
-        log_n,
-        booleanity_address_inner_log2,
-        booleanity_address_selectors_per_tile,
-        booleanity_address_tile_threads,
-        booleanity_address_finalize_threads,
-    )
-    hamming_weight_member = hamming_weight_member_breakdown(
-        events,
-        backend,
-        log_n,
-        hamming_weight_inner_log2,
-        hamming_weight_selectors_per_tile,
-        hamming_weight_tile_threads,
-        hamming_weight_finalize_threads,
-    )
+    if backend == "metal" and booleanity_address_implementation == "packed-hot":
+        booleanity_address_member = packed_hot_booleanity_address_member_breakdown(
+            events, backend, log_n
+        )
+    else:
+        booleanity_address_member = booleanity_address_member_breakdown(
+            events,
+            backend,
+            log_n,
+            booleanity_address_inner_log2,
+            booleanity_address_selectors_per_tile,
+            booleanity_address_tile_threads,
+            booleanity_address_finalize_threads,
+        )
+    if backend == "metal" and hamming_weight_implementation == "retained-hot":
+        hamming_weight_member = retained_hot_hamming_weight_member_breakdown(
+            events, backend, log_n
+        )
+    else:
+        hamming_weight_member = hamming_weight_member_breakdown(
+            events,
+            backend,
+            log_n,
+            hamming_weight_inner_log2,
+            hamming_weight_selectors_per_tile,
+            hamming_weight_tile_threads,
+            hamming_weight_finalize_threads,
+        )
     outer_remainder_member = outer_remainder_member_breakdown(
         events,
         backend,
@@ -4264,6 +4970,11 @@ def parser() -> argparse.ArgumentParser:
         default=18,
     )
     result.add_argument(
+        "--booleanity-address-metal-implementation",
+        choices=["accepted", "packed-hot"],
+        default="accepted",
+    )
+    result.add_argument(
         "--hamming-weight-metal-inner-log2",
         type=int,
         choices=[12, 13, 14, 15, 16],
@@ -4292,6 +5003,11 @@ def parser() -> argparse.ArgumentParser:
         type=int,
         choices=[18, 20, 22, 24, 25, 26, 27, 28],
         default=18,
+    )
+    result.add_argument(
+        "--hamming-weight-metal-implementation",
+        choices=["accepted-rows", "retained-hot"],
+        default="accepted-rows",
     )
     result.add_argument(
         "--outer-remainder-metal-materialize-threads",
@@ -4389,6 +5105,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    if (
+        args.hamming_weight_metal_implementation == "retained-hot"
+        and args.booleanity_address_metal_implementation != "packed-hot"
+    ):
+        print(
+            "error: retained Hamming requires the packed-hot Booleanity producer",
+            file=sys.stderr,
+        )
+        return 2
     if args.outer_remainder_metal_cutoff_log2 > args.log_n - 1:
         print("error: OuterRemainder cutoff must not exceed half the trace", file=sys.stderr)
         return 2
@@ -4451,11 +5176,13 @@ def main() -> int:
                     args.booleanity_address_metal_tile_threads,
                     args.booleanity_address_metal_finalize_threads,
                     args.booleanity_address_metal_trace_cutoff_log2,
+                    args.booleanity_address_metal_implementation,
                     args.hamming_weight_metal_inner_log2,
                     args.hamming_weight_metal_selectors_per_tile,
                     args.hamming_weight_metal_tile_threads,
                     args.hamming_weight_metal_finalize_threads,
                     args.hamming_weight_metal_trace_cutoff_log2,
+                    args.hamming_weight_metal_implementation,
                     args.outer_remainder_metal_materialize_threads,
                     args.outer_remainder_metal_transition_threads,
                     args.outer_remainder_metal_output_threads,
@@ -5033,35 +5760,42 @@ def main() -> int:
                 ),
                 "booleanity_address_metal_backend_exercised": all(
                     sample["booleanity_address"]["metal_member"]["metal_counts"]
-                    == {
-                        "prepare": 1,
-                        "sequence_prepare": 1,
-                        "allocation_plan": 1,
-                        "dispatch": 1,
-                        "readback": 1,
-                    }
+                    == (
+                        {
+                            "prepare": 1,
+                            "sequence": 1,
+                            "dispatch": 1,
+                            "readback": 1,
+                        }
+                        if args.booleanity_address_metal_implementation == "packed-hot"
+                        else {
+                            "prepare": 1,
+                            "sequence_prepare": 1,
+                            "allocation_plan": 1,
+                            "dispatch": 1,
+                            "readback": 1,
+                        }
+                    )
                     for sample in attributions
                 ),
                 "booleanity_address_resident_rows_reused": all(
-                    sample["booleanity_address"]["metal_member"]["row_lifecycle"]
+                    (lifecycle := sample["booleanity_address"]["metal_member"]["row_lifecycle"])
                     is not None
-                    and sample["booleanity_address"]["metal_member"]["row_lifecycle"][
-                        "stage5_storage_id"
-                    ]
-                    == sample["booleanity_address"]["metal_member"]["row_lifecycle"][
-                        "stage6a_storage_id"
-                    ]
-                    == sample["booleanity_address"]["metal_member"]["row_lifecycle"][
-                        "stage6b_storage_id"
-                    ]
-                    and sample["booleanity_address"]["metal_member"]["row_lifecycle"][
-                        "stage6a"
-                    ]
-                    == {"row_allocations": 0, "row_upload_bytes": 0}
-                    and sample["booleanity_address"]["metal_member"]["row_lifecycle"][
-                        "stage6b"
-                    ]
-                    == {"row_allocations": 0, "row_upload_bytes": 0}
+                    and (
+                        lifecycle["source_rows_storage_id"] > 0
+                        and lifecycle["stage6a"]
+                        == {"row_allocations": 0, "row_upload_bytes": 0}
+                        and lifecycle["stage6b"]
+                        == {"row_allocations": 0, "row_upload_bytes": 0}
+                        if args.booleanity_address_metal_implementation == "packed-hot"
+                        else lifecycle["stage5_storage_id"]
+                        == lifecycle["stage6a_storage_id"]
+                        == lifecycle["stage6b_storage_id"]
+                        and lifecycle["stage6a"]
+                        == {"row_allocations": 0, "row_upload_bytes": 0}
+                        and lifecycle["stage6b"]
+                        == {"row_allocations": 0, "row_upload_bytes": 0}
+                    )
                     for sample in attributions
                 ),
                 "booleanity_address_working_set_admitted": all(
@@ -5071,9 +5805,15 @@ def main() -> int:
                         ]
                     )
                     is not None
-                    and observation["allocation"]["current_device_bytes"]
-                    + observation["allocation"]["planned_device_bytes"]
-                    <= observation["allocation"]["recommended_device_bytes"]
+                    and (
+                        observation["sequence"]["current_device_bytes"]
+                        + observation["sequence"]["owned_bytes"]
+                        <= observation["sequence"]["recommended_device_bytes"]
+                        if args.booleanity_address_metal_implementation == "packed-hot"
+                        else observation["allocation"]["current_device_bytes"]
+                        + observation["allocation"]["planned_device_bytes"]
+                        <= observation["allocation"]["recommended_device_bytes"]
+                    )
                     for sample in attributions
                 ),
                 "booleanity_address_readback_exact": all(
@@ -5088,16 +5828,23 @@ def main() -> int:
                         "resource_observation"
                     ]["dispatch"]["command_buffers"]
                     == 1
-                    and sample["booleanity_address"]["metal_member"][
-                        "resource_observation"
-                    ]["dispatch"]["tile_dispatches"]
-                    == (29 + args.booleanity_address_metal_selectors_per_tile - 1)
-                    // args.booleanity_address_metal_selectors_per_tile
-                    and sample["booleanity_address"]["metal_member"][
-                        "resource_observation"
-                    ]["dispatch"]["finalize_dispatches"]
-                    == (29 + args.booleanity_address_metal_selectors_per_tile - 1)
-                    // args.booleanity_address_metal_selectors_per_tile
+                    and (
+                        sample["booleanity_address"]["metal_member"][
+                            "resource_observation"
+                        ]["dispatch"]["dispatches"]
+                        == 3
+                        if args.booleanity_address_metal_implementation == "packed-hot"
+                        else sample["booleanity_address"]["metal_member"][
+                            "resource_observation"
+                        ]["dispatch"]["tile_dispatches"]
+                        == (29 + args.booleanity_address_metal_selectors_per_tile - 1)
+                        // args.booleanity_address_metal_selectors_per_tile
+                        and sample["booleanity_address"]["metal_member"][
+                            "resource_observation"
+                        ]["dispatch"]["finalize_dispatches"]
+                        == (29 + args.booleanity_address_metal_selectors_per_tile - 1)
+                        // args.booleanity_address_metal_selectors_per_tile
+                    )
                     for sample in attributions
                 ),
                 "booleanity_address_command_completed": all(
@@ -5145,62 +5892,117 @@ def main() -> int:
                 ),
                 "hamming_weight_metal_backend_exercised": all(
                     sample["hamming_weight"]["metal_member"]["metal_counts"]
-                    == {
-                        "prepare": 1,
-                        "sequence_prepare": 1,
-                        "allocation_plan": 1,
-                        "dispatch": 1,
-                        "readback": 1,
-                    }
+                    == (
+                        {"sequence": 1, "dispatch": 1, "readback": 1}
+                        if args.hamming_weight_metal_implementation == "retained-hot"
+                        else {
+                            "prepare": 1,
+                            "sequence_prepare": 1,
+                            "allocation_plan": 1,
+                            "dispatch": 1,
+                            "readback": 1,
+                        }
+                    )
                     for sample in attributions
                 ),
                 "hamming_weight_resident_rows_reused": all(
                     (lifecycle := sample["hamming_weight"]["metal_member"]["row_lifecycle"])
                     is not None
-                    and lifecycle["kind"] == "metal_hamming_resident"
-                    and lifecycle["stage5_storage_id"]
-                    == lifecycle["stage6a_storage_id"]
-                    == lifecycle["stage6b_storage_id"]
-                    == lifecycle["stage6b_retain_storage_id"]
-                    == lifecycle["stage7_storage_id"]
-                    and all(
-                        lifecycle[stage]
-                        == {"row_allocations": 0, "row_upload_bytes": 0}
-                        for stage in ("stage6a", "stage6b", "stage6b_retain", "stage7")
+                    and (
+                        lifecycle["kind"] == "metal_hamming_hot"
+                        and lifecycle["source_rows_storage_id"] > 0
+                        and lifecycle["hot_rows_storage_id"] > 0
+                        and all(
+                            lifecycle[stage]
+                            == {"row_allocations": 0, "row_upload_bytes": 0}
+                            for stage in ("stage6a", "stage6b", "stage6b_retain")
+                        )
+                        and lifecycle["stage7"]["row_allocations"] == 0
+                        and lifecycle["stage7"]["row_upload_bytes"] == 0
+                        if args.hamming_weight_metal_implementation == "retained-hot"
+                        else lifecycle["kind"] == "metal_hamming_resident"
+                        and lifecycle["stage5_storage_id"]
+                        == lifecycle["stage6a_storage_id"]
+                        == lifecycle["stage6b_storage_id"]
+                        == lifecycle["stage6b_retain_storage_id"]
+                        == lifecycle["stage7_storage_id"]
+                        and all(
+                            lifecycle[stage]
+                            == {"row_allocations": 0, "row_upload_bytes": 0}
+                            for stage in (
+                                "stage6a",
+                                "stage6b",
+                                "stage6b_retain",
+                                "stage7",
+                            )
+                        )
                     )
                     for sample in attributions
                 ),
                 "hamming_weight_zero_row_upload": all(
-                    sample["hamming_weight"]["metal_member"]["resource_observation"][
-                        "sequence"
-                    ]["row_upload_bytes"]
-                    == 0
-                    and sample["hamming_weight"]["metal_member"]["row_lifecycle"][
-                        "stage7"
-                    ]["row_upload_bytes"]
-                    == 0
+                    (
+                        sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                            "stage6b_retain"
+                        ]["row_upload_bytes"]
+                        == 0
+                        and sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                            "stage7"
+                        ]["row_upload_bytes"]
+                        == 0
+                        if args.hamming_weight_metal_implementation == "retained-hot"
+                        else sample["hamming_weight"]["metal_member"][
+                            "resource_observation"
+                        ]["sequence"]["row_upload_bytes"]
+                        == 0
+                        and sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                            "stage7"
+                        ]["row_upload_bytes"]
+                        == 0
+                    )
                     for sample in attributions
                 ),
                 "hamming_weight_terminal_carry_removed": all(
-                    sample["hamming_weight"]["metal_member"]["row_lifecycle"][
-                        "terminal_consumer"
-                    ]
-                    is True
-                    and sample["hamming_weight"]["metal_member"]["row_lifecycle"][
-                        "terminal_carry_removed"
-                    ]
-                    is True
+                    (
+                        sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                            "stage7"
+                        ]["terminal_consumer"]
+                        is True
+                        and sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                            "stage7"
+                        ]["terminal_carry_removed"]
+                        is True
+                        if args.hamming_weight_metal_implementation == "retained-hot"
+                        else sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                            "terminal_consumer"
+                        ]
+                        is True
+                        and sample["hamming_weight"]["metal_member"]["row_lifecycle"][
+                            "terminal_carry_removed"
+                        ]
+                        is True
+                    )
                     for sample in attributions
                 ),
                 "hamming_weight_k256_schedule_exact": all(
-                    sample["hamming_weight"]["metal_member"]["resource_observation"][
-                        "sequence"
-                    ]["polys"]
-                    == 29
-                    and sample["hamming_weight"]["metal_member"][
-                        "resource_observation"
-                    ]["sequence"]["k"]
-                    == 256
+                    (
+                        sample["hamming_weight"]["metal_member"][
+                            "resource_observation"
+                        ]["sequence"]["output_fields"]
+                        == 29 * 256
+                        and sample["hamming_weight"]["metal_member"][
+                            "resource_observation"
+                        ]["sequence"]["encoders"]
+                        == 10
+                        if args.hamming_weight_metal_implementation == "retained-hot"
+                        else sample["hamming_weight"]["metal_member"][
+                            "resource_observation"
+                        ]["sequence"]["polys"]
+                        == 29
+                        and sample["hamming_weight"]["metal_member"][
+                            "resource_observation"
+                        ]["sequence"]["k"]
+                        == 256
+                    )
                     for sample in attributions
                 ),
                 "hamming_weight_working_set_admitted": all(
@@ -5210,9 +6012,15 @@ def main() -> int:
                         ]
                     )
                     is not None
-                    and observation["allocation"]["current_device_bytes"]
-                    + observation["allocation"]["planned_device_bytes"]
-                    <= observation["allocation"]["recommended_device_bytes"]
+                    and (
+                        observation["sequence"]["current_device_bytes"]
+                        + observation["sequence"]["owned_bytes"]
+                        <= observation["sequence"]["recommended_device_bytes"]
+                        if args.hamming_weight_metal_implementation == "retained-hot"
+                        else observation["allocation"]["current_device_bytes"]
+                        + observation["allocation"]["planned_device_bytes"]
+                        <= observation["allocation"]["recommended_device_bytes"]
+                    )
                     for sample in attributions
                 ),
                 "hamming_weight_readback_exact": all(
@@ -5230,13 +6038,21 @@ def main() -> int:
                     and sample["hamming_weight"]["metal_member"][
                         "resource_observation"
                     ]["dispatch"]["tile_dispatches"]
-                    == (29 + args.hamming_weight_metal_selectors_per_tile - 1)
-                    // args.hamming_weight_metal_selectors_per_tile
+                    == (
+                        5
+                        if args.hamming_weight_metal_implementation == "retained-hot"
+                        else (29 + args.hamming_weight_metal_selectors_per_tile - 1)
+                        // args.hamming_weight_metal_selectors_per_tile
+                    )
                     and sample["hamming_weight"]["metal_member"][
                         "resource_observation"
                     ]["dispatch"]["finalize_dispatches"]
-                    == (29 + args.hamming_weight_metal_selectors_per_tile - 1)
-                    // args.hamming_weight_metal_selectors_per_tile
+                    == (
+                        5
+                        if args.hamming_weight_metal_implementation == "retained-hot"
+                        else (29 + args.hamming_weight_metal_selectors_per_tile - 1)
+                        // args.hamming_weight_metal_selectors_per_tile
+                    )
                     for sample in attributions
                 ),
                 "hamming_weight_command_completed": all(
@@ -5248,6 +6064,9 @@ def main() -> int:
                 ),
                 "hamming_weight_local_gate": metrics[
                     "hamming_weight_claim_reduction_decision"
+                ]["clears"],
+                "booleanity_hamming_family_local_gate": metrics[
+                    "booleanity_hamming_family_decision"
                 ]["clears"],
                 "product_remainder_local_gate": metrics[
                     "product_remainder_decision"
@@ -5435,6 +6254,7 @@ def main() -> int:
                 "booleanity_address_metal_trace_cutoff_log2": args.booleanity_address_metal_trace_cutoff_log2,
                 "booleanity_address_metal_trace_cutoff_elements": 1
                 << args.booleanity_address_metal_trace_cutoff_log2,
+                "booleanity_address_metal_implementation": args.booleanity_address_metal_implementation,
                 "hamming_weight_metal_inner_log2": args.hamming_weight_metal_inner_log2,
                 "hamming_weight_metal_selectors_per_tile": args.hamming_weight_metal_selectors_per_tile,
                 "hamming_weight_metal_tile_threads": args.hamming_weight_metal_tile_threads,
@@ -5442,6 +6262,7 @@ def main() -> int:
                 "hamming_weight_metal_trace_cutoff_log2": args.hamming_weight_metal_trace_cutoff_log2,
                 "hamming_weight_metal_trace_cutoff_elements": 1
                 << args.hamming_weight_metal_trace_cutoff_log2,
+                "hamming_weight_metal_implementation": args.hamming_weight_metal_implementation,
                 "outer_remainder_metal_materialize_threads": args.outer_remainder_metal_materialize_threads,
                 "outer_remainder_metal_transition_threads": args.outer_remainder_metal_transition_threads,
                 "outer_remainder_metal_output_threads": args.outer_remainder_metal_output_threads,

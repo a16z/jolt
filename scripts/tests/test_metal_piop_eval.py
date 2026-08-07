@@ -721,6 +721,227 @@ def complete_hamming_weight_trace(
     return events
 
 
+def complete_retained_hamming_trace(log_n: int) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    rows = 1 << log_n
+    e_in = 1 << 15
+    e_out = rows // e_in
+    output_fields = 29 * 256
+    producer_partial_fields = e_out * 29 * 256
+    producer_owned_bytes = 29 * rows + rows + 16 * (
+        e_in + e_out + producer_partial_fields + output_fields
+    )
+    hamming_partial_fields = e_out * 6 * 256
+    hamming_owned_bytes = 16 * (
+        e_in + e_out + hamming_partial_fields + output_fields
+    )
+    current_device_bytes = rows * 40
+    source = {
+        "resident_rows_storage_id": "401",
+        "resident_rows": str(rows),
+        "resident_row_bytes": "40",
+        "device_registry_id": "17",
+        "row_allocations": "0",
+        "row_upload_bytes": "0",
+    }
+    events = [
+        event("jolt_prover::piop", 0.0, 10_000.0),
+        event("InstructionReadRaf::prepare", 90.0, 100.0),
+        event(
+            "MetalBooleanityRows::stage5_prepare",
+            110.0,
+            20.0,
+            {
+                **source,
+                "row_allocations": "1",
+                "row_upload_bytes": str(rows * 40),
+            },
+        ),
+        event("BooleanityAddressPhase::prepare", 1_000.0, 600.0),
+        event(
+            "MetalBooleanityRows::stage6a_address_use",
+            1_002.0,
+            2.0,
+            source,
+        ),
+        event("MetalBooleanityAddressPhase::prepare", 1_005.0, 500.0),
+        event(
+            "MetalBooleanityAddressPhase::packed_hot_sequence",
+            1_010.0,
+            10.0,
+            {
+                "resident_rows_storage_id": "401",
+                "hot_rows_storage_id": "501",
+                "rows": str(rows),
+                "resident_row_bytes": "40",
+                "hot_bytes": str(29 * rows),
+                "validity_bytes": str(rows),
+                "e_in_fields": str(e_in),
+                "e_out_fields": str(e_out),
+                "partial_fields": str(producer_partial_fields),
+                "output_fields": str(output_fields),
+                "owned_bytes": str(producer_owned_bytes),
+                "current_device_bytes": str(current_device_bytes),
+                "recommended_device_bytes": str(
+                    current_device_bytes + producer_owned_bytes
+                ),
+                "command_buffers": "1",
+                "dispatches": "3",
+                "readbacks": "1",
+            },
+        ),
+        event(
+            "MetalBooleanityAddressPhase::packed_hot_dispatch",
+            1_030.0,
+            170.0,
+            {
+                "command_buffers": "1",
+                "dispatches": "3",
+                "command_completed": "true",
+                "gpu_active_ns": "150000",
+                "resident_rows_storage_id": "401",
+                "hot_rows_storage_id": "501",
+            },
+        ),
+        event(
+            "MetalBooleanityAddressPhase::packed_hot_readback",
+            1_210.0,
+            90.0,
+            {
+                "elements": str(output_fields),
+                "bytes": str(output_fields * 16),
+                "readbacks": "1",
+            },
+        ),
+        event("Booleanity::prepare", 2_700.0, 200.0),
+        event(
+            "MetalBooleanityRows::stage6b_cycle_use",
+            2_750.0,
+            20.0,
+            source,
+        ),
+        event(
+            "MetalHammingHotRows::stage6b_retain_for_stage7",
+            2_800.0,
+            20.0,
+            {
+                "hot_rows_storage_id": "501",
+                "source_rows_storage_id": "401",
+                "hot_rows": str(rows),
+                "hot_row_bytes": "29",
+                "device_registry_id": "17",
+                "row_allocations": "0",
+                "row_upload_bytes": "0",
+            },
+        ),
+        event("HammingWeightClaimReduction::prepare", 3_000.0, 600.0),
+        event(
+            "MetalHammingHotRows::stage7_terminal_use",
+            3_005.0,
+            400.0,
+            {
+                "hot_rows_storage_id": "501",
+                "source_rows_storage_id": "401",
+                "hot_rows": str(rows),
+                "hot_row_bytes": "29",
+                "device_registry_id": "17",
+                "row_allocations": "0",
+                "row_upload_bytes": "0",
+                "terminal_consumer": "true",
+                "terminal_carry_removed": "true",
+            },
+        ),
+        event(
+            "MetalHammingWeightClaimReduction::retained_sequence",
+            3_010.0,
+            10.0,
+            {
+                "hot_rows_storage_id": "501",
+                "source_rows_storage_id": "401",
+                "rows": str(rows),
+                "hot_bytes": str(29 * rows),
+                "e_in_fields": str(e_in),
+                "e_out_fields": str(e_out),
+                "partial_fields": str(hamming_partial_fields),
+                "output_fields": str(output_fields),
+                "owned_bytes": str(hamming_owned_bytes),
+                "current_device_bytes": str(current_device_bytes),
+                "recommended_device_bytes": str(
+                    current_device_bytes + hamming_owned_bytes
+                ),
+                "command_buffers": "1",
+                "encoders": "10",
+                "dispatches": "10",
+                "tile_threadgroups": str(e_out * 5),
+                "finalize_threadgroups": "29",
+                "readbacks": "1",
+            },
+        ),
+        event(
+            "MetalHammingWeightClaimReduction::retained_dispatch",
+            3_030.0,
+            120.0,
+            {
+                "command_buffers": "1",
+                "tile_dispatches": "5",
+                "finalize_dispatches": "5",
+                "command_completed": "true",
+                "gpu_active_ns": "100000",
+                "hot_rows_storage_id": "501",
+            },
+        ),
+        event(
+            "MetalHammingWeightClaimReduction::retained_readback",
+            3_160.0,
+            40.0,
+            {
+                "elements": str(output_fields),
+                "bytes": str(output_fields * 16),
+                "readbacks": "1",
+            },
+        ),
+    ]
+    for index in range(8):
+        address_round = 1_700.0 + 100.0 * index
+        hamming_round = 3_700.0 + 100.0 * index
+        events.extend(
+            [
+                event("sumcheck_round", address_round - 5.0, 95.0),
+                event("BooleanityAddressPhase::prove_round", address_round, 80.0),
+                event("sumcheck_host_fiat_shamir", address_round + 85.0, 5.0),
+                event("sumcheck_round", hamming_round - 5.0, 95.0),
+                event("HammingWeightClaimReduction::prove_round", hamming_round, 80.0),
+                event("sumcheck_host_fiat_shamir", hamming_round + 85.0, 5.0),
+            ]
+        )
+    events.extend(
+        [
+            event("BooleanityAddressPhase::finish_rounds", 2_500.0, 80.0),
+            event("BooleanityAddressPhase::output_claims", 2_600.0, 40.0),
+            event("HammingWeightClaimReduction::finish_rounds", 4_500.0, 80.0),
+            event("HammingWeightClaimReduction::output_claims", 4_600.0, 40.0),
+        ]
+    )
+    return events
+
+
 def complete_outer_remainder_trace(
     log_n: int, backend: str, cutoff_log2: int = 16
 ) -> list[dict[str, object]]:
@@ -1322,7 +1543,12 @@ class MetalPiopEvalTests(unittest.TestCase):
             )
 
     def test_validates_booleanity_address_runtime_record(self) -> None:
-        record = "BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal trace_cutoff=262144 inner_log2=15 selectors_per_tile=6 tile_threads=512 finalize_threads=1024"
+        record = "\n".join(
+            [
+                "BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal trace_cutoff=262144 inner_log2=15 selectors_per_tile=6 tile_threads=512 finalize_threads=1024",
+                "BOOLEANITY_ADDRESS_METAL_IMPLEMENTATION value=accepted",
+            ]
+        )
         self.assertIsNone(
             metal_piop_eval.validate_booleanity_address_stdout("", "optimized")
         )
@@ -1330,13 +1556,26 @@ class MetalPiopEvalTests(unittest.TestCase):
         assert observed is not None
         self.assertEqual(observed["inner_log2"], 15)
         self.assertEqual(observed["selectors_per_tile"], 6)
+        self.assertEqual(observed["implementation"], "accepted")
+        packed = record.replace("value=accepted", "value=packed-hot")
+        self.assertEqual(
+            metal_piop_eval.validate_booleanity_address_stdout(
+                packed, "metal", implementation="packed-hot"
+            )["implementation"],
+            "packed-hot",
+        )
         with self.assertRaisesRegex(ValueError, "exactly one"):
             metal_piop_eval.validate_booleanity_address_stdout(
                 record + "\n" + record, "metal"
             )
 
     def test_validates_hamming_weight_runtime_record(self) -> None:
-        record = "HAMMING_WEIGHT_METAL_CONFIG backend=metal trace_cutoff=262144 inner_log2=15 selectors_per_tile=6 tile_threads=512 finalize_threads=1024"
+        record = "\n".join(
+            [
+                "HAMMING_WEIGHT_METAL_CONFIG backend=metal trace_cutoff=262144 inner_log2=15 selectors_per_tile=6 tile_threads=512 finalize_threads=1024",
+                "HAMMING_WEIGHT_METAL_IMPLEMENTATION value=accepted-rows",
+            ]
+        )
         self.assertIsNone(
             metal_piop_eval.validate_hamming_weight_stdout("", "optimized")
         )
@@ -1344,6 +1583,14 @@ class MetalPiopEvalTests(unittest.TestCase):
         assert observed is not None
         self.assertEqual(observed["inner_log2"], 15)
         self.assertEqual(observed["selectors_per_tile"], 6)
+        self.assertEqual(observed["implementation"], "accepted-rows")
+        retained = record.replace("value=accepted-rows", "value=retained-hot")
+        self.assertEqual(
+            metal_piop_eval.validate_hamming_weight_stdout(
+                retained, "metal", implementation="retained-hot"
+            )["implementation"],
+            "retained-hot",
+        )
         with self.assertRaisesRegex(ValueError, "exactly one"):
             metal_piop_eval.validate_hamming_weight_stdout(
                 record + "\n" + record, "metal"
@@ -1522,6 +1769,69 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "terminal_carry_removed": True,
             },
         )
+
+    def test_requires_exact_packed_hot_retained_hamming_contract(self) -> None:
+        events = complete_retained_hamming_trace(26)
+        producer = metal_piop_eval.packed_hot_booleanity_address_member_breakdown(
+            events, "metal", 26
+        )
+        consumer = metal_piop_eval.retained_hot_hamming_weight_member_breakdown(
+            events, "metal", 26
+        )
+
+        self.assertEqual(
+            producer["metal_counts"],
+            {"prepare": 1, "sequence": 1, "dispatch": 1, "readback": 1},
+        )
+        self.assertEqual(
+            consumer["metal_counts"],
+            {"sequence": 1, "dispatch": 1, "readback": 1},
+        )
+        self.assertEqual(
+            producer["resource_observation"]["sequence"]["owned_bytes"],
+            2_257_211_392,
+        )
+        self.assertEqual(
+            consumer["resource_observation"]["sequence"]["owned_bytes"],
+            51_007_488,
+        )
+        self.assertEqual(
+            consumer["resource_observation"]["dispatch"]["tile_dispatches"], 5
+        )
+        self.assertEqual(producer["row_lifecycle"], consumer["row_lifecycle"])
+        self.assertEqual(producer["row_lifecycle"]["kind"], "metal_hamming_hot")
+        self.assertEqual(producer["row_lifecycle"]["source_rows_storage_id"], 401)
+        self.assertEqual(producer["row_lifecycle"]["hot_rows_storage_id"], 501)
+        self.assertTrue(
+            producer["row_lifecycle"]["stage7"]["terminal_carry_removed"]
+        )
+
+        missing_terminal = [dict(event) for event in events]
+        missing_terminal[:] = [
+            event
+            for event in missing_terminal
+            if event.get("name") != "MetalHammingHotRows::stage7_terminal_use"
+        ]
+        with self.assertRaisesRegex(ValueError, "lifecycle"):
+            metal_piop_eval.retained_hot_hamming_weight_member_breakdown(
+                missing_terminal, "metal", 26
+            )
+
+        wrong_geometry = [
+            {**event, "args": dict(event["args"])} if "args" in event else dict(event)
+            for event in events
+        ]
+        sequence = next(
+            event
+            for event in wrong_geometry
+            if event.get("name")
+            == "MetalHammingWeightClaimReduction::retained_sequence"
+        )
+        sequence["args"]["partial_fields"] = "1"
+        with self.assertRaisesRegex(ValueError, "geometry"):
+            metal_piop_eval.retained_hot_hamming_weight_member_breakdown(
+                wrong_geometry, "metal", 26
+            )
 
     def test_rejects_hamming_weight_trace_contract_drift(self) -> None:
         def named(
@@ -2297,6 +2607,11 @@ class MetalPiopEvalTests(unittest.TestCase):
         ]
         self.assertTrue(booleanity_decision["clears"])
         self.assertEqual(booleanity_decision["median_speedup"], 5.0)
+        family_decision = metal_piop_eval.summarize_pairs(pairs)[
+            "booleanity_hamming_family_decision"
+        ]
+        self.assertTrue(family_decision["clears"])
+        self.assertEqual(family_decision["median_speedup"], 5.0)
 
     def test_bytecode_gate_rejects_a_slow_order_stratum(self) -> None:
         pairs = []
@@ -2442,6 +2757,11 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(decision["metal_first_median_speedup"], 0.1)
         self.assertFalse(decision["clears_order_strata"])
         self.assertFalse(decision["clears"])
+        family_decision = metal_piop_eval.summarize_pairs(pairs)[
+            "booleanity_hamming_family_decision"
+        ]
+        self.assertFalse(family_decision["clears_order_strata"])
+        self.assertFalse(family_decision["clears"])
 
     def test_production_run_class_is_exact(self) -> None:
         metal_piop_eval.validate_run_class("diagnostic", "btreemap", 25, 1)
