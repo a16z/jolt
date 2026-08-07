@@ -452,26 +452,12 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                 .par_extend(cycle_data.par_iter().map(|data| data.is_interleaved));
         }
 
-        // Build lookup_indices_by_table fully in parallel
-        // Create a vector for each table in parallel
-        let lookup_indices_by_table: Vec<Vec<usize>> = (0..num_tables)
-            .into_par_iter()
-            .map(|t_idx| {
-                // Each table gets its own parallel collection
-                cycle_data
-                    .par_iter()
-                    .filter_map(|data| {
-                        data.table.and_then(|t| {
-                            if LookupTables::<XLEN>::enum_index(&t) == t_idx {
-                                Some(data.idx)
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .collect()
-            })
-            .collect();
+        let mut lookup_indices_by_table = vec![Vec::new(); num_tables];
+        for data in &cycle_data {
+            if let Some(table) = data.table {
+                lookup_indices_by_table[LookupTables::<XLEN>::enum_index(&table)].push(data.idx);
+            }
+        }
         drop_in_background_thread(cycle_data);
         drop(_guard);
         drop(span);
