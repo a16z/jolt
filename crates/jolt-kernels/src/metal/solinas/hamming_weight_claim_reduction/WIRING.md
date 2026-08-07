@@ -154,7 +154,11 @@ It is capped at `2^16` rows so it cannot become a production allocation.
 compare every one of the 7,424 Akita-field masses across the algorithms, cover cold
 PC/RAM rows, signed increment carry, bin-zero recentering, compact index
 endpoints, exact log-26 buffer sizes, fail-closed topology/length checks, and
-the log-28 audit overflow case. The CPU-only suite passes all ten tests.
+the log-28 audit overflow case. The CPU-only suite passes all ten tests. The
+isolated Metal runtime also passes the log-16 two-stage fixture: all 7,424
+masses, every audit shard, status, and the split census match the independent
+unfactored oracle. Full `finish_flat` and transcript parity remain production
+adapter gates.
 
 Integration must additionally compare the input claim, every sampled round
 evaluation and polynomial, all host challenges, final claim, output values,

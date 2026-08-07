@@ -26,6 +26,8 @@ pub mod half_width_probe;
 #[cfg(feature = "test-utils")]
 #[doc(hidden)]
 pub mod hamming_weight_claim_reduction;
+#[cfg(not(feature = "test-utils"))]
+mod hamming_weight_claim_reduction;
 pub mod instruction_claim_reduction;
 mod instruction_input;
 pub mod instruction_input_successor;
@@ -84,6 +86,7 @@ pub use half_width_probe::{
     HalfWidthProbeShape, HALF_WIDTH_AKITA_OFFSET, MINIMUM_HALF_WIDTH_PRODUCTS_PER_SECOND,
     TARGET_CHAIN_ELEMENTS, TARGET_CHAIN_ITERATIONS,
 };
+pub use hamming_weight_claim_reduction::HammingWeightSuccessorError;
 pub(crate) use instruction_input::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
     instruction_input_weight_capacities, InstructionInputSequenceStorage,
@@ -601,6 +604,32 @@ pub enum MetalError {
     InstructionClaimShape(#[from] instruction_claim_reduction::InstructionClaimShapeError),
     #[error(transparent)]
     InstructionClaimOpening(#[from] instruction_claim_reduction::InstructionClaimOpeningError),
+    #[error(transparent)]
+    HammingWeightSuccessor(#[from] hamming_weight_claim_reduction::HammingWeightSuccessorError),
+    #[error(
+        "Hamming-weight pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedHammingWeightExecutionWidth {
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "Hamming-weight pipeline `{pipeline}` needs {requested} threads, pipeline maximum is {maximum}"
+    )]
+    HammingWeightThreadgroupLimit {
+        pipeline: &'static str,
+        requested: usize,
+        maximum: usize,
+    },
+    #[error(
+        "Hamming-weight pipeline `{pipeline}` needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
+    )]
+    HammingWeightThreadgroupMemory {
+        pipeline: &'static str,
+        requested: u64,
+        maximum: u64,
+    },
     #[error("invalid resident instruction claim-reduction state: {0}")]
     InvalidInstructionClaimState(&'static str),
     #[error(
