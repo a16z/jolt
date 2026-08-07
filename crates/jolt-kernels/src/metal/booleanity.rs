@@ -10,6 +10,7 @@ use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhas
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::hamming_weight_claim_reduction::HammingWeightImplementation;
 use super::solinas::{
     BooleanityAddressPushforwardConfig, BooleanityAddressSuccessorConfig,
     BooleanityAddressSuccessorRuntimeError, BooleanityRows, BooleanitySelector, BooleanitySequence,
@@ -198,7 +199,7 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
             let masses = invocation
                 .read_masses()
                 .map_err(|error| metal_error(error.to_string()))?;
-            let masses = select_packed_booleanity_masses(&masses, &packed_planes)?;
+            let masses = select_packed_hot_masses(&masses, &packed_planes)?;
             let kernel = plan.finish(masses)?;
             session.park(hot_rows);
             return Ok(kernel);
@@ -207,7 +208,7 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
     }
 }
 
-fn select_packed_booleanity_masses(
+pub(super) fn select_packed_hot_masses(
     masses: &[AkitaField],
     planes: &[usize],
 ) -> Result<Vec<AkitaField>, KernelError<AkitaField>> {
@@ -380,14 +381,28 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
     > {
         let dimensions = inputs.relation.dimensions();
         let trace_elements = 1usize << dimensions.log_t;
-        let retain_for_hamming = self.config.hamming_weight_claim_reduction.admits(
-            trace_elements,
-            dimensions.log_t,
-            dimensions.log_k_chunk,
-        );
+        let hamming_config = self.config.hamming_weight_claim_reduction;
+        let retain_for_hamming =
+            hamming_config.admits(trace_elements, dimensions.log_t, dimensions.log_k_chunk);
+        let wants_retained_hot = retain_for_hamming
+            && hamming_config.implementation == HammingWeightImplementation::RetainedHot;
         let mut cpu = prepare_optimized_booleanity_cycle(session, witness, inputs)?;
         if trace_elements < self.config.booleanity_cycle.trace_cutoff_elements {
             let retained_rows = session.state::<BooleanityRows>().cloned();
+            let retained_hot = session.state::<HammingHotRows>().cloned().filter(|hot| {
+                wants_retained_hot
+                    && retained_rows
+                        .as_ref()
+                        .is_some_and(|rows| hamming_hot_matches(rows, hot))
+            });
+            if let Some(hot) = retained_hot.as_ref() {
+                let _ = session.take::<BooleanityRows>();
+                trace_hamming_hot_retention(hot);
+                return Ok(Box::new(cpu));
+            }
+            if wants_retained_hot {
+                let _ = session.take::<HammingHotRows>();
+            }
             match retained_rows {
                 Some(rows)
                     if retain_for_hamming
@@ -400,6 +415,9 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
                     let _ = session.take::<BooleanityRows>();
                 }
                 None => {}
+            }
+            if !wants_retained_hot {
+                let _ = session.take::<HammingHotRows>();
             }
             return Ok(Box::new(cpu));
         }
@@ -430,10 +448,22 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
                 }
             }
         };
-        if retain_for_hamming {
+        let retained_hot = session
+            .state::<HammingHotRows>()
+            .cloned()
+            .filter(|hot| wants_retained_hot && hamming_hot_matches(&resident_rows, hot));
+        let hot_is_valid = retained_hot.is_some();
+        if let Some(hot) = retained_hot.as_ref() {
+            let _ = session.take::<BooleanityRows>();
+            trace_hamming_hot_retention(hot);
+        } else if retain_for_hamming {
+            if wants_retained_hot {
+                let _ = session.take::<HammingHotRows>();
+            }
             session.park(resident_rows.clone());
         } else {
             let _ = session.take::<BooleanityRows>();
+            let _ = session.take::<HammingHotRows>();
         }
         let lifecycle_span = tracing::info_span!(
             "MetalBooleanityRows::stage6b_cycle_use",
@@ -450,7 +480,7 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
         )
         .entered();
         drop(lifecycle_span);
-        if retain_for_hamming {
+        if retain_for_hamming && !hot_is_valid {
             trace_hamming_row_retention(&resident_rows);
         }
         let sequence = cpu.metal_offload(
@@ -464,6 +494,27 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
             self.config.booleanity_cycle.cutoff_elements,
         )?))
     }
+}
+
+fn hamming_hot_matches(rows: &BooleanityRows, hot: &HammingHotRows) -> bool {
+    hot.len() == rows.len()
+        && hot.device_registry_id() == rows.device_registry_id()
+        && hot.source_rows_storage_id() == rows.allocation_identity()
+}
+
+fn trace_hamming_hot_retention(rows: &HammingHotRows) {
+    let span = tracing::info_span!(
+        "MetalHammingHotRows::stage6b_retain_for_stage7",
+        hot_rows_storage_id = rows.allocation_identity(),
+        source_rows_storage_id = rows.source_rows_storage_id(),
+        hot_rows = rows.len(),
+        hot_row_bytes = 29usize,
+        device_registry_id = rows.device_registry_id(),
+        row_allocations = 0u64,
+        row_upload_bytes = 0u64,
+    )
+    .entered();
+    drop(span);
 }
 
 fn trace_hamming_row_retention(rows: &BooleanityRows) {
@@ -957,6 +1008,7 @@ mod tests {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
+                    ..Default::default()
                 },
                 ..Default::default()
             })
@@ -984,6 +1036,105 @@ mod tests {
                 .unwrap();
 
             assert!(retained.shares_allocation(session.state::<BooleanityRows>().unwrap()));
+        });
+    }
+
+    #[test]
+    fn cycle_releases_rows_when_retained_hamming_projection_exists() {
+        let log_t = 15;
+        with_booleanity_backend(log_t, 8, |witness, dimensions| {
+            let r_address = point(110, dimensions.log_k_chunk);
+            let address_relation = BooleanityAddressPhase::new(
+                dimensions,
+                point(900, dimensions.log_k_chunk),
+                point(400, log_t),
+            );
+            let address_claims = Default::default();
+            let address_points = Default::default();
+            let address_challenges = BooleanityAddressPhaseChallenges {
+                reference_address: point(700, dimensions.log_k_chunk),
+                gamma: AkitaField::from_u64(31),
+            };
+            let cycle_relation = Booleanity::new(
+                LatticeBooleanityDimensions::new(dimensions).unwrap(),
+                r_address.clone(),
+                point(700, dimensions.log_k_chunk),
+                point(400, log_t),
+            );
+            let cycle_claims = BooleanityInputClaims {
+                address_phase: AkitaField::from_u64(17),
+            };
+            let cycle_points = BooleanityInputClaims {
+                address_phase: r_address,
+            };
+            let cycle_challenges = BooleanityCyclePhaseChallenges {
+                gamma: AkitaField::from_u64(31),
+            };
+            let metal = MetalBackend::new(super::super::MetalConfig {
+                booleanity_address: BooleanityAddressMetalConfig {
+                    implementation: BooleanityAddressImplementation::PackedHot,
+                    trace_cutoff_elements: 2,
+                    ..Default::default()
+                },
+                booleanity_cycle: BooleanityMetalConfig {
+                    trace_cutoff_elements: 2,
+                    ..Default::default()
+                },
+                hamming_weight_claim_reduction: super::super::HammingWeightMetalConfig {
+                    implementation: super::super::HammingWeightImplementation::RetainedHot,
+                    trace_cutoff_elements: 2,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap();
+            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+            let resident = metal
+                .context
+                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                .unwrap();
+            let mut session = ProofSession::default();
+            session.park(resident);
+
+            let _address_kernel = metal
+                .prepare(
+                    &mut session,
+                    witness,
+                    ProverInputs {
+                        relation: &address_relation,
+                        claims: &address_claims,
+                        points: &address_points,
+                        challenges: &address_challenges,
+                    },
+                )
+                .unwrap();
+            let hot_identity = session
+                .state::<HammingHotRows>()
+                .unwrap()
+                .allocation_identity();
+            assert!(session.state::<BooleanityRows>().is_some());
+
+            let _cycle_kernel = metal
+                .prepare(
+                    &mut session,
+                    witness,
+                    ProverInputs {
+                        relation: &cycle_relation,
+                        claims: &cycle_claims,
+                        points: &cycle_points,
+                        challenges: &cycle_challenges,
+                    },
+                )
+                .unwrap();
+
+            assert!(session.state::<BooleanityRows>().is_none());
+            assert_eq!(
+                session
+                    .state::<HammingHotRows>()
+                    .unwrap()
+                    .allocation_identity(),
+                hot_identity
+            );
         });
     }
 
@@ -1025,6 +1176,7 @@ mod tests {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
+                    ..Default::default()
                 },
                 ..Default::default()
             })
@@ -1093,6 +1245,7 @@ mod tests {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
+                    ..Default::default()
                 },
                 ..Default::default()
             })

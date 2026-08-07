@@ -6,31 +6,56 @@ use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeight
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
-use super::booleanity::booleanity_address_can_fallback;
-use super::solinas::BooleanityAddressPushforwardConfig;
-use super::solinas::{BooleanityRow, BooleanityRows};
+use super::booleanity::{booleanity_address_can_fallback, select_packed_hot_masses};
+use super::solinas::{
+    BooleanityAddressPushforwardConfig, BooleanityRow, BooleanityRows, BooleanitySelector,
+    HammingHotRows, HammingWeightRetainedConfig, HammingWeightRetainedRuntimeError,
+};
 use crate::optimized::hamming_weight_claim_reduction::{
     HammingWeightPreparePlan, OptimizedHammingWeightClaimReduction,
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HammingWeightImplementation {
+    AcceptedRows,
+    RetainedHot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HammingWeightMetalConfig {
+    pub implementation: HammingWeightImplementation,
     pub trace_cutoff_elements: usize,
     pub dispatch: BooleanityAddressPushforwardConfig,
+    pub retained_hot: HammingWeightRetainedConfig,
 }
 
 impl Default for HammingWeightMetalConfig {
     fn default() -> Self {
         Self {
+            implementation: HammingWeightImplementation::AcceptedRows,
             trace_cutoff_elements: 1 << 18,
             dispatch: BooleanityAddressPushforwardConfig::default(),
+            retained_hot: HammingWeightRetainedConfig::default(),
         }
     }
 }
 
 impl HammingWeightMetalConfig {
     pub(super) fn admits(self, trace_elements: usize, log_t: usize, log_k_chunk: usize) -> bool {
+        match self.implementation {
+            HammingWeightImplementation::AcceptedRows => {
+                self.admits_accepted(trace_elements, log_t, log_k_chunk)
+            }
+            HammingWeightImplementation::RetainedHot => {
+                trace_elements >= self.trace_cutoff_elements
+                    && log_k_chunk == 8
+                    && self.retained_hot.inner_log2 <= log_t
+            }
+        }
+    }
+
+    fn admits_accepted(self, trace_elements: usize, log_t: usize, log_k_chunk: usize) -> bool {
         trace_elements >= self.trace_cutoff_elements
             && log_k_chunk == 8
             && self.dispatch.inner_log2 <= log_t
@@ -65,6 +90,7 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
         };
         let cpu = |session: &mut ProofSession| {
             let _ = session.take::<BooleanityRows>();
+            let _ = session.take::<HammingHotRows>();
             OptimizedHammingWeightClaimReduction.prepare(session, witness, cpu_inputs())
         };
         let dimensions = inputs.relation.dimensions();
@@ -83,6 +109,107 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
             }
         };
         let selectors = plan.metal_selectors();
+        if config.implementation == HammingWeightImplementation::RetainedHot {
+            let hot_rows = session.state::<HammingHotRows>().cloned().filter(|rows| {
+                rows.len() == trace_elements
+                    && rows.device_registry_id() == self.context.device_registry_id()
+                    && session.state::<BooleanityRows>().is_none_or(|source| {
+                        source.allocation_identity() == rows.source_rows_storage_id()
+                    })
+            });
+            if let Some(hot_rows) = hot_rows {
+                let Some(packed_planes) = selectors
+                    .iter()
+                    .copied()
+                    .map(BooleanitySelector::packed_hot_plane)
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    tracing::warn!(
+                        "Hamming selectors exceed the retained projection; using optimized CPU"
+                    );
+                    return cpu(session);
+                };
+                let invocation = match self.context.prepare_hamming_weight_retained(
+                    hot_rows.clone(),
+                    plan.reference_cycle(),
+                    config.retained_hot,
+                ) {
+                    Ok(invocation) => invocation,
+                    Err(error) if hamming_retained_can_fallback(&error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "Retained Hamming Metal preparation unavailable; using optimized CPU"
+                        );
+                        return cpu(session);
+                    }
+                    Err(error) => return Err(metal_error(error.to_string()).into()),
+                };
+                let consumed_hot =
+                    session
+                        .take::<HammingHotRows>()
+                        .ok_or(KernelError::InvariantViolation {
+                            reason: "retained Hamming preparation lost its projection owner",
+                        })?;
+                if consumed_hot.allocation_identity() != hot_rows.allocation_identity() {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "retained Hamming preparation changed projection allocations",
+                    });
+                }
+                let _ = session.take::<BooleanityRows>();
+                let lifecycle_guard = tracing::info_span!(
+                    "MetalHammingHotRows::stage7_terminal_use",
+                    hot_rows_storage_id = consumed_hot.allocation_identity(),
+                    source_rows_storage_id = consumed_hot.source_rows_storage_id(),
+                    hot_rows = consumed_hot.len(),
+                    hot_row_bytes = 29usize,
+                    device_registry_id = consumed_hot.device_registry_id(),
+                    terminal_consumer = true,
+                )
+                .entered();
+                let dispatch_span = tracing::info_span!(
+                    "MetalHammingWeightClaimReduction::retained_dispatch",
+                    command_buffers = 1u64,
+                    tile_dispatches = 5u64,
+                    finalize_dispatches = 5u64,
+                    command_completed = tracing::field::Empty,
+                    gpu_active_ns = tracing::field::Empty,
+                    hot_rows_storage_id = consumed_hot.allocation_identity(),
+                );
+                let dispatch_guard = dispatch_span.enter();
+                let gpu_active = invocation
+                    .execute_timed()
+                    .map_err(|error| metal_error(error.to_string()))?;
+                let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
+                let _ = dispatch_span.record("command_completed", true);
+                let _ = dispatch_span.record("gpu_active_ns", gpu_active_ns);
+                drop(dispatch_guard);
+
+                let readback_span = tracing::info_span!(
+                    "MetalHammingWeightClaimReduction::retained_readback",
+                    elements = invocation.output_elements(),
+                    bytes = invocation.output_elements() * size_of::<AkitaField>(),
+                    readbacks = 1u64,
+                );
+                let readback_guard = readback_span.enter();
+                let masses = invocation
+                    .read_masses()
+                    .map_err(|error| metal_error(error.to_string()))?;
+                drop(readback_guard);
+                let masses = select_packed_hot_masses(&masses, &packed_planes)?;
+                let kernel = plan.finish_flat(masses)?;
+                drop(lifecycle_guard);
+                drop(consumed_hot);
+                #[cfg(any(test, feature = "test-utils"))]
+                let _ = self
+                    .hamming_dispatches
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Ok(kernel);
+            }
+            tracing::warn!("Retained Hamming projection unavailable; using accepted Metal");
+            if !config.admits_accepted(trace_elements, log_t, dimensions.log_k_chunk) {
+                return cpu(session);
+            }
+        }
         let resident_rows = match session.state::<BooleanityRows>().cloned() {
             Some(rows)
                 if rows.len() == trace_elements
@@ -255,6 +382,20 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
     }
 }
 
+fn hamming_retained_can_fallback(error: &HammingWeightRetainedRuntimeError) -> bool {
+    matches!(
+        error,
+        HammingWeightRetainedRuntimeError::Metal(error)
+            if booleanity_address_can_fallback(error)
+    ) || matches!(
+        error,
+        HammingWeightRetainedRuntimeError::ExecutionWidth { .. }
+            | HammingWeightRetainedRuntimeError::ThreadLimit { .. }
+            | HammingWeightRetainedRuntimeError::ThreadgroupMemory { .. }
+            | HammingWeightRetainedRuntimeError::LeaseBytes { .. }
+    )
+}
+
 fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
     SumcheckError::ComputeBackend {
         backend: "metal",
@@ -268,13 +409,17 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_claims::protocols::jolt::lattice::relations::hamming_weight::LatticeHammingWeightClaimReductionDimensions;
     use jolt_field::AkitaField;
+    use jolt_verifier::stages::stage6a::booleanity::{
+        BooleanityAddressPhase, BooleanityAddressPhaseChallenges,
+    };
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReduction, HammingWeightClaimReductionChallenges,
         HammingWeightClaimReductionInputClaims,
     };
 
     use super::*;
-    use crate::metal::solinas::{BooleanityRows, BooleanitySelector};
+    use crate::metal::solinas::{BooleanityRows, BooleanitySelector, HammingHotRows};
+    use crate::metal::{BooleanityAddressImplementation, BooleanityAddressMetalConfig};
     use crate::optimized::booleanity::testing::with_booleanity_backend;
     use crate::optimized::instruction_read_raf::{
         collect_instruction_cycle_rows, InstructionCycleRow,
@@ -301,6 +446,23 @@ mod tests {
                     tile_threads_per_threadgroup,
                     finalize_threads_per_threadgroup: Some(256),
                 },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn retained_metal_config() -> super::super::MetalConfig {
+        super::super::MetalConfig {
+            booleanity_address: BooleanityAddressMetalConfig {
+                implementation: BooleanityAddressImplementation::PackedHot,
+                trace_cutoff_elements: 2,
+                ..Default::default()
+            },
+            hamming_weight_claim_reduction: HammingWeightMetalConfig {
+                implementation: HammingWeightImplementation::RetainedHot,
+                trace_cutoff_elements: 2,
+                ..Default::default()
             },
             ..Default::default()
         }
@@ -384,6 +546,84 @@ mod tests {
             assert!(session.state::<BooleanityRows>().is_none());
             assert_eq!(metal.hamming_dispatches(), 1);
 
+            run_lockstep(expected.as_mut(), actual.as_mut(), &claims);
+        });
+    }
+
+    #[test]
+    fn retained_prepare_matches_cpu_and_consumes_projection() {
+        let log_t = 15;
+        with_booleanity_backend(log_t, 8, |witness, base_dimensions| {
+            let metal = super::super::MetalBackend::new(retained_metal_config()).unwrap();
+            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+            let resident = metal
+                .context
+                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                .unwrap();
+            let resident_identity = resident.allocation_identity();
+            let mut session = ProofSession::default();
+            session.park(resident);
+
+            let address_relation = BooleanityAddressPhase::new(
+                base_dimensions,
+                point(900, base_dimensions.log_k_chunk),
+                point(400, log_t),
+            );
+            let address_claims = Default::default();
+            let address_points = Default::default();
+            let address_challenges = BooleanityAddressPhaseChallenges {
+                reference_address: point(700, base_dimensions.log_k_chunk),
+                gamma: AkitaField::from_u64(31),
+            };
+            let _address_kernel = metal
+                .prepare(
+                    &mut session,
+                    witness,
+                    ProverInputs {
+                        relation: &address_relation,
+                        claims: &address_claims,
+                        points: &address_points,
+                        challenges: &address_challenges,
+                    },
+                )
+                .unwrap();
+            let hot_rows = session.state::<HammingHotRows>().cloned().unwrap();
+            assert_eq!(hot_rows.source_rows_storage_id(), resident_identity);
+            let _ = session.take::<BooleanityRows>();
+
+            let dimensions = LatticeHammingWeightClaimReductionDimensions::new(
+                base_dimensions.layout,
+                base_dimensions.log_k_chunk,
+            )
+            .unwrap();
+            let relation = HammingWeightClaimReduction::new(
+                dimensions,
+                point(300, log_t),
+                point(500, dimensions.log_k_chunk),
+                (0..dimensions.layout.total())
+                    .map(|index| point(700 + index as u64, dimensions.log_k_chunk))
+                    .collect(),
+                Some(AkitaField::from_u64(17)),
+            );
+            let challenges = HammingWeightClaimReductionChallenges {
+                gamma: AkitaField::from_u64(23),
+            };
+            let claims = HammingWeightClaimReductionInputClaims::<AkitaField>::default();
+            let points = HammingWeightClaimReductionInputClaims::<Vec<AkitaField>>::default();
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+            let mut expected = OptimizedHammingWeightClaimReduction
+                .prepare(&mut ProofSession::default(), witness, inputs())
+                .unwrap();
+            let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
+
+            assert!(session.state::<HammingHotRows>().is_none());
+            assert!(session.state::<BooleanityRows>().is_none());
+            assert_eq!(metal.hamming_dispatches(), 1);
             run_lockstep(expected.as_mut(), actual.as_mut(), &claims);
         });
     }

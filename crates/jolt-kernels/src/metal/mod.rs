@@ -21,7 +21,7 @@ pub use booleanity::{
     BooleanityAddressImplementation, BooleanityAddressMetalConfig, BooleanityMetalConfig,
 };
 pub use bytecode_read_raf::{BytecodeReadRafMetalConfig, BytecodeReadRafResidentRows};
-pub use hamming_weight_claim_reduction::HammingWeightMetalConfig;
+pub use hamming_weight_claim_reduction::{HammingWeightImplementation, HammingWeightMetalConfig};
 pub use instruction_claim_reduction::InstructionClaimReductionMetalConfig;
 pub use instruction_input::InstructionInputMetalConfig;
 pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
