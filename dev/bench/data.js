@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786033072686,
+  "lastUpdate": 1786063583968,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -132430,6 +132430,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866088,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5d3684b3a371a46d07b69cff8631a4c63a288b2a",
+          "message": "perf(tracer): 12-23x faster trace generation + opt-in two-pass parallel tracing (#1717)\n\n* feat(prover-legacy): add tracer throughput bench example\n\ntrace_bench measures raw emulation/trace-generation rate (MHz) for\nsha2-chain, sha3-chain, fibonacci, and btreemap guests at ~9.6M cycles\neach, with an optional substring filter over guest names.\n\n* feat(prover-legacy): add golden-trace equivalence gate for tracer changes\n\ntrace_golden records/checks blake3 hashes over every postcard-serialized\nCycle in stream order, the final memory state, and JoltDevice I/O for\nfive fixed guests (sha2-chain, sha3-chain, fibonacci, btreemap, muldiv).\nFixtures recorded from the unmodified tracer; check mode is the\ncorrectness gate for all tracer speed work.\n\n* perf(tracer): count trace rows via vec-len delta instead of re-expanding\n\ntick_operate called instr.inline_sequence() a second time per traced\ninstruction just to compute trace_len — a full expansion (allocator +\nexpand_instruction + Vec collect) per tick, and for INLINE instructions\n(sha2/keccak) a rebuild of multi-thousand-row recipes. The number of rows\ninstr.trace() pushed is the same quantity, read directly from the trace\nvec length delta.\n\nGolden traces: 5/5 PASS. sha2-chain 9.42->12.51 MHz, sha3-chain\n8.11->20.25 MHz (suite medians, M4 mini).\n\n* perf(tracer): flat Vec-backed guest memory + single-probe trace pre-values\n\nGuest memory was HashMap<usize,u64> (SipHash per access, or_insert probe\neven for reads). Guest address space is one dense range\n[DRAM_BASE, heap_end), so back execution memory with a contiguous\nzero-initialized Vec<u64>; bounds panic moved to a #[cold] fn.\n\nCheckpoint replay images stay sparse (first-touch HashMap) via a\nMemoryBacking enum — materializing a flat array per checkpoint would\ndefeat checkpointing. First-touch recording semantics are unchanged in\nboth backings; touched-index sets are identical (trace_checkpoints test\ncovers replay equality).\n\nmmu trace_load/trace_store* pre-value reads were 8 byte-granular probes\nper access; now one read_doubleword on the DRAM side (device side keeps\nbyte loads via a shared device_doubleword helper).\n\nGolden traces: 5/5 PASS; tracer tests 127/127. Suite medians (M4 mini):\nsha2-chain 12.51->15.98 MHz, sha3-chain 20.25->24.44, fibonacci ->25.82,\nbtreemap 1.39(baseline)->17.83. Run-to-run spread dropped to ~2%.\n\n* perf(tracer): pre-decoded instruction cache keyed by PC\n\nDecode is a pure function of (word, pc, is_compressed), so decode each\ntext PC once into a halfword-indexed slot table + entry arena on the\nMmu, covering the ELF's SHF_EXECINSTR sections. Stores into the\nexecutable range invalidate overlapping slots (self-modifying code stays\ncorrect); stores elsewhere reject in one compare. Instruction is now\nCopy so cache hits are a bitwise copy, and decode-failure panic\nformatting moved to a #[cold] fn.\n\nCheckpoint-saving mode disables the cache: chunk replay needs text bytes\nin the chunk's first-touch memory image, which only happens when every\nexecuted instruction actually fetches (caught by test_checkpoints).\nEmulator snapshots keep the cache range but drop entries, so replay can\nlazily re-populate from its sparse image.\n\nGolden traces: 5/5 PASS; tracer tests 127/127. Suite medians (M4 mini):\nfibonacci 25.82->27.43 MHz, btreemap 17.83->19.30, sha2/sha3 flat\n(expansion-bound until expansions are cached).\n\n* perf(tracer): cache inline sequences per PC alongside decoded instructions\n\nEvery multi-row instruction (loads/stores/shifts/AMOs/csr/div/ecall +\nINLINE recipes) re-ran jolt-program expansion on every execution — the\nlargest single bucket in the tick profile, and for sha2/keccak INLINEs a\nmulti-thousand-row recipe rebuild per invocation.\n\nExpansion is a pure function of the instruction (fresh ExpansionAllocator\nper call; all virtual-register guards released on return), so the decode\ncache entry now carries the expanded row template, built on first\nexecution. Cpu::with_cached_inline_sequence moves the rows out of the\nentry while tracing (allowing &mut Cpu) and puts them back after; decode\nslot invalidation orphans the entry, so text rewrites can't serve stale\nrows, and variant-mismatch lookups (synthetic addresses, disabled cache)\nfall back to uncached expansion.\n\nAdvice-carrying sequences (div/rem family, SC.W/SC.D success bit, INLINE\nruntime advice) patch values into per-execution copies of the rows; the\ncached template is never mutated. fill_virtual_advice is replaced by\ntrace_inline_sequence_with_advice with identical fill/panic semantics.\n\nGolden traces: 5/5 PASS; tracer tests 127/127. Suite medians (M4 mini):\nsha2-chain 15.98->46.88 MHz, sha3-chain 24.18->52.43, fibonacci\n27.43->36.32, btreemap 19.30->25.79.\n\n* perf(tracer): rd0-rewrite check without SourceInstruction construction\n\nInstruction::trace built a full SourceInstruction (marker enum + row\nstruct + operand conversion) on every call just to test rd == x0 — paid\nonce per tick and once per expansion row in the div/amo/load/store\nloops. normalized_rd() extracts the same Option<u8> through the identical\nFrom<Format> for NormalizedOperands conversions.\n\nGolden traces: 5/5 PASS; tracer tests 127/127.\n\nMeasurement note: suite-order runs degrade for late guests (cumulative\nprocess allocator pressure) and background rustc from co-tenant\ncampaigns contaminated earlier medians — switching to per-guest process\ninvocations under lock. Fresh-process medians after this lever (M4):\nsha2-chain 68.71 MHz, fibonacci 56.75, btreemap 50.89.\n\n* perf(tracer): gate interrupt polling on MIP, drop dead per-tick clocks\n\nhandle_interrupt read MIP+MIE and walked six interrupt arms every tick;\nit is a no-op whenever MIP is 0, which is always for Jolt guests (no\nCLINT/PLIC, MIP not guest-writable). Gate it on one MIP load.\n\nmmu.tick() advanced a clock nobody reads; the per-tick\nwrite_csr_raw(CSR_CYCLE, clock*8) stored a value no guest can observe\n(0xc00 is outside the supported-CSR whitelist, csrr of it is rejected at\ndecode). Both removed.\n\nGolden traces: 5/5 PASS; tracer tests 127/127. Fresh-process medians:\nfibonacci 57.39 MHz, btreemap 52.49, sha2/sha3 flat ~64-68.\n\n* perf(tracer): opt-in register snapshots in call-stack frames\n\ntrack_call copied the whole register file into a CallFrame on every\njal/jalr with rd=ra. The snapshot is only ever displayed under\nJOLT_BACKTRACE=full, so capture it (boxed) only when that mode is\nrequested — cached as a bool on the Cpu at construction. Default\nbacktraces (call-site symbolization) are unchanged. CallFrame.operands\nwas never read anywhere; removed.\n\nGolden traces: 5/5 PASS; tracer tests 127/127. Fresh-process medians:\nsha2 68.35 MHz, sha3 69.39, fib 57.87, btreemap 52.06.\n\n* perf(tracer): drive tick() straight into the trace vec in trace()\n\ntracer::trace materialized the trace through LazyTraceIterator: every\nrow was pushed into a per-instruction buffer, the buffer reversed, then\npopped one Cycle per Iterator::next into collect() — three copies of\neach 96-byte row plus per-row iterator machinery. Drive step_emulator\ndirectly into the output Vec instead, with the same termination\ncondition (first step that emits no rows) and the same panic-log\nbehavior. The output vec reserves 2^24 rows up front so growth never\nmemcpys hundreds of MB (address space faults in as used).\n\nThe returned LazyTraceIterator is unchanged: it still clones the\npristine pre-execution emulator, which the streaming-commitment prover\nre-executes. trace_lazy/trace_to_file/checkpoint paths are untouched.\n\nGolden traces: 5/5 PASS; tracer tests 127/127. Fresh-process medians:\nsha2-chain 226.72 MHz, sha3-chain 248.57, fibonacci 115.14, btreemap\n97.17.\n\n* feat(tracer): execute-only path + INLINE execution, exec bench mode\n\ntracer::execute runs a program to completion on the emulator's\nexecute-only path (no Cycle construction) — the fast first-pass seam for\ntwo-pass parallel tracing. host::Program::execute wraps it; trace_bench\ngains an execute-only phase reporting trace-row-equivalent MHz.\n\nInstruction::execute previously panicked on INLINE (no single-step\nsemantics), so INLINE guests could never run without tracing. It now\nexecutes the (cached) inline sequence with runtime advice patched the\nsame way the traced path does — trace(cpu, None).\n\nGolden traces: 5/5 PASS; tracer tests 127/127. Execute-only medians\n(row-equiv): sha2 387.21 MHz, sha3 357.72, fib 98.87, btreemap 95.97.\n\n* feat(tracer): make execute mode bit-identical to trace mode per tick\n\nInstruction::execute now mirrors trace(cpu, None): rd0-rewritten\ninstructions and every instruction whose trace path expands a virtual\nsequence (CSR mirrors in vr34-39, ecall/mret trap sequences, advice-fed\ndiv/rem, vr temp writes) walk the same cached expansion with no row sink.\nNon-expanding instructions still compile down to their raw execute.\n\nThis makes execute-mode CPU state a valid trace-mode chunk-replay seed,\nthe binding requirement for two-pass parallel tracing. The jolt-emu ACT\nrunner's exec path now follows trace semantics for CSR/trap state (vr\nmirrors are the single source of truth in both modes).\n\nAdds Cpu::arch_state_diff (full architectural-state comparator), a\ntracer lockstep unit test on muldiv, and a trace_lockstep example gating\nall five golden guests: trace-mode and execute-mode emulators tick in\nlockstep asserting bit-identical state every tick + identical final\nmemory. All 5/5 PASS; golden trace gate unchanged 5/5.\n\nExecute-only rate after (row-equiv MHz, M4): sha2-chain 297, sha3-chain\n398, fibonacci 146, btreemap 114 (from 389/364/167/141 — loads/stores/\nshifts/jumps now walk their cached expansions).\n\n* chore(tracer): review cleanups — doc gaps, take_memory consistency, expansion-slot guard\n\n- Delete the blank line between trace()'s doc block and its attributes\n  (clippy::empty_line_after_doc_comments risk on pinned toolchains).\n- Make execute()'s termination doc exact: it stops only on PC stall;\n  trace() additionally stops on any zero-row step (trap/WFI tick).\n- take_memory() now zeroes num_doublewords in the emptied Memory instead\n  of reporting stale capacity. The one consumer that relied on the stale\n  value — the final post-termination save_checkpoint in\n  CheckpointingTracer — now clones the live memory at termination when\n  checkpoint saving is active (checkpoints snapshot capacity from it).\n- expansion_slot: document why the discriminant-only match is sound\n  (per-PC entry + store invalidation) and debug_assert full instruction\n  equality (Instruction now derives PartialEq).\n\n* feat(tracer): chunk checkpoints, pooled memory snapshots, replay workers\n\nNew tracer::parallel module — the state layer of two-pass parallel\ntracing:\n\n- ChunkCheckpoint: exhaustive-destructure capture of Cpu (registers, CSRs,\n  reservation, advice-tape suffix, counters) + Mmu translation state +\n  JoltDevice outputs/panic at a tick boundary. Adding a Cpu/Mmu field\n  fails compilation until classified. Capture asserts the vr allocator is\n  quiescent (guards are intra-tick).\n- SnapshotPool: pooled full flat-memory images; capture is one memcpy and\n  the buffer becomes the worker's working memory (zero-copy install,\n  returned to the pool on the next install).\n- ChunkWorker: resident replay Cpu in HostIo::Replay — stdout prints,\n  cycle markers, advice-tape appends and call tracking are suppressed\n  (pass-1 already did them exactly once); JoltDevice loads/stores and\n  advice reads stay live. Fresh empty-entry decode cache per chunk so\n  entries never leak across out-of-order chunks.\n- PassOne: execute-mode driver with trace()-identical termination\n  (PC stall, or a zero-row step observed as a zero trace_len delta).\n\nAcceptance: tracer tests replay muldiv chunks (N,M sweeps; chunk sizes\n1/29/97/degenerate) bit-exact against serial rows with boundary paranoia\ncompares; new trace_chunk_replay example gates all five golden guests —\nfull-trace concat, per-boundary state, final memory and device all\nbit-exact (5/5 PASS). Golden gate 5/5, tracer 130/130, muldiv e2e\nhost+zk, both clippys clean.\n\n* feat(tracer): two-pass parallel trace pipeline behind TRACER_PARALLEL\n\n- trace_len is now row-uniform across modes: the single row-push point\n  (RISCVTrace::trace) counts suppressed rows in execute mode, so pass-1\n  cuts chunks by exact trace-row counts with no expansion-len nesting\n  assumptions. execute()'s return value becomes the trace row count.\n- parallel::run_two_pass: pass-1 executes on the calling thread, closing\n  a chunk at the first tick boundary at/past chunk_rows (default 2^21);\n  jobs (checkpoint + pooled image + tick/row counts) flow through a\n  bounded queue (backpressure caps in-flight images at ~3W+1); workers\n  re-trace into per-chunk vecs asserting exact row counts; rows are\n  assembled in chunk order (safe copy — zero-copy windows can come later\n  behind the golden gate). Final memory/device/advice come from the\n  finished pass-1 emulator, exactly as serial.\n- tracer::trace() dispatches on TRACER_PARALLEL=<workers> (unset/0 =\n  serial, path untouched); JOLT_TRACER_CHUNK_ROWS overrides chunk size.\n\nGates: golden trace 5/5 through the parallel path at 128-row chunks\n(~7200 chunks on sha2-chain), 100k-row chunks, and single-chunk\ndegenerate; serial golden 5/5 unchanged; tracer tests 131/131 (new\nthreaded pipeline test sweeping workers × chunk sizes); muldiv e2e\nhost+zk; both clippys clean.\n\n* perf(tracer): zero-copy worker windows, prefix snapshots, QoS pinning\n\nThree pipeline levers, golden-gated at every step:\n\n- Workers write rows straight into disjoint MaybeUninit windows of the\n  pre-reserved output vec (exact row offsets from the row-uniform\n  trace_len), through a small cache-resident per-tick scratch — no\n  chunk-sized intermediate buffers, no serialized final copy. Chunks past\n  the reserved capacity (default 2^24 rows) fall back to copy assembly;\n  the windowed region stays a contiguous prefix for the single set_len.\n- Flat memory tracks a high-water mark (one branch in access_u64);\n  snapshot capture copies only the touched prefix into full-size pooled\n  buffers, provably zero beyond it (pass-1's mark is monotone and worker\n  dirt replays pass-1 writes). Cuts per-chunk capture from ~1ms (33MB\n  default-heap image) to ~0.1-0.5ms.\n- macOS QoS: pass-1 pinned USER_INTERACTIVE (it is the Amdahl path),\n  workers USER_INITIATED. Default chunk size 2^20 rows (measured optimum\n  at ~10M-row traces; both effects negligible at 100M+).\n- JOLT_TRACER_TIMING=1 prints pass-1 exec/capture/send and join times.\n\nMeasured (M4, 9 workers, ~8-9M-row guests, default chunks): parallel\n203/233/120/88 MHz vs serial 216/251/119/92 — break-even at this trace\nsize; pass-1 execute ceilings are 298/400/146/115, so the margin opens\nas traces grow and overheads amortize.\n\nGates: golden 5/5 serial + parallel at 128/100k/degenerate chunk sizes,\nchunk-replay + lockstep examples, tracer 131/131, muldiv e2e host+zk,\nboth clippys, fmt.\n\n* feat(tracer): parallel bench arm, capacity knob, single-worker fallback\n\n- trace_bench runs three explicit arms per guest — serial, execute-only\n  (pass-1 rate; now asserts row-count equality with the traced run), and\n  two-pass parallel (TRACER_PARALLEL override, default cores−1) — plus\n  JOLT_BENCH_SCALE to grow the ~9.6M-cycle target for amortization runs.\n- TRACER_PARALLEL=1 falls back to serial (a single worker would only\n  re-trace what pass-1 already executed); JOLT_TRACER_CAPACITY_ROWS\n  overrides the windowed output reserve (default 2^24, matching serial).\n- Timing line reports the snapshot pool's allocated image bytes.\n\nGates at this tree: golden 5/5 serial, parallel at 128/100k/degenerate\nchunk sizes AND with capacity_rows=1000 forcing the overflow-fallback\nassembly; chunk-replay + lockstep examples; tracer 131/131; muldiv e2e\nhost+zk; both clippys; fmt.\n\n* fix(tracer): propagate worker panics instead of hanging pass-1\n\nA systematic replay divergence kills every worker on its first chunk\n(the row-count tripwire), after which pass-1 blocked forever in send()\non the full job queue — the receiver lives in the parent frame and\nthread::scope only re-raises worker panics after the closure returns.\nNow: a drop guard flags worker unwind; pass-1 checks the flag at every\nchunk boundary and in a try_send poll loop, failing loudly with the\nworker's panic preceding it. job_tx is owned by the scope closure so\nany pass-1-side panic drops it before the join (workers blocked in\nrecv would otherwise deadlock the join itself). Regression test\nfault-injects a row-count divergence at workers=1 under a 60s bound —\nverified to hang (fail) without the flag mechanism and pass in 0.25s\nwith it.\n\nReview minors: drop the dead ChunkCheckpoint.prev_pc field; both\nparanoia comparators (arch_state_diff, ChunkCpuState::diff_vs_cpu) now\nalso compare trace_len — row-uniform across modes since e96698425 —\nand their stale mode-split docs are fixed, as is execute()'s\n\"cannot observe\" termination claim; the no-mid-trace-advice-append\nassumption is pinned on the HostIo doc.\n\nGates: golden 5/5 serial + parallel x9 (default and 131072-row\nchunks); tracer 132/132; muldiv e2e host 3/3 + host,zk 3/3; both\nworkspace clippys -D warnings; fmt.\n\n* chore(tracer): re-record btreemap golden fixture after main merge\n\nGuest ELF drift, not tracer behavior: main's workspace dep bumps (serde\n1.0.229 et al.) plus a jolt CLI reinstall shifted btreemap-guest's data\nlayout (row count unchanged at 625461). Tracer code is untouched by the\nmerge; serial, TRACER_PARALLEL={1,4,8}, lockstep, and chunk-replay gates\nall agree on the re-recorded hashes.\n\n* chore(tracer): re-record btreemap golden fixture after main merge\n\nGuest ELF drift again, not tracer behavior: main's dep bumps (serde_json\n1.0.151, anyhow 1.0.104, alloy-eips 2.1.0, bytemuck_derive 1.11.0) plus a\njolt CLI reinstall shifted btreemap-guest's data layout (row count unchanged\nat 625461, io_hash unchanged). Lockstep gate passes on btreemap; serial and\nparallel tracer suites (test-utils, test-utils+field-inline) green.\n\n* refactor(tracer): move trace_* harnesses from jolt-prover-legacy to tracer/examples\n\nThe four tracer regression harnesses (trace_bench, trace_golden,\ntrace_lockstep, trace_chunk_replay) gate tracer behavior, so they live\nwith the tracer — the crate that outlives the legacy prover — instead of\npinning new API surface (elf_and_memory_config, now removed) onto the\ndeprecating jolt-prover-legacy.\n\nThe only legacy dependency was host::Program's guest-build orchestration;\nexamples/support/mod.rs replicates its jolt-CLI invocation arg-for-arg\n(same defaults, same /tmp/jolt-guest-targets layout), so guest ELFs and\ncached builds are byte-identical, and the harnesses call tracer::trace/\nexecute/create_emulator directly — Program::trace/execute added only a\nper-call ELF read + decode_elf, which trace_bench keeps inside its timed\nregion (support::load_guest) so MHz numbers stay comparable with those\nmeasured through the legacy harness.\n\nVerified equivalent in-environment: the pre-move harness at the parent\ncommit and this port produce byte-identical golden hashes for all five\nguests (the committed fixtures themselves are recorded on the author's\nmachine and only reproduce there — pre-existing property, unchanged).\nLockstep and chunk-replay gates pass 5/5 through the moved harnesses;\ntracer suite 132/132; all three workspace clippy lanes -D warnings; fmt.\n\nThe golden fixture moves with its harness to tracer/tests/fixtures/.\nExamples declare required-features = [\"std\"]; inline crates come in as\ndev-dependencies for inventory registration (dev-dep cycles via\njolt-inlines-sdk follow existing workspace precedent).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(tracer): drop the dead Mmu clock, tighten chunk-state visibility\n\n`Mmu::tick` lost its last caller when the per-tick bookkeeping was removed\nas provably dead state, which left `Mmu::clock` write-only: pinned at 0 for\nthe process lifetime, yet still captured and reinstalled on every chunk\ncheckpoint. Delete the field, `Mmu::tick`, and the `ChunkMmuState` slot that\ncarried it.\n\n`ChunkMmuState` and `ChunkCpuState` are reachable only through private\nfields of `ChunkCheckpoint` and `pub(crate)` accessors, so `pub` exported\ntwo names that nothing outside the crate can construct or call. Make them\n`pub(crate)`.\n\nAlso record why `CallFrame::x` is boxed rather than a bare `Option`: the\nsnapshot is 1 KiB and `[i64; _]` has no niche, so the box is what keeps the\nframe at 24 bytes.\n\n* feat(tracer): allow overriding the serial trace reservation via JOLT_TRACER_CAPACITY_ROWS\n\nThe serial path's 2^24-row up-front reserve was a hardcoded const while\nthe parallel path already honored JOLT_TRACER_CAPACITY_ROWS; both now\nshare that knob and parallel::DEFAULT_CAPACITY_ROWS via one env_rows\nhelper. Also documents the variable in parallel_config_from_env's\ndoc comment and trace_bench's knob list, which previously omitted it.\n\nVerified: tracer suite 132/132; trace_bench fibonacci bit-consistent\nwith JOLT_TRACER_CAPACITY_ROWS=1000 (forces serial regrowth and the\nparallel overflow fallback) and with the default; clippy -p tracer\n--all-targets -D warnings; fmt.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* perf(tracer): keep the decode cache live during checkpoint recording\n\nstart_saving_checkpoints permanently disabled the decode cache, so\ncheckpointed runs forfeited the cached-decode speedup for the whole\ntrace. The recording hazard is narrower than that: only a cache HIT\nskips the fetch that lands an instruction's text bytes in the current\ninterval's first-touch map — miss-path fetches in decode_and_cache go\nthrough access_u64 and are recorded. Clearing the cache at each interval\nboundary (start_saving_checkpoints and every save_checkpoint) restores\nthe invariant per interval while keeping cached decode/expansion for\nre-executions within one; re-warm cost is one decode+expansion per\ndistinct PC per interval. DecodeCache::disable (now unused) is replaced\nby the in-place clear_entries. Checkpoint snapshots now inherit the real\ntext range, so replays warm their own caches too.\n\nVerified: tracer suite 132/132 incl. test_checkpoints (50-row intervals\nover muldiv loops exercise cross-interval re-recording); workspace\nclippy --features allocative,host and tracer --all-targets -D warnings;\nfmt.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-08-06T16:42:20-07:00",
+          "tree_id": "8d5db7c3bff185a200d2e8e3ca9624d9377a58fb",
+          "url": "https://github.com/a16z/jolt/commit/5d3684b3a371a46d07b69cff8631a4c63a288b2a"
+        },
+        "date": 1786063579907,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9136,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 873392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3215,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 502984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7285,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 506340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5875,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.9032,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498908,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.0103,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 194104,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4291,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 870400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.563,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498776,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4731,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.4675,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 504492,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.878,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.5061,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1088600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.446,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 642108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 95.1093,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2125896,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4665,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 507308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5284,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.6808,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864280,
             "unit": "KB",
             "extra": ""
           }
