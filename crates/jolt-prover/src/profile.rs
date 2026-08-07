@@ -706,6 +706,7 @@ fn trace_modular(
                 untrusted_advice: Vec::new(),
                 trusted_advice: Vec::new(),
                 memory_config,
+                advice_tape: None,
             },
         )
         .expect("modular trace")

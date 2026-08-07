@@ -102,6 +102,7 @@ mod support {
                     untrusted_advice: untrusted_advice.to_vec(),
                     trusted_advice: trusted_advice.to_vec(),
                     memory_config,
+                    advice_tape: None,
                 },
             )
             .expect("modular trace")
