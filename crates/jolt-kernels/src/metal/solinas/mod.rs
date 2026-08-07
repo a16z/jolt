@@ -29,6 +29,7 @@ pub mod half_width_probe;
 pub mod hamming_weight_claim_reduction;
 #[cfg(not(feature = "test-utils"))]
 mod hamming_weight_claim_reduction;
+pub mod hamming_weight_claim_reduction_successor;
 pub mod instruction_claim_reduction;
 mod instruction_input;
 pub mod instruction_input_successor;
@@ -92,6 +93,9 @@ pub use half_width_probe::{
     TARGET_CHAIN_ELEMENTS, TARGET_CHAIN_ITERATIONS,
 };
 pub use hamming_weight_claim_reduction::HammingWeightSuccessorError;
+pub use hamming_weight_claim_reduction_successor::{
+    HammingWeightRetainedConfig, HammingWeightRetainedInvocation, HammingWeightRetainedRuntimeError,
+};
 pub(crate) use instruction_input::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
     instruction_input_weight_capacities, InstructionInputSequenceStorage,
