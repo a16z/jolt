@@ -169,9 +169,10 @@ where
 }
 
 /// The Akita verification path: the same stage spine, with the reconstruction
-/// phase producing auxiliary leaves, a native same-point OneHotTrace opening,
-/// and separate packed openings for auxiliary objects in place of the
-/// homomorphic RLC batch. No homomorphism bounds and no ZK tail.
+/// phase producing auxiliary leaves, a random-selector opening of the
+/// prefix-packed OneHotTrace polynomial, and separate packed openings for
+/// auxiliary objects in place of the homomorphic RLC batch. No homomorphism
+/// bounds and no ZK tail.
 #[cfg(feature = "akita")]
 pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -665,17 +666,50 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     }
     #[cfg(feature = "akita")]
     {
-        append_length_prefixed(transcript, b"commitment", &proof.commitments);
-        if let Some(commitment) = proof.untrusted_advice_commitment.as_ref() {
-            append_length_prefixed(transcript, b"untrusted_advice", commitment);
-        }
-        if let Some(commitment) = trusted_advice_commitment {
-            append_length_prefixed(transcript, b"trusted_advice", commitment);
-        }
-        if let Some(committed) = preprocessing.program.committed() {
-            let commitment = &committed.program_one_hot_commitment;
-            append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
-        }
+        absorb_packed_commitments(
+            &proof.commitments,
+            proof.untrusted_advice_commitment.as_ref(),
+            trusted_advice_commitment,
+            preprocessing.program.committed().map_or(&[], |committed| {
+                committed.program_one_hot_commitments.as_slice()
+            }),
+            transcript,
+        );
+    }
+}
+
+/// Absorbs the packed commitment objects in canonical object order:
+/// `OneHotTrace`, untrusted advice, trusted advice, then the program objects.
+/// Shared verbatim by the packed prover's stage 0.
+#[cfg(feature = "akita")]
+pub fn absorb_packed_commitments<C, T>(
+    one_hot_trace: &C,
+    untrusted_advice_commitment: Option<&C>,
+    trusted_advice_commitment: Option<&C>,
+    program_one_hot_commitments: &[C],
+    transcript: &mut T,
+) where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    append_length_prefixed(transcript, b"commitment", one_hot_trace);
+    if let Some(commitment) = untrusted_advice_commitment {
+        append_length_prefixed(transcript, b"untrusted_advice", commitment);
+    }
+    if let Some(commitment) = trusted_advice_commitment {
+        append_length_prefixed(transcript, b"trusted_advice", commitment);
+    }
+    absorb_packed_program_commitments(program_one_hot_commitments, transcript);
+}
+
+#[cfg(feature = "akita")]
+pub fn absorb_packed_program_commitments<C, T>(commitments: &[C], transcript: &mut T)
+where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    for commitment in commitments {
+        append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
     }
 }
 
@@ -1318,10 +1352,7 @@ mod tests {
             #[cfg(not(feature = "akita"))]
             joint_opening_proof: (),
             #[cfg(feature = "akita")]
-            joint_opening_proof: crate::proof::AkitaJointOpeningProof {
-                one_hot_trace: (),
-                auxiliary: None,
-            },
+            joint_opening_proof: crate::proof::AkitaJointOpeningProof::new((), Vec::new()),
             untrusted_advice_commitment: None,
             claims,
             trace_length: 1,

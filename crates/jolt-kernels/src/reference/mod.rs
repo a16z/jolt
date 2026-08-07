@@ -56,6 +56,18 @@ pub(crate) mod views;
 /// (each module here hosts its impl next to the kernel it wraps).
 pub struct ReferenceBackend;
 
+/// Whether the active jolt-claims protocol shape is the packed (lattice)
+/// one: the lattice build folds the store val stage into
+/// `NUM_BYTECODE_VAL_STAGES`, so equality with `LATTICE_BYTECODE_VAL_STAGES`
+/// discriminates the shape at runtime. jolt-kernels deliberately has no
+/// feature of its own — a local cfg would silently read false under feature
+/// unification and desynchronize the kernels from the jolt-claims shape —
+/// so mode-agnostic relations (the booleanity address phase) branch on this.
+pub(crate) fn lattice_shape() -> bool {
+    jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
+        == jolt_claims::protocols::jolt::lattice::LATTICE_BYTECODE_VAL_STAGES
+}
+
 impl<F, PCS> JoltBackend<F, PCS>
 where
     F: Field,

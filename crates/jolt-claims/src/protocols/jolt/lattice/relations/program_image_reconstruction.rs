@@ -23,6 +23,7 @@ use super::super::geometry::byte_place_vars;
 
 /// The program-image byte one-hot opening at `(bound (byte ‖ place) ‖
 /// r_word)` — the final claim the packed opening consumes for the slot.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

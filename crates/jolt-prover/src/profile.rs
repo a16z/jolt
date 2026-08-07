@@ -562,14 +562,14 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     let public_io = trace_output.device.clone();
     let padded_output = pad_trace(trace_output, config.trace_length);
 
-    let witness = Arc::new(TraceBackend::new(
+    let witness = TraceBackend::new(
         JoltVmWitnessConfig::new(
             config.trace_length.ilog2() as usize,
             config.ram_K,
             config.one_hot_config,
         ),
         JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-    ));
+    );
 
     // PCS setup sized like the byte-diff harness: the main one-hot matrix
     // maxed with both advice candidates (always included in setup sizing,
@@ -599,7 +599,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         &prover_preprocessing,
         &config,
         None,
-        Arc::clone(&witness),
+        &witness,
         &public_io,
     )
     .expect("modular prove");

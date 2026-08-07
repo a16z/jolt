@@ -3,7 +3,7 @@
 //! `ExtractIndexed` index binding — which chunk of which decomposition is
 //! bound at the use site.
 
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::{Extract, ExtractIndexed, LookupIndex, MappedPc, RemappedRamAddress, WitnessEnv};
 use crate::{WitnessError, JOLT_VM_LABEL};

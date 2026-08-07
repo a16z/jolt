@@ -79,6 +79,11 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
       - name: cargo clippy -p jolt-prover-legacy --features akita
         run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
+      # The modular prover's packed (Akita) path and its fixture suites.
+      - name: cargo clippy -p jolt-prover --features akita
+        run: cargo clippy -p jolt-prover --all-targets --features akita
+      - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
+        run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
       # The profiling feature gates the profile harness bin and smoke test.
       # The smoke test cannot RUN in CI yet (reference-backend memory — see
       # the NOTE above the legacy test jobs), but everything behind the
@@ -176,6 +181,11 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
+      # The MODULAR prover's clear-mode acceptance suites: the byte-diff
+      # ratchets asserting wire-for-wire equality with the legacy prover,
+      # plus the engine/driver twins.
+      - name: Run jolt-prover tests with fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
 
   trace-equivalence:
     runs-on: ubuntu-latest
@@ -290,6 +300,19 @@ jobs:
       # Akita lattice PCS (the release-only perf harness stays ignored).
       - name: Run jolt-prover-legacy tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features akita
+      # The MODULAR packed-prover acceptance suites: the five e2e analogs
+      # (with live tampers) plus the four byte-diff ratchets asserting
+      # wire-for-wire equality with the legacy packed prover.
+      - name: Run jolt-prover tests with akita feature
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures --test-threads 1
+
+  # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
+  # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
+  # wired into CI yet. It proves through the reference backend, whose naive
+  # RAM kernels retain ~18 GiB regardless of trace length — past
+  # hosted-runner memory. Hook it up as a dedicated job (guest toolchain +
+  # jolt CLI install, mirroring the legacy test jobs above) once an
+  # optimized backend fits runner memory.
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
@@ -334,7 +357,7 @@ jobs:
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
       # by fixtures the real packed prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
 
   typos:
     runs-on: ubuntu-latest

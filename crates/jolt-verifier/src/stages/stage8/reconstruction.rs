@@ -558,19 +558,24 @@ fn completed_program_image_claim<F: Field>(
     Ok(CompletedClaim { value, point })
 }
 
-#[jolt_verifier_derive::fs_scope(Reconstruction)]
-pub fn verify<F, C, T>(
+/// The reconstruction phase's assembled batch and its consumed claims — the
+/// shared construction both `verify` and the prover's reconstruction recipe
+/// run: same instances (from the public shape and the completed upstream
+/// claims), same input cells. `None` exactly when the phase is absent (no
+/// advice and a full program).
+pub struct ReconstructionParts<F: Field> {
+    pub sumchecks: ReconstructionSumchecks<F>,
+    pub input_values: ReconstructionInputClaims<F>,
+    pub input_points: ReconstructionInputPoints<F>,
+}
+
+pub fn build_reconstruction_parts<F>(
     checked: &CheckedInputs,
-    sumcheck_proof: Option<&SumcheckProof<F, C>>,
-    claims: &ReconstructionOutputClaims<F>,
-    transcript: &mut T,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
-) -> Result<ReconstructionClearOutput<F>, VerifierError>
+) -> Result<Option<ReconstructionParts<F>>, VerifierError>
 where
     F: Field,
-    C: Clone + jolt_transcript::AppendToTranscript,
-    T: Transcript<Challenge = F>,
 {
     let untrusted_layout = checked.precommitted.untrusted_advice.as_ref();
     let trusted_layout = checked.precommitted.trusted_advice.as_ref();
@@ -582,27 +587,8 @@ where
         || bytecode_layout.is_some()
         || image_layout.is_some();
     if !phase_runs {
-        // Fail-closed: no advice and a full program in the public shape means
-        // no reconstruction anywhere in the proof.
-        if sumcheck_proof.is_some()
-            || claims.untrusted_advice.is_some()
-            || claims.trusted_advice.is_some()
-            || claims.bytecode.is_some()
-            || claims.program_image.is_some()
-        {
-            return Err(public_input_failed(
-                JoltRelationId::UntrustedAdviceReconstruction,
-                "reconstruction phase present without advice or a committed program",
-            ));
-        }
-        return Ok(ReconstructionClearOutput::empty());
+        return Ok(None);
     }
-    let Some(sumcheck_proof) = sumcheck_proof else {
-        return Err(public_input_failed(
-            JoltRelationId::UntrustedAdviceReconstruction,
-            "advice or a committed program is present but the reconstruction phase is missing",
-        ));
-    };
 
     let advice_word_vars = |layout: &jolt_claims::protocols::jolt::AdviceClaimReductionLayout| {
         layout.advice_shape().total_vars()
@@ -743,6 +729,55 @@ where
         trusted_advice: trusted.map(|(instance, _)| instance),
         bytecode: bytecode.map(|(instance, _, _)| instance),
         program_image: program_image.map(|(instance, _)| instance),
+    };
+
+    Ok(Some(ReconstructionParts {
+        sumchecks,
+        input_values,
+        input_points,
+    }))
+}
+
+#[jolt_verifier_derive::fs_scope(Reconstruction)]
+pub fn verify<F, C, T>(
+    checked: &CheckedInputs,
+    sumcheck_proof: Option<&SumcheckProof<F, C>>,
+    claims: &ReconstructionOutputClaims<F>,
+    transcript: &mut T,
+    stage6b: &Stage6bClearOutput<F>,
+    stage7: &Stage7ClearOutput<F>,
+) -> Result<ReconstructionClearOutput<F>, VerifierError>
+where
+    F: Field,
+    C: Clone + jolt_transcript::AppendToTranscript,
+    T: Transcript<Challenge = F>,
+{
+    let Some(ReconstructionParts {
+        sumchecks,
+        input_values,
+        input_points,
+    }) = build_reconstruction_parts(checked, stage6b, stage7)?
+    else {
+        // Fail-closed: no advice and a full program in the public shape means
+        // no reconstruction anywhere in the proof.
+        if sumcheck_proof.is_some()
+            || claims.untrusted_advice.is_some()
+            || claims.trusted_advice.is_some()
+            || claims.bytecode.is_some()
+            || claims.program_image.is_some()
+        {
+            return Err(public_input_failed(
+                JoltRelationId::UntrustedAdviceReconstruction,
+                "reconstruction phase present without advice or a committed program",
+            ));
+        }
+        return Ok(ReconstructionClearOutput::empty());
+    };
+    let Some(sumcheck_proof) = sumcheck_proof else {
+        return Err(public_input_failed(
+            JoltRelationId::UntrustedAdviceReconstruction,
+            "advice or a committed program is present but the reconstruction phase is missing",
+        ));
     };
 
     let challenges = sumchecks.draw_challenges(transcript)?;

@@ -27,7 +27,7 @@ use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, StreamConsumer};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 
 use crate::commitment::{
     finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
@@ -47,7 +47,7 @@ where
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        source: &dyn JoltWitnessPlane<F>,
+        source: &dyn RowSource,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,

@@ -13,8 +13,18 @@ workspace = true
 
 [features]
 default = ["parallel"]
-parallel = ["jolt-kernels/parallel"]
+parallel = ["jolt-kernels/parallel", "dep:rayon"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+# The packed lattice protocol. One compiled prover produces exactly one PCS
+# envelope; this feature replaces the Dory-specific stage 0/8 path.
+akita = [
+  "dep:jolt-akita",
+  "jolt-verifier/akita",
+  "jolt-claims/akita",
+  "jolt-field/akita",
+  "jolt-kernels/akita",
+  "jolt-prover-legacy/akita",
+]
 # Compile-time ZK mode: committed sumcheck recorders, hiding witness
 # commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.
@@ -63,6 +73,7 @@ allocative = [
 
 [dependencies]
 common.workspace = true
+jolt-akita = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
@@ -72,11 +83,14 @@ jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
 jolt-program.workspace = true
+jolt-riscv.workspace = true
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
+jolt-utils.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
+rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 
@@ -117,3 +131,9 @@ tracer.workspace = true
 name = "jolt-prover"
 path = "src/bin/jolt_prover.rs"
 required-features = ["profiling"]
+
+# The end-to-end benchmark harness needs the legacy host toolchain (guest
+# compilation) behind the same feature gate as the byte-diff tests.
+[[example]]
+name = "modular_benchmark"
+required-features = ["prover-fixtures"]

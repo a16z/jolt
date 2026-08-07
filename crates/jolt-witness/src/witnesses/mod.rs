@@ -16,8 +16,8 @@
 
 use jolt_field::Field;
 use jolt_lookup_tables::JoltLookupQuery;
-use jolt_program::{execution::TraceRow, preprocess::JoltProgramPreprocessing};
-use jolt_riscv::{Flags, JoltInstruction, JoltInstructionKind};
+use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_riscv::{JoltInstruction, JoltTraceRow as TraceRow};
 
 use crate::WitnessError;
 use crate::JOLT_VM_LABEL;
@@ -30,12 +30,13 @@ mod operands;
 mod pc;
 mod ram;
 mod registers;
+mod spartan;
 
 pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
     NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
 };
-pub use increments::{RamInc, RdInc};
+pub use increments::{FusedInc, RamInc, RdInc, UnsignedIncHot, UnsignedIncLane};
 pub use lookups::{LookupIndex, LookupOutput, TableIndex};
 pub use one_hot::{BytecodeRaChunk, InstructionRaChunk, RaChunkSelector, RamRaChunk};
 pub use operands::{
@@ -45,6 +46,7 @@ pub use operands::{
 pub use pc::{BytecodePc, MappedPc, NextPc, NextUnexpandedPc, Pc, UnexpandedPc};
 pub use ram::{RamAddress, RamHammingWeight, RamReadValue, RamWriteValue, RemappedRamAddress};
 pub use registers::{RdWriteValue, Rs1Value, Rs2Value};
+pub use spartan::SpartanOuterRow;
 
 pub(crate) use ram::ram_access_address;
 
@@ -52,13 +54,6 @@ pub(crate) use ram::ram_access_address;
 /// mapping, memory layout). Constructed by backends; opaque to consumers.
 pub struct WitnessEnv<'a> {
     pub(crate) preprocessing: &'a JoltProgramPreprocessing,
-}
-
-impl<'a> WitnessEnv<'a> {
-    /// Build the extraction environment for one program.
-    pub fn new(preprocessing: &'a JoltProgramPreprocessing) -> Self {
-        Self { preprocessing }
-    }
 }
 
 /// The field encoding of an atomic witness value.
@@ -87,42 +82,16 @@ pub trait ExtractIndexed<I>: Sized {
 }
 
 pub(crate) fn lookup_query(row: &TraceRow) -> JoltLookupQuery<&TraceRow> {
-    JoltLookupQuery::new(row.instruction.instruction_kind, row)
+    JoltLookupQuery::new(row.instruction_kind().unwrap_or_default(), row)
 }
 
 pub(crate) fn decode_instruction(row: &TraceRow) -> Result<JoltInstruction, WitnessError> {
-    JoltInstruction::try_from(row.instruction).map_err(|kind| WitnessError::InvalidWitnessData {
+    JoltInstruction::try_from(row.instruction()).map_err(|kind| WitnessError::InvalidWitnessData {
         label: JOLT_VM_LABEL,
         reason: format!("unsupported Jolt instruction kind in trace row: {kind:?}"),
     })
 }
 
-pub(crate) fn row_circuit_flags(
-    row: &TraceRow,
-) -> Result<jolt_riscv::CircuitFlagSet, WitnessError> {
-    Ok(decode_instruction(row)?.circuit_flags())
-}
-
 pub(crate) fn row_is_noop(row: &TraceRow) -> bool {
-    row.instruction.instruction_kind == JoltInstructionKind::NoOp
-}
-
-pub(crate) fn pc_for_row(
-    row: &TraceRow,
-    preprocessing: &JoltProgramPreprocessing,
-) -> Result<usize, WitnessError> {
-    preprocessing
-        .bytecode
-        .get_pc(&row.instruction)
-        .ok_or_else(|| missing_pc_mapping(row))
-}
-
-pub(crate) fn missing_pc_mapping(row: &TraceRow) -> WitnessError {
-    WitnessError::InvalidWitnessData {
-        label: JOLT_VM_LABEL,
-        reason: format!(
-            "bytecode preprocessing is missing PC mapping for address {:#x} with virtual_sequence_remaining {:?}",
-            row.instruction.address, row.instruction.virtual_sequence_remaining
-        ),
-    }
+    row.is_noop()
 }

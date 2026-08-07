@@ -40,6 +40,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::{
     InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, RightInstructionInput,
 };
@@ -47,10 +48,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{
-    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
-    RoundChallenges,
-};
+use super::support::{BundleAccess, BundleStore};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -107,39 +105,37 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     out
 }
 
-impl SpartanProductRow {
-    /// `left(node) · right(node)` for one cycle at every extended node, as exact
-    /// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
-    /// (the i128 lane), product `< 2^196` — inside `S256`.
-    /// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
-    /// loop (its integer Lagrange build is not free at `2^23` calls).
-    fn extended_products(
-        &self,
-        coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
-    ) -> [S256; EXTENDED_SIZE] {
-        let mut out = [S256::zero(); EXTENDED_SIZE];
-        let left_lanes = [
-            i128::from(self.left_instruction_input.0),
-            i128::from(self.lookup_output.0),
-            i128::from(self.jump_flag.0),
-        ];
-        let right_wide = S192::from_i128(self.right_instruction_input.0);
-        let right_flags = [
-            i64::from(self.branch_flag.0),
-            1 - i64::from(self.next_is_noop.0),
-        ];
-        for (slot, coefficients) in out.iter_mut().zip(coefficients) {
-            let mut left: i128 = 0;
-            for (lane, &c) in left_lanes.iter().zip(coefficients) {
-                left += i128::from(c) * lane;
-            }
-            let mut right = S192::from_i64(coefficients[0]).mul_trunc::<3, 3>(&right_wide);
-            right +=
-                S192::from_i64(coefficients[1] * right_flags[0] + coefficients[2] * right_flags[1]);
-            *slot = S128::from_i128(left).mul_trunc::<3, 4>(&right);
+/// `left(node) · right(node)` for one cycle at every extended node, as exact
+/// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
+/// (the i128 lane), product `< 2^196` — inside `S256`.
+/// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
+/// loop (its integer Lagrange build is not free at `2^23` calls).
+fn extended_products(
+    row: &SpartanProductRow,
+    coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
+) -> [S256; EXTENDED_SIZE] {
+    let mut out = [S256::zero(); EXTENDED_SIZE];
+    let left_lanes = [
+        i128::from(row.left_instruction_input.0),
+        i128::from(row.lookup_output.0),
+        i128::from(row.jump_flag.0),
+    ];
+    let right_wide = S192::from_i128(row.right_instruction_input.0);
+    let right_flags = [
+        i64::from(row.branch_flag.0),
+        1 - i64::from(row.next_is_noop.0),
+    ];
+    for (slot, coefficients) in out.iter_mut().zip(coefficients) {
+        let mut left: i128 = 0;
+        for (lane, &c) in left_lanes.iter().zip(coefficients) {
+            left += i128::from(c) * lane;
         }
-        out
+        let mut right = S192::from_i64(coefficients[0]).mul_trunc::<3, 3>(&right_wide);
+        right +=
+            S192::from_i64(coefficients[1] * right_flags[0] + coefficients[2] * right_flags[1]);
+        *slot = S128::from_i128(left).mul_trunc::<3, 4>(&right);
     }
+    out
 }
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
@@ -147,15 +143,79 @@ impl SpartanProductRow {
 struct SpartanProductCarry<F: Field> {
     log_t: usize,
     tau_low: Vec<F>,
-    rows: BundleStore<F, SpartanProductRow>,
+    rows: BundleStore<SpartanProductRow>,
     t1_values: Vec<F>,
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(SpartanProductCarry, |carry| {
-    use crate::backend::vec_heap_bytes;
-    vec_heap_bytes(&carry.tau_low) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
-});
+impl<F: Field> allocative::Allocative for SpartanProductCarry<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("tau_low"),
+            vec_heap_bytes(&self.tau_low),
+        );
+        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("t1_values"),
+            vec_heap_bytes(&self.t1_values),
+        );
+        visitor.exit();
+    }
+}
+
+/// Extended-node evaluations of
+/// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
+fn extended_t1_values<F: Field>(
+    rows: &BundleAccess<'_, SpartanProductRow>,
+    tau_low: &[F],
+) -> Result<Vec<F>, WitnessError> {
+    let split = tau_low.len() / 2;
+    let (out_point, in_point) = tau_low.split_at(split);
+    let e_out = EqPolynomial::<F>::evals(out_point, None);
+    let e_in = EqPolynomial::<F>::evals(in_point, None);
+    let in_len = e_in.len();
+    let coefficients = extension_coefficients();
+
+    let block = |x_out: usize| -> Result<Vec<F>, WitnessError> {
+        let mut accumulators: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator> =
+            vec![Default::default(); EXTENDED_SIZE];
+        for (x_in, &e) in e_in.iter().enumerate() {
+            let row = rows.row(x_out * in_len + x_in)?;
+            let products = extended_products(&row, &coefficients);
+            for (accumulator, product) in accumulators.iter_mut().zip(&products) {
+                accumulator.fmadd_s256(e, product);
+            }
+        }
+        Ok(accumulators
+            .into_iter()
+            .map(|accumulator| e_out[x_out] * accumulator.reduce())
+            .collect())
+    };
+    let merge = |mut left: Vec<F>, right: Vec<F>| {
+        for (left, right) in left.iter_mut().zip(right) {
+            *left += right;
+        }
+        left
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        (0..e_out.len()).into_par_iter().map(block).try_reduce(
+            || vec![F::zero(); EXTENDED_SIZE],
+            |left, right| Ok(merge(left, right)),
+        )
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut folded = vec![F::zero(); EXTENDED_SIZE];
+        for x_out in 0..e_out.len() {
+            folded = merge(folded, block(x_out)?);
+        }
+        Ok(folded)
+    }
+}
 
 /// The stage-2 product uni-skip front. `prepare` runs on `τ_low` only;
 /// `τ_high` arrives as the single late challenge of `first_round_poly`.
@@ -184,14 +244,14 @@ impl OptimizedProductUniskip {
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
-        rows: BundleStore<F, SpartanProductRow>,
+        rows: BundleStore<SpartanProductRow>,
     ) -> Result<(), KernelError<F>> {
         if tau_low.len() != log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "Spartan product tau_low must carry log_t challenges",
             });
         }
-        let t1_values = Self::extended_t1_values(&rows.access()?, tau_low)?;
+        let t1_values = extended_t1_values(&rows.access(), tau_low)?;
         session.park(SpartanProductCarry {
             log_t,
             tau_low: tau_low.to_vec(),
@@ -199,37 +259,6 @@ impl OptimizedProductUniskip {
             t1_values,
         });
         Ok(())
-    }
-
-    /// Extended-node evaluations of
-    /// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
-    fn extended_t1_values<F: Field>(
-        rows: &BundleAccess<'_, SpartanProductRow>,
-        tau_low: &[F],
-    ) -> Result<Vec<F>, WitnessError> {
-        let split = tau_low.len() / 2;
-        let (out_point, in_point) = tau_low.split_at(split);
-        let e_out = EqPolynomial::<F>::evals(out_point, None);
-        let e_in = EqPolynomial::<F>::evals(in_point, None);
-        let in_len = e_in.len();
-        let coefficients = extension_coefficients();
-
-        try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, |x_out| {
-            let mut accumulators: Vec<
-                <F as WithSignedProductAccumulator>::SignedProductAccumulator,
-            > = vec![Default::default(); EXTENDED_SIZE];
-            for (x_in, &e) in e_in.iter().enumerate() {
-                let row = rows.row(x_out * in_len + x_in)?;
-                let products = row.extended_products(&coefficients);
-                for (accumulator, product) in accumulators.iter_mut().zip(&products) {
-                    accumulator.fmadd_s256(e, product);
-                }
-            }
-            Ok(accumulators
-                .into_iter()
-                .map(|accumulator| e_out[x_out] * accumulator.reduce())
-                .collect())
-        })
     }
 }
 
@@ -242,7 +271,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
         tau_low: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = BundleStore::resolve(session, witness, 1usize << log_t)?;
+        let rows = BundleStore::resolve(witness, 1usize << log_t)?;
         Self::prepare_from_store(session, log_t, tau_low, rows)
     }
 
@@ -299,28 +328,45 @@ impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemaind
 /// The linear-time product remainder rounds over the cycle domain
 /// (bound `LowToHigh`).
 struct ProductRemainderKernel<F: Field> {
+    rounds: usize,
     left: Polynomial<F>,
     right: Polynomial<F>,
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     pending_endpoints: Option<(F, F)>,
-    challenges: RoundChallenges<F>,
-    rows: BundleStore<F, SpartanProductRow>,
+    challenges: Vec<F>,
+    rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ProductRemainderKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    poly_heap_bytes(&kernel.left)
-        + poly_heap_bytes(&kernel.right)
-        + vec_heap_bytes(&kernel.scratch)
-        + kernel.split_eq.heap_bytes()
-        + kernel.challenges.heap_bytes()
-        + kernel.rows.heap_bytes()
-        + vec_heap_bytes(&kernel.lagrange_weights)
-});
+impl<F: Field> allocative::Allocative for ProductRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("left"), poly_heap_bytes(&self.left));
+        visitor.visit_simple(allocative::Key::new("right"), poly_heap_bytes(&self.right));
+        visitor.visit_simple(
+            allocative::Key::new("scratch"),
+            vec_heap_bytes(&self.scratch),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("split_eq"),
+            gruen_heap_bytes(&self.split_eq),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("challenges"),
+            vec_heap_bytes(&self.challenges),
+        );
+        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("lagrange_weights"),
+            vec_heap_bytes(&self.lagrange_weights),
+        );
+        visitor.exit();
+    }
+}
 
 impl<F: Field> ProductRemainderKernel<F> {
     fn prepare(
@@ -362,7 +408,7 @@ impl<F: Field> ProductRemainderKernel<F> {
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
         let width = 2 * in_len;
-        let access = rows.access()?;
+        let access = rows.access();
         let weights_ref = &weights;
         let cell = |row: &SpartanProductRow| -> (F, F) {
             let mut left_acc = <F as WithSmallScalarAccumulator>::SmallScalarAccumulator::default();
@@ -430,15 +476,55 @@ impl<F: Field> ProductRemainderKernel<F> {
         };
 
         Ok(Self {
+            rounds,
             left: Polynomial::new(left),
             right: Polynomial::new(right),
             scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
-            challenges: RoundChallenges::new(rounds),
+            challenges: Vec::with_capacity(rounds),
             rows,
             lagrange_weights: weights,
         })
+    }
+
+    fn endpoints(&self) -> (F, F) {
+        let left = self.left.evals();
+        let right = self.right.evals();
+        let e_out = self.split_eq.e_out_current();
+        let e_in = self.split_eq.e_in_current();
+        let in_len = e_in.len();
+        debug_assert_eq!(e_out.len() * in_len * 2, left.len());
+
+        let block = |x_out: usize| -> (F, F) {
+            let mut inner_zero = F::zero();
+            let mut inner_infinity = F::zero();
+            for (x_in, &e) in e_in.iter().enumerate() {
+                let pair = 2 * (x_out * in_len + x_in);
+                let left_low = left[pair];
+                let left_high = left[pair + 1];
+                let right_low = right[pair];
+                let right_high = right[pair + 1];
+                inner_zero += e * (left_low * right_low);
+                inner_infinity += e * ((left_high - left_low) * (right_high - right_low));
+            }
+            (e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity)
+        };
+        let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
+
+        #[cfg(feature = "parallel")]
+        {
+            (0..e_out.len())
+                .into_par_iter()
+                .map(block)
+                .reduce(|| (F::zero(), F::zero()), add)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            (0..e_out.len())
+                .map(block)
+                .fold((F::zero(), F::zero()), add)
+        }
     }
 
     fn bind(&mut self, challenge: F) {
@@ -455,10 +541,10 @@ impl<F: Field> ProductRemainderKernel<F> {
     /// eq-weighted walk over the typed rows, in the output claims' canonical
     /// field order.
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
-        let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
+        let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
         let cycles = weights.len();
-        let access = self.rows.access()?;
+        let access = self.rows.access();
 
         let block_size = 1usize << 12;
         let blocks = cycles.div_ceil(block_size);
@@ -493,13 +579,34 @@ impl<F: Field> ProductRemainderKernel<F> {
                 virtual_instruction.reduce(),
             ])
         };
-        try_par_sum_vecs(blocks, 8, block)
+        let merge = |mut left: Vec<F>, right: Vec<F>| {
+            for (left, right) in left.iter_mut().zip(right) {
+                *left += right;
+            }
+            left
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            (0..blocks)
+                .into_par_iter()
+                .map(block)
+                .try_reduce(|| vec![F::zero(); 8], |left, right| Ok(merge(left, right)))
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut folded = vec![F::zero(); 8];
+            for index in 0..blocks {
+                folded = merge(folded, block(index)?);
+            }
+            Ok(folded)
+        }
     }
 }
 
 impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.challenges.total()
+        self.rounds
     }
 
     fn prove_round(
@@ -511,11 +618,9 @@ impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        // Round 0's endpoints were fused into the materialization pass; later
-        // rounds sample them over the remaining (lo, hi) pairs.
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
-            None => self.split_eq.product_endpoints(&self.left, &self.right),
+            None => self.endpoints(),
         };
         Ok(self
             .split_eq
@@ -535,7 +640,10 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        self.challenges.require_complete()?;
+        let remaining = self.rounds - self.challenges.len();
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
         let ids = [
             left_instruction_input_product(),
             right_instruction_input_product(),
@@ -567,10 +675,20 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.challenges.require_complete()?;
+        let remaining = self.rounds - self.challenges.len();
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
         let ids = std::iter::once(SpartanProductVirtualizationPublic::TauKernel)
             .chain((0..DOMAIN).map(SpartanProductVirtualizationPublic::LagrangeWeight));
         for public_id in ids {
+            let id = JoltDerivedId::from(public_id);
+            let expected =
+                match relation.derive_output_term(&id, input_points, output_points, challenges) {
+                    Ok(value) => value,
+                    Err(VerifierError::MissingStageClaimDerived { .. }) => continue,
+                    Err(error) => return Err(error.into()),
+                };
             let got = match public_id {
                 SpartanProductVirtualizationPublic::TauKernel => self.split_eq.current_scalar(),
                 SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
@@ -578,14 +696,9 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
                 }
                 SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => continue,
             };
-            pin_derived_term_if_derived(
-                relation,
-                JoltDerivedId::from(public_id),
-                input_points,
-                output_points,
-                challenges,
-                got,
-            )?;
+            if got != expected {
+                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+            }
         }
         Ok(())
     }

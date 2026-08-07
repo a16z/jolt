@@ -16,9 +16,13 @@
 //! statement shape, bridges Jolt's Fiat-Shamir transcript into Akita's, and
 //! embeds the backend proof bytes wholesale.
 
+use akita_config::CommitmentConfig;
 use akita_pcs::AkitaTranscript;
-use akita_prover::ProverOpeningData;
-use akita_types::{BasisMode, OpeningClaims, PointVariableSelection, PolynomialGroupClaims};
+use akita_prover::{CpuBackend, PreparedGroupProveOps, PreparedProverGroup, ProverOpeningData};
+use akita_types::{
+    BasisMode, CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims,
+    OpeningScheduleSelection, PolynomialGroupClaims,
+};
 use jolt_openings::{BatchOpeningScheme, OpeningsError, VerifierOpeningClaim};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
@@ -27,11 +31,13 @@ use tracing::info_span;
 use crate::adapters::{
     akita_error, append_batch_statement, append_verifier_setup, backend_stack,
     bridge_jolt_statement_challenge, invalid_batch, prove_failed, reverse_point, serialize_akita,
-    with_backend_pool, AkitaBackendCommitment, AkitaBackendFlavor, AkitaBackendHint,
-    AkitaBackendOneHotPoly, AkitaBackendProof, AkitaBackendScheme, AkitaBatchProof,
-    AkitaCommitment, AkitaField, AkitaHintPolynomials, AkitaOneHotK16BackendScheme,
-    AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    with_backend_pool, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
+    AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBackendProof, AkitaBackendScheme,
+    AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintPolynomials,
+    AkitaOneHotK16BackendScheme, AkitaOneHotK16Config, AkitaOneHotK256BackendScheme,
+    AkitaOneHotK256Config, AkitaOneHotK256D128BackendScheme, AkitaOneHotK256D128Config,
+    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_K16,
+    AKITA_ONE_HOT_K256,
 };
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
@@ -55,6 +61,7 @@ fn validate_statement(
     max_num_vars: usize,
     max_num_polys_per_commitment_group: usize,
     one_hot_k: usize,
+    one_hot_ring_dimension: usize,
 ) -> Result<ValidatedStatement<'_>, OpeningsError> {
     let first = statement
         .first()
@@ -101,15 +108,20 @@ fn validate_statement(
         )));
     }
     match commitment.backend_flavor {
-        AkitaBackendFlavor::Dense if commitment.one_hot_k != 0 => {
+        AkitaBackendFlavor::Dense
+            if commitment.one_hot_k != 0 || commitment.ring_dimension != AKITA_D =>
+        {
             return Err(invalid_batch(
-                "Akita dense commitment must not declare a one-hot chunk size",
+                "Akita dense commitment has invalid ring metadata",
             ));
         }
-        AkitaBackendFlavor::OneHot if commitment.one_hot_k != one_hot_k => {
+        AkitaBackendFlavor::OneHot
+            if commitment.one_hot_k != one_hot_k
+                || commitment.ring_dimension != one_hot_ring_dimension =>
+        {
             return Err(invalid_batch(format!(
-                "Akita commitment one-hot K={} does not match setup K={one_hot_k}",
-                commitment.one_hot_k
+                "Akita commitment one-hot geometry K={}, D={} does not match setup K={one_hot_k}, D={one_hot_ring_dimension}",
+                commitment.one_hot_k, commitment.ring_dimension
             )));
         }
         AkitaBackendFlavor::Dense | AkitaBackendFlavor::OneHot => {}
@@ -149,7 +161,9 @@ fn validate_witness(
     }
     if matches!(
         hint.polynomials,
-        AkitaHintPolynomials::OneHot(_) | AkitaHintPolynomials::SparseUnit(_)
+        AkitaHintPolynomials::OneHot(_)
+            | AkitaHintPolynomials::TraceOneHot(_)
+            | AkitaHintPolynomials::SparseUnit(_)
     ) && !polynomials.iter().all(|polynomial| polynomial.is_one_hot())
     {
         return Err(invalid_batch(format!(
@@ -195,15 +209,29 @@ fn single_group_batch<'a, P>(
     polynomials: &'a [&'a P],
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
-) -> Result<ProverOpeningData<'a, AkitaField, P, AkitaField>, OpeningsError> {
-    let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).map_err(akita_error)?,
-        evaluations.to_vec(),
-        backend_commitment,
-    )
-    .map_err(akita_error)?;
-    let claims = OpeningClaims::from_groups(point.to_vec(), vec![group]).map_err(akita_error)?;
+) -> Result<ProverOpeningData<'a, AkitaField, PreparedProverGroup<'a, P>, AkitaField>, OpeningsError>
+where
+    P: akita_prover::RootPolyMeta<AkitaField>,
+{
+    let group =
+        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), backend_commitment)
+            .map_err(akita_error)?;
+    let claims = OpeningClaims::from_groups(vec![group]).map_err(akita_error)?;
     ProverOpeningData::new(claims, vec![backend_hint], vec![polynomials]).map_err(akita_error)
+}
+
+/// Selects the generated schedule row for one standalone commitment group and
+/// returns its public batch-level selection.
+fn single_group_selection<Cfg: CommitmentConfig>(
+    backend_commitment: &AkitaBackendCommitment,
+) -> Result<OpeningScheduleSelection, OpeningsError> {
+    let profiles = CommittedGroupBatchProfile {
+        final_group: *backend_commitment.profile(),
+        precommitteds: Vec::new(),
+    };
+    Cfg::select_schedule_for_profiles(&profiles)
+        .map(|row| row.selection())
+        .map_err(akita_error)
 }
 
 /// Dense-flavor batched prove shared by the dense and sparse-unit paths —
@@ -211,7 +239,15 @@ fn single_group_batch<'a, P>(
 /// chain is too deep to name generically, hence a macro.
 macro_rules! prove_dense_backend {
     ($setup:expr, $point:expr, $evaluations:expr, $polynomials:expr, $commitment:expr, $hint:expr, $transcript:expr) => {{
-        let claims = single_group_batch($point, $evaluations, $polynomials, $commitment, $hint)?;
+        let backend_commitment = $commitment;
+        let selection = single_group_selection::<AkitaConfig>(&backend_commitment)?;
+        let claims = single_group_batch(
+            $point,
+            $evaluations,
+            $polynomials,
+            backend_commitment,
+            $hint,
+        )?;
         let (backend_prover_setup, prepared_backend_setup) = $setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
@@ -219,7 +255,7 @@ macro_rules! prove_dense_backend {
         with_backend_pool(|| {
             AkitaBackendScheme::batched_prove(
                 backend_prover_setup,
-                claims,
+                (selection, claims),
                 &stack,
                 transcript,
                 BasisMode::Lagrange,
@@ -231,17 +267,34 @@ macro_rules! prove_dense_backend {
 
 /// The one-hot backend consumes the point in reversed variable order and uses
 /// the dedicated one-hot setup pair.
-fn prove_one_hot(
+fn prove_one_hot<'a, P>(
     setup: &AkitaProverSetup,
     point: &[AkitaField],
     evaluations: &[AkitaField],
-    polynomials: &[&AkitaBackendOneHotPoly],
+    polynomials: &'a [&'a P],
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
     akita_transcript: &mut AkitaTranscript<AkitaField>,
-) -> Result<AkitaBackendProof, OpeningsError> {
+) -> Result<AkitaBackendProof, OpeningsError>
+where
+    P: akita_prover::RootPolyMeta<AkitaField>,
+    PreparedProverGroup<'a, P>:
+        PreparedGroupProveOps<AkitaField, AkitaBackendExtField, CpuBackend, CpuBackend>,
+{
     let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
     let backend_point = reverse_point(point);
+    let selection = match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
+        (AKITA_ONE_HOT_K16, 64) => {
+            single_group_selection::<AkitaOneHotK16Config>(&backend_commitment)?
+        }
+        (AKITA_ONE_HOT_K256, 64) => {
+            single_group_selection::<AkitaOneHotK256Config>(&backend_commitment)?
+        }
+        (AKITA_ONE_HOT_K256, 128) => {
+            single_group_selection::<AkitaOneHotK256D128Config>(&backend_commitment)?
+        }
+        _ => unreachable!("the one-hot setup geometry was validated during setup"),
+    };
     let claims = single_group_batch(
         &backend_point,
         evaluations,
@@ -251,23 +304,32 @@ fn prove_one_hot(
     )?;
     let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
-    with_backend_pool(|| match setup.one_hot_k() {
-        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_prove(
-            backend_prover_setup,
-            claims,
-            &stack,
-            akita_transcript,
-            BasisMode::Lagrange,
-        ),
-        AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_prove(
-            backend_prover_setup,
-            claims,
-            &stack,
-            akita_transcript,
-            BasisMode::Lagrange,
-        ),
-        _ => unreachable!("one-hot K is validated during setup"),
-    })
+    with_backend_pool(
+        || match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
+            (AKITA_ONE_HOT_K16, 64) => AkitaOneHotK16BackendScheme::batched_prove(
+                backend_prover_setup,
+                (selection, claims),
+                &stack,
+                akita_transcript,
+                BasisMode::Lagrange,
+            ),
+            (AKITA_ONE_HOT_K256, 64) => AkitaOneHotK256BackendScheme::batched_prove(
+                backend_prover_setup,
+                (selection, claims),
+                &stack,
+                akita_transcript,
+                BasisMode::Lagrange,
+            ),
+            (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::batched_prove(
+                backend_prover_setup,
+                (selection, claims),
+                &stack,
+                akita_transcript,
+                BasisMode::Lagrange,
+            ),
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        },
+    )
     .map_err(prove_failed)
 }
 
@@ -299,6 +361,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.max_num_vars(),
             setup.max_num_polys_per_commitment_group(),
             setup.one_hot_k(),
+            setup.one_hot_ring_dimension(),
         )?;
         let _span = info_span!(
             "AkitaNativeBatching::prove_batch",
@@ -335,7 +398,19 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             }
             AkitaHintPolynomials::OneHot(one_hot) => {
                 let refs = one_hot.iter().collect::<Vec<_>>();
-                prove_one_hot(
+                prove_one_hot::<AkitaBackendOneHotPoly>(
+                    setup,
+                    point,
+                    &evaluations,
+                    &refs,
+                    backend_commitment,
+                    backend_hint,
+                    &mut akita_transcript,
+                )?
+            }
+            AkitaHintPolynomials::TraceOneHot(one_hot) => {
+                let refs = one_hot.iter().collect::<Vec<_>>();
+                prove_one_hot::<crate::trace_onehot::TracePackedOneHot>(
                     setup,
                     point,
                     &evaluations,
@@ -389,6 +464,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.max_num_vars,
             setup.max_num_polys_per_commitment_group,
             setup.one_hot_k,
+            setup.one_hot_ring_dimension,
         )?;
         let backend_point = match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => point.to_vec(),
@@ -397,7 +473,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         // Deserializes the proof-controlled backend payloads only after their
         // shapes are validated against the trusted schedule, so a malformed
         // proof cannot drive shape-backed allocations (see `shape_guard`).
-        let (backend_commitment, backend_proof) =
+        let (selection, backend_commitment, backend_proof) =
             crate::shape_guard::deserialize_checked_backend_payload(
                 commitment,
                 proof,
@@ -417,38 +493,41 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             .iter()
             .map(|claim| claim.evaluation.value)
             .collect();
-        let group = PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(backend_point.len(), backend_point.len())
-                .map_err(akita_error)?,
-            openings,
-            &backend_commitment,
-        )
-        .map_err(akita_error)?;
-        let claims = OpeningClaims::from_groups(backend_point, vec![group]).map_err(akita_error)?;
+        let group = PolynomialGroupClaims::new(backend_point, openings, &backend_commitment)
+            .map_err(akita_error)?;
+        let claims = OpeningClaims::from_groups(vec![group]).map_err(akita_error)?;
+        let batch_statement = GroupBatchStatement::new(selection, claims).map_err(akita_error)?;
         with_backend_pool(|| match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => AkitaBackendScheme::batched_verify(
                 &backend_proof,
                 backend_verifier,
                 &mut akita_transcript,
-                claims,
+                batch_statement,
                 BasisMode::Lagrange,
             ),
-            AkitaBackendFlavor::OneHot => match setup.one_hot_k {
-                AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_verify(
+            AkitaBackendFlavor::OneHot => match (setup.one_hot_k, setup.one_hot_ring_dimension) {
+                (AKITA_ONE_HOT_K16, 64) => AkitaOneHotK16BackendScheme::batched_verify(
                     &backend_proof,
                     backend_verifier,
                     &mut akita_transcript,
-                    claims,
+                    batch_statement,
                     BasisMode::Lagrange,
                 ),
-                AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_verify(
+                (AKITA_ONE_HOT_K256, 64) => AkitaOneHotK256BackendScheme::batched_verify(
                     &backend_proof,
                     backend_verifier,
                     &mut akita_transcript,
-                    claims,
+                    batch_statement,
                     BasisMode::Lagrange,
                 ),
-                _ => unreachable!("one-hot K is validated during setup"),
+                (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::batched_verify(
+                    &backend_proof,
+                    backend_verifier,
+                    &mut akita_transcript,
+                    batch_statement,
+                    BasisMode::Lagrange,
+                ),
+                _ => unreachable!("the one-hot setup geometry was validated during setup"),
             },
         })
         .map_err(|_| OpeningsError::VerificationFailed)

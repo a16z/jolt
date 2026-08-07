@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -124,8 +124,11 @@ pub type ChunkVisitor<'a> =
     dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
 /// Sequential row access for the pass: trace-backed today, segment-backed
-/// later. Slice-backed sources may also expose their rows for
-/// order-insensitive whole-range collection.
+/// later. Random access is deliberately inexpressible — except through
+/// [`RowSource::random_access`], the measured escape hatch for
+/// order-insensitive whole-range collection: the chunked walk serializes on
+/// per-chunk staging and consume copies, and at 2^25 cycles on a 64-thread
+/// host the collection walks alone were most of the prover's wall time.
 pub trait RowSource {
     /// Visits the half-open cycle `range` in order as buffers of at most
     /// `chunk_size` rows; `[0, T)` today, segments later.
@@ -136,9 +139,235 @@ pub trait RowSource {
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
 
-    /// The full physical row sequence, when borrowing it is supported.
-    fn rows(&self) -> Option<&[TraceRow]> {
+    /// The random-access view of a slice-backed source: `Some` lets
+    /// whole-range collectors ([`collect_bundles`], the kernels' presized
+    /// twins) take the index-parallel path over the physical rows. `None`
+    /// (the default, and every re-emulating source) keeps the sequential
+    /// chunk walk as the only access shape.
+    fn random_access(&self) -> Option<RandomAccessRows<'_>> {
         None
+    }
+
+    /// An owning counterpart of [`RowSource::random_access`], for consumers
+    /// that outlive their borrow of the source (sumcheck kernels holding
+    /// state across rounds): re-deriving per-cycle windows from the handle
+    /// replaces retaining materialized row vectors at gigabyte scale. `None`
+    /// whenever `random_access` is.
+    fn owned_rows(&self) -> Option<OwnedRows> {
+        None
+    }
+}
+
+/// A shared owning handle to a slice-backed source's rows and extraction
+/// context: [`OwnedRows::view`] re-creates the borrowed random-access view
+/// on demand.
+pub struct OwnedRows {
+    rows: std::sync::Arc<Vec<TraceRow>>,
+    cycles: usize,
+    preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
+}
+
+impl OwnedRows {
+    pub(crate) fn new(
+        rows: std::sync::Arc<Vec<TraceRow>>,
+        cycles: usize,
+        preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
+    ) -> Self {
+        Self {
+            rows,
+            cycles,
+            preprocessing,
+        }
+    }
+
+    /// The padded cycle-domain size the handle serves.
+    pub fn cycles(&self) -> usize {
+        self.cycles
+    }
+
+    /// The borrowed random-access view over the held rows.
+    pub fn view(&self) -> RandomAccessRows<'_> {
+        RandomAccessRows::new(
+            &self.rows,
+            self.cycles,
+            WitnessEnv {
+                preprocessing: &self.preprocessing,
+            },
+        )
+    }
+}
+
+/// A slice-backed source's rows and extraction context, for index-parallel
+/// collection. Cycles at or beyond the physical rows are padding (default)
+/// rows, exactly as the sequential walk serves them.
+pub struct RandomAccessRows<'a> {
+    /// The physical trace rows.
+    rows: &'a [TraceRow],
+    /// The padded cycle-domain size (`2^log_t`); the lookahead window ends
+    /// here regardless of the collected range.
+    cycles: usize,
+    /// The extraction environment shared by every window.
+    env: WitnessEnv<'a>,
+    /// The padding row served at and beyond the physical trace, shared by
+    /// every window (and every thread) of the view.
+    padding: TraceRow,
+}
+
+impl<'a> RandomAccessRows<'a> {
+    pub(crate) fn new(rows: &'a [TraceRow], cycles: usize, env: WitnessEnv<'a>) -> Self {
+        Self {
+            rows,
+            cycles,
+            env,
+            padding: TraceRow::default(),
+        }
+    }
+
+    /// The padded cycle-domain size the view serves.
+    pub fn cycles(&self) -> usize {
+        self.cycles
+    }
+
+    /// Extracts the bundle at `index` with the sequential walk's one-row
+    /// lookahead window (padding rows at and beyond the physical trace, no
+    /// lookahead at the end of the cycle domain). Pure per index — callers
+    /// extract from any thread in any order.
+    #[inline]
+    pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {
+        let current = self.rows.get(index).unwrap_or(&self.padding);
+        let next =
+            (index + 1 < self.cycles).then(|| self.rows.get(index + 1).unwrap_or(&self.padding));
+        B::from_row(current, next, &self.env)
+    }
+}
+
+/// The parallel scatter grain of the index-parallel collectors: big enough
+/// to amortize rayon dispatch, small enough to load-balance skewed
+/// extraction.
+#[cfg(feature = "parallel")]
+const COLLECT_PAR_CHUNK: usize = 1 << 12;
+
+/// In-place parallel collection of `window(0..count)` into a fresh vector:
+/// workers write straight into the destination's spare capacity — no
+/// per-thread segment buffers or concatenation (rayon's `Result` collect
+/// loses indexedness and stages every segment). First error wins; the
+/// partially-written buffer is abandoned without drops (elements are plain
+/// data across every caller).
+#[cfg(feature = "parallel")]
+pub(crate) fn par_collect_windows<V: Send>(
+    count: usize,
+    window: impl Fn(usize) -> Result<V, WitnessError> + Send + Sync,
+) -> Result<Vec<V>, WitnessError> {
+    let mut out: Vec<V> = Vec::with_capacity(count);
+    let spare = &mut out.spare_capacity_mut()[..count];
+    let error = std::sync::Mutex::new(None);
+    spare
+        .par_chunks_mut(COLLECT_PAR_CHUNK)
+        .enumerate()
+        .for_each(|(chunk_index, destination)| {
+            let base = chunk_index * COLLECT_PAR_CHUNK;
+            for (offset, slot) in destination.iter_mut().enumerate() {
+                match window(base + offset) {
+                    Ok(value) => {
+                        let _ = slot.write(value);
+                    }
+                    Err(failure) => {
+                        if let Ok(mut guard) = error.try_lock() {
+                            let _ = guard.get_or_insert(failure);
+                        }
+                        return;
+                    }
+                }
+            }
+        });
+    #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
+    if let Some(failure) = error.into_inner().unwrap() {
+        return Err(failure);
+    }
+    // SAFETY: the error latch is empty, so every chunk ran to completion and
+    // initialized all `count` slots of the spare capacity above.
+    unsafe { out.set_len(count) };
+    Ok(out)
+}
+
+/// Index-parallel bundle collection over a random-access view, mapped
+/// through `pack` element by element (so packed forms never stage the wide
+/// bundle): values are identical to the sequential pass's — extraction is
+/// pure per cycle window, and the lookahead row at the end of the range
+/// matches the chunk walk's `next_after`.
+pub fn collect_par_map<B: WitnessBundle, V: Send>(
+    access: &RandomAccessRows<'_>,
+    cycles: usize,
+    pack: impl Fn(B) -> V + Send + Sync,
+) -> Result<Vec<V>, WitnessError> {
+    let window = |index: usize| access.window::<B>(index).map(&pack);
+    #[cfg(feature = "parallel")]
+    return par_collect_windows(cycles, window);
+    #[cfg(not(feature = "parallel"))]
+    (0..cycles).map(window).collect()
+}
+
+/// [`collect_par_map`] without the packing step: index-parallel collection
+/// of the bundles themselves.
+pub fn collect_bundles_par<B: WitnessBundle + Send>(
+    access: &RandomAccessRows<'_>,
+    cycles: usize,
+) -> Result<Vec<B>, WitnessError> {
+    collect_par_map(access, cycles, |bundle: B| bundle)
+}
+
+/// Index-parallel collection of one cycle sub-range into a reusable buffer
+/// (cleared first, allocation kept): the pipelining collector's shape — a
+/// caller overlapping extraction with downstream work re-fills two buffers
+/// alternately instead of allocating per delivery. Elements must be plain
+/// data (every witness bundle is); on error the buffer is left cleared.
+pub fn collect_range_into<B: WitnessBundle + Send>(
+    access: &RandomAccessRows<'_>,
+    range: Range<usize>,
+    out: &mut Vec<B>,
+) -> Result<(), WitnessError> {
+    out.clear();
+    #[cfg(feature = "parallel")]
+    {
+        let start = range.start;
+        let count = range.end.saturating_sub(start);
+        out.reserve(count);
+        let spare = &mut out.spare_capacity_mut()[..count];
+        let error = std::sync::Mutex::new(None);
+        spare
+            .par_chunks_mut(COLLECT_PAR_CHUNK)
+            .enumerate()
+            .for_each(|(chunk_index, destination)| {
+                let base = start + chunk_index * COLLECT_PAR_CHUNK;
+                for (offset, slot) in destination.iter_mut().enumerate() {
+                    match access.window::<B>(base + offset) {
+                        Ok(bundle) => {
+                            let _ = slot.write(bundle);
+                        }
+                        Err(failure) => {
+                            if let Ok(mut guard) = error.try_lock() {
+                                let _ = guard.get_or_insert(failure);
+                            }
+                            return;
+                        }
+                    }
+                }
+            });
+        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
+        if let Some(failure) = error.into_inner().unwrap() {
+            return Err(failure);
+        }
+        // SAFETY: the error latch is empty, so every chunk ran to completion
+        // and initialized all `count` slots of the spare capacity above.
+        unsafe { out.set_len(count) };
+        Ok(())
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        for index in range {
+            out.push(access.window::<B>(index)?);
+        }
+        Ok(())
     }
 }
 
@@ -182,6 +411,13 @@ pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
+    // Whole-range collection over a slice-backed source skips the chunked
+    // walk (out-of-range requests fall through to it for its validation).
+    if let Some(access) = source.random_access() {
+        if cycles <= access.cycles() {
+            return collect_bundles_par(&access, cycles);
+        }
+    }
     let mut consumers = (CollectBundles::<B>::default(),);
     stream_witnesses(source, 0..cycles, BUNDLE_PASS_CHUNK, &mut consumers)?;
     Ok(consumers.0.into_rows())
@@ -291,6 +527,24 @@ mod tests {
             let expected = whole.get(index + 1).map_or(0, |next| next.pc.0);
             assert_eq!(bundle.next_pc.0, expected);
         }
+    }
+
+    #[test]
+    fn random_access_collection_matches_the_chunked_walk() {
+        with_sample_backend(|backend| {
+            // The routed path (index-parallel over the slice-backed trace).
+            let routed: Vec<WindowBundle> = collect_bundles(backend, 4).unwrap();
+            // The chunked walk, forced.
+            let mut consumers = (CollectBundles::<WindowBundle>::default(),);
+            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
+            assert_eq!(routed, consumers.0.into_rows());
+            // The mapped variant packs the same windows.
+            let access = backend.random_access().unwrap();
+            let packed: Vec<u64> =
+                collect_par_map(&access, 4, |bundle: WindowBundle| bundle.pc.0).unwrap();
+            let expected: Vec<u64> = routed.iter().map(|bundle| bundle.pc.0).collect();
+            assert_eq!(packed, expected);
+        });
     }
 
     #[test]

@@ -27,11 +27,10 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub bytecode_chunk_commitments: Vec<PCS::Output>,
     #[cfg(not(feature = "akita"))]
     pub program_image_commitment: PCS::Output,
-    /// The one packed `ProgramOneHot` commitment covering every bytecode lane
-    /// sub-column and the program image bytes (the per-chunk/image commitment
-    /// pair does not exist on the packed path).
+    /// Fixed-prefix program objects in canonical order: bytecode, then the
+    /// independently pointed program-image bytes.
     #[cfg(feature = "akita")]
-    pub program_one_hot_commitment: PCS::Output,
+    pub program_one_hot_commitments: Vec<PCS::Output>,
     #[cfg(feature = "akita")]
     pub bytecode_chunk_count: usize,
 }
@@ -177,9 +176,9 @@ where
     pub untrusted_advice_setup: Option<PCS::VerifierSetup>,
     #[cfg(feature = "akita")]
     pub trusted_advice_setup: Option<PCS::VerifierSetup>,
-    /// Committed-program mode: the `ProgramOneHot` object setup.
+    /// Committed-program mode: setups matching `program_one_hot_commitments`.
     #[cfg(feature = "akita")]
-    pub program_one_hot_setup: Option<PCS::VerifierSetup>,
+    pub program_one_hot_setups: Vec<PCS::VerifierSetup>,
 }
 
 impl<PCS, VC> JoltVerifierPreprocessing<PCS, VC>
@@ -203,7 +202,7 @@ where
             #[cfg(feature = "akita")]
             trusted_advice_setup: None,
             #[cfg(feature = "akita")]
-            program_one_hot_setup: None,
+            program_one_hot_setups: Vec::new(),
         }
     }
 }

@@ -1,17 +1,15 @@
 use jolt_field::Field;
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
-use super::{pc_for_row, row_is_noop, Extract, ToField, WitnessEnv};
+use super::{row_is_noop, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 
-/// Bytecode PC with the read-RAF pushforward convention: no-op rows and rows
-/// without a bytecode mapping land on slot 0 (unlike [`Pc`], which requires
-/// the mapping).
+/// Bytecode PC with the read-RAF pushforward convention: no-op rows land on
+/// slot 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BytecodePc(pub usize);
 
-/// Bytecode PC if the row has a mapping (no-ops map to slot 0) — the
-/// committed one-hot convention, where unmapped rows are cold cycles.
+/// Bytecode PC for the committed one-hot convention (no-ops map to slot 0).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MappedPc(pub Option<usize>);
 
@@ -19,17 +17,12 @@ impl Extract for BytecodePc {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
+        _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         if row_is_noop(row) {
             return Ok(Self(0));
         }
-        Ok(Self(
-            env.preprocessing
-                .bytecode
-                .get_pc(&row.instruction)
-                .unwrap_or(0),
-        ))
+        Ok(Self(row.pc() as usize))
     }
 }
 
@@ -37,9 +30,9 @@ impl Extract for MappedPc {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
+        _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(env.preprocessing.bytecode.get_pc(&row.instruction)))
+        Ok(Self(Some(row.pc() as usize)))
     }
 }
 
@@ -70,9 +63,9 @@ impl Extract for Pc {
     fn extract(
         row: &TraceRow,
         _next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
+        _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        pc_for_row(row, env.preprocessing).map(|pc| Self(pc as u64))
+        Ok(Self(row.pc()))
     }
 }
 
@@ -88,7 +81,7 @@ impl Extract for UnexpandedPc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.instruction.address as u64))
+        Ok(Self(row.unexpanded_pc()))
     }
 }
 
@@ -102,13 +95,9 @@ impl Extract for NextPc {
     fn extract(
         _row: &TraceRow,
         next: Option<&TraceRow>,
-        env: &WitnessEnv<'_>,
+        _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(
-            next.map(|row| pc_for_row(row, env.preprocessing))
-                .transpose()?
-                .map_or(0, |pc| pc as u64),
-        ))
+        Ok(Self(next.map_or(0, TraceRow::pc)))
     }
 }
 
@@ -124,6 +113,6 @@ impl Extract for NextUnexpandedPc {
         next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(next.map_or(0, |row| row.instruction.address as u64)))
+        Ok(Self(next.map_or(0, TraceRow::unexpanded_pc)))
     }
 }

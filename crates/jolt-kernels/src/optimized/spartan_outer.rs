@@ -57,7 +57,6 @@ use jolt_poly::lagrange::{
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
-use jolt_riscv::CircuitFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -65,20 +64,20 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+use jolt_verifier::VerifierError;
+use jolt_witness::witnesses::SpartanOuterRow;
+#[cfg(test)]
 use jolt_witness::witnesses::{
     Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput, NextIsFirstInSequence,
     NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamReadValue,
     RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
     ShouldBranch, ShouldJump, UnexpandedPc,
 };
-use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{
-    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
-    RoundChallenges,
-};
+use super::support::collect_rows;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -91,82 +90,6 @@ const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 
-/// The per-cycle Spartan outer witness: all 35 R1CS inputs as their native
-/// small scalars, extracted in one typed trace-row walk.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-pub struct SpartanOuterRow {
-    #[opening(LeftInstructionInput)]
-    pub left_instruction_input: LeftInstructionInput,
-    #[opening(RightInstructionInput)]
-    pub right_instruction_input: RightInstructionInput,
-    #[opening(Product)]
-    pub product: Product,
-    #[opening(ShouldBranch)]
-    pub should_branch: ShouldBranch,
-    #[opening(PC)]
-    pub pc: Pc,
-    #[opening(UnexpandedPC)]
-    pub unexpanded_pc: UnexpandedPc,
-    #[opening(Imm)]
-    pub imm: Imm,
-    #[opening(RamAddress)]
-    pub ram_address: RamAddress,
-    #[opening(Rs1Value)]
-    pub rs1_value: Rs1Value,
-    #[opening(Rs2Value)]
-    pub rs2_value: Rs2Value,
-    #[opening(RdWriteValue)]
-    pub rd_write_value: RdWriteValue,
-    #[opening(RamReadValue)]
-    pub ram_read_value: RamReadValue,
-    #[opening(RamWriteValue)]
-    pub ram_write_value: RamWriteValue,
-    #[opening(LeftLookupOperand)]
-    pub left_lookup_operand: LeftLookupOperand,
-    #[opening(RightLookupOperand)]
-    pub right_lookup_operand: RightLookupOperand,
-    #[opening(NextUnexpandedPC)]
-    pub next_unexpanded_pc: NextUnexpandedPc,
-    #[opening(NextPC)]
-    pub next_pc: NextPc,
-    #[opening(NextIsVirtual)]
-    pub next_is_virtual: NextIsVirtual,
-    #[opening(NextIsFirstInSequence)]
-    pub next_is_first_in_sequence: NextIsFirstInSequence,
-    #[opening(LookupOutput)]
-    pub lookup_output: LookupOutput,
-    #[opening(ShouldJump)]
-    pub should_jump: ShouldJump,
-    #[opening(OpFlags(CircuitFlags::AddOperands))]
-    pub add_operands: OpFlag,
-    #[opening(OpFlags(CircuitFlags::SubtractOperands))]
-    pub subtract_operands: OpFlag,
-    #[opening(OpFlags(CircuitFlags::MultiplyOperands))]
-    pub multiply_operands: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Load))]
-    pub load: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Store))]
-    pub store: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Jump))]
-    pub jump: OpFlag,
-    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD))]
-    pub write_lookup_output_to_rd: OpFlag,
-    #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
-    pub virtual_instruction: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Assert))]
-    pub assert_flag: OpFlag,
-    #[opening(OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC))]
-    pub do_not_update_unexpanded_pc: OpFlag,
-    #[opening(OpFlags(CircuitFlags::Advice))]
-    pub advice: OpFlag,
-    #[opening(OpFlags(CircuitFlags::IsCompressed))]
-    pub is_compressed: OpFlag,
-    #[opening(OpFlags(CircuitFlags::IsFirstInSequence))]
-    pub is_first_in_sequence: OpFlag,
-    #[opening(OpFlags(CircuitFlags::IsLastInSequence))]
-    pub is_last_in_sequence: OpFlag,
-}
-
 /// One cycle's integer values of the 19 eq-conditional rows, split into the
 /// two uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as
 /// `S192` — wide enough for the `RightLookupOperand`-bearing rows, whose
@@ -178,99 +101,96 @@ struct RowGroupValues {
     b_second: [S192; SECOND_GROUP_LEN],
 }
 
-impl SpartanOuterRow {
-    /// Evaluate the 19 constraint rows at one cycle with exact integer
-    /// arithmetic. Formulas transcribe `jolt-r1cs`'s `rv64_eq_constraint_rows`
-    /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
-    /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
-    fn group_values(&self) -> RowGroupValues {
-        let flag = |value: bool| i64::from(value);
-        let load = flag(self.load.0);
-        let store = flag(self.store.0);
-        let add = flag(self.add_operands.0);
-        let sub = flag(self.subtract_operands.0);
-        let mul = flag(self.multiply_operands.0);
-        let jump = flag(self.jump.0);
-        let should_branch = flag(self.should_branch.0);
+/// Evaluate the 19 constraint rows at one cycle with exact integer
+/// arithmetic. Formulas transcribe `jolt-r1cs`'s `rv64_eq_constraint_rows`
+/// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
+/// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
+fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
+    let flag = |value: bool| i64::from(value);
+    let load = flag(row.load.0);
+    let store = flag(row.store.0);
+    let add = flag(row.add_operands.0);
+    let sub = flag(row.subtract_operands.0);
+    let mul = flag(row.multiply_operands.0);
+    let jump = flag(row.jump.0);
+    let should_branch = flag(row.should_branch.0);
 
-        // Rows 1, 2, 3, 4, 5, 6, 11, 14, 17, 18.
-        let a_first = [
-            1 - load - store,
-            load,
-            load,
-            store,
-            add + sub + mul,
-            1 - add - sub - mul,
-            flag(self.assert_flag.0),
-            flag(self.should_jump.0),
-            flag(self.virtual_instruction.0) - flag(self.is_last_in_sequence.0),
-            flag(self.next_is_virtual.0) - flag(self.next_is_first_in_sequence.0),
-        ];
-        // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
-        let a_second = [
-            load + store,
-            add,
-            sub,
-            mul,
-            1 - add - sub - mul - flag(self.advice.0),
-            flag(self.write_lookup_output_to_rd.0),
-            jump,
-            should_branch,
-            1 - should_branch - jump,
-        ];
+    // Rows 1, 2, 3, 4, 5, 6, 11, 14, 17, 18.
+    let a_first = [
+        1 - load - store,
+        load,
+        load,
+        store,
+        add + sub + mul,
+        1 - add - sub - mul,
+        flag(row.assert_flag.0),
+        flag(row.should_jump.0),
+        flag(row.virtual_instruction.0) - flag(row.is_last_in_sequence.0),
+        flag(row.next_is_virtual.0) - flag(row.next_is_first_in_sequence.0),
+    ];
+    // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
+    let a_second = [
+        load + store,
+        add,
+        sub,
+        mul,
+        1 - add - sub - mul - flag(row.advice.0),
+        flag(row.write_lookup_output_to_rd.0),
+        jump,
+        should_branch,
+        1 - should_branch - jump,
+    ];
 
-        let diff = |a: u64, b: u64| S192::from_i128(i128::from(a) - i128::from(b));
-        let b_first = [
-            S192::from_u64(self.ram_address.0),
-            diff(self.ram_read_value.0, self.ram_write_value.0),
-            diff(self.ram_read_value.0, self.rd_write_value.0),
-            diff(self.rs2_value.0, self.ram_write_value.0),
-            S192::from_u64(self.left_lookup_operand.0),
-            diff(self.left_lookup_operand.0, self.left_instruction_input.0),
-            S192::from_i128(i128::from(self.lookup_output.0) - 1),
-            diff(self.next_unexpanded_pc.0, self.lookup_output.0),
-            S192::from_i128(i128::from(self.next_pc.0) - i128::from(self.pc.0) - 1),
-            S192::from_i64(1 - flag(self.do_not_update_unexpanded_pc.0)),
-        ];
+    let diff = |a: u64, b: u64| S192::from_i128(i128::from(a) - i128::from(b));
+    let b_first = [
+        S192::from_u64(row.ram_address.0),
+        diff(row.ram_read_value.0, row.ram_write_value.0),
+        diff(row.ram_read_value.0, row.rd_write_value.0),
+        diff(row.rs2_value.0, row.ram_write_value.0),
+        S192::from_u64(row.left_lookup_operand.0),
+        diff(row.left_lookup_operand.0, row.left_instruction_input.0),
+        S192::from_i128(i128::from(row.lookup_output.0) - 1),
+        diff(row.next_unexpanded_pc.0, row.lookup_output.0),
+        S192::from_i128(i128::from(row.next_pc.0) - i128::from(row.pc.0) - 1),
+        S192::from_i64(1 - flag(row.do_not_update_unexpanded_pc.0)),
+    ];
 
-        let flag_i128 = |value: bool| i128::from(value);
-        let right_lookup = S192::from_u128(self.right_lookup_operand.0);
-        let right_input = S192::from_i128(self.right_instruction_input.0);
-        let left_input = S192::from_u64(self.left_instruction_input.0);
-        let imm = S192::from_i128(self.imm.0);
-        let product_limbs = self.product.0.magnitude_limbs();
-        let product = S192::new(
-            [product_limbs[0], product_limbs[1], 0],
-            self.product.0.is_positive,
-        );
-        let two_pow_64 = S192::new([0, 1, 0], true);
-        let b_second = [
-            S192::from_i128(i128::from(self.ram_address.0) - i128::from(self.rs1_value.0)) - imm,
-            right_lookup - left_input - right_input,
-            right_lookup - left_input + right_input - two_pow_64,
-            right_lookup - product,
-            right_lookup - right_input,
-            S192::from_i128(i128::from(self.rd_write_value.0) - i128::from(self.lookup_output.0)),
-            S192::from_i128(
-                i128::from(self.rd_write_value.0) - i128::from(self.unexpanded_pc.0) - 4
-                    + 2 * flag_i128(self.is_compressed.0),
-            ),
-            S192::from_i128(
-                i128::from(self.next_unexpanded_pc.0) - i128::from(self.unexpanded_pc.0),
-            ) - imm,
-            S192::from_i128(
-                i128::from(self.next_unexpanded_pc.0) - i128::from(self.unexpanded_pc.0) - 4
-                    + 4 * flag_i128(self.do_not_update_unexpanded_pc.0)
-                    + 2 * flag_i128(self.is_compressed.0),
-            ),
-        ];
+    let flag_i128 = |value: bool| i128::from(value);
+    let right_lookup = S192::from_u128(row.right_lookup_operand.0);
+    let right_input = S192::from_i128(row.right_instruction_input.0);
+    let left_input = S192::from_u64(row.left_instruction_input.0);
+    let imm = S192::from_i128(row.imm.0);
+    let product_limbs = row.product.0.magnitude_limbs();
+    let product = S192::new(
+        [product_limbs[0], product_limbs[1], 0],
+        row.product.0.is_positive,
+    );
+    let two_pow_64 = S192::new([0, 1, 0], true);
+    let b_second = [
+        S192::from_i128(i128::from(row.ram_address.0) - i128::from(row.rs1_value.0)) - imm,
+        right_lookup - left_input - right_input,
+        right_lookup - left_input + right_input - two_pow_64,
+        right_lookup - product,
+        right_lookup - right_input,
+        S192::from_i128(i128::from(row.rd_write_value.0) - i128::from(row.lookup_output.0)),
+        S192::from_i128(
+            i128::from(row.rd_write_value.0) - i128::from(row.unexpanded_pc.0) - 4
+                + 2 * flag_i128(row.is_compressed.0),
+        ),
+        S192::from_i128(i128::from(row.next_unexpanded_pc.0) - i128::from(row.unexpanded_pc.0))
+            - imm,
+        S192::from_i128(
+            i128::from(row.next_unexpanded_pc.0) - i128::from(row.unexpanded_pc.0) - 4
+                + 4 * flag_i128(row.do_not_update_unexpanded_pc.0)
+                + 2 * flag_i128(row.is_compressed.0),
+        ),
+    ];
 
-        RowGroupValues {
-            a_first,
-            a_second,
-            b_first,
-            b_second,
-        }
+    RowGroupValues {
+        a_first,
+        a_second,
+        b_first,
+        b_second,
     }
 }
 
@@ -308,51 +228,48 @@ fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
     out
 }
 
-impl RowGroupValues {
-    /// `Az·Bz` at every extended node for one cycle, per stream: integer Lagrange
-    /// extension of the group row values, then one wide integer product. Ranges:
-    /// `|az| < 2^22`, `|bz| < 2^152`, product `< 2^174` — inside `S256`.
-    fn extended_products(
-        &self,
-        coefficients: &[(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT],
-    ) -> [(S256, S256); EXTENDED_NODE_COUNT] {
-        let mut out = [(S256::zero(), S256::zero()); EXTENDED_NODE_COUNT];
-        for (slot, (_, coefficients)) in coefficients.iter().enumerate() {
-            let mut az_first: i64 = 0;
-            let mut az_second: i64 = 0;
-            let mut bz_first = S192::zero();
-            let mut bz_second = S192::zero();
-            for (i, &c) in coefficients.iter().enumerate() {
-                if c == 0 {
-                    continue;
+/// `Az·Bz` at every extended node for one cycle, per stream: integer Lagrange
+/// extension of the group row values, then one wide integer product. Ranges:
+/// `|az| < 2^22`, `|bz| < 2^152`, product `< 2^174` — inside `S256`.
+fn extended_products(
+    values: &RowGroupValues,
+    coefficients: &[(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT],
+) -> [(S256, S256); EXTENDED_NODE_COUNT] {
+    let mut out = [(S256::zero(), S256::zero()); EXTENDED_NODE_COUNT];
+    for (slot, (_, coefficients)) in coefficients.iter().enumerate() {
+        let mut az_first: i64 = 0;
+        let mut az_second: i64 = 0;
+        let mut bz_first = S192::zero();
+        let mut bz_second = S192::zero();
+        for (i, &c) in coefficients.iter().enumerate() {
+            if c == 0 {
+                continue;
+            }
+            let a_first = values.a_first[i];
+            if a_first != 0 {
+                az_first += c * a_first;
+            }
+            let b_first = &values.b_first[i];
+            if b_first.magnitude_limbs() != [0; 3] {
+                S64::from_i64(c).fmadd_trunc::<3, 3>(b_first, &mut bz_first);
+            }
+            if i < SECOND_GROUP_LEN {
+                let a_second = values.a_second[i];
+                if a_second != 0 {
+                    az_second += c * a_second;
                 }
-                let c_signed = S64::from_i64(c);
-                az_first += c * self.a_first[i];
-                bz_first += c_signed.mul_trunc::<3, 3>(&self.b_first[i]);
-                if i < SECOND_GROUP_LEN {
-                    az_second += c * self.a_second[i];
-                    bz_second += c_signed.mul_trunc::<3, 3>(&self.b_second[i]);
+                let b_second = &values.b_second[i];
+                if b_second.magnitude_limbs() != [0; 3] {
+                    S64::from_i64(c).fmadd_trunc::<3, 3>(b_second, &mut bz_second);
                 }
             }
-            out[slot] = (
-                S64::from_i64(az_first).mul_trunc::<3, 4>(&bz_first),
-                S64::from_i64(az_second).mul_trunc::<3, 4>(&bz_second),
-            );
         }
-        out
+        out[slot] = (
+            S64::from_i64(az_first).mul_trunc::<3, 4>(&bz_first),
+            S64::from_i64(az_second).mul_trunc::<3, 4>(&bz_second),
+        );
     }
-
-    /// The bound `Az`/`Bz` values of the first stream group under the
-    /// uni-skip challenge's Lagrange weights.
-    fn fold_first<F: Field>(&self, weights: &[F]) -> (F, F) {
-        fold_group(weights, &self.a_first, &self.b_first)
-    }
-
-    /// The bound `Az`/`Bz` values of the second stream group; only the first
-    /// `SECOND_GROUP_LEN` Lagrange weights apply.
-    fn fold_second<F: Field>(&self, weights: &[F]) -> (F, F) {
-        fold_group(&weights[..SECOND_GROUP_LEN], &self.a_second, &self.b_second)
-    }
+    out
 }
 
 fn widen(value: &S192) -> S256 {
@@ -368,7 +285,12 @@ fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (
     let mut bz = <F as WithSignedProductAccumulator>::SignedProductAccumulator::default();
     for ((&weight, &guard), magnitude) in weights.iter().zip(guards).zip(magnitudes) {
         az.fmadd_i64(weight, guard);
-        bz.fmadd_s256(weight, &widen(magnitude));
+        let limbs = magnitude.magnitude_limbs();
+        if limbs[1] == 0 && limbs[2] == 0 {
+            bz.fmadd_signed_u64(weight, limbs[0], magnitude.is_positive);
+        } else {
+            bz.fmadd_s256(weight, &widen(magnitude));
+        }
     }
     (az.reduce(), bz.reduce())
 }
@@ -380,19 +302,149 @@ fn fold_group<F: Field>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (
 struct SpartanOuterCarry<F: Field> {
     log_t: usize,
     tau: Vec<F>,
-    /// Typed-row store: slice-backed witnesses stay unmaterialized (the
-    /// ~176 B × T row vector is the prover's peak allocation at large scale).
-    rows: BundleStore<F, SpartanOuterRow>,
+    rows: RowsStore,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
     t1_values: Vec<F>,
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(SpartanOuterCarry, |carry| {
-    use crate::backend::vec_heap_bytes;
-    vec_heap_bytes(&carry.tau) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
-});
+impl<F: Field> allocative::Allocative for SpartanOuterCarry<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
+        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("t1_values"),
+            vec_heap_bytes(&self.t1_values),
+        );
+        visitor.exit();
+    }
+}
+
+/// Where the kernel's typed rows live. A slice-backed witness serves an
+/// owning handle and every pass re-extracts its windows on the fly — the
+/// materialized row vector (~176 B × T, the prover's peak allocation at
+/// large scale) never exists. Re-emulating sources retain the collected
+/// rows as before.
+enum RowsStore {
+    Owned(jolt_witness::OwnedRows),
+    Retained(Vec<SpartanOuterRow>),
+}
+
+impl RowsStore {
+    /// Resolve for a witness plane: the owning handle when the source is
+    /// slice-backed (and covers the cycle domain), a materialized collect
+    /// otherwise.
+    fn resolve<F: Field>(
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Self, KernelError<F>> {
+        match witness.owned_rows() {
+            Some(owned) if cycles <= owned.cycles() => Ok(Self::Owned(owned)),
+            _ => Ok(Self::Retained(collect_rows(witness, cycles)?)),
+        }
+    }
+
+    fn access(&self) -> RowsAccess<'_> {
+        match self {
+            Self::Owned(owned) => RowsAccess::View(owned.view()),
+            Self::Retained(rows) => RowsAccess::Retained(rows),
+        }
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl RowsStore {
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Owned(_) => 0,
+            Self::Retained(rows) => crate::backend::vec_heap_bytes(rows),
+        }
+    }
+}
+
+/// One pass's borrowed row provider.
+enum RowsAccess<'a> {
+    View(jolt_witness::RandomAccessRows<'a>),
+    Retained(&'a [SpartanOuterRow]),
+}
+
+impl RowsAccess<'_> {
+    /// The typed row at cycle `t` — an extraction window over a slice-backed
+    /// source, an indexed copy from a retained vector. Pure per index.
+    #[inline]
+    fn row(&self, t: usize) -> Result<SpartanOuterRow, WitnessError> {
+        match self {
+            Self::View(view) => view.window(t),
+            Self::Retained(rows) => Ok(rows[t]),
+        }
+    }
+}
+
+/// Extended-node evaluations of
+/// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
+/// table factored as `E_out ⊗ E_in` and the per-cycle products from the
+/// integer extension pipeline.
+fn extended_t1_values<F: Field>(
+    rows: &RowsAccess<'_>,
+    tau_low: &[F],
+) -> Result<Vec<F>, WitnessError> {
+    let split = tau_low.len() / 2;
+    let (out_point, in_point) = tau_low.split_at(split);
+    let e_out = EqPolynomial::<F>::evals(out_point, None);
+    let e_in = EqPolynomial::<F>::evals(in_point, None);
+    // `in_point` always covers the stream bit (τ_low's last entry), so every
+    // (cycle, stream) pair sits inside one `x_out` block.
+    let pairs_per_block = e_in.len() / 2;
+    let coefficients = extension_coefficients();
+
+    let block = |x_out: usize| -> Result<Vec<F>, WitnessError> {
+        let mut accumulators: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator> =
+            vec![Default::default(); EXTENDED_NODE_COUNT];
+        for pair in 0..pairs_per_block {
+            let t = x_out * pairs_per_block + pair;
+            let row = rows.row(t)?;
+            let values = row_group_values(&row);
+            let products = extended_products(&values, &coefficients);
+            for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
+                accumulator.fmadd_s256(e_in[2 * pair], first);
+                accumulator.fmadd_s256(e_in[2 * pair + 1], second);
+            }
+        }
+        Ok(accumulators
+            .into_iter()
+            .map(|accumulator| e_out[x_out] * accumulator.reduce())
+            .collect())
+    };
+    let merge = |mut left: Vec<F>, right: Vec<F>| {
+        for (left, right) in left.iter_mut().zip(right) {
+            *left += right;
+        }
+        left
+    };
+
+    #[cfg(feature = "parallel")]
+    let extended = (0..e_out.len()).into_par_iter().map(block).try_reduce(
+        || vec![F::zero(); EXTENDED_NODE_COUNT],
+        |left, right| Ok(merge(left, right)),
+    )?;
+    #[cfg(not(feature = "parallel"))]
+    let extended = {
+        let mut folded = vec![F::zero(); EXTENDED_NODE_COUNT];
+        for x_out in 0..e_out.len() {
+            folded = merge(folded, block(x_out)?);
+        }
+        folded
+    };
+
+    let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
+    for ((position, _), value) in extension_coefficients().iter().zip(extended) {
+        t1_values[*position] = value;
+    }
+    Ok(t1_values)
+}
 
 /// The stage-1 uni-skip front: typed-row collection, the extended-node
 /// evaluation pass, and the first-round polynomial assembly.
@@ -413,7 +465,7 @@ impl OptimizedOuterUniskip {
                 reason: "Spartan outer row count disagrees with log_t",
             });
         }
-        Self::prepare_from_store(session, log_t, tau, BundleStore::Retained(rows))
+        Self::prepare_from_store(session, log_t, tau, RowsStore::Retained(rows))
     }
 
     /// The store-generic half of `prepare`.
@@ -421,7 +473,7 @@ impl OptimizedOuterUniskip {
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
-        rows: BundleStore<F, SpartanOuterRow>,
+        rows: RowsStore,
     ) -> Result<(), KernelError<F>> {
         if tau.len() != log_t + 2 {
             return Err(KernelError::InvariantViolation {
@@ -429,7 +481,7 @@ impl OptimizedOuterUniskip {
             });
         }
         let (tau_low, _) = tau.split_at(log_t + 1);
-        let t1_values = Self::extended_t1_values(&rows.access()?, tau_low)?;
+        let t1_values = extended_t1_values(&rows.access(), tau_low)?;
         session.park(SpartanOuterCarry {
             log_t,
             tau: tau.to_vec(),
@@ -437,50 +489,6 @@ impl OptimizedOuterUniskip {
             t1_values,
         });
         Ok(())
-    }
-
-    /// Extended-node evaluations of
-    /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
-    /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
-    /// integer extension pipeline.
-    fn extended_t1_values<F: Field>(
-        rows: &BundleAccess<'_, SpartanOuterRow>,
-        tau_low: &[F],
-    ) -> Result<Vec<F>, WitnessError> {
-        let split = tau_low.len() / 2;
-        let (out_point, in_point) = tau_low.split_at(split);
-        let e_out = EqPolynomial::<F>::evals(out_point, None);
-        let e_in = EqPolynomial::<F>::evals(in_point, None);
-        // `in_point` always covers the stream bit (τ_low's last entry), so every
-        // (cycle, stream) pair sits inside one `x_out` block.
-        let pairs_per_block = e_in.len() / 2;
-        let coefficients = extension_coefficients();
-
-        let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, |x_out| {
-            let mut accumulators: Vec<
-                <F as WithSignedProductAccumulator>::SignedProductAccumulator,
-            > = vec![Default::default(); EXTENDED_NODE_COUNT];
-            for pair in 0..pairs_per_block {
-                let t = x_out * pairs_per_block + pair;
-                let row = rows.row(t)?;
-                let values = row.group_values();
-                let products = values.extended_products(&coefficients);
-                for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
-                    accumulator.fmadd_s256(e_in[2 * pair], first);
-                    accumulator.fmadd_s256(e_in[2 * pair + 1], second);
-                }
-            }
-            Ok(accumulators
-                .into_iter()
-                .map(|accumulator| e_out[x_out] * accumulator.reduce())
-                .collect())
-        })?;
-
-        let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
-        for ((position, _), value) in extension_coefficients().iter().zip(extended) {
-            t1_values[*position] = value;
-        }
-        Ok(t1_values)
     }
 }
 
@@ -493,7 +501,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
         tau: &[F],
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        let rows = BundleStore::resolve(session, witness, 1usize << log_t)?;
+        let rows = RowsStore::resolve(witness, 1usize << log_t)?;
         Self::prepare_from_store(session, log_t, tau, rows)
     }
 
@@ -556,36 +564,55 @@ struct DerivedWeights<F> {
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
 struct OuterRemainderKernel<F: Field> {
+    rounds: usize,
     az: Polynomial<F>,
     bz: Polynomial<F>,
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     /// Round-0 endpoints, fused into the materialization pass.
     pending_endpoints: Option<(F, F)>,
-    challenges: RoundChallenges<F>,
-    rows: BundleStore<F, SpartanOuterRow>,
+    challenges: Vec<F>,
+    rows: RowsStore,
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OuterRemainderKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    poly_heap_bytes(&kernel.az)
-        + poly_heap_bytes(&kernel.bz)
-        + vec_heap_bytes(&kernel.scratch)
-        + kernel.split_eq.heap_bytes()
-        + kernel.challenges.heap_bytes()
-        + kernel.rows.heap_bytes()
-        + vec_heap_bytes(&kernel.opening_ids)
-        + kernel
-            .derived
-            .az_weights
-            .iter()
-            .chain(&kernel.derived.bz_weights)
-            .map(vec_heap_bytes)
-            .sum::<usize>()
-});
+impl<F: Field> allocative::Allocative for OuterRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::{gruen_heap_bytes, poly_heap_bytes, vec_heap_bytes};
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("az"), poly_heap_bytes(&self.az));
+        visitor.visit_simple(allocative::Key::new("bz"), poly_heap_bytes(&self.bz));
+        visitor.visit_simple(
+            allocative::Key::new("scratch"),
+            vec_heap_bytes(&self.scratch),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("split_eq"),
+            gruen_heap_bytes(&self.split_eq),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("challenges"),
+            vec_heap_bytes(&self.challenges),
+        );
+        visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("opening_ids"),
+            vec_heap_bytes(&self.opening_ids),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("derived"),
+            self.derived
+                .az_weights
+                .iter()
+                .chain(&self.derived.bz_weights)
+                .map(vec_heap_bytes)
+                .sum::<usize>(),
+        );
+        visitor.exit();
+    }
+}
 
 impl<F: Field> OuterRemainderKernel<F> {
     fn prepare(
@@ -630,7 +657,7 @@ impl<F: Field> OuterRemainderKernel<F> {
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
         let width = 2 * in_len;
-        let access = rows.access()?;
+        let access = rows.access();
         let lagrange = &lagrange_r0;
         let block = |x_out: usize,
                      az_chunk: &mut [F],
@@ -641,9 +668,13 @@ impl<F: Field> OuterRemainderKernel<F> {
             for x_in in 0..in_len {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
-                let values = row.group_values();
-                let (az_zero, bz_zero) = values.fold_first(lagrange);
-                let (az_one, bz_one) = values.fold_second(lagrange);
+                let values = row_group_values(&row);
+                let (az_zero, bz_zero) = fold_group(lagrange, &values.a_first, &values.b_first);
+                let (az_one, bz_one) = fold_group(
+                    &lagrange[..SECOND_GROUP_LEN],
+                    &values.a_second,
+                    &values.b_second,
+                );
                 az_chunk[2 * x_in] = az_zero;
                 az_chunk[2 * x_in + 1] = az_one;
                 bz_chunk[2 * x_in] = bz_zero;
@@ -677,12 +708,13 @@ impl<F: Field> OuterRemainderKernel<F> {
             folded
         };
         Ok(Self {
+            rounds,
             az: Polynomial::new(az),
             bz: Polynomial::new(bz),
             scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
-            challenges: RoundChallenges::new(rounds),
+            challenges: Vec::with_capacity(rounds),
             rows,
             opening_ids,
             derived,
@@ -718,6 +750,47 @@ impl<F: Field> OuterRemainderKernel<F> {
         })
     }
 
+    /// The current round's endpoints `q(0)`, `q(∞)` over the remaining
+    /// `(lo, hi)` pairs, eq-weighted by the split tensor.
+    fn endpoints(&self) -> (F, F) {
+        let az = self.az.evals();
+        let bz = self.bz.evals();
+        let e_out = self.split_eq.e_out_current();
+        let e_in = self.split_eq.e_in_current();
+        let in_len = e_in.len();
+        debug_assert_eq!(e_out.len() * in_len * 2, az.len());
+
+        let block = |x_out: usize| -> (F, F) {
+            let mut inner_zero = F::zero();
+            let mut inner_infinity = F::zero();
+            for (x_in, &e) in e_in.iter().enumerate() {
+                let pair = 2 * (x_out * in_len + x_in);
+                let az_low = az[pair];
+                let az_high = az[pair + 1];
+                let bz_low = bz[pair];
+                let bz_high = bz[pair + 1];
+                inner_zero += e * (az_low * bz_low);
+                inner_infinity += e * ((az_high - az_low) * (bz_high - bz_low));
+            }
+            (e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity)
+        };
+        let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
+
+        #[cfg(feature = "parallel")]
+        {
+            (0..e_out.len())
+                .into_par_iter()
+                .map(block)
+                .reduce(|| (F::zero(), F::zero()), add)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            (0..e_out.len())
+                .map(block)
+                .fold((F::zero(), F::zero()), add)
+        }
+    }
+
     fn bind(&mut self, challenge: F) {
         self.az
             .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
@@ -731,19 +804,19 @@ impl<F: Field> OuterRemainderKernel<F> {
     /// The 35 produced opening values at the bound cycle point: one
     /// eq-weighted walk over the typed rows (`compute_claimed_inputs`),
     /// mixed-width accumulators per input.
+    #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
-        let reversed: Vec<F> = self.challenges.as_slice()[1..]
-            .iter()
-            .rev()
-            .copied()
-            .collect();
-        let weights = EqPolynomial::<F>::evals(&reversed, None);
+        let reversed: Vec<F> = self.challenges[1..].iter().rev().copied().collect();
+        let weights = {
+            let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
+            EqPolynomial::<F>::evals(&reversed, None)
+        };
         let cycles = weights.len();
-        let access = self.rows.access()?;
+        let access = self.rows.access();
 
         let block_size = 1usize << 12;
         let blocks = cycles.div_ceil(block_size);
-        try_par_sum_vecs(blocks, VARIABLE_COUNT, |index| {
+        let block = |index: usize| -> Result<Vec<F>, WitnessError> {
             let start = index * block_size;
             let end = (start + block_size).min(cycles);
             let mut accumulator = ClaimAccumulator::<F>::default();
@@ -752,7 +825,34 @@ impl<F: Field> OuterRemainderKernel<F> {
                 accumulator.add_row(weight, &row);
             }
             Ok(accumulator.finish())
-        })
+        };
+        let merge = |mut left: Vec<F>, right: Vec<F>| {
+            for (left, right) in left.iter_mut().zip(right) {
+                *left += right;
+            }
+            left
+        };
+
+        let claimed = {
+            let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
+            #[cfg(feature = "parallel")]
+            {
+                (0..blocks).into_par_iter().map(block).try_reduce(
+                    || vec![F::zero(); VARIABLE_COUNT],
+                    |left, right| Ok(merge(left, right)),
+                )
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                let mut folded = vec![F::zero(); VARIABLE_COUNT];
+                for index in 0..blocks {
+                    folded = merge(folded, block(index)?);
+                }
+                Ok(folded)
+            }
+        };
+        claimed
     }
 }
 
@@ -818,34 +918,46 @@ impl<F: Field> ClaimAccumulator<F> {
         flag(33, row.is_first_in_sequence.0);
         flag(34, row.is_last_in_sequence.0);
 
-        let mut word = |index: usize, value: u64| {
-            self.wide[index].fmadd_s256(weight, &S256::from_u64(value));
+        let mut word = |index: usize, magnitude: u128, is_positive: bool| {
+            if let Ok(magnitude) = u64::try_from(magnitude) {
+                self.wide[index].fmadd_signed_u64(weight, magnitude, is_positive);
+            } else {
+                self.wide[index].fmadd_s256(
+                    weight,
+                    &S256::new(
+                        [magnitude as u64, (magnitude >> 64) as u64, 0, 0],
+                        is_positive,
+                    ),
+                );
+            }
         };
-        word(0, row.left_instruction_input.0);
-        word(4, row.pc.0);
-        word(5, row.unexpanded_pc.0);
-        word(7, row.ram_address.0);
-        word(8, row.rs1_value.0);
-        word(9, row.rs2_value.0);
-        word(10, row.rd_write_value.0);
-        word(11, row.ram_read_value.0);
-        word(12, row.ram_write_value.0);
-        word(13, row.left_lookup_operand.0);
-        word(15, row.next_unexpanded_pc.0);
-        word(16, row.next_pc.0);
-        word(19, row.lookup_output.0);
+        word(0, u128::from(row.left_instruction_input.0), true);
+        word(4, u128::from(row.pc.0), true);
+        word(5, u128::from(row.unexpanded_pc.0), true);
+        word(7, u128::from(row.ram_address.0), true);
+        word(8, u128::from(row.rs1_value.0), true);
+        word(9, u128::from(row.rs2_value.0), true);
+        word(10, u128::from(row.rd_write_value.0), true);
+        word(11, u128::from(row.ram_read_value.0), true);
+        word(12, u128::from(row.ram_write_value.0), true);
+        word(13, u128::from(row.left_lookup_operand.0), true);
+        word(15, u128::from(row.next_unexpanded_pc.0), true);
+        word(16, u128::from(row.next_pc.0), true);
+        word(19, u128::from(row.lookup_output.0), true);
 
         let product_limbs = row.product.0.magnitude_limbs();
-        self.wide[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
-        self.wide[2].fmadd_s256(
-            weight,
-            &S256::new(
-                [product_limbs[0], product_limbs[1], 0, 0],
-                row.product.0.is_positive,
-            ),
+        word(
+            1,
+            row.right_instruction_input.0.unsigned_abs(),
+            row.right_instruction_input.0 >= 0,
         );
-        self.wide[6].fmadd_s256(weight, &S256::from_i128(row.imm.0));
-        self.wide[14].fmadd_s256(weight, &S256::from_u128(row.right_lookup_operand.0));
+        word(
+            2,
+            (u128::from(product_limbs[1]) << 64) | u128::from(product_limbs[0]),
+            row.product.0.is_positive,
+        );
+        word(6, row.imm.0.unsigned_abs(), row.imm.0 >= 0);
+        word(14, row.right_lookup_operand.0, true);
     }
 
     fn finish(self) -> Vec<F> {
@@ -866,7 +978,7 @@ impl<F: Field> ClaimAccumulator<F> {
 
 impl<F: Field> ProveRounds<F> for OuterRemainderKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.challenges.total()
+        self.rounds
     }
 
     fn prove_round(
@@ -878,11 +990,9 @@ impl<F: Field> ProveRounds<F> for OuterRemainderKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        // Round 0's endpoints were fused into the materialization pass; later
-        // rounds sample them over the remaining (lo, hi) pairs.
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
-            None => self.split_eq.product_endpoints(&self.az, &self.bz),
+            None => self.endpoints(),
         };
         Ok(self
             .split_eq
@@ -902,7 +1012,10 @@ impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
-        self.challenges.require_complete()?;
+        let remaining = self.rounds - self.challenges.len();
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
         let claimed =
             self.claimed_inputs()
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
@@ -923,11 +1036,14 @@ impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.challenges.require_complete()?;
+        let remaining = self.rounds - self.challenges.len();
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
         // The stream challenge binds the per-stream weight pairs; the split-eq
         // scalar is the fully bound TauKernel — both from the kernel's own
         // state, cross-checked against the verifier's coefficient build.
-        let stream = self.challenges.as_slice()[0];
+        let stream = self.challenges[0];
         let blend = |pair: [&F; 2]| *pair[0] + stream * (*pair[1] - *pair[0]);
         let variable_count = self.opening_ids.len();
         let ids = std::iter::once(SpartanOuterPublic::TauKernel)
@@ -938,6 +1054,13 @@ impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
                 SpartanOuterPublic::BzConstant,
             ]);
         for public_id in ids {
+            let id = JoltDerivedId::from(public_id);
+            let expected =
+                match relation.derive_output_term(&id, input_points, output_points, challenges) {
+                    Ok(value) => value,
+                    Err(VerifierError::MissingStageClaimDerived { .. }) => continue,
+                    Err(error) => return Err(error.into()),
+                };
             let got = match public_id {
                 SpartanOuterPublic::TauKernel => self.split_eq.current_scalar(),
                 SpartanOuterPublic::AzWeight(index) => blend([
@@ -955,14 +1078,9 @@ impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
                     blend([&self.derived.bz_constant[0], &self.derived.bz_constant[1]])
                 }
             };
-            pin_derived_term_if_derived(
-                relation,
-                JoltDerivedId::from(public_id),
-                input_points,
-                output_points,
-                challenges,
-                got,
-            )?;
+            if got != expected {
+                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+            }
         }
         Ok(())
     }

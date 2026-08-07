@@ -28,7 +28,8 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::{
     RamRaClaimReduction, RamRaClaimReductionOutputClaims,
@@ -38,7 +39,6 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::support::{bind_pairs, pin_derived_term, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -111,7 +111,7 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
 
         Ok(Box::new(RaReductionKernel {
             rounds: log_t,
-            progress: RoundProgress::new(log_t),
+            rounds_bound: 0,
             prefix_bits,
             gamma_powers,
             phase,
@@ -128,7 +128,7 @@ fn build_q_tables<F: Field>(
     prefix_bits: usize,
 ) -> [Vec<F>; TERMS] {
     let prefix_size = 1usize << prefix_bits;
-    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u64]| {
+    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u32]| {
         for (i, &address) in chunk.iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
@@ -189,7 +189,7 @@ fn gather_h_prime<F: Field>(
 ) -> Vec<F> {
     let prefix_size = 1usize << prefix_bits;
     let suffix_size = 1usize << suffix_bits;
-    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u64]| {
+    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u32]| {
         for (i, &address) in chunk.iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
@@ -231,6 +231,16 @@ fn gather_h_prime<F: Field>(
     }
 }
 
+/// In-place low-to-high bind: `t[y] ← t[2y] + r·(t[2y+1] − t[2y])`.
+fn bind_pairs<F: Field>(table: &mut Vec<F>, r: F) {
+    let half = table.len() / 2;
+    for y in 0..half {
+        let even = table[2 * y];
+        table[y] = even + r * (table[2 * y + 1] - even);
+    }
+    table.truncate(half);
+}
+
 #[expect(
     clippy::large_enum_variant,
     reason = "one kernel object per proof; boxing buys nothing"
@@ -259,7 +269,7 @@ enum Phase<F: Field> {
 
 struct RaReductionKernel<F: Field> {
     rounds: usize,
-    progress: RoundProgress,
+    rounds_bound: usize,
     prefix_bits: usize,
     /// `[1, γ, γ²]` — the consumed-claim batching coefficients.
     gamma_powers: [F; TERMS],
@@ -267,37 +277,51 @@ struct RaReductionKernel<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RaReductionKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    match &kernel.phase {
-        Phase::Prefix {
-            p,
-            q,
-            eq_hi,
-            columns,
-            eq_address,
-            r_cycle_lo,
-            challenges,
-        } => {
-            p.iter()
-                .chain(q)
-                .chain(eq_hi)
-                .chain(r_cycle_lo)
-                .map(vec_heap_bytes)
-                .sum::<usize>()
-                + columns.heap_bytes()
-                + vec_heap_bytes(eq_address)
-                + vec_heap_bytes(challenges)
+impl<F: Field> allocative::Allocative for RaReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        match &self.phase {
+            Phase::Prefix {
+                p,
+                q,
+                eq_hi,
+                columns,
+                eq_address,
+                r_cycle_lo,
+                challenges,
+            } => {
+                let array_bytes =
+                    |tables: &[Vec<F>; TERMS]| tables.iter().map(vec_heap_bytes).sum::<usize>();
+                visitor.visit_simple(allocative::Key::new("p"), array_bytes(p));
+                visitor.visit_simple(allocative::Key::new("q"), array_bytes(q));
+                visitor.visit_simple(allocative::Key::new("eq_hi"), array_bytes(eq_hi));
+                visitor.visit_field(allocative::Key::new("columns"), columns);
+                visitor.visit_simple(
+                    allocative::Key::new("eq_address"),
+                    vec_heap_bytes(eq_address),
+                );
+                visitor.visit_simple(allocative::Key::new("r_cycle_lo"), array_bytes(r_cycle_lo));
+                visitor.visit_simple(
+                    allocative::Key::new("challenges"),
+                    vec_heap_bytes(challenges),
+                );
+            }
+            Phase::Suffix { h, eq_hi, .. } => {
+                visitor.visit_simple(allocative::Key::new("h"), vec_heap_bytes(h));
+                visitor.visit_simple(
+                    allocative::Key::new("eq_hi"),
+                    eq_hi.iter().map(vec_heap_bytes).sum::<usize>(),
+                );
+            }
         }
-        Phase::Suffix { h, eq_hi, .. } => {
-            vec_heap_bytes(h) + eq_hi.iter().map(vec_heap_bytes).sum::<usize>()
-        }
+        visitor.exit();
     }
-});
+}
 
 impl<F: Field> RaReductionKernel<F> {
     fn bind(&mut self, r: F) {
-        self.progress.advance();
+        self.rounds_bound += 1;
         match &mut self.phase {
             Phase::Prefix {
                 p, q, challenges, ..
@@ -393,6 +417,15 @@ impl<F: Field> RaReductionKernel<F> {
             }
         }
     }
+
+    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
+        let remaining = self.rounds - self.rounds_bound;
+        if remaining == 0 {
+            Ok(())
+        } else {
+            Err(SumcheckKernelError::NotFullyBound { remaining })
+        }
+    }
 }
 
 impl<F: Field> ProveRounds<F> for RaReductionKernel<F> {
@@ -428,7 +461,7 @@ impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamRaClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.require_fully_bound()?;
         let Phase::Suffix { h, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "RAM RA claim-reduction fully bound but still in the prefix phase",
@@ -447,7 +480,7 @@ impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
         output_points: &SumcheckOutputPoints<F, Self::Relation>,
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
-        self.progress.require_complete()?;
+        self.require_fully_bound()?;
         let Phase::Suffix { eq_hi, scales, .. } = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "RAM RA claim-reduction fully bound but still in the prefix phase",
@@ -459,14 +492,13 @@ impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
             RamRaClaimReductionPublic::EqCycleValCheck,
         ];
         for (x, public_id) in ids.into_iter().enumerate() {
-            pin_derived_term(
-                relation,
-                JoltDerivedId::from(public_id),
-                input_points,
-                output_points,
-                challenges,
-                scales[x] * eq_hi[x][0],
-            )?;
+            let id = JoltDerivedId::from(public_id);
+            let expected =
+                relation.derive_output_term(&id, input_points, output_points, challenges)?;
+            let got = scales[x] * eq_hi[x][0];
+            if got != expected {
+                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+            }
         }
         Ok(())
     }

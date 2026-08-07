@@ -7,23 +7,51 @@
 //! naive reference tier). This crate is orchestration only: config and
 //! preprocessing, transcript sequencing, kernel invocation, typed claim
 //! assembly, and proof assembly. See `specs/clean-slate-prover.md`.
+//!
+//! Two parallel prover paths share that orchestration ([`config`],
+//! [`preprocessing`], [`driver`], [`error`]):
+//!
+//! - `dory` — the homomorphic pipeline over an elliptic-curve PCS:
+//!   streaming per-polynomial witness commitments, the stage 0–8 recipes,
+//!   and the RLC-batched joint opening (`dory::prove`);
+//! - `akita` — the packed pipeline over the lattice PCS: one native
+//!   `OneHotTrace` commitment group, the fused-inc/reconstruction stage
+//!   swaps, and the native same-point joint opening (`akita::prove`).
+//!
+//! Like `jolt-verifier`, one compiled prover proves exactly one protocol:
+//! the `akita` feature swaps the shared wire types to the packed envelope,
+//! so exactly one of the two path modules compiles into any given build.
+//!
+//! [`config`]: ProverConfig
+//! [`preprocessing`]: JoltProverPreprocessing
+//! [`driver`]: StageProver
+//! [`error`]: ProverError
 
+#[cfg(all(feature = "akita", feature = "zk"))]
+compile_error!("the Akita prover does not support the zk feature");
+
+#[cfg(feature = "akita")]
+pub mod akita;
 #[cfg(feature = "zk")]
 mod blindfold;
 mod config;
+#[cfg(not(feature = "akita"))]
+pub mod dory;
 pub mod driver;
 mod error;
 mod preprocessing;
 #[cfg(feature = "profiling")]
 pub mod profile;
-mod prover;
 mod recorder;
 pub mod stages;
 
+#[cfg(feature = "akita")]
+pub use akita::prove;
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
+#[cfg(not(feature = "akita"))]
+pub use dory::prove;
 pub use driver::{KernelSource, Proved, StageProver};
 pub use error::ProverError;
 pub use jolt_kernels::{JoltBackend, ProofSession};
 pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
-pub use prover::prove;
 pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};

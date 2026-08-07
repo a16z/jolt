@@ -14,13 +14,21 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
 use jolt_claims::protocols::jolt::{
-    HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
+    HammingWeightClaimReductionPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId,
+    JoltRelationId,
 };
+use jolt_claims::{Source, SymbolicSumcheck};
 use jolt_field::Field;
+#[cfg(feature = "akita")]
+use jolt_poly::boolean_point_msb;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
+
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 
 use super::views::{cycle_fold, eq_table};
 use crate::{
@@ -52,15 +60,11 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBac
             .layout
             .openings(JoltRelationId::HammingWeightClaimReduction)
         {
-            let _ = opening_tables.insert(
-                opening,
-                Polynomial::new(cycle_fold(
-                    witness,
-                    opening,
-                    dimensions.log_k_chunk,
-                    r_cycle,
-                )?),
-            );
+            let mut table = cycle_fold(witness, opening, dimensions.log_k_chunk, r_cycle)?;
+            if crate::reference::lattice_shape() {
+                table[0] = F::zero();
+            }
+            let _ = opening_tables.insert(opening, Polynomial::new(table));
         }
 
         let mut derived_tables = BTreeMap::from([(
@@ -72,6 +76,80 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBac
                 JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(index)),
                 Polynomial::new(eq_table(point)),
             );
+        }
+
+        #[cfg(feature = "akita")]
+        {
+            let table_len = 1usize << dimensions.log_k_chunk;
+            let at_default = |point: &[F]| {
+                point
+                    .iter()
+                    .fold(F::one(), |acc, coordinate| acc * (F::one() - *coordinate))
+            };
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanityAtDefault),
+                Polynomial::new(vec![at_default(r_address); table_len]),
+            );
+            for (index, point) in virtualization_points.iter().enumerate() {
+                let _ = derived_tables.insert(
+                    JoltDerivedId::from(
+                        HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(index),
+                    ),
+                    Polynomial::new(vec![at_default(point); table_len]),
+                );
+            }
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqDefault),
+                Polynomial::new(eq_table(&vec![F::zero(); dimensions.log_k_chunk])),
+            );
+            let ram_hamming_weight =
+                relation
+                    .ram_hamming_weight()
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "Akita hamming reduction is missing the RAM activation",
+                    })?;
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::RamHammingWeight),
+                Polynomial::new(vec![ram_hamming_weight; table_len]),
+            );
+            let balanced_values = (0..table_len)
+                .map(|lane| balanced_inc_value(&boolean_point_msb(dimensions.log_k_chunk, lane)))
+                .collect();
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::BalancedIncValueAtAddress),
+                Polynomial::new(balanced_values),
+            );
+        }
+
+        // The packed (lattice) shape extends the reduction with the fused-inc
+        // one-hot columns and their little-endian decode: serve the extra
+        // tables per the relation's own expression leaves (the base shape
+        // references none of them, so this loop no-ops there — the kernel
+        // adapts to the jolt-claims shape instead of carrying a feature).
+        for term in &relation.symbolic().output_expression::<F>().terms {
+            for factor in &term.factors {
+                match factor {
+                    Source::Opening(id) => {
+                        if matches!(
+                            id.polynomial_id(),
+                            JoltPolynomialId::Committed(
+                                JoltCommittedPolynomial::UnsignedIncChunk(_)
+                                    | JoltCommittedPolynomial::UnsignedIncMsb,
+                            )
+                        ) && !opening_tables.contains_key(id)
+                        {
+                            let mut table =
+                                cycle_fold(witness, *id, dimensions.log_k_chunk, r_cycle)?;
+                            if crate::reference::lattice_shape() {
+                                table[0] = F::zero();
+                            }
+                            let _ = opening_tables.insert(*id, Polynomial::new(table));
+                        }
+                    }
+                    Source::Derived(_) => {}
+                    Source::Challenge(_) => {}
+                }
+            }
         }
 
         Ok(Box::new(NaiveSumcheckProver::new(
