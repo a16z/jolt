@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::relations::instruction::{
 use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_field::{Field, Fr};
 use jolt_lookup_tables::lookup_bits::LookupBits;
-use jolt_lookup_tables::tables::prefixes::PrefixEval;
+use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::SuffixEval;
 use jolt_lookup_tables::tables::LookupTableKind;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
@@ -14,13 +14,13 @@ use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::address_driver::DeviceAddressPhase;
+use super::address_phase::{flag_claims, DeviceRows};
 use super::context::CudaKernelContext;
 use super::cycle_handoff::{build_cycle_tables, HandoffInputs};
 use super::cycle_rounds::DeviceCycleRounds;
 use super::device::{fr_into, require_fr, require_fr_slice};
 use super::{require_context, CudaBackend};
-use crate::reference::instruction_read_raf::{InstructionReadRafKernel, InstructionReadRafWitness};
-use crate::reference::views::eq_table;
+use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -29,13 +29,25 @@ const CHUNK_LEN: usize = 8;
 const ADDRESS_BITS: usize = 128;
 const RAF_CHECKPOINTS: usize = 4;
 
+fn raf_initial_checkpoints<F: Field>() -> [F; RAF_CHECKPOINTS] {
+    let mut checkpoints = [F::zero(); RAF_CHECKPOINTS];
+    if CANONICAL_INSTRUCTION_ADDRESS {
+        checkpoints[3] = F::one();
+    }
+    checkpoints
+}
+
 pub struct DeviceInstructionReadRaf<F: Field> {
-    host: InstructionReadRafKernel<F>,
     device: Option<DeviceAddressPhase>,
     cycle: Option<DeviceCycleRounds>,
+    rows: DeviceRows,
     r_reduction: Vec<Fr>,
+    cycle_challenges: Vec<Fr>,
+    prefix_checkpoints: Vec<PrefixEval<F>>,
+    raf_checkpoints: [F; RAF_CHECKPOINTS],
     ra_count: usize,
-    gamma: Fr,
+    rounds: usize,
+    gamma: F,
     context: &'static CudaKernelContext,
     rounds_bound: usize,
 }
@@ -83,24 +95,20 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
                 .collect::<Result<_, _>>()?;
             v_tables.push(host);
         }
-        if prefix_checkpoints.len() != self.host.prefix_checkpoints.len()
-            || v_tables.len() != self.host.phases()
+        if prefix_checkpoints.len() != self.prefix_checkpoints.len()
+            || v_tables.len() != ADDRESS_BITS / CHUNK_LEN
         {
             return Err(failed());
         }
 
-        self.host.prefix_checkpoints = prefix_checkpoints
+        self.prefix_checkpoints = prefix_checkpoints
             .into_iter()
             .map(PrefixEval::from)
             .collect();
-        self.host.raf_left.checkpoint = raf_checkpoints[0];
-        self.host.raf_right.checkpoint = raf_checkpoints[1];
-        self.host.raf_identity.checkpoint = raf_checkpoints[2];
-        self.host.raf_upper_all_ones.checkpoint = raf_checkpoints[3];
-        self.host.v_tables = v_tables;
-        self.host.rounds_bound = ADDRESS_BITS;
+        self.raf_checkpoints = raf_checkpoints;
+        let _ = v_tables;
 
-        let gamma_sqr = self.host.gamma * self.host.gamma;
+        let gamma_sqr = self.gamma * self.gamma;
         let empty = LookupBits::new(0, 0);
         let table_values: Vec<Fr> = LookupTableKind::<RISCV_XLEN>::iter()
             .map(|table| {
@@ -109,22 +117,21 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
                     .iter()
                     .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle(empty))))
                     .collect();
-                require_fr(table.combine(self.host.prefix_checkpoints(), &suffixes))
+                require_fr(table.combine(&self.prefix_checkpoints, &suffixes))
             })
             .collect::<Result<_, _>>()
             .map_err(|_| failed())?;
-        let raf_interleaved = self.host.gamma * self.host.raf_left.checkpoint
-            + gamma_sqr * self.host.raf_right.checkpoint;
-        let mut raf_identity = gamma_sqr * self.host.raf_identity.checkpoint;
+        let raf_interleaved =
+            self.gamma * self.raf_checkpoints[0] + gamma_sqr * self.raf_checkpoints[1];
+        let mut raf_identity = gamma_sqr * self.raf_checkpoints[2];
         if CANONICAL_INSTRUCTION_ADDRESS {
-            raf_identity +=
-                gamma_sqr * self.host.gamma * self.host.raf_upper_all_ones.checkpoint;
+            raf_identity += gamma_sqr * self.gamma * self.raf_checkpoints[3];
         }
 
         let tables = build_cycle_tables(
             self.context,
             &HandoffInputs {
-                rows: device.rows(),
+                rows: &self.rows,
                 v_tables: device.v_tables(),
                 table_values: &table_values,
                 raf_interleaved: require_fr(raf_interleaved).map_err(|_| failed())?,
@@ -144,7 +151,7 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
                 eq_reduction,
                 tables.combined_val,
                 tables.ra,
-                self.host.num_rounds() - ADDRESS_BITS,
+                self.rounds - ADDRESS_BITS,
             )
             .map_err(|_| failed())?,
         );
@@ -179,7 +186,6 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
         let unsupported = || KernelError::Unsupported {
             reason: "the CUDA instruction read-RAF kernel supports only the BN254 scalar field",
         };
-        let gamma = require_fr(inputs.challenges.gamma).map_err(|_| unsupported())?;
         let device = DeviceAddressPhase::new(
             context,
             &lookup_index,
@@ -190,22 +196,25 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
         )
         .map_err(|_| unsupported())?;
 
-        let host = InstructionReadRafKernel::new(
-            dimensions,
-            &inputs.points.lookup_output,
-            rows,
-            inputs.challenges.gamma,
-        )?;
         let r_reduction = require_fr_slice(&inputs.points.lookup_output)
             .map_err(|_| unsupported())?
             .to_vec();
+        let device_rows = DeviceRows::new(context, &lookup_index, &table_index, &raf_flag)
+            .map_err(|_| unsupported())?;
         Ok(Box::new(DeviceInstructionReadRaf {
-            host,
             device: Some(device),
             cycle: None,
+            rows: device_rows,
             r_reduction,
+            cycle_challenges: Vec::with_capacity(dimensions.log_t()),
+            prefix_checkpoints: ALL_PREFIXES
+                .iter()
+                .map(|prefix| prefix.default_checkpoint::<F>())
+                .collect(),
+            raf_checkpoints: raf_initial_checkpoints(),
             ra_count: dimensions.num_virtual_ra_polys(),
-            gamma,
+            rounds: dimensions.sumcheck_rounds(),
+            gamma: inputs.challenges.gamma,
             context,
             rounds_bound: 0,
         }))
@@ -214,7 +223,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
 
 impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
     fn num_rounds(&self) -> usize {
-        self.host.num_rounds()
+        self.rounds
     }
 
     fn prove_round(
@@ -234,7 +243,11 @@ impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
                     kind: "cuda address phase",
                 })?;
             let evals = device
-                .round_message(self.context, self.gamma)
+                .round_message(self.context, require_fr(self.gamma).map_err(|_| {
+                    SumcheckError::MissingEvaluationSource {
+                        kind: "cuda address gamma",
+                    }
+                })?)
                 .map_err(|_| SumcheckError::MissingEvaluationSource {
                     kind: "cuda address round message",
                 })?;
@@ -308,7 +321,11 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
                     kind: "cuda cycle-round bind",
                 })?;
             self.rounds_bound += 1;
-            self.host.cycle_challenges.push(challenge);
+            self.cycle_challenges.push(require_fr(challenge).map_err(|_| {
+                SumcheckError::MissingEvaluationSource {
+                    kind: "cuda cycle-round challenge",
+                }
+            })?);
             Ok(())
         }
     }
@@ -321,7 +338,7 @@ impl<F: Field> SumcheckKernel<F> for DeviceInstructionReadRaf<F> {
         &mut self,
         _inputs: &InstructionReadRafInputClaims<F>,
     ) -> Result<InstructionReadRafOutputClaims<F>, SumcheckKernelError<F>> {
-        let remaining = self.host.num_rounds() - self.rounds_bound;
+        let remaining = self.rounds - self.rounds_bound;
         if remaining != 0 {
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
@@ -337,18 +354,33 @@ impl<F: Field> SumcheckKernel<F> for DeviceInstructionReadRaf<F> {
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
                     reason: "CUDA instruction RA claim readback failed",
                 })?;
-        let r_cycle: Vec<F> = self.host.cycle_challenges.iter().rev().copied().collect();
-        let eq_cycle = eq_table(&r_cycle);
-        let mut lookup_table_flags = vec![F::zero(); LookupTableKind::<RISCV_XLEN>::COUNT];
-        let mut instruction_raf_flag = F::zero();
-        for (row, &eq) in self.host.rows().iter().zip(&eq_cycle) {
-            if let Some(index) = row.table_index.0 {
-                lookup_table_flags[index] += eq;
+        let r_cycle: Vec<Fr> = self.cycle_challenges.iter().rev().copied().collect();
+        let eq_cycle = self.context.eq_evals(&r_cycle).map_err(|_| {
+            SumcheckKernelError::InvariantViolation {
+                reason: "CUDA cycle eq table construction failed",
             }
-            if row.raf_flag.0 {
-                instruction_raf_flag += eq;
-            }
-        }
+        })?;
+        let (flags, raf_flag) = flag_claims(
+            self.context,
+            &self.rows,
+            &eq_cycle,
+            LookupTableKind::<RISCV_XLEN>::COUNT,
+        )
+        .map_err(|_| SumcheckKernelError::InvariantViolation {
+            reason: "CUDA flag claim readback failed",
+        })?;
+        let lookup_table_flags: Vec<F> = flags
+            .into_iter()
+            .map(|value| {
+                fr_into(value).ok_or(SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA kernels support only the BN254 scalar field",
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let instruction_raf_flag =
+            fr_into(raf_flag).ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA kernels support only the BN254 scalar field",
+            })?;
         Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
             instruction_ra,

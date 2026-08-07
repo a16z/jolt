@@ -530,3 +530,60 @@ extern "C" __global__ void ap_ra_kernel(const unsigned long long *__restrict__ l
     }
     store4(out + (unsigned long long)j * LIMBS, acc);
 }
+
+extern "C" __global__ void ap_flag_sums_kernel(const unsigned int *__restrict__ order,
+                                               const unsigned int *__restrict__ offsets,
+                                               const unsigned int *__restrict__ counts,
+                                               const u64 *__restrict__ eq_cycle,
+                                               u64 *__restrict__ out) {
+    extern __shared__ u64 scratch[];
+    unsigned int bucket = blockIdx.x;
+    unsigned int start = offsets[bucket];
+    unsigned int count = counts[bucket];
+
+    u64 acc[LIMBS] = {0, 0, 0, 0};
+    for (unsigned int i = threadIdx.x; i < count; i += blockDim.x) {
+        unsigned int j = order[start + i];
+        u64 eq[LIMBS];
+        load4(eq_cycle + (unsigned long long)j * LIMBS, eq);
+        fr_add(acc, eq, acc);
+    }
+
+    ap_block_reduce(scratch, acc);
+    if (threadIdx.x == 0) {
+        u64 total[LIMBS];
+        load4(scratch, total);
+        store4(out + (unsigned long long)bucket * LIMBS, total);
+    }
+}
+
+extern "C" __global__ void ap_flag_keys_kernel(const unsigned int *__restrict__ table_index,
+                                               unsigned int table_count,
+                                               unsigned int *__restrict__ keys,
+                                               unsigned int n) {
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= n) return;
+    unsigned int table = table_index[j];
+    keys[j] = (table == AP_NO_TABLE || table >= table_count) ? AP_SKIP : table;
+}
+
+extern "C" __global__ void ap_raf_flag_sum_kernel(const unsigned char *__restrict__ raf_flags,
+                                                 const u64 *__restrict__ eq_cycle,
+                                                 u64 *__restrict__ partials,
+                                                 unsigned int n) {
+    extern __shared__ u64 scratch[];
+    unsigned int tid = threadIdx.x;
+    unsigned int j = blockIdx.x * blockDim.x + tid;
+
+    u64 acc[LIMBS] = {0, 0, 0, 0};
+    if (j < n && raf_flags[j] != 0u) {
+        load4(eq_cycle + (unsigned long long)j * LIMBS, acc);
+    }
+
+    ap_block_reduce(scratch, acc);
+    if (tid == 0) {
+        u64 total[LIMBS];
+        load4(scratch, total);
+        store4(partials + (unsigned long long)blockIdx.x * LIMBS, total);
+    }
+}

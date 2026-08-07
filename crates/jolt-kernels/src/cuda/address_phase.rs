@@ -85,13 +85,13 @@ pub struct RafBuckets {
     pub upper_all_ones: DeviceFrVec,
 }
 
-struct Segments {
-    order: CudaSlice<u32>,
-    offsets: CudaSlice<u32>,
-    counts: CudaSlice<u32>,
+pub(super) struct Segments {
+    pub(super) order: CudaSlice<u32>,
+    pub(super) offsets: CudaSlice<u32>,
+    pub(super) counts: CudaSlice<u32>,
 }
 
-fn segment_rows(
+pub(super) fn segment_rows(
     context: &CudaKernelContext,
     keys: &CudaSlice<u32>,
     rows: usize,
@@ -388,6 +388,77 @@ pub fn condense_u_evals(
     Ok(())
 }
 
+pub fn flag_claims(
+    context: &CudaKernelContext,
+    rows: &DeviceRows,
+    eq_cycle: &DeviceFrVec,
+    table_count: usize,
+) -> Result<(Vec<Fr>, Fr), CudaError> {
+    if eq_cycle.len() != rows.cycles() {
+        return Err(CudaError::LengthMismatch {
+            expected: rows.cycles(),
+            got: eq_cycle.len(),
+        });
+    }
+    let count = CudaKernelContext::count_of(rows.cycles())?;
+    let table_count_arg = CudaKernelContext::count_of(table_count)?;
+
+    let mut keys = context.alloc_u32(rows.cycles())?;
+    let mut builder = context.stream().launch_builder(context.ap_flag_keys());
+    let _ = builder.arg(rows.table_index());
+    let _ = builder.arg(&table_count_arg);
+    let _ = builder.arg(&mut keys);
+    let _ = builder.arg(&count);
+    // SAFETY: thread `j < cycles` reads `table_index[j]` of `cycles` and writes
+    // only `keys[j]` of `cycles`, either `SKIP` or a value `< table_count`.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+    context.stream().synchronize()?;
+
+    let segments = segment_rows(context, &keys, rows.cycles(), table_count)?;
+    let mut sums = context.alloc(table_count)?;
+    let blocks = CudaKernelContext::count_of(table_count)?;
+    let mut builder = context.stream().launch_builder(context.ap_flag_sums());
+    let _ = builder.arg(&segments.order);
+    let _ = builder.arg(&segments.offsets);
+    let _ = builder.arg(&segments.counts);
+    let _ = builder.arg(eq_cycle.limbs());
+    let _ = builder.arg(sums.limbs_mut());
+    // SAFETY: block `bucket < table_count` reads `order[offsets[bucket] ..
+    // + counts[bucket]]`, whose elements are row indices `< cycles`, bounding the
+    // `eq_cycle` reads. Thread 0 writes only `out[bucket]` of `table_count`.
+    // Shared memory is `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`.
+    let _ = unsafe {
+        builder.launch(LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+        })
+    }?;
+    context.stream().synchronize()?;
+
+    let raf_blocks = count.div_ceil(BLOCK).max(1);
+    let mut partials = context.alloc(raf_blocks as usize)?;
+    let mut builder = context.stream().launch_builder(context.ap_raf_flag_sum());
+    let _ = builder.arg(rows.raf_flag());
+    let _ = builder.arg(eq_cycle.limbs());
+    let _ = builder.arg(partials.limbs_mut());
+    let _ = builder.arg(&count);
+    // SAFETY: thread `j < cycles` reads `raf_flag[j]` and `eq_cycle[j]`, both of
+    // `cycles`; lanes with `j >= cycles` seed the tree with field zero. Thread 0
+    // writes only `partials[blockIdx.x]` of `raf_blocks`. Shared memory is
+    // `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`.
+    let _ = unsafe {
+        builder.launch(LaunchConfig {
+            grid_dim: (raf_blocks, 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+        })
+    }?;
+    context.stream().synchronize()?;
+
+    Ok((sums.to_host()?, context.sum(&partials)?))
+}
+
 fn suffix_len(address_bits: usize, phase: usize) -> Result<usize, CudaError> {
     address_bits
         .checked_sub((phase + 1) * CHUNK_LEN)
@@ -585,6 +656,40 @@ mod tests {
                 "condensed u_evals diverged entering phase {}",
                 phase
             );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn flag_claims_match_the_reference_output_claims(
+            log_t in 4usize..=10,
+            seed in any::<u64>(),
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            let host = reference_at_phase(log_t, seed, 0);
+            let device = device_rows(context, host.rows());
+
+            let r_cycle: Vec<Fr> = (0..log_t).map(|i| fr(seed + i as u64 + 301)).collect();
+            let eq_cycle = crate::reference::views::eq_table(&r_cycle);
+            let uploaded = context.upload(&eq_cycle).expect("upload eq_cycle");
+
+            let table_count = LookupTableKind::<RISCV_XLEN>::COUNT;
+            let (flags, raf_flag) =
+                super::flag_claims(context, &device, &uploaded, table_count)
+                    .expect("device flag_claims");
+
+            let mut expected_flags = vec![Fr::from(0u64); table_count];
+            let mut expected_raf = Fr::from(0u64);
+            for (row, &eq) in host.rows().iter().zip(&eq_cycle) {
+                if let Some(index) = row.table_index.0 {
+                    expected_flags[index] += eq;
+                }
+                if row.raf_flag.0 {
+                    expected_raf += eq;
+                }
+            }
+            prop_assert_eq!(flags, expected_flags, "lookup table flag claims diverged");
+            prop_assert_eq!(raf_flag, expected_raf, "instruction RAF flag claim diverged");
         }
     }
 

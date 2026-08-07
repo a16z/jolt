@@ -93,6 +93,9 @@ pub struct CudaKernelContext {
     ap_round_message: CudaFunction,
     ap_combined_val: CudaFunction,
     ap_ra: CudaFunction,
+    ap_flag_keys: CudaFunction,
+    ap_flag_sums: CudaFunction,
+    ap_raf_flag_sum: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -154,6 +157,9 @@ impl CudaKernelContext {
             ap_round_message: module.load_function("ap_round_message_kernel")?,
             ap_combined_val: module.load_function("ap_combined_val_kernel")?,
             ap_ra: module.load_function("ap_ra_kernel")?,
+            ap_flag_keys: module.load_function("ap_flag_keys_kernel")?,
+            ap_flag_sums: module.load_function("ap_flag_sums_kernel")?,
+            ap_raf_flag_sum: module.load_function("ap_raf_flag_sum_kernel")?,
         })
     }
 
@@ -361,6 +367,18 @@ impl CudaKernelContext {
 
     pub(super) const fn ap_ra(&self) -> &CudaFunction {
         &self.ap_ra
+    }
+
+    pub(super) const fn ap_flag_keys(&self) -> &CudaFunction {
+        &self.ap_flag_keys
+    }
+
+    pub(super) const fn ap_flag_sums(&self) -> &CudaFunction {
+        &self.ap_flag_sums
+    }
+
+    pub(super) const fn ap_raf_flag_sum(&self) -> &CudaFunction {
+        &self.ap_raf_flag_sum
     }
 
     pub(super) fn copy_into(
