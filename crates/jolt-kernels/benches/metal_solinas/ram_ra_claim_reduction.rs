@@ -4,12 +4,135 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_field::AkitaField;
 use jolt_kernels::metal::solinas::{
     ram_ra_claim_reduction::{
-        RamRaClaimConfig, RamRaClaimQAccumulator, RamRaClaimQInvocation,
-        RAM_RA_CLAIM_ADDRESS_DOMAIN, RAM_RA_CLAIM_NO_ACCESS, RAM_RA_CLAIM_TARGET_ACCESSED_ROWS,
-        RAM_RA_CLAIM_TARGET_CPU_NS, RAM_RA_CLAIM_TARGET_FIVE_X_NS, RAM_RA_CLAIM_TARGET_ROWS,
+        RamRaClaimConfig, RamRaClaimGatherInvocation, RamRaClaimQAccumulator,
+        RamRaClaimQInvocation, RAM_RA_CLAIM_ADDRESS_DOMAIN, RAM_RA_CLAIM_NO_ACCESS,
+        RAM_RA_CLAIM_TARGET_ACCESSED_ROWS, RAM_RA_CLAIM_TARGET_CPU_NS,
+        RAM_RA_CLAIM_TARGET_FIVE_X_NS, RAM_RA_CLAIM_TARGET_ROWS,
     },
     SolinasMetal,
 };
+
+pub fn bench_gather(c: &mut Criterion, context: &SolinasMetal) {
+    let rows = trace_rows();
+    let accessed_rows = accessed_rows(rows);
+    let addresses = uniform_addresses(rows, accessed_rows);
+    let r_address = point(RAM_RA_CLAIM_ADDRESS_DOMAIN.ilog2() as usize, 0xa11c_e001);
+    let r_prefix = point(rows.ilog2() as usize / 2, 0xc1c1_1001);
+    let config = RamRaClaimConfig {
+        trace_cutoff: rows,
+        ..RamRaClaimConfig::default()
+    };
+
+    let setup_started = Instant::now();
+    let resident = context
+        .prepare_ram_ra_claim_addresses(&addresses)
+        .expect("RAM RA claim address plane should prepare");
+    drop(addresses);
+    let invocation = context
+        .prepare_ram_ra_claim_gather(&resident, &r_address, &r_prefix, config)
+        .expect("RAM RA claim gather invocation should prepare");
+    drop(resident);
+    let setup_wall = setup_started.elapsed();
+
+    let cold = invocation
+        .execute_timed()
+        .expect("RAM RA claim gather should execute");
+    let warm = invocation
+        .execute_timed()
+        .expect("warm RAM RA claim gather should execute");
+    assert_eq!(cold.h_prime, warm.h_prime);
+    assert_eq!(cold.checksum, warm.checksum);
+    assert_eq!(warm.counters.q_accessed_rows as usize, accessed_rows);
+    assert_eq!(warm.counters.q_invalid_rows, 0);
+    assert_eq!(warm.counters.gather_invalid_rows, 0);
+    assert_eq!(warm.counters.unsupported_dispatches, 0);
+    assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+    assert_ne!(
+        invocation.source_allocation_identity(),
+        invocation.output_allocation_identity()
+    );
+
+    report_gather(&invocation, setup_wall, cold.gpu_active, &warm);
+
+    let projection = invocation.projection();
+    let suffix = format!("n{rows}_a{accessed_rows}_compact");
+    let mut group = c.benchmark_group("metal_sumcheck/ram_ra_claim_gather");
+    let _ = group
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(setting(
+            "JOLT_METAL_RAM_RA_CLAIM_WARMUP_MS",
+            200,
+        )))
+        .measurement_time(Duration::from_millis(setting(
+            "JOLT_METAL_RAM_RA_CLAIM_MEASUREMENT_MS",
+            1_000,
+        )))
+        .throughput(Throughput::Elements(projection.gather_full_width_products));
+    let _ = group.bench_function(BenchmarkId::new("resident_active", &suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut active = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = invocation
+                    .execute_timed()
+                    .expect("timed RAM RA claim gather should execute");
+                let _ = black_box(observation.checksum);
+                active += observation.gpu_active;
+            }
+            active
+        });
+    });
+    let _ = group.bench_function(BenchmarkId::new("resident_wall", &suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut wall = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = invocation
+                    .execute_timed()
+                    .expect("timed RAM RA claim gather should execute");
+                let _ = black_box(observation.checksum);
+                wall += observation.resident_wall;
+            }
+            wall
+        });
+    });
+    group.finish();
+}
+
+fn report_gather(
+    invocation: &RamRaClaimGatherInvocation,
+    setup_wall: Duration,
+    cold_active: Duration,
+    warm: &jolt_kernels::metal::solinas::ram_ra_claim_reduction::RamRaClaimGatherObservation,
+) {
+    let plan = invocation.plan();
+    let projection = invocation.projection();
+    eprintln!(
+        "ram-ra-claim-gather rows={} accessed={} setup-ms={:.3} cold-active-ms={:.3} \
+         warm-active-ms={:.3} warm-wall-ms={:.3} useful-products={} \
+         perfect-cache-bytes={} shader-requested-bytes={} product-floor-ms={:.3} \
+         traffic-floor-ms={:.3} no-cache-floor-ms={:.3} pursuit-ms={:.3} \
+         member-5x-cap-ms={:.3} cpu-member-ms={:.3} compact-resident-bytes={} \
+         readback-bytes={} threadgroups={} tew={}",
+        projection.rows,
+        projection.accessed_rows,
+        setup_wall.as_secs_f64() * 1e3,
+        cold_active.as_secs_f64() * 1e3,
+        warm.gpu_active.as_secs_f64() * 1e3,
+        warm.resident_wall.as_secs_f64() * 1e3,
+        projection.gather_full_width_products,
+        projection.gather_perfect_cache_bytes,
+        projection.gather_shader_logical_bytes,
+        projection.gather_product_floor_ns as f64 / 1e6,
+        projection.gather_perfect_cache_traffic_floor_ns as f64 / 1e6,
+        projection.gather_no_cache_request_floor_ns as f64 / 1e6,
+        projection.gather_pursuit_ns as f64 / 1e6,
+        RAM_RA_CLAIM_TARGET_FIVE_X_NS as f64 / 1e6,
+        RAM_RA_CLAIM_TARGET_CPU_NS as f64 / 1e6,
+        invocation.compact_resident_bytes(),
+        plan.storage.h_bytes + std::mem::size_of_val(&warm.counters),
+        warm.threadgroups,
+        invocation.pipeline_limits().thread_execution_width,
+    );
+}
 
 pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     let rows = trace_rows();

@@ -176,6 +176,7 @@ mod macos {
                 "ram-val-check" => ram_val_check::bench(c, &context),
                 "ram-raf" => ram_raf_evaluation::bench(c, &context),
                 "ram-ra-claim-q" => ram_ra_claim_reduction::bench(c, &context),
+                "ram-ra-claim-gather" => ram_ra_claim_reduction::bench_gather(c, &context),
                 "ram-output-check" => ram_output_check::bench(c, &context),
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
                 "instruction-ra-first-message" => instruction_ra::bench(c, &context),
