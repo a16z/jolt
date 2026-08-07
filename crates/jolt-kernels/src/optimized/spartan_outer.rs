@@ -649,7 +649,28 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let rows = RowsStore::resolve(witness, cycles).map_err(MetalSpartanDenseRowsError::Kernel)?;
     let access = rows.access();
-    context
+    let source_kind = rows.production_source_kind();
+    let host_repack_rows = rows.host_repack_rows();
+    let span = tracing::info_span!(
+        "MetalInstructionInput::compact_rows_prepare",
+        source_kind,
+        witness_row_extractions = cycles,
+        residual_rows_written = cycles,
+        compact_rows_written = cycles,
+        compact_row_bytes = 48,
+        residual_row_bytes = 112,
+        compact_allocations = 1,
+        residual_allocations = 1,
+        full_row_allocations = 0,
+        full_domain_copy_bytes = 0,
+        full_domain_copy_dispatches = 0,
+        host_repack_rows,
+        compact_rows_storage_id = tracing::field::Empty,
+        residual_rows_storage_id = tracing::field::Empty,
+        resident_rows = cycles,
+    );
+    let _entered = span.enter();
+    let prepared = context
         .prepare_spartan_outer_uniskip_rows_with_shift_fill(
             cycles,
             |instruction_input, residual, unexpanded_pc, pc, flags| {
@@ -717,7 +738,13 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
                 Ok(())
             },
         )
-        .map_err(MetalSpartanDenseRowsError::Metal)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let _ = span.record(
+        "compact_rows_storage_id",
+        prepared.0.instruction_input_allocation_identity(),
+    );
+    let _ = span.record("residual_rows_storage_id", prepared.0.allocation_identity());
+    Ok(prepared)
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
