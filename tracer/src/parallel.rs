@@ -371,14 +371,17 @@ struct ChunkJob<'trace> {
     window: Option<&'trace mut [core::mem::MaybeUninit<Cycle>]>,
 }
 
-/// Flags worker death on unwind. Without it, a systematic replay divergence
-/// (every worker tripping its row-count assert) would leave pass-1 blocked
-/// forever on the full job queue — the receiver lives until the scope ends,
-/// and `thread::scope` only re-raises worker panics after the closure
-/// returns.
-struct WorkerPanicGuard<'flag>(&'flag std::sync::atomic::AtomicBool);
+/// Flags pipeline death on unwind, on both sides. Without the worker-side
+/// guard, a systematic replay divergence (every worker tripping its
+/// row-count assert) would leave pass-1 blocked forever on the full job
+/// queue; without the pass-1-side guard, a pass-1 panic (e.g. its own
+/// boundary assert firing after a sibling worker died) would leave workers
+/// blocked forever on an end-boundary slot that is never published — in both
+/// cases the receiver lives until the scope ends, and `thread::scope` only
+/// re-raises panics after joining every thread.
+struct PanicGuard<'flag>(&'flag std::sync::atomic::AtomicBool);
 
-impl Drop for WorkerPanicGuard<'_> {
+impl Drop for PanicGuard<'_> {
     fn drop(&mut self) {
         if std::thread::panicking() {
             self.0.store(true, std::sync::atomic::Ordering::Release);
@@ -445,8 +448,10 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
     let windowed_rows = std::thread::scope(|scope| {
         // Owned by the scope closure: ANY pass-1-side panic must drop the
         // sender before the scope joins, or workers blocked in `recv` would
-        // deadlock the join itself.
+        // deadlock the join itself. The guard covers the other blocking site:
+        // workers polling an end-boundary slot pass-1 will never publish.
         let job_tx = job_tx;
+        let _panic_guard = PanicGuard(&worker_panicked);
         for _ in 0..workers {
             let job_rx = &job_rx;
             let worker_panicked = &worker_panicked;
@@ -455,7 +460,7 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
             let seed_device = seed_device.clone();
             let seed_decode = seed_decode.clone();
             scope.spawn(move || {
-                let _panic_guard = WorkerPanicGuard(worker_panicked);
+                let _panic_guard = PanicGuard(worker_panicked);
                 demote_worker_thread();
                 let mut worker = ChunkWorker::from_seed(seed_device, seed_decode);
                 // Per-tick row buffer, reused across ticks and chunks: it
@@ -500,10 +505,23 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                     // the next chunk's captured state. Row counts alone miss
                     // divergences that preserve them (e.g. a value-level
                     // advice mismatch); the state is already captured, so
-                    // this costs one comparison per chunk. `wait` returns
-                    // immediately in the steady state: pass-1 published this
-                    // checkpoint when it started the next chunk.
-                    let end = job.end.wait();
+                    // this costs one comparison per chunk. The slot is
+                    // already set in the steady state: pass-1 published this
+                    // checkpoint when it started the next chunk. Poll rather
+                    // than `wait()`: if pass-1 dies before publishing (its
+                    // boundary assert fires after a sibling worker panics),
+                    // a blocking wait would never wake and the scope join
+                    // would hang instead of re-raising the panic.
+                    let end = loop {
+                        if let Some(end) = job.end.get() {
+                            break end;
+                        }
+                        assert!(
+                            !worker_panicked.load(std::sync::atomic::Ordering::Acquire),
+                            "pipeline died while waiting for the chunk end boundary"
+                        );
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                    };
                     if let Some(diff) = end.diff_vs_cpu(worker.cpu()) {
                         panic!(
                             "chunk {}: replay diverged from pass-1 at the chunk boundary: {diff}",

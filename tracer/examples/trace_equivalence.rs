@@ -50,16 +50,17 @@ struct Config {
 
 /// The serial interpreter is the reference; every parallel configuration must
 /// match it. Chunk sizes are deliberately small so that a ~1M-row guest
-/// crosses many chunk boundaries, and `1` worker exercises the single-worker
-/// fallback path.
+/// crosses many chunk boundaries (`TRACER_PARALLEL=1` maps to the serial
+/// path, so 2 workers is the smallest real pipeline), and the tiny
+/// capacity reservation forces the overflow copy-assembly path.
 const CONFIGS: &[Config] = &[
     Config {
         name: "serial",
         env: &[],
     },
     Config {
-        name: "parallel/1-worker/128-row chunks",
-        env: &[("TRACER_PARALLEL", "1"), ("JOLT_TRACER_CHUNK_ROWS", "128")],
+        name: "parallel/2-worker/128-row chunks",
+        env: &[("TRACER_PARALLEL", "2"), ("JOLT_TRACER_CHUNK_ROWS", "128")],
     },
     Config {
         name: "parallel/4-worker/128-row chunks",
@@ -70,6 +71,14 @@ const CONFIGS: &[Config] = &[
         env: &[
             ("TRACER_PARALLEL", "4"),
             ("JOLT_TRACER_CHUNK_ROWS", "65536"),
+        ],
+    },
+    Config {
+        name: "parallel/4-worker/64k-row chunks/1k-row reserve (overflow assembly)",
+        env: &[
+            ("TRACER_PARALLEL", "4"),
+            ("JOLT_TRACER_CHUNK_ROWS", "65536"),
+            ("JOLT_TRACER_CAPACITY_ROWS", "1000"),
         ],
     },
 ];
@@ -136,6 +145,7 @@ fn digests_under(config: &Config, filter: Option<&str>) -> BTreeMap<String, Trac
     // silently turn the serial reference into a parallel run.
     command.env_remove("TRACER_PARALLEL");
     command.env_remove("JOLT_TRACER_CHUNK_ROWS");
+    command.env_remove("JOLT_TRACER_CAPACITY_ROWS");
     for (key, value) in config.env {
         command.env(key, value);
     }

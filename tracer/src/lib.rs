@@ -1238,12 +1238,11 @@ mod tests {
         }
     }
 
-    #[test]
     /// A count-preserving replay divergence must trip the boundary-state
     /// verification. Fault injection corrupts one worker register after
     /// replay (row counts stay equal), so only the boundary check can catch
     /// it; without it the trace would be assembled silently.
-    fn test_boundary_divergence_panics() {
+    fn boundary_divergence_panics(workers: usize) {
         use crate::parallel::{run_two_pass, TwoPassConfig, TEST_CORRUPT_BOUNDARY_STATE};
         use std::sync::atomic::Ordering;
         use std::sync::mpsc;
@@ -1263,7 +1262,7 @@ mod tests {
                 run_two_pass(
                     emulator,
                     &TwoPassConfig {
-                        workers: 1,
+                        workers,
                         chunk_rows: 64,
                         capacity_rows: 1 << 24,
                     },
@@ -1281,6 +1280,20 @@ mod tests {
                 panic!("two-pass trace hung on boundary divergence instead of panicking")
             }
         }
+    }
+
+    #[test]
+    fn test_boundary_divergence_panics() {
+        boundary_divergence_panics(1);
+    }
+
+    /// Multi-worker variant: the first tripped worker panics while its
+    /// siblings may be blocked awaiting end boundaries pass-1 will never
+    /// publish (its own boundary assert fires first) — the interleaving that
+    /// hangs without the pass-1-side panic guard and the polling wait.
+    #[test]
+    fn test_boundary_divergence_panics_multiworker() {
+        boundary_divergence_panics(4);
     }
 
     #[test]
