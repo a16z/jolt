@@ -196,6 +196,21 @@ mod support {
             .expect("modular trace")
     }
 
+    pub fn assert_word_shift_coverage(trace_output: &TraceOutput<OwnedTrace>) {
+        for instruction_name in ["VirtualSRLW", "VirtualSRAW", "VirtualSRLIW", "VirtualSRAIW"] {
+            let count = trace_output
+                .trace
+                .rows()
+                .iter()
+                .filter(|row| row.instruction.instruction_kind.name() == instruction_name)
+                .count();
+            assert!(
+                count >= 2,
+                "muldiv trace must contain shifts 0 and 31 for {instruction_name}, got {count}",
+            );
+        }
+    }
+
     /// Derive the modular config, apply the trace order (always a caller
     /// override — derivation picks cycle-major) and any one-hot config
     /// override (the wide-geometry arm injects `{8, 32}` below the 2^25
@@ -538,6 +553,7 @@ mod muldiv {
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        support::assert_word_shift_coverage(&trace_output);
 
         let program_preprocessing = verifier_preprocessing
             .program
