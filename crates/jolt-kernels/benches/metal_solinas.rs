@@ -85,6 +85,10 @@ mod ram_output_check;
 mod registers_read_write;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/registers_claim_reduction.rs"]
+mod registers_claim_reduction;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/registers_read_write_dense.rs"]
 mod registers_read_write_dense;
 
@@ -122,8 +126,8 @@ mod macos {
         instruction_ra_sequence, product5, product_remainder, product_uniskip, ram_output_check,
         ram_raf_evaluation, ram_val_check,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
-        registers_read_write, registers_read_write_dense, registers_val, spartan_outer_uniskip,
-        spartan_shift,
+        registers_claim_reduction, registers_read_write, registers_read_write_dense, registers_val,
+        spartan_outer_uniskip, spartan_shift,
     };
 
     const STREAM_ELEMENTS: usize = 1 << 20;
@@ -173,6 +177,9 @@ mod macos {
                 "instruction-ra-sequence" => instruction_ra_sequence::bench(c, &context),
                 "registers-read-write-first-message" => {
                     registers_read_write::bench(c, &context);
+                }
+                "registers-claim-linear-q" => {
+                    registers_claim_reduction::bench(c, &context);
                 }
                 "registers-read-write-dense-round" => {
                     registers_read_write_dense::bench(c, &context);

@@ -35,6 +35,7 @@ mod product_uniskip;
 mod ram_output_check;
 mod ram_raf_evaluation;
 mod ram_val_check;
+pub mod registers_claim_reduction;
 mod registers_read_write;
 mod registers_read_write_dense;
 mod registers_val;
