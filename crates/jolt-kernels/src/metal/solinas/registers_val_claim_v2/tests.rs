@@ -198,7 +198,7 @@ fn owner_value_oracle_preserves_zero_increment_wa_and_low_bind_order() {
     let mut emitted = Vec::new();
     let transition =
         value_first_transition_oracle(&carrier, &point, first.samples, challenge, |index, row| {
-            emitted.push((index, row))
+            emitted.push((index, row));
         })
         .unwrap();
     let expected_rows = expected_inc

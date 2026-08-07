@@ -290,6 +290,7 @@ pub(crate) enum RamAccessTapeError {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests use fixed valid fixtures")]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 

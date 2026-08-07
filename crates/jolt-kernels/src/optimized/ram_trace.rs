@@ -563,6 +563,7 @@ impl RamAccessColumns {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests use fixed valid fixtures")]
 mod tests {
     use super::*;
 

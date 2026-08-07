@@ -193,8 +193,8 @@ fn packed_factorization_matches_unfactored_original_row_oracle() {
         BooleanityRow::new(13, None, Some(1), i64::MIN as i128).unwrap(),
         BooleanityRow::new(17, Some(1), None, 42).unwrap(),
     ];
-    let e_in = [1, 2, 3, 5].map(|value| AkitaField::from_u64(value));
-    let e_out = [7, 11].map(|value| AkitaField::from_u64(value));
+    let e_in = [1, 2, 3, 5].map(AkitaField::from_u64);
+    let e_out = [7, 11].map(AkitaField::from_u64);
     let packed = pack_rows(&rows).unwrap();
     let expected = unfactored_pushforward(&rows, &e_in, &e_out).unwrap();
     let actual = packed_factorized_pushforward(&rows, &packed, &e_in, &e_out).unwrap();
@@ -210,8 +210,10 @@ fn five_x_is_a_floor_and_incumbent_makes_ten_x_credible() {
     assert_eq!(FIVE_X_GATE.complete_member_cap_ns, 185_827_982);
     assert_eq!(EIGHT_X_GATE.complete_member_cap_ns, 116_142_489);
     assert_eq!(TEN_X_STRETCH_GATE.complete_member_cap_ns, 92_913_991);
-    assert!(ACCEPTED_METAL_MEDIAN_NS < EIGHT_X_GATE.complete_member_cap_ns);
-    assert!(ACCEPTED_METAL_MEDIAN_NS > TEN_X_STRETCH_GATE.complete_member_cap_ns);
+    const {
+        assert!(ACCEPTED_METAL_MEDIAN_NS < EIGHT_X_GATE.complete_member_cap_ns);
+        assert!(ACCEPTED_METAL_MEDIAN_NS > TEN_X_STRETCH_GATE.complete_member_cap_ns);
+    }
 }
 
 #[test]

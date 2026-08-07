@@ -56,7 +56,7 @@ fn fixtures(rows: usize) -> Vec<Vec<u32>> {
         (0..rows)
             .map(|index| {
                 let value = splitmix64(0xfeed_face_cafe_beef ^ index as u64);
-                if value & 3 == 0 {
+                if value.trailing_zeros() >= 2 {
                     (value as usize % RAM_RA_CLAIM_ADDRESS_DOMAIN) as u32
                 } else {
                     RAM_RA_CLAIM_NO_ACCESS

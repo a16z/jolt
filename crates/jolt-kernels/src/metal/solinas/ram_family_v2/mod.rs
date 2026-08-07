@@ -31,11 +31,7 @@ pub(crate) use owner::{
 };
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    reason = "tests use fixed valid fixtures"
-)]
+#[expect(clippy::unwrap_used, reason = "tests use fixed valid fixtures")]
 mod tests;
 
 use thiserror::Error;

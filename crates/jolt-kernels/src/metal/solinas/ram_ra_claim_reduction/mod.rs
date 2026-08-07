@@ -7,7 +7,11 @@ pub use host::*;
 pub use runtime::*;
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "tests use fixed valid fixtures")]
+#[expect(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "tests use fixed valid fixtures"
+)]
 mod tests;
 
 use std::mem::{align_of, size_of};
