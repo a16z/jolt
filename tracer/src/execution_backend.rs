@@ -239,9 +239,17 @@ impl ChunkedExecutionBackend for TracerBackend {
             let before = cycles.len();
             worker.run_ticks(1, &mut cycles);
             if cycles.len() == before {
-                // A zero-row tick before the window is complete means the
-                // replay diverged from the fast pass; fail instead of
-                // spinning (mirrors the row-count tripwire in run_two_pass).
+                // A zero-row tick (trap/WFI) before the window is complete:
+                // fail instead of spinning forever. This detects stalls
+                // only — a replay that diverges while still emitting rows
+                // is not caught here. run_two_pass's per-chunk row-count
+                // and boundary-state tripwires don't transfer to
+                // row-aligned contract checkpoints (no expected tick count
+                // exists for a window ending mid-tick, and no boundary
+                // state is captured at arbitrary marks); count- and
+                // value-level fidelity is instead enforced by the
+                // chunk-composition equivalence tests (invariant 3 of
+                // specs/x86-tracer-backend.md).
                 return Err(TraceError::Backend(
                     "chunk replay stalled before completing its row window",
                 ));
