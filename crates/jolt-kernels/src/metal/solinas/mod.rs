@@ -41,6 +41,8 @@ mod outer_remainder;
 mod product5;
 mod product_remainder;
 mod product_uniskip;
+#[doc(hidden)]
+pub mod ram_family_v2;
 mod ram_output_check;
 pub mod ram_ra_claim_reduction;
 mod ram_raf_evaluation;
