@@ -27,8 +27,10 @@ pub const BYTECODE_ADDRESS_MAJOR_SIMDGROUPS: usize =
 
 const WORKER_PIPELINE: &str = "solinas_bytecode_address_major_worker_5_4";
 const REDUCE_PIPELINE: &str = "solinas_bytecode_address_major_reduce_tiles";
-const PRODUCER_PIPELINE: &str = "solinas_bytecode_address_major_build_resident";
-const PRODUCER_THREADS: usize = 1024;
+const PRODUCER_PIPELINE: &str = "solinas_bytecode_address_major_build_compact_support";
+const PRODUCER_THREADS: usize = 256;
+const MAX_PRODUCER_ACTIVE_ADDRESSES: usize = 32;
+const PRODUCER_SCAN_WORDS: usize = PRODUCER_THREADS / BYTECODE_ADDRESS_MAJOR_SIMD_WIDTH + 1;
 const PRODUCER_STATUS_WORDS: usize = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,7 +54,7 @@ struct BytecodeAddressMajorParams {
     outer_tiles: u32,
     stages: u32,
     base_stages: u32,
-    reserved: u32,
+    max_active_addresses: u32,
 }
 
 const _: [(); 32] = [(); size_of::<BytecodeAddressMajorParams>()];
@@ -80,7 +82,7 @@ impl BytecodeAddressMajorParams {
             outer_tiles: shader_count("outer tiles", config.outer_tiles)?,
             stages: BYTECODE_ADDRESS_MAJOR_STAGES as u32,
             base_stages: BYTECODE_ADDRESS_MAJOR_BASE_STAGES as u32,
-            reserved: 0,
+            max_active_addresses: 0,
         })
     }
 }
@@ -92,6 +94,7 @@ pub struct BytecodeAddressMajorStorage {
     pub partial_bytes: usize,
     pub output_bytes: usize,
     pub producer_status_bytes: usize,
+    pub producer_support_bytes: usize,
     pub owned_bytes: usize,
 }
 
@@ -116,6 +119,8 @@ struct BytecodeAddressMajorBuffers {
     partials: Buffer,
     output: Buffer,
     producer_status: Option<Buffer>,
+    active_addresses: Option<Buffer>,
+    support_offsets: Option<Buffer>,
 }
 
 pub struct BytecodeAddressMajorInvocation {
@@ -144,7 +149,9 @@ pub struct BytecodeAddressMajorObservation {
     pub completed_before_join: bool,
     pub source_rows_device_registry_id: Option<u64>,
     pub source_rows_storage_id: Option<usize>,
-    pub static_buffer_identities: [usize; 8],
+    pub max_active_addresses: Option<usize>,
+    pub producer_threadgroup_bytes: Option<usize>,
+    pub static_buffer_identities: [usize; 10],
 }
 
 struct BytecodeAddressMajorSubmittedCommand {
@@ -153,7 +160,7 @@ struct BytecodeAddressMajorSubmittedCommand {
     submit_wall: Duration,
     source_rows_device_registry_id: Option<u64>,
     source_rows_storage_id: Option<usize>,
-    static_buffer_identities: [usize; 8],
+    static_buffer_identities: [usize; 10],
 }
 
 #[must_use = "a submitted bytecode address-major execution must be joined"]
@@ -233,11 +240,21 @@ impl SolinasMetal {
                 AddressMajorShape::production(rows.len().ilog2())?
             }
         };
-        let params = BytecodeAddressMajorParams::new(shape, config)?;
+        let mut params = BytecodeAddressMajorParams::new(shape, config)?;
         let rows = shape.rows()?;
         let addresses = shape.addresses()?;
         let inner_length = shape.inner_length()?;
         let outer_length = shape.outer_length()?;
+        let producer_support = match &carrier {
+            BytecodeAddressMajorCarrierInput::Upload(_) => None,
+            BytecodeAddressMajorCarrierInput::Resident(rows) => {
+                let (support_offsets, active_addresses, max_active_addresses) =
+                    compact_support(rows, addresses, outer_length)?;
+                params.max_active_addresses =
+                    shader_count("maximum active addresses", max_active_addresses)?;
+                Some((support_offsets, active_addresses))
+            }
+        };
         validate_table_shape("E_lo", e_lo, inner_length)?;
         validate_table_shape("E_hi", e_hi, outer_length)?;
 
@@ -277,12 +294,16 @@ impl SolinasMetal {
                 size_of::<BytecodeAddressMajorProducerStatus>()
             }
         };
+        let producer_support_bytes = producer_support.as_ref().map_or(0, |(offsets, active)| {
+            (offsets.len() + active.len()) * size_of::<u32>()
+        });
         let owned_bytes = [
             carrier_bytes,
             equality_bytes,
             partial_bytes,
             output_bytes,
             producer_status_bytes,
+            producer_support_bytes,
         ]
         .into_iter()
         .try_fold(0usize, |sum, bytes| checked_add("owned bytes", sum, bytes))?;
@@ -298,6 +319,7 @@ impl SolinasMetal {
             partial_bytes,
             output_bytes,
             producer_status_bytes,
+            producer_support_bytes,
         ] {
             if bytes == 0 {
                 continue;
@@ -321,7 +343,7 @@ impl SolinasMetal {
         let reduce_limits = Self::limits(&reduce_pipeline);
         if let Some(limits) = producer_limits {
             validate_pipeline(PRODUCER_PIPELINE, limits, PRODUCER_THREADS)?;
-            let requested = producer_threadgroup_bytes(shape)?;
+            let requested = producer_threadgroup_bytes_from_params(params);
             let maximum = usize::try_from(self.device.max_threadgroup_memory_length())
                 .map_err(|_| BytecodeAddressMajorRuntimeError::SizeOverflow("threadgroup"))?;
             if requested > maximum {
@@ -342,15 +364,28 @@ impl SolinasMetal {
             BYTECODE_ADDRESS_MAJOR_THREADS,
         )?;
 
-        let (resident_rows, cells, inner_sign, magnitude, producer_status) = match carrier {
-            BytecodeAddressMajorCarrierInput::Upload(carrier) => (
+        let (
+            resident_rows,
+            cells,
+            inner_sign,
+            magnitude,
+            producer_status,
+            active_addresses,
+            support_offsets,
+        ) = match (carrier, producer_support) {
+            (BytecodeAddressMajorCarrierInput::Upload(carrier), None) => (
                 None,
                 buffer_from_slice(&self.device, carrier.cells()),
                 buffer_from_slice(&self.device, carrier.inner_sign()),
                 buffer_from_slice(&self.device, carrier.magnitude()),
                 None,
+                None,
+                None,
             ),
-            BytecodeAddressMajorCarrierInput::Resident(rows) => (
+            (
+                BytecodeAddressMajorCarrierInput::Resident(rows),
+                Some((support_offsets, active_addresses)),
+            ) => (
                 Some(rows),
                 self.device
                     .new_buffer(cell_bytes as u64, MTLResourceOptions::StorageModePrivate),
@@ -366,7 +401,10 @@ impl SolinasMetal {
                     producer_status_bytes as u64,
                     MTLResourceOptions::StorageModeShared,
                 )),
+                Some(buffer_from_slice(&self.device, &active_addresses)),
+                Some(buffer_from_slice(&self.device, &support_offsets)),
             ),
+            _ => return Err(BytecodeAddressMajorRuntimeError::InvalidState),
         };
 
         Ok(BytecodeAddressMajorInvocation {
@@ -391,6 +429,8 @@ impl SolinasMetal {
                     .device
                     .new_buffer(output_bytes as u64, MTLResourceOptions::StorageModeShared),
                 producer_status,
+                active_addresses,
+                support_offsets,
             },
             params,
             storage: BytecodeAddressMajorStorage {
@@ -399,6 +439,7 @@ impl SolinasMetal {
                 partial_bytes,
                 output_bytes,
                 producer_status_bytes,
+                producer_support_bytes,
                 owned_bytes,
             },
             completed: Cell::new(false),
@@ -462,11 +503,24 @@ impl BytecodeAddressMajorInvocation {
             &self.producer_pipeline,
             &self.buffers.rows,
             &self.buffers.producer_status,
+            &self.buffers.active_addresses,
+            &self.buffers.support_offsets,
         ) {
-            (None, None, None) => {}
-            (Some(pipeline), Some(rows), Some(status)) => {
+            (None, None, None, None, None) => {}
+            (
+                Some(pipeline),
+                Some(rows),
+                Some(status),
+                Some(active_addresses),
+                Some(support_offsets),
+            ) => {
                 let blit = command_buffer.new_blit_command_encoder();
                 blit.fill_buffer(status, NSRange::new(0, status.length()), 0);
+                blit.fill_buffer(
+                    &self.buffers.cells,
+                    NSRange::new(0, self.buffers.cells.length()),
+                    0,
+                );
                 blit.end_encoding();
 
                 let producer = command_buffer.new_compute_command_encoder();
@@ -477,6 +531,8 @@ impl BytecodeAddressMajorInvocation {
                 producer.set_buffer(3, Some(&self.buffers.magnitude), 0);
                 set_inline_bytes(producer, 4, &self.params);
                 producer.set_buffer(5, Some(status), 0);
+                producer.set_buffer(6, Some(active_addresses), 0);
+                producer.set_buffer(7, Some(support_offsets), 0);
                 producer.set_threadgroup_memory_length(
                     0,
                     producer_threadgroup_bytes_from_params(self.params) as u64,
@@ -553,6 +609,11 @@ impl BytecodeAddressMajorInvocation {
                     rows.len(),
                 ));
             }
+            if rows.bytecode_outer_support().map(|(_, _, maximum)| maximum)
+                != Some(self.params.max_active_addresses as usize)
+            {
+                return Err(BytecodeAddressMajorRuntimeError::InvalidState);
+            }
         }
         Ok(())
     }
@@ -593,7 +654,7 @@ impl BytecodeAddressMajorInvocation {
             .map(BooleanityRows::allocation_identity)
     }
 
-    fn static_buffer_identities(&self) -> [usize; 8] {
+    fn static_buffer_identities(&self) -> [usize; 10] {
         [
             self.buffers.cells.as_ptr() as usize,
             self.buffers.inner_sign.as_ptr() as usize,
@@ -604,6 +665,14 @@ impl BytecodeAddressMajorInvocation {
             self.buffers.output.as_ptr() as usize,
             self.buffers
                 .producer_status
+                .as_ref()
+                .map_or(0, |buffer| buffer.as_ptr() as usize),
+            self.buffers
+                .active_addresses
+                .as_ref()
+                .map_or(0, |buffer| buffer.as_ptr() as usize),
+            self.buffers
+                .support_offsets
                 .as_ref()
                 .map_or(0, |buffer| buffer.as_ptr() as usize),
         ]
@@ -644,6 +713,22 @@ impl BytecodeAddressMajorInvocation {
 
     pub const fn producer_pipeline_limits(&self) -> Option<PipelineLimits> {
         self.producer_limits
+    }
+
+    pub const fn max_active_addresses(&self) -> Option<usize> {
+        if self.params.max_active_addresses == 0 {
+            None
+        } else {
+            Some(self.params.max_active_addresses as usize)
+        }
+    }
+
+    pub const fn producer_threadgroup_memory_bytes(&self) -> Option<usize> {
+        if self.params.max_active_addresses == 0 {
+            None
+        } else {
+            Some(producer_threadgroup_bytes_from_params(self.params))
+        }
     }
 
     pub const fn reduce_pipeline_limits(&self) -> PipelineLimits {
@@ -718,6 +803,8 @@ impl BytecodeAddressMajorInvocation {
             completed_before_join,
             source_rows_device_registry_id: command.source_rows_device_registry_id,
             source_rows_storage_id: command.source_rows_storage_id,
+            max_active_addresses: self.max_active_addresses(),
+            producer_threadgroup_bytes: self.producer_threadgroup_memory_bytes(),
             static_buffer_identities: command.static_buffer_identities,
         })
     }
@@ -752,6 +839,14 @@ pub enum BytecodeAddressMajorRuntimeError {
     InvalidCarrierLength,
     #[error("bytecode address-major resident source has invalid row count {0}")]
     InvalidResidentRows(usize),
+    #[error("bytecode address-major resident source has no checked PC-address support")]
+    MissingBytecodeAddressSupport,
+    #[error(
+        "bytecode address-major compact producer supports at most {maximum} active addresses, got {got}"
+    )]
+    TooManyActiveAddresses { got: usize, maximum: usize },
+    #[error("bytecode address-major PC-address support is malformed")]
+    InvalidBytecodeAddressSupport,
     #[error(
         "bytecode address-major producer needs {requested} threadgroup bytes, device maximum is {maximum}"
     )]
@@ -805,6 +900,39 @@ fn flatten_tables(tables: &[Vec<AkitaField>]) -> Vec<Fp128> {
         .collect()
 }
 
+fn compact_support(
+    rows: &BooleanityRows,
+    addresses: usize,
+    outer_length: usize,
+) -> Result<(Vec<u32>, Vec<u32>, usize), BytecodeAddressMajorRuntimeError> {
+    let (offsets, active, max_active_addresses) = rows
+        .bytecode_outer_support()
+        .ok_or(BytecodeAddressMajorRuntimeError::MissingBytecodeAddressSupport)?;
+    if max_active_addresses > MAX_PRODUCER_ACTIVE_ADDRESSES {
+        return Err(BytecodeAddressMajorRuntimeError::TooManyActiveAddresses {
+            got: max_active_addresses,
+            maximum: MAX_PRODUCER_ACTIVE_ADDRESSES,
+        });
+    }
+    if offsets.len() != outer_length + 1
+        || offsets.first() != Some(&0)
+        || offsets.last().copied() != u32::try_from(active.len()).ok()
+        || active.is_empty()
+        || active.iter().any(|address| *address as usize >= addresses)
+    {
+        return Err(BytecodeAddressMajorRuntimeError::InvalidBytecodeAddressSupport);
+    }
+    for pair in offsets.windows(2) {
+        let Some(segment) = active.get(pair[0] as usize..pair[1] as usize) else {
+            return Err(BytecodeAddressMajorRuntimeError::InvalidBytecodeAddressSupport);
+        };
+        if segment.is_empty() || segment.windows(2).any(|entry| entry[0] >= entry[1]) {
+            return Err(BytecodeAddressMajorRuntimeError::InvalidBytecodeAddressSupport);
+        }
+    }
+    Ok((offsets.to_vec(), active.to_vec(), max_active_addresses))
+}
+
 fn validate_pipeline(
     pipeline: &'static str,
     limits: PipelineLimits,
@@ -827,18 +955,9 @@ const fn threadgroup_bytes() -> usize {
     BYTECODE_ADDRESS_MAJOR_SIMDGROUPS * BYTECODE_ADDRESS_MAJOR_BASE_STAGES * size_of::<Fp128>()
 }
 
-fn producer_threadgroup_bytes(
-    shape: AddressMajorShape,
-) -> Result<usize, BytecodeAddressMajorRuntimeError> {
-    byte_len(
-        "producer threadgroup memory",
-        shape.addresses()?,
-        size_of::<u32>(),
-    )
-}
-
 const fn producer_threadgroup_bytes_from_params(params: BytecodeAddressMajorParams) -> usize {
-    params.addresses as usize * size_of::<u32>()
+    let active = params.max_active_addresses as usize;
+    active * PRODUCER_THREADS * size_of::<u16>() + (PRODUCER_SCAN_WORDS + active) * size_of::<u32>()
 }
 
 fn completed_gpu_active(

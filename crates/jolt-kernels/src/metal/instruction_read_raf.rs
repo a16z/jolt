@@ -70,12 +70,21 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let trace_elements = 1usize << dimensions.log_t();
         let use_metal_address =
             trace_elements >= self.config.instruction_read_raf.address_cutoff_elements;
+        let collect_bytecode_support = self.config.bytecode_read_raf_address.implementation
+            == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajorShadow
+            && trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
         let retain_lookup_plane = trace_elements
             >= self
                 .config
                 .instruction_ra_virtualization
                 .trace_cutoff_elements;
-        let cpu = prepare_metal_instruction_read_raf(session, witness, inputs, use_metal_address)?;
+        let cpu = prepare_metal_instruction_read_raf(
+            session,
+            witness,
+            inputs,
+            use_metal_address,
+            collect_bytecode_support,
+        )?;
         let hamming_log_k_chunk = committed_hamming_log_k_chunk(witness, dimensions.log_t());
         let hamming_rows_requested = hamming_log_k_chunk.is_some_and(|log_k_chunk| {
             self.config.hamming_weight_claim_reduction.admits(

@@ -828,6 +828,10 @@ pub enum MetalError {
     },
     #[error("booleanity row cannot be represented by the packed Metal ABI")]
     InvalidBooleanityRow,
+    #[error(
+        "Booleanity bytecode support has {count} entries; expected a nonempty sorted set below {maximum}"
+    )]
+    InvalidBooleanityBytecodeSupport { count: usize, maximum: usize },
     #[error("booleanity needs a power-of-two row count of at least four, got {0}")]
     InvalidBooleanityRows(usize),
     #[error("booleanity chunk size must be a power of two in 2..=256, got {0}")]

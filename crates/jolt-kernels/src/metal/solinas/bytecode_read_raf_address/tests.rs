@@ -172,13 +172,13 @@ fn address_major_worker_handles_a_full_u16_cell() {
 #[cfg(target_os = "macos")]
 fn resident_producer_matches_the_independent_row_oracle() {
     let context = SolinasMetal::for_akita().unwrap();
-    let shape = AddressMajorShape::production(15).unwrap();
+    let shape = AddressMajorShape::production(16).unwrap();
     let rows = (0..shape.rows().unwrap())
         .map(|inner| Row {
             mapped_pc: if inner.is_multiple_of(257) {
                 None
             } else {
-                Some((17 * inner + inner / 31) % shape.addresses().unwrap())
+                Some((17 * inner + inner / 31) % 10)
             },
             fused_inc_magnitude: if inner.is_multiple_of(509) {
                 u64::MAX
@@ -205,7 +205,30 @@ fn resident_producer_matches_the_independent_row_oracle() {
             .unwrap()
         })
         .collect::<Vec<_>>();
-    let resident = context.prepare_booleanity_rows(&resident_words).unwrap();
+    let mut support_offsets = vec![0];
+    let mut active_addresses = Vec::new();
+    for outer_rows in rows.chunks(shape.inner_length().unwrap()) {
+        let mut outer_addresses = outer_rows
+            .iter()
+            .map(|row| row.push_pc() as u32)
+            .collect::<Vec<_>>();
+        outer_addresses.sort_unstable();
+        outer_addresses.dedup();
+        active_addresses.extend(outer_addresses);
+        support_offsets.push(active_addresses.len() as u32);
+    }
+    let max_active_addresses = support_offsets
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]) as usize)
+        .max()
+        .unwrap();
+    let resident = context
+        .prepare_booleanity_rows_with_bytecode_support(
+            &resident_words,
+            &support_offsets,
+            &active_addresses,
+        )
+        .unwrap();
     let source_id = resident.allocation_identity();
     let device_id = resident.device_registry_id();
     let (e_lo, e_hi) = tables(shape);
@@ -224,6 +247,8 @@ fn resident_producer_matches_the_independent_row_oracle() {
 
     assert_eq!(observation.source_rows_storage_id, Some(source_id));
     assert_eq!(observation.source_rows_device_registry_id, Some(device_id));
+    assert_eq!(observation.max_active_addresses, Some(max_active_addresses));
+    assert!(observation.producer_threadgroup_bytes.unwrap() < 6 * 1024);
     assert_eq!(
         observation.producer_status.unwrap().emitted_rows as usize,
         rows.len()

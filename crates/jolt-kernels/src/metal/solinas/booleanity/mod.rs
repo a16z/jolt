@@ -20,6 +20,15 @@ const REDUCE_PIPELINE: &str = "solinas_booleanity_reduce";
 
 const PACKED_PC_MASK: u64 = (1 << 56) - 1;
 const PACKED_INC_SIGN_SHIFT: u32 = 63;
+const BYTECODE_ADDRESS_COUNT: usize = 1 << 13;
+const BYTECODE_ADDRESS_INNER_LENGTH: usize = 1 << 15;
+
+#[derive(Clone)]
+struct BytecodeOuterSupport {
+    offsets: Box<[u32]>,
+    addresses: Box<[u32]>,
+    max_active_addresses: usize,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -35,6 +44,7 @@ struct BooleanityRowsInner {
     buffer: Buffer,
     len: usize,
     device_registry_id: u64,
+    bytecode_outer_support: Option<BytecodeOuterSupport>,
 }
 
 #[derive(Clone)]
@@ -70,6 +80,16 @@ impl BooleanityRows {
 
     pub fn allocation_identity(&self) -> usize {
         self.0.buffer.as_ptr() as usize
+    }
+
+    pub(crate) fn bytecode_outer_support(&self) -> Option<(&[u32], &[u32], usize)> {
+        self.0.bytecode_outer_support.as_ref().map(|support| {
+            (
+                support.offsets.as_ref(),
+                support.addresses.as_ref(),
+                support.max_active_addresses,
+            )
+        })
     }
 
     #[cfg(test)]
@@ -134,6 +154,12 @@ impl allocative::Allocative for BooleanityRows {
             shared.visit_simple(
                 allocative::Key::new("device_rows"),
                 self.len() * size_of::<BooleanityRow>(),
+            );
+            shared.visit_simple(
+                allocative::Key::new("bytecode_outer_support"),
+                self.0.bytecode_outer_support.as_ref().map_or(0, |support| {
+                    (support.offsets.len() + support.addresses.len()) * size_of::<u32>()
+                }),
             );
             shared.exit();
         }
@@ -377,6 +403,55 @@ impl SolinasMetal {
         &self,
         rows: &[BooleanityRow],
     ) -> Result<BooleanityRows, MetalError> {
+        self.prepare_booleanity_rows_inner(rows, None)
+    }
+
+    pub(crate) fn prepare_booleanity_rows_with_bytecode_support(
+        &self,
+        rows: &[BooleanityRow],
+        offsets: &[u32],
+        addresses: &[u32],
+    ) -> Result<BooleanityRows, MetalError> {
+        let outer_length = rows.len().div_ceil(BYTECODE_ADDRESS_INNER_LENGTH);
+        let layout_valid = offsets.len() == outer_length + 1
+            && offsets.first() == Some(&0)
+            && offsets.last().copied() == u32::try_from(addresses.len()).ok();
+        let mut max_active_addresses = 0;
+        let segments_valid = layout_valid
+            && offsets.windows(2).all(|pair| {
+                let start = pair[0] as usize;
+                let end = pair[1] as usize;
+                let Some(segment) = addresses.get(start..end) else {
+                    return false;
+                };
+                max_active_addresses = max_active_addresses.max(segment.len());
+                !segment.is_empty()
+                    && segment
+                        .iter()
+                        .all(|address| (*address as usize) < BYTECODE_ADDRESS_COUNT)
+                    && segment.windows(2).all(|entry| entry[0] < entry[1])
+            });
+        if !segments_valid {
+            return Err(MetalError::InvalidBooleanityBytecodeSupport {
+                count: addresses.len(),
+                maximum: BYTECODE_ADDRESS_COUNT,
+            });
+        }
+        self.prepare_booleanity_rows_inner(
+            rows,
+            Some(BytecodeOuterSupport {
+                offsets: offsets.into(),
+                addresses: addresses.into(),
+                max_active_addresses,
+            }),
+        )
+    }
+
+    fn prepare_booleanity_rows_inner(
+        &self,
+        rows: &[BooleanityRow],
+        bytecode_outer_support: Option<BytecodeOuterSupport>,
+    ) -> Result<BooleanityRows, MetalError> {
         if rows.is_empty() {
             return Err(MetalError::EmptyInput);
         }
@@ -388,6 +463,7 @@ impl SolinasMetal {
             buffer: buffer_from_slice(&self.device, rows),
             len,
             device_registry_id: self.device.registry_id(),
+            bytecode_outer_support,
         })))
     }
 
@@ -1166,6 +1242,7 @@ mod tests {
             buffer: rows.buffer().clone(),
             len: rows.len(),
             device_registry_id: got,
+            bytecode_outer_support: rows.0.bytecode_outer_support.clone(),
         }));
 
         assert!(matches!(

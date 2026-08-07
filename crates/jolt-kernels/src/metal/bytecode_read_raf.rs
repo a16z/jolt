@@ -298,6 +298,7 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                     return Ok(Box::new(cpu(session)?));
                 }
             };
+            let producer_support_bytes = invocation.storage().producer_support_bytes;
             let resident_rows_storage_id = rows.allocation_identity();
             let resident_rows_device_registry_id = rows.device_registry_id();
             let pending = match invocation.submit() {
@@ -355,10 +356,13 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                 completed_before_join = observation.completed_before_join,
                 completed_outer_blocks = producer_status.completed_outer_blocks,
                 emitted_rows = producer_status.emitted_rows,
+                max_active_addresses = observation.max_active_addresses.unwrap_or(0) as u64,
+                producer_threadgroup_bytes =
+                    observation.producer_threadgroup_bytes.unwrap_or(0) as u64,
                 resident_rows_storage_id,
                 row_allocations = 0u64,
                 row_upload_bytes = 0u64,
-                carrier_upload_bytes = 0u64,
+                carrier_upload_bytes = producer_support_bytes as u64,
                 "Metal bytecode address-major resident shadow matched the optimized CPU tables"
             );
             return Ok(Box::new(prepared_cpu));
@@ -848,9 +852,20 @@ mod tests {
             })
             .unwrap();
             let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+            let mut active_addresses = packed
+                .iter()
+                .map(|row| row.mapped_pc().unwrap_or(0) as u32)
+                .collect::<Vec<_>>();
+            active_addresses.sort_unstable();
+            active_addresses.dedup();
+            let support_offsets = [0, active_addresses.len() as u32];
             let resident = metal
                 .context
-                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                .prepare_booleanity_rows_with_bytecode_support(
+                    InstructionCycleRow::metal_booleanity_rows(&packed),
+                    &support_offsets,
+                    &active_addresses,
+                )
                 .unwrap();
             let mut session = ProofSession::default();
             session.park(resident);
