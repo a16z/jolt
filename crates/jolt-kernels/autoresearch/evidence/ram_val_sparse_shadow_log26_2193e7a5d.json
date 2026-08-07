@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "evidence_stage": "diagnostic_log26_single_pair",
+  "decision": "accept_sparse_producer_and_first_message_correctness;_do_not_extend_device_rounds_for_fibonacci",
+  "artifact": "benchmark-runs/metal-piop-eval/20260807-100706-919741/result.json",
+  "revision": "2193e7a5d0495d6272aee8ed0c11df8c9d894f6f",
+  "binary_sha256": "a0a4ead06b9a0a28f27ca36a40e2e857ad9b94459ec97b5a5062582836bb8649",
+  "run": {
+    "workload": "fibonacci",
+    "log_t": 26,
+    "rayon_threads": 16,
+    "pairs": 1,
+    "acceptance_eligible": false,
+    "cpu_proof_verified": true,
+    "metal_proof_verified": true,
+    "worktree_dirty": true
+  },
+  "piop": {
+    "optimized_ns": 20558317375,
+    "metal_hybrid_ns": 5543216208,
+    "diagnostic_speedup": 3.7087345330911154
+  },
+  "ram_val_member": {
+    "optimized_ns": 265215959,
+    "metal_hybrid_with_shadow_ns": 255490290,
+    "apparent_ratio": 1.0380666873876108,
+    "interpretation": "Both arms use the optimized CPU kernel. The single-pair difference is run-order noise, not a Metal speedup."
+  },
+  "shadow": {
+    "cycles": 67108864,
+    "nonzero_increments": 77,
+    "active_pairs": 74,
+    "incremental_upload_bytes": 1776,
+    "address_storage_id": 35128987136,
+    "submit_span_ns": 57917,
+    "submit_wall_ns": 5333,
+    "gpu_active_ns": 35875,
+    "overlap_wall_ns": 882947250,
+    "join_span_ns": 54459,
+    "join_wait_ns": 1000,
+    "lifecycle_wall_ns": 882965250,
+    "completed_before_join": true,
+    "exact_first_message": true,
+    "cpu_output_authoritative": true
+  },
+  "conclusion": {
+    "first_message_gpu_work_is_fully_hidden": true,
+    "production_fibonacci_is_latency_sparse": true,
+    "next_atom": "Build the backend-neutral sparse RAM owner and per-level census in the existing witness traversal, then compare host-sparse and high-support Metal selectors with producer cost charged once.",
+    "promotion_blocker": "One diagnostic pair cannot establish a speedup, and 74 active pairs cannot amortize transcript-dependent GPU service across 26 rounds."
+  }
+}
