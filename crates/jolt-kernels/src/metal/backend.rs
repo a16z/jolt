@@ -61,6 +61,8 @@ pub struct MetalBackend {
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) product_remainder_sequences: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
+    pub(super) product_uniskip_dispatches: Arc<AtomicUsize>,
+    #[cfg(any(test, feature = "test-utils"))]
     pub(super) registers_val_sequences: Arc<AtomicUsize>,
 }
 
@@ -148,6 +150,8 @@ impl MetalBackend {
             #[cfg(any(test, feature = "test-utils"))]
             product_remainder_sequences: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
+            product_uniskip_dispatches: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "test-utils"))]
             registers_val_sequences: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -175,6 +179,13 @@ impl MetalBackend {
 
     #[cfg(any(test, feature = "test-utils"))]
     #[doc(hidden)]
+    pub fn product_uniskip_dispatches(&self) -> usize {
+        self.product_uniskip_dispatches
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
     pub fn registers_val_sequences(&self) -> usize {
         self.registers_val_sequences
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -189,6 +200,7 @@ where
     pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Self {
         self.spartan_outer_uniskip = Box::new(metal.clone());
         self.spartan_outer_remainder = Box::new(metal.clone());
+        self.spartan_product_uniskip = Box::new(metal.clone());
         self.spartan_product_remainder = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
         self.ram_read_write = Box::new(metal.clone());

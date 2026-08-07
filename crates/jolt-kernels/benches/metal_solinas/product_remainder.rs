@@ -24,6 +24,7 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     let cutoff = setting("JOLT_METAL_PRODUCT_REMAINDER_CUTOFF", 1 << 16);
     let service_only = env::var_os("JOLT_METAL_PRODUCT_REMAINDER_SERVICE_ONLY").is_some();
     let config = ProductRemainderSequenceConfig {
+        uniskip_threads_per_threadgroup: Some(64),
         materialize_threads_per_threadgroup: Some(materialize_threads),
         transition_threads_per_threadgroup: Some(transition_threads),
         openings_threads_per_threadgroup: Some(openings_threads),

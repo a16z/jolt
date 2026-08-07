@@ -11,7 +11,9 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::AkitaField;
-use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel};
+use jolt_poly::lagrange::{
+    centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
+};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -27,14 +29,17 @@ use super::solinas::{
     MetalError, ProductRemainderRow, ProductRemainderSequence, ProductRemainderSequenceConfig,
 };
 use crate::optimized::spartan_product::{
-    discard_product_uniskip_carry, product_uniskip_carry_metadata, OptimizedProductRemainder,
-    SpartanProductRow,
+    OptimizedProductRemainder, OptimizedProductUniskip, SpartanProductRow,
 };
+use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
 const DOMAIN: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
+const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
+const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
+const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanProductRemainderMetalConfig {
@@ -188,6 +193,170 @@ impl MetalBackend {
     }
 }
 
+struct MetalProductUniskipCarry {
+    log_t: usize,
+    tau_low: Vec<AkitaField>,
+    endpoints: [AkitaField; 2],
+    row_storage_id: usize,
+    device_registry_id: u64,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalProductUniskipCarry {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("tau_low"),
+            vec_heap_bytes(&self.tau_low),
+        );
+        visitor.exit();
+    }
+}
+
+impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
+    fn prepare(
+        &self,
+        session: &mut ProofSession,
+        log_t: usize,
+        tau_low: &[AkitaField],
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+    ) -> Result<(), KernelError<AkitaField>> {
+        if tau_low.len() != log_t {
+            return Err(KernelError::InvariantViolation {
+                reason: "Spartan product tau_low must carry log_t challenges",
+            });
+        }
+        let cycles = 1usize
+            .checked_shl(log_t as u32)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Spartan product trace length overflows usize",
+            })?;
+        let use_metal = cycles >= self.config.spartan_product_remainder.trace_cutoff_elements
+            && session.state::<ProductRemainderSequence>().is_some();
+        if !use_metal {
+            drop(session.take::<ProductRemainderSequence>());
+            drop(session.take::<MetalProductUniskipCarry>());
+            return OptimizedProductUniskip.prepare(session, log_t, tau_low, witness);
+        }
+
+        let mut sequence =
+            session
+                .take::<ProductRemainderSequence>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "Metal product uni-skip lost its resident sequence",
+                })?;
+        if !sequence.is_primed()
+            || sequence.storage_layout().rows() != cycles
+            || sequence.device_registry_id() != self.context.device_registry_id()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "Metal product uni-skip sequence has the wrong state, shape, or device",
+            });
+        }
+        let row_storage_id = sequence.row_allocation_identity();
+        let split = tau_low.len().div_ceil(2);
+        let (out_point, in_point) = tau_low.split_at(split);
+        let e_in = EqPolynomial::evals(in_point, None);
+        let e_out = EqPolynomial::evals(out_point, None);
+        let span = tracing::info_span!(
+            "MetalProductUniskip::prepare",
+            cycles,
+            resident_rows_storage_id = row_storage_id as u64,
+            row_upload_bytes = 0u64,
+            round_device_buffer_allocations = 0u64,
+            dispatch_wall_ns = tracing::field::Empty,
+            gpu_active_ns = tracing::field::Empty,
+        );
+        let _entered = span.enter();
+        let started = Instant::now();
+        let endpoints = sequence.uniskip_message_timed(&e_in, &e_out);
+        let dispatch_wall = started.elapsed();
+        let (endpoints, gpu_active) = match endpoints {
+            Ok(result) => result,
+            Err(error) if product_prepare_fallback_reason(&error).is_some() => {
+                tracing::warn!(
+                    target: "jolt::metal",
+                    error = %error,
+                    "product uni-skip dispatch failed before Fiat-Shamir; using optimized CPU"
+                );
+                return OptimizedProductUniskip.prepare(session, log_t, tau_low, witness);
+            }
+            Err(error) => return Err(metal_prepare_error(error)),
+        };
+        let _ = span.record("dispatch_wall_ns", duration_nanos(dispatch_wall));
+        let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
+        if sequence.row_allocation_identity() != row_storage_id || !sequence.is_primed() {
+            return Err(KernelError::InvariantViolation {
+                reason: "product uni-skip changed the resident sequence allocation or phase",
+            });
+        }
+        session.park(sequence);
+        session.park(MetalProductUniskipCarry {
+            log_t,
+            tau_low: tau_low.to_vec(),
+            endpoints: endpoints.as_array(),
+            row_storage_id,
+            device_registry_id: self.context.device_registry_id(),
+        });
+        #[cfg(any(test, feature = "test-utils"))]
+        let _ = self
+            .product_uniskip_dispatches
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn first_round_poly(
+        &self,
+        session: &mut ProofSession,
+        late_tau: &[AkitaField],
+        known_values: &[AkitaField],
+    ) -> Result<UnivariatePoly<AkitaField>, KernelError<AkitaField>> {
+        let Some(carry) = session.state::<MetalProductUniskipCarry>() else {
+            return OptimizedProductUniskip.first_round_poly(session, late_tau, known_values);
+        };
+        let &[tau_high] = late_tau else {
+            return Err(KernelError::InvariantViolation {
+                reason:
+                    "the product uni-skip first-round polynomial expects exactly one late challenge",
+            });
+        };
+        let &[product, should_branch, should_jump] = known_values else {
+            return Err(KernelError::InvariantViolation {
+                reason: "the product uni-skip first-round polynomial expects three known nodes",
+            });
+        };
+        let sequence =
+            session
+                .state::<ProductRemainderSequence>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "Metal product uni-skip lost its sequence before interpolation",
+                })?;
+        if sequence.row_allocation_identity() != carry.row_storage_id
+            || sequence.device_registry_id() != carry.device_registry_id
+            || !sequence.is_primed()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "Metal product uni-skip carry disagrees with its resident sequence",
+            });
+        }
+        let kernel_values = centered_lagrange_evals::<AkitaField>(DOMAIN, tau_high)?;
+        let kernel_coefficients = interpolate_to_coeffs(DOMAIN_START, &kernel_values);
+        let t1_values = [
+            carry.endpoints[0],
+            product,
+            should_branch,
+            should_jump,
+            carry.endpoints[1],
+        ];
+        let t1_coefficients = interpolate_to_coeffs(EXTENDED_START, &t1_values);
+        Ok(UnivariatePoly::new(poly_mul(
+            &kernel_coefficients,
+            &t1_coefficients,
+        )))
+    }
+}
+
 impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
     fn prepare(
         &self,
@@ -204,14 +373,31 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             .ok_or(KernelError::InvariantViolation {
                 reason: "Spartan product trace length overflows usize",
             })?;
-        let use_metal = cycles >= self.config.spartan_product_remainder.trace_cutoff_elements
-            && session.state::<ProductRemainderSequence>().is_some();
-        if !use_metal {
+        let has_metal_carry = session.state::<MetalProductUniskipCarry>().is_some();
+        if !has_metal_carry {
             drop(session.take::<ProductRemainderSequence>());
             return OptimizedProductRemainder.prepare(session, witness, inputs);
         }
-
-        let (carry_log_t, tau_low) = product_uniskip_carry_metadata(session)?;
+        if cycles < self.config.spartan_product_remainder.trace_cutoff_elements
+            || session.state::<ProductRemainderSequence>().is_none()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "Metal product uni-skip cannot hand off without its resident remainder",
+            });
+        }
+        let (carry_log_t, tau_low, carry_row_storage_id, carry_device_registry_id) = {
+            let carry = session.state::<MetalProductUniskipCarry>().ok_or(
+                KernelError::InvariantViolation {
+                    reason: "Metal product uni-skip carry disappeared before handoff",
+                },
+            )?;
+            (
+                carry.log_t,
+                carry.tau_low.clone(),
+                carry.row_storage_id,
+                carry.device_registry_id,
+            )
+        };
         if carry_log_t != rounds || tau_low.len() != rounds {
             return Err(KernelError::InvariantViolation {
                 reason: "product uni-skip carry disagrees with the remainder relation",
@@ -230,9 +416,11 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                 })?;
         if sequence.storage_layout().rows() != cycles
             || sequence.device_registry_id() != self.context.device_registry_id()
+            || sequence.device_registry_id() != carry_device_registry_id
+            || sequence.row_allocation_identity() != carry_row_storage_id
         {
             return Err(KernelError::InvariantViolation {
-                reason: "Metal product-remainder sequence has the wrong shape or device",
+                reason: "Metal product-remainder sequence has the wrong shape, device, or rows",
             });
         }
         let row_storage_id = sequence.row_allocation_identity();
@@ -256,18 +444,7 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         let started = Instant::now();
         let first_message = sequence.restart_message_timed(&e_in, &e_out);
         let materialize_wall = started.elapsed();
-        let (first_message, materialize_gpu_active) = match first_message {
-            Ok(result) => result,
-            Err(error) if product_prepare_fallback_reason(&error).is_some() => {
-                tracing::warn!(
-                    target: "jolt::metal",
-                    error = %error,
-                    "product-remainder Metal materialization failed; using optimized CPU"
-                );
-                return OptimizedProductRemainder.prepare(session, witness, inputs);
-            }
-            Err(error) => return Err(metal_prepare_error(error)),
-        };
+        let (first_message, materialize_gpu_active) = first_message.map_err(metal_prepare_error)?;
         let _ = prepare_span.record("materialize_wall_ns", duration_nanos(materialize_wall));
         let _ = prepare_span.record(
             "materialize_gpu_active_ns",
@@ -278,7 +455,21 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                 reason: "product-remainder sequence changed the resident row allocation",
             });
         }
-        discard_product_uniskip_carry(session, carry_log_t, &tau_low)?;
+        let carry =
+            session
+                .take::<MetalProductUniskipCarry>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "Metal product uni-skip carry disappeared during handoff",
+                })?;
+        if carry.log_t != carry_log_t
+            || carry.tau_low != tau_low
+            || carry.row_storage_id != row_storage_id
+            || carry.device_registry_id != self.context.device_registry_id()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "Metal product uni-skip carry changed during handoff",
+            });
+        }
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
             .product_remainder_sequences
@@ -659,7 +850,7 @@ mod tests {
                 OptimizedProductUniskip
                     .prepare(&mut optimized_session, log_t, &tau_low, witness)
                     .unwrap();
-                let _ = OptimizedProductUniskip
+                let expected_uniskip = OptimizedProductUniskip
                     .first_round_poly(&mut optimized_session, &[tau_high], &known_values)
                     .unwrap();
                 let mut optimized = OptimizedProductRemainder
@@ -682,12 +873,34 @@ mod tests {
                 metal
                     .prepare_product_remainder_witness(&mut metal_session, log_t, witness)
                     .unwrap();
-                OptimizedProductUniskip
-                    .prepare(&mut metal_session, log_t, &tau_low, witness)
-                    .unwrap();
-                let _ = OptimizedProductUniskip
-                    .first_round_poly(&mut metal_session, &[tau_high], &known_values)
-                    .unwrap();
+                <MetalBackend as UniskipKernel<AkitaField, ProductRemainder<AkitaField>>>::prepare(
+                    &metal,
+                    &mut metal_session,
+                    log_t,
+                    &tau_low,
+                    witness,
+                )
+                .unwrap();
+                let actual_uniskip = <MetalBackend as UniskipKernel<
+                    AkitaField,
+                    ProductRemainder<AkitaField>,
+                >>::first_round_poly(
+                    &metal, &mut metal_session, &[tau_high], &known_values
+                )
+                .unwrap();
+                assert_eq!(actual_uniskip, expected_uniskip);
+                assert_eq!(metal.product_uniskip_dispatches(), 1);
+                let resident_row_id = metal_session
+                    .state::<ProductRemainderSequence>()
+                    .unwrap()
+                    .row_allocation_identity();
+                assert_eq!(
+                    metal_session
+                        .state::<MetalProductUniskipCarry>()
+                        .unwrap()
+                        .row_storage_id,
+                    resident_row_id
+                );
                 let mut actual = <MetalBackend as PrepareKernel<
                     AkitaField,
                     ProductRemainder<AkitaField>,

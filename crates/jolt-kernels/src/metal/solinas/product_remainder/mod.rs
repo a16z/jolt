@@ -13,6 +13,11 @@ use thiserror::Error;
 
 use crate::optimized::spartan_product::SpartanProductRow;
 
+use super::product_uniskip::{
+    ProductUniskipBlockParams, ProductUniskipExtendedNodes,
+    BLOCKS_PIPELINE as PRODUCT_UNISKIP_PIPELINE, PRODUCT_UNISKIP_EXTENDED_NODES,
+    PRODUCT_UNISKIP_SIMD_WIDTH,
+};
 use super::{
     buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
@@ -45,6 +50,7 @@ const VALID_FLAGS: u64 = (1 << 6) - 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductRemainderSequenceConfig {
+    pub uniskip_threads_per_threadgroup: Option<usize>,
     pub materialize_threads_per_threadgroup: Option<usize>,
     pub transition_threads_per_threadgroup: Option<usize>,
     pub openings_threads_per_threadgroup: Option<usize>,
@@ -53,6 +59,7 @@ pub struct ProductRemainderSequenceConfig {
 impl Default for ProductRemainderSequenceConfig {
     fn default() -> Self {
         Self {
+            uniskip_threads_per_threadgroup: Some(64),
             materialize_threads_per_threadgroup: Some(128),
             transition_threads_per_threadgroup: Some(64),
             openings_threads_per_threadgroup: Some(128),
@@ -584,16 +591,19 @@ struct ProductRemainderBuffers {
 
 pub struct ProductRemainderSequence {
     context: SolinasMetal,
+    uniskip_pipeline: ComputePipelineState,
     materialize_pipeline: ComputePipelineState,
     transition_pipeline: ComputePipelineState,
     openings_pipeline: ComputePipelineState,
     reduction_pipeline: ComputePipelineState,
+    uniskip_limits: PipelineLimits,
     materialize_limits: PipelineLimits,
     transition_limits: PipelineLimits,
     openings_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: ProductRemainderBuffers,
     layout: ProductRemainderStorageLayout,
+    uniskip_threads_per_threadgroup: usize,
     materialize_threads_per_threadgroup: usize,
     transition_threads_per_threadgroup: usize,
     openings_threads_per_threadgroup: usize,
@@ -702,14 +712,23 @@ impl SolinasMetal {
             .map_err(|_| MetalError::InputTooLong(layout.workspace_bytes()))?;
         self.validate_additional_working_set(workspace_bytes)?;
 
+        let uniskip_pipeline = self.compile_named_pipeline(PRODUCT_UNISKIP_PIPELINE)?;
         let materialize_pipeline = self.compile_named_pipeline(MATERIALIZE_PIPELINE)?;
         let transition_pipeline = self.compile_named_pipeline(TRANSITION_PIPELINE)?;
         let openings_pipeline = self.compile_named_pipeline(OPENINGS_PIPELINE)?;
         let reduction_pipeline = self.compile_named_pipeline(REDUCTION_PIPELINE)?;
+        let uniskip_limits = Self::limits(&uniskip_pipeline);
         let materialize_limits = Self::limits(&materialize_pipeline);
         let transition_limits = Self::limits(&transition_pipeline);
         let openings_limits = Self::limits(&openings_pipeline);
         let reduction_limits = Self::limits(&reduction_pipeline);
+        if uniskip_limits.thread_execution_width != PRODUCT_UNISKIP_SIMD_WIDTH {
+            return Err(MetalError::UnsupportedProductUniskipExecutionWidth {
+                pipeline: PRODUCT_UNISKIP_PIPELINE,
+                expected: PRODUCT_UNISKIP_SIMD_WIDTH,
+                got: uniskip_limits.thread_execution_width,
+            });
+        }
         for (pipeline, limits) in [
             (MATERIALIZE_PIPELINE, materialize_limits),
             (TRANSITION_PIPELINE, transition_limits),
@@ -725,6 +744,10 @@ impl SolinasMetal {
             }
         }
 
+        let uniskip_threads_per_threadgroup = Self::resolve_threadgroup_width(
+            config.uniskip_threads_per_threadgroup,
+            uniskip_limits,
+        )?;
         let materialize_threads_per_threadgroup = Self::resolve_threadgroup_width(
             config.materialize_threads_per_threadgroup,
             materialize_limits,
@@ -745,10 +768,12 @@ impl SolinasMetal {
 
         Ok(ProductRemainderSequence {
             context: self.clone(),
+            uniskip_pipeline,
             materialize_pipeline,
             transition_pipeline,
             openings_pipeline,
             reduction_pipeline,
+            uniskip_limits,
             materialize_limits,
             transition_limits,
             openings_limits,
@@ -764,6 +789,7 @@ impl SolinasMetal {
                 partial_b: self.new_product_remainder_buffer(layout.partial_fields())?,
             },
             layout,
+            uniskip_threads_per_threadgroup,
             materialize_threads_per_threadgroup,
             transition_threads_per_threadgroup,
             openings_threads_per_threadgroup,
@@ -840,6 +866,69 @@ impl ProductRemainderSequence {
             &weights,
             "Lagrange weights",
         )
+    }
+
+    pub fn uniskip_message_timed(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<(ProductUniskipExtendedNodes<AkitaField>, Duration), MetalError> {
+        if !self.is_primed() {
+            return Err(MetalError::InvalidProductRemainderState(
+                "product uni-skip requires a primed resident sequence",
+            ));
+        }
+        let params = ProductUniskipBlockParams::new(self.layout.rows(), e_in.len(), e_out.len())?;
+        self.write_weights(e_in, e_out)?;
+        let (values, active_time) = autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.uniskip_pipeline);
+            encoder.set_buffer(0, Some(self.buffers.rows.buffer()), 0);
+            encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+            encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+            encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+            set_inline_bytes(encoder, 4, &params);
+            encoder.set_threadgroup_memory_length(
+                0,
+                product_remainder_threadgroup_bytes(
+                    PRODUCT_UNISKIP_EXTENDED_NODES,
+                    self.uniskip_threads_per_threadgroup,
+                ) as u64,
+            );
+            dispatch_product_remainder_blocks(
+                encoder,
+                e_out.len(),
+                self.uniskip_threads_per_threadgroup,
+            );
+            let final_in_a = encode_product_remainder_reductions(
+                encoder,
+                &self.reduction_pipeline,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                PRODUCT_UNISKIP_EXTENDED_NODES,
+            )?;
+            encoder.end_encoding();
+            finish_product_remainder_command::<PRODUCT_UNISKIP_EXTENDED_NODES>(
+                &self.context,
+                command_buffer,
+                if final_in_a {
+                    &self.buffers.partial_a
+                } else {
+                    &self.buffers.partial_b
+                },
+                "product uni-skip endpoints",
+            )
+        })?;
+        self.gpu_active_time += active_time;
+        Ok((
+            ProductUniskipExtendedNodes {
+                minus_two: values[0],
+                plus_two: values[1],
+            },
+            active_time,
+        ))
     }
 
     pub fn message(
@@ -1173,6 +1262,10 @@ impl ProductRemainderSequence {
 
     pub const fn materialize_pipeline_limits(&self) -> PipelineLimits {
         self.materialize_limits
+    }
+
+    pub const fn uniskip_pipeline_limits(&self) -> PipelineLimits {
+        self.uniskip_limits
     }
 
     pub const fn transition_pipeline_limits(&self) -> PipelineLimits {
@@ -1549,6 +1642,7 @@ pub mod reference {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests use a fixed valid storage shape")]
 mod tests {
+    use super::super::product_uniskip::evaluate_product_uniskip_extensions_cpu;
     use super::*;
 
     #[test]
@@ -1576,6 +1670,55 @@ mod tests {
             assert_eq!(row.right_instruction_input(), value);
             assert_eq!(ProductRemainderRow::try_from_words(row.words()), Ok(row));
         }
+    }
+
+    #[test]
+    fn primed_sequence_reuses_resident_rows_for_product_uniskip() {
+        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+        let row_count = 1usize << 10;
+        let rows = (0..row_count)
+            .map(|index| {
+                ProductRemainderRow::new(
+                    (17 * index + 3) as u64,
+                    index as i128 - 513,
+                    index % 3 == 0,
+                    index % 5 == 0,
+                    (29 * index + 11) as u64,
+                    index % 7 == 0,
+                    index % 11 == 0,
+                    index % 13 == 0,
+                )
+            })
+            .collect::<Vec<_>>();
+        let e_in = (0..32)
+            .map(|index| AkitaField::from_u64((37 * index + 19) as u64))
+            .collect::<Vec<_>>();
+        let e_out = (0..32)
+            .map(|index| AkitaField::from_u64((43 * index + 23) as u64))
+            .collect::<Vec<_>>();
+        let expected = evaluate_product_uniskip_extensions_cpu(&rows, &e_in, &e_out)
+            .expect("CPU product uni-skip should be well-shaped");
+        let mut sequence = context
+            .prepare_product_remainder_sequence(
+                &rows,
+                [AkitaField::zero(); PRODUCT_REMAINDER_MESSAGE_COLUMNS + 1],
+                e_in.len(),
+                e_out.len(),
+                ProductRemainderSequenceConfig::default(),
+            )
+            .expect("resident product sequence should prepare");
+        let row_storage_id = sequence.row_allocation_identity();
+        let _ = sequence
+            .prime()
+            .expect("resident product sequence should prime");
+
+        let (actual, _) = sequence
+            .uniskip_message_timed(&e_in, &e_out)
+            .expect("resident product uni-skip should execute");
+        assert_eq!(actual, expected);
+        assert!(sequence.is_primed());
+        assert_eq!(sequence.row_allocation_identity(), row_storage_id);
+        assert_eq!(sequence.round_device_buffer_allocations(), 0);
     }
 
     #[test]
