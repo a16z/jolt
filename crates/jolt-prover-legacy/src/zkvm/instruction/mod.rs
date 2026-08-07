@@ -294,7 +294,12 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstruction::VirtualZeroExtendWord(_) => {
                 LookupTables::LowerHalfWord(Default::default())
             }
-            JoltInstruction::VirtualSignExtendWord(_) => {
+            JoltInstructionKind::ADDW
+            | JoltInstructionKind::ADDIW
+            | JoltInstructionKind::SUBW
+            | JoltInstructionKind::MULW
+            | JoltInstructionKind::SLLIW
+            | JoltInstruction::VirtualSignExtendWord(_) => {
                 LookupTables::SignExtendHalfWord(Default::default())
             }
             JoltInstructionKind::VirtualPow2 | JoltInstructionKind::VirtualPow2I => {
@@ -485,9 +490,9 @@ macro_rules! define_rv64imac_trait_impls {
 
 define_rv64imac_trait_impls! {
     instructions: [
-        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        ADD, ADDI, ADDIW, ADDW, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
-        SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
+        MULW, SLLIW, SLT, SLTI, SLTIU, SLTU, SUB, SUBW, SD, XOR, XORI,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment,
         VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO,
@@ -504,6 +509,8 @@ define_rv64imac_trait_impls! {
 
 pub mod add;
 pub mod addi;
+pub mod addiw;
+pub mod addw;
 pub mod and;
 pub mod andi;
 pub mod andn;
@@ -523,14 +530,17 @@ pub mod ld;
 pub mod lui;
 pub mod mul;
 pub mod mulhu;
+pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod sd;
+pub mod slliw;
 pub mod slt;
 pub mod slti;
 pub mod sltiu;
 pub mod sltu;
 pub mod sub;
+pub mod subw;
 pub mod virtual_advice;
 pub mod virtual_advice_len;
 pub mod virtual_advice_load;
@@ -568,3 +578,15 @@ pub mod xori;
 
 #[cfg(test)]
 pub mod test;
+
+#[inline]
+fn sign_extend_half_word<const XLEN: usize>(value: u64) -> u64 {
+    let half_word_size = XLEN / 2;
+    let lower_mask = (1u128 << half_word_size).wrapping_sub(1) as u64;
+    let lower_half = value & lower_mask;
+    if lower_half & (1 << (half_word_size - 1)) == 0 {
+        lower_half
+    } else {
+        lower_half | (lower_mask << half_word_size)
+    }
+}
