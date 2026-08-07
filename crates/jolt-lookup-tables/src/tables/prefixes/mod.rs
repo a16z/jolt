@@ -13,6 +13,8 @@ pub mod change_divisor;
 pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
+pub mod lane_extract_s;
+pub mod lane_mask;
 pub mod left_is_zero;
 pub mod left_operand_msb;
 pub mod left_shift;
@@ -42,6 +44,7 @@ pub mod right_shift_w;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod three_lsb;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
@@ -155,6 +158,14 @@ pub enum Prefixes {
     XorRotW8,
     XorRotW12,
     XorRotW16,
+    ThreeLsb,
+    LaneMaskB,
+    LaneMaskH,
+    LaneMaskW,
+    Pow2Lane,
+    LaneSignT,
+    LaneSignS,
+    LastMaskBit,
 }
 
 /// Total number of prefix variants.
@@ -216,6 +227,14 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
             Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
+            Prefixes::ThreeLsb => three_lsb::ThreeLsbPrefix::$method($($args),*),
+            Prefixes::LaneMaskB => lane_mask::LaneMaskPrefix::<1>::$method($($args),*),
+            Prefixes::LaneMaskH => lane_mask::LaneMaskPrefix::<2>::$method($($args),*),
+            Prefixes::LaneMaskW => lane_mask::LaneMaskPrefix::<4>::$method($($args),*),
+            Prefixes::Pow2Lane => lane_mask::LaneMaskPrefix::<0>::$method($($args),*),
+            Prefixes::LaneSignT => lane_extract_s::LaneSignTPrefix::$method($($args),*),
+            Prefixes::LaneSignS => lane_extract_s::LaneSignSPrefix::$method($($args),*),
+            Prefixes::LastMaskBit => lane_extract_s::LastMaskBitPrefix::$method($($args),*),
         }
     };
 }

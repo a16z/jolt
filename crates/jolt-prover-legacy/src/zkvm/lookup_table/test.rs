@@ -27,6 +27,23 @@ pub fn lookup_table_mle_random_test<F: JoltField, T: JoltLookupTable + Default>(
     }
 }
 
+pub fn lookup_table_mle_random_valid_index_test<
+    const XLEN: usize,
+    F: JoltField,
+    T: PrefixSuffixDecomposition<XLEN>,
+>() {
+    let mut rng = StdRng::seed_from_u64(12345);
+
+    for _ in 0..1000 {
+        let index = T::random_lookup_index(&mut rng);
+        assert_eq!(
+            F::from_u64(T::default().materialize_entry(index)),
+            T::default().evaluate_mle::<F, F>(&index_to_field_bitvector(index, XLEN * 2)),
+            "MLE did not match materialized table at index {index}",
+        );
+    }
+}
+
 pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + Default>() {
     let materialized = T::default().materialize();
     for (i, entry) in materialized.iter().enumerate() {
@@ -47,8 +64,18 @@ pub fn gen_bitmask_lookup_index(rng: &mut StdRng) -> u128 {
 }
 
 pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomposition<XLEN>>() {
-    const ROUNDS_PER_PHASE: usize = 16;
-    let total_phases: usize = XLEN * 2 / ROUNDS_PER_PHASE;
+    prefix_suffix_test_phases::<XLEN, F, T>(16);
+    prefix_suffix_test_phases::<XLEN, F, T>(8);
+}
+
+fn prefix_suffix_test_phases<
+    const XLEN: usize,
+    F: JoltField,
+    T: PrefixSuffixDecomposition<XLEN>,
+>(
+    rounds_per_phase: usize,
+) {
+    let total_phases: usize = XLEN * 2 / rounds_per_phase;
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..300 {
@@ -57,9 +84,9 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
         let mut j = 0;
         let mut r: Vec<F> = vec![];
         for phase in 0..total_phases {
-            let suffix_len = (total_phases - 1 - phase) * ROUNDS_PER_PHASE;
+            let suffix_len = (total_phases - 1 - phase) * rounds_per_phase;
             let (mut prefix_bits, suffix_bits) =
-                LookupBits::new(lookup_index, XLEN * 2 - phase * ROUNDS_PER_PHASE)
+                LookupBits::new(lookup_index, XLEN * 2 - phase * rounds_per_phase)
                     .split(suffix_len);
 
             let suffix_evals: Vec<_> = T::default()
@@ -68,7 +95,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle::<XLEN>(suffix_bits))))
                 .collect();
 
-            for _ in 0..ROUNDS_PER_PHASE {
+            for _ in 0..rounds_per_phase {
                 let mut eval_point = r.clone();
                 let c = if rng.next_u64().is_even() { 0 } else { 2 };
                 eval_point.push(F::from_u32(c));
@@ -121,5 +148,20 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 j += 1;
             }
         }
+
+        let prefix_evals = prefix_checkpoints
+            .into_iter()
+            .map(PrefixCheckpoint::unwrap)
+            .collect::<Vec<_>>();
+        let empty_suffix = LookupBits::new(0, 0);
+        let suffix_evals = T::default()
+            .suffixes()
+            .iter()
+            .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle::<XLEN>(empty_suffix))))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            T::default().combine(&prefix_evals, &suffix_evals),
+            T::default().evaluate_mle(&r)
+        );
     }
 }

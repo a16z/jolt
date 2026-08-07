@@ -439,6 +439,24 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRotW7) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualAlignAddr) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualLaneMaskB) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualLaneMaskH) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualLaneMaskW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualPow2Lane) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualLaneExtractS) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (FieldAdd) => {
         Some(SourceExtension::FieldInline)
     };
@@ -868,6 +886,24 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRotW7) => {
         false
     };
+    (VirtualAlignAddr) => {
+        false
+    };
+    (VirtualLaneMaskB) => {
+        false
+    };
+    (VirtualLaneMaskH) => {
+        false
+    };
+    (VirtualLaneMaskW) => {
+        false
+    };
+    (VirtualPow2Lane) => {
+        false
+    };
+    (VirtualLaneExtractS) => {
+        false
+    };
     (FieldAdd) => {
         true
     };
@@ -1095,6 +1131,24 @@ macro_rules! jolt_target_extension_for_marker {
     };
     (VirtualXorRotW7) => {
         Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualAlignAddr) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (VirtualLaneMaskB) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (VirtualLaneMaskH) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (VirtualLaneMaskW) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (VirtualPow2Lane) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (VirtualLaneExtractS) => {
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (FieldAdd) => {
         Some(JoltTargetExtension::FieldInline)
@@ -1346,6 +1400,24 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRotW7) => {
+        false
+    };
+    (VirtualAlignAddr) => {
+        false
+    };
+    (VirtualLaneMaskB) => {
+        false
+    };
+    (VirtualLaneMaskH) => {
+        false
+    };
+    (VirtualLaneMaskW) => {
+        false
+    };
+    (VirtualPow2Lane) => {
+        false
+    };
+    (VirtualLaneExtractS) => {
         false
     };
 }

@@ -349,6 +349,14 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualXORROTW7 => {
                 LookupTables::VirtualXORROTW7(Default::default())
             }
+            JoltInstruction::VirtualAlignAddr(_) => LookupTables::AlignAddr(Default::default()),
+            JoltInstruction::VirtualLaneMaskB(_) => LookupTables::LaneMaskB(Default::default()),
+            JoltInstruction::VirtualLaneMaskH(_) => LookupTables::LaneMaskH(Default::default()),
+            JoltInstruction::VirtualLaneMaskW(_) => LookupTables::LaneMaskW(Default::default()),
+            JoltInstruction::VirtualPow2Lane(_) => LookupTables::Pow2Lane(Default::default()),
+            JoltInstruction::VirtualLaneExtractS(_) => {
+                LookupTables::LaneExtractS(Default::default())
+            }
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -499,6 +507,8 @@ define_rv64imac_trait_impls! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7
+        , VirtualAlignAddr, VirtualLaneMaskB, VirtualLaneMaskH, VirtualLaneMaskW, VirtualPow2Lane,
+        VirtualLaneExtractS,
     ]
 }
 
@@ -544,6 +554,7 @@ pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
+pub mod virtual_lane;
 pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_pow2;

@@ -1,0 +1,15 @@
+use super::SparseDenseSuffix;
+use crate::lookup_bits::LookupBits;
+
+pub enum ThreeLsbSuffix {}
+
+impl SparseDenseSuffix for ThreeLsbSuffix {
+    fn suffix_mle(b: LookupBits) -> u64 {
+        if b.is_empty() {
+            // Binding every address bit leaves no low-bit contribution.
+            0
+        } else {
+            u64::from(b) & 7
+        }
+    }
+}

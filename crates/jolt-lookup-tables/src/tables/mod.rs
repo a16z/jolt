@@ -15,10 +15,13 @@ use serde::{Deserialize, Serialize};
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::traits::LookupTable;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
 pub mod halfword_alignment;
+pub mod lane_extract_s;
+pub mod lane_mask;
 pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
@@ -55,10 +58,13 @@ pub mod xor;
 pub use prefixes::{PrefixEval, Prefixes};
 pub use suffixes::{SuffixEval, Suffixes};
 
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
+use lane_extract_s::LaneExtractSTable;
+use lane_mask::{LaneMaskTable, Pow2LaneTable};
 use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
@@ -153,6 +159,12 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTW12(VirtualXORROTWTable<XLEN, 12>),
     VirtualXORROTW8(VirtualXORROTWTable<XLEN, 8>),
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
+    AlignAddr(AlignAddrTable<XLEN>),
+    LaneMaskB(LaneMaskTable<XLEN, 1>),
+    LaneMaskH(LaneMaskTable<XLEN, 2>),
+    LaneMaskW(LaneMaskTable<XLEN, 4>),
+    Pow2Lane(Pow2LaneTable<XLEN>),
+    LaneExtractS(LaneExtractSTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -202,6 +214,12 @@ macro_rules! dispatch {
             Self::VirtualXORROTW12($t) => $expr,
             Self::VirtualXORROTW8($t) => $expr,
             Self::VirtualXORROTW7($t) => $expr,
+            Self::AlignAddr($t) => $expr,
+            Self::LaneMaskB($t) => $expr,
+            Self::LaneMaskH($t) => $expr,
+            Self::LaneMaskW($t) => $expr,
+            Self::Pow2Lane($t) => $expr,
+            Self::LaneExtractS($t) => $expr,
         }
     };
 }

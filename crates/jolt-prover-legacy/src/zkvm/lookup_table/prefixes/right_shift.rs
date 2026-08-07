@@ -32,9 +32,18 @@ impl<F: JoltField> SparseDensePrefix<F> for RightShiftPrefix {
             result *= F::from_u8(1 + y_msb);
             result += F::from_u8(c as u8 * y_msb);
         }
-        let (x, y) = b.uninterleave();
-        result *= F::from_u32(1 << y.leading_ones());
-        result += F::from_u32(u32::from(x) >> y.trailing_zeros());
+        let (mut x, mut y) = b.uninterleave();
+        let mut suffix = 0;
+        let mut selected = 0;
+        while x.len() != 0 {
+            let x_i = x.pop_msb();
+            let y_i = y.pop_msb();
+            suffix *= 1 + u32::from(y_i);
+            suffix += u32::from(x_i * y_i);
+            selected += u32::from(y_i);
+        }
+        result *= F::from_u32(1 << selected);
+        result += F::from_u32(suffix);
 
         result
     }

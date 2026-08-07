@@ -213,6 +213,30 @@ fn modular_lookup_table_indices_match_prover_abi() {
                 Default::default(),
             )),
         ),
+        (
+            LookupTableKind::<XLEN>::AlignAddr(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::AlignAddr(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::LaneMaskB(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::LaneMaskB(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::LaneMaskH(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::LaneMaskH(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::LaneMaskW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::LaneMaskW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::Pow2Lane(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::Pow2Lane(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::LaneExtractS(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::LaneExtractS(Default::default())),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());
@@ -223,4 +247,29 @@ fn modular_lookup_table_indices_match_prover_abi() {
         LookupTableKind::<XLEN>::COUNT,
         ProverLookupTables::<XLEN>::COUNT
     );
+}
+
+#[test]
+fn modular_lookup_table_mles_match_prover_abi() {
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use strum::IntoEnumIterator;
+
+    let modular_point: Vec<Fr> = (0..2 * XLEN)
+        .map(|i| Fr::from_u64((i as u64 + 1).wrapping_mul(0x9e37_79b9)))
+        .collect();
+    let prover_point: Vec<ark_bn254::Fr> = (0..2 * XLEN)
+        .map(|i| ark_bn254::Fr::from((i as u64 + 1).wrapping_mul(0x9e37_79b9)))
+        .collect();
+
+    for (modular, prover) in LookupTableKind::<XLEN>::iter().zip(ProverLookupTables::<XLEN>::iter())
+    {
+        let modular_eval = modular.evaluate_mle::<Fr, Fr>(&modular_point);
+        let prover_eval = prover.evaluate_mle::<ark_bn254::Fr, ark_bn254::Fr>(&prover_point);
+        assert_eq!(
+            modular_eval.to_string(),
+            prover_eval.to_string(),
+            "lookup table index {}",
+            modular.index()
+        );
+    }
 }

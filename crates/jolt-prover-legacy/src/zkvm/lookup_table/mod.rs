@@ -1,7 +1,10 @@
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
+use lane_extract_s::LaneExtractSTable;
+use lane_mask::{LaneMaskTable, Pow2LaneTable};
 use lower_half_word::LowerHalfWordTable;
 use movsign::MovsignTable;
 use mulu_no_overflow::MulUNoOverflowTable;
@@ -74,10 +77,13 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: JoltLookupTable + Defaul
 pub mod prefixes;
 pub mod suffixes;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
 pub mod halfword_alignment;
+pub mod lane_extract_s;
+pub mod lane_mask;
 pub mod lower_half_word;
 pub mod movsign;
 pub mod mulu_no_overflow;
@@ -160,6 +166,12 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualXORROTW12(VirtualXORROTWTable<XLEN, 12>),
     VirtualXORROTW8(VirtualXORROTWTable<XLEN, 8>),
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
+    AlignAddr(AlignAddrTable<XLEN>),
+    LaneMaskB(LaneMaskTable<XLEN, 1>),
+    LaneMaskH(LaneMaskTable<XLEN, 2>),
+    LaneMaskW(LaneMaskTable<XLEN, 4>),
+    Pow2Lane(Pow2LaneTable<XLEN>),
+    LaneExtractS(LaneExtractSTable<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -212,6 +224,12 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW8(table) => table.materialize(),
             LookupTables::VirtualXORROTW12(table) => table.materialize(),
             LookupTables::VirtualXORROTW16(table) => table.materialize(),
+            LookupTables::AlignAddr(table) => table.materialize(),
+            LookupTables::LaneMaskB(table) => table.materialize(),
+            LookupTables::LaneMaskH(table) => table.materialize(),
+            LookupTables::LaneMaskW(table) => table.materialize(),
+            LookupTables::Pow2Lane(table) => table.materialize(),
+            LookupTables::LaneExtractS(table) => table.materialize(),
         }
     }
 
@@ -257,6 +275,12 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW8(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROTW12(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROTW16(table) => table.materialize_entry(index),
+            LookupTables::AlignAddr(table) => table.materialize_entry(index),
+            LookupTables::LaneMaskB(table) => table.materialize_entry(index),
+            LookupTables::LaneMaskH(table) => table.materialize_entry(index),
+            LookupTables::LaneMaskW(table) => table.materialize_entry(index),
+            LookupTables::Pow2Lane(table) => table.materialize_entry(index),
+            LookupTables::LaneExtractS(table) => table.materialize_entry(index),
         }
     }
 
@@ -306,6 +330,12 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW8(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROTW12(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROTW16(table) => table.evaluate_mle(r),
+            LookupTables::AlignAddr(table) => table.evaluate_mle(r),
+            LookupTables::LaneMaskB(table) => table.evaluate_mle(r),
+            LookupTables::LaneMaskH(table) => table.evaluate_mle(r),
+            LookupTables::LaneMaskW(table) => table.evaluate_mle(r),
+            LookupTables::Pow2Lane(table) => table.evaluate_mle(r),
+            LookupTables::LaneExtractS(table) => table.evaluate_mle(r),
         }
     }
 
@@ -351,6 +381,12 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW8(table) => table.suffixes(),
             LookupTables::VirtualXORROTW12(table) => table.suffixes(),
             LookupTables::VirtualXORROTW16(table) => table.suffixes(),
+            LookupTables::AlignAddr(table) => table.suffixes(),
+            LookupTables::LaneMaskB(table) => table.suffixes(),
+            LookupTables::LaneMaskH(table) => table.suffixes(),
+            LookupTables::LaneMaskW(table) => table.suffixes(),
+            LookupTables::Pow2Lane(table) => table.suffixes(),
+            LookupTables::LaneExtractS(table) => table.suffixes(),
         }
     }
 
@@ -400,6 +436,12 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW8(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROTW12(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROTW16(table) => table.combine(prefixes, suffixes),
+            LookupTables::AlignAddr(table) => table.combine(prefixes, suffixes),
+            LookupTables::LaneMaskB(table) => table.combine(prefixes, suffixes),
+            LookupTables::LaneMaskH(table) => table.combine(prefixes, suffixes),
+            LookupTables::LaneMaskW(table) => table.combine(prefixes, suffixes),
+            LookupTables::Pow2Lane(table) => table.combine(prefixes, suffixes),
+            LookupTables::LaneExtractS(table) => table.combine(prefixes, suffixes),
         }
     }
 }

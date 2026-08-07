@@ -26,12 +26,7 @@ pub(in crate::expand) fn expand_ram_region_assertion(
     Ok(())
 }
 
-/// Lowers `LB`/`LBU` by loading the containing doubleword and extracting a byte.
-///
-/// The effective address is rounded down to the aligned 8-byte address for the
-/// `LD`. The byte offset then determines how far to left-shift the containing
-/// doubleword so the requested byte lands in bits 63:56; the final arithmetic
-/// or logical right shift performs signed or unsigned extension.
+/// Lowers `LB`/`LBU` through a byte-lane mask.
 pub(in crate::expand) fn expand_byte_load(
     instruction: &SourceInstructionRow,
     signed: bool,
@@ -40,51 +35,33 @@ pub(in crate::expand) fn expand_byte_load(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
-    // v0 = effective address. v1 = aligned address of the containing
-    // doubleword.
     asm.expand_i(
-        SourceInstructionKind::ADDI,
+        SourceInstructionKind::VirtualAlignAddr(jolt_riscv::instructions::VirtualAlignAddr(())),
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
+    asm.expand_i(SourceInstructionKind::LD, v0.operand(), v0.operand(), 0);
     asm.expand_i(
-        SourceInstructionKind::ANDI,
+        SourceInstructionKind::VirtualLaneMaskB(jolt_riscv::instructions::VirtualLaneMaskB(())),
         v1.operand(),
-        v0.operand(),
-        format_i_imm(-8),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // Under the RV64 shift mask, ((address ^ 7) << 3) is
-    // (7 - byte_offset) * 8, moving the selected byte to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 7);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
-        SourceInstructionKind::SLL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
-    asm.expand_i(
-        if signed {
-            SourceInstructionKind::SRAI
-        } else {
-            SourceInstructionKind::SRLI
-        },
-        reg(rd(instruction)?),
-        v1.operand(),
-        56,
-    );
+    let extract = if signed {
+        SourceInstructionKind::VirtualLaneExtractS(
+            jolt_riscv::instructions::VirtualLaneExtractS(()),
+        )
+    } else {
+        SourceInstructionKind::VirtualSRL
+    };
+    asm.expand_r(extract, reg(rd(instruction)?), v0.operand(), v1.operand());
     asm.release_many([v0, v1]);
 
     asm.finalize()
 }
 
-/// Lowers `LH`/`LHU` by loading the containing doubleword and extracting a halfword.
-///
-/// Halfword alignment is asserted first. The extraction mirrors byte loads:
-/// shift the selected halfword into bits 63:48, then use arithmetic or logical
-/// right shift to get signed or unsigned extension.
+/// Lowers `LH`/`LHU` through an aligned halfword-lane mask.
 pub(in crate::expand) fn expand_halfword_load(
     instruction: &SourceInstructionRow,
     signed: bool,
@@ -93,46 +70,32 @@ pub(in crate::expand) fn expand_halfword_load(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
-    // Halfword loads may start at byte offsets 0, 2, 4, or 6 within the
-    // containing doubleword.
     asm.expand_address(
         SourceInstructionKind::VirtualAssertHalfwordAlignment,
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
     asm.expand_i(
-        SourceInstructionKind::ADDI,
+        SourceInstructionKind::VirtualAlignAddr(jolt_riscv::instructions::VirtualAlignAddr(())),
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
+    asm.expand_i(SourceInstructionKind::LD, v0.operand(), v0.operand(), 0);
     asm.expand_i(
-        SourceInstructionKind::ANDI,
+        SourceInstructionKind::VirtualLaneMaskH(jolt_riscv::instructions::VirtualLaneMaskH(())),
         v1.operand(),
-        v0.operand(),
-        format_i_imm(-8),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // Under the RV64 shift mask, ((address ^ 6) << 3) selects the aligned
-    // halfword lane and moves it to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 6);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
-        SourceInstructionKind::SLL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
-    asm.expand_i(
-        if signed {
-            SourceInstructionKind::SRAI
-        } else {
-            SourceInstructionKind::SRLI
-        },
-        reg(rd(instruction)?),
-        v1.operand(),
-        48,
-    );
+    let extract = if signed {
+        SourceInstructionKind::VirtualLaneExtractS(
+            jolt_riscv::instructions::VirtualLaneExtractS(()),
+        )
+    } else {
+        SourceInstructionKind::VirtualSRL
+    };
+    asm.expand_r(extract, reg(rd(instruction)?), v0.operand(), v1.operand());
     asm.release_many([v0, v1]);
 
     asm.finalize()
@@ -475,15 +438,10 @@ pub(in crate::expand) fn expand_amo_post64(
     Ok(())
 }
 
-/// Lowers `SB`/`SH` by replacing a narrow lane inside an aligned doubleword.
-///
-/// The helper optionally emits the source instruction's alignment assertion,
-/// loads the containing doubleword, builds a byte/halfword mask shifted to the
-/// selected lane, merges the low bits of `rs2`, and writes the whole
-/// doubleword back.
+/// Lowers a sub-doubleword store with a masked-XOR merge.
 pub(in crate::expand) fn expand_narrow_store(
     instruction: &SourceInstructionRow,
-    mask: i128,
+    lane_mask: SourceInstructionKind,
     alignment: Option<SourceInstructionKind>,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
@@ -493,57 +451,52 @@ pub(in crate::expand) fn expand_narrow_store(
     let v3 = asm.allocate()?;
 
     if let Some(alignment) = alignment {
-        // `SH` requires halfword alignment; `SB` passes `None`.
         asm.expand_address(alignment, reg(rs1(instruction)?), instruction.operands.imm);
     }
     asm.expand_i(
-        SourceInstructionKind::ADDI,
+        SourceInstructionKind::VirtualAlignAddr(jolt_riscv::instructions::VirtualAlignAddr(())),
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
+    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v0.operand(), 0);
     asm.expand_i(
-        SourceInstructionKind::ANDI,
-        v1.operand(),
-        v0.operand(),
-        format_i_imm(-8),
+        SourceInstructionKind::VirtualPow2Lane(jolt_riscv::instructions::VirtualPow2Lane(())),
+        v2.operand(),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(SourceInstructionKind::LD, v2.operand(), v1.operand(), 0);
-    asm.expand_i(SourceInstructionKind::SLLI, v3.operand(), v0.operand(), 3);
-    asm.expand_u(SourceInstructionKind::LUI, v0.operand(), mask);
-    // As in the word-store and AMO paths, masked-XOR replacement updates only
-    // the selected narrow lane.
-    asm.expand_r(
-        SourceInstructionKind::SLL,
-        v0.operand(),
-        v0.operand(),
-        v3.operand(),
-    );
-    asm.expand_r(
-        SourceInstructionKind::SLL,
-        v3.operand(),
+    asm.emit_r(
+        JoltInstructionKind::MUL,
+        v2.operand(),
         reg(rs2(instruction)?),
+        v2.operand(),
+    );
+    asm.expand_i(
+        lane_mask,
         v3.operand(),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
     );
     asm.expand_r(
         SourceInstructionKind::XOR,
-        v3.operand(),
         v2.operand(),
-        v3.operand(),
+        v1.operand(),
+        v2.operand(),
     );
     asm.expand_r(
         SourceInstructionKind::AND,
+        v2.operand(),
+        v2.operand(),
         v3.operand(),
-        v3.operand(),
-        v0.operand(),
     );
     asm.expand_r(
         SourceInstructionKind::XOR,
+        v1.operand(),
+        v1.operand(),
         v2.operand(),
-        v2.operand(),
-        v3.operand(),
     );
-    asm.expand_s(SourceInstructionKind::SD, v1.operand(), v2.operand(), 0);
+    asm.expand_s(SourceInstructionKind::SD, v0.operand(), v1.operand(), 0);
     asm.release_many([v0, v1, v2, v3]);
 
     asm.finalize()

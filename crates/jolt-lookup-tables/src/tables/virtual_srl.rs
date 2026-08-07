@@ -63,7 +63,13 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRLTable<XLEN
 
     #[cfg(test)]
     fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
-        crate::tables::test_utils::gen_bitmask_lookup_index::<XLEN>(rng)
+        use rand::Rng;
+
+        let x = rng.gen::<u64>() & ((1u128 << XLEN).wrapping_sub(1) as u64);
+        let start = rng.gen_range(0..XLEN);
+        let width = rng.gen_range(1..=XLEN - start);
+        let y = ((((1u128 << width) - 1) << start) & ((1u128 << XLEN) - 1)) as u64;
+        crate::interleave_bits(x, y)
     }
 }
 
