@@ -628,7 +628,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), device, None),
+            TraceOutput::new(OwnedTrace::new(rows), device, None, None),
         );
         let backend = TraceBackend::new(config, inputs);
 

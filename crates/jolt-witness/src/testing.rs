@@ -86,7 +86,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)
