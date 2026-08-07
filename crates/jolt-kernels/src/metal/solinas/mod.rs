@@ -37,6 +37,8 @@ mod instruction_input;
 pub mod instruction_input_successor;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
+#[doc(hidden)]
+pub mod instruction_read_raf_v2;
 mod outer_remainder;
 mod product5;
 mod product_remainder;
