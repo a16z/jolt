@@ -234,12 +234,40 @@ impl SolinasMetal {
             }
         }
 
-        let value_bytes = size_of_val(unexpanded_pc);
-        let flag_bytes = size_of_val(flags);
-        for bytes in [value_bytes, flag_bytes] {
-            self.validate_buffer_length(
-                u64::try_from(bytes).map_err(|_| MetalError::InputTooLong(bytes))?,
-            )?;
+        self.prepare_spartan_shift_rows_with_fill(
+            geometry.rows(),
+            exact_current_flags,
+            |destination_unexpanded_pc, destination_pc, destination_flags| {
+                destination_unexpanded_pc.copy_from_slice(unexpanded_pc);
+                destination_pc.copy_from_slice(pc);
+                destination_flags.copy_from_slice(flags);
+                Ok(())
+            },
+        )
+    }
+
+    pub(crate) fn prepare_spartan_shift_rows_with_fill(
+        &self,
+        rows: usize,
+        exact_current_flags: bool,
+        fill: impl FnOnce(&mut [u64], &mut [u64], &mut [SpartanShiftFlagWord]) -> Result<(), MetalError>,
+    ) -> Result<SpartanShiftResidentRows, MetalError> {
+        let geometry = SpartanShiftGeometry::new(rows)?;
+
+        let value_bytes = geometry
+            .rows()
+            .checked_mul(size_of::<u64>())
+            .ok_or(MetalError::InputTooLong(geometry.rows()))?;
+        let flag_bytes = geometry
+            .flag_words()
+            .checked_mul(size_of::<SpartanShiftFlagWord>())
+            .ok_or(MetalError::InputTooLong(geometry.rows()))?;
+        let value_bytes_u64 =
+            u64::try_from(value_bytes).map_err(|_| MetalError::InputTooLong(value_bytes))?;
+        let flag_bytes_u64 =
+            u64::try_from(flag_bytes).map_err(|_| MetalError::InputTooLong(flag_bytes))?;
+        for bytes in [value_bytes_u64, flag_bytes_u64] {
+            self.validate_buffer_length(bytes)?;
         }
         let resident_bytes = value_bytes
             .checked_mul(2)
@@ -249,9 +277,33 @@ impl SolinasMetal {
             u64::try_from(resident_bytes).map_err(|_| MetalError::InputTooLong(resident_bytes))?,
         )?;
 
-        let unexpanded_pc = buffer_from_slice(&self.device, unexpanded_pc);
-        let pc = buffer_from_slice(&self.device, pc);
-        let flags = buffer_from_slice(&self.device, flags);
+        let unexpanded_pc = self
+            .device
+            .new_buffer(value_bytes_u64, MTLResourceOptions::StorageModeShared);
+        let pc = self
+            .device
+            .new_buffer(value_bytes_u64, MTLResourceOptions::StorageModeShared);
+        let flags = self
+            .device
+            .new_buffer(flag_bytes_u64, MTLResourceOptions::StorageModeShared);
+
+        // SAFETY: the shared buffers above have exactly the element counts used
+        // below and are not submitted to Metal until after `fill` returns.
+        let destination_unexpanded_pc = unsafe {
+            slice::from_raw_parts_mut(unexpanded_pc.contents().cast::<u64>(), geometry.rows())
+        };
+        // SAFETY: see the allocation and submission invariant above.
+        let destination_pc =
+            unsafe { slice::from_raw_parts_mut(pc.contents().cast::<u64>(), geometry.rows()) };
+        // SAFETY: see the allocation and submission invariant above.
+        let destination_flags = unsafe {
+            slice::from_raw_parts_mut(
+                flags.contents().cast::<SpartanShiftFlagWord>(),
+                geometry.flag_words(),
+            )
+        };
+        fill(destination_unexpanded_pc, destination_pc, destination_flags)?;
+
         self.attach_spartan_shift_rows(
             unexpanded_pc,
             pc,

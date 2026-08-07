@@ -40,6 +40,7 @@ use crate::optimized::spartan_outer::{
     prepare_metal_spartan_outer_witness_rows, take_metal_spartan_outer_tau,
     OptimizedOuterRemainder, OptimizedOuterUniskip,
 };
+use crate::optimized::spartan_shift::prepare_metal_spartan_shift_witness_rows;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -436,6 +437,35 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 let rows =
                     prepare_metal_instruction_input_witness_rows(&self.context, witness, cycles)?;
                 session.park(rows);
+            }
+        }
+        if cycles >= self.config.spartan_shift.trace_cutoff_elements {
+            let span = tracing::info_span!(
+                "MetalSpartanShift::resident_rows_prepare",
+                cycles,
+                source = "witness_projection",
+                resident_bytes = tracing::field::Empty,
+                admitted = tracing::field::Empty,
+                fallback_reason = tracing::field::Empty,
+            );
+            let _entered = span.enter();
+            match prepare_metal_spartan_shift_witness_rows(&self.context, witness, cycles) {
+                Ok(rows) => {
+                    let _ = span.record("resident_bytes", rows.resident_bytes());
+                    let _ = span.record("admitted", true);
+                    let _ = span.record("fallback_reason", "none");
+                    self.install_spartan_shift_resident_rows(session, rows)?;
+                }
+                Err(error) if error.is_capacity_error() => {
+                    let _ = span.record("admitted", false);
+                    let _ = span.record("fallback_reason", "capacity");
+                    tracing::warn!(
+                        target: "jolt::metal",
+                        error = %error,
+                        "Spartan shift resident projection was not admitted"
+                    );
+                }
+                Err(error) => return Err(metal_prepare_error(error)),
             }
         }
         self.prepare_instruction_input_storage(session, cycles)?;

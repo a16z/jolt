@@ -31,6 +31,8 @@
 //!   ring-accumulator `fmadd` for the field-by-field `Q` products.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_field::AkitaField;
 use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, SignedScalarAccumulator};
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, InstructionFlags};
@@ -46,6 +48,11 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 use rayon::prelude::*;
 
 use super::support::collect_rows;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::{
+    spartan_shift::{SpartanShiftFlagWord, SpartanShiftResidentRows},
+    MetalError, SolinasMetal,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -65,6 +72,120 @@ struct SpartanShiftRow {
     is_first_in_sequence: OpFlag,
     #[opening(InstructionFlags(InstructionFlags::IsNoop))]
     is_noop: InstructionFlag,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_spartan_shift_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<SpartanShiftResidentRows, MetalError> {
+    context.prepare_spartan_shift_rows_with_fill(cycles, true, |unexpanded_pc, pc, flags| {
+        flags.fill(SpartanShiftFlagWord::default());
+        if let Some(access) = witness
+            .random_access()
+            .filter(|access| cycles <= access.cycles())
+        {
+            #[cfg(feature = "parallel")]
+            {
+                return unexpanded_pc
+                    .par_chunks_mut(32)
+                    .zip(pc.par_chunks_mut(32))
+                    .zip(flags.par_iter_mut())
+                    .enumerate()
+                    .try_for_each(|(word_index, ((unexpanded_pc, pc), flags))| {
+                        for offset in 0..unexpanded_pc.len() {
+                            let row_index = word_index * 32 + offset;
+                            let row =
+                                access
+                                    .window::<SpartanShiftRow>(row_index)
+                                    .map_err(|error| MetalError::SpartanShiftRowExtraction {
+                                        row: row_index,
+                                        message: error.to_string(),
+                                    })?;
+                            write_spartan_shift_row(
+                                row,
+                                offset,
+                                &mut unexpanded_pc[offset],
+                                &mut pc[offset],
+                                flags,
+                            );
+                        }
+                        Ok(())
+                    });
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                for row_index in 0..cycles {
+                    let row = access
+                        .window::<SpartanShiftRow>(row_index)
+                        .map_err(|error| MetalError::SpartanShiftRowExtraction {
+                            row: row_index,
+                            message: error.to_string(),
+                        })?;
+                    write_spartan_shift_row(
+                        row,
+                        row_index % 32,
+                        &mut unexpanded_pc[row_index],
+                        &mut pc[row_index],
+                        &mut flags[row_index / 32],
+                    );
+                }
+                return Ok(());
+            }
+        }
+
+        let mut cursor = 0usize;
+        let mut extraction_failure = None;
+        let result = witness.visit_chunks(0..cycles, 1 << 12, &mut |rows, next, env| {
+            for (offset, current) in rows.iter().enumerate() {
+                let row_index = cursor + offset;
+                let row =
+                    match SpartanShiftRow::from_row(current, rows.get(offset + 1).or(next), env) {
+                        Ok(row) => row,
+                        Err(error) => {
+                            extraction_failure = Some((row_index, error.to_string()));
+                            return Err(error);
+                        }
+                    };
+                write_spartan_shift_row(
+                    row,
+                    row_index % 32,
+                    &mut unexpanded_pc[row_index],
+                    &mut pc[row_index],
+                    &mut flags[row_index / 32],
+                );
+            }
+            cursor += rows.len();
+            Ok(())
+        });
+        if let Err(error) = result {
+            let (row, message) = extraction_failure.unwrap_or_else(|| (cursor, error.to_string()));
+            return Err(MetalError::SpartanShiftRowExtraction { row, message });
+        }
+        if cursor != cycles {
+            return Err(MetalError::InvalidSpartanShiftState(
+                "witness projection did not fill the cycle domain",
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn write_spartan_shift_row(
+    row: SpartanShiftRow,
+    bit: usize,
+    unexpanded_pc: &mut u64,
+    pc: &mut u64,
+    flags: &mut SpartanShiftFlagWord,
+) {
+    *unexpanded_pc = row.unexpanded_pc.0;
+    *pc = row.pc.0;
+    let mask = 1u32 << bit;
+    flags.is_virtual |= u32::from(row.is_virtual.0) * mask;
+    flags.is_first_in_sequence |= u32::from(row.is_first_in_sequence.0) * mask;
+    flags.is_noop |= u32::from(row.is_noop.0) * mask;
 }
 
 /// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
@@ -572,7 +693,8 @@ mod tests {
         SpartanShift, SpartanShiftChallenges, SpartanShiftInputClaims,
     };
     use jolt_witness::{
-        JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, JoltWitnessPlane, TraceBackend,
+        JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, JoltWitnessPlane, RowSource,
+        TraceBackend,
     };
 
     use super::super::registers_read_write::test_support::{
@@ -739,5 +861,74 @@ mod tests {
         // log_t = 1: the P·Q phase covers the single round and the dense
         // phase materializes inside `finish_rounds`.
         run_parity(1, 229);
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_witness_projection_matches_the_prefix_oracle() {
+        use crate::metal::solinas::spartan_shift::{
+            build_prefix_successor, pack_flag_words, SpartanShiftGeometry,
+            SpartanShiftKernelConfig, SpartanShiftNativePlanes, SpartanShiftPrefixStrategy,
+        };
+        use crate::metal::solinas::SolinasMetal;
+
+        use super::{prepare_metal_spartan_shift_witness_rows, SpartanShiftRow};
+
+        with_shift_plane(4, |backend| {
+            let context = SolinasMetal::for_akita().unwrap();
+            let cycles = 16;
+            let geometry = SpartanShiftGeometry::new(cycles).unwrap();
+            let resident = prepare_metal_spartan_shift_witness_rows(
+                &context,
+                backend as &dyn JoltWitnessPlane<jolt_field::AkitaField>,
+                cycles,
+            )
+            .unwrap();
+
+            let access = backend.random_access().unwrap();
+            let rows: Vec<SpartanShiftRow> = (0..cycles)
+                .map(|index| access.window(index).unwrap())
+                .collect();
+            let unexpanded_pc: Vec<u64> = rows.iter().map(|row| row.unexpanded_pc.0).collect();
+            let pc: Vec<u64> = rows.iter().map(|row| row.pc.0).collect();
+            let is_virtual: Vec<bool> = rows.iter().map(|row| row.is_virtual.0).collect();
+            let is_first: Vec<bool> = rows.iter().map(|row| row.is_first_in_sequence.0).collect();
+            let is_noop: Vec<bool> = rows.iter().map(|row| row.is_noop.0).collect();
+            let flags = pack_flag_words(geometry, &is_virtual, &is_first, &is_noop).unwrap();
+            let planes =
+                SpartanShiftNativePlanes::new(geometry, &unexpanded_pc, &pc, &flags).unwrap();
+            let point = |seed: u64| {
+                (0..geometry.log_t())
+                    .scan(seed, |state, _| {
+                        *state = state
+                            .wrapping_mul(6_364_136_223_846_793_005)
+                            .wrapping_add(1_442_695_040_888_963_407);
+                        Some(jolt_field::AkitaField::from_u64(*state | 1))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let r_outer = point(0xA11C_E001);
+            let r_product = point(0xB22D_F002);
+            let gamma = jolt_field::AkitaField::from_u64(0xC33E_1003);
+            let expected =
+                build_prefix_successor(geometry, planes, &r_outer, &r_product, gamma).unwrap();
+            let observed = context
+                .prepare_spartan_shift_prefix(
+                    &resident,
+                    &r_outer,
+                    &r_product,
+                    gamma,
+                    SpartanShiftKernelConfig {
+                        build_threads_per_threadgroup: 32,
+                        high_tile_elements: geometry.suffix_elements(),
+                        fold_threads_per_threadgroup: 32,
+                    },
+                    SpartanShiftPrefixStrategy::Mixed,
+                )
+                .unwrap()
+                .execute()
+                .unwrap();
+            assert_eq!(observed.q, expected.q);
+        });
     }
 }

@@ -614,6 +614,8 @@ pub enum MetalError {
     SpartanShiftOracle(#[from] spartan_shift::SpartanShiftOracleError),
     #[error("invalid resident Spartan shift state: {0}")]
     InvalidSpartanShiftState(&'static str),
+    #[error("Spartan shift row {row} could not be extracted: {message}")]
+    SpartanShiftRowExtraction { row: usize, message: String },
     #[error("Spartan shift {name} buffer is on device {got}, expected {expected}")]
     SpartanShiftBufferDevice {
         name: &'static str,
