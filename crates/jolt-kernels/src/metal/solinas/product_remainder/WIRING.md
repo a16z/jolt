@@ -92,6 +92,22 @@ toward the measured roof rather than treating 5x as a stopping cap.
 
 ## Promotion evidence
 
+The relation-aware prefetch submits materialization immediately after the
+product relation exists and before Stage 2 prepares RAM read/write. The
+pending command owns the resident sequence; Product preparation joins it and
+records submit, overlap, exposed join, lifecycle, GPU-active, and completion
+state. It does not advance the host relation or touch Fiat-Shamir.
+
+`prefetch_evidence.json` freezes the first exact log-27 diagnostic. Product
+improved from the prior 199.284-ms Metal result to 115.897 ms, or 7.917x over
+the paired 917.556-ms CPU control. The carried Outer+Product family reached
+5.550x. The command overlapped 153.740 ms of Stage-2 setup, but 51.228 ms
+remained exposed; its GPU-active time was 23.270 ms. This is one dirty-worktree
+pair, not promotion evidence. It misses the strict 8x cap by 1.202 ms, so the
+next bounded optimization is the already-required CPU switchover for
+command-latency-dominated late rounds. Do not tune the evidence boundary or
+attribute hidden lifecycle time away.
+
 Before backend wiring, require exact Akita parity for materialization, every
 A-to-B-to-A transition, and all eight openings at even and odd log sizes.
 Vectors include `i128::MIN`, `i128::MAX`, zero, mixed flags, and challenges

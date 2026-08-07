@@ -97,6 +97,15 @@ where
         Ok(())
     }
 
+    /// Starts relation-dependent work before the stage driver prepares its members.
+    fn prefetch_relation(
+        &self,
+        session: &mut ProofSession,
+        _relation: &R,
+    ) -> Result<(), KernelError<F>> {
+        self.prefetch(session)
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,

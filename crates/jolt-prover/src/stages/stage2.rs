@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, PrepareKernel, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 #[cfg(feature = "zk")]
@@ -156,6 +156,11 @@ where
         ),
         ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
     };
+    <JoltBackend<F, PCS> as PrepareKernel<F, ProductRemainder<F>>>::prefetch_relation(
+        backend,
+        session,
+        &sumchecks.product_remainder,
+    )?;
     // Both batch gammas, then the RAM output-check address reference point (the
     // last member's `draw_challenges` override) — the verifier's exact schedule.
     let challenges = sumchecks.draw_challenges(transcript)?;

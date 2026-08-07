@@ -6,8 +6,8 @@ use std::{
 
 use jolt_field::{AkitaField, Field};
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 use thiserror::Error;
 
@@ -639,6 +639,77 @@ impl ProductRemainderPrimerStats {
     }
 }
 
+struct ProductRemainderInitialMessageCommand {
+    command_buffer: CommandBuffer,
+    output: Buffer,
+    submitted_at: Instant,
+    submit_wall: Duration,
+    sequence_identity: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProductRemainderInitialMessageStats {
+    pub(crate) lifecycle_wall: Duration,
+    pub(crate) submit_wall: Duration,
+    pub(crate) overlap_wall: Duration,
+    pub(crate) join_wall: Duration,
+    pub(crate) gpu_active: Duration,
+    pub(crate) completed_before_join: bool,
+}
+
+#[must_use = "a submitted product-remainder message must be joined"]
+pub(crate) struct PendingProductRemainderInitialMessage {
+    sequence: Option<ProductRemainderSequence>,
+    command: Option<ProductRemainderInitialMessageCommand>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PendingProductRemainderInitialMessage {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(sequence) = &self.sequence {
+            visitor.visit_field(allocative::Key::new("sequence"), sequence);
+        }
+        visitor.exit();
+    }
+}
+
+impl Drop for PendingProductRemainderInitialMessage {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl PendingProductRemainderInitialMessage {
+    pub(crate) fn join(
+        mut self,
+    ) -> Result<
+        (
+            ProductRemainderSequence,
+            [AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS],
+            ProductRemainderInitialMessageStats,
+        ),
+        MetalError,
+    > {
+        let mut sequence = self
+            .sequence
+            .take()
+            .ok_or(MetalError::InvalidProductRemainderState(
+                "the pending first message lost its resident sequence",
+            ))?;
+        let command = self
+            .command
+            .take()
+            .ok_or(MetalError::InvalidProductRemainderState(
+                "the pending first message lost its command buffer",
+            ))?;
+        let (message, stats) = sequence.complete_restart_message(command)?;
+        Ok((sequence, message, stats))
+    }
+}
+
 #[cfg(feature = "allocative")]
 impl allocative::Allocative for ProductRemainderSequence {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
@@ -980,12 +1051,84 @@ impl ProductRemainderSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
-        let (message, active_time) = self.execute_materialize_message(e_in, e_out)?;
+        let command = self.submit_materialize_message_command(e_in, e_out)?;
+        let (message, stats) = self.complete_restart_message(command)?;
+        Ok((message, stats.gpu_active))
+    }
+
+    pub(crate) fn submit_restart_message(
+        self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<PendingProductRemainderInitialMessage, MetalError> {
+        if !self.is_primed() {
+            return Err(MetalError::InvalidProductRemainderState(
+                "product-remainder prefetch requires a primed sequence",
+            ));
+        }
+        let command = self.submit_materialize_message_command(e_in, e_out)?;
+        Ok(PendingProductRemainderInitialMessage {
+            sequence: Some(self),
+            command: Some(command),
+        })
+    }
+
+    fn complete_restart_message(
+        &mut self,
+        command: ProductRemainderInitialMessageCommand,
+    ) -> Result<
+        (
+            [AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS],
+            ProductRemainderInitialMessageStats,
+        ),
+        MetalError,
+    > {
+        if !self.is_primed() || command.sequence_identity != self.buffers.state_a.as_ptr() as usize
+        {
+            return Err(MetalError::InvalidProductRemainderState(
+                "the pending first message belongs to a different product sequence",
+            ));
+        }
+        let completed_before_join =
+            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(command.submitted_at)
+            .saturating_sub(command.submit_wall);
+        command.command_buffer.wait_until_completed();
+        let status = command.command_buffer.status();
+        if status != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(status));
+        }
+        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        // SAFETY: completion makes the two reduced fields at the front of the
+        // selected shared output buffer visible to the host.
+        let values = unsafe {
+            slice::from_raw_parts(
+                command.output.contents().cast::<Fp128>(),
+                PRODUCT_REMAINDER_MESSAGE_COLUMNS,
+            )
+        };
+        self.context
+            .validate_inputs("product remainder first message", values)?;
+        let message = std::array::from_fn(|index| values[index].into_jolt_field());
+        let stats = ProductRemainderInitialMessageStats {
+            lifecycle_wall: command.submitted_at.elapsed(),
+            submit_wall: command.submit_wall,
+            overlap_wall,
+            join_wall: join_started.elapsed(),
+            gpu_active: Duration::from_secs_f64(end - start),
+            completed_before_join,
+        };
         self.current_elements = self.layout.rows();
         self.source_in_a = true;
         self.phase = ProductRemainderPhase::Materialized;
-        self.gpu_active_time += active_time;
-        Ok((message, active_time))
+        self.gpu_active_time += stats.gpu_active;
+        Ok((message, stats))
     }
 
     fn execute_materialize_message(
@@ -993,11 +1136,44 @@ impl ProductRemainderSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
+        let command = self.submit_materialize_message_command(e_in, e_out)?;
+        command.command_buffer.wait_until_completed();
+        let status = command.command_buffer.status();
+        if status != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(status));
+        }
+        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        // SAFETY: the completed reduction leaves two fields at the front of
+        // the selected shared output buffer.
+        let values = unsafe {
+            slice::from_raw_parts(
+                command.output.contents().cast::<Fp128>(),
+                PRODUCT_REMAINDER_MESSAGE_COLUMNS,
+            )
+        };
+        self.context
+            .validate_inputs("product remainder first message", values)?;
+        Ok((
+            std::array::from_fn(|index| values[index].into_jolt_field()),
+            Duration::from_secs_f64(end - start),
+        ))
+    }
+
+    fn submit_materialize_message_command(
+        &self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<ProductRemainderInitialMessageCommand, MetalError> {
+        let submitted_at = Instant::now();
         let params =
             ProductRemainderPhaseParams::materialize(self.layout.rows(), e_in.len(), e_out.len())?;
         self.write_weights(e_in, e_out)?;
         autoreleasepool(|| {
-            let command_buffer = self.context.queue.new_command_buffer();
+            let command_buffer = self.context.queue.new_command_buffer().to_owned();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.materialize_pipeline);
             encoder.set_buffer(0, Some(self.buffers.rows.buffer()), 0);
@@ -1028,16 +1204,19 @@ impl ProductRemainderSequence {
                 PRODUCT_REMAINDER_MESSAGE_COLUMNS,
             )?;
             encoder.end_encoding();
-            finish_product_remainder_command::<PRODUCT_REMAINDER_MESSAGE_COLUMNS>(
-                &self.context,
+            let output = if final_in_a {
+                self.buffers.partial_a.clone()
+            } else {
+                self.buffers.partial_b.clone()
+            };
+            command_buffer.commit();
+            Ok(ProductRemainderInitialMessageCommand {
                 command_buffer,
-                if final_in_a {
-                    &self.buffers.partial_a
-                } else {
-                    &self.buffers.partial_b
-                },
-                "product remainder first message",
-            )
+                output,
+                submitted_at,
+                submit_wall: submitted_at.elapsed(),
+                sequence_identity: self.buffers.state_a.as_ptr() as usize,
+            })
         })
     }
 
@@ -1718,6 +1897,67 @@ mod tests {
         assert_eq!(actual, expected);
         assert!(sequence.is_primed());
         assert_eq!(sequence.row_allocation_identity(), row_storage_id);
+        assert_eq!(sequence.round_device_buffer_allocations(), 0);
+    }
+
+    #[test]
+    fn submitted_restart_matches_the_independent_materialization_oracle() {
+        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+        let row_count = 1usize << 10;
+        let rows = (0..row_count)
+            .map(|index| {
+                ProductRemainderRow::new(
+                    (17 * index + 3) as u64,
+                    index as i128 - 513,
+                    index % 3 == 0,
+                    index % 5 == 0,
+                    (29 * index + 11) as u64,
+                    index % 7 == 0,
+                    index % 11 == 0,
+                    index % 13 == 0,
+                )
+            })
+            .collect::<Vec<_>>();
+        let e_in = (0..16)
+            .map(|index| AkitaField::from_u64((37 * index + 19) as u64))
+            .collect::<Vec<_>>();
+        let e_out = (0..32)
+            .map(|index| AkitaField::from_u64((43 * index + 23) as u64))
+            .collect::<Vec<_>>();
+        let lagrange = [
+            AkitaField::from_u64(5),
+            AkitaField::from_u64(7),
+            AkitaField::from_u64(11),
+        ];
+        let expected = reference::materialize_message(&rows, lagrange, &e_in, &e_out)
+            .expect("the independent materialization should be well-shaped");
+        let mut sequence = context
+            .prepare_product_remainder_sequence(
+                &rows,
+                lagrange,
+                32,
+                32,
+                ProductRemainderSequenceConfig::default(),
+            )
+            .expect("resident product sequence should prepare");
+        let _ = sequence
+            .prime()
+            .expect("resident product sequence should prime");
+
+        let pending = sequence
+            .submit_restart_message(&e_in, &e_out)
+            .expect("the materialization should submit");
+        let (sequence, actual, stats) = pending.join().expect("the materialization should join");
+        let (left, right) = sequence
+            .read_current_state()
+            .expect("the materialized state should be readable");
+
+        assert_eq!(actual, expected.endpoints);
+        assert_eq!([left, right].concat(), expected.state);
+        assert!(stats.lifecycle_wall >= stats.submit_wall);
+        assert!(stats.lifecycle_wall >= stats.join_wall);
+        assert!(stats.gpu_active > Duration::ZERO);
+        assert_eq!(sequence.current_elements(), row_count);
         assert_eq!(sequence.round_device_buffer_allocations(), 0);
     }
 

@@ -139,6 +139,7 @@ pub use product5::{
 };
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;
+pub(crate) use product_remainder::PendingProductRemainderInitialMessage;
 pub use product_remainder::{
     ProductRemainderRow, ProductRemainderRowError, ProductRemainderRows, ProductRemainderSequence,
     ProductRemainderSequenceConfig, ProductRemainderShapeError, ProductRemainderStorageLayout,

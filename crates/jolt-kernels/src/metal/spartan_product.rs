@@ -32,8 +32,8 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 use super::backend::MetalBackend;
 use super::solinas::{
     instruction_claim_reduction::{InstructionClaimLookupOperandRow, InstructionClaimLookupRows},
-    MetalError, ProductRemainderRow, ProductRemainderRows, ProductRemainderSequence,
-    ProductRemainderSequenceConfig,
+    MetalError, PendingProductRemainderInitialMessage, ProductRemainderRow, ProductRemainderRows,
+    ProductRemainderSequence, ProductRemainderSequenceConfig,
 };
 #[cfg(test)]
 use crate::optimized::spartan_product::SpartanProductRow;
@@ -334,6 +334,16 @@ struct MetalProductUniskipCarry {
     device_registry_id: u64,
 }
 
+struct MetalProductRemainderPrefetch {
+    pending: PendingProductRemainderInitialMessage,
+    log_t: usize,
+    tau_low: Vec<AkitaField>,
+    uniskip_challenge: AkitaField,
+    tau_high: AkitaField,
+    row_storage_id: usize,
+    device_registry_id: u64,
+}
+
 pub(super) struct MetalProductUniskipEndpointCarrier {
     pub(super) log_t: usize,
     pub(super) tau_low: Vec<AkitaField>,
@@ -360,6 +370,20 @@ impl allocative::Allocative for MetalProductUniskipCarry {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::vec_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("tau_low"),
+            vec_heap_bytes(&self.tau_low),
+        );
+        visitor.exit();
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalProductRemainderPrefetch {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("pending"), &self.pending);
         visitor.visit_simple(
             allocative::Key::new("tau_low"),
             vec_heap_bytes(&self.tau_low),
@@ -545,6 +569,99 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
 }
 
 impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
+    fn prefetch_relation(
+        &self,
+        session: &mut ProofSession,
+        relation: &ProductRemainder<AkitaField>,
+    ) -> Result<(), KernelError<AkitaField>> {
+        let rounds = relation.rounds();
+        let cycles = 1usize
+            .checked_shl(rounds as u32)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Spartan product trace length overflows usize",
+            })?;
+        if cycles < self.config.spartan_product_remainder.trace_cutoff_elements
+            || session.state::<MetalProductUniskipCarry>().is_none()
+            || session.state::<ProductRemainderSequence>().is_none()
+        {
+            return Ok(());
+        }
+        if session.state::<MetalProductRemainderPrefetch>().is_some() {
+            return Err(KernelError::InvariantViolation {
+                reason: "product-remainder prefetch was submitted twice",
+            });
+        }
+        let (carry_log_t, tau_low, row_storage_id, device_registry_id) = {
+            let carry = session.state::<MetalProductUniskipCarry>().ok_or(
+                KernelError::InvariantViolation {
+                    reason: "product-remainder prefetch lost its uni-skip carry",
+                },
+            )?;
+            (
+                carry.log_t,
+                carry.tau_low.clone(),
+                carry.row_storage_id,
+                carry.device_registry_id,
+            )
+        };
+        if carry_log_t != rounds || tau_low.len() != rounds {
+            return Err(KernelError::InvariantViolation {
+                reason: "product-remainder prefetch disagrees with the uni-skip carry",
+            });
+        }
+        let host = MetalProductRemainderHost::new(
+            &tau_low,
+            relation.uniskip_challenge(),
+            relation.tau_high(),
+        )?;
+        let mut sequence =
+            session
+                .take::<ProductRemainderSequence>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "product-remainder prefetch lost its resident sequence",
+                })?;
+        if !sequence.is_primed()
+            || sequence.storage_layout().rows() != cycles
+            || sequence.device_registry_id() != self.context.device_registry_id()
+            || sequence.device_registry_id() != device_registry_id
+            || sequence.row_allocation_identity() != row_storage_id
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "product-remainder prefetch has the wrong state, shape, device, or rows",
+            });
+        }
+        sequence
+            .set_lagrange_weights(host.lagrange_weights)
+            .map_err(metal_prepare_error)?;
+        let (e_in, e_out) = host.current_weights()?;
+        let span = tracing::info_span!(
+            "MetalProductRemainder::prefetch_submit",
+            cycles,
+            rounds,
+            resident_rows_storage_id = row_storage_id as u64,
+            row_upload_bytes = 0u64,
+            command_committed = true,
+            protocol_state_advanced = false,
+            submit_wall_ns = tracing::field::Empty,
+        );
+        let _entered = span.enter();
+        let started = Instant::now();
+        let pending = sequence
+            .submit_restart_message(&e_in, &e_out)
+            .map_err(metal_prepare_error)?;
+        let _ = span.record("submit_wall_ns", duration_nanos(started.elapsed()));
+        session.park(MetalProductRemainderPrefetch {
+            pending,
+            log_t: rounds,
+            tau_low,
+            uniskip_challenge: relation.uniskip_challenge(),
+            tau_high: relation.tau_high(),
+            row_storage_id,
+            device_registry_id,
+        });
+        Ok(())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -563,12 +680,15 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         let has_metal_carry = session.state::<MetalProductUniskipCarry>().is_some();
         if !has_metal_carry {
             drop(session.take::<ProductRemainderSequence>());
+            drop(session.take::<MetalProductRemainderPrefetch>());
             drop(session.take::<MetalInstructionClaimResidentRows>());
             drop(session.take::<MetalInstructionClaimHandoff>());
             return OptimizedProductRemainder.prepare(session, witness, inputs);
         }
+        let has_metal_remainder = session.state::<ProductRemainderSequence>().is_some()
+            || session.state::<MetalProductRemainderPrefetch>().is_some();
         if cycles < self.config.spartan_product_remainder.trace_cutoff_elements
-            || session.state::<ProductRemainderSequence>().is_none()
+            || !has_metal_remainder
         {
             return Err(KernelError::InvariantViolation {
                 reason: "Metal product uni-skip cannot hand off without its resident remainder",
@@ -597,53 +717,118 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             inputs.relation.uniskip_challenge(),
             inputs.relation.tau_high(),
         )?;
-        let mut sequence =
-            session
-                .take::<ProductRemainderSequence>()
-                .ok_or(KernelError::InvariantViolation {
+        let prefetched = session.take::<MetalProductRemainderPrefetch>();
+        if prefetched.is_some() && session.state::<ProductRemainderSequence>().is_some() {
+            return Err(KernelError::InvariantViolation {
+                reason: "product-remainder prefetch duplicated its resident sequence",
+            });
+        }
+        let (sequence, first_message) = if let Some(prefetched) = prefetched {
+            if prefetched.log_t != rounds
+                || prefetched.tau_low != tau_low
+                || prefetched.uniskip_challenge != inputs.relation.uniskip_challenge()
+                || prefetched.tau_high != inputs.relation.tau_high()
+                || prefetched.row_storage_id != carry_row_storage_id
+                || prefetched.device_registry_id != carry_device_registry_id
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason: "prefetched product remainder disagrees with its relation or carry",
+                });
+            }
+            let prepare_span = tracing::info_span!(
+                "MetalProductRemainder::prepare",
+                cycles,
+                rounds,
+                resident_rows_storage_id = carry_row_storage_id as u64,
+                row_upload_bytes = 0u64,
+                round_device_buffer_allocations = 0u64,
+                sequence_prepare_wall_ns = 0u64,
+                prefetched = true,
+                materialize_wall_ns = tracing::field::Empty,
+                materialize_submit_wall_ns = tracing::field::Empty,
+                materialize_overlap_wall_ns = tracing::field::Empty,
+                materialize_join_wall_ns = tracing::field::Empty,
+                materialize_gpu_active_ns = tracing::field::Empty,
+                completed_before_join = tracing::field::Empty,
+            );
+            let _entered = prepare_span.enter();
+            let (sequence, first_message, stats) =
+                prefetched.pending.join().map_err(metal_prepare_error)?;
+            let _ =
+                prepare_span.record("materialize_wall_ns", duration_nanos(stats.lifecycle_wall));
+            let _ = prepare_span.record(
+                "materialize_submit_wall_ns",
+                duration_nanos(stats.submit_wall),
+            );
+            let _ = prepare_span.record(
+                "materialize_overlap_wall_ns",
+                duration_nanos(stats.overlap_wall),
+            );
+            let _ =
+                prepare_span.record("materialize_join_wall_ns", duration_nanos(stats.join_wall));
+            let _ = prepare_span.record(
+                "materialize_gpu_active_ns",
+                duration_nanos(stats.gpu_active),
+            );
+            let _ = prepare_span.record("completed_before_join", stats.completed_before_join);
+            (sequence, first_message)
+        } else {
+            let mut sequence = session.take::<ProductRemainderSequence>().ok_or(
+                KernelError::InvariantViolation {
                     reason: "Metal product remainder lost its preinitialized sequence",
-                })?;
+                },
+            )?;
+            if !sequence.is_primed()
+                || sequence.storage_layout().rows() != cycles
+                || sequence.device_registry_id() != self.context.device_registry_id()
+                || sequence.device_registry_id() != carry_device_registry_id
+                || sequence.row_allocation_identity() != carry_row_storage_id
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason:
+                        "Metal product-remainder sequence has the wrong state, shape, device, or rows",
+                });
+            }
+            let row_storage_id = sequence.row_allocation_identity();
+            let (e_in, e_out) = host.current_weights()?;
+            let prepare_span = tracing::info_span!(
+                "MetalProductRemainder::prepare",
+                cycles,
+                rounds,
+                resident_rows_storage_id = row_storage_id as u64,
+                row_upload_bytes = 0u64,
+                round_device_buffer_allocations = 0u64,
+                primed_device_bytes = sequence.storage_layout().workspace_bytes(),
+                sequence_prepare_wall_ns = 0u64,
+                prefetched = false,
+                materialize_wall_ns = tracing::field::Empty,
+                materialize_gpu_active_ns = tracing::field::Empty,
+            );
+            let _entered = prepare_span.enter();
+            sequence
+                .set_lagrange_weights(host.lagrange_weights)
+                .map_err(metal_prepare_error)?;
+            let started = Instant::now();
+            let (first_message, materialize_gpu_active) = sequence
+                .restart_message_timed(&e_in, &e_out)
+                .map_err(metal_prepare_error)?;
+            let _ = prepare_span.record("materialize_wall_ns", duration_nanos(started.elapsed()));
+            let _ = prepare_span.record(
+                "materialize_gpu_active_ns",
+                duration_nanos(materialize_gpu_active),
+            );
+            (sequence, first_message)
+        };
         if sequence.storage_layout().rows() != cycles
             || sequence.device_registry_id() != self.context.device_registry_id()
             || sequence.device_registry_id() != carry_device_registry_id
             || sequence.row_allocation_identity() != carry_row_storage_id
         {
             return Err(KernelError::InvariantViolation {
-                reason: "Metal product-remainder sequence has the wrong shape, device, or rows",
+                reason: "Metal product-remainder handoff changed shape, device, or rows",
             });
         }
         let row_storage_id = sequence.row_allocation_identity();
-        let (e_in, e_out) = host.current_weights()?;
-        let prepare_span = tracing::info_span!(
-            "MetalProductRemainder::prepare",
-            cycles,
-            rounds,
-            resident_rows_storage_id = row_storage_id as u64,
-            row_upload_bytes = 0u64,
-            round_device_buffer_allocations = 0u64,
-            primed_device_bytes = sequence.storage_layout().workspace_bytes(),
-            sequence_prepare_wall_ns = 0u64,
-            materialize_wall_ns = tracing::field::Empty,
-            materialize_gpu_active_ns = tracing::field::Empty,
-        );
-        let _entered = prepare_span.enter();
-        sequence
-            .set_lagrange_weights(host.lagrange_weights)
-            .map_err(metal_prepare_error)?;
-        let started = Instant::now();
-        let first_message = sequence.restart_message_timed(&e_in, &e_out);
-        let materialize_wall = started.elapsed();
-        let (first_message, materialize_gpu_active) = first_message.map_err(metal_prepare_error)?;
-        let _ = prepare_span.record("materialize_wall_ns", duration_nanos(materialize_wall));
-        let _ = prepare_span.record(
-            "materialize_gpu_active_ns",
-            duration_nanos(materialize_gpu_active),
-        );
-        if sequence.row_allocation_identity() != row_storage_id {
-            return Err(KernelError::InvariantViolation {
-                reason: "product-remainder sequence changed the resident row allocation",
-            });
-        }
         let carry =
             session
                 .take::<MetalProductUniskipCarry>()
@@ -1136,6 +1321,15 @@ mod tests {
                         .row_storage_id,
                     resident_row_id
                 );
+                <MetalBackend as PrepareKernel<
+                    AkitaField,
+                    ProductRemainder<AkitaField>,
+                >>::prefetch_relation(&metal, &mut metal_session, &relation)
+                .unwrap();
+                assert!(metal_session
+                    .state::<MetalProductRemainderPrefetch>()
+                    .is_some());
+                assert!(metal_session.state::<ProductRemainderSequence>().is_none());
                 let mut actual = <MetalBackend as PrepareKernel<
                     AkitaField,
                     ProductRemainder<AkitaField>,
