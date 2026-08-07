@@ -264,6 +264,26 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 - rs2));
         }
+        Instruction::ADDW(ADDW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 + rs2)));
+        }
+        Instruction::ADDIW(ADDIW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 + imm)));
+        }
+        Instruction::SUBW(SUBW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 - rs2)));
+        }
+        Instruction::MULW(MULW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 * rs2)));
+        }
         Instruction::VirtualAssertEQ(VirtualAssertEQ { operands, .. }) => {
             let val1 = cpu.x[operands.rs1 as usize].clone();
             let val2 = cpu.x[operands.rs2 as usize].clone();
@@ -401,7 +421,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         Instruction::VirtualMULIW(VirtualMULIW { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let imm = scale_imm_u64(operands.imm, cpu);
-            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&(rs1 * imm));
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 * imm)));
         }
         Instruction::VirtualSRLI(VirtualSRLI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
