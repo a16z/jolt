@@ -567,6 +567,7 @@ impl ProductRemainderStorageLayout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProductRemainderPhase {
     Raw,
+    Primed,
     Materialized,
 }
 
@@ -817,8 +818,9 @@ impl ProductRemainderSequence {
             &transition_e_out,
         )?;
         let transition_wall = started.elapsed();
-        self.current_elements /= 2;
-        self.source_in_a = false;
+        self.current_elements = self.layout.rows();
+        self.source_in_a = true;
+        self.phase = ProductRemainderPhase::Primed;
 
         Ok(ProductRemainderPrimerStats {
             materialize_wall,
@@ -1153,6 +1155,12 @@ impl ProductRemainderSequence {
 
     pub(crate) fn device_registry_id(&self) -> u64 {
         self.context.device_registry_id()
+    }
+
+    pub(crate) fn is_primed(&self) -> bool {
+        self.phase == ProductRemainderPhase::Primed
+            && self.current_elements == self.layout.rows()
+            && self.source_in_a
     }
 
     pub const fn round_device_buffer_allocations(&self) -> usize {

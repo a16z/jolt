@@ -176,9 +176,7 @@ impl MetalBackend {
             "primer_transition_gpu_active_ns",
             duration_nanos(primer.transition_gpu_active()),
         );
-        if sequence.current_elements() != cycles / 2
-            || sequence.row_allocation_identity() != row_storage_id
-        {
+        if !sequence.is_primed() || sequence.row_allocation_identity() != row_storage_id {
             return Err(KernelError::InvariantViolation {
                 reason: "product-remainder pipeline primer ended in the wrong state",
             });
@@ -238,7 +236,7 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             });
         }
         let row_storage_id = sequence.row_allocation_identity();
-        let (e_in, e_out) = host.current_weights();
+        let (e_in, e_out) = host.current_weights()?;
         let prepare_span = tracing::info_span!(
             "MetalProductRemainder::prepare",
             cycles,
@@ -256,7 +254,7 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             .set_lagrange_weights(host.lagrange_weights)
             .map_err(metal_prepare_error)?;
         let started = Instant::now();
-        let first_message = sequence.restart_message_timed(e_in, e_out);
+        let first_message = sequence.restart_message_timed(&e_in, &e_out);
         let materialize_wall = started.elapsed();
         let (first_message, materialize_gpu_active) = match first_message {
             Ok(result) => result,
@@ -335,6 +333,7 @@ fn duration_nanos(duration: std::time::Duration) -> u64 {
 
 struct MetalProductRemainderHost {
     rounds: usize,
+    tau_low: Vec<AkitaField>,
     split_eq: GruenSplitEqPolynomial<AkitaField>,
     challenges: Vec<AkitaField>,
     lagrange_weights: [AkitaField; DOMAIN],
@@ -354,6 +353,7 @@ impl MetalProductRemainderHost {
         let scale = centered_lagrange_kernel(DOMAIN, tau_high, uniskip_challenge)?;
         Ok(Self {
             rounds: tau_low.len(),
+            tau_low: tau_low.to_vec(),
             split_eq: GruenSplitEqPolynomial::new_with_scaling(
                 tau_low,
                 BindingOrder::LowToHigh,
@@ -364,8 +364,23 @@ impl MetalProductRemainderHost {
         })
     }
 
-    fn current_weights(&self) -> (&[AkitaField], &[AkitaField]) {
-        (self.split_eq.e_in_current(), self.split_eq.e_out_current())
+    fn current_weights(
+        &self,
+    ) -> Result<(Vec<AkitaField>, Vec<AkitaField>), SumcheckError<AkitaField>> {
+        let remaining = self.rounds.saturating_sub(self.challenges.len());
+        let head_len = remaining
+            .checked_sub(1)
+            .ok_or_else(|| SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "product-remainder weights requested after the final bind".to_string(),
+            })?;
+        let head = &self.tau_low[..head_len];
+        let split = head.len().div_ceil(2);
+        let (out_point, in_point) = head.split_at(split);
+        Ok((
+            EqPolynomial::evals(in_point, None),
+            EqPolynomial::evals(out_point, None),
+        ))
     }
 
     fn bind(&mut self, challenge: AkitaField) {
@@ -384,7 +399,7 @@ impl MetalProductRemainderHost {
 
     fn opening_weights(&self) -> (Vec<AkitaField>, Vec<AkitaField>) {
         let point = self.challenges.iter().rev().copied().collect::<Vec<_>>();
-        let split = point.len() / 2;
+        let split = point.len().div_ceil(2);
         let (out_point, in_point) = point.split_at(split);
         (
             EqPolynomial::evals(in_point, None),
@@ -429,7 +444,7 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
                 });
             }
             let source_elements = self.sequence.current_elements();
-            let (e_in, e_out) = self.host.current_weights();
+            let (e_in, e_out) = self.host.current_weights()?;
             let span = tracing::info_span!(
                 "MetalProductRemainder::bind_and_message",
                 round,
@@ -442,7 +457,7 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
             let started = Instant::now();
             let (message, gpu_active) = self
                 .sequence
-                .bind_and_message_timed(challenge, e_in, e_out)
+                .bind_and_message_timed(challenge, &e_in, &e_out)
                 .map_err(metal_round_error)?;
             let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
             let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
@@ -599,64 +614,66 @@ mod tests {
 
     #[test]
     fn resident_product_remainder_matches_optimized_cpu() {
-        let log_t = 4usize;
-        with_sample_backend_at_log_t(log_t, 4, |witness| {
-            let tau_low = (0..log_t)
-                .map(|index| AkitaField::from_u64(19 + 7 * index as u64))
-                .collect::<Vec<_>>();
-            let tau_high = AkitaField::from_u64(313);
-            let uniskip_challenge = AkitaField::from_u64(911);
-            let rows = collect_bundles::<SpartanProductRow>(witness, 1 << log_t)
-                .unwrap()
-                .iter()
-                .map(ProductRemainderRow::from)
-                .collect::<Vec<_>>();
-            let input_claim = true_input_claim(&rows, &tau_low, tau_high, uniskip_challenge);
-            let relation = ProductRemainder::new(
-                SpartanProductDimensions::new(log_t),
-                uniskip_challenge,
-                tau_high,
-                tau_low.clone(),
-            );
-            let claims = product_remainder_input_values_from_uniskip_output(input_claim);
-            let points = ProductRemainderInputClaims::<Vec<AkitaField>>::default();
-            let no_challenges = NoChallenges::<AkitaField>::default();
+        for log_t in [4usize, 5] {
+            with_sample_backend_at_log_t(log_t, 4, |witness| {
+                let tau_low = (0..log_t)
+                    .map(|index| AkitaField::from_u64(19 + 7 * index as u64))
+                    .collect::<Vec<_>>();
+                let tau_high = AkitaField::from_u64(313);
+                let uniskip_challenge = AkitaField::from_u64(911);
+                let rows = collect_bundles::<SpartanProductRow>(witness, 1 << log_t)
+                    .unwrap()
+                    .iter()
+                    .map(ProductRemainderRow::from)
+                    .collect::<Vec<_>>();
+                let input_claim = true_input_claim(&rows, &tau_low, tau_high, uniskip_challenge);
+                let relation = ProductRemainder::new(
+                    SpartanProductDimensions::new(log_t),
+                    uniskip_challenge,
+                    tau_high,
+                    tau_low.clone(),
+                );
+                let claims = product_remainder_input_values_from_uniskip_output(input_claim);
+                let points = ProductRemainderInputClaims::<Vec<AkitaField>>::default();
+                let no_challenges = NoChallenges::<AkitaField>::default();
 
-            let mut optimized_session = ProofSession::default();
-            OptimizedProductUniskip
-                .prepare(&mut optimized_session, log_t, &tau_low, witness)
-                .unwrap();
-            let _ = OptimizedProductUniskip
-                .first_round_poly(&mut optimized_session, &[tau_high])
-                .unwrap();
-            let mut optimized = OptimizedProductRemainder
-                .prepare(
-                    &mut optimized_session,
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &no_challenges,
-                    },
-                )
-                .unwrap();
+                let mut optimized_session = ProofSession::default();
+                OptimizedProductUniskip
+                    .prepare(&mut optimized_session, log_t, &tau_low, witness)
+                    .unwrap();
+                let _ = OptimizedProductUniskip
+                    .first_round_poly(&mut optimized_session, &[tau_high])
+                    .unwrap();
+                let mut optimized = OptimizedProductRemainder
+                    .prepare(
+                        &mut optimized_session,
+                        witness,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &no_challenges,
+                        },
+                    )
+                    .unwrap();
 
-            let mut config = super::super::MetalConfig::default();
-            config.spartan_product_remainder.trace_cutoff_elements = 2;
-            let metal = MetalBackend::new(config).unwrap();
-            let mut metal_session = ProofSession::default();
-            metal
-                .prepare_product_remainder_witness(&mut metal_session, log_t, witness)
-                .unwrap();
-            OptimizedProductUniskip
-                .prepare(&mut metal_session, log_t, &tau_low, witness)
-                .unwrap();
-            let _ = OptimizedProductUniskip
-                .first_round_poly(&mut metal_session, &[tau_high])
-                .unwrap();
-            let mut actual =
-                <MetalBackend as PrepareKernel<AkitaField, ProductRemainder<AkitaField>>>::prepare(
+                let mut config = super::super::MetalConfig::default();
+                config.spartan_product_remainder.trace_cutoff_elements = 2;
+                let metal = MetalBackend::new(config).unwrap();
+                let mut metal_session = ProofSession::default();
+                metal
+                    .prepare_product_remainder_witness(&mut metal_session, log_t, witness)
+                    .unwrap();
+                OptimizedProductUniskip
+                    .prepare(&mut metal_session, log_t, &tau_low, witness)
+                    .unwrap();
+                let _ = OptimizedProductUniskip
+                    .first_round_poly(&mut metal_session, &[tau_high])
+                    .unwrap();
+                let mut actual = <MetalBackend as PrepareKernel<
+                    AkitaField,
+                    ProductRemainder<AkitaField>,
+                >>::prepare(
                     &metal,
                     &mut metal_session,
                     witness,
@@ -668,37 +685,38 @@ mod tests {
                     },
                 )
                 .unwrap();
-            assert_eq!(metal.product_remainder_sequences(), 1);
+                assert_eq!(metal.product_remainder_sequences(), 1);
 
-            let challenges = (0..log_t)
-                .map(|index| AkitaField::from_u64(1201 + 43 * index as u64))
-                .collect::<Vec<_>>();
-            let mut bind = None;
-            let mut previous_claim = input_claim;
-            for (round, &challenge) in challenges.iter().enumerate() {
-                let expected = optimized.prove_round(bind, round, previous_claim).unwrap();
-                let got = actual.prove_round(bind, round, previous_claim).unwrap();
-                assert_eq!(got, expected, "round {round}");
-                previous_claim = expected.evaluate(challenge);
-                bind = Some(challenge);
-            }
-            let final_challenge = *challenges.last().unwrap();
-            optimized.finish_rounds(final_challenge).unwrap();
-            actual.finish_rounds(final_challenge).unwrap();
-            assert_eq!(
-                actual.output_claims(&claims).unwrap(),
-                optimized.output_claims(&claims).unwrap()
-            );
+                let challenges = (0..log_t)
+                    .map(|index| AkitaField::from_u64(1201 + 43 * index as u64))
+                    .collect::<Vec<_>>();
+                let mut bind = None;
+                let mut previous_claim = input_claim;
+                for (round, &challenge) in challenges.iter().enumerate() {
+                    let expected = optimized.prove_round(bind, round, previous_claim).unwrap();
+                    let got = actual.prove_round(bind, round, previous_claim).unwrap();
+                    assert_eq!(got, expected, "round {round}");
+                    previous_claim = expected.evaluate(challenge);
+                    bind = Some(challenge);
+                }
+                let final_challenge = *challenges.last().unwrap();
+                optimized.finish_rounds(final_challenge).unwrap();
+                actual.finish_rounds(final_challenge).unwrap();
+                assert_eq!(
+                    actual.output_claims(&claims).unwrap(),
+                    optimized.output_claims(&claims).unwrap()
+                );
 
-            let output_points = relation
-                .derive_opening_points(&challenges, &points)
-                .unwrap();
-            optimized
-                .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
-                .unwrap();
-            actual
-                .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
-                .unwrap();
-        });
+                let output_points = relation
+                    .derive_opening_points(&challenges, &points)
+                    .unwrap();
+                optimized
+                    .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
+                    .unwrap();
+                actual
+                    .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
+                    .unwrap();
+            });
+        }
     }
 }
