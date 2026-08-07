@@ -23,6 +23,9 @@ mod booleanity_address;
 mod bytecode_cycle;
 mod bytecode_row;
 pub mod half_width_probe;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub mod hamming_weight_claim_reduction;
 pub mod instruction_claim_reduction;
 mod instruction_input;
 pub mod instruction_input_successor;

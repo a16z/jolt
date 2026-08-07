@@ -1,4 +1,6 @@
 const FIELD_SOURCE: &str = include_str!("fp128.metal");
+#[cfg(feature = "test-utils")]
+const HAMMING_WEIGHT_CLAIM_REDUCTION_SOURCE: &str = super::hamming_weight_claim_reduction::SOURCE;
 const HALF_WIDTH_PROBE_SOURCE: &str = super::half_width_probe::SOURCE;
 const SIMD_REDUCE_SOURCE: &str = include_str!("simd_reduce.metal");
 const REGISTERS_CLAIM_REDUCTION_SOURCE: &str = super::registers_claim_reduction::SOURCE;
@@ -124,6 +126,21 @@ pub(super) fn library_source(offset: u32) -> String {
     assemble_library_source(offset, LIBRARY_SOURCE_FRAGMENTS, None)
 }
 
+#[cfg(feature = "test-utils")]
+pub(super) fn hamming_weight_claim_reduction_probe_source(offset: u32) -> String {
+    assemble_library_source(
+        offset,
+        &[
+            SourceFragment::new("fp128", FIELD_SOURCE),
+            SourceFragment::new(
+                "hamming_weight_claim_reduction",
+                HAMMING_WEIGHT_CLAIM_REDUCTION_SOURCE,
+            ),
+        ],
+        None,
+    )
+}
+
 #[cfg(any(test, feature = "test-utils"))]
 pub(super) fn library_source_with_outer(offset: u32, outer_source: &str) -> String {
     assemble_library_source(
@@ -192,6 +209,16 @@ mod tests {
         assert!(source.contains(OUTER_REMAINDER_SOURCE));
         assert!(!source.contains(OUTER_REMAINDER_PADDED_56_SOURCE));
         assert!(!source.contains(INSTRUCTION_INPUT_SOURCE));
+    }
+
+    #[test]
+    fn hamming_weight_probe_source_has_only_its_field_dependency() {
+        let source = hamming_weight_claim_reduction_probe_source(0xffff_a7f7);
+
+        assert!(source.starts_with("#define SOLINAS_OFFSET 4294944759u\n"));
+        assert!(source.contains(FIELD_SOURCE));
+        assert!(source.ends_with(HAMMING_WEIGHT_CLAIM_REDUCTION_SOURCE));
+        assert!(!source.contains(HALF_WIDTH_PROBE_SOURCE));
     }
 
     #[test]
