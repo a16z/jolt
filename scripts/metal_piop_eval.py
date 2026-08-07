@@ -2505,8 +2505,8 @@ def retained_hamming_lifecycle(
     ordered = [
         raw_intervals["stage5"],
         raw_intervals["stage6a"],
-        raw_intervals["stage6b"],
         hot_intervals["stage6b_retain"],
+        raw_intervals["stage6b"],
         hot_intervals["stage7"],
     ]
     if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):

@@ -832,14 +832,8 @@ def complete_retained_hamming_trace(log_n: int) -> list[dict[str, object]]:
         ),
         event("Booleanity::prepare", 2_700.0, 200.0),
         event(
-            "MetalBooleanityRows::stage6b_cycle_use",
-            2_750.0,
-            20.0,
-            source,
-        ),
-        event(
             "MetalHammingHotRows::stage6b_retain_for_stage7",
-            2_800.0,
+            2_750.0,
             20.0,
             {
                 "hot_rows_storage_id": "501",
@@ -850,6 +844,12 @@ def complete_retained_hamming_trace(log_n: int) -> list[dict[str, object]]:
                 "row_allocations": "0",
                 "row_upload_bytes": "0",
             },
+        ),
+        event(
+            "MetalBooleanityRows::stage6b_cycle_use",
+            2_800.0,
+            20.0,
+            source,
         ),
         event("HammingWeightClaimReduction::prepare", 3_000.0, 600.0),
         event(
