@@ -790,6 +790,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip {
         &self,
         session: &mut ProofSession,
         _late_tau: &[F],
+        _known_values: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let carry =
             session
@@ -1582,6 +1583,7 @@ mod tests {
                 &ReferenceBackend,
                 &mut reference_session,
                 &[],
+                &[],
             )
             .unwrap();
 
@@ -1592,6 +1594,7 @@ mod tests {
             <OptimizedOuterUniskip as UniskipKernel<Fr, OuterRemainder<Fr>>>::first_round_poly(
                 &OptimizedOuterUniskip,
                 &mut optimized_session,
+                &[],
                 &[],
             )
             .unwrap();
@@ -1730,6 +1733,7 @@ mod tests {
                     &ReferenceBackend,
                     &mut reference_session,
                     &[],
+                    &[],
                 )
                 .unwrap();
 
@@ -1746,7 +1750,7 @@ mod tests {
                 Fr,
                 OuterRemainder<Fr>,
             >>::first_round_poly(
-                &OptimizedOuterUniskip, &mut optimized_session, &[]
+                &OptimizedOuterUniskip, &mut optimized_session, &[], &[]
             )
             .unwrap();
             assert_eq!(optimized_uniskip, reference_uniskip);

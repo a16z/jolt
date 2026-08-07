@@ -6,10 +6,9 @@
 //! geometry: a 3-node uni-skip window over three factor lanes, a remainder
 //! over the plain cycle domain, and eight per-cycle witness columns.
 //!
-//! Unlike the outer uni-skip, the in-domain `t1` nodes do not vanish (they
-//! are the three stage-1 product claims), so all `2·3 − 1` node values are
-//! computed; the extension coefficients at in-domain nodes are the 0/1
-//! Lagrange selectors, so one integer pipeline serves every node.
+//! Unlike the outer uni-skip, the in-domain `t1` nodes are the three stage-1
+//! product claims. The kernel scans only the two missing endpoints and
+//! assembles the five-node interpolation window from those known claims.
 
 use std::collections::BTreeMap;
 
@@ -58,6 +57,9 @@ const DOMAIN: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
+const EXTENDED_ENDPOINTS: usize = 2;
+const EXTENDED_ENDPOINT_NODES: [i64; EXTENDED_ENDPOINTS] =
+    [EXTENDED_START, EXTENDED_START + EXTENDED_SIZE as i64 - 1];
 
 /// The per-cycle product-virtualization witness: the three left/right factor
 /// lanes plus the two wire passengers, as native small scalars.
@@ -81,13 +83,10 @@ pub struct SpartanProductRow {
     pub virtual_instruction: OpFlag,
 }
 
-/// The exact integer Lagrange coefficients `L_i(node)` of the 3-node base
-/// window at every node of the extended window (in-domain nodes included —
-/// there they are the 0/1 selectors).
-fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
-    let mut out = [[0i64; DOMAIN]; EXTENDED_SIZE];
-    for (position, coefficients) in out.iter_mut().enumerate() {
-        let node = EXTENDED_START + position as i64;
+/// Exact integer Lagrange coefficients at the two missing extended nodes.
+fn endpoint_extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_ENDPOINTS] {
+    let mut out = [[0i64; DOMAIN]; EXTENDED_ENDPOINTS];
+    for (&node, coefficients) in EXTENDED_ENDPOINT_NODES.iter().zip(&mut out) {
         for (i, coefficient) in coefficients.iter_mut().enumerate() {
             let mut numerator: i128 = 1;
             let mut denominator: i128 = 1;
@@ -105,16 +104,16 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     out
 }
 
-/// `left(node) · right(node)` for one cycle at every extended node, as exact
+/// `left(node) · right(node)` for one cycle at both missing nodes, as exact
 /// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
 /// (the i128 lane), product `< 2^196` — inside `S256`.
-/// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
+/// `coefficients` is [`endpoint_extension_coefficients`], hoisted out of the per-cycle
 /// loop (its integer Lagrange build is not free at `2^23` calls).
-fn extended_products(
+fn endpoint_products(
     row: &SpartanProductRow,
-    coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
-) -> [S256; EXTENDED_SIZE] {
-    let mut out = [S256::zero(); EXTENDED_SIZE];
+    coefficients: &[[i64; DOMAIN]; EXTENDED_ENDPOINTS],
+) -> [S256; EXTENDED_ENDPOINTS] {
+    let mut out = [S256::zero(); EXTENDED_ENDPOINTS];
     let left_lanes = [
         i128::from(row.left_instruction_input.0),
         i128::from(row.lookup_output.0),
@@ -139,12 +138,12 @@ fn extended_products(
 }
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
-/// challenge vector, and all extended-node values of `t1`.
+/// challenge vector, and the two missing endpoint values of `t1`.
 struct SpartanProductCarry<F: Field> {
     log_t: usize,
     tau_low: Vec<F>,
     rows: BundleStore<SpartanProductRow>,
-    t1_values: Vec<F>,
+    t1_endpoints: [F; EXTENDED_ENDPOINTS],
 }
 
 pub(crate) fn product_uniskip_carry_metadata<F: Field>(
@@ -188,43 +187,36 @@ impl<F: Field> allocative::Allocative for SpartanProductCarry<F> {
             vec_heap_bytes(&self.tau_low),
         );
         visitor.visit_simple(allocative::Key::new("rows"), self.rows.heap_bytes());
-        visitor.visit_simple(
-            allocative::Key::new("t1_values"),
-            vec_heap_bytes(&self.t1_values),
-        );
         visitor.exit();
     }
 }
 
 /// Extended-node evaluations of
 /// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
-fn extended_t1_values<F: Field>(
+fn endpoint_t1_values<F: Field>(
     rows: &BundleAccess<'_, SpartanProductRow>,
     tau_low: &[F],
-) -> Result<Vec<F>, WitnessError> {
-    let split = tau_low.len() / 2;
+) -> Result<[F; EXTENDED_ENDPOINTS], WitnessError> {
+    let split = tau_low.len().div_ceil(2);
     let (out_point, in_point) = tau_low.split_at(split);
     let e_out = EqPolynomial::<F>::evals(out_point, None);
     let e_in = EqPolynomial::<F>::evals(in_point, None);
     let in_len = e_in.len();
-    let coefficients = extension_coefficients();
+    let coefficients = endpoint_extension_coefficients();
 
-    let block = |x_out: usize| -> Result<Vec<F>, WitnessError> {
-        let mut accumulators: Vec<<F as WithSignedProductAccumulator>::SignedProductAccumulator> =
-            vec![Default::default(); EXTENDED_SIZE];
+    let block = |x_out: usize| -> Result<[F; EXTENDED_ENDPOINTS], WitnessError> {
+        let mut accumulators: [<F as WithSignedProductAccumulator>::SignedProductAccumulator;
+            EXTENDED_ENDPOINTS] = Default::default();
         for (x_in, &e) in e_in.iter().enumerate() {
             let row = rows.row(x_out * in_len + x_in)?;
-            let products = extended_products(&row, &coefficients);
+            let products = endpoint_products(&row, &coefficients);
             for (accumulator, product) in accumulators.iter_mut().zip(&products) {
                 accumulator.fmadd_s256(e, product);
             }
         }
-        Ok(accumulators
-            .into_iter()
-            .map(|accumulator| e_out[x_out] * accumulator.reduce())
-            .collect())
+        Ok(accumulators.map(|accumulator| e_out[x_out] * accumulator.reduce()))
     };
-    let merge = |mut left: Vec<F>, right: Vec<F>| {
+    let merge = |mut left: [F; EXTENDED_ENDPOINTS], right: [F; EXTENDED_ENDPOINTS]| {
         for (left, right) in left.iter_mut().zip(right) {
             *left += right;
         }
@@ -234,13 +226,13 @@ fn extended_t1_values<F: Field>(
     #[cfg(feature = "parallel")]
     {
         (0..e_out.len()).into_par_iter().map(block).try_reduce(
-            || vec![F::zero(); EXTENDED_SIZE],
+            || [F::zero(); EXTENDED_ENDPOINTS],
             |left, right| Ok(merge(left, right)),
         )
     }
     #[cfg(not(feature = "parallel"))]
     {
-        let mut folded = vec![F::zero(); EXTENDED_SIZE];
+        let mut folded = [F::zero(); EXTENDED_ENDPOINTS];
         for x_out in 0..e_out.len() {
             folded = merge(folded, block(x_out)?);
         }
@@ -282,12 +274,12 @@ impl OptimizedProductUniskip {
                 reason: "Spartan product tau_low must carry log_t challenges",
             });
         }
-        let t1_values = extended_t1_values(&rows.access(), tau_low)?;
+        let t1_endpoints = endpoint_t1_values(&rows.access(), tau_low)?;
         session.park(SpartanProductCarry {
             log_t,
             tau_low: tau_low.to_vec(),
             rows,
-            t1_values,
+            t1_endpoints,
         });
         Ok(())
     }
@@ -311,6 +303,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        known_values: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -325,9 +318,21 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
                     reason:
                         "the product uni-skip slot parked no carry for the first-round polynomial",
                 })?;
+        let &[product, should_branch, should_jump] = known_values else {
+            return Err(KernelError::InvariantViolation {
+                reason: "the product uni-skip first-round polynomial expects three known nodes",
+            });
+        };
         let kernel_values = centered_lagrange_evals::<F>(DOMAIN, tau_high)?;
         let kernel_coefficients = interpolate_to_coeffs(DOMAIN_START, &kernel_values);
-        let t1_coefficients = interpolate_to_coeffs(EXTENDED_START, &carry.t1_values);
+        let t1_values = [
+            carry.t1_endpoints[0],
+            product,
+            should_branch,
+            should_jump,
+            carry.t1_endpoints[1],
+        ];
+        let t1_coefficients = interpolate_to_coeffs(EXTENDED_START, &t1_values);
         Ok(UnivariatePoly::new(poly_mul(
             &kernel_coefficients,
             &t1_coefficients,
@@ -834,6 +839,19 @@ mod tests {
         backend
     }
 
+    fn known_t1_values(rows: &[SpartanProductRow], tau_low: &[Fr]) -> [Fr; DOMAIN] {
+        let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
+        let mut values = [Fr::from_u64(0); DOMAIN];
+        for (row, weight) in rows.iter().zip(eq) {
+            values[0] += weight * column_field_value(row, 0) * column_field_value(row, 1);
+            values[1] += weight * column_field_value(row, 4) * column_field_value(row, 5);
+            values[2] += weight
+                * column_field_value(row, 2)
+                * (Fr::from_u64(1) - column_field_value(row, 6));
+        }
+        values
+    }
+
     /// The remainder's true input claim
     /// `scale · Σ_j eq(τ_low, j) · left(j) · right(j)`, straight field math.
     fn true_input_claim(rows: &[SpartanProductRow], tau_low: &[Fr], tau_high: Fr, r0: Fr) -> Fr {
@@ -861,6 +879,7 @@ mod tests {
             .collect();
         let tau_high = Fr::from_u64(6007 + seed);
         let backend = fixed_backend_from_rows(log_t, &rows);
+        let known_values = known_t1_values(&rows, &tau_low);
 
         let mut reference_session = ProofSession::default();
         reference_session
@@ -870,6 +889,7 @@ mod tests {
                 &ReferenceBackend,
                 &mut reference_session,
                 &[tau_high],
+                &known_values,
             )
             .unwrap();
 
@@ -886,6 +906,7 @@ mod tests {
                 &OptimizedProductUniskip,
                 &mut optimized_session,
                 &[tau_high],
+                &known_values,
             )
             .unwrap();
         assert_eq!(
@@ -987,6 +1008,8 @@ mod tests {
                 .map(|i| Fr::from_u64(41 + 19 * i as u64))
                 .collect();
             let tau_high = Fr::from_u64(7211);
+            let rows: Vec<SpartanProductRow> = backend.bundles().unwrap();
+            let known_values = known_t1_values(&rows, &tau_low);
 
             let mut reference_session = ProofSession::default();
             <ReferenceBackend as UniskipKernel<Fr, ProductRemainder<Fr>>>::prepare(
@@ -1002,6 +1025,7 @@ mod tests {
                     &ReferenceBackend,
                     &mut reference_session,
                     &[tau_high],
+                    &known_values,
                 )
                 .unwrap();
 
@@ -1021,12 +1045,12 @@ mod tests {
                 &OptimizedProductUniskip,
                 &mut optimized_session,
                 &[tau_high],
+                &known_values,
             )
             .unwrap();
             assert_eq!(optimized_uniskip, reference_uniskip);
 
             let r0 = Fr::from_u64(15013);
-            let rows: Vec<SpartanProductRow> = backend.bundles().unwrap();
             let input_claim = true_input_claim(&rows, &tau_low, tau_high, r0);
 
             let relation = ProductRemainder::new(
@@ -1085,12 +1109,13 @@ mod tests {
         });
     }
 
-    /// The integer extension coefficients equal the field Lagrange basis
-    /// evaluations at every extended node (in-domain selectors included).
+    /// The integer endpoint coefficients equal the field Lagrange basis.
     #[test]
-    fn extension_coefficients_match_field_lagrange() {
-        for (position, coefficients) in extension_coefficients().iter().enumerate() {
-            let node = EXTENDED_START + position as i64;
+    fn endpoint_extension_coefficients_match_field_lagrange() {
+        for (&node, coefficients) in EXTENDED_ENDPOINT_NODES
+            .iter()
+            .zip(&endpoint_extension_coefficients())
+        {
             let expected = centered_lagrange_evals::<Fr>(DOMAIN, Fr::from_i64(node)).unwrap();
             for (i, &coefficient) in coefficients.iter().enumerate() {
                 assert_eq!(

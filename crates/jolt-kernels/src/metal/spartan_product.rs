@@ -612,6 +612,23 @@ mod tests {
                 .sum::<AkitaField>()
     }
 
+    fn known_t1_values(
+        rows: &[ProductRemainderRow],
+        tau_low: &[AkitaField],
+    ) -> [AkitaField; DOMAIN] {
+        let eq = EqPolynomial::<AkitaField>::evals(tau_low, None);
+        let mut values = [AkitaField::zero(); DOMAIN];
+        for (&row, weight) in rows.iter().zip(eq) {
+            for node in 0..DOMAIN {
+                let mut basis = [AkitaField::zero(); DOMAIN];
+                basis[node] = AkitaField::one();
+                let (left, right) = row.relation_values(&basis);
+                values[node] += weight * left * right;
+            }
+        }
+        values
+    }
+
     #[test]
     fn resident_product_remainder_matches_optimized_cpu() {
         for log_t in [4usize, 5] {
@@ -626,6 +643,7 @@ mod tests {
                     .iter()
                     .map(ProductRemainderRow::from)
                     .collect::<Vec<_>>();
+                let known_values = known_t1_values(&rows, &tau_low);
                 let input_claim = true_input_claim(&rows, &tau_low, tau_high, uniskip_challenge);
                 let relation = ProductRemainder::new(
                     SpartanProductDimensions::new(log_t),
@@ -642,7 +660,7 @@ mod tests {
                     .prepare(&mut optimized_session, log_t, &tau_low, witness)
                     .unwrap();
                 let _ = OptimizedProductUniskip
-                    .first_round_poly(&mut optimized_session, &[tau_high])
+                    .first_round_poly(&mut optimized_session, &[tau_high], &known_values)
                     .unwrap();
                 let mut optimized = OptimizedProductRemainder
                     .prepare(
@@ -668,7 +686,7 @@ mod tests {
                     .prepare(&mut metal_session, log_t, &tau_low, witness)
                     .unwrap();
                 let _ = OptimizedProductUniskip
-                    .first_round_poly(&mut metal_session, &[tau_high])
+                    .first_round_poly(&mut metal_session, &[tau_high], &known_values)
                     .unwrap();
                 let mut actual = <MetalBackend as PrepareKernel<
                     AkitaField,

@@ -539,11 +539,12 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         &self,
         session: &mut ProofSession,
         late_tau: &[AkitaField],
+        known_values: &[AkitaField],
     ) -> Result<UnivariatePoly<AkitaField>, KernelError<AkitaField>> {
         <OptimizedOuterUniskip as UniskipKernel<
             AkitaField,
             OuterRemainder<AkitaField>,
-        >>::first_round_poly(&OptimizedOuterUniskip, session, late_tau)
+        >>::first_round_poly(&OptimizedOuterUniskip, session, late_tau, known_values)
     }
 }
 

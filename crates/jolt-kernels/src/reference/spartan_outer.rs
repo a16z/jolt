@@ -90,6 +90,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
         &self,
         session: &mut ProofSession,
         _late_tau: &[F],
+        _known_values: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         session
             .state::<SpartanOuterKernel<F>>()

@@ -70,8 +70,12 @@ where
             .prepare(session, log_t, &tau, witness)
     })?;
 
-    let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
-        .in_scope(|| backend.spartan_outer_uniskip.first_round_poly(session, &[]))?;
+    let uniskip_poly =
+        tracing::info_span!("SpartanOuterUniskip::first_round_poly").in_scope(|| {
+            backend
+                .spartan_outer_uniskip
+                .first_round_poly(session, &[], &[])
+        })?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),

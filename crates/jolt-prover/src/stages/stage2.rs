@@ -107,11 +107,16 @@ where
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =
         uniskip_relation.input_claim(&uniskip_inputs, &NoChallenges::default())?;
+    let known_values = [
+        uniskip_inputs.product,
+        uniskip_inputs.should_branch,
+        uniskip_inputs.should_jump,
+    ];
     let uniskip_poly =
         tracing::info_span!("SpartanProductUniskip::first_round_poly").in_scope(|| {
             backend
                 .spartan_product_uniskip
-                .first_round_poly(session, &[tau_high])
+                .first_round_poly(session, &[tau_high], &known_values)
         })?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,

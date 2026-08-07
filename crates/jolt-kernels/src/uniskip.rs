@@ -56,10 +56,12 @@ where
 
     /// The uni-skip first-round polynomial. `late_tau` carries the challenges
     /// drawn after [`prepare`](Self::prepare) (outer: empty; product:
-    /// `&[tau_high]`).
+    /// `&[tau_high]`). `known_values` carries relation inputs whose node values
+    /// are already available from the preceding stage.
     fn first_round_poly(
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        known_values: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>>;
 }
