@@ -27,6 +27,7 @@ use crate::{
     clippy::too_many_arguments,
     reason = "Stage 6a's address-phase input claim folds all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
+#[jolt_verifier_derive::fs_scope(Stage6a)]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,

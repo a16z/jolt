@@ -16,6 +16,7 @@ use crate::{
     VerifierError,
 };
 
+#[jolt_verifier_derive::fs_scope(Stage1)]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,

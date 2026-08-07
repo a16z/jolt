@@ -29,11 +29,7 @@ impl SB {
 
 impl RISCVTrace for SB {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
-        let mut trace = trace;
-        for instr in inline_sequence {
-            instr.trace(cpu, trace.as_deref_mut());
-        }
+        super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
     }
 }
 

@@ -1,9 +1,9 @@
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_grumpkin::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    Cpu, ExpandedInstructionSequence, ExpansionError, FieldElementAdvice, FormatInline,
-    GlvDecompositionAdvice, InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands,
-    InlineRegister,
+    load_field_element_limbs, ExpandedInstructionSequence, ExpansionError, FieldElementAdvice,
+    FormatInline, GlvDecompositionAdvice, InlineAdviceContext, InlineAdviceError, InlineBuilderExt,
+    InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
 };
 struct GrumpkinDivAdv {
     asm: InlineExpansionBuilder,
@@ -20,21 +20,15 @@ impl GrumpkinDivAdv {
         Ok(GrumpkinDivAdv { asm, vr, operands })
     }
 
-    fn advice(operands: FormatInline, is_base_field: bool, cpu: &mut Cpu) -> FieldElementAdvice {
-        let a_addr = cpu.x[operands.rs1 as usize] as u64;
-        let a = [
-            cpu.mmu.load_doubleword(a_addr).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(a_addr + 24).unwrap().0,
-        ];
-        let b_addr = cpu.x[operands.rs2 as usize] as u64;
-        let b = [
-            cpu.mmu.load_doubleword(b_addr).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(b_addr + 24).unwrap().0,
-        ];
+    fn advice(
+        operands: FormatInline,
+        is_base_field: bool,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<FieldElementAdvice, InlineAdviceError> {
+        let a_addr = ctx.register(operands.rs1 as usize);
+        let a = load_field_element_limbs(ctx, a_addr)?;
+        let b_addr = ctx.register(operands.rs2 as usize);
+        let b = load_field_element_limbs(ctx, b_addr)?;
         let limbs = if is_base_field {
             let arr_to_fq = |a: &[u64; 4]| Fq::new_unchecked(BigInt(*a));
             (arr_to_fq(&b)
@@ -52,7 +46,7 @@ impl GrumpkinDivAdv {
             .0
              .0
         };
-        FieldElementAdvice { limbs }
+        Ok(FieldElementAdvice { limbs })
     }
 
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -77,16 +71,16 @@ impl GlvrAdvBuilder {
         Ok(GlvrAdvBuilder { asm, vr, operands })
     }
 
-    fn advice(operands: FormatInline, cpu: &mut Cpu) -> GlvDecompositionAdvice {
-        let k_addr = cpu.x[operands.rs1 as usize] as u64;
-        let k_limbs = [
-            cpu.mmu.load_doubleword(k_addr).unwrap().0,
-            cpu.mmu.load_doubleword(k_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(k_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(k_addr + 24).unwrap().0,
-        ];
+    fn advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<GlvDecompositionAdvice, InlineAdviceError> {
+        let k_addr = ctx.register(operands.rs1 as usize);
+        let k_limbs = load_field_element_limbs(ctx, k_addr)?;
         let k = Fr::new_unchecked(BigInt(k_limbs)).into_bigint().into();
-        GlvDecompositionAdvice::from_sign_abs(crate::glv::decompose_scalar(k))
+        Ok(GlvDecompositionAdvice::from_sign_abs(
+            crate::glv::decompose_scalar(k),
+        ))
     }
 
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -113,8 +107,11 @@ impl InlineOp for GrumpkinDivQAdv {
         GrumpkinDivAdv::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-        GrumpkinDivAdv::advice(operands, true, cpu)
+    fn build_advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Self::Advice, InlineAdviceError> {
+        GrumpkinDivAdv::advice(operands, true, ctx)
     }
 }
 
@@ -135,8 +132,11 @@ impl InlineOp for GrumpkinDivRAdv {
         GrumpkinDivAdv::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-        GrumpkinDivAdv::advice(operands, false, cpu)
+    fn build_advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Self::Advice, InlineAdviceError> {
+        GrumpkinDivAdv::advice(operands, false, ctx)
     }
 }
 
@@ -157,7 +157,10 @@ impl InlineOp for GrumpkinGlvrAdv {
         GlvrAdvBuilder::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-        GlvrAdvBuilder::advice(operands, cpu)
+    fn build_advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Self::Advice, InlineAdviceError> {
+        GlvrAdvBuilder::advice(operands, ctx)
     }
 }

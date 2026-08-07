@@ -42,6 +42,7 @@ pub fn stage3_input_values_from_upstream<F: Field>(
     }
 }
 
+#[jolt_verifier_derive::fs_scope(Stage3)]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
