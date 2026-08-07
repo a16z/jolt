@@ -3,6 +3,7 @@ use core::mem::size_of;
 use jolt_lookup_tables::tables::suffixes::Suffixes;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
+pub(super) use super::super::instruction_read_raf_producer::AddressAtomLookup as AddressLookup;
 use super::{InstructionReadRafV3Error, ADDRESS_BINS, ADDRESS_PHASES, ADDRESS_PHASE_BITS};
 
 pub(crate) const TABLES: usize = LookupTableKind::<RISCV_XLEN>::COUNT;
@@ -27,24 +28,6 @@ const _: () = assert!(SEGMENTS == 82);
 const _: () = assert!(JOB_FIELDS == 1536);
 const _: () = assert!(PHASE_THREADGROUP_BYTES == 30_720);
 const _: () = assert!(FLAG_THREADGROUP_BYTES == 820);
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct AddressLookup {
-    pub(super) limbs: [u64; 2],
-}
-
-impl AddressLookup {
-    pub(super) const fn new(value: u128) -> Self {
-        Self {
-            limbs: [value as u64, (value >> 64) as u64],
-        }
-    }
-
-    pub(super) const fn value(self) -> u128 {
-        self.limbs[0] as u128 | ((self.limbs[1] as u128) << 64)
-    }
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

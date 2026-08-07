@@ -10,6 +10,9 @@
 //! the device scatter needs one payload pass and no count pass.
 
 mod abi;
+mod address_atoms;
+#[cfg(test)]
+mod address_atoms_tests;
 mod binding;
 mod oracle;
 mod runtime;
@@ -19,6 +22,14 @@ mod tests;
 pub use abi::{
     BufferShape, ChunkSegmentCounts, PlaneRole, ProducerGeometry, ProducerShardPlan,
     ScatterDispatchPlan, ScatterLayout, ScatterParams, ScatterTraffic, SCATTER_BUFFER_ROLES,
+};
+pub use address_atoms::{
+    split_equality_weight, AddressAtomBufferShape, AddressAtomCycleRow, AddressAtomCycleSource,
+    AddressAtomError, AddressAtomLookup, AddressAtomMassReceipt, AddressAtomPartitionPenalty,
+    AddressAtomPlaneReceipt, AddressAtomPlaneRole, AddressAtomResult, AddressAtomShape,
+    AddressAtomSourceProvenance, AddressAtomTopology, AddressAtomTopologyBatchReceipt,
+    AddressAtomTopologyParts, AddressAtomTopologyReceipt, AddressAtomTraffic,
+    ADDRESS_ATOM_MASS_BYTES, ADDRESS_ATOM_PLANE_ROLES,
 };
 pub use oracle::{decode_claim, HostScatter, ProducerSelector};
 pub use runtime::{

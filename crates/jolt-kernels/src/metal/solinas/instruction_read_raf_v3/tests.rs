@@ -4,11 +4,19 @@ use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_A
 use jolt_field::{Field, Fr, FromPrimitiveInt};
 use jolt_lookup_tables::tables::suffixes::{Suffixes, NUM_SUFFIXES};
 
+use super::super::instruction_read_raf_producer::{
+    AddressAtomCycleSource as ProducerAtomCycleSource,
+    AddressAtomPlaneReceipt as ProducerAtomPlaneReceipt,
+    AddressAtomPlaneRole as ProducerAtomPlaneRole, AddressAtomShape as ProducerAtomShape,
+    AddressAtomSourceProvenance as ProducerAtomSourceProvenance,
+    AddressAtomTopology as ProducerAtomTopology,
+    AddressAtomTopologyReceipt as ProducerAtomTopologyReceipt, ProducerGeometry,
+};
 use super::abi::{
     AddressAtomTopologyReceipt, AddressStateReceipt, CycleFactorReceipt, HostRoundBoundary,
-    InstructionReadRafGeometry, MemberMessage, PlaneDescriptor, PriorBind, ProducerIdentity,
-    ReductionEqReceipt, ResidentInstructionFacts, ResidentReadRafInputs, StageOutputReceipt,
-    ADDRESS_SEGMENT_OFFSETS,
+    InstructionReadRafGeometry, MemberMessage, PlaneDescriptor, PriorBind,
+    ProducerAddressAtomTopologyReceipt, ProducerIdentity, ReductionEqReceipt,
+    ResidentInstructionFacts, ResidentReadRafInputs, StageOutputReceipt, ADDRESS_SEGMENT_OFFSETS,
 };
 use super::model::{
     choose_cycle_cutoff, AddressCensus, ExecutionModel, RoofRates, M4_MAX_RETAINED_RATES,
@@ -19,7 +27,7 @@ use super::shader_abi::{
     SplitAtom, SuffixPlan, TableDescriptor, EXPLICIT_SUFFIX_LANES, FLAG_COLUMNS, JOB_LANES,
     MAX_SUFFIXES, SEGMENTS, TABLES, TOTAL_SUFFIXES,
 };
-use super::topology::{AddressAtomTopology, AddressAtomTopologyConfig};
+use super::topology::{validate_one_shard, AddressAtomTopology, AddressAtomTopologyConfig};
 use super::{
     aggregate_address_atoms, atom_address_message, DenseReadRafOracle, InstructionReadRafRow,
     InstructionReadRafV3Error, ADDRESS_BITS, ADDRESS_PHASES, FP128_BYTES, INSTRUCTION_ROW_BYTES,
@@ -168,6 +176,67 @@ fn small_topology_config() -> AddressAtomTopologyConfig {
         mass_job_cycles: 2,
         atoms_per_phase_job: 2,
     }
+}
+
+fn producer_atom_topology(rows: &[InstructionReadRafRow]) -> ProducerAtomTopology {
+    let shard = ProducerGeometry::new(rows.len()).unwrap().shard(0).unwrap();
+    let lookup_lo = rows
+        .iter()
+        .map(|row| row.lookup_index() as u64)
+        .collect::<Vec<_>>();
+    let lookup_hi = rows
+        .iter()
+        .map(|row| (row.lookup_index() >> 64) as u64)
+        .collect::<Vec<_>>();
+    let claims = rows
+        .iter()
+        .map(|row| pack_claim(row.table_index(), row.raf_flag()).unwrap())
+        .collect::<Vec<_>>();
+    let source = ProducerAtomCycleSource::new(shard, &lookup_lo, &lookup_hi, &claims).unwrap();
+    ProducerAtomTopology::from_cycle_source_reference(source).unwrap()
+}
+
+#[test]
+fn producer_csr_builds_v3_jobs_without_sorting_or_inverse_transfer() {
+    let rows = fixture_rows();
+    let producer = producer_atom_topology(&rows);
+    let producer_inverse = producer.cycle_to_atom().to_vec();
+    let expected =
+        AddressAtomTopology::from_rows_reference(&rows, small_topology_config()).unwrap();
+    let actual =
+        AddressAtomTopology::from_producer_topology(&producer, small_topology_config()).unwrap();
+
+    assert_eq!(actual.atom_lookups(), expected.atom_lookups());
+    assert_eq!(actual.atom_cycle_offsets(), expected.atom_cycle_offsets());
+    assert_eq!(actual.cycle_indices(), expected.cycle_indices());
+    assert_eq!(
+        actual.segment_atom_offsets(),
+        expected.segment_atom_offsets()
+    );
+    assert_eq!(actual.mass_jobs(), expected.mass_jobs());
+    assert_eq!(actual.mass_groups(), expected.mass_groups());
+    assert_eq!(actual.phase_jobs(), expected.phase_jobs());
+    assert_eq!(producer.cycle_to_atom(), producer_inverse);
+}
+
+#[test]
+fn checked_parts_reject_a_non_permutation_before_job_planning() {
+    let rows = fixture_rows();
+    let topology =
+        AddressAtomTopology::from_rows_reference(&rows, small_topology_config()).unwrap();
+    let mut cycles = topology.cycle_indices().to_vec();
+    cycles[1] = cycles[0];
+    assert!(matches!(
+        AddressAtomTopology::from_checked_parts(
+            rows.len(),
+            topology.atom_lookups().to_vec(),
+            topology.atom_cycle_offsets().to_vec(),
+            cycles,
+            topology.segment_atom_offsets(),
+            small_topology_config(),
+        ),
+        Err(InstructionReadRafV3Error::DuplicateTopologyCycle { .. })
+    ));
 }
 
 #[test]
@@ -319,6 +388,78 @@ fn producer() -> ProducerIdentity {
         InstructionReadRafGeometry::new(8, 4).unwrap(),
     )
     .unwrap()
+}
+
+fn producer_atom_receipt(
+    shard: super::super::instruction_read_raf_producer::ProducerShardPlan,
+    atoms: usize,
+) -> ProducerAtomTopologyReceipt {
+    let shape = ProducerAtomShape::new(shard, atoms).unwrap();
+    let source = ProducerAtomSourceProvenance::new(shard, 7, 11, 13, [200, 201, 202]).unwrap();
+    let mut identity = 210;
+    let planes = shape.buffer_shapes().unwrap().map(|plane| {
+        let receipt = ProducerAtomPlaneReceipt::new(
+            plane.role(),
+            plane.elements(),
+            plane.bytes() as u64,
+            7,
+            identity,
+            11,
+            17,
+        )
+        .unwrap();
+        identity += 1;
+        receipt
+    });
+    ProducerAtomTopologyReceipt::new(shape, source, 17, 0, planes).unwrap()
+}
+
+#[test]
+fn producer_receipt_projects_only_the_five_v3_planes() {
+    let shard = ProducerGeometry::new(8).unwrap().shard(0).unwrap();
+    let producer = producer_atom_receipt(shard, 4);
+    let inverse_identity = producer
+        .planes()
+        .into_iter()
+        .find(|plane| plane.role() == ProducerAtomPlaneRole::CycleToAtom)
+        .unwrap()
+        .allocation_identity();
+    let adapter = ProducerAddressAtomTopologyReceipt::new(&producer).unwrap();
+
+    assert_eq!(adapter.atoms(), 4);
+    assert_eq!(adapter.source(), producer.source());
+    assert_eq!(adapter.completion_serial(), 17);
+    assert_eq!(adapter.lookups().role(), ProducerAtomPlaneRole::AtomLookups);
+    assert_eq!(adapter.claims().role(), ProducerAtomPlaneRole::AtomClaims);
+    assert_eq!(
+        adapter.offsets().role(),
+        ProducerAtomPlaneRole::AtomCycleOffsets
+    );
+    assert_eq!(adapter.cycles().role(), ProducerAtomPlaneRole::CycleIndices);
+    assert_eq!(
+        adapter.segments().role(),
+        ProducerAtomPlaneRole::SegmentAtomOffsets
+    );
+    assert!(!adapter.allocation_identities().contains(&inverse_identity));
+}
+
+#[test]
+fn producer_adapter_rejects_a_partial_log28_shard() {
+    let geometry = ProducerGeometry::new(1 << 28).unwrap();
+    let shard = geometry.shard(0).unwrap();
+    let producer = producer_atom_receipt(shard, 1);
+    assert!(matches!(
+        ProducerAddressAtomTopologyReceipt::new(&producer),
+        Err(InstructionReadRafV3Error::UnsupportedProducerShard {
+            total_rows: 268_435_456,
+            shard_index: 0,
+            shard_rows: 67_108_864,
+        })
+    ));
+    assert!(matches!(
+        validate_one_shard(shard),
+        Err(InstructionReadRafV3Error::UnsupportedProducerShard { .. })
+    ));
 }
 
 fn descriptor(id: usize, elements: usize, bytes: usize) -> PlaneDescriptor {

@@ -86,8 +86,9 @@ pub(crate) const REDUCE_PIPELINE: &str = "solinas_instruction_read_raf_v3_reduce
 
 pub(crate) use abi::{
     AddressAtomTopologyReceipt, AddressStateReceipt, CycleFactorReceipt, HostRoundBoundary,
-    InstructionReadRafGeometry, PlaneDescriptor, ProducerIdentity, ReductionEqReceipt,
-    ResidentInstructionFacts, ResidentPlane, ResidentReadRafInputs, StageOutputReceipt,
+    InstructionReadRafGeometry, PlaneDescriptor, ProducerAddressAtomTopologyReceipt,
+    ProducerIdentity, ReductionEqReceipt, ResidentInstructionFacts, ResidentPlane,
+    ResidentReadRafInputs, StageOutputReceipt,
 };
 pub(crate) use model::{
     AddressCensus, CutoffDecision, ExecutionModel, GateReport, RoofRates, SequenceWork,
@@ -207,6 +208,14 @@ pub(crate) enum InstructionReadRafV3Error {
     DuplicateTopologyCycle { cycle: usize },
     #[error("InstructionReadRaf sorted topology key decreases at position {position}")]
     NonMonotoneTopologyKey { position: usize },
+    #[error(
+        "InstructionReadRaf producer topology shard {shard_index} has {shard_rows} of {total_rows} rows; the v3 adapter accepts exactly one complete shard"
+    )]
+    UnsupportedProducerShard {
+        total_rows: usize,
+        shard_index: usize,
+        shard_rows: usize,
+    },
     #[error("InstructionReadRaf topology is invalid: {0}")]
     InvalidTopology(&'static str),
 }

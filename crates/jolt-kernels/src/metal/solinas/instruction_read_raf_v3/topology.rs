@@ -2,6 +2,9 @@
 
 use core::mem::size_of;
 
+use super::super::instruction_read_raf_producer::{
+    AddressAtomTopology as ProducerAddressAtomTopology, ProducerShardPlan,
+};
 use super::oracle::InstructionReadRafRow;
 use super::shader_abi::{
     segment_index, AddressJob, AddressLookup, AtomMassGroup, AtomMassJob, SplitAtom, SEGMENTS,
@@ -112,11 +115,6 @@ impl AddressAtomTopology {
         }
 
         let mut seen = vec![0u64; rows.div_ceil(64)];
-        let mut atom_lookups = Vec::new();
-        let mut atom_cycle_offsets = vec![0u32];
-        let mut segment_atom_counts = [0usize; SEGMENTS];
-        let mut previous_key = None;
-
         for (position, &cycle_u32) in sorted_cycles.iter().enumerate() {
             let cycle = cycle_u32 as usize;
             if cycle >= rows {
@@ -132,7 +130,15 @@ impl AddressAtomTopology {
                 return Err(InstructionReadRafV3Error::DuplicateTopologyCycle { cycle });
             }
             *seen_word |= seen_bit;
+        }
 
+        let mut atom_lookups = Vec::new();
+        let mut atom_cycle_offsets = vec![0u32];
+        let mut segment_atom_counts = [0usize; SEGMENTS];
+        let mut previous_key = None;
+
+        for (position, &cycle_u32) in sorted_cycles.iter().enumerate() {
+            let cycle = cycle_u32 as usize;
             let row = row_at(cycle)?;
             let segment = segment_index(row.table_index(), row.raf_flag())?;
             let key = (segment, row.lookup_index());
@@ -169,13 +175,57 @@ impl AddressAtomTopology {
             segment_atom_offsets[segment + 1] = shader_u32(atom_cursor, "segment atom offset")?;
         }
 
-        let plans = build_job_plans(&atom_cycle_offsets, &segment_atom_offsets, config)?;
+        Self::from_checked_parts(
+            rows,
+            atom_lookups,
+            atom_cycle_offsets,
+            sorted_cycles.to_vec(),
+            &segment_atom_offsets,
+            config,
+        )
+    }
+
+    /// Builds only v3 job plans around a producer-checked exact-key CSR.
+    pub(crate) fn from_producer_topology(
+        producer: &ProducerAddressAtomTopology,
+        config: AddressAtomTopologyConfig,
+    ) -> Result<Self, InstructionReadRafV3Error> {
+        validate_one_shard(producer.shard())?;
+        let parts = producer.parts();
+        Self::from_checked_parts(
+            producer.rows(),
+            parts.atom_lookups.clone(),
+            parts.atom_cycle_offsets.clone(),
+            parts.cycle_indices.clone(),
+            &parts.segment_atom_offsets,
+            config,
+        )
+    }
+
+    pub(crate) fn from_checked_parts(
+        rows: usize,
+        atom_lookups: Vec<AddressLookup>,
+        atom_cycle_offsets: Vec<u32>,
+        cycle_indices: Vec<u32>,
+        segment_atom_offsets: &[u32; SEGMENT_OFFSETS],
+        config: AddressAtomTopologyConfig,
+    ) -> Result<Self, InstructionReadRafV3Error> {
+        let _geometry = InstructionReadRafGeometry::new(rows, PRODUCTION_VIRTUAL_RA)?;
+        let config = config.validate()?;
+        validate_base_parts(
+            rows,
+            &atom_lookups,
+            &atom_cycle_offsets,
+            &cycle_indices,
+            segment_atom_offsets,
+        )?;
+        let plans = build_job_plans(&atom_cycle_offsets, segment_atom_offsets, config)?;
         let topology = Self {
             rows,
             atom_lookups,
             atom_cycle_offsets,
-            cycle_indices: sorted_cycles.to_vec(),
-            segment_atom_offsets,
+            cycle_indices,
+            segment_atom_offsets: *segment_atom_offsets,
             mass_jobs: plans.mass_jobs,
             mass_groups: plans.mass_groups,
             phase_zero_group_offsets: plans.phase_zero_group_offsets,
@@ -496,6 +546,90 @@ struct JobPlans {
     mass_partials: usize,
     phase_jobs: Vec<AddressJob>,
     phase_job_offsets: [u32; SEGMENT_OFFSETS],
+}
+
+pub(super) fn validate_one_shard(
+    shard: ProducerShardPlan,
+) -> Result<(), InstructionReadRafV3Error> {
+    if shard.shard_index() != 0
+        || shard.absolute_row_start() != 0
+        || shard.rows() != shard.total_rows()
+    {
+        return Err(InstructionReadRafV3Error::UnsupportedProducerShard {
+            total_rows: shard.total_rows(),
+            shard_index: shard.shard_index(),
+            shard_rows: shard.rows(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_base_parts(
+    rows: usize,
+    atom_lookups: &[AddressLookup],
+    atom_cycle_offsets: &[u32],
+    cycle_indices: &[u32],
+    segment_atom_offsets: &[u32; SEGMENT_OFFSETS],
+) -> Result<(), InstructionReadRafV3Error> {
+    let atoms = atom_lookups.len();
+    if atoms == 0 || atoms > rows {
+        return Err(InstructionReadRafV3Error::InvalidAtomCount { rows, atoms });
+    }
+    if atom_cycle_offsets.len() != atoms + 1 {
+        return Err(InstructionReadRafV3Error::AtomTopologyLength {
+            name: "atom cycle offsets",
+            expected: atoms + 1,
+            got: atom_cycle_offsets.len(),
+        });
+    }
+    if cycle_indices.len() != rows {
+        return Err(InstructionReadRafV3Error::AtomTopologyLength {
+            name: "cycle indices",
+            expected: rows,
+            got: cycle_indices.len(),
+        });
+    }
+    if atom_cycle_offsets.first() != Some(&0)
+        || atom_cycle_offsets.last() != Some(&(rows as u32))
+        || atom_cycle_offsets.windows(2).any(|pair| pair[0] >= pair[1])
+    {
+        return Err(InstructionReadRafV3Error::InvalidTopology(
+            "atom cycle offsets do not strictly partition the rows",
+        ));
+    }
+    validate_offsets(
+        segment_atom_offsets,
+        atoms,
+        "segment atom offsets do not cover the atoms",
+    )?;
+    for segment in 0..SEGMENTS {
+        let start = segment_atom_offsets[segment] as usize;
+        let end = segment_atom_offsets[segment + 1] as usize;
+        if atom_lookups[start..end]
+            .windows(2)
+            .any(|pair| pair[0].value() >= pair[1].value())
+        {
+            return Err(InstructionReadRafV3Error::InvalidTopology(
+                "atom lookups are not strictly increasing inside a selector range",
+            ));
+        }
+    }
+    let mut seen = vec![false; rows];
+    for (position, &cycle_u32) in cycle_indices.iter().enumerate() {
+        let cycle = cycle_u32 as usize;
+        if cycle >= rows {
+            return Err(InstructionReadRafV3Error::TopologyCycleOutOfRange {
+                position,
+                cycle,
+                rows,
+            });
+        }
+        if seen[cycle] {
+            return Err(InstructionReadRafV3Error::DuplicateTopologyCycle { cycle });
+        }
+        seen[cycle] = true;
+    }
+    Ok(())
 }
 
 fn build_job_plans(

@@ -2,6 +2,12 @@ use core::{marker::PhantomData, mem::size_of, num::NonZeroU64, num::NonZeroUsize
 
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
+use super::super::instruction_read_raf_producer::{
+    AddressAtomPlaneReceipt as ProducerAtomPlaneReceipt,
+    AddressAtomPlaneRole as ProducerAtomPlaneRole,
+    AddressAtomSourceProvenance as ProducerAtomSourceProvenance,
+    AddressAtomTopologyReceipt as ProducerAtomTopologyReceipt, ProducerShardPlan,
+};
 use super::{
     InstructionReadRafV3Error, ADDRESS_BINS, ADDRESS_BITS, ADDRESS_PHASES, FP128_BYTES,
     INSTRUCTION_ROW_BYTES, PRODUCTION_VIRTUAL_RA,
@@ -564,6 +570,105 @@ impl AddressAtomTopologyReceipt {
             self.segments.allocation_identity(),
         ]
     }
+}
+
+/// One-shard projection of the producer receipt onto the five planes v3 uses.
+/// The producer keeps its cycle-to-atom inverse and remains the allocation owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProducerAddressAtomTopologyReceipt {
+    source: ProducerAtomSourceProvenance,
+    atoms: usize,
+    completion_serial: u64,
+    lookups: ProducerAtomPlaneReceipt,
+    claims: ProducerAtomPlaneReceipt,
+    offsets: ProducerAtomPlaneReceipt,
+    cycles: ProducerAtomPlaneReceipt,
+    segments: ProducerAtomPlaneReceipt,
+}
+
+impl ProducerAddressAtomTopologyReceipt {
+    pub(crate) fn new(
+        producer: &ProducerAtomTopologyReceipt,
+    ) -> Result<Self, InstructionReadRafV3Error> {
+        let shape = producer.shape();
+        validate_producer_shard(shape.shard())?;
+        let planes = producer.planes();
+        let plane = |role| {
+            planes
+                .iter()
+                .copied()
+                .find(|plane| plane.role() == role)
+                .ok_or(InstructionReadRafV3Error::InvalidTopology(
+                    "producer atom receipt is missing a v3 plane",
+                ))
+        };
+        Ok(Self {
+            source: producer.source(),
+            atoms: shape.atoms(),
+            completion_serial: producer.completion_serial(),
+            lookups: plane(ProducerAtomPlaneRole::AtomLookups)?,
+            claims: plane(ProducerAtomPlaneRole::AtomClaims)?,
+            offsets: plane(ProducerAtomPlaneRole::AtomCycleOffsets)?,
+            cycles: plane(ProducerAtomPlaneRole::CycleIndices)?,
+            segments: plane(ProducerAtomPlaneRole::SegmentAtomOffsets)?,
+        })
+    }
+
+    pub(crate) const fn source(self) -> ProducerAtomSourceProvenance {
+        self.source
+    }
+
+    pub(crate) const fn atoms(self) -> usize {
+        self.atoms
+    }
+
+    pub(crate) const fn completion_serial(self) -> u64 {
+        self.completion_serial
+    }
+
+    pub(crate) const fn lookups(self) -> ProducerAtomPlaneReceipt {
+        self.lookups
+    }
+
+    pub(crate) const fn claims(self) -> ProducerAtomPlaneReceipt {
+        self.claims
+    }
+
+    pub(crate) const fn offsets(self) -> ProducerAtomPlaneReceipt {
+        self.offsets
+    }
+
+    pub(crate) const fn cycles(self) -> ProducerAtomPlaneReceipt {
+        self.cycles
+    }
+
+    pub(crate) const fn segments(self) -> ProducerAtomPlaneReceipt {
+        self.segments
+    }
+
+    pub(crate) fn allocation_identities(self) -> [usize; 5] {
+        [
+            self.lookups.allocation_identity(),
+            self.claims.allocation_identity(),
+            self.offsets.allocation_identity(),
+            self.cycles.allocation_identity(),
+            self.segments.allocation_identity(),
+        ]
+    }
+}
+
+fn validate_producer_shard(shard: ProducerShardPlan) -> Result<(), InstructionReadRafV3Error> {
+    if shard.shard_index() != 0
+        || shard.absolute_row_start() != 0
+        || shard.rows() != shard.total_rows()
+    {
+        return Err(InstructionReadRafV3Error::UnsupportedProducerShard {
+            total_rows: shard.total_rows(),
+            shard_index: shard.shard_index(),
+            shard_rows: shard.rows(),
+        });
+    }
+    Ok(())
 }
 
 /// Device-resident address owner after a completed 8-variable phase.
