@@ -1,10 +1,10 @@
 {
   "schema": "metal_hamming_weight_claim_reduction_successor_screen_v1",
   "schema_version": 1,
-  "recorded_at": "2026-08-06",
-  "evidence_stage": "analytical",
+  "recorded_at": "2026-08-07",
+  "evidence_stage": "diagnostic_log26_single_pair",
   "registered": false,
-  "decision": "retain_stage6a_all_hot_projection_for_stage7",
+  "decision": "pursue_eight_x_alternating_campaign",
   "target": {
     "device": "Apple M4 Max 40-core GPU",
     "log_t": 26,
@@ -138,6 +138,53 @@
     ],
     "screen": "small exact parity, compiled resources, then one log26 GPU-active sample"
   },
+  "observed_first_probe": {
+    "revision": "9f9c5575a",
+    "binary_sha256": "eb5fe42a52eda890ff2ae660f31976682ba96d3c9358a6245b2ed023cc45b034",
+    "workload": "fibonacci",
+    "log_t": 26,
+    "rayon_threads": 16,
+    "order": ["candidate", "accepted"],
+    "proof_verified": {
+      "candidate": true,
+      "accepted": true
+    },
+    "candidate": {
+      "trace": "benchmark-runs/metal-retained-hamming-screen/9f9c5575a/candidate.trace.json",
+      "trace_sha256": "0b20197e7985f220281ed06e6a27e90b5eb249e68db53a59456026da84ba3b6a",
+      "piop_ns": 5511655458,
+      "peak_rss_gib_reported": 38.24,
+      "booleanity_address_member_ns": 153261666,
+      "booleanity_address_gpu_active_ns": 93195375,
+      "hamming_member_ns": 63315291,
+      "hamming_gpu_active_ns": 27409875,
+      "combined_member_ns": 216576957,
+      "combined_gpu_active_ns": 120605250
+    },
+    "accepted": {
+      "trace": "benchmark-runs/metal-retained-hamming-screen/9f9c5575a/accepted.trace.json",
+      "trace_sha256": "802ac2f477f97dcedc5f9634848770744613798cf5d43772ebbbfef2b95418b8",
+      "piop_ns": 5395855375,
+      "peak_rss_gib_reported": 37.52,
+      "booleanity_address_member_ns": 120064918,
+      "booleanity_address_gpu_active_ns": 99430250,
+      "hamming_member_ns": 107444624,
+      "hamming_gpu_active_ns": 85018625,
+      "combined_member_ns": 227509542,
+      "combined_gpu_active_ns": 184448875
+    },
+    "frozen_cpu_ratios": {
+      "booleanity_address_speedup": 6.047077473371587,
+      "hamming_speedup": 8.66619250000762,
+      "combined_speedup": 6.840059799159521
+    },
+    "same_revision_deltas": {
+      "combined_member_improvement": 0.04805330318848789,
+      "combined_gpu_active_improvement": 0.3461318210805027,
+      "single_pair_piop_regression_ns": 115800083
+    },
+    "decision": "passes the first-probe active and complete-member gates; the single unbalanced PIOP pair is diagnostic only, so promotion requires the fixed five-pair alternating evaluator"
+  },
   "kill_gate": {
     "immediate": [
       "any correctness or transcript mismatch",
@@ -167,12 +214,10 @@
     "clear and ZK verification"
   ],
   "unverified": [
-    "Rust and MSL compilation",
-    "pipeline limits, registers, occupancy, and spills",
+    "register count, occupancy, and spill capture",
     "physical cache and atomic rates",
-    "projection allocation and retention",
-    "GPU parity and proof parity",
-    "latency, speedup, and combined PIOP improvement",
+    "five-pair alternating order stability",
+    "positive paired full-PIOP delta",
     "log27 transfer"
   ]
 }

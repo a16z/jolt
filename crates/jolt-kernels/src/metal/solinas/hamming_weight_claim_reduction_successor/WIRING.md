@@ -1,9 +1,10 @@
 # Hamming-weight retained-projection successor
 
-Status: registered low-level candidate; backend defaults and evaluator remain
-unchanged. The fixed ABI, analytical model, scalar oracle, full MSL assembly,
-and exact log-15 producer/consumer mass parity pass. No log-26 performance or
-promotion evidence exists yet.
+Status: the default-off backend candidate, fixed ABI, analytical model, scalar
+oracle, MSL assembly, and exact low-scale producer/consumer parity pass. A
+single log-26 diagnostic clears the 8x Hamming member gate. Promotion still
+requires the fixed alternating evaluator, log-27 transfer, and occupancy
+evidence.
 
 ## Decision
 
@@ -188,6 +189,31 @@ stage-6a-plus-stage-7 PIOP delta, five sealed alternating pairs, log-27
 transfer, and live-proof memory admission. If counters expose headroom beyond
 8x, continue rather than stopping at the target.
 
+## First log-26 diagnostic
+
+Revision `9f9c5575a` ran the candidate and accepted topology on the same clean
+release binary, in that order, with 16 Rayon threads. Both Akita proofs
+verified. The traces are retained under
+`benchmark-runs/metal-retained-hamming-screen/9f9c5575a/` and sealed in
+`screening_evidence.json`.
+
+| measurement | accepted | packed + retained |
+|---|---:|---:|
+| Booleanity-address member | 120.065 ms | 153.262 ms |
+| Booleanity-address GPU-active | 99.430 ms | 93.195 ms |
+| Hamming member | 107.445 ms | 63.315 ms |
+| Hamming GPU-active | 85.019 ms | 27.410 ms |
+| combined member | 227.510 ms | 216.577 ms |
+| combined GPU-active | 184.449 ms | 120.605 ms |
+
+Against the frozen equal-input CPU medians, the candidate is 6.047x for
+Booleanity address, 8.666x for Hamming, and 6.840x for their combined members.
+It reduces same-revision combined member wall by 4.81% and combined GPU-active
+time by 34.61%. The unbalanced single PIOP pair regressed by 115.800 ms because
+unrelated CPU-heavy stages varied by more than the local delta; it is not
+promotion evidence. This screen authorizes the five-pair alternating campaign
+without another geometry iteration.
+
 ## Integration order
 
 1. Version the all-hot projection lease, split hot bytes from validity, and
@@ -206,5 +232,5 @@ transfer, and live-proof memory admission. If counters expose headroom beyond
 ## Still unverified
 
 Register allocation, occupancy, cache-line behavior, target-size atomic issue
-rate, live-proof retention, transcript/proof parity, latency, speedup, and PIOP
-improvement remain unverified.
+rate, alternating-order stability, paired PIOP improvement, and log-27
+transfer remain unverified.
