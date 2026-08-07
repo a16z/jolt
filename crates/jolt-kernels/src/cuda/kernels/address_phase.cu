@@ -106,7 +106,7 @@ extern "C" __global__ void ap_raf_reduce_kernel(const unsigned int *__restrict__
                                                 unsigned int suffix_len,
                                                 unsigned int upper_suffix_bits,
                                                 unsigned int canonical,
-                                                u64 *__restrict__ buckets) {
+                                                u64 *__restrict__ slots) {
     extern __shared__ u64 scratch[];
     unsigned int bucket = blockIdx.x;
     unsigned int start = offsets[bucket];
@@ -150,8 +150,9 @@ extern "C" __global__ void ap_raf_reduce_kernel(const unsigned int *__restrict__
     for (int lane = 0; lane < AP_RAF_LANES; lane++) {
         ap_block_reduce_folded(scratch, acc[lane]);
         if (threadIdx.x == 0) {
-            unr_finalize(scratch,
-                         buckets + ((unsigned long long)lane * AP_CHUNK_SIZE + bucket) * LIMBS);
+            u64 *target =
+                slots + ((unsigned long long)lane * AP_CHUNK_SIZE + bucket) * (2 * UNR_SLOTS);
+            for (int i = 0; i < 2 * UNR_SLOTS; i++) target[i] = scratch[i];
         }
         __syncthreads();
     }
@@ -167,7 +168,7 @@ extern "C" __global__ void ap_suffix_reduce_kernel(
     const unsigned int *__restrict__ suffix_offsets,
     const unsigned int *__restrict__ suffix_counts,
     unsigned int suffix_len,
-    u64 *__restrict__ buckets) {
+    u64 *__restrict__ slots) {
     extern __shared__ u64 scratch[];
     unsigned int slot = blockIdx.x / AP_CHUNK_SIZE;
     unsigned int bucket = blockIdx.x % AP_CHUNK_SIZE;
@@ -200,9 +201,9 @@ extern "C" __global__ void ap_suffix_reduce_kernel(
     for (unsigned int s = 0; s < families; s++) {
         ap_block_reduce_folded(scratch, acc[s]);
         if (threadIdx.x == 0) {
-            unr_finalize(
-                scratch,
-                buckets + ((unsigned long long)(family_base + s) * AP_CHUNK_SIZE + bucket) * LIMBS);
+            u64 *target = slots + ((unsigned long long)(family_base + s) * AP_CHUNK_SIZE + bucket) *
+                                      (2 * UNR_SLOTS);
+            for (int i = 0; i < 2 * UNR_SLOTS; i++) target[i] = scratch[i];
         }
         __syncthreads();
     }

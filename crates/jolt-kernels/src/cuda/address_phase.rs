@@ -10,8 +10,8 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{DeviceFrVec, LIMBS};
-use super::unreduced::ACCUM_LIMBS;
 use super::error::CudaError;
+use super::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
 
 pub const CHUNK_LEN: usize = 8;
 pub const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
@@ -174,7 +174,7 @@ pub fn init_raf_buckets(
     );
     let upper_suffix_bits = CudaKernelContext::count_of(upper_suffix_bits)?;
 
-    let mut buckets = context.alloc(RAF_LANES * CHUNK_SIZE)?;
+    let mut slots = alloc_slots(context, RAF_LANES * CHUNK_SIZE)?;
     let chunk_count = CudaKernelContext::count_of(CHUNK_SIZE)?;
     let mut builder = context.stream().launch_builder(context.ap_raf_reduce());
     let _ = builder.arg(&segments.order);
@@ -186,14 +186,16 @@ pub fn init_raf_buckets(
     let _ = builder.arg(&suffix_len_arg);
     let _ = builder.arg(&upper_suffix_bits);
     let _ = builder.arg(&canonical);
-    let _ = builder.arg(buckets.limbs_mut());
+    let _ = builder.arg(&mut slots);
     // SAFETY: block `bucket < CHUNK_SIZE` reads `order[offsets[bucket] ..
     // + counts[bucket]]`, whose elements are row indices `< cycles`, bounding the
     // `lookup_index` (`2 * cycles`), `raf_flag` and `u_evals` (`cycles`) reads.
-    // Thread 0 writes `buckets[lane * CHUNK_SIZE + bucket]` for
-    // `lane < RAF_LANES`, one slot per (lane, bucket) of `RAF_LANES * CHUNK_SIZE`.
-    // Shared memory is `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded accumulator
-    // width the reduction tree operates on — matching `shared_mem_bytes`.
+    // Thread 0 writes the `2 * ACCUM_LIMBS` lanes at
+    // `slots[(lane * CHUNK_SIZE + bucket) * 2 * ACCUM_LIMBS]` for
+    // `lane < RAF_LANES`, one folded slot per (lane, bucket) of the
+    // `RAF_LANES * CHUNK_SIZE` `alloc_slots` reserved. Shared memory is
+    // `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded accumulator width the reduction
+    // tree operates on — matching `shared_mem_bytes`.
     let _ = unsafe {
         builder.launch(LaunchConfig {
             grid_dim: (chunk_count, 1, 1),
@@ -202,6 +204,8 @@ pub fn init_raf_buckets(
         })
     }?;
     context.stream().synchronize()?;
+
+    let mut buckets = finalize_slots(context, &slots, RAF_LANES * CHUNK_SIZE)?;
 
     let one = Fr::from(1u64);
     let half_scale = context.upload(&[one.mul_pow_2(suffix_len / 2)])?;
@@ -299,7 +303,7 @@ pub fn init_suffix_buckets(
     let device_suffix_offsets = context.upload_u32_slice(&suffix_offsets)?;
     let device_suffix_counts = context.upload_u32_slice(&suffix_counts)?;
 
-    let mut buckets = context.alloc(suffix_ids.len() * CHUNK_SIZE)?;
+    let mut slots = alloc_slots(context, suffix_ids.len() * CHUNK_SIZE)?;
     let blocks = CudaKernelContext::count_of(bucket_count)?;
     let mut builder = context.stream().launch_builder(context.ap_suffix_reduce());
     let _ = builder.arg(&segments.order);
@@ -311,19 +315,19 @@ pub fn init_suffix_buckets(
     let _ = builder.arg(&device_suffix_offsets);
     let _ = builder.arg(&device_suffix_counts);
     let _ = builder.arg(&suffix_len_arg);
-    let _ = builder.arg(buckets.limbs_mut());
+    let _ = builder.arg(&mut slots);
     // SAFETY: block `blockIdx.x < present.len() * CHUNK_SIZE` gives
     // `slot = blockIdx.x / CHUNK_SIZE < present.len()`, bounding its
     // `suffix_offsets`/`suffix_counts` reads, and `suffix_ids[family_base + s]`
     // for `s < suffix_counts[slot]` stays inside `suffix_ids`. Its segment of
     // `order` holds row indices `< cycles`, bounding the `lookup_index` and
-    // `u_evals` reads. Thread 0 writes
-    // `buckets[(family_base + s) * CHUNK_SIZE + bucket]` of
-    // `suffix_ids.len() * CHUNK_SIZE`; distinct blocks have distinct
-    // `(slot, bucket)`, so targets are distinct. `acc` is indexed by
-    // `s < families <= MAX_SUFFIXES`, its declared extent. Shared memory is
-    // `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded accumulator width the reduction
-    // tree operates on — matching `shared_mem_bytes`.
+    // `u_evals` reads. Thread 0 writes the `2 * ACCUM_LIMBS` lanes at
+    // `slots[((family_base + s) * CHUNK_SIZE + bucket) * 2 * ACCUM_LIMBS]`, inside
+    // the `suffix_ids.len() * CHUNK_SIZE` folded slots `alloc_slots` reserved;
+    // distinct blocks have distinct `(slot, bucket)`, so targets are distinct.
+    // `acc` is indexed by `s < families <= MAX_SUFFIXES`, its declared extent.
+    // Shared memory is `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded accumulator
+    // width the reduction tree operates on — matching `shared_mem_bytes`.
     let _ = unsafe {
         builder.launch(LaunchConfig {
             grid_dim: (blocks, 1, 1),
@@ -332,6 +336,8 @@ pub fn init_suffix_buckets(
         })
     }?;
     context.stream().synchronize()?;
+
+    let buckets = finalize_slots(context, &slots, suffix_ids.len() * CHUNK_SIZE)?;
 
     let mut tables = Vec::with_capacity(present.len());
     for (slot, _) in present.iter().enumerate() {

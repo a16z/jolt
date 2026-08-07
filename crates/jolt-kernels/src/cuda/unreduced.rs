@@ -11,6 +11,38 @@ use super::error::CudaError;
 
 pub const ACCUM_LIMBS: usize = 7;
 
+pub(super) fn alloc_slots(
+    context: &CudaKernelContext,
+    count: usize,
+) -> Result<cudarc::driver::CudaSlice<u64>, CudaError> {
+    context.alloc_u64(count * 2 * ACCUM_LIMBS)
+}
+
+pub(super) fn finalize_slots(
+    context: &CudaKernelContext,
+    slots: &cudarc::driver::CudaSlice<u64>,
+    count: usize,
+) -> Result<DeviceFrVec, CudaError> {
+    if slots.len() != count * 2 * ACCUM_LIMBS {
+        return Err(CudaError::LengthMismatch {
+            expected: count * 2 * ACCUM_LIMBS,
+            got: slots.len(),
+        });
+    }
+    let mut out = context.alloc(count)?;
+    let count_arg = CudaKernelContext::count_of(count)?;
+    let mut builder = context.stream().launch_builder(context.unr_reduce());
+    let _ = builder.arg(slots);
+    let _ = builder.arg(out.limbs_mut());
+    let _ = builder.arg(&count_arg);
+    // SAFETY: thread `b < count` reads its own `2 * ACCUM_LIMBS` lanes of `slots`,
+    // whose length is checked above, and writes only `out[b]` of `count`; `out` is
+    // a fresh allocation distinct from `slots`.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count_arg)) }?;
+    context.stream().synchronize()?;
+    Ok(out)
+}
+
 pub fn mul_u64_accumulate(
     context: &CudaKernelContext,
     values: &DeviceFrVec,
@@ -65,7 +97,7 @@ fn scatter(
         }
     }
 
-    let mut slots = context.alloc_u64(bucket_count * 2 * ACCUM_LIMBS)?;
+    let mut slots = alloc_slots(context, bucket_count)?;
     let device_words = context.upload_u64_slice(words)?;
     let device_buckets = context.upload_u32_slice(buckets)?;
     let count = CudaKernelContext::count_of(rows)?;
@@ -88,18 +120,7 @@ fn scatter(
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
     context.stream().synchronize()?;
 
-    let mut out = context.alloc(bucket_count)?;
-    let buckets_arg = CudaKernelContext::count_of(bucket_count)?;
-    let mut builder = context.stream().launch_builder(context.unr_reduce());
-    let _ = builder.arg(&slots);
-    let _ = builder.arg(out.limbs_mut());
-    let _ = builder.arg(&buckets_arg);
-    // SAFETY: thread `b < bucket_count` reads its own
-    // `2 * ACCUM_LIMBS` lanes of `slots` and writes only `out[b]` of
-    // `bucket_count`; `out` is a fresh allocation distinct from `slots`.
-    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(buckets_arg)) }?;
-    context.stream().synchronize()?;
-    Ok(out)
+    finalize_slots(context, &slots, bucket_count)
 }
 
 #[cfg(test)]
