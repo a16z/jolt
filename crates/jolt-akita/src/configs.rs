@@ -16,6 +16,19 @@ use akita_types::{
     setup_matrix_envelope_for_schedule, AkitaScheduleLookupKey, SetupMatrixEnvelope,
 };
 
+fn dp_planned_schedule<Cfg: CommitmentConfig>(
+    key: &AkitaScheduleLookupKey,
+) -> Result<akita_types::FoldSchedule, AkitaError> {
+    let planned = akita_planner::find_schedule(
+        key,
+        &akita_config::policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+    planned.schedule.validate_structure()?;
+    Ok(planned.schedule)
+}
+
 /// Sizes a production OneHotTrace setup directly from the checked-in Jolt catalog.
 ///
 /// `Some` means the requested maximum shape itself is catalog-backed. Smaller
@@ -44,7 +57,7 @@ fn catalog_setup_envelope<Cfg: CommitmentConfig>(
         let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             entry.root.final_group.layout,
         ))?;
-        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
     Ok(Some(envelope))
@@ -56,7 +69,14 @@ fn catalog_setup_envelope<Cfg: CommitmentConfig>(
 /// multi-group layouts (never produced by Jolt's shapes) fall back to the base
 /// preset's DP planning.
 macro_rules! delegate_preset {
-    ($(#[$doc:meta])* $name:ident, $base:ty, $catalog:expr) => {
+    (
+        $(#[$doc:meta])*
+        $name:ident,
+        $base:ty,
+        $catalog:expr,
+        $basis_range:expr,
+        $onehot_chunk_size:expr
+    ) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, Default)]
         pub struct $name;
@@ -109,15 +129,22 @@ macro_rules! delegate_preset {
                         return Ok(envelope);
                     }
                 }
-                <$base>::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
+                let key = AkitaScheduleLookupKey::single(
+                    akita_types::OpeningClaimsLayout::new(
+                        max_num_vars,
+                        max_num_batched_polys,
+                    )?
+                    .root_final_group_layout()?,
+                );
+                setup_matrix_envelope_for_schedule(&dp_planned_schedule::<Self>(&key)?, Self::D)
             }
 
             fn basis_range() -> (u32, u32) {
-                <$base>::basis_range()
+                $basis_range
             }
 
             fn onehot_chunk_size() -> usize {
-                <$base>::onehot_chunk_size()
+                $onehot_chunk_size
             }
 
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
@@ -136,12 +163,28 @@ macro_rules! delegate_preset {
                 $catalog
             }
 
+            fn runtime_schedule(
+                key: AkitaScheduleLookupKey,
+            ) -> Result<akita_types::FoldSchedule, AkitaError> {
+                Self::validate_sis_modulus_profile()?;
+                match akita_schedules::resolve_group_batch_schedule(
+                    &key,
+                    &akita_config::policy_of::<Self>(),
+                    Self::ring_challenge_config,
+                    Self::fold_challenge_shape_at_level,
+                    Self::schedule_catalog(),
+                ) {
+                    Err(AkitaError::UnsupportedSchedule(_)) => dp_planned_schedule::<Self>(&key),
+                    result => result,
+                }
+            }
+
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
             ) -> Result<akita_types::FoldSchedule, akita_pcs::AkitaError> {
                 if layout.num_groups() == 1 {
                     layout.check()?;
-                    Self::runtime_schedule(akita_types::AkitaScheduleLookupKey::single(
+                    Self::runtime_schedule(AkitaScheduleLookupKey::single(
                         layout.root_final_group_layout()?,
                     ))
                 } else {
@@ -156,34 +199,73 @@ delegate_preset!(
     /// `D64OneHotK16` with the Jolt-generated K=16 schedule catalog.
     JoltD64OneHotK16,
     akita_config::proof_optimized::fp128::D64OneHotK16,
-    crate::schedules::jolt_fp128_d64_onehot_k16_table()
+    crate::schedules::jolt_fp128_d64_onehot_k16_table(),
+    akita_config::proof_optimized::fp128::D64OneHotK16::basis_range(),
+    akita_config::proof_optimized::fp128::D64OneHotK16::onehot_chunk_size()
 );
 
 delegate_preset!(
     /// `D64OneHot` (K=256) with the Jolt-generated large-trace catalog.
     JoltD64OneHotK256,
     akita_config::proof_optimized::fp128::D64OneHot,
-    crate::schedules::jolt_fp128_d64_onehot_k256_table()
+    crate::schedules::jolt_fp128_d64_onehot_k256_table(),
+    akita_config::proof_optimized::fp128::D64OneHot::basis_range(),
+    akita_config::proof_optimized::fp128::D64OneHot::onehot_chunk_size()
+);
+
+delegate_preset!(
+    /// D128, K=256 policy for the largest packed trace.
+    JoltD128OneHotK256,
+    akita_config::proof_optimized::fp128::D128OneHot,
+    None,
+    (6, 6),
+    256
+);
+
+delegate_preset!(
+    /// `D64Dense` with planner fallback for exact advice and program shapes.
+    JoltD64Dense,
+    akita_config::proof_optimized::fp128::D64Dense,
+    None,
+    akita_config::proof_optimized::fp128::D64Dense::basis_range(),
+    akita_config::proof_optimized::fp128::D64Dense::onehot_chunk_size()
 );
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    reason = "catalog setup tests should fail loudly on malformed schedules"
-)]
 mod tests {
     use super::*;
 
     #[test]
-    fn production_one_hot_trace_shapes_use_catalog_setup_sizing() {
-        let k16 = crate::schedules::jolt_fp128_d64_onehot_k16_table().unwrap();
-        assert!(catalog_setup_envelope::<JoltD64OneHotK16>(k16, 28, 81)
-            .unwrap()
-            .is_some());
+    fn exact_shapes_have_setup_envelopes() {
+        assert!(JoltD64Dense::max_setup_matrix_size(14, 2).is_ok());
+        assert!(JoltD64OneHotK16::max_setup_matrix_size(34, 1).is_ok());
+        assert!(JoltD64OneHotK256::max_setup_matrix_size(43, 1).is_ok());
+    }
 
-        let k256 = crate::schedules::jolt_fp128_d64_onehot_k256_table().unwrap();
-        assert!(catalog_setup_envelope::<JoltD64OneHotK256>(k256, 38, 41)
-            .unwrap()
-            .is_some());
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn d128_k256_policy_uses_the_large_trace_geometry() {
+        assert_eq!(JoltD128OneHotK256::D, 128);
+        assert_eq!(JoltD128OneHotK256::basis_range(), (6, 6));
+        assert_eq!(JoltD128OneHotK256::onehot_chunk_size(), 256);
+
+        let layout = akita_types::OpeningClaimsLayout::new(41, 1).unwrap();
+        let schedule = JoltD128OneHotK256::get_params_for_prove(&layout).unwrap();
+        let commitment = &schedule.root.params.final_group.commitment;
+        assert_eq!(commitment.inner_commit_matrix.output_rank(), 4);
+        assert_eq!(commitment.num_positions_per_block, 1 << 18);
+
+        let envelope = JoltD128OneHotK256::max_setup_matrix_size(41, 1).unwrap();
+        assert_eq!(envelope.max_setup_len * 128 * 16, 11usize << 30);
+    }
+
+    #[test]
+    #[expect(clippy::unwrap_used)]
+    fn d64_k256_policy_uses_the_min_payload_geometry() {
+        let layout = akita_types::OpeningClaimsLayout::new(39, 1).unwrap();
+        let schedule = JoltD64OneHotK256::get_params_for_prove(&layout).unwrap();
+        let commitment = &schedule.root.params.final_group.commitment;
+        assert_eq!(commitment.inner_commit_matrix.output_rank(), 7);
+        assert_eq!(commitment.num_positions_per_block, 1 << 20);
     }
 }

@@ -46,6 +46,7 @@ impl LatticeBooleanityDimensions {
 /// families, unsigned-inc chunks, and increment MSB at the same full
 /// `(r_address || r_cycle)` point. The MSB column is a strict one-hot column
 /// whose hot address is zero or one.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

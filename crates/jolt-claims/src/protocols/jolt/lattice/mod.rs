@@ -2,10 +2,10 @@
 //! Jolt PIOP over a packed one-hot witness committed with a
 //! non-homomorphic PCS. Design: `specs/lattice-claims.md`.
 //!
-//! This module names facts only — the canonical native OneHotTrace column set,
-//! auxiliary `jolt-openings::PrefixPacking` registrations, extra relations,
-//! and final-opening map. Witness materialization, transcripts, and stage
-//! orchestration live in the verifier/prover crates.
+//! This module names facts only — the canonical OneHotTrace selector layout,
+//! auxiliary fixed-prefix layouts, extra relations,
+//! and final-opening map. Witness generation, transcripts, and stage
+//! orchestration live in the verifier and prover crates.
 //!
 //! # Vocabulary
 //!
@@ -24,8 +24,10 @@
 //!   bits are always the logical point's suffix.
 //! - **final claim** — claims flow through the relation DAG until, per
 //!   polynomial, one claim remains that no relation consumes. In base mode
-//!   the stage-8 RLC batch settles it; in lattice mode OneHotTrace columns are opened
-//!   natively at one point while auxiliary columns use one packed-slot claim.
+//!   the stage-8 RLC batch settles it; in lattice mode the semantic
+//!   OneHotTrace claims are reduced at a random selector and the single
+//!   physical polynomial is opened once. Auxiliary columns use packed-slot
+//!   claims.
 
 pub mod geometry;
 pub mod packing;
@@ -36,9 +38,10 @@ pub use geometry::{
 };
 pub mod strategy;
 pub use packing::{
-    advice_bytes_packing, one_hot_trace_columns, precommitted_packing, OneHotTraceShape,
-    PrecommittedPackingShape,
+    advice_bytes_packing_plan, one_hot_trace_columns, precommitted_packing_plan, OneHotTraceShape,
+    PrecommittedPackingPlan, PrecommittedPackingShape, PrefixPackedObjectPlan,
 };
 pub use strategy::{
-    OneHotTraceLayout, OneHotTraceLayoutPlan, OneHotTraceSetupShape, ONE_HOT_TRACE_LAYOUT,
+    OneHotTraceColumnRanges, OneHotTraceLayout, OneHotTraceLayoutPlan, OneHotTraceSetupShape,
+    ONE_HOT_TRACE_LAYOUT,
 };
