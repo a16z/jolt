@@ -21,6 +21,8 @@ mod address_suffix_full;
 mod booleanity;
 mod booleanity_address;
 pub mod booleanity_address_successor;
+#[doc(hidden)]
+pub mod booleanity_address_v2;
 mod bytecode_cycle;
 #[doc(hidden)]
 pub mod bytecode_read_raf;
