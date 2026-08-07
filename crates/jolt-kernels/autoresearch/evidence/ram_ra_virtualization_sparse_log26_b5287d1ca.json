@@ -1,0 +1,66 @@
+{
+  "schema": "metal_ram_ra_virtualization_sparse_transfer_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-07",
+  "status": "retained_log26_diagnostic",
+  "candidate_revision": "b5287d1cae9cc957cc9736470bfb2ea6acba8cd1",
+  "contract": {
+    "device": "Apple M4 Max",
+    "workload": "fibonacci",
+    "host_fiat_shamir": true,
+    "selector": "metal_hybrid_host_topology_sparse",
+    "shared_owner": "RamCycleFamilyOwner",
+    "command_log25": "python3 scripts/metal_piop_eval.py --mode diagnostic --workload fibonacci --log-n 25 --repeats 1 --timeout-seconds 1200",
+    "command_log26": "python3 scripts/metal_piop_eval.py --mode diagnostic --workload fibonacci --log-n 26 --repeats 1 --timeout-seconds 1200"
+  },
+  "log25": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260807-174316-821876",
+    "result_sha256": "62cfa3a6aa31b25f5db409615fc75b2ccfbbd6844f26684180ba5e96bfccdf38",
+    "optimized_trace_sha256": "6ad21a798ca0318f9ac0d842bb832a5dd6e9145c6b15e52758fd74d352a26062",
+    "metal_trace_sha256": "c84744527cc4f6bbe1115724789a3348b9755b5488714d9224f3ed51bf6ba901",
+    "predicted_products": 11489,
+    "cpu_prepare_ms": 9.200625,
+    "cpu_rounds_ms": 129.627127,
+    "metal_prepare_ms": 0.071792,
+    "metal_rounds_ms": 0.501957,
+    "cpu_complete_member_ms": 138.828251,
+    "metal_complete_member_ms": 0.574249,
+    "speedup": 241.756191,
+    "cpu_piop_ms": 9694.62425,
+    "metal_piop_ms": 2436.30375,
+    "piop_speedup": 3.97923463
+  },
+  "log26": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260807-174905-060918",
+    "result_sha256": "27f02d50ab7abe6a57c5ebdfc35784594ecad7489bb56d40a3506e8a7ee3b52d",
+    "optimized_trace_sha256": "55ce64e137999dd2b54d2bb3495429384b7b38777cf3db401b7243c424bfd25e",
+    "metal_trace_sha256": "5b237dc5edaebdb43ecc5a111aa7f57798969b4d6ffd6464dfb9b26ccc72c379",
+    "predicted_products": 11995,
+    "cpu_prepare_ms": 22.306875,
+    "cpu_rounds_ms": 276.45546,
+    "metal_prepare_ms": 0.067917,
+    "metal_rounds_ms": 0.492253,
+    "cpu_complete_member_ms": 298.762752,
+    "metal_complete_member_ms": 0.560628,
+    "speedup": 532.907297,
+    "cpu_piop_ms": 20861.011542,
+    "metal_piop_ms": 4751.014708,
+    "piop_speedup": 4.390853917
+  },
+  "guards": {
+    "cpu_proof_verified": true,
+    "metal_proof_verified": true,
+    "round_lockstep_test_passed": true,
+    "padded_chunk_lockstep_test_passed": true,
+    "clippy_metal_test_utils_lib_passed": true,
+    "five_x_member_floor_passed": true,
+    "ten_x_pursue_bar_passed_at_log26": true,
+    "acceptance_eligible": false
+  },
+  "verdict": {
+    "decision": "retain",
+    "reason": "The topology-sparse sequence preserves every round and terminal claim while transferring from 241.76x at log25 to 532.91x at log26.",
+    "portfolio_interpretation": "RAM RA virtualization is no longer a material PIOP bottleneck. The full diagnostic PIOP reaches 4.39x, but one alternating pair cannot promote the portfolio.",
+    "next_gate": "Keep the sparse path and continue the instruction read-RAF producer integration and registers read-write implementation; promotion still requires five alternating clean log26 pairs."
+  }
+}
