@@ -82,7 +82,10 @@ mod exec_functions {
 }
 
 mod sequence_tests {
-    use crate::sequence_builder::{Sha256Compression, Sha256CompressionInitial};
+    use crate::sequence_builder::{
+        Sha256Compression, Sha256CompressionBigEndian, Sha256CompressionInitial,
+        Sha256CompressionInitialBigEndian,
+    };
     use jolt_inlines_sdk::{
         assert_edge_cases_match_reference, assert_random_cases_match_reference,
     };
@@ -105,6 +108,26 @@ mod sequence_tests {
     #[test]
     fn test_sha256init_random_direct_execution() {
         assert_random_cases_match_reference::<Sha256CompressionInitial>(0x1256, 100);
+    }
+
+    #[test]
+    fn test_sha256_big_endian_direct_execution() {
+        assert_edge_cases_match_reference::<Sha256CompressionBigEndian>();
+    }
+
+    #[test]
+    fn test_sha256init_big_endian_direct_execution() {
+        assert_edge_cases_match_reference::<Sha256CompressionInitialBigEndian>();
+    }
+
+    #[test]
+    fn test_sha256_big_endian_random_direct_execution() {
+        assert_random_cases_match_reference::<Sha256CompressionBigEndian>(0xBE256, 100);
+    }
+
+    #[test]
+    fn test_sha256init_big_endian_random_direct_execution() {
+        assert_random_cases_match_reference::<Sha256CompressionInitialBigEndian>(0x1BE256, 100);
     }
 }
 
