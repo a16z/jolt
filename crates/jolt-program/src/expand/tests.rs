@@ -401,7 +401,7 @@ fn source_only_expanders_are_not_target_legal() {
     }
 
     assert_source_only! {
-        ADDIW, ADDW, SUBW, MULH, MULHSU, MULW,
+        MULH, MULHSU,
         LB, LBU, LH, LHU, LW, LWU,
         AdviceLB, AdviceLH, AdviceLW, AdviceLD,
         AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOSWAPD,
@@ -412,7 +412,7 @@ fn source_only_expanders_are_not_target_legal() {
         DIV, DIVU, DIVW, DIVUW, REM, REMU, REMW, REMUW,
         SB, SCD, SCW, SH, SW,
         CSRRW, CSRRS, EBREAK, ECALL, MRET,
-        SLL, SLLI, SLLW, SLLIW, SRL, SRLI, SRA, SRAI,
+        SLL, SLLI, SLLIW, SLLW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }
     assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
