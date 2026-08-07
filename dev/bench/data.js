@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786063583968,
+  "lastUpdate": 1786069102942,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -132682,6 +132682,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864280,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zk_albi@proton.me",
+            "name": "Alberto Centelles",
+            "username": "Acentelles"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "feb4d6aa67a4b7ac195ae7e81d64e0704153ea75",
+          "message": "fix(tracer): production boundary verification + CI golden gate for the parallel mode (#1726)\n\n* fix(tracer): verify chunk boundary state in production parallel runs\n\nThe per-chunk row-count assert misses divergences that preserve row\ncounts (e.g. a value-level advice mismatch under replay, or a guest\nviolating the append-then-read advice assumption): the trace would\nassemble silently corrupted. diff_vs_cpu was built for exactly this\ncomparison but only ran in tests and examples.\n\nPass-1 already captures a full ChunkCheckpoint at every boundary; each\nboundary is both chunk k's end and chunk k+1's start. Share it: jobs\ncarry an Arc'd start checkpoint plus a OnceLock slot for the end\nboundary, published when pass-1 captures the next chunk (or the final\nstate at termination). Workers verify their replay landed exactly on\nit after emitting their window; cost is one state comparison per chunk\n(~33KB memcmp per 2^20 rows), and the OnceLock wait is a no-op in the\nsteady state since pass-1 publishes before the worker finishes.\n\nRegression test: fault-injected register corruption after replay (row\ncounts preserved) must panic the trace instead of assembling it;\npropagation reuses the existing worker-panic machinery.\n\n* ci: enforce the golden-trace gate\n\ntrace_golden existed but only ran manually; \"bit-exact on every\ncommit\" was author discipline, not enforcement. Run 'check' in CI on\nthe recorded fixtures, in serial mode and in parallel mode (4 workers,\n128-row chunks, ~7k chunks over the five guests) so both paths stay\nanchored to the recorded traces.\n\nFixture re-records (crates/jolt-prover-legacy/tests/fixtures/\ngolden_traces.json) change what the gate proves and should be treated\nas review-flagged events, not routine churn.\n\n* fix(ci): compare tracer configurations in-run instead of against fixtures\n\nThe golden fixtures I proposed cannot work as a cross-machine gate, and\nenforcing them in CI (as the previous commit does) would have turned the\ngate red on every runner.\n\nGuest ELFs are rebuilt from source and their .rodata embeds absolute\nbuild paths — `strings` on fibonacci-guest shows dependency panic\nlocations under $CARGO_HOME. A recording machine writes\n/Users/<name>/.cargo/...; a GitHub runner writes /home/runner/.cargo/....\nThe differing lengths shift everything after them, so the final memory\nimage differs for every guest and any row loading a shifted address\ndiffers too, while the instruction stream is untouched. Measured on a\nbranch that enabled the job: five guests, all row counts equal, every\nmemory hash different, three of five cycle streams different. The\ncoupling is tighter than \"machine\" — the same machine in a different\ncheckout directory yields a third set of hashes.\n\nReplace the fixtures with `trace_equivalence`, which compares\nconfigurations within a single run: serial as the reference, then\nparallel at 1 and 4 workers over 128-row and 64k-row chunks, each in a\nchild process because the tracer reads its pipeline choice from the\nenvironment. Nothing to re-record, portable across machines, and it\ntests the property the parallel pipeline has to guarantee. What it gives\nup is \"output unchanged versus main\", which the fixture version did not\nactually provide.\n\nVerified locally: 4/4 configurations byte-identical across all five\nguests, and the row counts match the deleted fixtures exactly.\n\n* style(tracer): simplify chunk state synchronization\n\n* fix(tracer): survive pass-1 death during boundary waits; refresh equivalence configs\n\nRebase follow-ups to the boundary-verification and equivalence commits:\n\n- The OnceLock end-boundary wait could hang the scope join: if a worker\n  panics while a sibling is awaiting an end slot, pass-1's next boundary\n  assert fires before it publishes that slot, and the blocked wait()\n  never wakes (thread::scope re-raises only after joining every thread).\n  Workers now poll the slot against the shared panic flag (the try_send\n  idiom), and pass-1 carries the same unwind guard workers do, covering\n  any pass-1 death. Regression: multiworker variant of the boundary-\n  divergence test.\n\n- trace_equivalence's 1-worker configuration mapped to a real pipeline\n  when it was written, but TRACER_PARALLEL=1 now selects the serial path\n  (single-worker fallback), making it a serial-vs-serial no-op: bumped\n  to 2 workers, the smallest real pipeline. Added an overflow-assembly\n  configuration via the JOLT_TRACER_CAPACITY_ROWS knob (landed after\n  this branch forked) and cleared it in the child-process env hygiene.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-08-06T18:27:22-07:00",
+          "tree_id": "2a4eaac9cefa2249ca27234ee6b3e5a6d8779f1a",
+          "url": "https://github.com/a16z/jolt/commit/feb4d6aa67a4b7ac195ae7e81d64e0704153ea75"
+        },
+        "date": 1786069097978,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.6192,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 863920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.8898,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 502000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 507076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.4928,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.3988,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.3353,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 497192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.2571,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 191392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.0171,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4427,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3163,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 509284,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 14.2348,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498916,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.2233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 21.3783,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1091924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 9.6077,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 634360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 66.2533,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2116972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0.9843,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499192,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.0328,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 506968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 9.7611,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864384,
             "unit": "KB",
             "extra": ""
           }
