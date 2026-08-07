@@ -57,8 +57,12 @@
 mod abi;
 mod model;
 mod oracle;
+mod runtime;
 mod shader_abi;
 mod topology;
+
+#[cfg(feature = "test-utils")]
+pub use runtime::{run_address_atom_probe, AddressAtomProbeResult};
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 

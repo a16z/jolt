@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::{
     upper_half_all_ones, CANONICAL_INSTRUCTION_ADDRESS,
 };
 use jolt_field::Field;
-use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
+use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_poly::{
     IdentityPolynomial, MultilinearEvaluation, OperandPolynomial, OperandSide, UnivariatePoly,
 };
@@ -356,6 +356,12 @@ pub(crate) struct AddressAtom<F> {
     cycles: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AddressPhaseOutput<F> {
+    pub(crate) raf: Vec<F>,
+    pub(crate) suffixes: Vec<F>,
+}
+
 impl<F: Copy> AddressAtom<F> {
     pub(crate) const fn row(&self) -> InstructionReadRafRow {
         self.row
@@ -421,6 +427,106 @@ pub(crate) fn atom_address_message<F: Field>(
         })
         .collect();
     RoundMessage::new(evaluations)
+}
+
+/// Direct scalar phase output for the six RAF lanes and 88 declared suffixes.
+pub(crate) fn atom_address_phase<F: Field>(
+    atoms: &mut [AddressAtom<F>],
+    suffix_len: usize,
+    previous_phase_table: Option<&[F]>,
+) -> Result<AddressPhaseOutput<F>, InstructionReadRafV3Error> {
+    if suffix_len > 120 || !suffix_len.is_multiple_of(8) {
+        return Err(InstructionReadRafV3Error::InvalidShaderAbi(
+            "scalar phase suffix length is invalid",
+        ));
+    }
+    if previous_phase_table.is_some_and(|table| table.len() != 256) {
+        return Err(InstructionReadRafV3Error::InvalidShaderAbi(
+            "scalar previous phase table has the wrong length",
+        ));
+    }
+    if previous_phase_table.is_some() && suffix_len > 112 {
+        return Err(InstructionReadRafV3Error::InvalidShaderAbi(
+            "scalar condensation phase has no preceding byte",
+        ));
+    }
+
+    let tables = LookupTableKind::<RISCV_XLEN>::iter().collect::<Vec<_>>();
+    let mut table_offsets = Vec::with_capacity(tables.len() + 1);
+    table_offsets.push(0usize);
+    for table in &tables {
+        let next = table_offsets
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .checked_add(table.suffixes().len())
+            .ok_or(InstructionReadRafV3Error::SizeOverflow(
+                "scalar suffix output count",
+            ))?;
+        table_offsets.push(next);
+    }
+    if table_offsets.last() != Some(&88) {
+        return Err(InstructionReadRafV3Error::InvalidShaderAbi(
+            "scalar production suffix topology changed",
+        ));
+    }
+
+    let mut raf = vec![F::zero(); 6 * 256];
+    let mut suffixes = vec![F::zero(); 88 * 256];
+    let suffix_mask = if suffix_len == 0 {
+        0
+    } else {
+        (1u128 << suffix_len) - 1
+    };
+    for atom in atoms {
+        let lookup = atom.row.lookup_index;
+        if let Some(previous) = previous_phase_table {
+            let previous_chunk = ((lookup >> (suffix_len + 8)) & 0xff) as usize;
+            atom.mass *= previous[previous_chunk];
+        }
+        let chunk = ((lookup >> suffix_len) & 0xff) as usize;
+        let suffix_bits = lookup & suffix_mask;
+        if atom.row.raf_flag {
+            raf[3 * 256 + chunk] += atom.mass;
+            if suffix_bits != 0 {
+                raf[4 * 256 + chunk] += atom.mass * F::from_u128(suffix_bits);
+            }
+            let upper_bits = suffix_len.saturating_sub(RISCV_XLEN);
+            if upper_bits == 0
+                || suffix_bits >> (suffix_len - upper_bits) == (1u128 << upper_bits) - 1
+            {
+                raf[5 * 256 + chunk] += atom.mass;
+            }
+        } else {
+            raf[chunk] += atom.mass;
+            let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
+            let left = u64::from(left);
+            let right = u64::from(right);
+            if left != 0 {
+                raf[256 + chunk] += atom.mass * F::from_u64(left);
+            }
+            if right != 0 {
+                raf[2 * 256 + chunk] += atom.mass * F::from_u64(right);
+            }
+        }
+
+        let Some(table_index) = atom.row.table_index else {
+            continue;
+        };
+        let bits = LookupBits::new(suffix_bits, suffix_len);
+        for (suffix, suffix_kind) in tables[table_index].suffixes().iter().enumerate() {
+            let scalar = suffix_kind.suffix_mle(bits);
+            if scalar != 0 {
+                let value = if scalar == 1 {
+                    atom.mass
+                } else {
+                    atom.mass * F::from_u64(scalar)
+                };
+                suffixes[(table_offsets[table_index] + suffix) * 256 + chunk] += value;
+            }
+        }
+    }
+    Ok(AddressPhaseOutput { raf, suffixes })
 }
 
 fn dense_address_message<F: Field>(
