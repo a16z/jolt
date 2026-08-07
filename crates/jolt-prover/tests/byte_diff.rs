@@ -17,6 +17,7 @@
 //! (`advice_consumer`, `committed_muldiv`, `address_major`,
 //! `advice_committed`) are whole-proof ratchets over the mode ×
 //! trace-order matrix, sharing the `support` scaffolding.
+//! `inline_sha3` adds a minimal inline-bearing whole-proof ratchet.
 //! `chunk_boundary` is the scale arm: a real 2^17-cycle trace, one power
 //! past the optimized backend's 2^16-row streaming chunk, proved both
 //! slice-backed and behind a re-emulating source (the forced chunk walk).
@@ -1705,6 +1706,117 @@ mod advice_committed {
                 Some(&trusted.converted),
             );
         }
+    }
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[expect(clippy::expect_used)]
+mod inline_sha3 {
+    // Anchor the Keccak inline registration into this test binary.
+    extern crate jolt_inlines_keccak256;
+
+    use std::sync::Arc;
+
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_program::execution::JoltProgram;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing};
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+    use jolt_prover_legacy::zkvm::RV64IMACProver;
+    use jolt_riscv::JoltInstructionKind;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
+
+    use super::support;
+
+    const KECCAK_ROTRI_ROWS: usize = 696;
+
+    #[test]
+    fn prover_matches_legacy_on_sha3_inline() {
+        let mut program = host::Program::new("sha3-guest");
+        let inputs = postcard::to_stdvec(&[5u8; 32]).expect("serialize input");
+
+        let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
+        let shared = JoltSharedPreprocessing::new(
+            guest.program,
+            guest.io_device.memory_layout.clone(),
+            support::MAX_PADDED_TRACE_LENGTH,
+        );
+        let legacy_preprocessing = LegacyProverPreprocessing::new(shared);
+        let legacy_prover = RV64IMACProver::gen_from_elf(
+            &legacy_preprocessing,
+            &guest.elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let public_io = legacy_prover.program_io.clone();
+        let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
+        let memory_layout = &public_io.memory_layout;
+        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        assert_eq!(
+            trace_output
+                .trace
+                .rows()
+                .iter()
+                .filter(|row| {
+                    row.instruction.instruction_kind == JoltInstructionKind::VirtualROTRI
+                })
+                .count(),
+            KECCAK_ROTRI_ROWS,
+            "one Keccak permutation must be expanded into the modular trace",
+        );
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full_arc()
+            .expect("full program preprocessing");
+        let config = support::derive_config_pinned(
+            &trace_output,
+            memory_layout,
+            &verifier_preprocessing,
+            TracePolynomialOrder::CycleMajor,
+            None,
+            &legacy_proof,
+            support::MAX_PADDED_TRACE_LENGTH,
+        );
+        let padded_output = support::pad_trace(trace_output, config.trace_length);
+        let witness = Arc::new(TraceBackend::new(
+            support::witness_config(&config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        ));
+        let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                support::MAX_PADDED_TRACE_LENGTH,
+            )),
+            committed_program: None,
+        };
+
+        let backend = JoltBackend::<Fr, DoryScheme>::optimized();
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            &backend,
+            &prover_preprocessing,
+            &config,
+            None,
+            witness,
+            &public_io,
+        )
+        .expect("modular prove");
+        assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
+        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
     }
 }
 
