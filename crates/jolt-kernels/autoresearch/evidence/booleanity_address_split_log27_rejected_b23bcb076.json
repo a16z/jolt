@@ -1,0 +1,120 @@
+{
+  "schema": "metal_booleanity_address_split_screen_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-07",
+  "status": "rejected_screening",
+  "candidate": {
+    "git_revision": "b23bcb076c8b19acafcdb59d07aa89257b35c536",
+    "binary": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "a6ca2a32d9a9a20afcdaf866f556e4ff73a9f2dd636a3cf05666b9f5468b7479",
+    "production_default": false
+  },
+  "contract": {
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "field_offset": 4294944759,
+    "rows": 134217728,
+    "log_rows": 27,
+    "selectors": 29,
+    "bins": 256,
+    "accumulator_threads_per_threadgroup": 512,
+    "finalize_threads_per_threadgroup": 1024,
+    "source_state_resident_before_timing": true,
+    "allocations_reused_between_samples": true,
+    "command_buffers": 1,
+    "dispatches": 3,
+    "completion_waits": 1,
+    "readback_bytes": 118784,
+    "command": "JOLT_SOLINAS_BENCH_FAMILY=booleanity-address-packed-hot-split JOLT_SOLINAS_BENCH_ELEMENTS=134217728 cargo bench -p jolt-kernels --bench metal_solinas --features metal,test-utils -- --noplot",
+    "wall_metric": "prepared resident execution plus output readback",
+    "samples": 10
+  },
+  "geometry": {
+    "inner_15": {
+      "e_in": 32768,
+      "e_out": 4096,
+      "accumulator_threadgroups": 20480,
+      "partial_fields": 30408704,
+      "owned_bytes": 4513779712,
+      "modeled_cache_optimistic_bytes": 13724590080
+    },
+    "inner_16": {
+      "e_in": 65536,
+      "e_out": 2048,
+      "accumulator_threadgroups": 10240,
+      "partial_fields": 15204352,
+      "owned_bytes": 4271001600,
+      "modeled_cache_optimistic_bytes": 13238542336
+    },
+    "inner_17": {
+      "e_in": 131072,
+      "e_out": 1024,
+      "accumulator_threadgroups": 5120,
+      "partial_fields": 7602176,
+      "owned_bytes": 4150398976,
+      "modeled_cache_optimistic_bytes": 12996304896
+    }
+  },
+  "criterion": {
+    "inner_15_wall": {
+      "path": "target/criterion/metal_sumcheck_booleanity_address_successor_split/resident_wall/log27_inner15/new/estimates.json",
+      "sha256": "6d43ddff0ca033dc4ed8ef0417f86d700c3adbdf1f43c66bc4ae5a224d7d9508",
+      "median_ns": 79423339.07142857,
+      "median_95_percent_ci_ns": [
+        79284084.66666666,
+        80334111.875
+      ]
+    },
+    "inner_16_wall": {
+      "path": "target/criterion/metal_sumcheck_booleanity_address_successor_split/resident_wall/log27_inner16/new/estimates.json",
+      "sha256": "cfb828e6e986de2f02a3c4ae3b86b903741c435532d8768dd985f5032f38e7b5",
+      "median_ns": 91724738.21428572,
+      "median_95_percent_ci_ns": [
+        88342236.25,
+        93461277.44375
+      ]
+    },
+    "inner_17_wall": {
+      "path": "target/criterion/metal_sumcheck_booleanity_address_successor_split/resident_wall/log27_inner17/new/estimates.json",
+      "sha256": "dbaeee7c3d34b47d2f48d1b5c6b95ed9dfd7a4fabd5733f8c156981c7ccdabe9",
+      "median_ns": 103307218.75555556,
+      "median_95_percent_ci_ns": [
+        101437107.66666666,
+        110847112.85714285
+      ]
+    },
+    "inner_15_active": {
+      "path": "target/criterion/metal_sumcheck_booleanity_address_successor_split/gpu_active/log27_inner15/new/estimates.json",
+      "sha256": "cae47c8b9cb76f77ec94ccf96767020872b86028a8061ca72523f582dea4a562",
+      "median_ns": 82941007.8125
+    },
+    "inner_16_active": {
+      "path": "target/criterion/metal_sumcheck_booleanity_address_successor_split/gpu_active/log27_inner16/new/estimates.json",
+      "sha256": "31b77734df665fcfb94d600fe3fa91c80511578eae893155adeee328bea2d0b8",
+      "median_ns": 95949070.29166666
+    },
+    "inner_17_active": {
+      "status": "not_collected_after_wall_screen_rejected_candidate"
+    }
+  },
+  "comparison": {
+    "inner_16_wall_over_inner_15": 1.1548839331949265,
+    "inner_17_wall_over_inner_15": 1.3007161366339342,
+    "inner_16_active_over_inner_15": 1.156835114767031,
+    "inner_16_modeled_traffic_reduction_fraction": 0.03541437239049405,
+    "inner_17_modeled_traffic_reduction_fraction": 0.05306425763938005
+  },
+  "correctness": {
+    "independent_unfactored_field_oracle": "passed for inner log2 15, 16, and 17",
+    "target_scale_outputs_equal_across_splits": true,
+    "test": "cargo nextest run -p jolt-kernels metal_runtime_matches_unfactored_oracle_and_exposes_completed_lease --features metal,test-utils --cargo-quiet",
+    "metal_targeted_clippy": "passed with two unrelated pre-existing lints explicitly suppressed",
+    "cargo_fmt": "passed"
+  },
+  "decision": {
+    "primitive": "retain_inner_log2_15",
+    "candidate": "reject_inner_log2_16_and_17",
+    "reason": "The wider split halves or quarters partial storage and lowers modeled cache traffic, but leaves the row-level atomic work unchanged, halves independent threadgroups each step, and lengthens each threadgroup's serial row loop. At log27, inner 16 is 15.5% slower and inner 17 is 30.1% slower on the primary resident-wall metric.",
+    "next_architecture": "Keep the frozen split and separately test the validity-free selector schedule or reduce atomic contention; traffic-only split tuning is exhausted."
+  }
+}
