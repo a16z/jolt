@@ -1,4 +1,3 @@
-use super::sign_extend_half_word;
 use crate::traits::{impl_lookup_table, LookupQuery};
 use jolt_riscv::{instructions::AddiW, JoltCycle};
 
@@ -27,7 +26,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for AddiW<C> {
 
     fn to_lookup_output(&self) -> u64 {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        sign_extend_half_word::<XLEN>(x.wrapping_add(y as u64))
+        x.wrapping_add(y as u64) as u32 as i32 as i64 as u64
     }
 }
 

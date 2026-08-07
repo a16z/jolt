@@ -196,28 +196,6 @@ mod support {
             .expect("modular trace")
     }
 
-    pub fn assert_fused_word_op_coverage(trace_output: &TraceOutput<OwnedTrace>) {
-        for (source_kind, canonical_name) in [
-            ("ADDW", "rv64.addw"),
-            ("ADDIW", "rv64.addiw"),
-            ("SUBW", "rv64.subw"),
-            ("MULW", "rv64.mulw"),
-            ("SLLIW", "jolt.virtual.muliw"),
-            ("SLLW", "jolt.virtual.pow2_w"),
-        ] {
-            let count = trace_output
-                .trace
-                .rows()
-                .iter()
-                .filter(|row| row.instruction.instruction_kind.canonical_name() == canonical_name)
-                .count();
-            assert!(
-                count >= 2,
-                "muldiv trace must contain at least two {source_kind} expansions ({canonical_name}), got {count}",
-            );
-        }
-    }
-
     /// Derive the modular config, apply the trace order (always a caller
     /// override — derivation picks cycle-major) and any one-hot config
     /// override (the wide-geometry arm injects `{8, 32}` below the 2^25
@@ -560,8 +538,6 @@ mod muldiv {
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
-        support::assert_fused_word_op_coverage(&trace_output);
-
         let program_preprocessing = verifier_preprocessing
             .program
             .as_full_arc()

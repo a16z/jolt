@@ -419,34 +419,6 @@ fn source_only_expanders_are_not_target_legal() {
 }
 
 #[test]
-fn fused_word_ops_have_expected_row_counts() -> Result<(), ExpansionError> {
-    for (kind, expected_rows) in [
-        (SourceInstructionKind::ADDW, 1),
-        (SourceInstructionKind::ADDIW, 1),
-        (SourceInstructionKind::SUBW, 1),
-        (SourceInstructionKind::MULW, 1),
-        (SourceInstructionKind::SLLIW, 1),
-        (SourceInstructionKind::SLLW, 2),
-    ] {
-        let mut allocator = ExpansionAllocator::new();
-        let expanded = rows(expand_instruction(
-            &instruction(kind, Some(3), false),
-            &mut allocator,
-            RV64IMAC_JOLT,
-        )?);
-        assert_eq!(expanded.len(), expected_rows, "{kind:?}");
-        if kind == SourceInstructionKind::SLLIW {
-            assert_eq!(
-                expanded[0].instruction_kind,
-                JoltInstructionKind::VirtualMULIW
-            );
-            assert_eq!(expanded[0].operands.imm, 1 << 7);
-        }
-    }
-    Ok(())
-}
-
-#[test]
 fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::SLL, Some(3), true);

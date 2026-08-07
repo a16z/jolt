@@ -4,8 +4,8 @@ use tracer::instruction::{virtual_muliw::VirtualMULIW, RISCVCycle};
 use crate::zkvm::lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, LookupTables};
 
 use super::{
-    sign_extend_half_word, CircuitFlags, Flags, InstructionFlags, InstructionLookup, LookupQuery,
-    NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
+    CircuitFlags, Flags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS,
+    NUM_INSTRUCTION_FLAGS,
 };
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualMULIW {
@@ -55,7 +55,7 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualMULIW> {
 
     fn to_lookup_output(&self) -> u64 {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        sign_extend_half_word::<XLEN>(x.wrapping_mul(y as u64))
+        x.wrapping_mul(y as u64) as u32 as i32 as i64 as u64
     }
 }
 
