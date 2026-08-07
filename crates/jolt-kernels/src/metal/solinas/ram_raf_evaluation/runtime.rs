@@ -1,9 +1,13 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{
+    mem::size_of,
+    slice,
+    time::{Duration, Instant},
+};
 
 use jolt_field::AkitaField;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
 use super::super::{
@@ -76,6 +80,80 @@ pub struct RamRafSequence {
     buffers: RamRafBuffers,
     params: RamRafFoldParams,
     storage: RamRafStoragePlan,
+}
+
+struct RamRafCommand {
+    command_buffer: CommandBuffer,
+    submitted_at: Instant,
+    submit_wall: Duration,
+    resource_identities: [usize; 6],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RamRafSubmissionStats {
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
+    pub lifecycle_wall: Duration,
+    pub gpu_active: Duration,
+    pub completed_before_join: bool,
+}
+
+#[must_use = "a submitted RAM RAF sequence must be joined before its output is used"]
+pub struct PendingRamRafSequence {
+    sequence: Option<RamRafSequence>,
+    command: Option<RamRafCommand>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PendingRamRafSequence {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(sequence) = &self.sequence {
+            visitor.visit_simple(
+                allocative::Key::new("device_buffers"),
+                sequence.resident_bytes(),
+            );
+        }
+        visitor.exit();
+    }
+}
+
+impl Drop for PendingRamRafSequence {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl PendingRamRafSequence {
+    pub const fn rows(&self) -> Option<usize> {
+        match &self.sequence {
+            Some(sequence) => Some(sequence.addresses.rows()),
+            None => None,
+        }
+    }
+
+    pub const fn address_domain(&self) -> Option<usize> {
+        match &self.sequence {
+            Some(sequence) => Some(sequence.addresses.address_domain()),
+            None => None,
+        }
+    }
+
+    pub const fn address_storage_id(&self) -> Option<usize> {
+        match &self.sequence {
+            Some(sequence) => Some(sequence.address_storage_id()),
+            None => None,
+        }
+    }
+
+    pub fn join(mut self) -> Result<(RamRafObservation, RamRafSubmissionStats), MetalError> {
+        let sequence = self.sequence.take().ok_or(MetalError::NotExecuted)?;
+        let command = self.command.take().ok_or(MetalError::NotExecuted)?;
+        sequence.complete(command)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -257,9 +335,38 @@ impl RamRafSequence {
         0
     }
 
+    pub const fn resident_bytes(&self) -> usize {
+        self.addresses.resident_bytes() + self.storage.sequence_owned_bytes
+    }
+
     pub fn execute_timed(&self) -> Result<RamRafObservation, MetalError> {
+        let command = self.submit_command();
+        self.complete(command).map(|(observation, _)| observation)
+    }
+
+    pub fn submit(self) -> PendingRamRafSequence {
+        let command = self.submit_command();
+        PendingRamRafSequence {
+            sequence: Some(self),
+            command: Some(command),
+        }
+    }
+
+    fn resource_identities(&self) -> [usize; 6] {
+        [
+            self.addresses.storage_id(),
+            self.buffers.e_lo.as_ptr() as usize,
+            self.buffers.e_hi.as_ptr() as usize,
+            self.buffers.deferred.as_ptr() as usize,
+            self.buffers.output.as_ptr() as usize,
+            self.buffers.counters.as_ptr() as usize,
+        ]
+    }
+
+    fn submit_command(&self) -> RamRafCommand {
+        let submitted_at = Instant::now();
+        let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
-            let command_buffer = self.context.queue.new_command_buffer();
             let blit = command_buffer.new_blit_command_encoder();
             blit.fill_buffer(
                 &self.buffers.deferred,
@@ -316,28 +423,60 @@ impl RamRafSequence {
             finalize.end_encoding();
 
             command_buffer.commit();
-            command_buffer.wait_until_completed();
-            if command_buffer.status() != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(command_buffer.status()));
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
-            let counters = self.read_counters();
-            if counters.invalid_rows != 0 || counters.unsupported_dispatches != 0 {
-                return Err(MetalError::RamRafDispatch {
-                    invalid_rows: counters.invalid_rows,
-                    unsupported_dispatches: counters.unsupported_dispatches,
-                });
-            }
-            Ok(RamRafObservation {
-                masses: self.read_masses()?,
-                counters,
-                gpu_active: Duration::from_secs_f64(end - start),
-            })
-        })
+        });
+        RamRafCommand {
+            command_buffer,
+            submitted_at,
+            submit_wall: submitted_at.elapsed(),
+            resource_identities: self.resource_identities(),
+        }
+    }
+
+    fn complete(
+        &self,
+        command: RamRafCommand,
+    ) -> Result<(RamRafObservation, RamRafSubmissionStats), MetalError> {
+        if command.resource_identities != self.resource_identities() {
+            return Err(MetalError::NotExecuted);
+        }
+        let completed_before_join =
+            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(command.submitted_at)
+            .saturating_sub(command.submit_wall);
+        command.command_buffer.wait_until_completed();
+        let status = command.command_buffer.status();
+        if status != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(status));
+        }
+        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        let counters = self.read_counters();
+        if counters.invalid_rows != 0 || counters.unsupported_dispatches != 0 {
+            return Err(MetalError::RamRafDispatch {
+                invalid_rows: counters.invalid_rows,
+                unsupported_dispatches: counters.unsupported_dispatches,
+            });
+        }
+        let gpu_active = Duration::from_secs_f64(end - start);
+        let observation = RamRafObservation {
+            masses: self.read_masses()?,
+            counters,
+            gpu_active,
+        };
+        let stats = RamRafSubmissionStats {
+            submit_wall: command.submit_wall,
+            overlap_wall,
+            join_wall: join_started.elapsed(),
+            lifecycle_wall: command.submitted_at.elapsed(),
+            gpu_active,
+            completed_before_join,
+        };
+        Ok((observation, stats))
     }
 
     fn read_counters(&self) -> RamRafCounters {

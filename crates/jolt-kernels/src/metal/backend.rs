@@ -175,6 +175,7 @@ where
         self.spartan_outer_uniskip = Box::new(metal.clone());
         self.spartan_outer_remainder = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
+        self.ram_read_write = Box::new(metal.clone());
         self.ram_raf_evaluation = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
         self.booleanity_address = Box::new(metal.clone());

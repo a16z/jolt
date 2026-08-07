@@ -148,17 +148,17 @@ pub use ram_output_check::{
 pub use ram_raf_evaluation::{
     address_opening_point as ram_raf_address_opening_point, dense_pushforward_oracle,
     split_equality as ram_raf_split_equality, split_pushforward_oracle, tiled_pushforward_oracle,
-    RamRafAddress, RamRafAddressPlane, RamRafAffineTail, RamRafConfig, RamRafCostModel,
-    RamRafCounters, RamRafDecision, RamRafDeviceLimits, RamRafError, RamRafEvidence,
-    RamRafExecution, RamRafFoldParams, RamRafMeasuredResult, RamRafObservation, RamRafProjection,
-    RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan, RamRafTailOutput,
-    RamRafTopology, ValidatedRamRafAddressPlane, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_AKITA_OFFSET,
-    RAM_RAF_DEFAULT_TRACE_CUTOFF, RAM_RAF_FINALIZE_PIPELINE, RAM_RAF_FIXED_PROJECTION_NS,
-    RAM_RAF_FOLD_PIPELINE, RAM_RAF_FOLD_REDESIGN_NS, RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2,
-    RAM_RAF_NO_ACCESS, RAM_RAF_PURSUIT_NS, RAM_RAF_SIMD_WIDTH, RAM_RAF_TARGET_CPU_NS,
-    RAM_RAF_TARGET_CPU_PREPARE_NS, RAM_RAF_TARGET_CPU_TAIL_NS, RAM_RAF_TARGET_FIVE_X_NS,
-    RAM_RAF_TARGET_LOG_T, RAM_RAF_TARGET_ROWS, RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES,
-    RAM_RAF_TILE_COUNT,
+    PendingRamRafSequence, RamRafAddress, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
+    RamRafCostModel, RamRafCounters, RamRafDecision, RamRafDeviceLimits, RamRafError,
+    RamRafEvidence, RamRafExecution, RamRafFoldParams, RamRafMeasuredResult, RamRafObservation,
+    RamRafProjection, RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan,
+    RamRafSubmissionStats, RamRafTailOutput, RamRafTopology, ValidatedRamRafAddressPlane,
+    RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_AKITA_OFFSET, RAM_RAF_DEFAULT_TRACE_CUTOFF,
+    RAM_RAF_FINALIZE_PIPELINE, RAM_RAF_FIXED_PROJECTION_NS, RAM_RAF_FOLD_PIPELINE,
+    RAM_RAF_FOLD_REDESIGN_NS, RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS,
+    RAM_RAF_PURSUIT_NS, RAM_RAF_SIMD_WIDTH, RAM_RAF_TARGET_CPU_NS, RAM_RAF_TARGET_CPU_PREPARE_NS,
+    RAM_RAF_TARGET_CPU_TAIL_NS, RAM_RAF_TARGET_FIVE_X_NS, RAM_RAF_TARGET_LOG_T,
+    RAM_RAF_TARGET_ROWS, RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
 };
 #[cfg(feature = "test-utils")]
 pub use ram_val_check::oracle as ram_val_check_oracle;

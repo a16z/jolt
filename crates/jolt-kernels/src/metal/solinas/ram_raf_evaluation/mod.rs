@@ -8,7 +8,10 @@ use thiserror::Error;
 
 mod runtime;
 
-pub use runtime::{RamRafAddressPlane, RamRafObservation, RamRafSequence};
+pub use runtime::{
+    PendingRamRafSequence, RamRafAddressPlane, RamRafObservation, RamRafSequence,
+    RamRafSubmissionStats,
+};
 
 pub const SOURCE: &str = include_str!("shader.metal");
 
