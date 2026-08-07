@@ -381,18 +381,18 @@ mod tests {
             .map(|index| {
                 let lookup_lo = (index as u64).wrapping_mul(0x0102_0304_0506_0708);
                 let lookup_hi = (!(index as u64)).rotate_left(17);
-                let ram = if index % 3 == 0 {
+                let ram = if index.is_multiple_of(3) {
                     0
                 } else {
                     (index & 0xffff) as u64 + 1
                 };
                 let magnitude = (index as u64).wrapping_mul(0x1_0001);
-                let pc = if index % 5 == 0 {
+                let pc = if index.is_multiple_of(5) {
                     0
                 } else {
                     ((index * 7) & 0xffff) as u64 + 1
                 };
-                let negative = u64::from(index % 7 == 0) << 63;
+                let negative = u64::from(index.is_multiple_of(7)) << 63;
                 HammingWeightResidentRow::from_words([
                     lookup_lo,
                     lookup_hi,

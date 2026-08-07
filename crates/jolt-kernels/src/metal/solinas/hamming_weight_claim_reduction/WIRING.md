@@ -266,5 +266,19 @@ production run has different thermal and working-set conditions.
 Do not enable this path until the 928-thread pipeline is admitted without
 spill, all parity gates pass, and five alternating log-26 pairs clear 5x. Run a
 separate log-27 transfer gate before promotion and a log-28 capacity/parity run
-before claiming that scale. The principal honest blocker is compiled resource
-behavior: this static packet cannot establish it without using the machine.
+before claiming that scale. The compile and timing evidence below supersedes
+that provisional promotion checklist for this candidate.
+
+## Measured decision
+
+The M4 Max screen rejects this topology before production wiring. GPU-active
+time was 24.530 ms at `2^20` rows and 66.036 ms at `2^22`; both runs used 64
+threadgroups, enough to cover all 40 GPU cores. Fitting `T(N) = a + bN` to
+those saturated points projects 896 ms at `2^26`, versus the 109.741 ms 5x
+cap. The gap is too large for launch tuning and confirms that masked
+one-lane-per-SIMD field additions dominate.
+
+Keep the algebra, oracle, ABI checks, and negative result as evidence, but do
+not wire or benchmark this shader at `2^26`. The next candidate must improve
+the existing retained-projection path, which is already near 5x, rather than
+rescan each staged weight once per selector.
