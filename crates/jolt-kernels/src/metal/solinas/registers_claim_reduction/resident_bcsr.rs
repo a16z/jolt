@@ -38,7 +38,9 @@ pub const BCSR_INDEXED_THREADGROUP_BYTES: u64 =
 pub const BCSR_COMPONENT_REDUCE_THREADGROUPS: u64 = 96;
 pub const BCSR_COMPONENT_REDUCE_THREADS_PER_THREADGROUP: u64 = 256;
 pub const BCSR_MIDPOINT_THREADGROUPS: u64 = 8_192;
-pub const BCSR_MIDPOINT_THREADS_PER_THREADGROUP: u64 = 128;
+pub const BCSR_MIDPOINT_THREADS_PER_THREADGROUP: u64 = 256;
+pub const BCSR_MIDPOINT_THREADGROUP_BYTES: u64 = 256 * size_of::<u16>() as u64
+    + (BCSR_MIDPOINT_THREADS_PER_THREADGROUP / 32) * size_of::<super::super::Fp128>() as u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RegistersClaimBcsrReplayStrategy {

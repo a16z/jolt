@@ -162,6 +162,7 @@ fn resident_bcsr_log26_contract_is_exact() {
     assert_eq!(BCSR_COMPONENT_THREADGROUPS, 8_192);
     assert_eq!(BCSR_COMPONENT_REDUCE_THREADGROUPS, 96);
     assert_eq!(BCSR_MIDPOINT_THREADGROUPS, 8_192);
+    assert_eq!(BCSR_MIDPOINT_THREADGROUP_BYTES, 640);
 
     let plan = RegistersClaimBcsrPlan::log26().unwrap();
     assert_eq!(plan.component_partial_bytes, 100_663_296);
@@ -213,6 +214,7 @@ fn linear_q_abi_and_slots_are_fixed() {
     assert!(BCSR_SOURCE.contains("kernel void solinas_registers_claim_bcsr_reduce_components"));
     assert!(BCSR_SOURCE.contains("RegistersClaimBcsrWorkspace"));
     assert!(BCSR_SOURCE.contains("RegistersClaimBcsrIndexedWorkspace"));
+    assert!(BCSR_SOURCE.contains("kernel void solinas_registers_claim_bcsr_fold_rd_midpoint"));
 }
 
 #[test]
@@ -457,6 +459,65 @@ fn metal_bcsr_components_match_dense_factorization() {
             assert_eq!(observation.dispatches, 2);
         }
     }
+}
+
+#[test]
+fn metal_bcsr_midpoint_matches_dense_fold() {
+    let context = match super::super::SolinasMetal::for_akita() {
+        Ok(context) => context,
+        Err(super::super::MetalError::DeviceUnavailable) => return,
+        Err(error) => panic!("Akita Metal library failed to compile: {error:?}"),
+    };
+    let cycles = 1usize << 16;
+    let geometry = RegistersClaimGeometry::new(cycles).unwrap();
+    let (bcsr, rows) = bcsr_fixture(cycles);
+    let (rd, _, _) = dense_planes_from_rows(&rows);
+    let prefix_challenges = challenge_point(geometry.prefix_vars());
+    let expected = fold_alias_rd(geometry, &rd, &prefix_challenges).unwrap();
+
+    assert!(matches!(
+        context.prepare_registers_claim_bcsr_midpoint(
+            &bcsr,
+            &prefix_challenges[..prefix_challenges.len() - 1],
+        ),
+        Err(RegistersClaimBcsrRuntimeError::WrongPointLength {
+            expected: 8,
+            actual: 7,
+        })
+    ));
+    let observation = context
+        .prepare_registers_claim_bcsr_midpoint(&bcsr, &prefix_challenges)
+        .unwrap()
+        .execute_timed()
+        .unwrap();
+    assert_eq!(observation.rd_write_value, expected);
+    assert_eq!(
+        observation.useful_half_width_terms,
+        bcsr.event_counts().rd() as u64
+    );
+    assert_eq!(observation.dispatches, 1);
+    assert_eq!(observation.source_bytes, 655_872);
+}
+
+#[test]
+fn synthetic_bcsr_midpoint_benchmark_is_stable() {
+    let context = match super::super::SolinasMetal::for_akita() {
+        Ok(context) => context,
+        Err(super::super::MetalError::DeviceUnavailable) => return,
+        Err(error) => panic!("Akita Metal library failed to compile: {error:?}"),
+    };
+    let cycles = 1usize << 16;
+    let geometry = RegistersClaimGeometry::new(cycles).unwrap();
+    let prefix_challenges = challenge_point(geometry.prefix_vars());
+    let invocation = context
+        .prepare_registers_claim_bcsr_midpoint_benchmark(cycles, &prefix_challenges)
+        .unwrap();
+    let cold = invocation.execute_timed().unwrap();
+    let warm = invocation.execute_timed().unwrap();
+    assert_eq!(cold.checksum, warm.checksum);
+    assert_eq!(warm.useful_half_width_terms, 49_152);
+    assert_eq!(warm.dispatches, 1);
+    assert_eq!(warm.source_bytes, 655_872);
 }
 
 #[test]

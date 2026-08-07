@@ -13,6 +13,83 @@ use jolt_kernels::metal::solinas::{
 
 const DEFAULT_TRACE_ELEMENTS: usize = 1 << 26;
 
+pub fn bench_bcsr_midpoint(c: &mut Criterion, context: &SolinasMetal) {
+    let elements = trace_elements();
+    assert!(
+        elements >= 1 << 16,
+        "registers claim BCSR midpoint benchmark requires at least 2^16 rows"
+    );
+    let log_t = elements.trailing_zeros() as usize;
+    let prefix_vars = log_t - log_t / 2;
+    let prefix_challenges = (0..prefix_vars)
+        .map(|index| AkitaField::from_u64(0x517c_c1b7_2722_0a95_u64.wrapping_mul(index as u64 + 1)))
+        .collect::<Vec<_>>();
+    let invocation = context
+        .prepare_registers_claim_bcsr_midpoint_benchmark(elements, &prefix_challenges)
+        .expect("registers claim synthetic BCSR midpoint should prepare");
+    let cold = invocation
+        .execute_timed()
+        .expect("registers claim BCSR midpoint cold execution should complete");
+    let warm = invocation
+        .execute_timed()
+        .expect("registers claim BCSR midpoint warm execution should complete");
+    assert_eq!(cold.checksum, warm.checksum);
+    assert_eq!(warm.dispatches, 1);
+    eprintln!(
+        "registers-claim-bcsr-midpoint n={elements} source-bytes={} terms={} setup-ms={:.3} \
+         cold-active-ms={:.3} warm-active-ms={:.3} warm-wall-ms={:.3} \
+         five-x-member-gate-ms={:.3}",
+        warm.source_bytes,
+        warm.useful_half_width_terms,
+        warm.setup_wall.as_secs_f64() * 1e3,
+        cold.gpu_active.as_secs_f64() * 1e3,
+        warm.gpu_active.as_secs_f64() * 1e3,
+        warm.resident_wall.as_secs_f64() * 1e3,
+        REGISTERS_CLAIM_FIVE_X_GATE_NS as f64 / 1e6,
+    );
+
+    let suffix = format!("n{elements}");
+    let mut group = c.benchmark_group("metal_sumcheck/registers_claim_bcsr_midpoint");
+    let _ = group
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(setting(
+            "JOLT_METAL_REGISTERS_CLAIM_WARMUP_MS",
+            200,
+        )))
+        .measurement_time(Duration::from_millis(setting(
+            "JOLT_METAL_REGISTERS_CLAIM_MEASUREMENT_MS",
+            1_000,
+        )))
+        .throughput(Throughput::Elements(warm.useful_half_width_terms));
+    let _ = group.bench_function(BenchmarkId::new("resident_active", &suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut active = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = invocation
+                    .execute_timed()
+                    .expect("timed registers claim BCSR midpoint should complete");
+                let _ = black_box(observation.checksum);
+                active += observation.gpu_active;
+            }
+            active
+        });
+    });
+    let _ = group.bench_function(BenchmarkId::new("resident_wall", &suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut wall = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = invocation
+                    .execute_timed()
+                    .expect("timed registers claim BCSR midpoint should complete");
+                let _ = black_box(observation.checksum);
+                wall += observation.resident_wall;
+            }
+            wall
+        });
+    });
+    group.finish();
+}
+
 pub fn bench_bcsr(c: &mut Criterion, context: &SolinasMetal) {
     let elements = trace_elements();
     assert!(

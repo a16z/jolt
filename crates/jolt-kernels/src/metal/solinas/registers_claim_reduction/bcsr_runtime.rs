@@ -28,7 +28,7 @@ use super::super::{
     buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
 use super::{
-    registers_claim_q_checksum, RegistersClaimBcsrComponentParams, RegistersClaimBcsrKernelConfig,
+    RegistersClaimBcsrComponentParams, RegistersClaimBcsrKernelConfig,
     RegistersClaimBcsrReduceParams, RegistersClaimBcsrReplayStrategy, RegistersClaimGeometry,
     RegistersClaimLinearComponents, RegistersClaimPlanError, BCSR_COMPONENT_EQ_SUFFIX_SLOT,
     BCSR_COMPONENT_PARAMS_SLOT, BCSR_COMPONENT_PARTIALS_SLOT, BCSR_COMPONENT_RD_OFFSETS_SLOT,
@@ -44,6 +44,9 @@ use super::{
     BCSR_INDEXED_RS1_INDEX_SLOT, BCSR_INDEXED_RS2_INDEX_SLOT, BCSR_INDEXED_START_VALUES_SLOT,
     REGISTERS_CLAIM_AKITA_OFFSET, REGISTERS_CLAIM_OUTPUT_COLUMNS,
 };
+
+#[cfg(feature = "test-utils")]
+use super::registers_claim_q_checksum;
 
 #[derive(Debug, Error)]
 pub(crate) enum RegistersClaimBcsrRuntimeError {
@@ -1108,7 +1111,7 @@ const SYNTHETIC_RS1_EVENTS_PER_BLOCK: usize = 228;
 #[cfg(feature = "test-utils")]
 const SYNTHETIC_RS2_EVENTS_PER_BLOCK: usize = 213;
 #[cfg(feature = "test-utils")]
-const SYNTHETIC_RD_EVENTS_PER_BLOCK: usize = 192;
+pub(super) const SYNTHETIC_RD_EVENTS_PER_BLOCK: usize = 192;
 
 #[cfg(feature = "test-utils")]
 fn fill_synthetic_start_values(values: &mut [u64]) {
@@ -1158,7 +1161,7 @@ fn fill_synthetic_position_plane(
 }
 
 #[cfg(feature = "test-utils")]
-fn fill_synthetic_rd_plane(
+pub(super) fn fill_synthetic_rd_plane(
     offsets: &mut [u16],
     positions: &mut [u8],
     post_values: &mut [u64],
@@ -1214,7 +1217,7 @@ fn synthetic_register(event: usize, position: usize, block: usize, multiplier: u
 }
 
 #[cfg(feature = "test-utils")]
-unsafe fn shared_slice_mut<T>(buffer: &mut Buffer, elements: usize) -> &mut [T] {
+pub(super) unsafe fn shared_slice_mut<T>(buffer: &mut Buffer, elements: usize) -> &mut [T] {
     // SAFETY: callers validate that the shared allocation contains exactly
     // `elements` values of `T` and hold exclusive setup access.
     unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<T>(), elements) }

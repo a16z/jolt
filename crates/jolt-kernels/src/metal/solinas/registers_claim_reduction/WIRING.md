@@ -118,10 +118,12 @@ with `2P` full products. This keeps the exact prefix `P * Q` rounds; it makes
 no protocol or transcript change.
 
 After the 13th host prefix challenge has been absorbed,
-`solinas_registers_claim_bcsr_fold_rd_midpoint` dispatches 8,192 groups of 128
-threads. One group owns one `x_hi`, and its lanes own register columns over
-the 32 BCSR blocks for that suffix row. It scans only rd offsets, positions,
-and post values and reduces
+`solinas_registers_claim_bcsr_fold_rd_midpoint` dispatches 8,192 groups of 256
+threads. One group owns one `x_hi`. For each of its 32 BCSR blocks, the first
+128 threads scatter rd event numbers into a 256-entry threadgroup map; all 256
+cycle threads then accumulate independently. The 640-byte workspace holds the
+event map and eight SIMDgroup sums. The kernel scans only rd offsets,
+positions, and post values and reduces
 
 ```text
 rd_dense[x_hi] = sum_x_lo eq(reverse(r_prefix))[x_lo] * rd_write_value(j).
@@ -172,7 +174,12 @@ of `7.8876..7.9926 ms` GPU-active and `8.4411..8.6812 ms` resident wall. Its
 warm diagnostic was `7.895 ms` active and `8.387 ms` wall. The candidate
 consumes 1,074,266,112 source bytes, including the two dense index maps, and
 improves the observed component mechanism by about `5.3x`. This is exact
-component evidence, not complete-member promotion evidence.
+component evidence, not complete-member promotion evidence. The first
+register-column midpoint measured `6.7240 ms` active and an unstable
+`18.792 ms` wall. Reusing the indexed position-parallel mechanism reduced that
+to `2.0963 ms` active and `2.4249 ms` wall. The measured component and midpoint
+wall medians sum to `10.9702 ms`, leaving `9.0109 ms` under the 5x cap for the
+host prefix/suffix, Fiat--Shamir, receipt checks, and shared scheduling.
 
 ### Algebraic obligations
 

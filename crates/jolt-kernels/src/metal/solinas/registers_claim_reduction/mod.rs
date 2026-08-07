@@ -1,10 +1,15 @@
 //! Checked geometry, roof model, midpoint-alias contract, and scalar oracle for
 //! registers claim reduction.
 
+mod bcsr_midpoint_runtime;
 mod bcsr_runtime;
 mod resident_bcsr;
 mod runtime;
 
+#[cfg(feature = "test-utils")]
+pub use bcsr_midpoint_runtime::{
+    RegistersClaimBcsrMidpointBenchmarkInvocation, RegistersClaimBcsrMidpointBenchmarkObservation,
+};
 #[cfg(feature = "test-utils")]
 pub use bcsr_runtime::{
     RegistersClaimBcsrBenchmarkError, RegistersClaimBcsrBenchmarkInvocation,

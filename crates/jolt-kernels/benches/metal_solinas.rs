@@ -191,6 +191,9 @@ mod macos {
                 "registers-claim-bcsr-components" => {
                     registers_claim_reduction::bench_bcsr(c, &context);
                 }
+                "registers-claim-bcsr-midpoint" => {
+                    registers_claim_reduction::bench_bcsr_midpoint(c, &context);
+                }
                 "registers-read-write-dense-round" => {
                     registers_read_write_dense::bench(c, &context);
                 }
