@@ -17,6 +17,7 @@ use super::registers_val_evaluation::RegistersValEvaluationMetalConfig;
 use super::solinas::OuterKernelArtifact;
 use super::solinas::{MetalError, SolinasMetal};
 use super::spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
+use super::spartan_product::SpartanProductRemainderMetalConfig;
 use crate::JoltBackend;
 
 /// Tuning values for all currently implemented Metal slots.
@@ -26,6 +27,8 @@ pub struct MetalConfig {
     pub spartan_outer_uniskip: SpartanOuterUniskipMetalConfig,
     /// Stage-1 Spartan outer remainder settings.
     pub spartan_outer_remainder: SpartanOuterRemainderMetalConfig,
+    /// Stage-2 Spartan product-remainder settings.
+    pub spartan_product_remainder: SpartanProductRemainderMetalConfig,
     /// Stage-3 instruction-input virtualization settings.
     pub instruction_input: InstructionInputMetalConfig,
     /// Stage-5 instruction read-RAF settings.
@@ -55,6 +58,8 @@ pub struct MetalBackend {
     pub(super) hamming_dispatches: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) outer_remainder_sequences: Arc<AtomicUsize>,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) product_remainder_sequences: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) registers_val_sequences: Arc<AtomicUsize>,
 }
@@ -103,6 +108,7 @@ impl MetalBackend {
         for cutoff in [
             config.spartan_outer_uniskip.trace_cutoff_elements,
             config.spartan_outer_remainder.dispatch.cpu_tail_elements,
+            config.spartan_product_remainder.trace_cutoff_elements,
             config.instruction_input.trace_cutoff_elements,
             config.instruction_input.cutoff_elements,
             config.registers_val_evaluation.trace_cutoff_elements,
@@ -140,6 +146,8 @@ impl MetalBackend {
             #[cfg(any(test, feature = "test-utils"))]
             outer_remainder_sequences: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
+            product_remainder_sequences: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "test-utils"))]
             registers_val_sequences: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -160,6 +168,13 @@ impl MetalBackend {
 
     #[cfg(any(test, feature = "test-utils"))]
     #[doc(hidden)]
+    pub fn product_remainder_sequences(&self) -> usize {
+        self.product_remainder_sequences
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
     pub fn registers_val_sequences(&self) -> usize {
         self.registers_val_sequences
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -174,6 +189,7 @@ where
     pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Self {
         self.spartan_outer_uniskip = Box::new(metal.clone());
         self.spartan_outer_remainder = Box::new(metal.clone());
+        self.spartan_product_remainder = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
         self.ram_read_write = Box::new(metal.clone());
         self.ram_raf_evaluation = Box::new(metal.clone());

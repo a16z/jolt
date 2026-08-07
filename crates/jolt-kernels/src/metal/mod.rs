@@ -13,6 +13,7 @@ mod ram_raf_evaluation;
 mod registers_val_evaluation;
 pub mod solinas;
 mod spartan_outer;
+mod spartan_product;
 
 pub use backend::{MetalBackend, MetalConfig};
 pub use booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
@@ -32,3 +33,4 @@ pub use spartan_outer::{
     OuterRemainderEvalSample, OuterRemainderGpuActiveBreakdown,
 };
 pub use spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
+pub use spartan_product::SpartanProductRemainderMetalConfig;

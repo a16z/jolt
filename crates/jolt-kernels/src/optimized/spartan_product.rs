@@ -147,6 +147,37 @@ struct SpartanProductCarry<F: Field> {
     t1_values: Vec<F>,
 }
 
+pub(crate) fn product_uniskip_carry_metadata<F: Field>(
+    session: &ProofSession,
+) -> Result<(usize, Vec<F>), KernelError<F>> {
+    let carry =
+        session
+            .state::<SpartanProductCarry<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "the product uni-skip slot parked no carry for the remainder member",
+            })?;
+    Ok((carry.log_t, carry.tau_low.clone()))
+}
+
+pub(crate) fn discard_product_uniskip_carry<F: Field>(
+    session: &mut ProofSession,
+    expected_log_t: usize,
+    expected_tau_low: &[F],
+) -> Result<(), KernelError<F>> {
+    let carry =
+        session
+            .take::<SpartanProductCarry<F>>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "the product uni-skip carry disappeared before the remainder handoff",
+            })?;
+    if carry.log_t != expected_log_t || carry.tau_low.as_slice() != expected_tau_low {
+        return Err(KernelError::InvariantViolation {
+            reason: "the product uni-skip carry changed before the Metal handoff",
+        });
+    }
+    Ok(())
+}
+
 #[cfg(feature = "allocative")]
 impl<F: Field> allocative::Allocative for SpartanProductCarry<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {

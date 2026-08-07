@@ -279,6 +279,18 @@ impl ProductRemainderRows {
     }
 }
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for ProductRemainderRows {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_rows"),
+            self.len * size_of::<ProductRemainderRow>(),
+        );
+        visitor.exit();
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ProductRemainderShapeError {
     #[error("product remainder needs a power-of-two row count of at least two, got {0}")]
@@ -588,6 +600,19 @@ pub struct ProductRemainderSequence {
     source_in_a: bool,
     phase: ProductRemainderPhase,
     gpu_active_time: Duration,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for ProductRemainderSequence {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("rows"), &self.buffers.rows);
+        visitor.visit_simple(
+            allocative::Key::new("device_workspace"),
+            self.layout.workspace_bytes(),
+        );
+        visitor.exit();
+    }
 }
 
 impl SolinasMetal {
