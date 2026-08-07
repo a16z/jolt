@@ -270,3 +270,244 @@ fn rust_and_shader_abis_are_fixed() {
     assert!(METAL_SOURCE.contains("cycle_to_grouped_local"));
     assert!(!METAL_SOURCE.contains("grouped_claims"));
 }
+
+#[test]
+fn runtime_binding_checks_fail_closed_without_a_device() {
+    use super::runtime::{
+        validate_recorded_binding, validate_source_aliases, BindingFacts, BindingRecord,
+    };
+
+    let record = BindingRecord {
+        shard: 2,
+        role: PlaneRole::GroupedLookupHi,
+        bytes: 512,
+        device_registry_id: 17,
+        allocation_identity: 0x4000,
+        source_generation: 9,
+    };
+    let facts = BindingFacts {
+        bytes: 512,
+        device_registry_id: 17,
+        allocation_identity: 0x4000,
+    };
+    validate_recorded_binding(record, facts, 9, 1024).unwrap();
+
+    assert!(matches!(
+        validate_recorded_binding(
+            record,
+            BindingFacts {
+                bytes: 256,
+                ..facts
+            },
+            9,
+            1024
+        ),
+        Err(ProducerRuntimeError::BufferLength {
+            shard: 2,
+            role: PlaneRole::GroupedLookupHi,
+            ..
+        })
+    ));
+    assert!(matches!(
+        validate_recorded_binding(
+            record,
+            BindingFacts {
+                device_registry_id: 18,
+                ..facts
+            },
+            9,
+            1024
+        ),
+        Err(ProducerRuntimeError::BufferDevice { .. })
+    ));
+    assert!(matches!(
+        validate_recorded_binding(
+            record,
+            BindingFacts {
+                allocation_identity: 0x5000,
+                ..facts
+            },
+            9,
+            1024
+        ),
+        Err(ProducerRuntimeError::BufferIdentity { .. })
+    ));
+    assert!(matches!(
+        validate_recorded_binding(record, facts, 10, 1024),
+        Err(ProducerRuntimeError::SourceGeneration {
+            expected: 10,
+            got: 9,
+            ..
+        })
+    ));
+    assert!(matches!(
+        validate_recorded_binding(record, facts, 9, 511),
+        Err(ProducerRuntimeError::DeviceBufferLimit {
+            bytes: 512,
+            maximum: 511,
+            ..
+        })
+    ));
+    assert!(matches!(
+        validate_source_aliases(2, [0x1000, 0x2000, 0x1000]),
+        Err(ProducerRuntimeError::AliasedBuffers {
+            first_role: PlaneRole::CycleLookupLo,
+            second_role: PlaneRole::CycleClaims,
+            identity: 0x1000,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn resident_runtime_matches_the_unordered_host_oracle_and_reuses_outputs() {
+    use metal::{MTLCommandBufferStatus, MTLResourceOptions};
+
+    let context = super::super::SolinasMetal::for_akita().unwrap();
+    let geometry = ProducerGeometry::new(8192).unwrap();
+    let shard = geometry.shard(0).unwrap();
+    let lookup_lo = (0..shard.rows())
+        .map(|cycle| (cycle as u64).wrapping_mul(0x9e37_79b9))
+        .collect::<Vec<_>>();
+    let lookup_hi = (0..shard.rows())
+        .map(|cycle| !(cycle as u64).rotate_left(17))
+        .collect::<Vec<_>>();
+    let claims = (0..shard.rows())
+        .map(|cycle| {
+            let table = (cycle % 7 != 0).then_some(cycle % LOOKUP_TABLES);
+            selector(table, cycle % 3 == 0).claim()
+        })
+        .collect::<Vec<_>>();
+    let layout = ScatterLayout::from_cycle_claims(shard, &claims).unwrap();
+    let source = context
+        .attach_instruction_read_raf_producer_source_shard(
+            shard,
+            7,
+            11,
+            super::super::buffer_from_slice(&context.device, &lookup_lo),
+            super::super::buffer_from_slice(&context.device, &lookup_hi),
+            super::super::buffer_from_slice(&context.device, &claims),
+        )
+        .unwrap();
+    let source_identities = source.receipt().allocation_identities();
+    let mut owner = context
+        .prepare_instruction_read_raf_producer(
+            geometry,
+            vec![ProducerShardInput::new(source, layout).unwrap()],
+        )
+        .unwrap();
+    assert_eq!(owner.source_copy_bytes(), 0);
+    assert_eq!(owner.source_resident_bytes(), 8192 * 17);
+    assert_eq!(owner.execute_device_buffer_allocations(), 0);
+
+    let completed = owner.execute().unwrap();
+    assert_eq!(completed.receipt().dispatch_serial(), 1);
+    assert_eq!(completed.receipt().source_generation(), 7);
+    assert_eq!(completed.receipt().source_completion_serial(), 11);
+    let output = completed.shard(0).unwrap();
+    assert_eq!(
+        output.cycle_lookup_lo().receipt().allocation_identity(),
+        source_identities[0]
+    );
+    assert_eq!(
+        output.cycle_claims().receipt().initialization(),
+        ProducerPlaneInitialization::Source {
+            completion_serial: 11
+        }
+    );
+    assert_eq!(
+        output.segment_offsets().receipt().initialization(),
+        ProducerPlaneInitialization::FrozenLayout
+    );
+    assert_eq!(
+        output.grouped_lookup_lo().receipt().initialization(),
+        ProducerPlaneInitialization::ScatterDispatch { serial: 1 }
+    );
+    let output_identities = [
+        output.grouped_lookup_lo().receipt().allocation_identity(),
+        output.grouped_lookup_hi().receipt().allocation_identity(),
+        output
+            .cycle_to_grouped_local()
+            .receipt()
+            .allocation_identity(),
+    ];
+
+    let grouped_lo = context.device.new_buffer(
+        output.grouped_lookup_lo().receipt().bytes(),
+        MTLResourceOptions::StorageModeShared,
+    );
+    let grouped_hi = context.device.new_buffer(
+        output.grouped_lookup_hi().receipt().bytes(),
+        MTLResourceOptions::StorageModeShared,
+    );
+    let inverse = context.device.new_buffer(
+        output.cycle_to_grouped_local().receipt().bytes(),
+        MTLResourceOptions::StorageModeShared,
+    );
+    let command = context.queue.new_command_buffer();
+    let blit = command.new_blit_command_encoder();
+    blit.copy_from_buffer(
+        output.grouped_lookup_lo().buffer(),
+        0,
+        &grouped_lo,
+        0,
+        grouped_lo.length(),
+    );
+    blit.copy_from_buffer(
+        output.grouped_lookup_hi().buffer(),
+        0,
+        &grouped_hi,
+        0,
+        grouped_hi.length(),
+    );
+    blit.copy_from_buffer(
+        output.cycle_to_grouped_local().buffer(),
+        0,
+        &inverse,
+        0,
+        inverse.length(),
+    );
+    blit.end_encoding();
+    command.commit();
+    command.wait_until_completed();
+    assert_eq!(command.status(), MTLCommandBufferStatus::Completed);
+
+    // SAFETY: the blit completed and each shared allocation has exactly the
+    // element count passed to from_checked_parts.
+    let grouped_lo_values = unsafe {
+        std::slice::from_raw_parts(grouped_lo.contents().cast::<u64>(), shard.rows()).to_vec()
+    };
+    // SAFETY: the same completed blit and allocation-size argument applies.
+    let grouped_hi_values = unsafe {
+        std::slice::from_raw_parts(grouped_hi.contents().cast::<u64>(), shard.rows()).to_vec()
+    };
+    // SAFETY: the same completed blit and allocation-size argument applies.
+    let inverse_values = unsafe {
+        std::slice::from_raw_parts(inverse.contents().cast::<u32>(), shard.rows()).to_vec()
+    };
+    let _ = HostScatter::from_checked_parts(
+        output.layout(),
+        grouped_lo_values,
+        grouped_hi_values,
+        inverse_values,
+        &lookup_lo,
+        &lookup_hi,
+        &claims,
+    )
+    .unwrap();
+
+    let second = owner.execute().unwrap();
+    assert_eq!(second.receipt().dispatch_serial(), 2);
+    let second = second.shard(0).unwrap();
+    assert_eq!(
+        [
+            second.grouped_lookup_lo().receipt().allocation_identity(),
+            second.grouped_lookup_hi().receipt().allocation_identity(),
+            second
+                .cycle_to_grouped_local()
+                .receipt()
+                .allocation_identity(),
+        ],
+        output_identities
+    );
+}

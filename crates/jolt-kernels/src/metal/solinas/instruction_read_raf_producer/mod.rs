@@ -10,8 +10,9 @@
 //! the device scatter needs one payload pass and no count pass.
 
 mod abi;
+mod binding;
 mod oracle;
-mod owner_seam;
+mod runtime;
 #[cfg(test)]
 mod tests;
 
@@ -20,6 +21,12 @@ pub use abi::{
     ScatterDispatchPlan, ScatterLayout, ScatterParams, ScatterTraffic, SCATTER_BUFFER_ROLES,
 };
 pub use oracle::{decode_claim, HostScatter, ProducerSelector};
+pub use runtime::{
+    CompletedInstructionReadRafProducer, CompletedProducerShard, ProducerCompletionReceipt,
+    ProducerExecutionTiming, ProducerPlaneInitialization, ProducerPlaneReceipt,
+    ProducerPreparationTiming, ProducerRuntimeError, ProducerShardInput, ProducerSourceReceipt,
+    ResidentInstructionReadRafProducer, ResidentProducerPlane, ResidentProducerSourceShard,
+};
 
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use thiserror::Error;
