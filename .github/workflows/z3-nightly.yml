@@ -1,0 +1,57 @@
+# Nightly Z3 formal verification of the tracer/jolt-program virtual-sequence
+# expansions (z3-verifier). Runs the full symbolic_exec suite against a
+# hermetic, vendored Z3 (`z3/bundled` — built from source, no system libz3),
+# so results don't depend on runner packages.
+#
+# Nightly-only by design: the bundled Z3 build is too slow for the PR-blocking
+# path, and the suite proves ∀-input properties that only change when
+# expansions or the z3 model change. `workflow_dispatch` allows on-demand runs
+# (e.g. after landing a PR that touches tracer/, crates/jolt-program/, or
+# z3-verifier/).
+name: Z3 Formal Verification
+
+on:
+  schedule:
+    # 07:13 UTC nightly (off the top of the hour to dodge scheduler congestion)
+    - cron: "13 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  z3-formal-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Cache the expensive bundled-Z3 CMake build across nightly runs.
+          shared-key: z3-nightly
+      - name: Run Z3 formal verification suite
+        run: cargo nextest run -p z3-verifier --features z3/bundled --cargo-quiet --no-fail-fast
+      - name: File failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --state open --search "in:title \"Nightly Z3 formal verification failed\"" \
+            --json number --jq 'length')
+          if [ "$existing" -eq 0 ]; then
+            body=$(printf '%s\n\n%s' \
+              "The scheduled z3-verifier run failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              "A symbolic_exec obligation regressed (or the z3 model drifted from an expansion change). The suite proves every virtual-sequence expansion against its architectural semantics for all inputs — treat failures as potential soundness signals, not flakes.")
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Nightly Z3 formal verification failed" \
+              --body "$body"
+          else
+            echo "Open failure issue already exists; not filing a duplicate."
+          fi
