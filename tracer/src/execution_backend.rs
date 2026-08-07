@@ -185,30 +185,16 @@ impl TracerBackend {
             });
         }
 
-        // Summary extraction mirrors the serial trace() tail.
-        let mut emulator = pass.into_emulator();
-        let advice_tape = emulator.take_advice_tape().into_bytes();
-        let cpu = emulator.get_mut_cpu();
-        let final_memory = Some(MemoryImage {
-            bytes: cpu
-                .mmu
-                .memory
-                .memory
-                .take_memory()
-                .materialized_nonzero_bytes(),
-        });
-        let device = cpu
-            .get_mut_mmu()
-            .jolt_device
-            .take()
-            .ok_or(TraceError::Backend("JoltDevice was not initialized"))?;
+        let (advice_tape, final_memory, device) = crate::finish_emulator(pass.into_emulator());
 
         Ok(ExecutionSummary {
             checkpoints,
             trace_len,
             device,
-            final_memory,
-            advice_tape: Some(advice_tape),
+            final_memory: Some(MemoryImage {
+                bytes: final_memory.materialized_nonzero_bytes(),
+            }),
+            advice_tape: Some(advice_tape.into_bytes()),
         })
     }
 }

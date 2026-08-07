@@ -73,7 +73,6 @@ fn env_rows(name: &str, default: usize) -> usize {
 /// Tracing is serial by default. Setting `TRACER_PARALLEL=<workers>` opts
 /// into two-pass parallel tracing (bit-identical output); see [`parallel`].
 #[tracing::instrument(skip_all)]
-#[expect(clippy::expect_used)]
 pub fn trace(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
@@ -126,6 +125,21 @@ pub fn trace(
         }
     };
 
+    let (advice_tape_result, final_memory_state, jolt_device) = finish_emulator(emulator);
+    (
+        lazy_trace_iter,
+        trace,
+        final_memory_state,
+        jolt_device,
+        advice_tape_result,
+    )
+}
+
+/// Shared teardown for every execution path (eager [`trace`], execute-only
+/// [`execute`], and the chunked fast pass): report a guest panic (log +
+/// backtrace), then extract the advice tape, final memory, and device.
+#[expect(clippy::expect_used)]
+pub(crate) fn finish_emulator(mut emulator: Emulator) -> (cpu::AdviceTape, Memory, JoltDevice) {
     if emulator
         .get_cpu()
         .mmu
@@ -141,21 +155,15 @@ pub fn trace(
         utils::panic::display_panic_backtrace(&emulator);
     }
 
-    let advice_tape_result = emulator.take_advice_tape();
+    let advice_tape = emulator.take_advice_tape();
     let cpu = emulator.get_mut_cpu();
-    let final_memory_state = cpu.mmu.memory.memory.take_memory();
+    let final_memory = cpu.mmu.memory.memory.take_memory();
     let jolt_device = cpu
         .get_mut_mmu()
         .jolt_device
         .take()
         .expect("JoltDevice was not initialized");
-    (
-        lazy_trace_iter,
-        trace,
-        final_memory_state,
-        jolt_device,
-        advice_tape_result,
-    )
+    (advice_tape, final_memory, jolt_device)
 }
 
 /// Executes a RISC-V program to completion without materializing trace rows
@@ -174,7 +182,6 @@ pub fn trace(
 /// pass-1 driver does, via the `trace_len` delta. No valid Jolt guest hits
 /// a zero-row step mid-program.
 #[tracing::instrument(skip_all)]
-#[expect(clippy::expect_used)]
 pub fn execute(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
@@ -204,13 +211,7 @@ pub fn execute(
     }
 
     let executed = emulator.get_cpu().trace_len;
-    let advice_tape_result = emulator.take_advice_tape();
-    let jolt_device = emulator
-        .get_mut_cpu()
-        .get_mut_mmu()
-        .jolt_device
-        .take()
-        .expect("JoltDevice was not initialized");
+    let (advice_tape_result, _final_memory, jolt_device) = finish_emulator(emulator);
     (executed, jolt_device, advice_tape_result)
 }
 
