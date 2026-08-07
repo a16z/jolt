@@ -490,8 +490,10 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     /// Condensed per-cycle eq weights (see the reference kernel).
     u_evals: Vec<F>,
     prefix_checkpoints: Vec<PrefixEval<F>>,
+    /// `ALL_PREFIXES` indices referenced by tables with non-empty buckets.
+    prefix_indices: Vec<usize>,
     /// Materialized prefix chunk polynomials for the current phase, in
-    /// `ALL_PREFIXES` order.
+    /// `prefix_indices` order.
     prefix_tables: Vec<Polynomial<F>>,
     /// Per present table: enum value + suffix `Q` polynomials in
     /// `table.suffixes()` order.
@@ -523,6 +525,7 @@ crate::optimized::impl_field_allocative!(OptimizedInstructionReadRafKernel, |ker
         + nested_vec_heap_bytes(&kernel.buckets)
         + vec_heap_bytes(&kernel.u_evals)
         + vec_heap_bytes(&kernel.prefix_checkpoints)
+        + vec_heap_bytes(&kernel.prefix_indices)
         + polys_heap_bytes(&kernel.prefix_tables)
         + kernel.suffix_tables.capacity()
             * std::mem::size_of::<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>()
@@ -596,6 +599,19 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                     .push(j as u32);
             }
         }
+        let mut present_prefixes = vec![false; ALL_PREFIXES.len()];
+        for table in
+            LookupTableKind::<RISCV_XLEN>::iter().filter(|table| !buckets[table.index()].is_empty())
+        {
+            for prefix in table.prefixes() {
+                present_prefixes[*prefix as usize] = true;
+            }
+        }
+        let prefix_indices = present_prefixes
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, present)| present.then_some(index))
+            .collect();
 
         let mut kernel = Self {
             dimensions,
@@ -608,6 +624,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 .iter()
                 .map(|prefix| prefix.default_checkpoint::<F>())
                 .collect(),
+            prefix_indices,
             prefix_tables: Vec::new(),
             suffix_tables: Vec::new(),
             raf_left: RafDecomposition::empty(),
@@ -766,7 +783,9 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         // Table-prefix chunk polynomials from the checkpoints, one prefix per
         // parallel task.
         let checkpoints = self.prefix_checkpoints.as_slice();
-        self.prefix_tables = map_indices(ALL_PREFIXES.len(), |index| {
+        let prefix_indices = self.prefix_indices.as_slice();
+        self.prefix_tables = map_indices(prefix_indices.len(), |position| {
+            let index = prefix_indices[position];
             let prefix = &ALL_PREFIXES[index];
             Polynomial::new(
                 (0..CHUNK_SIZE)
@@ -863,7 +882,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     /// `s(1) = previous_claim − s(0)` (the engine-checked hint), emitted
     /// through the same `from_evals` constructor as the reference.
     fn address_message(&self, previous_claim: F) -> UnivariatePoly<F> {
-        let half = self.prefix_tables[0].evals().len() / 2;
+        let half = self.raf_left.prefix.evals().len() / 2;
         // Partial sums: [read, left, right, identity, upper] × {c=0, c=2}.
         let sums = map_reduce_chunks(
             half,
@@ -873,17 +892,15 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 // Per-thread scratch: full prefix eval rows (indexed by the
                 // `Prefixes` discriminant, as `combine` expects) plus suffix
                 // eval rows reused across tables.
-                let mut p0: Vec<PrefixEval<F>> = Vec::with_capacity(self.prefix_tables.len());
-                let mut p2: Vec<PrefixEval<F>> = Vec::with_capacity(self.prefix_tables.len());
+                let mut p0 = vec![PrefixEval::from(F::zero()); self.prefix_checkpoints.len()];
+                let mut p2 = vec![PrefixEval::from(F::zero()); self.prefix_checkpoints.len()];
                 let mut s0: Vec<SuffixEval<F>> = Vec::new();
                 let mut s2: Vec<SuffixEval<F>> = Vec::new();
                 for b in range {
-                    p0.clear();
-                    p2.clear();
-                    for table in &self.prefix_tables {
+                    for (&index, table) in self.prefix_indices.iter().zip(&self.prefix_tables) {
                         let (lo, ext) = extension_pair(table.evals(), b, half);
-                        p0.push(PrefixEval::from(lo));
-                        p2.push(PrefixEval::from(ext));
+                        p0[index] = PrefixEval::from(lo);
+                        p2[index] = PrefixEval::from(ext);
                     }
                     for (table, suffixes) in &self.suffix_tables {
                         s0.clear();
@@ -1158,10 +1175,8 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             if self.phase_challenges.len() == CHUNK_LEN {
                 let phase = self.progress.bound() / CHUNK_LEN;
                 self.v_tables.push(eq_table(&self.phase_challenges));
-                for (checkpoint, table) in
-                    self.prefix_checkpoints.iter_mut().zip(&self.prefix_tables)
-                {
-                    *checkpoint = PrefixEval::from(table.evals()[0]);
+                for (&index, table) in self.prefix_indices.iter().zip(&self.prefix_tables) {
+                    self.prefix_checkpoints[index] = PrefixEval::from(table.evals()[0]);
                 }
                 self.raf_left.checkpoint = self.raf_left.prefix.evals()[0];
                 self.raf_right.checkpoint = self.raf_right.prefix.evals()[0];
