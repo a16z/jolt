@@ -549,7 +549,7 @@ fn sparse_work_separates_logical_products_from_simd_slots() {
 fn sparse_roofs_are_independent_of_the_heuristic_interpolation() {
     let total_iterations = TARGET_ROWS / (2 * SIMD_WIDTH as u64);
     let active_iterations =
-        (total_iterations * SPARSE_SCREEN_TARGET_PRIORITY_PERMILLE + 999) / 1_000;
+        (total_iterations * SPARSE_SCREEN_TARGET_PRIORITY_PERMILLE).div_ceil(1_000);
     let plan = target_work_plan(FirstMessageActivity {
         active_pairs: active_iterations,
         active_simd_iterations: active_iterations,
@@ -751,7 +751,7 @@ fn speed_screen_and_complete_promotion_are_distinct() {
 fn promotion_derives_the_first_phase_bar_from_recorded_activity() {
     let total_iterations = TARGET_ROWS / (2 * SIMD_WIDTH as u64);
     let active_iterations =
-        (total_iterations * SPARSE_SCREEN_TARGET_PRIORITY_PERMILLE + 999) / 1_000;
+        (total_iterations * SPARSE_SCREEN_TARGET_PRIORITY_PERMILLE).div_ceil(1_000);
     let mut evidence = correct_candidate(29_000_000);
     let producer = evidence.producer.as_mut().unwrap();
     producer.active_pairs = active_iterations;

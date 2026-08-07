@@ -32,11 +32,33 @@ struct RamValSuccessorReductionParams {
     uint reserved;
 };
 
+struct RamValActivePair {
+    uint pair_index;
+    uint signs;
+    ulong lo_magnitude;
+    ulong hi_magnitude;
+};
+
+struct RamValSparseFirstMessageParams {
+    uint active_pairs;
+    uint rows;
+    uint low_length;
+    uint address_domain;
+};
+
 inline SolinasFp128 ram_val_successor_from_u64(ulong value) {
     SolinasFp128 result = solinas_zero();
     result.limb[0] = (uint)value;
     result.limb[1] = (uint)(value >> 32);
     return result;
+}
+
+inline SolinasFp128 ram_val_sparse_signed_magnitude(
+    ulong magnitude,
+    bool negative)
+{
+    SolinasFp128 value = ram_val_successor_from_u64(magnitude);
+    return negative ? solinas_sub(solinas_zero(), value) : value;
 }
 
 inline bool ram_val_successor_row_valid(
@@ -200,6 +222,115 @@ kernel void solinas_ram_val_check_successor_first_message(
             solinas_mul_wide(lt, a2), solinas_mul_wide(eq, b2));
         partials[2u * params.high_blocks + high] = solinas_add(
             solinas_mul_wide(lt, a3), solinas_mul_wide(eq, b3));
+    }
+}
+
+kernel void solinas_ram_val_check_sparse_first_message(
+    device const RamValActivePair* active_pairs [[buffer(0)]],
+    device const uint* addresses [[buffer(1)]],
+    device const SolinasFp128* eq_address [[buffer(2)]],
+    device const SolinasFp128* lt_low [[buffer(3)]],
+    device const SolinasFp128* lt_high [[buffer(4)]],
+    device const SolinasFp128* eq_high [[buffer(5)]],
+    device SolinasFp128* partials [[buffer(6)]],
+    constant RamValSparseFirstMessageParams& params [[buffer(7)]],
+    device atomic_uint* status [[buffer(8)]],
+    uint group [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    bool supported = threads == RAM_VAL_SUCCESSOR_SIMD_WIDTH
+        && params.active_pairs != 0u
+        && params.rows >= 2u
+        && (params.rows & (params.rows - 1u)) == 0u
+        && params.low_length >= 2u
+        && (params.low_length & (params.low_length - 1u)) == 0u
+        && params.rows % params.low_length == 0u
+        && params.address_domain != 0u
+        && (params.address_domain & (params.address_domain - 1u)) == 0u;
+    if (!supported) {
+        if (lane == 0u) {
+            atomic_fetch_or_explicit(
+                status,
+                RAM_VAL_SUCCESSOR_STATUS_UNSUPPORTED,
+                memory_order_relaxed);
+        }
+        return;
+    }
+
+    uint active_index = group * RAM_VAL_SUCCESSOR_SIMD_WIDTH + lane;
+    SolinasFp128 eval0 = solinas_zero();
+    SolinasFp128 eval2 = solinas_zero();
+    SolinasFp128 eval3 = solinas_zero();
+    if (active_index < params.active_pairs) {
+        RamValActivePair active = active_pairs[active_index];
+        ulong cycle = 2ul * (ulong)active.pair_index;
+        bool pair_valid = cycle + 1ul < (ulong)params.rows;
+        if (!pair_valid) {
+            atomic_fetch_or_explicit(
+                status,
+                RAM_VAL_SUCCESSOR_STATUS_INVALID_ROW,
+                memory_order_relaxed);
+        } else {
+            uint address0 = addresses[cycle];
+            uint address1 = addresses[cycle + 1ul];
+            bool address0_valid = address0 == 0xffffffffu
+                || address0 < params.address_domain;
+            bool address1_valid = address1 == 0xffffffffu
+                || address1 < params.address_domain;
+            if (!address0_valid || !address1_valid) {
+                atomic_fetch_or_explicit(
+                    status,
+                    RAM_VAL_SUCCESSOR_STATUS_INVALID_ROW,
+                    memory_order_relaxed);
+            } else {
+                SolinasFp128 inc0 = ram_val_sparse_signed_magnitude(
+                    active.lo_magnitude,
+                    (active.signs & 1u) != 0u);
+                SolinasFp128 inc1 = ram_val_sparse_signed_magnitude(
+                    active.hi_magnitude,
+                    (active.signs & 2u) != 0u);
+                SolinasFp128 ra0 = address0 == 0xffffffffu
+                    ? solinas_zero()
+                    : eq_address[address0];
+                SolinasFp128 ra1 = address1 == 0xffffffffu
+                    ? solinas_zero()
+                    : eq_address[address1];
+                uint low0 = (uint)cycle & (params.low_length - 1u);
+                uint high = (uint)(cycle / (ulong)params.low_length);
+                SolinasFp128 lt0 = solinas_add(
+                    lt_high[high],
+                    solinas_mul_wide(eq_high[high], lt_low[low0]));
+                SolinasFp128 lt1 = solinas_add(
+                    lt_high[high],
+                    solinas_mul_wide(eq_high[high], lt_low[low0 + 1u]));
+
+                SolinasFp128 inc_delta = solinas_sub(inc1, inc0);
+                SolinasFp128 ra_delta = solinas_sub(ra1, ra0);
+                SolinasFp128 lt_delta = solinas_sub(lt1, lt0);
+
+                eval0 = solinas_mul_wide(solinas_mul_wide(inc0, ra0), lt0);
+                inc1 = solinas_add(inc1, inc_delta);
+                ra1 = solinas_add(ra1, ra_delta);
+                lt1 = solinas_add(lt1, lt_delta);
+                eval2 = solinas_mul_wide(solinas_mul_wide(inc1, ra1), lt1);
+                inc1 = solinas_add(inc1, inc_delta);
+                ra1 = solinas_add(ra1, ra_delta);
+                lt1 = solinas_add(lt1, lt_delta);
+                eval3 = solinas_mul_wide(solinas_mul_wide(inc1, ra1), lt1);
+            }
+        }
+    }
+
+    eval0 = solinas_simd_sum_32(eval0);
+    eval2 = solinas_simd_sum_32(eval2);
+    eval3 = solinas_simd_sum_32(eval3);
+    if (lane == 0u) {
+        uint groups = (params.active_pairs + RAM_VAL_SUCCESSOR_SIMD_WIDTH - 1u)
+            / RAM_VAL_SUCCESSOR_SIMD_WIDTH;
+        partials[group] = eval0;
+        partials[groups + group] = eval2;
+        partials[2u * groups + group] = eval3;
     }
 }
 

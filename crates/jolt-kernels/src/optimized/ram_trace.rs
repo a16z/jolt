@@ -8,6 +8,8 @@
 //! `val(k, j)` walks from the initial state through the writes.
 
 use std::sync::Arc;
+#[cfg(feature = "parallel")]
+use std::sync::OnceLock;
 
 use jolt_field::Field;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
@@ -62,6 +64,8 @@ struct CollectRamAccessColumns {
     addresses: Vec<u32>,
     pre_values: Vec<u64>,
     post_values: Vec<u64>,
+    ram_increment_cycles: Vec<u64>,
+    ram_increments: Vec<i128>,
     address_error: Option<AddressEncodingError>,
 }
 
@@ -77,6 +81,13 @@ impl StreamConsumer for CollectRamAccessColumns {
             self.addresses.push(address);
             self.pre_values.push(bundle.pre_value.0);
             self.post_values.push(bundle.post_value.0);
+            let cycle = self.addresses.len() - 1;
+            if let Some((cycle, increment)) =
+                encode_ram_increment(cycle, bundle.pre_value.0, bundle.post_value.0)
+            {
+                self.ram_increment_cycles.push(cycle);
+                self.ram_increments.push(increment);
+            }
         }
     }
 }
@@ -116,6 +127,55 @@ pub(crate) struct RamAccessValues {
     pub post_values: Vec<u64>,
 }
 
+/// Sparse nonzero RAM deltas collected alongside the shared address column.
+pub(crate) struct RamIncrementActivity {
+    cycles: Vec<u64>,
+    increments: Vec<i128>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RamIncrementActivity {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("cycles"),
+            crate::backend::vec_heap_bytes(&self.cycles),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("increments"),
+            crate::backend::vec_heap_bytes(&self.increments),
+        );
+        visitor.exit();
+    }
+}
+
+impl RamIncrementActivity {
+    pub(crate) fn len(&self) -> usize {
+        self.cycles.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.cycles.is_empty()
+    }
+
+    pub(crate) fn records(&self) -> impl ExactSizeIterator<Item = (usize, i128)> + '_ {
+        self.cycles
+            .iter()
+            .copied()
+            .zip(self.increments.iter().copied())
+            .map(|(cycle, increment)| (cycle as usize, increment))
+    }
+}
+
+fn encode_ram_increment(cycle: usize, pre: u64, post: u64) -> Option<(u64, i128)> {
+    let increment = i128::from(post) - i128::from(pre);
+    if increment == 0 {
+        return None;
+    }
+    let cycle = u64::try_from(cycle).ok()?;
+    Some((cycle, increment))
+}
+
 #[cfg(feature = "allocative")]
 impl allocative::Allocative for RamAccessValues {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
@@ -136,7 +196,7 @@ impl RamAccessColumns {
     fn collect<F: Field>(
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
-    ) -> Result<(Self, RamAccessValues), KernelError<F>> {
+    ) -> Result<(Self, RamAccessValues, RamIncrementActivity), KernelError<F>> {
         let cycles = 1usize << log_t;
         #[cfg(feature = "parallel")]
         if let Some(access) = witness.random_access() {
@@ -150,6 +210,8 @@ impl RamAccessColumns {
             addresses: Vec::with_capacity(cycles),
             pre_values: Vec::with_capacity(cycles),
             post_values: Vec::with_capacity(cycles),
+            ram_increment_cycles: Vec::new(),
+            ram_increments: Vec::new(),
             address_error: None,
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
@@ -165,6 +227,10 @@ impl RamAccessColumns {
                 pre_values: collected.pre_values,
                 post_values: collected.post_values,
             },
+            RamIncrementActivity {
+                cycles: collected.ram_increment_cycles,
+                increments: collected.ram_increments,
+            },
         ))
     }
 
@@ -174,11 +240,14 @@ impl RamAccessColumns {
     fn collect_par<F: Field>(
         access: &RandomAccessRows<'_>,
         cycles: usize,
-    ) -> Result<(Self, RamAccessValues), KernelError<F>> {
+    ) -> Result<(Self, RamAccessValues, RamIncrementActivity), KernelError<F>> {
         const CHUNK: usize = 1 << 12;
         let mut addresses = Vec::with_capacity(cycles);
         let mut pre_values = Vec::with_capacity(cycles);
         let mut post_values = Vec::with_capacity(cycles);
+        let mut activity_chunks = (0..cycles.div_ceil(CHUNK))
+            .map(|_| OnceLock::new())
+            .collect::<Vec<_>>();
         let error = std::sync::Mutex::new(None);
         (
             addresses.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
@@ -189,6 +258,7 @@ impl RamAccessColumns {
             .enumerate()
             .for_each(|(chunk_index, (addresses, pre_values, post_values))| {
                 let base = chunk_index * CHUNK;
+                let mut activity = Vec::new();
                 for offset in 0..addresses.len() {
                     let bundle = match access.window::<RamAccessBundle>(base + offset) {
                         Ok(bundle) => bundle,
@@ -211,7 +281,13 @@ impl RamAccessColumns {
                     let _ = addresses[offset].write(address);
                     let _ = pre_values[offset].write(bundle.pre_value.0);
                     let _ = post_values[offset].write(bundle.post_value.0);
+                    if let Some(record) =
+                        encode_ram_increment(base + offset, bundle.pre_value.0, bundle.post_value.0)
+                    {
+                        activity.push(record);
+                    }
                 }
+                let _ = activity_chunks[chunk_index].set(activity);
             });
         #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
         if let Some(failure) = error.into_inner().unwrap() {
@@ -227,12 +303,19 @@ impl RamAccessColumns {
             pre_values.set_len(cycles);
             post_values.set_len(cycles);
         }
+        let activity_records = activity_chunks
+            .drain(..)
+            .filter_map(OnceLock::into_inner)
+            .flatten()
+            .collect::<Vec<_>>();
+        let (cycles, increments) = activity_records.into_iter().unzip();
         Ok((
             Self { addresses },
             RamAccessValues {
                 pre_values,
                 post_values,
             },
+            RamIncrementActivity { cycles, increments },
         ))
     }
 
@@ -248,10 +331,11 @@ impl RamAccessColumns {
         log_t: usize,
     ) -> Result<Arc<Self>, KernelError<F>> {
         if session.state::<Arc<Self>>().is_none() {
-            let (columns, values) = Self::collect(witness, log_t)?;
+            let (columns, values, activity) = Self::collect(witness, log_t)?;
             let columns = Arc::new(columns);
             session.park(columns);
             session.park(values);
+            session.park(activity);
         }
         let columns = Arc::clone(
             session

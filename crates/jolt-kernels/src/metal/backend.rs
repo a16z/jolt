@@ -13,6 +13,7 @@ use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::instruction_read_raf::InstructionReadRafMetalConfig;
 use super::ram_raf_evaluation::RamRafEvaluationMetalConfig;
+use super::ram_val_check::RamValCheckMetalConfig;
 use super::registers_val_evaluation::RegistersValEvaluationMetalConfig;
 #[cfg(feature = "test-utils")]
 use super::solinas::OuterKernelArtifact;
@@ -40,6 +41,8 @@ pub struct MetalConfig {
     pub registers_val_evaluation: RegistersValEvaluationMetalConfig,
     /// Stage-2 RAM RAF-evaluation settings.
     pub ram_raf_evaluation: RamRafEvaluationMetalConfig,
+    /// Stage-4 RAM value-check settings.
+    pub ram_val_check: RamValCheckMetalConfig,
     /// Stage-6a Booleanity address settings.
     pub booleanity_address: BooleanityAddressMetalConfig,
     /// Stage-6b Booleanity cycle settings.
@@ -71,6 +74,8 @@ pub struct MetalBackend {
     pub(super) instruction_claim_sequences: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) registers_val_sequences: Arc<AtomicUsize>,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) ram_val_shadow_dispatches: Arc<AtomicUsize>,
 }
 
 impl MetalBackend {
@@ -125,6 +130,7 @@ impl MetalBackend {
             config.registers_val_evaluation.trace_cutoff_elements,
             config.registers_val_evaluation.cutoff_elements,
             config.ram_raf_evaluation.dispatch.trace_cutoff,
+            config.ram_val_check.trace_cutoff_elements,
             config.booleanity_address.trace_cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
@@ -166,6 +172,8 @@ impl MetalBackend {
             instruction_claim_sequences: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
             registers_val_sequences: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "test-utils"))]
+            ram_val_shadow_dispatches: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -217,6 +225,13 @@ impl MetalBackend {
         self.registers_val_sequences
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
+    pub fn ram_val_shadow_dispatches(&self) -> usize {
+        self.ram_val_shadow_dispatches
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl<PCS> JoltBackend<AkitaField, PCS>
@@ -233,6 +248,7 @@ where
         self.instruction_input = Box::new(metal.clone());
         self.ram_read_write = Box::new(metal.clone());
         self.ram_raf_evaluation = Box::new(metal.clone());
+        self.ram_val_check = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
         self.booleanity_address = Box::new(metal.clone());
         self.bytecode_read_raf_cycle = Box::new(metal.clone());

@@ -16,10 +16,13 @@ pub const STATUS_INVALID_ROW: u32 = 1 << 1;
 
 pub const FIRST_MESSAGE_PIPELINE: &str = "solinas_ram_val_check_successor_first_message";
 pub const REDUCE_PIPELINE: &str = "solinas_ram_val_check_successor_reduce3";
+pub const SPARSE_FIRST_MESSAGE_PIPELINE: &str = "solinas_ram_val_check_sparse_first_message";
 
 const FLAG_INCREMENT_NONNEGATIVE: u32 = 1 << 0;
 const FLAG_RAM_INCREMENT: u32 = 1 << 1;
 const VALID_FLAGS: u32 = FLAG_INCREMENT_NONNEGATIVE | FLAG_RAM_INCREMENT;
+const PAIR_LO_NEGATIVE: u32 = 1 << 0;
+const PAIR_HI_NEGATIVE: u32 = 1 << 1;
 
 /// The checked typed input to the common row producer.
 ///
@@ -43,6 +46,31 @@ pub struct IncrementAccessRow {
     ram_address: u32,
     flags: u32,
 }
+
+/// One low-to-high cycle pair with at least one nonzero RAM increment.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RamValActivePair {
+    pair_index: u32,
+    signs: u32,
+    lo_magnitude: u64,
+    hi_magnitude: u64,
+}
+
+const _: [(); 24] = [(); size_of::<RamValActivePair>()];
+const _: [(); 8] = [(); align_of::<RamValActivePair>()];
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RamValSparseFirstMessageParams {
+    pub active_pairs: u32,
+    pub rows: u32,
+    pub low_length: u32,
+    pub address_domain: u32,
+}
+
+const _: [(); 16] = [(); size_of::<RamValSparseFirstMessageParams>()];
+const _: [(); 4] = [(); align_of::<RamValSparseFirstMessageParams>()];
 
 const _: [(); 16] = [(); size_of::<IncrementAccessRow>()];
 const _: [(); 8] = [(); align_of::<IncrementAccessRow>()];
@@ -111,6 +139,7 @@ pub struct RamValReductionBuffers {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RamValSuccessorRowError {
     IncrementOutOfRange(i128),
+    PairIndexOutOfRange(usize),
     RemappedAddressOutOfRange(u64),
     InvalidAddressDomain(u32),
     SentinelCollision,
@@ -347,6 +376,81 @@ impl IncrementAccessRow {
             }
         }
         Ok(())
+    }
+}
+
+impl RamValActivePair {
+    pub fn new(
+        pair_index: usize,
+        lo_increment: i128,
+        hi_increment: i128,
+    ) -> Result<Self, RamValSuccessorRowError> {
+        let pair_index = u32::try_from(pair_index)
+            .map_err(|_| RamValSuccessorRowError::PairIndexOutOfRange(pair_index))?;
+        let lo_magnitude = lo_increment.unsigned_abs();
+        let hi_magnitude = hi_increment.unsigned_abs();
+        if lo_magnitude > u128::from(u64::MAX) {
+            return Err(RamValSuccessorRowError::IncrementOutOfRange(lo_increment));
+        }
+        if hi_magnitude > u128::from(u64::MAX) {
+            return Err(RamValSuccessorRowError::IncrementOutOfRange(hi_increment));
+        }
+        let signs = (u32::from(lo_increment < 0) * PAIR_LO_NEGATIVE)
+            | (u32::from(hi_increment < 0) * PAIR_HI_NEGATIVE);
+        Ok(Self {
+            pair_index,
+            signs,
+            lo_magnitude: lo_magnitude as u64,
+            hi_magnitude: hi_magnitude as u64,
+        })
+    }
+
+    pub const fn pair_index(self) -> usize {
+        self.pair_index as usize
+    }
+
+    pub fn increments<F: Field>(self) -> [F; 2] {
+        let mut lo = F::from_u64(self.lo_magnitude);
+        let mut hi = F::from_u64(self.hi_magnitude);
+        if self.signs & PAIR_LO_NEGATIVE != 0 {
+            lo = -lo;
+        }
+        if self.signs & PAIR_HI_NEGATIVE != 0 {
+            hi = -hi;
+        }
+        [lo, hi]
+    }
+}
+
+impl RamValSparseFirstMessageParams {
+    pub fn new(
+        active_pairs: usize,
+        rows: usize,
+        low_length: usize,
+        address_domain: usize,
+    ) -> Result<Self, RamValSuccessorDispatchError> {
+        if active_pairs == 0
+            || rows < 2
+            || !rows.is_power_of_two()
+            || low_length < 2
+            || !low_length.is_power_of_two()
+            || !rows.is_multiple_of(low_length)
+            || address_domain == 0
+            || !address_domain.is_power_of_two()
+            || address_domain >= NO_RAM_ADDRESS as usize
+        {
+            return Err(RamValSuccessorDispatchError::InvalidFirstMessageParams);
+        }
+        Ok(Self {
+            active_pairs: u32::try_from(active_pairs)
+                .map_err(|_| RamValSuccessorDispatchError::ArithmeticOverflow)?,
+            rows: u32::try_from(rows)
+                .map_err(|_| RamValSuccessorDispatchError::ArithmeticOverflow)?,
+            low_length: u32::try_from(low_length)
+                .map_err(|_| RamValSuccessorDispatchError::ArithmeticOverflow)?,
+            address_domain: u32::try_from(address_domain)
+                .map_err(|_| RamValSuccessorDispatchError::ArithmeticOverflow)?,
+        })
     }
 }
 

@@ -504,7 +504,7 @@ fn transition_inner_simd_slots(
     simd_width: u128,
 ) -> Result<u128, ModelError> {
     let rows_per_iteration = high_blocks.checked_mul(4).ok_or(ModelError::Overflow)?;
-    if source_rows % rows_per_iteration != 0 {
+    if !source_rows.is_multiple_of(rows_per_iteration) {
         return Err(ModelError::InvalidFactorization);
     }
     let low_pairs_per_high = source_rows / rows_per_iteration;

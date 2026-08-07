@@ -46,6 +46,7 @@ mod ram_output_check;
 pub mod ram_ra_claim_reduction;
 mod ram_raf_evaluation;
 mod ram_val_check;
+pub mod ram_val_check_successor;
 pub mod registers_claim_reduction;
 mod registers_read_write;
 mod registers_read_write_dense;
@@ -192,6 +193,10 @@ pub use ram_val_check::{
     RamValCheckStorageLayout, RAM_VAL_CHECK_DEFAULT_CPU_TAIL_ELEMENTS,
     RAM_VAL_CHECK_FIVE_X_GATE_NS, RAM_VAL_CHECK_MESSAGE_COLUMNS, RAM_VAL_CHECK_NO_ACCESS,
     RAM_VAL_CHECK_SIMD_WIDTH, RAM_VAL_CHECK_TARGET_CPU_NS,
+};
+pub use ram_val_check_successor::{
+    PendingRamValSparseFirstMessage, RamValActivePair, RamValSparseFirstMessage,
+    RamValSparseFirstMessageStats,
 };
 pub use registers_read_write::{
     RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,

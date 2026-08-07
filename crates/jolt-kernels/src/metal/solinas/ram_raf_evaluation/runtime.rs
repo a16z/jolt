@@ -43,7 +43,7 @@ impl RamRafAddressPlane {
         self.metadata.storage_id()
     }
 
-    fn buffer(&self) -> &Buffer {
+    pub(crate) fn buffer(&self) -> &Buffer {
         &self.buffer
     }
 }

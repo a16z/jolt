@@ -1,16 +1,20 @@
 //! First-principles successor packet for the RAM value-check Metal kernel.
 //!
-//! This module is intentionally not registered yet. It freezes the relation,
-//! producer lease, performance model, independent oracle, and the first sparse
-//! message shader before proof-stage integration changes any shared code.
+//! The sparse first-message path runs as a protocol-inert parity shadow. The
+//! optimized CPU kernel remains authoritative while production timing decides
+//! whether later rounds merit a device implementation.
 
 pub mod abi;
 pub mod model;
 pub mod oracle;
+mod runtime;
+
+pub const SOURCE: &str = include_str!("shader.metal");
 
 pub use abi::{
-    IncrementAccessRow, IncrementAccessSource, RamValBufferRange, RamValFirstMessageBufferLengths,
-    RamValFirstMessageParams, RamValLaunch, RamValReductionBuffers, RamValReductionParams,
+    IncrementAccessRow, IncrementAccessSource, RamValActivePair, RamValBufferRange,
+    RamValFirstMessageBufferLengths, RamValFirstMessageParams, RamValLaunch,
+    RamValReductionBuffers, RamValReductionParams, RamValSparseFirstMessageParams,
     RamValSuccessorDispatchError, RamValSuccessorRowError,
 };
 pub use model::{
@@ -18,6 +22,9 @@ pub use model::{
     ActivityProvenance, ActivityProvenanceRejection, AdmissionDecision, CandidateEvidence,
     CompiledCaptureEvidence, CompiledCaptureRejection, CompiledPhaseResources, PhaseLatencySamples,
     PhaseRoofRejection, ProducerEvidence, RoofBounds, SparseScreenClass, SuccessorPhase,
+};
+pub use runtime::{
+    PendingRamValSparseFirstMessage, RamValSparseFirstMessage, RamValSparseFirstMessageStats,
 };
 
 #[cfg(test)]
