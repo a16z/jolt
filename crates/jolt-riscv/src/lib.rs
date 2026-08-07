@@ -249,6 +249,11 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualXORROTW12 => VirtualXorRotW12 => (0x0086, "jolt.virtual.xorrotw12"),
                 VirtualXORROTW8 => VirtualXorRotW8 => (0x0087, "jolt.virtual.xorrotw8"),
                 VirtualXORROTW7 => VirtualXorRotW7 => (0x0088, "jolt.virtual.xorrotw7"),
+                ADDW => AddW => (0x0089, "rv64.addw"),
+                ADDIW => AddiW => (0x008a, "rv64.addiw"),
+                SUBW => SubW => (0x008b, "rv64.subw"),
+                MULW => MulW => (0x008c, "rv64.mulw"),
+                SLLIW => SllIW => (0x008d, "rv64.slliw"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

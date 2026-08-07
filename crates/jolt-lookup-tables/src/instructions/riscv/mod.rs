@@ -6,6 +6,8 @@
 
 pub mod add;
 pub mod addi;
+pub mod addiw;
+pub mod addw;
 pub mod and;
 pub mod andi;
 pub mod andn;
@@ -25,13 +27,28 @@ pub mod ld;
 pub mod lui;
 pub mod mul;
 pub mod mulhu;
+pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod sd;
+pub mod slliw;
 pub mod slt;
 pub mod slti;
 pub mod sltiu;
 pub mod sltu;
 pub mod sub;
+pub mod subw;
 pub mod xor;
 pub mod xori;
+
+#[inline]
+fn sign_extend_half_word<const XLEN: usize>(value: u64) -> u64 {
+    let half_word_size = XLEN / 2;
+    let lower_mask = (1u128 << half_word_size).wrapping_sub(1) as u64;
+    let lower_half = value & lower_mask;
+    if lower_half & (1 << (half_word_size - 1)) == 0 {
+        lower_half
+    } else {
+        lower_half | (lower_mask << half_word_size)
+    }
+}

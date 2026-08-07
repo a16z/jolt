@@ -714,7 +714,8 @@ macro_rules! define_rv64imac_enums {
                             Ok(JoltInstructionRow {
                                 instruction_kind,
                                 address: instr.address as usize,
-                                operands: instr.operands.into(),
+                                operands: jolt_riscv::NormalizedOperands::from(instr.operands)
+                                    .materialize_for_jolt(instruction_kind),
                                 virtual_sequence_remaining: instr.virtual_sequence_remaining,
                                 is_first_in_sequence: instr.is_first_in_sequence,
                                 is_compressed: instr.is_compressed,
@@ -983,12 +984,14 @@ macro_rules! impl_final_jolt_row_data {
             $(#[$meta])*
             impl From<$instr> for JoltInstructionRow {
                 fn from(instr: $instr) -> JoltInstructionRow {
+                    let instruction_kind = jolt_riscv::JoltInstruction::$marker(
+                        jolt_riscv::instructions::$marker(())
+                    );
                     JoltInstructionRow {
-                        instruction_kind: jolt_riscv::JoltInstruction::$marker(
-                            jolt_riscv::instructions::$marker(())
-                        ),
+                        instruction_kind,
                         address: instr.address as usize,
-                        operands: instr.operands.into(),
+                        operands: jolt_riscv::NormalizedOperands::from(instr.operands)
+                            .materialize_for_jolt(instruction_kind),
                         is_compressed: instr.is_compressed,
                         virtual_sequence_remaining: instr.virtual_sequence_remaining,
                         is_first_in_sequence: instr.is_first_in_sequence,
@@ -999,6 +1002,23 @@ macro_rules! impl_final_jolt_row_data {
     };
 
     (@from_row VirtualAdvice) => {};
+
+    (@from_row SLLIW) => {
+        impl From<JoltInstructionRow> for SLLIW {
+            fn from(row: JoltInstructionRow) -> Self {
+                let mut operands = row.operands;
+                debug_assert!(operands.imm > 0 && (operands.imm as u128).is_power_of_two());
+                operands.imm = (operands.imm as u128).trailing_zeros() as i128;
+                Self {
+                    address: row.address as u64,
+                    operands: operands.into(),
+                    virtual_sequence_remaining: row.virtual_sequence_remaining,
+                    is_first_in_sequence: row.is_first_in_sequence,
+                    is_compressed: row.is_compressed,
+                }
+            }
+        }
+    };
 
     (@from_row $instr:ident) => {
         impl From<JoltInstructionRow> for $instr {
@@ -2083,7 +2103,7 @@ mod tests {
     #[test]
     fn source_only_tracer_conversion_does_not_fabricate_final_kind() {
         let source = SourceInstruction::new(
-            SourceInstructionKind::ADDW,
+            SourceInstructionKind::MULH,
             SourceInstructionRow {
                 address: 0x1234,
                 operands: NormalizedOperands {
@@ -2099,13 +2119,13 @@ mod tests {
 
         let instruction = Instruction::try_from_source_instruction(source).unwrap();
         assert!(instruction.try_jolt_instruction_row().is_err());
-        let Instruction::ADDW(addw) = instruction else {
-            panic!("expected ADDW tracer instruction");
+        let Instruction::MULH(mulh) = instruction else {
+            panic!("expected MULH tracer instruction");
         };
-        assert_eq!(addw.address, 0x1234);
-        assert_eq!(addw.virtual_sequence_remaining, None);
-        assert!(!addw.is_first_in_sequence);
-        assert!(addw.is_compressed);
+        assert_eq!(mulh.address, 0x1234);
+        assert_eq!(mulh.virtual_sequence_remaining, None);
+        assert!(!mulh.is_first_in_sequence);
+        assert!(mulh.is_compressed);
     }
 
     #[test]

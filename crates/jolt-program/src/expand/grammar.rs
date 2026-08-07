@@ -426,12 +426,8 @@ pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
         SourceInstructionKind::Inline
-            | SourceInstructionKind::ADDIW
-            | SourceInstructionKind::ADDW
-            | SourceInstructionKind::SUBW
             | SourceInstructionKind::MULH
             | SourceInstructionKind::MULHSU
-            | SourceInstructionKind::MULW
             | SourceInstructionKind::LB
             | SourceInstructionKind::LBU
             | SourceInstructionKind::LH
@@ -483,7 +479,6 @@ pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
             | SourceInstructionKind::SLL
             | SourceInstructionKind::SLLI
             | SourceInstructionKind::SLLW
-            | SourceInstructionKind::SLLIW
             | SourceInstructionKind::SRL
             | SourceInstructionKind::SRLI
             | SourceInstructionKind::SRA

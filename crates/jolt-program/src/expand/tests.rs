@@ -401,7 +401,7 @@ fn source_only_expanders_are_not_target_legal() {
     }
 
     assert_source_only! {
-        ADDIW, ADDW, SUBW, MULH, MULHSU, MULW,
+        MULH, MULHSU,
         LB, LBU, LH, LHU, LW, LWU,
         AdviceLB, AdviceLH, AdviceLW, AdviceLD,
         AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOSWAPD,
@@ -412,10 +412,34 @@ fn source_only_expanders_are_not_target_legal() {
         DIV, DIVU, DIVW, DIVUW, REM, REMU, REMW, REMUW,
         SB, SCD, SCW, SH, SW,
         CSRRW, CSRRS, EBREAK, ECALL, MRET,
-        SLL, SLLI, SLLW, SLLIW, SRL, SRLI, SRA, SRAI,
+        SLL, SLLI, SLLW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }
     assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
+}
+
+#[test]
+fn fused_word_ops_have_expected_row_counts() -> Result<(), ExpansionError> {
+    for (kind, expected_rows) in [
+        (SourceInstructionKind::ADDW, 1),
+        (SourceInstructionKind::ADDIW, 1),
+        (SourceInstructionKind::SUBW, 1),
+        (SourceInstructionKind::MULW, 1),
+        (SourceInstructionKind::SLLIW, 1),
+        (SourceInstructionKind::SLLW, 2),
+    ] {
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = rows(expand_instruction(
+            &instruction(kind, Some(3), false),
+            &mut allocator,
+            RV64IMAC_JOLT,
+        )?);
+        assert_eq!(expanded.len(), expected_rows, "{kind:?}");
+        if kind == SourceInstructionKind::SLLIW {
+            assert_eq!(expanded[0].operands.imm, 1 << 7);
+        }
+    }
+    Ok(())
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
 
-use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RISCVTrace};
+use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = SLLIW,
@@ -24,8 +24,4 @@ impl SLLIW {
     }
 }
 
-impl RISCVTrace for SLLIW {
-    fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
-    }
-}
+impl RISCVTrace for SLLIW {}
