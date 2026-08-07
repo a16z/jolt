@@ -1,0 +1,101 @@
+{
+  "schema": "metal_product5_tiled_sequence_screen_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-07",
+  "status": "rejected_sequence_integration",
+  "primitive": {
+    "git_revision": "8cc71525f",
+    "source_lineage": "5831cbd905e96cff9d63d670a390b72883abcaa4",
+    "tile_pairs": 128,
+    "location": "crates/jolt-kernels/src/metal/solinas/product5/tiled_transition.rs",
+    "standalone_retained": true,
+    "sequence_integration_retained": false,
+    "production_default_changed": false
+  },
+  "contract": {
+    "device": "Apple M4 Max",
+    "field_offset": 4294944759,
+    "elements": 33554432,
+    "log_elements": 25,
+    "factors": 5,
+    "cpu_tail_elements": 65536,
+    "host_fiat_shamir": true,
+    "resident_sequences": 2,
+    "pairs": 10,
+    "order": "alternating retained-first and tiled-first",
+    "timed_metric": "complete resident Product5 cycle after excluding the identical host-to-resident reset",
+    "candidate_route": "tile only the first transition at 2^25 elements and use the retained transition for the remaining eight Metal rounds",
+    "round_allocations": 0,
+    "transient_evaluator": "JOLT_METAL_EVAL_LOG_N=25 JOLT_METAL_EVAL_REPEATS=10 JOLT_METAL_EVAL_SEED=1 JOLT_METAL_TRANSITION_STRATEGY=paired cargo run --release -p jolt-kernels --features metal,akita,test-utils --example metal-kernel-eval -- instruction-read-raf-cycle",
+    "evaluator_retained_after_screen": false
+  },
+  "prior_standalone_screen": {
+    "artifact": "instruction_read_raf_dense_transition_tile128_log25_screening_5831cbd90.json",
+    "retained_wall_ns": 11331093.75,
+    "tile_128_wall_ns": 9874734.4375,
+    "retained_over_tile_128_wall": 1.1474833902337032,
+    "interpretation": "The isolated transition cleared the three-percent mechanism gate, so sequence integration was warranted but not yet promotable."
+  },
+  "paired_sequence_result": {
+    "exact_cpu_trace": true,
+    "no_round_allocations": true,
+    "tiled_route_count": 1,
+    "tiled_fallback_count": 8,
+    "retained_route_count": 9,
+    "direct_handoff_relative_speedup": 0.6673769253372135,
+    "gpu_active_relative_speedup": 1.0308109937545038,
+    "first_position_direct_speedup": 0.6721954848368946,
+    "second_position_direct_speedup": 0.6085968705505552,
+    "first_position_active_speedup": 1.011061408859753,
+    "second_position_active_speedup": 1.0332162996801229,
+    "pair_ratio_median": 1.086670367591233,
+    "pair_active_ratio_median": 1.0462681299625078,
+    "pair_relative_speedups": [
+      0.7998990654629798,
+      0.5178307664221764,
+      0.5701592092238155,
+      1.1743221013391523,
+      0.3486478543179573,
+      1.3346740838100515,
+      1.6753751315074328,
+      0.48292837292371255,
+      1.3282006747861377,
+      1.086670367591233
+    ],
+    "pair_active_speedups": [
+      1.005328065568548,
+      1.049260569050283,
+      1.0134206308826355,
+      1.2920671133995003,
+      0.9500734302398545,
+      1.0876020705644698,
+      1.0041958625925225,
+      1.0054190273453072,
+      1.084836977368362,
+      1.0462681299625078
+    ],
+    "both_order_strata_clear_three_percent": false
+  },
+  "small_scale_control": {
+    "log_elements": 22,
+    "retained_gpu_dispatch_wall_ms": 15.153127,
+    "tiled_gpu_dispatch_wall_ms": 17.118875,
+    "tiled_wall_regression_fraction": 0.12973017716590672,
+    "interpretation": "Tiled transitions are not a general replacement for the retained kernel."
+  },
+  "correctness": {
+    "standalone_biguint_test": "cargo nextest run -p jolt-kernels product5_tiled_transition_matches_biguint --cargo-quiet --features test-utils,akita,metal",
+    "standalone_biguint_result": "passed",
+    "transient_two_round_sequence_biguint_result": "passed",
+    "transient_instruction_read_raf_lockstep_tests": "four passed",
+    "cargo_check_all_targets": "passed",
+    "targeted_clippy": "passed",
+    "cargo_fmt": "passed"
+  },
+  "decision": {
+    "primitive": "retain_as_reusable_product5_microkernel",
+    "sequence_candidate": "reject_and_auto_revert",
+    "reason": "The isolated kernel reduces its own active and wall time, but the complete resident sequence gains only 3.1 percent GPU-active time and regresses the primary direct-handoff wall in both position strata. The primary metric therefore falsifies production integration.",
+    "next_action": "Keep the retained Product5 sequence unchanged. Reconsider the tiled primitive only inside an architecture that removes its additional dispatch and completion exposure, and require a paired complete-sequence win before integration."
+  }
+}
