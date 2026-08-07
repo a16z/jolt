@@ -43,6 +43,8 @@ mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
 #[doc(hidden)]
 pub mod instruction_read_raf_v2;
+#[doc(hidden)]
+pub mod instruction_read_raf_v3;
 mod outer_remainder;
 mod product5;
 mod product_remainder;
