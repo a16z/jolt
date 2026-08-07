@@ -1,4 +1,11 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
+use tracer::instruction::virtual_xor_rot::{
+    VirtualXORROT19, VirtualXORROT2, VirtualXORROT20, VirtualXORROT21, VirtualXORROT23,
+    VirtualXORROT25, VirtualXORROT28, VirtualXORROT3, VirtualXORROT36, VirtualXORROT37,
+    VirtualXORROT39, VirtualXORROT43, VirtualXORROT44, VirtualXORROT46, VirtualXORROT49,
+    VirtualXORROT50, VirtualXORROT54, VirtualXORROT56, VirtualXORROT58, VirtualXORROT61,
+    VirtualXORROT62, VirtualXORROT8, VirtualXORROT9,
+};
 use tracer::instruction::{
     virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63},
     RISCVCycle,
@@ -74,6 +81,29 @@ impl_virtual_xor_rot!(VirtualXORROT32, 32);
 impl_virtual_xor_rot!(VirtualXORROT24, 24);
 impl_virtual_xor_rot!(VirtualXORROT16, 16);
 impl_virtual_xor_rot!(VirtualXORROT63, 63);
+impl_virtual_xor_rot!(VirtualXORROT2, 2);
+impl_virtual_xor_rot!(VirtualXORROT3, 3);
+impl_virtual_xor_rot!(VirtualXORROT8, 8);
+impl_virtual_xor_rot!(VirtualXORROT9, 9);
+impl_virtual_xor_rot!(VirtualXORROT19, 19);
+impl_virtual_xor_rot!(VirtualXORROT20, 20);
+impl_virtual_xor_rot!(VirtualXORROT21, 21);
+impl_virtual_xor_rot!(VirtualXORROT23, 23);
+impl_virtual_xor_rot!(VirtualXORROT25, 25);
+impl_virtual_xor_rot!(VirtualXORROT28, 28);
+impl_virtual_xor_rot!(VirtualXORROT36, 36);
+impl_virtual_xor_rot!(VirtualXORROT37, 37);
+impl_virtual_xor_rot!(VirtualXORROT39, 39);
+impl_virtual_xor_rot!(VirtualXORROT43, 43);
+impl_virtual_xor_rot!(VirtualXORROT44, 44);
+impl_virtual_xor_rot!(VirtualXORROT46, 46);
+impl_virtual_xor_rot!(VirtualXORROT49, 49);
+impl_virtual_xor_rot!(VirtualXORROT50, 50);
+impl_virtual_xor_rot!(VirtualXORROT54, 54);
+impl_virtual_xor_rot!(VirtualXORROT56, 56);
+impl_virtual_xor_rot!(VirtualXORROT58, 58);
+impl_virtual_xor_rot!(VirtualXORROT61, 61);
+impl_virtual_xor_rot!(VirtualXORROT62, 62);
 
 #[cfg(test)]
 mod test {

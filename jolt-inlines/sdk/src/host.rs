@@ -53,9 +53,32 @@ pub mod instruction {
     alias_instruction!(virtual_assert_lte, VirtualAssertLTE, AssertLte);
     pub mod virtual_xor_rot {
         pub use jolt_riscv::instructions::VirtualXorRot16 as VirtualXORROT16;
+        pub use jolt_riscv::instructions::VirtualXorRot19 as VirtualXORROT19;
+        pub use jolt_riscv::instructions::VirtualXorRot2 as VirtualXORROT2;
+        pub use jolt_riscv::instructions::VirtualXorRot20 as VirtualXORROT20;
+        pub use jolt_riscv::instructions::VirtualXorRot21 as VirtualXORROT21;
+        pub use jolt_riscv::instructions::VirtualXorRot23 as VirtualXORROT23;
         pub use jolt_riscv::instructions::VirtualXorRot24 as VirtualXORROT24;
+        pub use jolt_riscv::instructions::VirtualXorRot25 as VirtualXORROT25;
+        pub use jolt_riscv::instructions::VirtualXorRot28 as VirtualXORROT28;
+        pub use jolt_riscv::instructions::VirtualXorRot3 as VirtualXORROT3;
         pub use jolt_riscv::instructions::VirtualXorRot32 as VirtualXORROT32;
+        pub use jolt_riscv::instructions::VirtualXorRot36 as VirtualXORROT36;
+        pub use jolt_riscv::instructions::VirtualXorRot37 as VirtualXORROT37;
+        pub use jolt_riscv::instructions::VirtualXorRot39 as VirtualXORROT39;
+        pub use jolt_riscv::instructions::VirtualXorRot43 as VirtualXORROT43;
+        pub use jolt_riscv::instructions::VirtualXorRot44 as VirtualXORROT44;
+        pub use jolt_riscv::instructions::VirtualXorRot46 as VirtualXORROT46;
+        pub use jolt_riscv::instructions::VirtualXorRot49 as VirtualXORROT49;
+        pub use jolt_riscv::instructions::VirtualXorRot50 as VirtualXORROT50;
+        pub use jolt_riscv::instructions::VirtualXorRot54 as VirtualXORROT54;
+        pub use jolt_riscv::instructions::VirtualXorRot56 as VirtualXORROT56;
+        pub use jolt_riscv::instructions::VirtualXorRot58 as VirtualXORROT58;
+        pub use jolt_riscv::instructions::VirtualXorRot61 as VirtualXORROT61;
+        pub use jolt_riscv::instructions::VirtualXorRot62 as VirtualXORROT62;
         pub use jolt_riscv::instructions::VirtualXorRot63 as VirtualXORROT63;
+        pub use jolt_riscv::instructions::VirtualXorRot8 as VirtualXORROT8;
+        pub use jolt_riscv::instructions::VirtualXorRot9 as VirtualXORROT9;
     }
     pub mod virtual_xor_rotw {
         pub use jolt_riscv::instructions::VirtualXorRotW12 as VirtualXORROTW12;

@@ -311,18 +311,57 @@ impl Keccak256SequenceBuilder {
 ///
 /// Emitting one of these instead of a separate XOR + ROTRI pair saves one row
 /// per lane per round, which is why θ-apply is folded into ρ wherever the
-/// rotation amount has a table.
+/// rotation amount has a table. Every nonzero Keccak ρ rotation has one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum XorRot {
-    Rot63,
+struct XorRot {
+    /// Right-rotation amount (`64 - rho_left_rotation`).
+    rotr: u32,
+}
+
+macro_rules! xor_rot_dispatch {
+    ($self:ident, $asm:ident, $rd:ident, $rs1:ident, $rs2:ident, [$($n:literal => $instr:ident),+ $(,)?]) => {
+        match $self.rotr {
+            $($n => $asm.emit_r::<jolt_inlines_sdk::host::instruction::virtual_xor_rot::$instr>($rd, $rs1, $rs2),)+
+            _ => unreachable!("no VirtualXORROT table for rotation {}", $self.rotr),
+        }
+    };
 }
 
 impl XorRot {
     fn emit(self, asm: &mut InlineExpansionBuilder, rd: u8, rs1: u8, rs2: u8) {
-        use jolt_inlines_sdk::host::instruction::virtual_xor_rot::VirtualXORROT63;
-        match self {
-            XorRot::Rot63 => asm.emit_r::<VirtualXORROT63>(rd, rs1, rs2),
-        }
+        xor_rot_dispatch!(
+            self,
+            asm,
+            rd,
+            rs1,
+            rs2,
+            [
+                2 => VirtualXORROT2,
+                3 => VirtualXORROT3,
+                8 => VirtualXORROT8,
+                9 => VirtualXORROT9,
+                19 => VirtualXORROT19,
+                20 => VirtualXORROT20,
+                21 => VirtualXORROT21,
+                23 => VirtualXORROT23,
+                25 => VirtualXORROT25,
+                28 => VirtualXORROT28,
+                36 => VirtualXORROT36,
+                37 => VirtualXORROT37,
+                39 => VirtualXORROT39,
+                43 => VirtualXORROT43,
+                44 => VirtualXORROT44,
+                46 => VirtualXORROT46,
+                49 => VirtualXORROT49,
+                50 => VirtualXORROT50,
+                54 => VirtualXORROT54,
+                56 => VirtualXORROT56,
+                58 => VirtualXORROT58,
+                61 => VirtualXORROT61,
+                62 => VirtualXORROT62,
+                63 => VirtualXORROT63,
+            ]
+        )
     }
 }
 
@@ -330,11 +369,15 @@ impl XorRot {
 /// `rotl64(a ^ b, amount)`, if one exists.
 ///
 /// `rotl64(v, r)` = `rotr64(v, 64 - r)`, so a left rotation by `r` needs the
-/// `VirtualXORROT{64-r}` table.
+/// `VirtualXORROT{64-r}` table. All 24 nonzero ρ rotations are covered; only
+/// the identity rotation of lane (0,0) has none.
 fn xor_rot_for_amount(rotl_amount: u32) -> Option<XorRot> {
     match rotl_amount {
-        1 => Some(XorRot::Rot63),
-        _ => None,
+        0 => None,
+        1..=63 => Some(XorRot {
+            rotr: 64 - rotl_amount,
+        }),
+        _ => unreachable!("keccak rho rotation out of range: {rotl_amount}"),
     }
 }
 
