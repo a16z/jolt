@@ -33,7 +33,6 @@ use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCom
 use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, PrefixPackedClaims,
 };
-use jolt_poly::OneHotPolynomial;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
