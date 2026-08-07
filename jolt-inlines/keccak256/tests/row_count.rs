@@ -38,11 +38,11 @@ fn count_keccak256_rows() {
         println!("{count:6}  {name}");
     }
 
-    // 24 rounds x 126 rows (70 XOR + 5 XORROTL1 + 24 ROTRI + 25 ANDN + 2 XORI)
-    // + 25 LD + 25 SD + 66 register resets.
+    // 24 rounds x 125 rows (70 XOR + 5 XORROTL1 + 24 ROTRI + 25 ANDN + 1 XORI)
+    // + 25 LD + 25 SD + 37 register resets.
     assert_eq!(
         sequence.len(),
-        3140,
+        3087,
         "keccak256 inline row count changed; update this ratchet deliberately"
     );
 }
