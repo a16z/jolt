@@ -14,6 +14,7 @@ use crate::{
     challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
 };
 
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -43,6 +44,7 @@ pub struct IncClaimReductionInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the increment claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct IncClaimReductionChallenges<F> {
     #[challenge(IncClaimReductionChallenge::Gamma)]
     pub gamma: F,

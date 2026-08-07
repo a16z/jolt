@@ -51,6 +51,9 @@ libc = "0.2"
 
 [dev-dependencies]
 criterion = { workspace = true }
+iai-callgrind.workspace = true
+iai-callgrind-runner.workspace = true
+jolt-poly.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"
@@ -90,6 +93,11 @@ harness = false
 
 [[bench]]
 name = "prover_time_sha2_chain"
+harness = false
+
+[[bench]]
+name = "eq_evals"
+path = "benches/callgrind/eq_evals.rs"
 harness = false
 
 [[bench]]

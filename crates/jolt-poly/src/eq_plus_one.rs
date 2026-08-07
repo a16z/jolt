@@ -11,8 +11,8 @@
 
 use jolt_field::Field;
 
-use crate::thread::unsafe_allocate_zero_vec;
 use crate::EqPolynomial;
+use jolt_utils::unsafe_allocate_zero_vec;
 
 /// MLE evaluating to 1 iff `y = x + 1` (no wrap at `2^l − 1`).
 ///
@@ -153,7 +153,7 @@ impl<F: Field> EqPlusOnePrefixSuffix<F> {
         let ones: Vec<F> = vec![F::one(); r_lo.len()];
         let is_max_eval = EqPolynomial::<F>::mle(&ones, r_lo);
 
-        let mut prefix_1 = crate::thread::unsafe_allocate_zero_vec(1 << r_lo.len());
+        let mut prefix_1 = jolt_utils::unsafe_allocate_zero_vec(1 << r_lo.len());
         prefix_1[0] = is_max_eval;
 
         let (suffix_0, suffix_1) = EqPlusOnePolynomial::evals(r_hi, None);

@@ -370,6 +370,8 @@ impl TraceSource for OwnedTrace {
     }
 
     fn rows(&self) -> Option<&[TraceRow]> {
-        Some(OwnedTrace::rows(self))
+        // Pristine sources only: after `next_row` consumption the full slice
+        // would diverge from the remaining stream.
+        (self.next == 0).then(|| self.rows.as_slice())
     }
 }

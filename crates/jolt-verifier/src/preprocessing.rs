@@ -6,6 +6,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::VerifierError;
 
@@ -57,8 +58,14 @@ impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
     serialize = "PCS::Output: Serialize",
     deserialize = "PCS::Output: serde::de::DeserializeOwned"
 ))]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "constructed once per preprocessing; boxing Committed buys nothing"
+)]
 pub enum ProgramPreprocessing<PCS: CommitmentScheme> {
-    Full(JoltProgramPreprocessing),
+    /// `Arc` so witness backends take an owning handle without deep-cloning
+    /// the program-sized tables (serde `rc`: serializes as the contents).
+    Full(Arc<JoltProgramPreprocessing>),
     Committed(CommittedProgramPreprocessing<PCS>),
 }
 
@@ -66,6 +73,15 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     pub fn as_full(&self) -> Option<&JoltProgramPreprocessing> {
         match self {
             Self::Full(full) => Some(full),
+            Self::Committed(_) => None,
+        }
+    }
+
+    /// The owning counterpart of [`as_full`](Self::as_full) — a refcount
+    /// bump, never a copy.
+    pub fn as_full_arc(&self) -> Option<Arc<JoltProgramPreprocessing>> {
+        match self {
+            Self::Full(full) => Some(Arc::clone(full)),
             Self::Committed(_) => None,
         }
     }

@@ -18,7 +18,6 @@ use super::terminal::Terminal;
 /// @TODO: Memory protection is not implemented yet. We should support.
 #[derive(Clone, Debug)]
 pub struct Mmu {
-    clock: u64,
     ppn: u64,
     addressing_mode: AddressingMode,
     privilege_mode: PrivilegeMode,
@@ -65,7 +64,6 @@ impl Mmu {
     /// * `tracer`
     pub fn new(_terminal: Box<dyn Terminal>) -> Self {
         Mmu {
-            clock: 0,
             ppn: 0,
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
@@ -88,11 +86,6 @@ impl Mmu {
     /// * `capacity`
     pub fn init_memory(&mut self, capacity: u64) {
         self.memory.init(capacity);
-    }
-
-    /// Runs one cycle of MMU and peripheral devices.
-    pub fn tick(&mut self) {
-        self.clock = self.clock.wrapping_add(1);
     }
 
     /// Updates addressing mode
@@ -990,7 +983,6 @@ impl Mmu {
 impl Mmu {
     pub fn save_state_with_empty_memory(&self) -> Mmu {
         Mmu {
-            clock: self.clock,
             ppn: self.ppn,
             addressing_mode: self.addressing_mode,
             privilege_mode: self.privilege_mode,
@@ -1008,7 +1000,6 @@ impl Mmu {
     /// new fields must be classified.
     pub(crate) fn capture_chunk_state(&self) -> ChunkMmuState {
         let Mmu {
-            clock,
             ppn,
             addressing_mode,
             privilege_mode,
@@ -1019,7 +1010,6 @@ impl Mmu {
             mstatus,
         } = self;
         ChunkMmuState {
-            clock: *clock,
             ppn: *ppn,
             addressing_mode: *addressing_mode,
             privilege_mode: *privilege_mode,
@@ -1029,7 +1019,6 @@ impl Mmu {
 
     /// Counterpart of [`Mmu::capture_chunk_state`].
     pub(crate) fn install_chunk_state(&mut self, state: &ChunkMmuState) {
-        self.clock = state.clock;
         self.ppn = state.ppn;
         self.addressing_mode = state.addressing_mode;
         self.privilege_mode = state.privilege_mode;
@@ -1039,8 +1028,7 @@ impl Mmu {
 
 /// MMU translation state captured with a chunk checkpoint.
 #[derive(Clone, Copy, Debug)]
-pub struct ChunkMmuState {
-    clock: u64,
+pub(crate) struct ChunkMmuState {
     ppn: u64,
     addressing_mode: AddressingMode,
     privilege_mode: PrivilegeMode,

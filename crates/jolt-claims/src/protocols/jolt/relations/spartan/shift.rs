@@ -19,6 +19,7 @@ use crate::{
 /// Produced Spartan shift openings (the shifted unexpanded-PC / PC / virtual /
 /// first-in-sequence / noop columns), all sharing the single shift opening point.
 /// Generic over the cell.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -57,6 +58,7 @@ pub struct SpartanShiftInputClaims<C> {
 
 /// Fiat-Shamir challenge drawn by the Spartan shift sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct SpartanShiftChallenges<F> {
     #[challenge(SpartanShiftChallenge::Gamma)]
     pub gamma: F,

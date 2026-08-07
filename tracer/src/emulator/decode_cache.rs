@@ -57,14 +57,18 @@ impl DecodeCache {
         self.entries = Vec::new();
     }
 
-    /// Permanently disable the cache: every lookup misses and every insert is
-    /// a no-op, restoring fetch-per-tick semantics.
+    /// Drop all cached entries in place, keeping the executable range.
     ///
-    /// Required while checkpoint saving is active: replaying a chunk needs its
-    /// text bytes in the chunk's first-touch memory image, which only happens
-    /// if every executed instruction actually fetches from memory.
-    pub fn disable(&mut self) {
-        self.init(0, 0);
+    /// Called at every checkpoint-interval boundary while first-touch
+    /// recording is active: a chunk's replay needs its text bytes in that
+    /// chunk's first-touch memory image, which only happens if each PC's
+    /// first execution within the interval actually fetches from memory.
+    /// Clearing (rather than disabling for the whole run) re-records those
+    /// fetches per interval while keeping cached decode/expansion speed for
+    /// re-executions within an interval.
+    pub fn clear_entries(&mut self) {
+        self.slots = Vec::new();
+        self.entries = Vec::new();
     }
 
     /// A copy that keeps the executable range but drops all cached entries.

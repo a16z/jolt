@@ -38,10 +38,24 @@ use crate::emulator::{
     Emulator,
 };
 
-/// Initial trace capacity: covers the standard 2^23-cycle proving scale
-/// without Vec regrowth (each doubling past the hundreds of MB memcpys the
-/// whole trace). Reserved address space is only faulted in as rows are pushed.
-const TRACE_CAPACITY_RESERVE: usize = 1 << 24;
+/// Initial trace capacity, in rows (`JOLT_TRACER_CAPACITY_ROWS` overrides —
+/// the same knob the parallel path uses): the default covers the standard
+/// 2^23-cycle proving scale without Vec regrowth (each doubling past the
+/// hundreds of MB memcpys the whole trace). Reserved address space is only
+/// faulted in as rows are pushed.
+fn trace_capacity_reserve() -> usize {
+    env_rows("JOLT_TRACER_CAPACITY_ROWS", parallel::DEFAULT_CAPACITY_ROWS)
+}
+
+/// Positive row-count env override; unset, unparsable, or zero falls back to
+/// `default`.
+fn env_rows(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|&rows| rows > 0)
+        .unwrap_or(default)
+}
 
 /// Executes a RISC-V program to completion and materializes its execution
 /// trace.
@@ -98,7 +112,7 @@ pub fn trace(
             // lazy iterator's per-cycle buffer/reverse/pop round-trip.
             // Termination matches the lazy path: stop on the first step that
             // emits no rows (PC stall or a trap that produced no trace).
-            let mut trace: Vec<Cycle> = Vec::with_capacity(TRACE_CAPACITY_RESERVE);
+            let mut trace: Vec<Cycle> = Vec::with_capacity(trace_capacity_reserve());
             let mut prev_pc: u64 = 0;
             loop {
                 let rows_before = trace.len();
@@ -297,26 +311,16 @@ pub fn trace_checkpoints(
 /// Opt-in parallel tracing: `TRACER_PARALLEL=<workers>` (unset, 0, 1, or
 /// unparsable = serial — a single worker would only re-trace what pass-1
 /// already executed); `JOLT_TRACER_CHUNK_ROWS` overrides the default chunk
-/// size.
+/// size and `JOLT_TRACER_CAPACITY_ROWS` the up-front output reservation.
 fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
     let workers: usize = std::env::var("TRACER_PARALLEL").ok()?.parse().ok()?;
     if workers <= 1 {
         return None;
     }
-    let chunk_rows = std::env::var("JOLT_TRACER_CHUNK_ROWS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|&rows| rows > 0)
-        .unwrap_or(parallel::DEFAULT_CHUNK_ROWS);
-    let capacity_rows = std::env::var("JOLT_TRACER_CAPACITY_ROWS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|&rows| rows > 0)
-        .unwrap_or(parallel::DEFAULT_CAPACITY_ROWS);
     Some(parallel::TwoPassConfig {
         workers,
-        chunk_rows,
-        capacity_rows,
+        chunk_rows: env_rows("JOLT_TRACER_CHUNK_ROWS", parallel::DEFAULT_CHUNK_ROWS),
+        capacity_rows: env_rows("JOLT_TRACER_CAPACITY_ROWS", parallel::DEFAULT_CAPACITY_ROWS),
     })
 }
 
@@ -644,9 +648,11 @@ impl CheckpointingTracer {
         let mmu = self.emulator_state.get_mut_cpu().get_mut_mmu();
         mmu.memory.memory.data.start_saving_checkpoints();
         // Replay needs every executed instruction's text bytes present in the
-        // chunk's first-touch memory image; the decode cache would skip those
-        // fetches, so it must be off for the whole checkpointed run.
-        mmu.decode_cache.disable();
+        // chunk's first-touch memory image, so each interval must start with
+        // an empty decode cache (a cache hit skips the recorded fetch). The
+        // cache is cleared again at every save_checkpoint; within an interval
+        // it works normally.
+        mmu.decode_cache.clear_entries();
     }
 
     /// Save the recorded memory traces to a new [`Checkpoint`] and reset the hashmap to which
@@ -677,14 +683,11 @@ impl CheckpointingTracer {
         );
 
         // Store the hashmap of memory assignments since the last chunk
-        let data = self
-            .emulator_state
-            .get_mut_cpu()
-            .get_mut_mmu()
-            .memory
-            .memory
-            .data
-            .save_checkpoint();
+        let mmu = self.emulator_state.get_mut_cpu().get_mut_mmu();
+        let data = mmu.memory.memory.data.save_checkpoint();
+        // The next interval's first-touch map must see each PC's first fetch
+        // re-recorded (see start_saving_checkpoints).
+        mmu.decode_cache.clear_entries();
         new_processor_state.set_memory_state(data, self.trace_steps_since_last_checkpoint);
         self.trace_steps_since_last_checkpoint = 0;
 
@@ -1239,12 +1242,11 @@ mod tests {
         }
     }
 
-    #[test]
     /// A count-preserving replay divergence must trip the boundary-state
     /// verification. Fault injection corrupts one worker register after
     /// replay (row counts stay equal), so only the boundary check can catch
     /// it; without it the trace would be assembled silently.
-    fn test_boundary_divergence_panics() {
+    fn boundary_divergence_panics(workers: usize) {
         use crate::parallel::{run_two_pass, TwoPassConfig, TEST_CORRUPT_BOUNDARY_STATE};
         use std::sync::atomic::Ordering;
         use std::sync::mpsc;
@@ -1264,7 +1266,7 @@ mod tests {
                 run_two_pass(
                     emulator,
                     &TwoPassConfig {
-                        workers: 1,
+                        workers,
                         chunk_rows: 64,
                         capacity_rows: 1 << 24,
                     },
@@ -1282,6 +1284,20 @@ mod tests {
                 panic!("two-pass trace hung on boundary divergence instead of panicking")
             }
         }
+    }
+
+    #[test]
+    fn test_boundary_divergence_panics() {
+        boundary_divergence_panics(1);
+    }
+
+    /// Multi-worker variant: the first tripped worker panics while its
+    /// siblings may be blocked awaiting end boundaries pass-1 will never
+    /// publish (its own boundary assert fires first) — the interleaving that
+    /// hangs without the pass-1-side panic guard and the polling wait.
+    #[test]
+    fn test_boundary_divergence_panics_multiworker() {
+        boundary_divergence_panics(4);
     }
 
     #[test]
