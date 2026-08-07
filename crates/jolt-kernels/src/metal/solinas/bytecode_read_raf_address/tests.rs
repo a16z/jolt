@@ -8,7 +8,7 @@ use super::{
     BytecodeAddressMajorConfig, BYTECODE_ADDRESS_MAJOR_BASE_STAGES,
     BYTECODE_ADDRESS_MAJOR_SIMD_WIDTH, BYTECODE_ADDRESS_MAJOR_STAGES,
 };
-use crate::metal::solinas::SolinasMetal;
+use crate::metal::solinas::{BooleanityRow, SolinasMetal};
 
 fn fixture() -> (AddressMajorShape, Vec<Row>) {
     let shape = AddressMajorShape::new(12, 5, 8).unwrap();
@@ -166,4 +166,67 @@ fn address_major_worker_handles_a_full_u16_cell() {
 
     assert_eq!(carrier.cell(0, 0).unwrap().count(), 1 << 15);
     assert_eq!(invocation.execute().unwrap(), expected);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn resident_producer_matches_the_independent_row_oracle() {
+    let context = SolinasMetal::for_akita().unwrap();
+    let shape = AddressMajorShape::production(15).unwrap();
+    let rows = (0..shape.rows().unwrap())
+        .map(|inner| Row {
+            mapped_pc: if inner.is_multiple_of(257) {
+                None
+            } else {
+                Some((17 * inner + inner / 31) % shape.addresses().unwrap())
+            },
+            fused_inc_magnitude: if inner.is_multiple_of(509) {
+                u64::MAX
+            } else {
+                (13 * inner + 7) as u64
+            },
+            fused_inc_negative: inner.is_multiple_of(5),
+        })
+        .collect::<Vec<_>>();
+    let resident_words = rows
+        .iter()
+        .map(|row| {
+            let magnitude = i128::from(row.fused_inc_magnitude);
+            BooleanityRow::new(
+                0,
+                row.mapped_pc.map(|pc| pc as u64),
+                None,
+                if row.fused_inc_negative {
+                    -magnitude
+                } else {
+                    magnitude
+                },
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let resident = context.prepare_booleanity_rows(&resident_words).unwrap();
+    let source_id = resident.allocation_identity();
+    let device_id = resident.device_registry_id();
+    let (e_lo, e_hi) = tables(shape);
+    let expected = direct_oracle(shape, &rows, &e_lo, &e_hi);
+    let pending = context
+        .prepare_bytecode_address_major_resident_shadow(
+            resident,
+            &e_lo,
+            &e_hi,
+            BytecodeAddressMajorConfig { outer_tiles: 1 },
+        )
+        .unwrap()
+        .submit()
+        .unwrap();
+    let (_, observation) = pending.join().unwrap();
+
+    assert_eq!(observation.source_rows_storage_id, Some(source_id));
+    assert_eq!(observation.source_rows_device_registry_id, Some(device_id));
+    assert_eq!(
+        observation.producer_status.unwrap().emitted_rows as usize,
+        rows.len()
+    );
+    assert_eq!(observation.output, expected);
 }

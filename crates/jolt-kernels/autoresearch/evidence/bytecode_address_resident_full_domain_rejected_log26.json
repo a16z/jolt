@@ -1,0 +1,74 @@
+{
+  "schema": "metal_bytecode_address_resident_full_domain_screen_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-07",
+  "evidence_stage": "diagnostic_mechanism_screen_rejected",
+  "candidate": {
+    "base_revision": "e02c455a2b9bd68be8ba732fdfe2f961c645e89f",
+    "worktree_state_sha256": "b275004b13cc95052beacb3be85a6f34ab72e7854f154c7d970ff91032f8a958",
+    "binary_sha256": "e1d366512cd124746e6797dbd1db491848df9e6f7c9a1f49c5a06c10179eb3e5",
+    "producer": "solinas_bytecode_address_major_build_resident",
+    "worker": "solinas_bytecode_address_major_worker_5_4",
+    "reducer": "solinas_bytecode_address_major_reduce_tiles",
+    "production_default_changed": false
+  },
+  "contract": {
+    "log_t": 26,
+    "rows": 67108864,
+    "addresses": 8192,
+    "inner_length": 32768,
+    "outer_length": 2048,
+    "outer_tiles": 8,
+    "producer_threads_per_group": 1024,
+    "producer_threadgroup_bytes": 32768,
+    "commands": 1,
+    "waits": 1,
+    "source_row_bytes": 40,
+    "row_allocations": 0,
+    "row_upload_bytes": 0,
+    "carrier_upload_bytes": 0,
+    "producer_completed_outer_blocks": 2048,
+    "producer_emitted_rows": 67108864,
+    "host_fiat_shamir": true,
+    "cpu_output_authoritative": true
+  },
+  "correctness": {
+    "independent_resident_oracle_test": "passed",
+    "high_level_cpu_pushforward_parity_test": "passed",
+    "full_proof_verification": "passed",
+    "all_output_fields_equal": 73728,
+    "source_allocation_identity_preserved": true
+  },
+  "measurement": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260807-221842-270928",
+    "order": ["optimized", "metal"],
+    "submit_ns": 73583,
+    "overlap_ns": 186828709,
+    "join_ns": 22583708,
+    "total_ns": 209486000,
+    "gpu_active_ns": 200580375,
+    "completed_before_join": false,
+    "known_tile8_worker_gpu_active_ns": 10478216,
+    "inferred_producer_and_integration_overhead_ns": 190102159,
+    "frozen_cpu_address_member_ns": 204085127,
+    "gpu_active_speedup_vs_frozen_cpu": 1.017474962,
+    "visible_join_speedup_vs_frozen_cpu": 9.005022,
+    "visible_join_is_not_service_time": true
+  },
+  "analytical_boundary": {
+    "minimum_selective_traffic_bytes": 2483027968,
+    "minimum_selective_traffic_formula": "36*N + 4*O*K",
+    "threadgroup_atomic_updates": 134217728,
+    "request_traffic_can_be_higher": "The literal AoS shader may request two 40-byte rows per cycle even though the selective fields total 24 bytes.",
+    "fibonacci_nonempty_cells": 20008,
+    "mean_nonempty_addresses_per_outer": 9.76953125,
+    "maximum_cell_count": 32768
+  },
+  "decision": {
+    "status": "reject_full_domain_producer_retain_worker",
+    "promotion_eligible": false,
+    "reason": "The exact 5+4 worker remains fast, but the 8192-bin, 1024-thread, 32-KiB producer consumes about 190 ms beyond the measured worker. CPU overlap hides most of that cost in the shadow join, so the 22.6-ms join is not a valid service-time result.",
+    "kill_gate": "The direct producer exceeds the pre-registered 8.5-ms incremental-builder bar by more than 22x.",
+    "next_experiment": "Build only the approximately ten live address cells per outer using a compact-support map produced during the existing resident-row extraction, or co-produce the complete carrier in that extraction. Keep the accepted tile-8 worker unchanged."
+  }
+}

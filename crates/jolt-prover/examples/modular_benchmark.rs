@@ -571,6 +571,24 @@ mod akita_benchmark {
     }
 
     #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
+    enum BytecodeAddressImplementation {
+        #[default]
+        Cpu,
+        CsrShadow,
+        AddressMajorShadow,
+    }
+
+    impl BytecodeAddressImplementation {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::Cpu => "cpu",
+                Self::CsrShadow => "csr-shadow",
+                Self::AddressMajorShadow => "address-major-shadow",
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
     enum HammingWeightImplementation {
         #[default]
         AcceptedRows,
@@ -602,6 +620,13 @@ mod akita_benchmark {
         transition_threads: usize,
         max_threadgroups: usize,
         cutoff_log2: u32,
+        trace_cutoff_log2: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct BytecodeAddressMetalTuning {
+        implementation: BytecodeAddressImplementation,
+        outer_tiles: usize,
         trace_cutoff_log2: u32,
     }
 
@@ -652,6 +677,7 @@ mod akita_benchmark {
         instruction_ra_reuse_inverse: bool,
         bytecode_cycle_algebra: BytecodeCycleAlgebra,
         bytecode_metal: BytecodeMetalTuning,
+        bytecode_address_metal: BytecodeAddressMetalTuning,
         instruction_input_metal: InstructionInputMetalTuning,
         booleanity_address_metal: BooleanityAddressMetalTuning,
         hamming_weight_metal: HammingWeightMetalTuning,
@@ -698,6 +724,15 @@ mod akita_benchmark {
 
         #[clap(long, default_value_t = 18)]
         bytecode_metal_trace_cutoff_log2: u32,
+
+        #[clap(long, value_enum, default_value = "cpu")]
+        bytecode_address_metal_implementation: BytecodeAddressImplementation,
+
+        #[clap(long, default_value_t = 8)]
+        bytecode_address_metal_outer_tiles: usize,
+
+        #[clap(long, default_value_t = 26)]
+        bytecode_address_metal_trace_cutoff_log2: u32,
 
         #[clap(long, default_value_t = 256)]
         instruction_input_metal_native_message_threads: usize,
@@ -816,6 +851,11 @@ mod akita_benchmark {
                 cutoff_log2: cli.bytecode_metal_cutoff_log2,
                 trace_cutoff_log2: cli.bytecode_metal_trace_cutoff_log2,
             },
+            bytecode_address_metal: BytecodeAddressMetalTuning {
+                implementation: cli.bytecode_address_metal_implementation,
+                outer_tiles: cli.bytecode_address_metal_outer_tiles,
+                trace_cutoff_log2: cli.bytecode_address_metal_trace_cutoff_log2,
+            },
             instruction_input_metal: InstructionInputMetalTuning {
                 native_message_threads: cli.instruction_input_metal_native_message_threads,
                 native_transition_threads: cli.instruction_input_metal_native_transition_threads,
@@ -870,6 +910,12 @@ mod akita_benchmark {
                     max_threadgroups: bytecode_metal_max_threadgroups,
                     cutoff_log2: bytecode_metal_cutoff_log2,
                     trace_cutoff_log2: bytecode_metal_trace_cutoff_log2,
+                },
+            bytecode_address_metal:
+                BytecodeAddressMetalTuning {
+                    implementation: bytecode_address_metal_implementation,
+                    outer_tiles: bytecode_address_metal_outer_tiles,
+                    trace_cutoff_log2: bytecode_address_metal_trace_cutoff_log2,
                 },
             instruction_input_metal:
                 InstructionInputMetalTuning {
@@ -1034,6 +1080,9 @@ mod akita_benchmark {
             bytecode_metal_max_threadgroups,
             bytecode_metal_cutoff_log2,
             bytecode_metal_trace_cutoff_log2,
+            bytecode_address_metal_implementation,
+            bytecode_address_metal_outer_tiles,
+            bytecode_address_metal_trace_cutoff_log2,
             instruction_input_metal_native_message_threads,
             instruction_input_metal_native_transition_threads,
             instruction_input_metal_dense_transition_threads,
@@ -1116,6 +1165,23 @@ mod akita_benchmark {
                 config.bytecode_read_raf_cycle.trace_cutoff_elements = 1usize
                     .checked_shl(bytecode_metal_trace_cutoff_log2)
                     .expect("Bytecode Metal trace cutoff log2 must fit usize");
+                config.bytecode_read_raf_address.implementation =
+                    match bytecode_address_metal_implementation {
+                        BytecodeAddressImplementation::Cpu => {
+                            jolt_kernels::metal::BytecodeReadRafAddressImplementation::Cpu
+                        }
+                        BytecodeAddressImplementation::CsrShadow => {
+                            jolt_kernels::metal::BytecodeReadRafAddressImplementation::CsrShadow
+                        }
+                        BytecodeAddressImplementation::AddressMajorShadow => {
+                            jolt_kernels::metal::BytecodeReadRafAddressImplementation::AddressMajorShadow
+                        }
+                    };
+                config.bytecode_read_raf_address.address_major.outer_tiles =
+                    bytecode_address_metal_outer_tiles;
+                config.bytecode_read_raf_address.dispatch.trace_cutoff = 1usize
+                    .checked_shl(bytecode_address_metal_trace_cutoff_log2)
+                    .expect("Bytecode address Metal trace cutoff log2 must fit usize");
                 config
                     .instruction_input
                     .dispatch
@@ -1255,6 +1321,12 @@ mod akita_benchmark {
                     bytecode_metal_message_threads,
                     bytecode_metal_transition_threads,
                     bytecode_metal_max_threadgroups,
+                );
+                println!(
+                    "BYTECODE_ADDRESS_METAL_CONFIG backend=metal implementation={} trace_cutoff={} outer_tiles={}",
+                    bytecode_address_metal_implementation.as_str(),
+                    config.bytecode_read_raf_address.dispatch.trace_cutoff,
+                    bytecode_address_metal_outer_tiles,
                 );
                 println!(
                     "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} native_message_threads={} native_transition_threads={} dense_transition_threads={} storage_initialization={} native_primer=async",

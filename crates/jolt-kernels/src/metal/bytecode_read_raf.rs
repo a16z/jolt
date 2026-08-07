@@ -17,13 +17,15 @@ use super::backend::MetalBackend;
 use super::solinas::bytecode_read_raf::{
     split_stage_eq_tables, BytecodeReadRafConfig, BytecodeReadRafFusedProductPath,
 };
+use super::solinas::bytecode_read_raf_address::BytecodeAddressMajorConfig;
 use super::solinas::{
     BooleanityRows, BytecodeCycleRowInputs, BytecodeCycleRowSequence, BytecodeCycleSequenceConfig,
     BytecodeCycleTablesMut, MetalError,
 };
 use crate::optimized::bytecode_read_raf::{
-    prepare_bytecode_read_raf_address, prepare_metal_bytecode_cycle_shell, BytecodeCycleAlgebra,
-    BytecodeCycleDenseState, CycleKernel, MetalBytecodeCycleInputs, OptimizedBytecodeReadRafCycle,
+    prepare_bytecode_read_raf_address, prepare_metal_bytecode_cycle_shell, AddressKernel,
+    BytecodeCycleAlgebra, BytecodeCycleDenseState, CycleKernel, MetalBytecodeCycleInputs,
+    OptimizedBytecodeReadRafCycle,
 };
 use crate::optimized::instruction_read_raf::{collect_instruction_cycle_rows, InstructionCycleRow};
 use crate::{
@@ -34,6 +36,7 @@ use crate::{
 pub enum BytecodeReadRafAddressImplementation {
     Cpu,
     CsrShadow,
+    AddressMajorShadow,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +44,7 @@ pub struct BytecodeReadRafAddressMetalConfig {
     pub implementation: BytecodeReadRafAddressImplementation,
     pub dispatch: BytecodeReadRafConfig,
     pub product_path: BytecodeReadRafFusedProductPath,
+    pub address_major: BytecodeAddressMajorConfig,
 }
 
 impl Default for BytecodeReadRafAddressMetalConfig {
@@ -49,6 +53,7 @@ impl Default for BytecodeReadRafAddressMetalConfig {
             implementation: BytecodeReadRafAddressImplementation::Cpu,
             dispatch: BytecodeReadRafConfig::default(),
             product_path: BytecodeReadRafFusedProductPath::FullWidth,
+            address_major: BytecodeAddressMajorConfig::default(),
         }
     }
 }
@@ -277,6 +282,87 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                 "bytecode address equality-table preparation failed: {error}"
             )))
         })?;
+        if config.implementation == BytecodeReadRafAddressImplementation::AddressMajorShadow {
+            let invocation = match self.context.prepare_bytecode_address_major_resident_shadow(
+                rows.clone(),
+                &tables.e_lo,
+                &tables.e_hi,
+                config.address_major,
+            ) {
+                Ok(invocation) => invocation,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "bytecode address-major preparation unavailable; using the optimized CPU kernel"
+                    );
+                    return Ok(Box::new(cpu(session)?));
+                }
+            };
+            let resident_rows_storage_id = rows.allocation_identity();
+            let resident_rows_device_registry_id = rows.device_registry_id();
+            let pending = match invocation.submit() {
+                Ok(pending) => pending,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "bytecode address-major submission unavailable; using the optimized CPU kernel"
+                    );
+                    return Ok(Box::new(cpu(session)?));
+                }
+            };
+            drop(prepare_span);
+
+            let prepared_cpu = cpu(session)?;
+            let _join_span =
+                tracing::info_span!("MetalBytecodeReadRafAddress::address_major_join").entered();
+            let (_, observation) = match pending.join() {
+                Ok(completed) => completed,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "bytecode address-major completion failed; retaining optimized CPU output"
+                    );
+                    return Ok(Box::new(prepared_cpu));
+                }
+            };
+            if observation.source_rows_storage_id != Some(resident_rows_storage_id)
+                || observation.source_rows_device_registry_id
+                    != Some(resident_rows_device_registry_id)
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason: "bytecode address-major source identity changed",
+                });
+            }
+            validate_bytecode_address_pushforwards(
+                &prepared_cpu,
+                address_elements,
+                &observation.output,
+                "bytecode address-major",
+            )?;
+            let producer_status =
+                observation
+                    .producer_status
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "bytecode address-major producer status is missing",
+                    })?;
+            tracing::info!(
+                target: "jolt::metal",
+                submit_ns = observation.submit_wall.as_nanos() as u64,
+                overlap_ns = observation.overlap_wall.as_nanos() as u64,
+                join_ns = observation.join_wall.as_nanos() as u64,
+                total_ns = observation.total_wall.as_nanos() as u64,
+                gpu_active_ns = observation.gpu_active.as_nanos() as u64,
+                completed_before_join = observation.completed_before_join,
+                completed_outer_blocks = producer_status.completed_outer_blocks,
+                emitted_rows = producer_status.emitted_rows,
+                resident_rows_storage_id,
+                row_allocations = 0u64,
+                row_upload_bytes = 0u64,
+                carrier_upload_bytes = 0u64,
+                "Metal bytecode address-major resident shadow matched the optimized CPU tables"
+            );
+            return Ok(Box::new(prepared_cpu));
+        }
         let invocation = match self.context.prepare_bytecode_read_raf_csr(
             rows.clone(),
             &tables,
@@ -324,34 +410,12 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                 reason: "bytecode address CSR source identity changed",
             });
         }
-        let expected_output_elements = prepared_cpu
-            .pushforward_tables()
-            .len()
-            .checked_mul(address_elements)
-            .ok_or(KernelError::InvariantViolation {
-                reason: "bytecode address pushforward size overflow",
-            })?;
-        if observation.output.len() != expected_output_elements {
-            return Err(KernelError::TableSizeMismatch {
-                table: "Metal bytecode address pushforwards".to_owned(),
-                expected: expected_output_elements,
-                got: observation.output.len(),
-            });
-        }
-        for (stage, cpu_table) in prepared_cpu.pushforward_tables().enumerate() {
-            let start = stage * address_elements;
-            let gpu_table = &observation.output[start..start + address_elements];
-            if let Some(index) = cpu_table
-                .iter()
-                .zip(gpu_table)
-                .position(|(cpu, gpu)| cpu != gpu)
-            {
-                tracing::error!(stage, index, "bytecode address CSR parity mismatch");
-                return Err(KernelError::InvariantViolation {
-                    reason: "bytecode address CSR pushforward mismatch",
-                });
-            }
-        }
+        validate_bytecode_address_pushforwards(
+            &prepared_cpu,
+            address_elements,
+            &observation.output,
+            "bytecode address CSR",
+        )?;
         tracing::info!(
             target: "jolt::metal",
             submit_ns = observation.submit_wall.as_nanos() as u64,
@@ -372,6 +436,48 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
         );
         Ok(Box::new(prepared_cpu))
     }
+}
+
+fn validate_bytecode_address_pushforwards(
+    cpu: &AddressKernel<AkitaField>,
+    address_elements: usize,
+    gpu_output: &[AkitaField],
+    implementation: &'static str,
+) -> Result<(), KernelError<AkitaField>> {
+    let expected_output_elements = cpu
+        .pushforward_tables()
+        .len()
+        .checked_mul(address_elements)
+        .ok_or(KernelError::InvariantViolation {
+            reason: "bytecode address pushforward size overflow",
+        })?;
+    if gpu_output.len() != expected_output_elements {
+        return Err(KernelError::TableSizeMismatch {
+            table: "Metal bytecode address pushforwards".to_owned(),
+            expected: expected_output_elements,
+            got: gpu_output.len(),
+        });
+    }
+    for (stage, cpu_table) in cpu.pushforward_tables().enumerate() {
+        let start = stage * address_elements;
+        let gpu_table = &gpu_output[start..start + address_elements];
+        if let Some(index) = cpu_table
+            .iter()
+            .zip(gpu_table)
+            .position(|(cpu, gpu)| cpu != gpu)
+        {
+            tracing::error!(
+                stage,
+                index,
+                implementation,
+                "bytecode address parity mismatch"
+            );
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode address pushforward mismatch",
+            });
+        }
+    }
+    Ok(())
 }
 
 impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBackend {
@@ -730,11 +836,12 @@ mod tests {
                     .unwrap();
             let metal = MetalBackend::new(super::super::MetalConfig {
                 bytecode_read_raf_address: BytecodeReadRafAddressMetalConfig {
-                    implementation: BytecodeReadRafAddressImplementation::CsrShadow,
+                    implementation: BytecodeReadRafAddressImplementation::AddressMajorShadow,
                     dispatch: BytecodeReadRafConfig {
                         trace_cutoff: 1 << log_t,
                         ..Default::default()
                     },
+                    address_major: BytecodeAddressMajorConfig { outer_tiles: 1 },
                     ..Default::default()
                 },
                 ..Default::default()

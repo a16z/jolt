@@ -4798,6 +4798,9 @@ def run_backend(
     bytecode_max_threadgroups: int,
     bytecode_cutoff_log2: int,
     bytecode_trace_cutoff_log2: int,
+    bytecode_address_implementation: str,
+    bytecode_address_outer_tiles: int,
+    bytecode_address_trace_cutoff_log2: int,
     instruction_input_native_message_threads: int,
     instruction_input_native_transition_threads: int,
     instruction_input_dense_transition_threads: int,
@@ -4847,6 +4850,12 @@ def run_backend(
         str(bytecode_cutoff_log2),
         "--bytecode-metal-trace-cutoff-log2",
         str(bytecode_trace_cutoff_log2),
+        "--bytecode-address-metal-implementation",
+        bytecode_address_implementation,
+        "--bytecode-address-metal-outer-tiles",
+        str(bytecode_address_outer_tiles),
+        "--bytecode-address-metal-trace-cutoff-log2",
+        str(bytecode_address_trace_cutoff_log2),
         "--instruction-input-metal-native-message-threads",
         str(instruction_input_native_message_threads),
         "--instruction-input-metal-native-transition-threads",
@@ -5272,6 +5281,23 @@ def parser() -> argparse.ArgumentParser:
         default=18,
     )
     result.add_argument(
+        "--bytecode-address-metal-implementation",
+        choices=["cpu", "csr-shadow", "address-major-shadow"],
+        default="cpu",
+    )
+    result.add_argument(
+        "--bytecode-address-metal-outer-tiles",
+        type=int,
+        choices=[1, 2, 4, 8, 16, 32],
+        default=8,
+    )
+    result.add_argument(
+        "--bytecode-address-metal-trace-cutoff-log2",
+        type=int,
+        choices=[18, 20, 22, 24, 25, 26, 27, 28],
+        default=26,
+    )
+    result.add_argument(
         "--instruction-input-metal-native-message-threads",
         type=int,
         choices=[32, 64, 128, 256, 512, 1024],
@@ -5441,6 +5467,15 @@ def main() -> int:
     if args.bytecode_metal_trace_cutoff_log2 > args.log_n:
         print("error: Bytecode Metal trace cutoff disables the measured backend", file=sys.stderr)
         return 2
+    if (
+        args.bytecode_address_metal_implementation != "cpu"
+        and args.bytecode_address_metal_trace_cutoff_log2 > args.log_n
+    ):
+        print(
+            "error: Bytecode address Metal trace cutoff disables the measured backend",
+            file=sys.stderr,
+        )
+        return 2
     if args.instruction_input_metal_cutoff_log2 > args.log_n - 1:
         print("error: InstructionInput cutoff must not exceed half the trace", file=sys.stderr)
         return 2
@@ -5529,6 +5564,9 @@ def main() -> int:
                     args.bytecode_metal_max_threadgroups,
                     args.bytecode_metal_cutoff_log2,
                     args.bytecode_metal_trace_cutoff_log2,
+                    args.bytecode_address_metal_implementation,
+                    args.bytecode_address_metal_outer_tiles,
+                    args.bytecode_address_metal_trace_cutoff_log2,
                     args.instruction_input_metal_native_message_threads,
                     args.instruction_input_metal_native_transition_threads,
                     args.instruction_input_metal_dense_transition_threads,

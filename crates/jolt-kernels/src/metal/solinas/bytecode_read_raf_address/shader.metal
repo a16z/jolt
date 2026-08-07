@@ -6,6 +6,20 @@
 #define BYTECODE_ADDRESS_WORKER_BASE_STAGES 5u
 #define BYTECODE_ADDRESS_WORKER_SIMD_WIDTH 32u
 #define BYTECODE_ADDRESS_WORKER_SIMDGROUPS 8u
+#define BYTECODE_ADDRESS_PRODUCER_THREADS 1024u
+#define BYTECODE_ADDRESS_PRODUCER_BINS_PER_THREAD 8u
+#define BYTECODE_ADDRESS_PRODUCER_INNER_LENGTH 32768u
+#define BYTECODE_ADDRESS_PRODUCER_INVALID_ROWS 0u
+#define BYTECODE_ADDRESS_PRODUCER_COMPLETED_OUTERS 1u
+#define BYTECODE_ADDRESS_PRODUCER_EMITTED_ROWS 2u
+
+struct BytecodeAddressMajorRowWords {
+    ulong lookup_lo;
+    ulong lookup_hi;
+    ulong ram_address_plus_one;
+    ulong fused_inc_magnitude;
+    ulong packed_pc_and_flags;
+};
 
 struct BytecodeAddressMajorParams {
     uint rows;
@@ -17,6 +31,177 @@ struct BytecodeAddressMajorParams {
     uint base_stages;
     uint reserved;
 };
+
+inline uint bytecode_address_major_push_pc(
+    BytecodeAddressMajorRowWords row,
+    uint addresses,
+    thread bool& valid)
+{
+    ulong plus_one = row.packed_pc_and_flags & 0x00fffffffffffffful;
+    ulong pc = plus_one == 0ul ? 0ul : plus_one - 1ul;
+    valid = pc < (ulong)addresses;
+    return valid ? (uint)pc : 0u;
+}
+
+inline uint bytecode_address_major_simd_inclusive_sum(uint value, uint lane) {
+    for (ushort offset = 1; offset < BYTECODE_ADDRESS_WORKER_SIMD_WIDTH; offset <<= 1) {
+        uint previous = simd_shuffle_up(value, offset);
+        if (lane >= (uint)offset) {
+            value += previous;
+        }
+    }
+    return value;
+}
+
+inline uint bytecode_address_major_threadgroup_exclusive_sum(
+    uint local_total,
+    uint lane,
+    uint simdgroup,
+    threadgroup atomic_uint* scratch,
+    thread uint& total)
+{
+    uint simd_inclusive = bytecode_address_major_simd_inclusive_sum(local_total, lane);
+    if (lane == BYTECODE_ADDRESS_WORKER_SIMD_WIDTH - 1u) {
+        atomic_store_explicit(
+            &scratch[simdgroup],
+            simd_inclusive,
+            memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (simdgroup == 0u) {
+        uint group_total = atomic_load_explicit(&scratch[lane], memory_order_relaxed);
+        uint group_inclusive = bytecode_address_major_simd_inclusive_sum(group_total, lane);
+        atomic_store_explicit(
+            &scratch[lane],
+            group_inclusive - group_total,
+            memory_order_relaxed);
+        if (lane == BYTECODE_ADDRESS_WORKER_SIMD_WIDTH - 1u) {
+            atomic_store_explicit(&scratch[32], group_inclusive, memory_order_relaxed);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint simd_base = atomic_load_explicit(&scratch[simdgroup], memory_order_relaxed);
+    total = atomic_load_explicit(&scratch[32], memory_order_relaxed);
+    return simd_base + simd_inclusive - local_total;
+}
+
+kernel void solinas_bytecode_address_major_build_resident(
+    device const BytecodeAddressMajorRowWords* rows [[buffer(0)]],
+    device uint* cells [[buffer(1)]],
+    device uint* inner_sign [[buffer(2)]],
+    device ulong* magnitude [[buffer(3)]],
+    constant BytecodeAddressMajorParams& params [[buffer(4)]],
+    device atomic_uint* status [[buffer(5)]],
+    threadgroup atomic_uint* bins [[threadgroup(0)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint outer [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    bool supported = threads == BYTECODE_ADDRESS_PRODUCER_THREADS
+        && params.addresses == BYTECODE_ADDRESS_PRODUCER_THREADS
+            * BYTECODE_ADDRESS_PRODUCER_BINS_PER_THREAD
+        && params.inner_length == BYTECODE_ADDRESS_PRODUCER_INNER_LENGTH
+        && params.rows == params.inner_length * params.outer_length
+        && outer < params.outer_length;
+    if (!supported) {
+        if (tid == 0u && outer < params.outer_length) {
+            atomic_fetch_add_explicit(
+                &status[BYTECODE_ADDRESS_PRODUCER_INVALID_ROWS],
+                1u,
+                memory_order_relaxed);
+            atomic_fetch_add_explicit(
+                &status[BYTECODE_ADDRESS_PRODUCER_COMPLETED_OUTERS],
+                1u,
+                memory_order_relaxed);
+        }
+        return;
+    }
+
+    for (uint address = tid; address < params.addresses; address += threads) {
+        atomic_store_explicit(&bins[address], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint outer_base = outer * params.inner_length;
+    for (uint inner = tid; inner < params.inner_length; inner += threads) {
+        uint row_index = outer_base + inner;
+        bool valid;
+        uint address = bytecode_address_major_push_pc(rows[row_index], params.addresses, valid);
+        if (!valid) {
+            atomic_fetch_add_explicit(
+                &status[BYTECODE_ADDRESS_PRODUCER_INVALID_ROWS],
+                1u,
+                memory_order_relaxed);
+        }
+        atomic_fetch_add_explicit(&bins[address], 1u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint local_counts[BYTECODE_ADDRESS_PRODUCER_BINS_PER_THREAD];
+    uint local_total = 0u;
+    uint first_address = tid * BYTECODE_ADDRESS_PRODUCER_BINS_PER_THREAD;
+    for (uint i = 0u; i < BYTECODE_ADDRESS_PRODUCER_BINS_PER_THREAD; i++) {
+        uint count = atomic_load_explicit(&bins[first_address + i], memory_order_relaxed);
+        local_counts[i] = count;
+        local_total += count;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint occurrence_total;
+    uint running = bytecode_address_major_threadgroup_exclusive_sum(
+        local_total, lane, simdgroup, bins, occurrence_total);
+    if (tid == 0u && occurrence_total != params.inner_length) {
+        atomic_fetch_add_explicit(
+            &status[BYTECODE_ADDRESS_PRODUCER_INVALID_ROWS],
+            1u,
+            memory_order_relaxed);
+    }
+    for (uint i = 0u; i < BYTECODE_ADDRESS_PRODUCER_BINS_PER_THREAD; i++) {
+        uint address = first_address + i;
+        uint count = local_counts[i];
+        cells[address * params.outer_length + outer] = running | (count << 16u);
+        atomic_store_explicit(&bins[address], running, memory_order_relaxed);
+        running += count;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    for (uint inner = tid; inner < params.inner_length; inner += threads) {
+        uint row_index = outer_base + inner;
+        BytecodeAddressMajorRowWords row = rows[row_index];
+        bool valid;
+        uint address = bytecode_address_major_push_pc(row, params.addresses, valid);
+        (void)valid;
+        uint destination = atomic_fetch_add_explicit(
+            &bins[address],
+            1u,
+            memory_order_relaxed);
+        if (destination < params.inner_length) {
+            uint negative = (uint)(row.packed_pc_and_flags >> 63u);
+            inner_sign[outer_base + destination] = inner | (negative << 31u);
+            magnitude[outer_base + destination] = row.fused_inc_magnitude;
+        } else {
+            atomic_fetch_add_explicit(
+                &status[BYTECODE_ADDRESS_PRODUCER_INVALID_ROWS],
+                1u,
+                memory_order_relaxed);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0u) {
+        atomic_fetch_add_explicit(
+            &status[BYTECODE_ADDRESS_PRODUCER_COMPLETED_OUTERS],
+            1u,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            &status[BYTECODE_ADDRESS_PRODUCER_EMITTED_ROWS],
+            occurrence_total,
+            memory_order_relaxed);
+    }
+}
 
 inline SolinasFp128 bytecode_address_major_from_u64(ulong value) {
     SolinasFp128 result = solinas_zero();
