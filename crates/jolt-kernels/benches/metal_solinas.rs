@@ -253,6 +253,9 @@ mod macos {
                 }
                 "booleanity-message" => booleanity::bench_message(c, &context),
                 "booleanity-address" => booleanity_address::bench(c, &context),
+                "booleanity-address-packed-hot-split" => {
+                    booleanity_address::bench_successor_splits(c, &context);
+                }
                 "hamming-weight-claim-reduction" => {
                     booleanity_address::bench_hamming(c, &context);
                 }

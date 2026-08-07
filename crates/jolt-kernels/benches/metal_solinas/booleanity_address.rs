@@ -10,7 +10,8 @@ use jolt_field::{
     AdditiveAccumulator, AkitaAccumulator, AkitaField, FromPrimitiveInt, RingAccumulator,
 };
 use jolt_kernels::metal::solinas::{
-    BooleanityAddressPushforwardConfig, BooleanityRow, BooleanitySelector, SolinasMetal,
+    BooleanityAddressPushforwardConfig, BooleanityAddressSuccessorConfig, BooleanityRow,
+    BooleanitySelector, SolinasMetal,
 };
 use jolt_poly::TensorEqTable;
 use rayon::prelude::*;
@@ -233,6 +234,103 @@ pub fn bench_hamming(c: &mut Criterion, context: &SolinasMetal) {
                 });
             });
         }
+    }
+    group.finish();
+}
+
+pub fn bench_successor_splits(c: &mut Criterion, context: &SolinasMetal) {
+    let elements = successor_elements();
+    let log_n = elements.ilog2() as usize;
+    let rows = rows(elements, 1);
+    let reference_cycle = point(log_n, 0xc1c1_e5e5);
+    let resident_rows = context
+        .prepare_booleanity_rows(&rows)
+        .expect("Booleanity successor rows should become resident");
+    drop(rows);
+
+    let useful_fields = u64::try_from(elements * POLYS)
+        .expect("Booleanity successor useful work should fit in u64");
+    let mut expected = None;
+    let mut group = c.benchmark_group("metal_sumcheck/booleanity_address_successor_split");
+    let _ = group
+        .sample_size(10)
+        .warm_up_time(Duration::from_secs(2))
+        .measurement_time(Duration::from_secs(5))
+        .throughput(Throughput::Elements(useful_fields));
+
+    for inner_log2 in 15..=17 {
+        let invocation = context
+            .prepare_booleanity_address_successor(
+                resident_rows.clone(),
+                &reference_cycle,
+                BooleanityAddressSuccessorConfig {
+                    inner_log2,
+                    ..BooleanityAddressSuccessorConfig::default()
+                },
+            )
+            .expect("Booleanity successor split should prepare");
+        let lengths = invocation
+            .buffer_lengths()
+            .expect("Booleanity successor lengths should fit");
+        let dispatch = invocation
+            .dispatch_plan()
+            .expect("Booleanity successor dispatch should fit");
+        let warm_active = invocation
+            .execute_timed()
+            .expect("Booleanity successor validation should execute");
+        let masses = invocation
+            .read_masses()
+            .expect("Booleanity successor validation masses should be readable");
+        if let Some(expected) = &expected {
+            assert_eq!(&masses, expected);
+        } else {
+            expected = Some(masses);
+        }
+        eprintln!(
+            "booleanity_address_successor log_n={log_n} rows={elements} inner_log2={inner_log2} e_in={} e_out={} hot_bytes={} validity_bytes={} partial_fields={} owned_bytes={} pack_groups={} packed_groups={} finalize_groups={} warm_gpu_active_ns={} exact_across_splits=true",
+            lengths.e_in_fields,
+            lengths.e_out_fields,
+            lengths.hot_bytes,
+            lengths.validity_bytes,
+            lengths.partial_fields,
+            lengths
+                .owned_bytes()
+                .expect("Booleanity successor owned bytes should fit"),
+            dispatch.pack_and_first_threadgroups,
+            dispatch.packed_tile_threadgroups,
+            dispatch.finalize_threadgroups,
+            warm_active.as_nanos(),
+        );
+
+        let geometry = format!("log{log_n}_inner{inner_log2}");
+        let _ = group.bench_function(BenchmarkId::new("resident_wall", &geometry), |bench| {
+            bench.iter_custom(|iterations| {
+                let mut measured = Duration::ZERO;
+                for _ in 0..iterations {
+                    let started = Instant::now();
+                    let _ = invocation
+                        .execute_timed()
+                        .expect("Booleanity successor should execute");
+                    let masses = invocation
+                        .read_masses()
+                        .expect("Booleanity successor masses should be readable");
+                    measured += started.elapsed();
+                    let _ = black_box(masses);
+                }
+                measured
+            });
+        });
+        let _ = group.bench_function(BenchmarkId::new("gpu_active", geometry), |bench| {
+            bench.iter_custom(|iterations| {
+                let mut measured = Duration::ZERO;
+                for _ in 0..iterations {
+                    measured += invocation
+                        .execute_timed()
+                        .expect("Booleanity successor should execute");
+                }
+                measured
+            });
+        });
     }
     group.finish();
 }
@@ -497,6 +595,19 @@ fn hamming_cases(inner_log2: usize) -> Vec<usize> {
         "Hamming sizes must be powers of two with log_n >= inner_log2"
     );
     cases
+}
+
+fn successor_elements() -> usize {
+    let elements = env::var("JOLT_SOLINAS_BENCH_ELEMENTS").map_or(1 << 20, |value| {
+        value
+            .parse::<usize>()
+            .expect("JOLT_SOLINAS_BENCH_ELEMENTS should be a positive integer")
+    });
+    assert!(
+        elements.is_power_of_two() && elements >= 1 << 17,
+        "Booleanity successor rows must be a power of two of at least 2^17"
+    );
+    elements
 }
 
 fn env_usize(name: &str, default: usize) -> usize {
