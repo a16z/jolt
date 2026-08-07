@@ -150,6 +150,8 @@ where
             .vc_setup
             .as_ref()
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
+        jolt_verifier_derive::fs_scope_guard!(BlindFold);
+
         transcript.append(&Label(b"BlindFold"));
         blindfold
             .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
@@ -557,6 +559,7 @@ where
 /// metadata, and the proof-derived structural parameters. WARNING: the byte
 /// order here is consensus-critical — the prover's preamble must absorb
 /// identically or the transcripts diverge.
+#[jolt_verifier_derive::fs_scope(Preamble)]
 pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -632,6 +635,7 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
 /// identically or the transcripts diverge. On the `akita` build the order is
 /// the canonical commitment-object order: `OneHotTrace`, untrusted advice, trusted
 /// advice, `ProgramOneHot`.
+#[jolt_verifier_derive::fs_scope(Commitments)]
 pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -1269,7 +1273,8 @@ mod tests {
     #[cfg(feature = "zk")]
     #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
-        let preprocessing = test_preprocessing();
+        let mut preprocessing = test_preprocessing();
+        preprocessing.vc_setup = None;
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
@@ -1644,6 +1649,13 @@ mod tests {
             stack_size: 8,
             heap_size: 8,
         });
+        #[cfg(feature = "zk")]
+        let vc_setup = Some(PedersenSetup::new(
+            vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],
+            Bn254G1::default(),
+        ));
+        #[cfg(not(feature = "zk"))]
+        let vc_setup = None;
         JoltVerifierPreprocessing::new(
             ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::default(),
@@ -1653,7 +1665,7 @@ mod tests {
             })),
             [7; 32],
             (),
-            None,
+            vc_setup,
         )
     }
 }

@@ -17,6 +17,7 @@ default = ["transcript-blake2b"]
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+fs-audit = []
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
 zk = ["jolt-prover-legacy/zk"]
 # The packed (lattice/Akita) commitment mode: one packed one-hot witness per
@@ -56,3 +57,5 @@ jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
 serde_json = { workspace = true, features = ["std"] }
+quote.workspace = true
+syn = { workspace = true, features = ["visit"] }

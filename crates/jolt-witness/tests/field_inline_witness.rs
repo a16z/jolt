@@ -97,7 +97,7 @@ fn witness(
         JoltVmWitnessInputs::new(
             program,
             preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
         ),
     )
 }

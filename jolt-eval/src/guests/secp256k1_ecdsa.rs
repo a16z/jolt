@@ -64,10 +64,10 @@ impl GuestConfig for Secp256k1EcdsaVerify {
             program_size: None,
         }
     }
+    fn label(&self) -> String {
+        "secp256k1_ecdsa_verify".to_string()
+    }
     fn input(&self) -> Vec<u8> {
         postcard::to_stdvec(&(self.z, self.r, self.s, self.q)).unwrap()
-    }
-    fn bench_name(&self) -> String {
-        "prover_time_secp256k1_ecdsa_verify".to_string()
     }
 }

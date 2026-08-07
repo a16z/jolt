@@ -727,6 +727,7 @@ fn trace_modular(
                 untrusted_advice: Vec::new(),
                 trusted_advice: Vec::new(),
                 memory_config,
+                advice_tape: None,
             },
         )
         .expect("modular trace")
@@ -741,13 +742,14 @@ fn pad_trace(
         trace,
         device,
         final_memory,
+        advice_tape,
     } = trace_output;
     // In place: the trace is single-owner here, so `into_rows` reclaims the
     // vector without the fresh-copy transient (~2x trace bytes) a rebuild
     // would cost.
     let mut rows = trace.into_rows();
     rows.resize(trace_length, TraceRow::default());
-    TraceOutput::new(OwnedTrace::new(rows), device, final_memory)
+    TraceOutput::new(OwnedTrace::new(rows), device, final_memory, advice_tape)
 }
 
 /// A word-aligned advice buffer's balanced Dory matrix variable count.
