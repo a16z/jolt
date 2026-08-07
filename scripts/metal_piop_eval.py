@@ -50,6 +50,7 @@ INSTRUCTION_INPUT_METAL_PHASES = (
     "allocation_plan",
     "storage_initialize",
     "storage_initialize_complete",
+    "outer_residual_transfer",
     "native_primer_submit",
     "prepare",
     "native_primer_join",
@@ -139,6 +140,7 @@ METAL_INSTRUCTION_INPUT_ROWS_PREPARE = (
 METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF = (
     "MetalInstructionInput::compact_rows_stage1_handoff"
 )
+METAL_OUTER_REMAINDER_ROW_RELEASE = "MetalOuterRemainder::row_release"
 PRODUCTION_PAIRS = 5
 LOCAL_KERNELS = {
     INSTRUCTION_READ_RAF_KERNEL: {
@@ -212,6 +214,11 @@ def instruction_input_sequence_storage_bytes(log_n: int) -> int:
     return 16 * elements
 
 
+def instruction_input_sequence_auxiliary_storage_bytes(log_n: int) -> int:
+    rows = 1 << log_n
+    return instruction_input_sequence_storage_bytes(log_n) - 96 * rows
+
+
 def booleanity_address_sequence_storage_bytes(
     log_n: int, inner_log2: int, selectors_per_tile: int
 ) -> int:
@@ -249,6 +256,7 @@ INSTRUCTION_INPUT_METAL_CONFIG_RE = re.compile(
     r"native_transition_threads=(?P<native_transition_threads>\d+) "
     r"dense_transition_threads=(?P<dense_transition_threads>\d+) "
     r"storage_initialization=(?P<storage_initialization>\S+) "
+    r"dense_storage_mode=(?P<dense_storage_mode>\S+) "
     r"native_primer=(?P<native_primer>\S+)$"
 )
 BOOLEANITY_ADDRESS_METAL_CONFIG_RE = re.compile(
@@ -563,6 +571,7 @@ def validate_instruction_input_stdout(
     dense_transition_threads: int = 128,
     cutoff_log2: int = 16,
     trace_cutoff_log2: int = 25,
+    borrow_outer_residual: bool = False,
 ) -> Optional[dict[str, Any]]:
     configs = [
         match
@@ -585,6 +594,7 @@ def validate_instruction_input_stdout(
         "native_transition_threads": int(raw_config["native_transition_threads"]),
         "dense_transition_threads": int(raw_config["dense_transition_threads"]),
         "storage_initialization": raw_config["storage_initialization"],
+        "dense_storage_mode": raw_config["dense_storage_mode"],
         "native_primer": raw_config["native_primer"],
     }
     expected = {
@@ -594,6 +604,7 @@ def validate_instruction_input_stdout(
         "native_transition_threads": native_transition_threads,
         "dense_transition_threads": dense_transition_threads,
         "storage_initialization": "minimal",
+        "dense_storage_mode": "OuterResidual" if borrow_outer_residual else "Owned",
         "native_primer": "async",
     }
     if config != expected:
@@ -3158,6 +3169,7 @@ def instruction_input_member_breakdown(
     backend: str,
     log_n: int,
     cutoff_log2: int = 16,
+    borrow_outer_residual: bool = False,
 ) -> dict[str, Any]:
     outer_names = {
         f"{INSTRUCTION_INPUT_KERNEL}::{component}"
@@ -3193,7 +3205,12 @@ def instruction_input_member_breakdown(
         outer_names
         | inner_names
         | lifecycle_names
-        | {PIOP_SPAN, BACKEND_WITNESS_PREP_SPAN, SPARTAN_SHIFT_PREPARE_SPAN},
+        | {
+            PIOP_SPAN,
+            BACKEND_WITNESS_PREP_SPAN,
+            SPARTAN_SHIFT_PREPARE_SPAN,
+            METAL_OUTER_REMAINDER_ROW_RELEASE,
+        },
     )
     if len(intervals[PIOP_SPAN]) != 1:
         raise ValueError("trace must contain exactly one positive PIOP span")
@@ -3317,6 +3334,7 @@ def instruction_input_member_breakdown(
             "allocation_plan": 1,
             "storage_initialize": 1,
             "storage_initialize_complete": 1,
+            "outer_residual_transfer": 1 if borrow_outer_residual else 0,
             "native_primer_submit": 1,
             "prepare": 1,
             "native_primer_join": 1,
@@ -3335,6 +3353,11 @@ def instruction_input_member_breakdown(
         allocation_plan = inner["allocation_plan"][0]
         storage_initialize = inner["storage_initialize"][0]
         storage_initialize_complete = inner["storage_initialize_complete"][0]
+        outer_residual_transfer = (
+            inner["outer_residual_transfer"][0]
+            if borrow_outer_residual
+            else None
+        )
         primer_submit = inner["native_primer_submit"][0]
         primer_submit_us = interval_duration_us(primer_submit)
         primer_join = inner["native_primer_join"][0]
@@ -3393,6 +3416,25 @@ def instruction_input_member_breakdown(
             raise ValueError(
                 "InstructionInput native primer was not submitted before stage-3 Shift preparation"
             )
+        if outer_residual_transfer is not None:
+            outer_releases = intervals[METAL_OUTER_REMAINDER_ROW_RELEASE]
+            if len(outer_releases) != 1:
+                raise ValueError(
+                    "borrowed InstructionInput requires one completed Outer row release"
+                )
+            outer_release = outer_releases[0]
+            require_contained(
+                outer_residual_transfer,
+                piop,
+                "InstructionInput Outer residual transfer",
+            )
+            if (
+                outer_release[1] > outer_residual_transfer[0]
+                or outer_residual_transfer[1] > primer_submit[0]
+            ):
+                raise ValueError(
+                    "InstructionInput Outer residual transfer is outside its ownership seam"
+                )
         require_contained(inner["prepare"][0], prepare, "Metal InstructionInput prepare")
         require_contained(primer_join, rounds[0], "InstructionInput native primer join")
         require_contained(
@@ -3433,12 +3475,16 @@ def instruction_input_member_breakdown(
         if set(storage) != {
             "trace_elements",
             "cutoff_elements",
+            "dense_storage_mode",
             "host_tail_bytes",
             "resident_rows_storage_id",
             "resident_rows",
             "resident_row_bytes",
         }:
             raise ValueError("InstructionInput storage preparation has unexpected fields")
+        dense_storage_mode = trace_string(
+            storage.pop("dense_storage_mode"), "InstructionInput dense storage mode"
+        )
         storage = {
             name: positive_trace_integer(value, name)
             for name, value in storage.items()
@@ -3450,6 +3496,8 @@ def instruction_input_member_breakdown(
             or storage["host_tail_bytes"] != host_tail_bytes
             or storage["resident_rows"] != 1 << log_n
             or storage["resident_row_bytes"] != 48
+            or dense_storage_mode
+            != ("OuterResidual" if borrow_outer_residual else "Owned")
         ):
             raise ValueError("InstructionInput storage preparation has invalid geometry")
 
@@ -3459,27 +3507,42 @@ def instruction_input_member_breakdown(
         allocation_fields = {
             "device_buffers",
             "planned_device_bytes",
+            "owned_device_bytes",
+            "reused_device_bytes",
+            "borrowed_outer_residual",
             "current_device_bytes",
             "recommended_device_bytes",
         }
         if set(allocation) != allocation_fields:
             raise ValueError("InstructionInput allocation plan has unexpected fields")
+        allocation_borrowed = trace_boolean(
+            allocation.pop("borrowed_outer_residual")
+        )
         allocation = {
             name: nonnegative_trace_integer(value, name)
             for name, value in allocation.items()
         }
         expected_sequence_bytes = instruction_input_sequence_storage_bytes(log_n)
+        expected_owned_bytes = (
+            instruction_input_sequence_auxiliary_storage_bytes(log_n)
+            if borrow_outer_residual
+            else expected_sequence_bytes
+        )
+        expected_reused_bytes = expected_sequence_bytes - expected_owned_bytes
         expected_resident_row_bytes = 160 * (1 << log_n)
         if (
-            allocation["device_buffers"] != 6
+            allocation["device_buffers"] != (4 if borrow_outer_residual else 6)
             or allocation["planned_device_bytes"] != expected_sequence_bytes
+            or allocation["owned_device_bytes"] != expected_owned_bytes
+            or allocation["reused_device_bytes"] != expected_reused_bytes
+            or allocation_borrowed is not borrow_outer_residual
             or allocation["current_device_bytes"] < expected_resident_row_bytes
         ):
             raise ValueError(
                 "InstructionInput allocation plan has invalid buffer accounting"
             )
         if (
-            allocation["current_device_bytes"] + allocation["planned_device_bytes"]
+            allocation["current_device_bytes"] + allocation["owned_device_bytes"]
             > allocation["recommended_device_bytes"]
         ):
             raise ValueError(
@@ -3527,10 +3590,17 @@ def instruction_input_member_breakdown(
         }
         if (
             storage_initialization["mode"] != "minimal"
-            or storage_initialization["device_buffers"] != 6
-            or storage_initialization["bytes"] != 96
+            or storage_initialization["device_buffers"]
+            != (4 if borrow_outer_residual else 6)
+            or storage_initialization["bytes"]
+            != (64 if borrow_outer_residual else 96)
             or storage_initialization["protocol_dispatches"] != 0
-            or len(set(initialization_buffer_ids)) != 6
+            or len(set(initialization_buffer_ids))
+            != (5 if borrow_outer_residual else 6)
+            or (
+                borrow_outer_residual
+                and initialization_buffer_ids[0] != initialization_buffer_ids[1]
+            )
         ):
             raise ValueError(
                 "InstructionInput storage initialization is not the exact minimal control"
@@ -3718,6 +3788,10 @@ def instruction_input_member_breakdown(
             "storage_initialization",
             "storage_initialization_bytes",
             "native_primer",
+            "dense_a_offset_bytes",
+            "dense_a_length_bytes",
+            "dense_b_offset_bytes",
+            "dense_b_length_bytes",
             *(f"storage_buffer_{index}" for index in range(6)),
         }:
             raise ValueError("InstructionInput Metal prepare has unexpected fields")
@@ -3739,6 +3813,17 @@ def instruction_input_member_breakdown(
             )
             for index in range(6)
         ]
+        dense_ranges = {
+            name: nonnegative_trace_integer(prepare_args[name], name)
+            for name in (
+                "dense_a_offset_bytes",
+                "dense_a_length_bytes",
+                "dense_b_offset_bytes",
+                "dense_b_length_bytes",
+            )
+        }
+        dense_a_bytes = 64 * (1 << log_n)
+        dense_b_bytes = 32 * (1 << log_n)
         if (
             trace_string(
                 prepare_args["storage_initialization"],
@@ -3749,11 +3834,18 @@ def instruction_input_member_breakdown(
                 prepare_args["storage_initialization_bytes"],
                 "Metal stage-3 storage initialization bytes",
             )
-            != 96
+            != (64 if borrow_outer_residual else 96)
             or trace_string(
                 prepare_args["native_primer"], "Metal stage-3 native primer mode"
             )
             != "async"
+            or dense_ranges
+            != {
+                "dense_a_offset_bytes": 0,
+                "dense_a_length_bytes": dense_a_bytes,
+                "dense_b_offset_bytes": dense_a_bytes if borrow_outer_residual else 0,
+                "dense_b_length_bytes": dense_b_bytes,
+            }
         ):
             raise ValueError(
                 "InstructionInput Metal prepare did not preserve the selected startup controls"
@@ -3892,6 +3984,85 @@ def instruction_input_member_breakdown(
             stage1_args["host_repack_rows"], "Metal stage-1 host repack rows"
         )
         prepare_storage_id = storage["resident_rows_storage_id"]
+        outer_transfer = None
+        if outer_residual_transfer is not None:
+            transfer_args = unique_span_args(
+                events, f"Metal{INSTRUCTION_INPUT_KERNEL}::outer_residual_transfer"
+            )
+            if set(transfer_args) != {
+                "resident_rows",
+                "outer_residual_generation",
+                "compact_rows_storage_id",
+                "residual_rows_storage_id",
+                "device_registry_id",
+                "outer_sequence_owned_bytes",
+                "outer_sequence_consumed",
+                "compact_rows_transferred",
+                "residual_rows_transferred",
+            }:
+                raise ValueError(
+                    "InstructionInput Outer residual transfer has unexpected fields"
+                )
+            outer_transfer = {
+                "resident_rows": positive_trace_integer(
+                    transfer_args["resident_rows"], "Outer transfer row count"
+                ),
+                "outer_residual_generation": positive_trace_integer(
+                    transfer_args["outer_residual_generation"],
+                    "Outer residual generation",
+                ),
+                "compact_rows_storage_id": positive_trace_integer(
+                    transfer_args["compact_rows_storage_id"],
+                    "Outer transfer compact storage ID",
+                ),
+                "residual_rows_storage_id": positive_trace_integer(
+                    transfer_args["residual_rows_storage_id"],
+                    "Outer transfer residual storage ID",
+                ),
+                "device_registry_id": positive_trace_integer(
+                    transfer_args["device_registry_id"],
+                    "Outer transfer device registry ID",
+                ),
+                "outer_sequence_owned_bytes": positive_trace_integer(
+                    transfer_args["outer_sequence_owned_bytes"],
+                    "Outer transfer sequence-owned bytes",
+                ),
+                "outer_sequence_consumed": trace_boolean(
+                    transfer_args["outer_sequence_consumed"]
+                ),
+                "compact_rows_transferred": trace_boolean(
+                    transfer_args["compact_rows_transferred"]
+                ),
+                "residual_rows_transferred": trace_boolean(
+                    transfer_args["residual_rows_transferred"]
+                ),
+            }
+            outer_release_args = unique_span_args(
+                events, METAL_OUTER_REMAINDER_ROW_RELEASE
+            )
+            if (
+                outer_transfer["resident_rows"] != row_count
+                or outer_transfer["compact_rows_storage_id"]
+                != production_storage_id
+                or outer_transfer["residual_rows_storage_id"]
+                != residual_storage_id
+                or outer_transfer["device_registry_id"]
+                != positive_trace_integer(
+                    outer_release_args["device_registry_id"],
+                    "Outer release device registry ID",
+                )
+                or outer_transfer["outer_sequence_owned_bytes"]
+                != positive_trace_integer(
+                    outer_release_args["remaining_sequence_storage_bytes"],
+                    "Outer release sequence-owned bytes",
+                )
+                or outer_transfer["outer_sequence_consumed"] is not True
+                or outer_transfer["compact_rows_transferred"] is not True
+                or outer_transfer["residual_rows_transferred"] is not True
+            ):
+                raise ValueError(
+                    "InstructionInput Outer residual ownership transfer is incomplete"
+                )
         primer_resource_records = [
             primer_submit,
             primer_join_resources,
@@ -3931,6 +4102,20 @@ def instruction_input_member_breakdown(
             or stage1_storage_id != prepare_storage_id
             or stage3_storage_id != prepare_storage_id
             or storage["resident_row_bytes"] != 48
+            or (
+                borrow_outer_residual
+                and (
+                    initialization_buffer_ids[0] != residual_storage_id
+                    or initialization_buffer_ids[1] != residual_storage_id
+                    or any(
+                        buffer_id == residual_storage_id
+                        for buffer_id in initialization_buffer_ids[2:]
+                    )
+                    or dense_ranges["dense_b_offset_bytes"]
+                    + dense_ranges["dense_b_length_bytes"]
+                    >= 112 * row_count
+                )
+            )
             or any(
                 record["resident_rows_storage_id"] != prepare_storage_id
                 or record["storage_buffer_identities"]
@@ -3952,6 +4137,7 @@ def instruction_input_member_breakdown(
             "stage3_storage_id": stage3_storage_id,
             "residual_storage_id": residual_storage_id,
             "row_production": row_production,
+            "outer_residual_transfer": outer_transfer,
         }
 
         readback = unique_span_args(
@@ -3963,6 +4149,9 @@ def instruction_input_member_breakdown(
             )
         resource_observation = {
             "allocation": allocation,
+            "borrowed_outer_residual": allocation_borrowed,
+            "dense_ranges": dense_ranges,
+            "outer_residual_transfer": outer_transfer,
             "storage_initialization": storage_initialization,
             "native_primer": primer_submit,
             "host_tail_bytes": storage["host_tail_bytes"],
@@ -4806,6 +4995,7 @@ def run_backend(
     instruction_input_dense_transition_threads: int,
     instruction_input_cutoff_log2: int,
     instruction_input_trace_cutoff_log2: int,
+    instruction_input_borrow_outer_residual: bool,
     booleanity_address_inner_log2: int,
     booleanity_address_selectors_per_tile: int,
     booleanity_address_tile_threads: int,
@@ -4905,6 +5095,8 @@ def run_backend(
     ]
     if product_uniskip_outer_carrier:
         benchmark_command.append("--product-uniskip-outer-carrier")
+    if instruction_input_borrow_outer_residual:
+        benchmark_command.append("--instruction-input-metal-borrow-outer-residual")
     if backend == "metal":
         benchmark_command.extend(
             [
@@ -4951,6 +5143,7 @@ def run_backend(
         instruction_input_dense_transition_threads,
         instruction_input_cutoff_log2,
         instruction_input_trace_cutoff_log2,
+        instruction_input_borrow_outer_residual,
     )
     booleanity_address_config = validate_booleanity_address_stdout(
         result.stdout,
@@ -5002,7 +5195,11 @@ def run_backend(
         events, backend, log_n, bytecode_cutoff_log2
     )
     instruction_input_member = instruction_input_member_breakdown(
-        events, backend, log_n, instruction_input_cutoff_log2
+        events,
+        backend,
+        log_n,
+        instruction_input_cutoff_log2,
+        instruction_input_borrow_outer_residual,
     )
     if backend == "metal" and booleanity_address_implementation == "packed-hot":
         booleanity_address_member = packed_hot_booleanity_address_member_breakdown(
@@ -5328,6 +5525,9 @@ def parser() -> argparse.ArgumentParser:
         default=25,
     )
     result.add_argument(
+        "--instruction-input-metal-borrow-outer-residual", action="store_true"
+    )
+    result.add_argument(
         "--booleanity-address-metal-inner-log2",
         type=int,
         choices=[12, 13, 14, 15, 16],
@@ -5572,6 +5772,7 @@ def main() -> int:
                     args.instruction_input_metal_dense_transition_threads,
                     args.instruction_input_metal_cutoff_log2,
                     args.instruction_input_metal_trace_cutoff_log2,
+                    args.instruction_input_metal_borrow_outer_residual,
                     args.booleanity_address_metal_inner_log2,
                     args.booleanity_address_metal_selectors_per_tile,
                     args.booleanity_address_metal_tile_threads,
@@ -6091,11 +6292,19 @@ def main() -> int:
                     and sample["instruction_input"]["metal_member"][
                         "resource_observation"
                     ]["storage_initialization"]["bytes"]
-                    == 96
+                    == (
+                        64
+                        if args.instruction_input_metal_borrow_outer_residual
+                        else 96
+                    )
                     and sample["instruction_input"]["metal_member"][
                         "resource_observation"
                     ]["storage_initialization"]["device_buffers"]
-                    == 6
+                    == (
+                        4
+                        if args.instruction_input_metal_borrow_outer_residual
+                        else 6
+                    )
                     for sample in attributions
                 ),
                 "instruction_input_storage_buffers_stable": all(
@@ -6106,13 +6315,74 @@ def main() -> int:
                             ]["storage_initialization"]["buffer_identities"]
                         )
                     )
-                    == 6
+                    == (
+                        5
+                        if args.instruction_input_metal_borrow_outer_residual
+                        else 6
+                    )
                     and sample["instruction_input"]["metal_member"][
                         "resource_observation"
                     ]["storage_initialization"]["buffer_identities"]
                     == sample["instruction_input"]["metal_member"][
                         "resource_observation"
                     ]["native_primer"]["storage_buffer_identities"]
+                    for sample in attributions
+                ),
+                "instruction_input_borrowed_dense_arena_exact": all(
+                    (
+                        sample["instruction_input"]["metal_member"][
+                            "resource_observation"
+                        ]["borrowed_outer_residual"]
+                        is args.instruction_input_metal_borrow_outer_residual
+                        and sample["instruction_input"]["metal_member"][
+                            "resource_observation"
+                        ]["allocation"]["owned_device_bytes"]
+                        == (
+                            instruction_input_sequence_auxiliary_storage_bytes(
+                                args.log_n
+                            )
+                            if args.instruction_input_metal_borrow_outer_residual
+                            else instruction_input_sequence_storage_bytes(args.log_n)
+                        )
+                        and sample["instruction_input"]["metal_member"][
+                            "resource_observation"
+                        ]["allocation"]["reused_device_bytes"]
+                        == (
+                            96 * (1 << args.log_n)
+                            if args.instruction_input_metal_borrow_outer_residual
+                            else 0
+                        )
+                        and (
+                            sample["instruction_input"]["metal_member"][
+                                "resource_observation"
+                            ]["outer_residual_transfer"]
+                            is not None
+                        )
+                        is args.instruction_input_metal_borrow_outer_residual
+                        and (
+                            not args.instruction_input_metal_borrow_outer_residual
+                            or (
+                                sample["instruction_input"]["metal_member"][
+                                    "resource_observation"
+                                ]["storage_initialization"]["buffer_identities"][:2]
+                                == [
+                                    sample["instruction_input"]["metal_member"][
+                                        "row_lifecycle"
+                                    ]["residual_storage_id"]
+                                ]
+                                * 2
+                                and sample["instruction_input"]["metal_member"][
+                                    "resource_observation"
+                                ]["dense_ranges"]
+                                == {
+                                    "dense_a_offset_bytes": 0,
+                                    "dense_a_length_bytes": 64 * (1 << args.log_n),
+                                    "dense_b_offset_bytes": 64 * (1 << args.log_n),
+                                    "dense_b_length_bytes": 32 * (1 << args.log_n),
+                                }
+                            )
+                        )
+                    )
                     for sample in attributions
                 ),
                 "instruction_input_native_primer_exact_and_protocol_inert": all(
@@ -6744,6 +7014,7 @@ def main() -> int:
                 "instruction_input_metal_trace_cutoff_log2": args.instruction_input_metal_trace_cutoff_log2,
                 "instruction_input_metal_trace_cutoff_elements": 1
                 << args.instruction_input_metal_trace_cutoff_log2,
+                "instruction_input_metal_borrow_outer_residual": args.instruction_input_metal_borrow_outer_residual,
                 "instruction_input_storage_initialization": "minimal",
                 "instruction_input_native_primer": "async",
                 "booleanity_address_metal_inner_log2": args.booleanity_address_metal_inner_log2,

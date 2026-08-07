@@ -102,7 +102,10 @@ def complete_bytecode_trace(log_n: int, backend: str) -> list[dict[str, object]]
 
 
 def complete_instruction_input_trace(
-    log_n: int, backend: str, cutoff_log2: int = 16
+    log_n: int,
+    backend: str,
+    cutoff_log2: int = 16,
+    borrow_outer_residual: bool = False,
 ) -> list[dict[str, object]]:
     def event(
         name: str,
@@ -164,7 +167,19 @@ def complete_instruction_input_trace(
         handoff_round = 2 + dense_count
         host_tail_bytes = 8 * (1 << cutoff_log2) * 16
         sequence_bytes = metal_piop_eval.instruction_input_sequence_storage_bytes(log_n)
+        auxiliary_bytes = (
+            metal_piop_eval.instruction_input_sequence_auxiliary_storage_bytes(log_n)
+        )
         resident_row_bytes = 160 * (1 << log_n)
+        storage_buffer_ids = (
+            [203, 203, 301, 302, 303, 304]
+            if borrow_outer_residual
+            else list(range(301, 307))
+        )
+        owned_bytes = auxiliary_bytes if borrow_outer_residual else sequence_bytes
+        reused_bytes = sequence_bytes - owned_bytes
+        initialized_buffers = 4 if borrow_outer_residual else 6
+        initialized_bytes = 64 if borrow_outer_residual else 96
         events.extend(
             [
                 event(
@@ -187,6 +202,7 @@ def complete_instruction_input_trace(
                         "compact_rows_storage_id": "202",
                         "residual_rows_storage_id": "203",
                         "resident_rows": str(1 << log_n),
+                        "explicit_rows": str(1 << log_n),
                     },
                 ),
                 event(
@@ -196,6 +212,9 @@ def complete_instruction_input_trace(
                     {
                         "trace_elements": str(1 << log_n),
                         "cutoff_elements": str(1 << cutoff_log2),
+                        "dense_storage_mode": (
+                            "OuterResidual" if borrow_outer_residual else "Owned"
+                        ),
                         "host_tail_bytes": str(host_tail_bytes),
                         "resident_rows_storage_id": "202",
                         "resident_rows": str(1 << log_n),
@@ -207,11 +226,16 @@ def complete_instruction_input_trace(
                     200.0,
                     200.0,
                     {
-                        "device_buffers": "6",
+                        "device_buffers": str(initialized_buffers),
                         "planned_device_bytes": str(sequence_bytes),
+                        "owned_device_bytes": str(owned_bytes),
+                        "reused_device_bytes": str(reused_bytes),
+                        "borrowed_outer_residual": str(
+                            borrow_outer_residual
+                        ).lower(),
                         "current_device_bytes": str(resident_row_bytes),
                         "recommended_device_bytes": str(
-                            resident_row_bytes + sequence_bytes
+                            resident_row_bytes + owned_bytes
                         ),
                     },
                 ),
@@ -221,11 +245,11 @@ def complete_instruction_input_trace(
                     100.0,
                     {
                         "mode": "minimal",
-                        "device_buffers": "6",
-                        "bytes": "96",
+                        "device_buffers": str(initialized_buffers),
+                        "bytes": str(initialized_bytes),
                         "protocol_dispatches": "0",
                         **{
-                            f"buffer_{index}": str(301 + index)
+                            f"buffer_{index}": str(storage_buffer_ids[index])
                             for index in range(6)
                         },
                     },
@@ -248,12 +272,44 @@ def complete_instruction_input_trace(
                         "compact_rows_storage_id": "202",
                         "residual_rows_storage_id": "203",
                         "resident_rows": str(1 << log_n),
+                        "explicit_rows": str(1 << log_n),
                         "compact_row_bytes": "48",
                         "residual_row_bytes": "112",
                         "full_domain_copy_bytes": "0",
                         "full_domain_copy_dispatches": "0",
                         "host_repack_rows": "0",
                     },
+                ),
+                event(
+                    "MetalOuterRemainder::row_release",
+                    1_051.0,
+                    3.0,
+                    {
+                        "device_registry_id": "1",
+                        "remaining_sequence_storage_bytes": "5242880",
+                    },
+                ),
+                *(
+                    [
+                        event(
+                            "MetalInstructionInput::outer_residual_transfer",
+                            1_055.0,
+                            2.0,
+                            {
+                                "resident_rows": str(1 << log_n),
+                                "outer_residual_generation": "7",
+                                "compact_rows_storage_id": "202",
+                                "residual_rows_storage_id": "203",
+                                "device_registry_id": "1",
+                                "outer_sequence_owned_bytes": "5242880",
+                                "outer_sequence_consumed": "true",
+                                "compact_rows_transferred": "true",
+                                "residual_rows_transferred": "true",
+                            },
+                        )
+                    ]
+                    if borrow_outer_residual
+                    else []
                 ),
                 event(
                     "MetalInstructionInput::native_primer_submit",
@@ -265,7 +321,7 @@ def complete_instruction_input_trace(
                         "e_out_elements": "32",
                         "resident_rows_storage_id": "202",
                         **{
-                            f"storage_buffer_{index}": str(301 + index)
+                            f"storage_buffer_{index}": str(storage_buffer_ids[index])
                             for index in range(6)
                         },
                         "command_committed": "true",
@@ -283,10 +339,16 @@ def complete_instruction_input_trace(
                         "resident_rows_storage_id": "202",
                         "resident_rows": str(1 << log_n),
                         "storage_initialization": "minimal",
-                        "storage_initialization_bytes": "96",
+                        "storage_initialization_bytes": str(initialized_bytes),
                         "native_primer": "async",
+                        "dense_a_offset_bytes": "0",
+                        "dense_a_length_bytes": str(64 * (1 << log_n)),
+                        "dense_b_offset_bytes": str(
+                            64 * (1 << log_n) if borrow_outer_residual else 0
+                        ),
+                        "dense_b_length_bytes": str(32 * (1 << log_n)),
                         **{
-                            f"storage_buffer_{index}": str(301 + index)
+                            f"storage_buffer_{index}": str(storage_buffer_ids[index])
                             for index in range(6)
                         },
                     },
@@ -301,7 +363,7 @@ def complete_instruction_input_trace(
                         "e_out_elements": "32",
                         "resident_rows_storage_id": "202",
                         **{
-                            f"storage_buffer_{index}": str(301 + index)
+                            f"storage_buffer_{index}": str(storage_buffer_ids[index])
                             for index in range(6)
                         },
                     },
@@ -316,7 +378,7 @@ def complete_instruction_input_trace(
                         "e_out_elements": "32",
                         "resident_rows_storage_id": "202",
                         **{
-                            f"storage_buffer_{index}": str(301 + index)
+                            f"storage_buffer_{index}": str(storage_buffer_ids[index])
                             for index in range(6)
                         },
                         "command_completed": "true",
@@ -1689,14 +1751,21 @@ class MetalPiopEvalTests(unittest.TestCase):
             metal_piop_eval.validate_bytecode_stdout(metal + "\n" + metal, "metal", 26)
 
     def test_validates_instruction_input_runtime_record(self) -> None:
-        record = "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff=33554432 cutoff=65536 native_message_threads=256 native_transition_threads=128 dense_transition_threads=128 storage_initialization=minimal native_primer=async"
+        record = "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff=33554432 cutoff=65536 native_message_threads=256 native_transition_threads=128 dense_transition_threads=128 storage_initialization=minimal dense_storage_mode=Owned native_primer=async"
         self.assertIsNone(
             metal_piop_eval.validate_instruction_input_stdout("", "optimized")
         )
         observed = metal_piop_eval.validate_instruction_input_stdout(record, "metal")
         assert observed is not None
         self.assertEqual(observed["storage_initialization"], "minimal")
+        self.assertEqual(observed["dense_storage_mode"], "Owned")
         self.assertEqual(observed["native_primer"], "async")
+        borrowed = record.replace("dense_storage_mode=Owned", "dense_storage_mode=OuterResidual")
+        self.assertIsNotNone(
+            metal_piop_eval.validate_instruction_input_stdout(
+                borrowed, "metal", borrow_outer_residual=True
+            )
+        )
         with self.assertRaisesRegex(ValueError, "exactly one"):
             metal_piop_eval.validate_instruction_input_stdout(
                 record + "\n" + record, "metal"
@@ -1843,6 +1912,50 @@ class MetalPiopEvalTests(unittest.TestCase):
                 },
                 "stage6a": {"row_allocations": 0, "row_upload_bytes": 0},
                 "stage6b": {"row_allocations": 0, "row_upload_bytes": 0},
+            },
+        )
+        borrowed = metal_piop_eval.instruction_input_member_breakdown(
+            complete_instruction_input_trace(26, "metal", 16, True),
+            "metal",
+            26,
+            16,
+            True,
+        )
+        borrowed_resources = borrowed["resource_observation"]
+        self.assertTrue(borrowed_resources["borrowed_outer_residual"])
+        self.assertEqual(
+            borrowed_resources["allocation"]["owned_device_bytes"],
+            metal_piop_eval.instruction_input_sequence_auxiliary_storage_bytes(26),
+        )
+        self.assertEqual(
+            borrowed_resources["allocation"]["reused_device_bytes"],
+            96 * (1 << 26),
+        )
+        self.assertEqual(
+            borrowed_resources["storage_initialization"]["buffer_identities"][:2],
+            [203, 203],
+        )
+        self.assertEqual(
+            borrowed_resources["outer_residual_transfer"],
+            {
+                "resident_rows": 1 << 26,
+                "outer_residual_generation": 7,
+                "compact_rows_storage_id": 202,
+                "residual_rows_storage_id": 203,
+                "device_registry_id": 1,
+                "outer_sequence_owned_bytes": 5_242_880,
+                "outer_sequence_consumed": True,
+                "compact_rows_transferred": True,
+                "residual_rows_transferred": True,
+            },
+        )
+        self.assertEqual(
+            borrowed_resources["dense_ranges"],
+            {
+                "dense_a_offset_bytes": 0,
+                "dense_a_length_bytes": 64 * (1 << 26),
+                "dense_b_offset_bytes": 64 * (1 << 26),
+                "dense_b_length_bytes": 32 * (1 << 26),
             },
         )
 
@@ -2326,11 +2439,13 @@ class MetalPiopEvalTests(unittest.TestCase):
             {
                 "kind": "metal_compact_resident",
                 "rows": 1 << 26,
+                "explicit_rows": 1 << 26,
                 "row_bytes": 48,
                 "prepare_storage_id": 202,
                 "stage1_storage_id": 202,
                 "stage3_storage_id": 202,
                 "residual_storage_id": 203,
+                "outer_residual_transfer": None,
                 "row_production": {
                     "source_kind": "owned_random_access",
                     "witness_row_extractions": 1 << 26,

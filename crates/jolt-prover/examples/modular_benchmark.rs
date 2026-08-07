@@ -637,6 +637,7 @@ mod akita_benchmark {
         dense_transition_threads: usize,
         cutoff_log2: u32,
         trace_cutoff_log2: u32,
+        borrow_outer_residual: bool,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -748,6 +749,9 @@ mod akita_benchmark {
 
         #[clap(long, default_value_t = 25)]
         instruction_input_metal_trace_cutoff_log2: u32,
+
+        #[clap(long)]
+        instruction_input_metal_borrow_outer_residual: bool,
 
         #[clap(long, default_value_t = 15)]
         booleanity_address_metal_inner_log2: usize,
@@ -862,6 +866,7 @@ mod akita_benchmark {
                 dense_transition_threads: cli.instruction_input_metal_dense_transition_threads,
                 cutoff_log2: cli.instruction_input_metal_cutoff_log2,
                 trace_cutoff_log2: cli.instruction_input_metal_trace_cutoff_log2,
+                borrow_outer_residual: cli.instruction_input_metal_borrow_outer_residual,
             },
             booleanity_address_metal: BooleanityAddressMetalTuning {
                 implementation: cli.booleanity_address_metal_implementation,
@@ -924,6 +929,7 @@ mod akita_benchmark {
                     dense_transition_threads: instruction_input_metal_dense_transition_threads,
                     cutoff_log2: instruction_input_metal_cutoff_log2,
                     trace_cutoff_log2: instruction_input_metal_trace_cutoff_log2,
+                    borrow_outer_residual: instruction_input_metal_borrow_outer_residual,
                 },
             booleanity_address_metal:
                 BooleanityAddressMetalTuning {
@@ -1088,6 +1094,7 @@ mod akita_benchmark {
             instruction_input_metal_dense_transition_threads,
             instruction_input_metal_cutoff_log2,
             instruction_input_metal_trace_cutoff_log2,
+            instruction_input_metal_borrow_outer_residual,
             booleanity_address_metal_inner_log2,
             booleanity_address_metal_implementation,
             booleanity_address_metal_selectors_per_tile,
@@ -1203,6 +1210,12 @@ mod akita_benchmark {
                 config.instruction_input.trace_cutoff_elements = 1usize
                     .checked_shl(instruction_input_metal_trace_cutoff_log2)
                     .expect("InstructionInput Metal trace cutoff log2 must fit usize");
+                config.instruction_input.dense_storage_mode =
+                    if instruction_input_metal_borrow_outer_residual {
+                        jolt_kernels::metal::InstructionInputDenseStorageMode::OuterResidual
+                    } else {
+                        jolt_kernels::metal::InstructionInputDenseStorageMode::Owned
+                    };
                 config.booleanity_address.dispatch.inner_log2 = booleanity_address_metal_inner_log2;
                 config.booleanity_address.implementation =
                     match booleanity_address_metal_implementation {
@@ -1329,7 +1342,7 @@ mod akita_benchmark {
                     bytecode_address_metal_outer_tiles,
                 );
                 println!(
-                    "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} native_message_threads={} native_transition_threads={} dense_transition_threads={} storage_initialization={} native_primer=async",
+                    "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} native_message_threads={} native_transition_threads={} dense_transition_threads={} storage_initialization={} dense_storage_mode={:?} native_primer=async",
                     config.instruction_input.trace_cutoff_elements,
                     config.instruction_input.cutoff_elements,
                     instruction_input_metal_native_message_threads,
@@ -1340,6 +1353,7 @@ mod akita_benchmark {
                         .dispatch
                         .storage_initialization
                         .as_str(),
+                    config.instruction_input.dense_storage_mode,
                 );
                 println!(
                     "BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal trace_cutoff={} inner_log2={} selectors_per_tile={} tile_threads={} finalize_threads={}",
