@@ -129,6 +129,7 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
                     );
                     return cpu(session);
                 };
+                let device = self.context.device_info();
                 let invocation = match self.context.prepare_hamming_weight_retained(
                     hot_rows.clone(),
                     plan.reference_cycle(),
@@ -144,6 +145,35 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
                     }
                     Err(error) => return Err(metal_error(error.to_string()).into()),
                 };
+                let lengths = invocation
+                    .buffer_lengths()
+                    .map_err(|error| metal_error(error.to_string()))?;
+                let dispatch_plan = invocation.dispatch_plan();
+                let owned_bytes = lengths
+                    .owned_bytes()
+                    .map_err(|error| metal_error(error.to_string()))?;
+                let sequence_guard = tracing::info_span!(
+                    "MetalHammingWeightClaimReduction::retained_sequence",
+                    hot_rows_storage_id = invocation.hot_rows_storage_id(),
+                    source_rows_storage_id = invocation.source_rows_storage_id(),
+                    rows = trace_elements,
+                    hot_bytes = lengths.hot_bytes,
+                    e_in_fields = lengths.e_in_fields,
+                    e_out_fields = lengths.e_out_fields,
+                    partial_fields = lengths.partial_fields,
+                    output_fields = lengths.output_fields,
+                    owned_bytes,
+                    current_device_bytes = device.current_allocated_size,
+                    recommended_device_bytes = device.recommended_max_working_set_size,
+                    command_buffers = dispatch_plan.command_buffers,
+                    encoders = dispatch_plan.encoders,
+                    dispatches = dispatch_plan.dispatches,
+                    tile_threadgroups = dispatch_plan.tile_threadgroups,
+                    finalize_threadgroups = dispatch_plan.finalize_threadgroups,
+                    readbacks = dispatch_plan.readbacks,
+                )
+                .entered();
+                drop(sequence_guard);
                 let consumed_hot =
                     session
                         .take::<HammingHotRows>()
@@ -156,6 +186,13 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
                     });
                 }
                 let _ = session.take::<BooleanityRows>();
+                let terminal_carry_removed = session.state::<HammingHotRows>().is_none()
+                    && session.state::<BooleanityRows>().is_none();
+                if !terminal_carry_removed {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "retained Hamming preparation left a resident row owner",
+                    });
+                }
                 let lifecycle_guard = tracing::info_span!(
                     "MetalHammingHotRows::stage7_terminal_use",
                     hot_rows_storage_id = consumed_hot.allocation_identity(),
@@ -163,7 +200,10 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
                     hot_rows = consumed_hot.len(),
                     hot_row_bytes = 29usize,
                     device_registry_id = consumed_hot.device_registry_id(),
+                    row_allocations = 0u64,
+                    row_upload_bytes = 0u64,
                     terminal_consumer = true,
+                    terminal_carry_removed,
                 )
                 .entered();
                 let dispatch_span = tracing::info_span!(

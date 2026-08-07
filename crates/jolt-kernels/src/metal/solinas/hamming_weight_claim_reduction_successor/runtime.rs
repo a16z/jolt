@@ -12,7 +12,8 @@ use super::super::{
     AKITA_OFFSET_FFFFA7F7,
 };
 use super::{
-    HammingWeightRetainedConfig, HammingWeightRetainedError, HammingWeightRetainedGeometry,
+    HammingWeightRetainedBufferLengths, HammingWeightRetainedConfig,
+    HammingWeightRetainedDispatchPlan, HammingWeightRetainedError, HammingWeightRetainedGeometry,
     HammingWeightRetainedParams, HAMMING_RETAINED_FINALIZE_BUFFER_OUTPUT,
     HAMMING_RETAINED_FINALIZE_BUFFER_PARAMS, HAMMING_RETAINED_FINALIZE_BUFFER_PARTIALS,
     HAMMING_RETAINED_FINALIZE_PIPELINE, HAMMING_RETAINED_FINALIZE_THREADGROUP_BYTES,
@@ -220,6 +221,16 @@ impl HammingWeightRetainedInvocation {
 
     pub const fn output_elements(&self) -> usize {
         super::HAMMING_RETAINED_SELECTORS * super::HAMMING_RETAINED_BINS
+    }
+
+    pub fn buffer_lengths(
+        &self,
+    ) -> Result<HammingWeightRetainedBufferLengths, HammingWeightRetainedRuntimeError> {
+        Ok(self.geometry.buffer_lengths()?)
+    }
+
+    pub fn dispatch_plan(&self) -> HammingWeightRetainedDispatchPlan {
+        self.geometry.dispatch_plan()
     }
 
     pub fn hot_rows_storage_id(&self) -> usize {

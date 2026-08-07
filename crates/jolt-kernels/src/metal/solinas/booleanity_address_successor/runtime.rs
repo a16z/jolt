@@ -13,7 +13,8 @@ use super::super::{
     SolinasMetal, AKITA_OFFSET_FFFFA7F7,
 };
 use super::{
-    BooleanityAddressSuccessorConfig, BooleanityAddressSuccessorError,
+    BooleanityAddressSuccessorBufferLengths, BooleanityAddressSuccessorConfig,
+    BooleanityAddressSuccessorDispatchPlan, BooleanityAddressSuccessorError,
     BooleanityAddressSuccessorGeometry, BooleanityAddressSuccessorParams,
     BOOLEANITY_ADDRESS_SUCCESSOR_FINALIZE_THREADGROUP_BYTES,
     BOOLEANITY_ADDRESS_SUCCESSOR_SIMD_WIDTH, BOOLEANITY_ADDRESS_SUCCESSOR_THREADGROUP_BYTES,
@@ -226,6 +227,24 @@ impl BooleanityAddressSuccessorInvocation {
 
     pub const fn output_elements(&self) -> usize {
         super::BOOLEANITY_ADDRESS_SUCCESSOR_SELECTORS * super::BOOLEANITY_ADDRESS_SUCCESSOR_BINS
+    }
+
+    pub fn buffer_lengths(
+        &self,
+    ) -> Result<BooleanityAddressSuccessorBufferLengths, BooleanityAddressSuccessorRuntimeError>
+    {
+        self.geometry
+            .buffer_lengths()
+            .map_err(BooleanityAddressSuccessorRuntimeError::Plan)
+    }
+
+    pub fn dispatch_plan(
+        &self,
+    ) -> Result<BooleanityAddressSuccessorDispatchPlan, BooleanityAddressSuccessorRuntimeError>
+    {
+        self.geometry
+            .dispatch_plan()
+            .map_err(BooleanityAddressSuccessorRuntimeError::Plan)
     }
 
     pub fn source_rows_storage_id(&self) -> usize {

@@ -149,6 +149,7 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
                     cpu,
                 );
             };
+            let device = self.context.device_info();
             let invocation = match self.context.prepare_booleanity_address_successor(
                 resident_rows.clone(),
                 plan.reference_cycle(),
@@ -171,6 +172,36 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
                 }
                 Err(error) => return Err(metal_error(error.to_string()).into()),
             };
+            let lengths = invocation
+                .buffer_lengths()
+                .map_err(|error| metal_error(error.to_string()))?;
+            let dispatch_plan = invocation
+                .dispatch_plan()
+                .map_err(|error| metal_error(error.to_string()))?;
+            let owned_bytes = lengths
+                .owned_bytes()
+                .map_err(|error| metal_error(format!("{error:?}")))?;
+            let sequence_guard = tracing::info_span!(
+                "MetalBooleanityAddressPhase::packed_hot_sequence",
+                resident_rows_storage_id = resident_row_identity,
+                hot_rows_storage_id = invocation.hot_rows_storage_id(),
+                rows = trace_elements,
+                resident_row_bytes = size_of::<super::solinas::BooleanityRow>(),
+                hot_bytes = lengths.hot_bytes,
+                validity_bytes = lengths.validity_bytes,
+                e_in_fields = lengths.e_in_fields,
+                e_out_fields = lengths.e_out_fields,
+                partial_fields = lengths.partial_fields,
+                output_fields = lengths.output_fields,
+                owned_bytes,
+                current_device_bytes = device.current_allocated_size,
+                recommended_device_bytes = device.recommended_max_working_set_size,
+                command_buffers = dispatch_plan.command_buffers,
+                dispatches = dispatch_plan.dispatches,
+                readbacks = dispatch_plan.readbacks,
+            )
+            .entered();
+            drop(sequence_guard);
             let dispatch_span = tracing::info_span!(
                 "MetalBooleanityAddressPhase::packed_hot_dispatch",
                 command_buffers = 1u64,
@@ -196,9 +227,17 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
                     reason: "packed Booleanity-address projection changed source row identity",
                 });
             }
+            let readback_guard = tracing::info_span!(
+                "MetalBooleanityAddressPhase::packed_hot_readback",
+                elements = invocation.output_elements(),
+                bytes = invocation.output_elements() * size_of::<AkitaField>(),
+                readbacks = 1u64,
+            )
+            .entered();
             let masses = invocation
                 .read_masses()
                 .map_err(|error| metal_error(error.to_string()))?;
+            drop(readback_guard);
             let masses = select_packed_hot_masses(&masses, &packed_planes)?;
             let kernel = plan.finish(masses)?;
             session.park(hot_rows);
