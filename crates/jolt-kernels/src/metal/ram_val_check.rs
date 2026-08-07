@@ -1,18 +1,29 @@
-use jolt_field::AkitaField;
+use std::sync::Arc;
+
+use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
+use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
+use jolt_field::{AkitaField, CanonicalU64};
 use jolt_poly::{EqPolynomial, LtPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::solinas::ram_cycle_family_v3::{
+    HostSparseRamValCheck, OwnerConfig, RamAccessRecord as CycleRamAccessRecord,
+    RamCycleFamilyOwner, RamIncrementRecord as CycleRamIncrementRecord,
+};
 use super::solinas::{
     MetalError, PendingRamValSparseFirstMessage, RamRafAddressPlane, RamValActivePair,
 };
-use crate::optimized::ram_trace::RamIncrementActivity;
+use crate::optimized::ram_trace::{RamAccessColumns, RamIncrementActivity};
 use crate::optimized::ram_val_check::{prepare_optimized_ram_val_check, RamValCheckKernel};
+use crate::ram_access::{RamAccessTape, MAX_RETAINED_RAM_ACCESSES};
+use crate::reference::views::dense_view;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -27,6 +38,108 @@ impl Default for RamValCheckMetalConfig {
         Self {
             trace_cutoff_elements: 1 << 25,
         }
+    }
+}
+
+struct HostSparseRamValCheckKernel {
+    sequence: HostSparseRamValCheck<AkitaField>,
+    next_round: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for HostSparseRamValCheckKernel {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("sparse_sequence"),
+            std::mem::size_of_val(&self.sequence),
+        );
+        visitor.exit();
+    }
+}
+
+impl ProveRounds<AkitaField> for HostSparseRamValCheckKernel {
+    fn num_rounds(&self) -> usize {
+        self.sequence.num_rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<AkitaField>,
+        round: usize,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        if round != self.next_round || (round == 0) != bind.is_none() {
+            return Err(metal_error(
+                "sparse RAM value-check received an out-of-order round",
+            ));
+        }
+        if let Some(challenge) = bind {
+            self.sequence
+                .bind(challenge)
+                .map_err(|error| host_sparse_error(error.to_string()))?;
+        }
+        let message = self
+            .sequence
+            .message()
+            .map_err(|error| host_sparse_error(error.to_string()))?;
+        self.next_round += 1;
+        Ok(UnivariatePoly::from_evals_and_hint(
+            previous_claim,
+            &message.sampled_evaluations(),
+        ))
+    }
+
+    fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
+        self.sequence
+            .bind(bind)
+            .map_err(|error| host_sparse_error(error.to_string()))
+    }
+}
+
+impl SumcheckKernel<AkitaField> for HostSparseRamValCheckKernel {
+    type Relation = RamValCheck<AkitaField>;
+
+    fn output_claims(
+        &mut self,
+        inputs: &SumcheckInputClaims<AkitaField, Self::Relation>,
+    ) -> Result<RamValCheckOutputClaims<AkitaField>, SumcheckKernelError<AkitaField>> {
+        let terminal = self.sequence.terminal_factors().map_err(|error| {
+            SumcheckKernelError::ComputeBackend {
+                backend: "host-sparse",
+                message: error.to_string(),
+            }
+        })?;
+        Ok(RamValCheckOutputClaims {
+            untrusted_advice: inputs.untrusted_advice,
+            trusted_advice: inputs.trusted_advice,
+            program_image: inputs.program_image,
+            ram_ra: terminal.ram_ra(),
+            ram_inc: terminal.ram_increment(),
+        })
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &Self::Relation,
+        input_points: &SumcheckInputPoints<AkitaField, Self::Relation>,
+        output_points: &SumcheckOutputPoints<AkitaField, Self::Relation>,
+        challenges: &ConcreteSumcheckChallenges<AkitaField, Self::Relation>,
+    ) -> Result<(), SumcheckKernelError<AkitaField>> {
+        let id = JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma);
+        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
+        let got = self
+            .sequence
+            .terminal_factors()
+            .map_err(|error| SumcheckKernelError::ComputeBackend {
+                backend: "host-sparse",
+                message: error.to_string(),
+            })?
+            .lt_cycle_plus_gamma();
+        if got != expected {
+            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+        }
+        Ok(())
     }
 }
 
@@ -64,6 +177,23 @@ impl PrepareKernel<AkitaField, RamValCheck<AkitaField>> for MetalBackend {
         let gamma = inputs.challenges.gamma;
         let log_t = relation.trace_dimensions().log_t();
         let cycles = 1usize << log_t;
+        let columns = RamAccessColumns::shared(session, witness, log_t)?;
+        columns.validate_addresses(1usize << relation.ram_log_k())?;
+        if cycles >= self.config.ram_val_check.trace_cutoff_elements {
+            if let Some(sequence) = prepare_host_sparse_ram_val_check(
+                session,
+                witness,
+                relation,
+                &points.ram_val,
+                gamma,
+            )? {
+                #[cfg(any(test, feature = "test-utils"))]
+                let _ = self
+                    .ram_val_sparse_sequences
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Ok(Box::new(sequence));
+            }
+        }
         let cpu = prepare_optimized_ram_val_check(session, witness, inputs)?;
         if cycles < self.config.ram_val_check.trace_cutoff_elements {
             return Ok(Box::new(cpu));
@@ -127,10 +257,6 @@ impl PrepareKernel<AkitaField, RamValCheck<AkitaField>> for MetalBackend {
             .entered();
             invocation.submit()
         };
-        #[cfg(any(test, feature = "test-utils"))]
-        let _ = self
-            .ram_val_shadow_dispatches
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(Box::new(MetalRamValCheckShadow {
             cpu,
             pending: Some(pending),
@@ -138,6 +264,115 @@ impl PrepareKernel<AkitaField, RamValCheck<AkitaField>> for MetalBackend {
             next_round: 0,
         }))
     }
+}
+
+fn prepare_host_sparse_ram_val_check(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    relation: &RamValCheck<AkitaField>,
+    ram_val_point: &[AkitaField],
+    gamma: AkitaField,
+) -> Result<Option<HostSparseRamValCheckKernel>, KernelError<AkitaField>> {
+    let log_t = relation.trace_dimensions().log_t();
+    let log_k = relation.ram_log_k();
+    if ram_val_point.len() != log_k + log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "RAM value-check input point has the wrong variable count",
+        });
+    }
+    let address_domain = 1usize << log_k;
+    let records = {
+        let tape = session
+            .state::<RamAccessTape>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "RAM sparse value-check is missing the retained access tape",
+            })?;
+        tape.validate(log_t, address_domain)
+            .map_err(|error| host_sparse_prepare_error(error.to_string()))?;
+        let Some(records) = tape.records() else {
+            return Ok(None);
+        };
+        records
+            .iter()
+            .map(|record| {
+                CycleRamAccessRecord::new(
+                    record.cycle,
+                    record.address,
+                    record.pre_value,
+                    record.post_value,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let increments = session
+        .state::<RamIncrementActivity>()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "RAM sparse value-check is missing increment activity",
+        })?
+        .records()
+        .map(|(cycle, increment)| {
+            u64::try_from(cycle)
+                .map(|cycle| CycleRamIncrementRecord::new(cycle, increment))
+                .map_err(|_| {
+                    host_sparse_prepare_error("RAM increment cycle exceeds the sparse ABI")
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if records.len().max(increments.len()) > MAX_RETAINED_RAM_ACCESSES {
+        return Ok(None);
+    }
+    let final_memory = dense_view::<AkitaField>(witness, ram_val_final())?;
+    if final_memory.len() != address_domain {
+        return Err(KernelError::TableSizeMismatch {
+            table: format!("{:?}", ram_val_final()),
+            expected: address_domain,
+            got: final_memory.len(),
+        });
+    }
+    let final_memory = final_memory
+        .iter()
+        .map(|value| {
+            value.to_canonical_u64_checked().ok_or_else(|| {
+                host_sparse_prepare_error(
+                    "RAM final memory is not canonically representable as u64",
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let config = OwnerConfig::new(
+        log_t,
+        log_k,
+        1,
+        256,
+        records.len().max(increments.len()).max(1),
+    )
+    .map_err(|error| host_sparse_prepare_error(error.to_string()))?;
+    let owner = Arc::new(
+        RamCycleFamilyOwner::from_sparse_records(config, records, increments, final_memory)
+            .map_err(|error| host_sparse_prepare_error(error.to_string()))?,
+    );
+    let (r_address, r_cycle) = ram_val_point.split_at(log_k);
+    let sequence = HostSparseRamValCheck::new(Arc::clone(&owner), r_address, r_cycle, gamma)
+        .map_err(|error| host_sparse_prepare_error(error.to_string()))?;
+    session.park(Arc::clone(&owner));
+    tracing::info!(
+        target: "jolt::metal",
+        cycles = owner.receipt().cycles(),
+        accesses = owner.receipt().access_count(),
+        increments = owner.receipt().increment_count(),
+        topology_nodes = owner
+            .receipt()
+            .block_census()
+            .iter()
+            .map(|level| level.entries())
+            .sum::<u64>(),
+        "prepared sparse RAM value-check sequence"
+    );
+    Ok(Some(HostSparseRamValCheckKernel {
+        sequence,
+        next_round: 0,
+    }))
 }
 
 fn collect_active_pairs(
@@ -269,6 +504,17 @@ fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
     })
 }
 
+fn host_sparse_prepare_error(message: impl Into<String>) -> KernelError<AkitaField> {
+    KernelError::Sumcheck(host_sparse_error(message))
+}
+
+fn host_sparse_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "host-sparse",
+        message: message.into(),
+    }
+}
+
 fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
     SumcheckError::ComputeBackend {
         backend: "metal",
@@ -306,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn sparse_first_message_matches_optimized_cpu() {
+    fn host_sparse_sequence_matches_optimized_cpu() {
         let shape = FixtureShape {
             log_t: 15,
             ram_k: RAM_RAF_ADDRESS_DOMAIN,
@@ -368,7 +614,7 @@ mod tests {
 
             let mut actual =
                 PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();
-            assert_eq!(metal.ram_val_shadow_dispatches(), 1);
+            assert_eq!(metal.ram_val_sparse_sequences(), 1);
             let (r_address, r_cycle) = points.ram_val.split_at(shape.log_k());
             let ra_folded =
                 address_fold::<AkitaField>(witness, ram_ra_val_check(), shape.log_t, r_address)

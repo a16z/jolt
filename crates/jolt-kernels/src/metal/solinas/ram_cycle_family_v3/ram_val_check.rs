@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use jolt_field::Field;
 use thiserror::Error;
 
@@ -105,23 +107,24 @@ impl<F: Field> RamValFrontierEntry<F> {
 ///
 /// The sequence contains no transcript logic. The caller reads a message,
 /// absorbs it on the host, and supplies the resulting challenge to [`Self::bind`].
-pub struct HostSparseRamValCheck<'a, F> {
-    owner: &'a RamCycleFamilyOwner,
+pub struct HostSparseRamValCheck<F> {
+    owner: Arc<RamCycleFamilyOwner>,
     frontier: Vec<RamValFrontierEntry<F>>,
     lt: SplitLt<F>,
     round: usize,
     rounds: usize,
 }
 
-impl<'a, F: Field> HostSparseRamValCheck<'a, F> {
+impl<F: Field> HostSparseRamValCheck<F> {
     pub fn new(
-        owner: &'a RamCycleFamilyOwner,
+        owner: Arc<RamCycleFamilyOwner>,
         r_address: &[F],
         r_cycle: &[F],
         gamma: F,
     ) -> Result<Self, RamValError> {
         owner.verify_integrity()?;
         let receipt = owner.receipt();
+        let rounds = receipt.log_t();
         if r_address.len() != receipt.log_k() {
             return Err(RamValError::AddressPointLength {
                 expected: receipt.log_k(),
@@ -142,7 +145,7 @@ impl<'a, F: Field> HostSparseRamValCheck<'a, F> {
                 got: eq_address.len(),
             });
         }
-        let frontier = seed_frontier(owner, &eq_address)?;
+        let frontier = seed_frontier(&owner, &eq_address)?;
         if !frontier.iter().map(|value| value.block).eq(owner
             .block_topology()
             .leaf_cycles()
@@ -170,7 +173,7 @@ impl<'a, F: Field> HostSparseRamValCheck<'a, F> {
             frontier,
             lt: SplitLt::new_plus_constant(r_cycle, gamma)?,
             round: 0,
-            rounds: receipt.log_t(),
+            rounds,
         })
     }
 

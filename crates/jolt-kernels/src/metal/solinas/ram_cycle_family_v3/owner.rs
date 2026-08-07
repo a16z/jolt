@@ -18,6 +18,15 @@ pub struct RamAccessRecord {
 const _: [(); 24] = [(); size_of::<RamAccessRecord>()];
 
 impl RamAccessRecord {
+    pub const fn new(cycle: u32, address: u32, pre_value: u64, post_value: u64) -> Self {
+        Self {
+            cycle,
+            address,
+            pre_value,
+            post_value,
+        }
+    }
+
     pub const fn cycle(self) -> u32 {
         self.cycle
     }
@@ -42,6 +51,10 @@ pub struct RamIncrementRecord {
 }
 
 impl RamIncrementRecord {
+    pub const fn new(cycle: u64, increment: i128) -> Self {
+        Self { cycle, increment }
+    }
+
     pub const fn cycle(self) -> u64 {
         self.cycle
     }
@@ -429,7 +442,143 @@ pub struct RamCycleFamilyOwner {
     block_topology: RamBlockTopology,
 }
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for RamCycleFamilyOwner {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("access_records"),
+            std::mem::size_of_val(self.records.as_ref()),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("increment_cycles"),
+            std::mem::size_of_val(self.increment_cycles.as_ref()),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("increments"),
+            std::mem::size_of_val(self.increments.as_ref()),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("final_memory"),
+            std::mem::size_of_val(self.final_memory.as_ref()),
+        );
+        visitor.exit();
+    }
+}
+
 impl RamCycleFamilyOwner {
+    pub fn from_sparse_records(
+        config: OwnerConfig,
+        records: Vec<RamAccessRecord>,
+        increments: Vec<RamIncrementRecord>,
+        final_memory: Vec<u64>,
+    ) -> Result<Self, OwnerError> {
+        let cycles = domain_size(config.log_t)?;
+        let address_domain = domain_size(config.log_k)?;
+        if records.len() > config.max_sparse_records {
+            return Err(OwnerError::SparseCapacityExceeded {
+                maximum: config.max_sparse_records,
+            });
+        }
+        if increments.len() > config.max_sparse_records {
+            return Err(OwnerError::SparseCapacityExceeded {
+                maximum: config.max_sparse_records,
+            });
+        }
+        if final_memory.len() != address_domain {
+            return Err(OwnerError::FinalMemoryLength {
+                expected: address_domain,
+                got: final_memory.len(),
+            });
+        }
+
+        let mut last_cycle = None;
+        let mut last_post = vec![None; address_domain];
+        for record in &records {
+            let cycle = record.cycle as usize;
+            let address = record.address as usize;
+            if cycle >= cycles {
+                return Err(OwnerError::CycleIndexTooLarge);
+            }
+            if last_cycle.is_some_and(|previous| previous >= cycle) {
+                return Err(OwnerError::AccessRecordsOutOfOrder { cycle });
+            }
+            if address >= address_domain {
+                return Err(OwnerError::AddressOutOfRange {
+                    cycle,
+                    address: record.address,
+                    address_domain,
+                });
+            }
+            if last_post[address].is_some_and(|previous| previous != record.pre_value) {
+                return Err(OwnerError::CheckpointDiscontinuity {
+                    cycle,
+                    address: record.address,
+                });
+            }
+            last_post[address] = Some(record.post_value);
+            last_cycle = Some(cycle);
+        }
+        for (address, expected) in last_post.into_iter().enumerate() {
+            if let Some(expected) = expected {
+                let got = final_memory[address];
+                if got != expected {
+                    return Err(OwnerError::FinalMemoryMismatch {
+                        address,
+                        expected,
+                        got,
+                    });
+                }
+            }
+        }
+
+        let mut increment_cycles = Vec::with_capacity(increments.len());
+        let mut increment_values = Vec::with_capacity(increments.len());
+        let mut last_increment_cycle = None;
+        for increment in increments {
+            let cycle =
+                usize::try_from(increment.cycle).map_err(|_| OwnerError::CycleIndexTooLarge)?;
+            if cycle >= cycles {
+                return Err(OwnerError::CycleIndexTooLarge);
+            }
+            if last_increment_cycle.is_some_and(|previous| previous >= cycle) {
+                return Err(OwnerError::IncrementRecordsOutOfOrder { cycle });
+            }
+            if increment.increment == 0 {
+                return Err(OwnerError::ZeroIncrement { cycle });
+            }
+            increment_cycles.push(increment.cycle);
+            increment_values.push(increment.increment);
+            last_increment_cycle = Some(cycle);
+        }
+
+        for record in &records {
+            let cycle = u64::from(record.cycle);
+            let expected = i128::from(record.post_value) - i128::from(record.pre_value);
+            let got = increment_cycles
+                .binary_search(&cycle)
+                .ok()
+                .map_or(0, |index| increment_values[index]);
+            if got != expected {
+                return Err(OwnerError::IncrementMismatch {
+                    cycle: record.cycle as usize,
+                    expected,
+                    got,
+                });
+            }
+        }
+
+        build_owner(
+            config,
+            cycles,
+            address_domain,
+            records,
+            increment_cycles,
+            increment_values,
+            final_memory,
+        )
+    }
+
     pub fn receipt(&self) -> &RamCycleFamilyReceipt {
         &self.receipt
     }
@@ -549,6 +698,60 @@ impl RamCycleFamilyOwner {
     }
 }
 
+fn build_owner(
+    config: OwnerConfig,
+    cycles: usize,
+    address_domain: usize,
+    records: Vec<RamAccessRecord>,
+    increment_cycles: Vec<u64>,
+    increments: Vec<i128>,
+    final_memory: Vec<u64>,
+) -> Result<RamCycleFamilyOwner, OwnerError> {
+    let rw_topology = RamRwMergeTopology::build(config.log_t, &records, config.threadgroup_width)?;
+    let block_topology = RamBlockTopology::build(
+        config.log_t,
+        &records,
+        &increment_cycles,
+        config.threadgroup_width,
+    )?;
+    let final_memory = final_memory.into_boxed_slice();
+    let records = records.into_boxed_slice();
+    let increment_cycles = increment_cycles.into_boxed_slice();
+    let increments = increments.into_boxed_slice();
+    let fingerprint = owner_fingerprint(
+        config,
+        &records,
+        &increment_cycles,
+        &increments,
+        &final_memory,
+        &rw_topology,
+        &block_topology,
+    );
+    let receipt = RamCycleFamilyReceipt {
+        schema_version: RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+        source_generation: config.source_generation,
+        log_t: config.log_t,
+        log_k: config.log_k,
+        cycles,
+        address_domain,
+        threadgroup_width: config.threadgroup_width,
+        access_count: records.len(),
+        increment_count: increments.len(),
+        rw_census: rw_topology.census().to_vec().into_boxed_slice(),
+        block_census: block_topology.census().to_vec().into_boxed_slice(),
+        fingerprint,
+    };
+    Ok(RamCycleFamilyOwner {
+        receipt,
+        records,
+        increment_cycles,
+        increments,
+        final_memory,
+        rw_topology,
+        block_topology,
+    })
+}
+
 fn owner_fingerprint(
     config: OwnerConfig,
     records: &[RamAccessRecord],
@@ -630,6 +833,12 @@ pub enum OwnerError {
     CycleCountMismatch { expected: usize, got: usize },
     #[error("RAM owner cycle index exceeds the u32 ABI")]
     CycleIndexTooLarge,
+    #[error("RAM owner access records are not strictly ordered at cycle {cycle}")]
+    AccessRecordsOutOfOrder { cycle: usize },
+    #[error("RAM owner increment records are not strictly ordered at cycle {cycle}")]
+    IncrementRecordsOutOfOrder { cycle: usize },
+    #[error("RAM owner retained a zero increment at cycle {cycle}")]
+    ZeroIncrement { cycle: usize },
     #[error(
         "RAM owner address {address} at cycle {cycle} is outside the {address_domain}-word domain"
     )]

@@ -83,7 +83,7 @@ pub struct MetalBackend {
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) registers_val_sequences: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
-    pub(super) ram_val_shadow_dispatches: Arc<AtomicUsize>,
+    pub(super) ram_val_sparse_sequences: Arc<AtomicUsize>,
 }
 
 impl MetalBackend {
@@ -185,7 +185,7 @@ impl MetalBackend {
             #[cfg(any(test, feature = "test-utils"))]
             registers_val_sequences: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
-            ram_val_shadow_dispatches: Arc::new(AtomicUsize::new(0)),
+            ram_val_sparse_sequences: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -240,8 +240,8 @@ impl MetalBackend {
 
     #[cfg(any(test, feature = "test-utils"))]
     #[doc(hidden)]
-    pub fn ram_val_shadow_dispatches(&self) -> usize {
-        self.ram_val_shadow_dispatches
+    pub fn ram_val_sparse_sequences(&self) -> usize {
+        self.ram_val_sparse_sequences
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 }

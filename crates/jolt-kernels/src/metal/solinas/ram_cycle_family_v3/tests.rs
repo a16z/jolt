@@ -1,4 +1,5 @@
 use jolt_field::AkitaField;
+use std::sync::Arc;
 
 use super::*;
 
@@ -92,12 +93,46 @@ fn owner_builds_checked_shared_topologies() {
     clippy::unwrap_used,
     reason = "test fixtures should stop at the first violated invariant"
 )]
+fn sparse_records_reconstruct_the_checked_owner() {
+    let expected = fixture_owner();
+    let records = expected.access_records().to_vec();
+    let increments = expected.increment_records().collect::<Vec<_>>();
+    let config = OwnerConfig::new(3, 2, 17, 4, 16).unwrap();
+    let actual = RamCycleFamilyOwner::from_sparse_records(
+        config,
+        records,
+        increments,
+        expected.final_memory().to_vec(),
+    )
+    .unwrap();
+
+    actual.verify_integrity().unwrap();
+    assert_eq!(
+        actual.receipt().fingerprint(),
+        expected.receipt().fingerprint()
+    );
+    assert_eq!(
+        actual.block_topology().leaf_cycles(),
+        expected.block_topology().leaf_cycles()
+    );
+    assert_eq!(
+        actual.read_write_topology().final_addresses(),
+        expected.read_write_topology().final_addresses()
+    );
+}
+
+#[test]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test fixtures should stop at the first violated invariant"
+)]
 fn sparse_value_check_matches_independent_dense_oracle() {
-    let owner = fixture_owner();
+    let owner = Arc::new(fixture_owner());
     let r_address = [field(2), field(5)];
     let r_cycle = [field(7), field(11), field(13)];
     let gamma = field(17);
-    let mut sparse = HostSparseRamValCheck::new(&owner, &r_address, &r_cycle, gamma).unwrap();
+    let mut sparse =
+        HostSparseRamValCheck::new(Arc::clone(&owner), &r_address, &r_cycle, gamma).unwrap();
     let mut dense = DenseRamValCheckOracle::new(&owner, &r_address, &r_cycle, gamma).unwrap();
     let challenges = [field(19), field(23), field(29)];
 
@@ -142,7 +177,9 @@ fn increment_only_raw_zero_survives_an_empty_access_topology() {
 
     let r_address = [field(3)];
     let r_cycle = [field(5), field(7)];
-    let mut sparse = HostSparseRamValCheck::new(&owner, &r_address, &r_cycle, field(11)).unwrap();
+    let owner = Arc::new(owner);
+    let mut sparse =
+        HostSparseRamValCheck::new(Arc::clone(&owner), &r_address, &r_cycle, field(11)).unwrap();
     let mut dense = DenseRamValCheckOracle::new(&owner, &r_address, &r_cycle, field(11)).unwrap();
     for challenge in [field(13), field(17)] {
         assert_eq!(sparse.message().unwrap(), dense.message().unwrap());
