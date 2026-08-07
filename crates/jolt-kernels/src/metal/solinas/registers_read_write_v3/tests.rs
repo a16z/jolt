@@ -87,7 +87,7 @@ fn fixture(cycles: usize) -> (Vec<RegisterRow>, [u64; 128], Vec<F>, [u64; 128]) 
     let mut state = initial;
     let mut rows = Vec::with_capacity(cycles);
     let mut rd_inc = vec![f(0); cycles];
-    for cycle in 0..cycles {
+    for (cycle, increment) in rd_inc.iter_mut().enumerate() {
         let rs1_register = ((3 * cycle + 7) % 128) as u8;
         let rs2_register = if cycle % 11 == 0 {
             rs1_register
@@ -108,7 +108,7 @@ fn fixture(cycles: usize) -> (Vec<RegisterRow>, [u64; 128], Vec<F>, [u64; 128]) 
             let pre = state[register];
             let post = pre + (cycle % 19 + 1) as u64;
             state[register] = post;
-            rd_inc[cycle] = F::from_i128(i128::from(post) - i128::from(pre));
+            *increment = F::from_i128(i128::from(post) - i128::from(pre));
             RegisterWrite::new(rd_register, pre, post)
         });
         rows.push(RegisterRow::new(rs1, rs2, rd));

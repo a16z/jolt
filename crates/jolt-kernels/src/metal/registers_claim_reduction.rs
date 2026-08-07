@@ -559,7 +559,7 @@ fn duration_nanos(duration: std::time::Duration) -> u64 {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test module")]
+#[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_field::AkitaField;

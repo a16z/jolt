@@ -185,7 +185,6 @@ pub(crate) enum RegistersRwV3Error {
 
 #[cfg(test)]
 #[expect(
-    clippy::panic,
     clippy::unwrap_used,
     reason = "fixed unit-test fixtures use direct assertions and unwraps"
 )]
