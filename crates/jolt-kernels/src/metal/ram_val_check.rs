@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
-use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::{AkitaField, CanonicalU64};
+use jolt_field::AkitaField;
 use jolt_poly::{EqPolynomial, LtPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -13,17 +10,13 @@ use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutpu
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
-use super::solinas::ram_cycle_family_v3::{
-    HostSparseRamValCheck, OwnerConfig, RamAccessRecord as CycleRamAccessRecord,
-    RamCycleFamilyOwner, RamIncrementRecord as CycleRamIncrementRecord,
-};
+use super::ram_cycle_family::shared_ram_cycle_family_owner;
+use super::solinas::ram_cycle_family_v3::HostSparseRamValCheck;
 use super::solinas::{
     MetalError, PendingRamValSparseFirstMessage, RamRafAddressPlane, RamValActivePair,
 };
 use crate::optimized::ram_trace::{RamAccessColumns, RamIncrementActivity};
 use crate::optimized::ram_val_check::{prepare_optimized_ram_val_check, RamValCheckKernel};
-use crate::ram_access::{RamAccessTape, MAX_RETAINED_RAM_ACCESSES};
-use crate::reference::views::dense_view;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -280,95 +273,12 @@ fn prepare_host_sparse_ram_val_check(
             reason: "RAM value-check input point has the wrong variable count",
         });
     }
-    let address_domain = 1usize << log_k;
-    let records = {
-        let tape = session
-            .state::<RamAccessTape>()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "RAM sparse value-check is missing the retained access tape",
-            })?;
-        tape.validate(log_t, address_domain)
-            .map_err(|error| host_sparse_prepare_error(error.to_string()))?;
-        let Some(records) = tape.records() else {
-            return Ok(None);
-        };
-        records
-            .iter()
-            .map(|record| {
-                CycleRamAccessRecord::new(
-                    record.cycle,
-                    record.address,
-                    record.pre_value,
-                    record.post_value,
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    let increments = session
-        .state::<RamIncrementActivity>()
-        .ok_or(KernelError::InvariantViolation {
-            reason: "RAM sparse value-check is missing increment activity",
-        })?
-        .records()
-        .map(|(cycle, increment)| {
-            u64::try_from(cycle)
-                .map(|cycle| CycleRamIncrementRecord::new(cycle, increment))
-                .map_err(|_| {
-                    host_sparse_prepare_error("RAM increment cycle exceeds the sparse ABI")
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    if records.len().max(increments.len()) > MAX_RETAINED_RAM_ACCESSES {
+    let Some(owner) = shared_ram_cycle_family_owner(session, witness, log_t, log_k)? else {
         return Ok(None);
-    }
-    let final_memory = dense_view::<AkitaField>(witness, ram_val_final())?;
-    if final_memory.len() != address_domain {
-        return Err(KernelError::TableSizeMismatch {
-            table: format!("{:?}", ram_val_final()),
-            expected: address_domain,
-            got: final_memory.len(),
-        });
-    }
-    let final_memory = final_memory
-        .iter()
-        .map(|value| {
-            value.to_canonical_u64_checked().ok_or_else(|| {
-                host_sparse_prepare_error(
-                    "RAM final memory is not canonically representable as u64",
-                )
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let config = OwnerConfig::new(
-        log_t,
-        log_k,
-        1,
-        256,
-        records.len().max(increments.len()).max(1),
-    )
-    .map_err(|error| host_sparse_prepare_error(error.to_string()))?;
-    let owner = Arc::new(
-        RamCycleFamilyOwner::from_sparse_records(config, records, increments, final_memory)
-            .map_err(|error| host_sparse_prepare_error(error.to_string()))?,
-    );
+    };
     let (r_address, r_cycle) = ram_val_point.split_at(log_k);
-    let sequence = HostSparseRamValCheck::new(Arc::clone(&owner), r_address, r_cycle, gamma)
+    let sequence = HostSparseRamValCheck::new(owner, r_address, r_cycle, gamma)
         .map_err(|error| host_sparse_prepare_error(error.to_string()))?;
-    session.park(Arc::clone(&owner));
-    tracing::info!(
-        target: "jolt::metal",
-        cycles = owner.receipt().cycles(),
-        accesses = owner.receipt().access_count(),
-        increments = owner.receipt().increment_count(),
-        topology_nodes = owner
-            .receipt()
-            .block_census()
-            .iter()
-            .map(|level| level.entries())
-            .sum::<u64>(),
-        "prepared sparse RAM value-check sequence"
-    );
     Ok(Some(HostSparseRamValCheckKernel {
         sequence,
         next_round: 0,
@@ -523,8 +433,14 @@ fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
+#[expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "Metal parity test setup"
+)]
 mod tests {
+    use std::sync::Arc;
+
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{
         ram_inc_val_check, ram_ra_val_check, RamValCheckInit,
@@ -537,6 +453,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
+    use crate::metal::solinas::ram_cycle_family_v3::RamCycleFamilyOwner;
     use crate::metal::solinas::RAM_RAF_ADDRESS_DOMAIN;
     use crate::metal::MetalConfig;
     use crate::optimized::harness::run_lockstep;
@@ -611,10 +528,21 @@ mod tests {
             .unwrap();
             assert!(session.state::<RamRafAddressPlane>().is_some());
             assert!(session.state::<RamIncrementActivity>().is_some());
+            let shared_owner = Arc::clone(
+                session
+                    .state::<Arc<RamCycleFamilyOwner>>()
+                    .expect("RAM owner prepared with the witness"),
+            );
 
             let mut actual =
                 PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();
             assert_eq!(metal.ram_val_sparse_sequences(), 1);
+            assert!(Arc::ptr_eq(
+                &shared_owner,
+                session
+                    .state::<Arc<RamCycleFamilyOwner>>()
+                    .expect("RAM value-check retains the shared owner")
+            ));
             let (r_address, r_cycle) = points.ram_val.split_at(shape.log_k());
             let ra_folded =
                 address_fold::<AkitaField>(witness, ram_ra_val_check(), shape.log_t, r_address)

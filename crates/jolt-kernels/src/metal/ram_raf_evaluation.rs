@@ -17,6 +17,7 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::ram_cycle_family::shared_ram_cycle_family_owner;
 use super::solinas::{
     MetalError, PendingRamRafSequence, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
     RamRafTailOutput, RAM_RAF_ADDRESS_DOMAIN,
@@ -67,12 +68,21 @@ impl MetalBackend {
     ) -> Result<(), KernelError<AkitaField>> {
         let config = self.config.ram_raf_evaluation.dispatch;
         let cycles = 1usize << log_t;
-        if cycles < config.trace_cutoff || session.state::<RamRafAddressPlane>().is_some() {
+        if cycles < config.trace_cutoff {
             return Ok(());
         }
         let ram_ra_shape =
             witness.shape(JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa))?;
         if ram_ra_shape.log_rows != log_t + RAM_RAF_ADDRESS_DOMAIN.ilog2() as usize {
+            return Ok(());
+        }
+        let _ = shared_ram_cycle_family_owner(
+            session,
+            witness,
+            log_t,
+            RAM_RAF_ADDRESS_DOMAIN.ilog2() as usize,
+        )?;
+        if session.state::<RamRafAddressPlane>().is_some() {
             return Ok(());
         }
         let columns = RamAccessColumns::shared(session, witness, log_t)?;
@@ -140,7 +150,7 @@ impl MetalBackend {
         Ok(())
     }
 
-    fn submit_ram_raf(
+    pub(super) fn submit_ram_raf(
         &self,
         session: &mut ProofSession,
         relation: &RamReadWriteChecking<AkitaField>,
@@ -189,21 +199,6 @@ impl MetalBackend {
         };
         session.park(pending);
         Ok(())
-    }
-}
-
-impl PrepareKernel<AkitaField, RamReadWriteChecking<AkitaField>> for MetalBackend {
-    fn prepare(
-        &self,
-        session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<AkitaField>,
-        inputs: ProverInputs<'_, AkitaField, RamReadWriteChecking<AkitaField>>,
-    ) -> Result<
-        Box<dyn SumcheckKernel<AkitaField, Relation = RamReadWriteChecking<AkitaField>>>,
-        KernelError<AkitaField>,
-    > {
-        self.submit_ram_raf(session, inputs.relation)?;
-        OptimizedBackend.prepare(session, witness, inputs)
     }
 }
 

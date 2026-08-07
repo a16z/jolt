@@ -18,8 +18,8 @@ use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
 use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
-    RegisterWrite, TraceOutput, TraceRow,
+    JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
+    RegisterState, RegisterWrite, TraceOutput, TraceRow,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -238,6 +238,20 @@ fn with_ram_fixture_init_backend<R>(
             }
         })
         .collect();
+    let final_memory = MemoryImage {
+        bytes: state
+            .iter()
+            .enumerate()
+            .flat_map(|(word, value)| {
+                value
+                    .to_le_bytes()
+                    .into_iter()
+                    .enumerate()
+                    .filter(|&(_, byte)| byte != 0)
+                    .map(move |(byte, value)| (BASE_ADDRESS + 8 * word as u64 + byte as u64, value))
+            })
+            .collect(),
+    };
 
     let device = JoltDevice {
         memory_layout,
@@ -255,7 +269,7 @@ fn with_ram_fixture_init_backend<R>(
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), device, None),
+        TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory)),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)
