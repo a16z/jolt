@@ -7,9 +7,10 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 
 use super::{
     lookup_query, row_is_noop, Imm, InstructionFlag, LeftInstructionInput, LeftLookupOperand,
-    LookupOutput, NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc,
-    Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
-    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
+    LookupOutput, NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc,
+    OpFlag, Pc, Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue,
+    RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump,
+    UnexpandedPc, WitnessEnv,
 };
 use crate::{WitnessBundle, WitnessError, RV64_XLEN};
 
@@ -39,6 +40,8 @@ pub struct SpartanOuterRow {
     pub next_is_first_in_sequence: NextIsFirstInSequence,
     pub lookup_output: LookupOutput,
     pub should_jump: ShouldJump,
+    pub branch_flag: InstructionFlag,
+    pub next_is_noop: NextIsNoop,
     pub add_operands: OpFlag,
     pub subtract_operands: OpFlag,
     pub multiply_operands: OpFlag,
@@ -118,6 +121,8 @@ impl WitnessBundle for SpartanOuterRow {
             should_jump: ShouldJump(
                 circuit_flags[CircuitFlags::Jump] && !next.is_some_and(row_is_noop),
             ),
+            branch_flag: InstructionFlag(instruction_flags[InstructionFlags::Branch]),
+            next_is_noop: NextIsNoop(next.is_none_or(row_is_noop)),
             add_operands: flag(CircuitFlags::AddOperands),
             subtract_operands: flag(CircuitFlags::SubtractOperands),
             multiply_operands: flag(CircuitFlags::MultiplyOperands),

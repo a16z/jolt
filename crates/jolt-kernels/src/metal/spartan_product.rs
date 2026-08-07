@@ -334,6 +334,27 @@ struct MetalProductUniskipCarry {
     device_registry_id: u64,
 }
 
+pub(super) struct MetalProductUniskipEndpointCarrier {
+    pub(super) log_t: usize,
+    pub(super) tau_low: Vec<AkitaField>,
+    pub(super) endpoints: [AkitaField; 2],
+    pub(super) source_rows: usize,
+    pub(super) source_row_storage_id: usize,
+    pub(super) device_registry_id: u64,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalProductUniskipEndpointCarrier {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("tau_low"),
+            crate::backend::vec_heap_bytes(&self.tau_low),
+        );
+        visitor.exit();
+    }
+}
+
 #[cfg(feature = "allocative")]
 impl allocative::Allocative for MetalProductUniskipCarry {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
@@ -365,6 +386,7 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             .ok_or(KernelError::InvariantViolation {
                 reason: "Spartan product trace length overflows usize",
             })?;
+        let endpoint_carrier = session.take::<MetalProductUniskipEndpointCarrier>();
         let use_metal = cycles >= self.config.spartan_product_remainder.trace_cutoff_elements
             && session.state::<ProductRemainderSequence>().is_some();
         if !use_metal {
@@ -390,37 +412,71 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             });
         }
         let row_storage_id = sequence.row_allocation_identity();
-        let split = tau_low.len().div_ceil(2);
-        let (out_point, in_point) = tau_low.split_at(split);
-        let e_in = EqPolynomial::evals(in_point, None);
-        let e_out = EqPolynomial::evals(out_point, None);
-        let span = tracing::info_span!(
-            "MetalProductUniskip::prepare",
-            cycles,
-            resident_rows_storage_id = row_storage_id as u64,
-            row_upload_bytes = 0u64,
-            round_device_buffer_allocations = 0u64,
-            dispatch_wall_ns = tracing::field::Empty,
-            gpu_active_ns = tracing::field::Empty,
-        );
-        let _entered = span.enter();
-        let started = Instant::now();
-        let endpoints = sequence.uniskip_message_timed(&e_in, &e_out);
-        let dispatch_wall = started.elapsed();
-        let (endpoints, gpu_active) = match endpoints {
-            Ok(result) => result,
-            Err(error) if product_prepare_fallback_reason(&error).is_some() => {
-                tracing::warn!(
-                    target: "jolt::metal",
-                    error = %error,
-                    "product uni-skip dispatch failed before Fiat-Shamir; using optimized CPU"
-                );
-                return OptimizedProductUniskip.prepare(session, log_t, tau_low, witness);
+        let endpoints = if let Some(carrier) = endpoint_carrier {
+            if carrier.log_t != log_t
+                || carrier.tau_low != tau_low
+                || carrier.source_rows != cycles
+                || carrier.source_row_storage_id == 0
+                || carrier.device_registry_id != self.context.device_registry_id()
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason: "stage-1 product uni-skip endpoint carrier has stale provenance",
+                });
             }
-            Err(error) => return Err(metal_prepare_error(error)),
+            let _span = tracing::info_span!(
+                "MetalProductUniskip::outer_opening_carrier",
+                cycles,
+                source_rows_storage_id = carrier.source_row_storage_id as u64,
+                product_rows_storage_id = row_storage_id as u64,
+                row_upload_bytes = 0u64,
+                dispatches = 0u64,
+                command_buffers = 0u64,
+                readback_bytes = 0u64,
+            )
+            .entered();
+            #[cfg(any(test, feature = "test-utils"))]
+            let _ = self
+                .product_uniskip_carrier_hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            carrier.endpoints
+        } else {
+            let split = tau_low.len().div_ceil(2);
+            let (out_point, in_point) = tau_low.split_at(split);
+            let e_in = EqPolynomial::evals(in_point, None);
+            let e_out = EqPolynomial::evals(out_point, None);
+            let span = tracing::info_span!(
+                "MetalProductUniskip::prepare",
+                cycles,
+                resident_rows_storage_id = row_storage_id as u64,
+                row_upload_bytes = 0u64,
+                round_device_buffer_allocations = 0u64,
+                dispatch_wall_ns = tracing::field::Empty,
+                gpu_active_ns = tracing::field::Empty,
+            );
+            let _entered = span.enter();
+            let started = Instant::now();
+            let endpoints = sequence.uniskip_message_timed(&e_in, &e_out);
+            let dispatch_wall = started.elapsed();
+            let (endpoints, gpu_active) = match endpoints {
+                Ok(result) => result,
+                Err(error) if product_prepare_fallback_reason(&error).is_some() => {
+                    tracing::warn!(
+                        target: "jolt::metal",
+                        error = %error,
+                        "product uni-skip dispatch failed before Fiat-Shamir; using optimized CPU"
+                    );
+                    return OptimizedProductUniskip.prepare(session, log_t, tau_low, witness);
+                }
+                Err(error) => return Err(metal_prepare_error(error)),
+            };
+            let _ = span.record("dispatch_wall_ns", duration_nanos(dispatch_wall));
+            let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
+            #[cfg(any(test, feature = "test-utils"))]
+            let _ = self
+                .product_uniskip_dispatches
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            endpoints.as_array()
         };
-        let _ = span.record("dispatch_wall_ns", duration_nanos(dispatch_wall));
-        let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
         if sequence.row_allocation_identity() != row_storage_id || !sequence.is_primed() {
             return Err(KernelError::InvariantViolation {
                 reason: "product uni-skip changed the resident sequence allocation or phase",
@@ -430,14 +486,10 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         session.park(MetalProductUniskipCarry {
             log_t,
             tau_low: tau_low.to_vec(),
-            endpoints: endpoints.as_array(),
+            endpoints,
             row_storage_id,
             device_registry_id: self.context.device_registry_id(),
         });
-        #[cfg(any(test, feature = "test-utils"))]
-        let _ = self
-            .product_uniskip_dispatches
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 

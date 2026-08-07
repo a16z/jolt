@@ -88,7 +88,27 @@ inline SolinasFp128 outer_padded_opening_value(
         case 31u: return outer_from_u64((ulong)outer_flag(flags, 13u));
         case 32u: return outer_from_u64((ulong)outer_flag(flags, 16u));
         case 33u: return outer_from_u64((ulong)outer_flag(flags, 24u));
-        default: return outer_from_u64((ulong)outer_flag(flags, 10u));
+        case 34u: return outer_from_u64((ulong)outer_flag(flags, 10u));
+        case 35u:
+            return outer_product_uniskip_endpoint(
+                outer_from_u64(outer_padded_staged_word(row_words, row, 6u)),
+                outer_from_signed_u128(
+                    outer_padded_staged_word(row_words, row, 7u),
+                    outer_padded_staged_word(row_words, row, 8u),
+                    outer_flag(flags, 17u) != 0),
+                outer_from_u64(outer_padded_staged_word(row_words, row, 19u)),
+                flags,
+                false);
+        default:
+            return outer_product_uniskip_endpoint(
+                outer_from_u64(outer_padded_staged_word(row_words, row, 6u)),
+                outer_from_signed_u128(
+                    outer_padded_staged_word(row_words, row, 7u),
+                    outer_padded_staged_word(row_words, row, 8u),
+                    outer_flag(flags, 17u) != 0),
+                outer_from_u64(outer_padded_staged_word(row_words, row, 19u)),
+                flags,
+                true);
     }
 }
 
@@ -108,8 +128,8 @@ kernel void solinas_outer_remainder_opening_tiles_padded_56(
     uint threads [[threads_per_threadgroup]])
 {
     uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
-    if (tid < OUTER_REMAINDER_COLUMNS) {
-        partials[block * OUTER_REMAINDER_COLUMNS + tid] = solinas_zero();
+    if (tid < params.columns) {
+        partials[block * params.columns + tid] = solinas_zero();
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -152,7 +172,7 @@ kernel void solinas_outer_remainder_opening_tiles_padded_56(
                  slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
                  slot++) {
                 uint column = simdgroup + slot * simdgroups;
-                if (column < OUTER_REMAINDER_COLUMNS) {
+                if (column < params.columns) {
                     SolinasFp128 sum = sums[slot];
                     for (uint tile_row = lane;
                          tile_row < tile_count;
@@ -181,10 +201,10 @@ kernel void solinas_outer_remainder_opening_tiles_padded_56(
              slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
              slot++) {
             uint column = simdgroup + slot * simdgroups;
-            if (column < OUTER_REMAINDER_COLUMNS) {
+            if (column < params.columns) {
                 SolinasFp128 column_sum = solinas_simd_sum_32(sums[slot]);
                 if (lane == 0u) {
-                    uint output = block * OUTER_REMAINDER_COLUMNS + column;
+                    uint output = block * params.columns + column;
                     partials[output] = solinas_add(
                         partials[output],
                         solinas_mul_wide(e_out[x_out], column_sum));

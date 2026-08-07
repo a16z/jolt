@@ -3,6 +3,9 @@ use std::time::Duration;
 use super::artifact::OuterBindingPlan;
 
 pub const OUTER_REMAINDER_OPENINGS: usize = 35;
+pub(super) const OUTER_REMAINDER_PRODUCT_ENDPOINTS: usize = 2;
+pub(super) const OUTER_REMAINDER_MAX_OUTPUTS: usize =
+    OUTER_REMAINDER_OPENINGS + OUTER_REMAINDER_PRODUCT_ENDPOINTS;
 pub(super) const OUTER_REMAINDER_STREAM_ROWS: usize = 10;
 pub(super) const DEVICE_BUFFERS: usize = 9;
 
@@ -16,6 +19,7 @@ pub struct OuterRemainderSequenceConfig {
     pub max_threadgroups: usize,
     pub cpu_tail_elements: usize,
     pub storage_initialization: OuterRemainderStorageInitialization,
+    pub product_uniskip_carrier: bool,
 }
 
 impl Default for OuterRemainderSequenceConfig {
@@ -29,6 +33,7 @@ impl Default for OuterRemainderSequenceConfig {
             max_threadgroups: 8192,
             cpu_tail_elements: 1 << 18,
             storage_initialization: OuterRemainderStorageInitialization::Full,
+            product_uniskip_carrier: false,
         }
     }
 }

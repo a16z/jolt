@@ -44,6 +44,8 @@ const FLAG_LEFT_OPERAND_IS_RS1: u32 = 20;
 const FLAG_LEFT_OPERAND_IS_PC: u32 = 21;
 const FLAG_RIGHT_OPERAND_IS_RS2: u32 = 22;
 const FLAG_RIGHT_OPERAND_IS_IMM: u32 = 23;
+const FLAG_BRANCH: u32 = 25;
+const FLAG_NEXT_IS_NOOP: u32 = 26;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -69,6 +71,8 @@ impl InstructionInputRow {
         set(FLAG_LEFT_OPERAND_IS_PC, row.left_operand_is_pc.0);
         set(FLAG_RIGHT_OPERAND_IS_RS2, row.right_operand_is_rs2.0);
         set(FLAG_RIGHT_OPERAND_IS_IMM, row.right_operand_is_imm.0);
+        set(FLAG_BRANCH, row.branch_flag.0);
+        set(FLAG_NEXT_IS_NOOP, row.next_is_noop.0);
         Self {
             words: [
                 row.rs1_value.0,

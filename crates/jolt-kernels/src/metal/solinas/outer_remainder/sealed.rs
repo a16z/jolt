@@ -146,6 +146,7 @@ impl SealedOuterArtifact {
             max_threadgroups: self.dispatch.max_threadgroups,
             cpu_tail_elements: self.dispatch.cpu_tail_elements,
             storage_initialization: OuterRemainderStorageInitialization::Full,
+            product_uniskip_carrier: false,
         }
     }
 

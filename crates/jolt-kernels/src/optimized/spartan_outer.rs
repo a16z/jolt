@@ -71,8 +71,8 @@ use jolt_witness::witnesses::SpartanOuterRow;
 #[cfg(test)]
 use jolt_witness::witnesses::{
     Imm, InstructionFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput,
-    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
-    RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
+    NextIsFirstInSequence, NextIsNoop, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc,
+    Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc,
 };
 use jolt_witness::{JoltWitnessPlane, WitnessError};
@@ -1493,6 +1493,8 @@ mod tests {
                     next_is_first_in_sequence: NextIsFirstInSequence(bit()),
                     lookup_output: LookupOutput(next()),
                     should_jump: ShouldJump(bit()),
+                    branch_flag: InstructionFlag(bit()),
+                    next_is_noop: NextIsNoop(bit()),
                     add_operands: OpFlag(bit()),
                     subtract_operands: OpFlag(bit()),
                     multiply_operands: OpFlag(bit()),

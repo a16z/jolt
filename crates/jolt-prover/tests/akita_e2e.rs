@@ -248,6 +248,7 @@ mod muldiv {
                     trace_cutoff_elements: 4,
                     dispatch: jolt_kernels::metal::solinas::OuterRemainderSequenceConfig {
                         cpu_tail_elements: 2,
+                        product_uniskip_carrier: true,
                         ..Default::default()
                     },
                 },
@@ -279,6 +280,7 @@ mod muldiv {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
+                    ..Default::default()
                 },
                 booleanity_cycle: jolt_kernels::metal::BooleanityMetalConfig {
                     trace_cutoff_elements: 2,
@@ -304,6 +306,7 @@ mod muldiv {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
+                    ..Default::default()
                 },
                 ..Default::default()
             })
@@ -337,6 +340,8 @@ mod muldiv {
         #[cfg(all(feature = "metal", target_os = "macos"))]
         {
             assert_eq!(metal.product_remainder_sequences(), 1);
+            assert_eq!(metal.product_uniskip_dispatches(), 0);
+            assert_eq!(metal.product_uniskip_carrier_hits(), 1);
             assert_eq!(metal.instruction_claim_sequences(), 1);
         }
 
@@ -463,6 +468,7 @@ mod muldiv {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
+                    ..Default::default()
                 },
                 ..Default::default()
             })

@@ -66,6 +66,8 @@ pub struct MetalBackend {
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) product_uniskip_dispatches: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
+    pub(super) product_uniskip_carrier_hits: Arc<AtomicUsize>,
+    #[cfg(any(test, feature = "test-utils"))]
     pub(super) instruction_claim_sequences: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) registers_val_sequences: Arc<AtomicUsize>,
@@ -158,6 +160,8 @@ impl MetalBackend {
             #[cfg(any(test, feature = "test-utils"))]
             product_uniskip_dispatches: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
+            product_uniskip_carrier_hits: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "test-utils"))]
             instruction_claim_sequences: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
             registers_val_sequences: Arc::new(AtomicUsize::new(0)),
@@ -189,6 +193,13 @@ impl MetalBackend {
     #[doc(hidden)]
     pub fn product_uniskip_dispatches(&self) -> usize {
         self.product_uniskip_dispatches
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
+    pub fn product_uniskip_carrier_hits(&self) -> usize {
+        self.product_uniskip_carrier_hits
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

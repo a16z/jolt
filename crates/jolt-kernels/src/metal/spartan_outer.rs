@@ -25,6 +25,7 @@ use rayon::prelude::*;
 
 use super::backend::{MetalBackend, MetalConfig};
 use super::instruction_input::PreparedInstructionInput;
+use super::spartan_product::MetalProductUniskipEndpointCarrier;
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
     instruction_ra_weight_capacities, outer_remainder_sequence_max_buffer_bytes_with_config,
@@ -974,17 +975,21 @@ impl MetalOuterRemainderHost {
     }
 
     fn opening_weights(&self) -> (Vec<AkitaField>, Vec<AkitaField>) {
-        let point = self.challenges[1..]
-            .iter()
-            .rev()
-            .copied()
-            .collect::<Vec<_>>();
+        let point = self.product_tau_low();
         let split = point.len() / 2;
         let (out_point, in_point) = point.split_at(split);
         (
             EqPolynomial::evals(in_point, None),
             EqPolynomial::evals(out_point, None),
         )
+    }
+
+    fn product_tau_low(&self) -> Vec<AkitaField> {
+        self.challenges[1..]
+            .iter()
+            .rev()
+            .copied()
+            .collect()
     }
 
     fn output_claims(
@@ -1082,6 +1087,7 @@ struct MetalOuterRemainderKernel {
     compact_retained: bool,
     cpu_tail_elements: usize,
     gpu_active_breakdown: OuterRemainderGpuActiveBreakdown,
+    product_uniskip_endpoint_carrier: Option<MetalProductUniskipEndpointCarrier>,
     #[cfg(feature = "test-utils")]
     completed_gpu_active: Option<Duration>,
     #[cfg(feature = "test-utils")]
@@ -1105,6 +1111,12 @@ impl allocative::Allocative for MetalOuterRemainderKernel {
             visitor.visit_simple(
                 allocative::Key::new("host_tail"),
                 crate::backend::vec_heap_bytes(az) + crate::backend::vec_heap_bytes(bz),
+            );
+        }
+        if let Some(carrier) = &self.product_uniskip_endpoint_carrier {
+            visitor.visit_field(
+                allocative::Key::new("product_uniskip_endpoint_carrier"),
+                carrier,
             );
         }
         visitor.exit();
@@ -1167,6 +1179,7 @@ impl MetalOuterRemainderKernel {
                 materialize: materialize_gpu_active,
                 ..OuterRemainderGpuActiveBreakdown::default()
             },
+            product_uniskip_endpoint_carrier: None,
             #[cfg(feature = "test-utils")]
             completed_gpu_active: None,
             #[cfg(feature = "test-utils")]
@@ -1344,14 +1357,15 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "Metal outer remainder released resident rows before openings",
             })?;
+        let opening_output_elements = sequence.opening_output_count();
         let claimed = {
             let phase = tracing::info_span!(
                 "MetalOuterRemainder::output_claims",
                 dispatch_wall_ns = tracing::field::Empty,
                 gpu_active_ns = tracing::field::Empty,
                 readbacks = 1u64,
-                output_elements = OUTER_VARIABLES,
-                readback_bytes = OUTER_VARIABLES * size_of::<AkitaField>(),
+                output_elements = opening_output_elements,
+                readback_bytes = opening_output_elements * size_of::<AkitaField>(),
                 row_upload_bytes = 0u64,
             );
             let _phase_guard = phase.enter();
@@ -1364,6 +1378,16 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                 record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
             claimed
         };
+        if let Some(endpoints) = sequence.take_product_uniskip_endpoints() {
+            self.product_uniskip_endpoint_carrier = Some(MetalProductUniskipEndpointCarrier {
+                log_t: self.host.rounds - 1,
+                tau_low: self.host.product_tau_low(),
+                endpoints,
+                source_rows: self.resident_rows,
+                source_row_storage_id: self.compact_rows_storage_id,
+                device_registry_id: self.device_registry_id,
+            });
+        }
         let completed_gpu_active = sequence.gpu_active_time();
         if self.gpu_active_breakdown.total() != Some(completed_gpu_active) {
             return Err(SumcheckKernelError::InvariantViolation {
@@ -1444,6 +1468,19 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
     ) -> Result<(), SumcheckKernelError<AkitaField>> {
         self.host
             .validate_derived_tables(relation, input_points, output_points, challenges)
+    }
+
+    fn park_residue(mut self: Box<Self>, session: &mut ProofSession) {
+        if let Some(carrier) = self.product_uniskip_endpoint_carrier.take() {
+            let _span = tracing::info_span!(
+                "MetalOuterRemainder::product_uniskip_carrier_park",
+                rows = carrier.source_rows,
+                source_rows_storage_id = carrier.source_row_storage_id as u64,
+                endpoint_elements = carrier.endpoints.len(),
+            )
+            .entered();
+            session.park(carrier);
+        }
     }
 }
 

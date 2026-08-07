@@ -11,9 +11,13 @@ use super::{
     api::{
         OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequenceConfig,
         OuterRemainderStorageInitializationStats, OuterRemainderStorageStats,
-        OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_STREAM_ROWS,
+        OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_PRODUCT_ENDPOINTS,
+        OUTER_REMAINDER_STREAM_ROWS,
     },
-    plan::{message_threadgroup_bytes, opening_threadgroup_memory_lengths, to_u32, SIMD_WIDTH},
+    plan::{
+        message_threadgroup_bytes, opening_output_count, opening_threadgroup_memory_lengths, to_u32,
+        SIMD_WIDTH,
+    },
     storage::{write_fields, DenseBuffers, OuterRemainderSequenceStorage, Storage},
 };
 
@@ -29,7 +33,7 @@ pub(super) struct PhaseParams {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(super) struct OpeningParams {
-    rows: u32,
+    columns: u32,
     e_in_length: u32,
     e_out_length: u32,
     blocks: u32,
@@ -52,6 +56,7 @@ pub struct OuterRemainderSequence {
     dense_in_a: bool,
     gpu_active: Duration,
     dispatch_counts: OuterRemainderDispatchCounts,
+    product_uniskip_endpoints: Option<[AkitaField; OUTER_REMAINDER_PRODUCT_ENDPOINTS]>,
 }
 
 #[cfg(feature = "allocative")]
@@ -113,6 +118,7 @@ impl OuterRemainderSequenceStorage {
             dense_in_a: true,
             gpu_active: Duration::ZERO,
             dispatch_counts: OuterRemainderDispatchCounts::default(),
+            product_uniskip_endpoints: None,
         })
     }
 }
@@ -384,8 +390,9 @@ impl OuterRemainderSequence {
         self.validate_weights("opening scan", cycles, e_in, e_out)?;
         self.write_weights(e_in, e_out)?;
         let blocks = e_out.len().min(self.storage.max_threadgroups);
+        let output_count = opening_output_count(self.config.product_uniskip_carrier);
         let params = OpeningParams {
-            rows: to_u32(cycles)?,
+            columns: to_u32(output_count)?,
             e_in_length: to_u32(e_in.len())?,
             e_out_length: to_u32(e_out.len())?,
             blocks: to_u32(blocks)?,
@@ -393,7 +400,11 @@ impl OuterRemainderSequence {
         let rows = self.rows()?;
         let threads = self.storage.threads.opening;
         let threadgroup_memory =
-            opening_threadgroup_memory_lengths(self.config.binding_plan, threads)?;
+            opening_threadgroup_memory_lengths(
+                self.config.binding_plan,
+                threads,
+                self.config.product_uniskip_carrier,
+            )?;
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
         autoreleasepool(|| {
@@ -416,7 +427,7 @@ impl OuterRemainderSequence {
                 &self.storage.buffers.opening_partials,
                 &self.storage.buffers.opening_output,
                 blocks,
-                OUTER_REMAINDER_OPENINGS,
+                output_count,
             );
             encoder.end_encoding();
             command_buffer.commit();
@@ -425,10 +436,33 @@ impl OuterRemainderSequence {
         self.dispatch_counts.command_buffers += 1;
         self.finish_command(command_buffer)?;
         let output = self.storage.buffers.opening_output.clone();
-        let openings = self.read_array::<OUTER_REMAINDER_OPENINGS>(&output, "outer openings")?;
+        // SAFETY: the completed reduction initializes `output_count` fields in
+        // the shared output buffer before this CPU-visible read.
+        let values = unsafe {
+            slice::from_raw_parts(output.contents().cast::<Fp128>(), output_count)
+        };
+        self.storage
+            .context
+            .validate_inputs("outer openings and carriers", values)?;
+        let openings = std::array::from_fn(|index| values[index].into_jolt_field());
+        self.product_uniskip_endpoints = self.config.product_uniskip_carrier.then(|| {
+            std::array::from_fn(|index| {
+                values[OUTER_REMAINDER_OPENINGS + index].into_jolt_field()
+            })
+        });
         self.phase = OuterRemainderPhase::OpeningsComplete;
         self.dispatch_counts.opening_scans += 1;
         Ok(openings)
+    }
+
+    pub fn take_product_uniskip_endpoints(
+        &mut self,
+    ) -> Option<[AkitaField; OUTER_REMAINDER_PRODUCT_ENDPOINTS]> {
+        self.product_uniskip_endpoints.take()
+    }
+
+    pub const fn opening_output_count(&self) -> usize {
+        opening_output_count(self.config.product_uniskip_carrier)
     }
 
     pub fn into_instruction_input_rows(mut self) -> Result<InstructionInputRows, MetalError> {

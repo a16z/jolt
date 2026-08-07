@@ -1,7 +1,8 @@
 // Candidate source. Concatenate after fp128.metal, simd_reduce.metal, and
 // spartan_outer_common.metal.
 
-#define OUTER_REMAINDER_COLUMNS 35u
+#define OUTER_REMAINDER_COLUMNS 37u
+#define OUTER_REMAINDER_CANONICAL_OPENINGS 35u
 #define OUTER_REMAINDER_STREAM_ROWS 10u
 #define OUTER_REMAINDER_TILE_ROWS 64u
 #define OUTER_REMAINDER_SIMD_WIDTH 32u
@@ -15,7 +16,7 @@ struct OuterRemainderPhaseParams {
 };
 
 struct OuterRemainderOpeningParams {
-    uint rows;
+    uint columns;
     uint e_in_length;
     uint e_out_length;
     uint blocks;
@@ -584,6 +585,41 @@ inline ulong outer_staged_word(
     return row_words[row * 20u + word];
 }
 
+inline SolinasFp128 outer_product_uniskip_endpoint(
+    SolinasFp128 left_input,
+    SolinasFp128 right_input,
+    SolinasFp128 lookup_output,
+    ulong flags,
+    bool plus_two)
+{
+    SolinasFp128 one = outer_from_u64(1ul);
+    SolinasFp128 three = solinas_add(one, solinas_add(one, one));
+    SolinasFp128 three_lookup = solinas_add(
+        lookup_output,
+        solinas_add(lookup_output, lookup_output));
+    SolinasFp128 three_left = solinas_add(
+        left_input,
+        solinas_add(left_input, left_input));
+    SolinasFp128 left = plus_two
+        ? solinas_sub(left_input, three_lookup)
+        : solinas_sub(three_left, three_lookup);
+    if (outer_flag(flags, 5u) != 0) {
+        left = solinas_add(left, plus_two ? three : one);
+    }
+
+    SolinasFp128 three_right = solinas_add(
+        right_input,
+        solinas_add(right_input, right_input));
+    SolinasFp128 right = plus_two ? right_input : three_right;
+    if (outer_flag(flags, 25u) != 0) {
+        right = solinas_sub(right, three);
+    }
+    if (outer_flag(flags, 26u) == 0) {
+        right = solinas_add(right, plus_two ? three : one);
+    }
+    return solinas_mul_wide(left, right);
+}
+
 inline SolinasFp128 outer_opening_value(
     threadgroup const ulong* row_words,
     uint row,
@@ -651,13 +687,34 @@ inline SolinasFp128 outer_opening_value(
         case 31u: return outer_from_u64((ulong)outer_flag(flags, 13u));
         case 32u: return outer_from_u64((ulong)outer_flag(flags, 16u));
         case 33u: return outer_from_u64((ulong)outer_flag(flags, 24u));
-        default: return outer_from_u64((ulong)outer_flag(flags, 10u));
+        case 34u: return outer_from_u64((ulong)outer_flag(flags, 10u));
+        case 35u:
+            return outer_product_uniskip_endpoint(
+                outer_from_u64(outer_staged_word(row_words, row, 6u)),
+                outer_from_signed_u128(
+                    outer_staged_word(row_words, row, 7u),
+                    outer_staged_word(row_words, row, 8u),
+                    outer_flag(flags, 17u) != 0),
+                outer_from_u64(outer_staged_word(row_words, row, 19u)),
+                flags,
+                false);
+        default:
+            return outer_product_uniskip_endpoint(
+                outer_from_u64(outer_staged_word(row_words, row, 6u)),
+                outer_from_signed_u128(
+                    outer_staged_word(row_words, row, 7u),
+                    outer_staged_word(row_words, row, 8u),
+                    outer_flag(flags, 17u) != 0),
+                outer_from_u64(outer_staged_word(row_words, row, 19u)),
+                flags,
+                true);
     }
 }
 
 inline bool outer_opening_is_boolean(uint column) {
     return column == 3u || column == 17u || column == 18u ||
-        column == 20u || column >= 21u;
+        column == 20u ||
+        (column >= 21u && column < OUTER_REMAINDER_CANONICAL_OPENINGS);
 }
 
 kernel void solinas_outer_remainder_opening_tiles(
@@ -678,8 +735,8 @@ kernel void solinas_outer_remainder_opening_tiles(
 {
     uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
     (void)shard_sums;
-    if (tid < OUTER_REMAINDER_COLUMNS) {
-        partials[block * OUTER_REMAINDER_COLUMNS + tid] = solinas_zero();
+    if (tid < params.columns) {
+        partials[block * params.columns + tid] = solinas_zero();
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -717,7 +774,7 @@ kernel void solinas_outer_remainder_opening_tiles(
                  slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
                  slot++) {
                 uint column = simdgroup + slot * simdgroups;
-                if (column < OUTER_REMAINDER_COLUMNS) {
+                if (column < params.columns) {
                     SolinasFp128 sum = sums[slot];
                     for (uint tile_row = lane;
                          tile_row < tile_count;
@@ -746,10 +803,10 @@ kernel void solinas_outer_remainder_opening_tiles(
              slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
              slot++) {
             uint column = simdgroup + slot * simdgroups;
-            if (column < OUTER_REMAINDER_COLUMNS) {
+            if (column < params.columns) {
                 SolinasFp128 column_sum = solinas_simd_sum_32(sums[slot]);
                 if (lane == 0u) {
-                    uint output = block * OUTER_REMAINDER_COLUMNS + column;
+                    uint output = block * params.columns + column;
                     partials[output] = solinas_add(
                         partials[output],
                         solinas_mul_wide(e_out[x_out], column_sum));

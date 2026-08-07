@@ -642,6 +642,7 @@ mod akita_benchmark {
         cutoff_log2: u32,
         trace_cutoff_log2: u32,
         binding_plan: OuterRemainderBindingPlan,
+        product_uniskip_carrier: bool,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -766,6 +767,9 @@ mod akita_benchmark {
 
         #[clap(long, value_enum, default_value = "b_only_v1")]
         outer_remainder_metal_binding_plan: OuterRemainderBindingPlan,
+
+        #[clap(long)]
+        product_uniskip_outer_carrier: bool,
     }
 
     pub fn run() {
@@ -842,6 +846,7 @@ mod akita_benchmark {
                 cutoff_log2: cli.outer_remainder_metal_cutoff_log2,
                 trace_cutoff_log2: cli.outer_remainder_metal_trace_cutoff_log2,
                 binding_plan: cli.outer_remainder_metal_binding_plan,
+                product_uniskip_carrier: cli.product_uniskip_outer_carrier,
             },
         };
         run_benchmark(cli.name, scale, cli.target_trace_size, backend_config);
@@ -900,6 +905,7 @@ mod akita_benchmark {
                     cutoff_log2: outer_remainder_metal_cutoff_log2,
                     trace_cutoff_log2: outer_remainder_metal_trace_cutoff_log2,
                     binding_plan: outer_remainder_metal_binding_plan,
+                    product_uniskip_carrier,
                 },
         } = backend_config;
         let bench_name = bench.as_str();
@@ -1051,6 +1057,7 @@ mod akita_benchmark {
             outer_remainder_metal_cutoff_log2,
             outer_remainder_metal_trace_cutoff_log2,
             outer_remainder_metal_binding_plan,
+            product_uniskip_carrier,
         );
         let optimized_bytecode_algebra = match bytecode_cycle_algebra {
             BytecodeCycleAlgebra::Generic => jolt_kernels::optimized::BytecodeCycleAlgebra::Generic,
@@ -1230,6 +1237,10 @@ mod akita_benchmark {
                             jolt_kernels::metal::solinas::OuterBindingPlan::BOnlyPadded56V1
                         }
                     };
+                config
+                    .spartan_outer_remainder
+                    .dispatch
+                    .product_uniskip_carrier = product_uniskip_carrier;
                 config.spartan_outer_remainder.dispatch.cpu_tail_elements = 1usize
                     .checked_shl(outer_remainder_metal_cutoff_log2)
                     .expect("outer-remainder Metal cutoff log2 must fit usize");
@@ -1285,7 +1296,7 @@ mod akita_benchmark {
                     hamming_weight_metal_implementation.as_str(),
                 );
                 println!(
-                    "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} materialize_threads={} transition_threads={} output_threads={} max_threadgroups={} binding_plan={} storage_initialization={}",
+                    "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} materialize_threads={} transition_threads={} output_threads={} max_threadgroups={} binding_plan={} storage_initialization={} product_uniskip_carrier={}",
                     config.spartan_outer_remainder.trace_cutoff_elements,
                     config.spartan_outer_remainder.dispatch.cpu_tail_elements,
                     outer_remainder_metal_materialize_threads,
@@ -1298,6 +1309,7 @@ mod akita_benchmark {
                         .dispatch
                         .storage_initialization
                         .as_str(),
+                    product_uniskip_carrier,
                 );
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }

@@ -69,6 +69,8 @@ const FLAG_LEFT_OPERAND_IS_PC: u32 = 21;
 const FLAG_RIGHT_OPERAND_IS_RS2: u32 = 22;
 const FLAG_RIGHT_OPERAND_IS_IMM: u32 = 23;
 pub(crate) const FLAG_IS_FIRST: u32 = 24;
+const FLAG_BRANCH: u32 = 25;
+const FLAG_NEXT_IS_NOOP: u32 = 26;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -204,6 +206,8 @@ impl SpartanOuterUniskipRow {
         set(FLAG_RIGHT_OPERAND_IS_RS2, row.right_operand_is_rs2.0);
         set(FLAG_RIGHT_OPERAND_IS_IMM, row.right_operand_is_imm.0);
         set(FLAG_IS_FIRST, row.is_first_in_sequence.0);
+        set(FLAG_BRANCH, row.branch_flag.0);
+        set(FLAG_NEXT_IS_NOOP, row.next_is_noop.0);
         Self {
             words: [
                 row.left_instruction_input.0,
@@ -1399,12 +1403,48 @@ mod tests {
         output
     }
 
+    fn product_uniskip_endpoints(
+        rows: &[SpartanOuterUniskipRow],
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> [AkitaField; 2] {
+        let mut output = [AkitaField::zero(); 2];
+        for (x_out, &outer) in e_out.iter().enumerate() {
+            for (x_in, &inner) in e_in.iter().enumerate() {
+                let words = rows[x_out * e_in.len() + x_in].words();
+                let flags = words[19];
+                let left = AkitaField::from_u64(words[0]);
+                let right = field_signed_magnitude(
+                    words[1],
+                    words[2],
+                    flag(flags, FLAG_RIGHT_INPUT_POSITIVE) != 0,
+                );
+                let lookup = AkitaField::from_u64(words[18]);
+                let jump = AkitaField::from_u64(flag(flags, FLAG_JUMP) as u64);
+                let branch = AkitaField::from_u64(flag(flags, FLAG_BRANCH) as u64);
+                let not_next_noop =
+                    AkitaField::one() - AkitaField::from_u64(flag(flags, FLAG_NEXT_IS_NOOP) as u64);
+                let weight = outer * inner;
+                let three = AkitaField::from_u64(3);
+                output[0] += weight
+                    * (three * left - three * lookup + jump)
+                    * (three * right - three * branch + not_next_noop);
+                output[1] += weight
+                    * (left - three * lookup + three * jump)
+                    * (right - three * branch + three * not_next_noop);
+            }
+        }
+        output
+    }
+
     #[test]
     fn outer_remainder_sequence_matches_field_oracle() {
         let mut packed = rows(16);
         for (index, row) in packed.iter_mut().enumerate() {
             let mut words = row.words();
             words[19] |= ((index & 1) as u64) << FLAG_IS_FIRST;
+            words[19] |= (((index >> 1) & 1) as u64) << FLAG_BRANCH;
+            words[19] |= (((index >> 2) & 1) as u64) << FLAG_NEXT_IS_NOOP;
             *row = SpartanOuterUniskipRow::from_words(words);
         }
         let lagrange = std::array::from_fn(|index| {
@@ -1429,6 +1469,7 @@ mod tests {
                 OuterRemainderSequenceConfig {
                     max_threadgroups: 2,
                     cpu_tail_elements: 4,
+                    product_uniskip_carrier: true,
                     ..OuterRemainderSequenceConfig::default()
                 },
             )
@@ -1520,11 +1561,17 @@ mod tests {
         let opening_out = (0..4)
             .map(|index| AkitaField::from_u64(79 + index))
             .collect::<Vec<_>>();
+        let expected_product_endpoints =
+            product_uniskip_endpoints(&packed, &opening_in, &opening_out);
         assert_eq!(
             sequence
                 .evaluate_openings(&opening_in, &opening_out)
                 .unwrap(),
             outer_openings(&packed, &opening_in, &opening_out)
+        );
+        assert_eq!(
+            sequence.take_product_uniskip_endpoints(),
+            Some(expected_product_endpoints)
         );
         let stats = sequence.storage_stats().unwrap();
         assert_eq!(stats.compact_row_identity, compact_id);

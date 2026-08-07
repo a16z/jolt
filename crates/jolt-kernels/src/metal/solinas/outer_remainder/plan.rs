@@ -2,8 +2,8 @@ use std::mem::size_of;
 
 use super::super::{Fp128, MetalError, PipelineLimits, SolinasMetal};
 use super::api::{
-    OuterRemainderSequenceConfig, DEVICE_BUFFERS, OUTER_REMAINDER_OPENINGS,
-    OUTER_REMAINDER_STREAM_ROWS,
+    OuterRemainderSequenceConfig, DEVICE_BUFFERS, OUTER_REMAINDER_MAX_OUTPUTS,
+    OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_STREAM_ROWS,
 };
 use super::artifact::OuterBindingPlan;
 
@@ -67,8 +67,9 @@ pub(super) fn validate_opening_threadgroup_memory(
     limits: PipelineLimits,
     plan: OuterBindingPlan,
     threads: usize,
+    product_uniskip_carrier: bool,
 ) -> Result<(), MetalError> {
-    let dynamic = opening_threadgroup_memory_lengths(plan, threads)?
+    let dynamic = opening_threadgroup_memory_lengths(plan, threads, product_uniskip_carrier)?
         .into_iter()
         .try_fold(0u64, |total, bytes| total.checked_add(bytes))
         .ok_or(MetalError::InvalidOuterRemainderConfig(
@@ -90,6 +91,7 @@ pub(super) fn validate_opening_threadgroup_memory(
 pub(super) fn opening_threadgroup_memory_lengths(
     plan: OuterBindingPlan,
     threads: usize,
+    product_uniskip_carrier: bool,
 ) -> Result<[u64; 3], MetalError> {
     let layout = opening_layout(plan);
     let row_words = layout
@@ -100,9 +102,10 @@ pub(super) fn opening_threadgroup_memory_lengths(
         ))?;
     let row_bytes = row_words.checked_mul(size_of::<u64>());
     let weight_bytes = layout.tile_rows.checked_mul(size_of::<Fp128>());
+    let outputs = opening_output_count(product_uniskip_carrier);
     let shard_bytes = if layout.shard_sums {
-        OUTER_REMAINDER_OPENINGS
-            .checked_mul(threads / OUTER_REMAINDER_OPENINGS)
+        outputs
+            .checked_mul(threads / outputs)
             .and_then(|elements| elements.checked_mul(size_of::<Fp128>()))
     } else {
         Some(0)
@@ -115,6 +118,14 @@ pub(super) fn opening_threadgroup_memory_lengths(
         ));
     };
     Ok([row_bytes as u64, weight_bytes as u64, shard_bytes as u64])
+}
+
+pub(super) const fn opening_output_count(product_uniskip_carrier: bool) -> usize {
+    if product_uniskip_carrier {
+        OUTER_REMAINDER_MAX_OUTPUTS
+    } else {
+        OUTER_REMAINDER_OPENINGS
+    }
 }
 
 pub(super) fn storage_geometry(
@@ -146,7 +157,8 @@ pub(super) fn storage_geometry(
     let message_partials = 2usize
         .checked_mul(max_threadgroups)
         .ok_or(MetalError::InputTooLong(max_threadgroups))?;
-    let opening_partials = OUTER_REMAINDER_OPENINGS
+    let opening_outputs = opening_output_count(config.product_uniskip_carrier);
+    let opening_partials = opening_outputs
         .checked_mul(max_threadgroups)
         .ok_or(MetalError::InputTooLong(max_threadgroups))?;
     let element_counts = [
@@ -158,7 +170,7 @@ pub(super) fn storage_geometry(
         message_partials,
         2,
         opening_partials,
-        OUTER_REMAINDER_OPENINGS,
+        opening_outputs,
     ];
     let owned_bytes = element_counts.iter().try_fold(0u64, |total, &elements| {
         total

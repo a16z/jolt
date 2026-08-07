@@ -13,12 +13,11 @@ use super::super::{command_buffer_timestamp, Fp128, MetalError, PipelineLimits, 
 use super::{
     api::{
         OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
-        OuterRemainderStorageInitializationStats, DEVICE_BUFFERS, OUTER_REMAINDER_OPENINGS,
-        OUTER_REMAINDER_STREAM_ROWS,
+        OuterRemainderStorageInitializationStats, DEVICE_BUFFERS, OUTER_REMAINDER_STREAM_ROWS,
     },
     plan::{
-        field_bytes, outer_remainder_sequence_storage_bytes_with_config, storage_geometry,
-        validate_opening_threadgroup_memory, SIMD_WIDTH,
+        field_bytes, opening_output_count, outer_remainder_sequence_storage_bytes_with_config,
+        storage_geometry, validate_opening_threadgroup_memory, SIMD_WIDTH,
     },
     shader::pipeline_names,
 };
@@ -218,6 +217,7 @@ impl SolinasMetal {
             limits.opening,
             config.binding_plan,
             threads.opening,
+            config.product_uniskip_carrier,
         )?;
 
         for elements in geometry.element_counts {
@@ -230,6 +230,7 @@ impl SolinasMetal {
         let dense_bytes = field_bytes(current_elements)?
             .checked_mul(2)
             .ok_or(MetalError::InputTooLong(current_elements))?;
+        let opening_outputs = opening_output_count(config.product_uniskip_carrier);
         let buffers = Buffers {
             dense: Some(DenseBuffers {
                 state_a: new_field_buffer(self, current_elements)?,
@@ -240,8 +241,8 @@ impl SolinasMetal {
             lagrange: new_field_buffer(self, OUTER_REMAINDER_STREAM_ROWS)?,
             message_partials: new_field_buffer(self, 2 * max_threadgroups)?,
             message_output: new_field_buffer(self, 2)?,
-            opening_partials: new_field_buffer(self, OUTER_REMAINDER_OPENINGS * max_threadgroups)?,
-            opening_output: new_field_buffer(self, OUTER_REMAINDER_OPENINGS)?,
+            opening_partials: new_field_buffer(self, opening_outputs * max_threadgroups)?,
+            opening_output: new_field_buffer(self, opening_outputs)?,
         };
         let initialization = initialize_storage(self, &buffers, config.storage_initialization)?;
 
