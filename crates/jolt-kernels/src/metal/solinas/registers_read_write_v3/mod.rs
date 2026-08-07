@@ -3,6 +3,7 @@
 //! The implementation map is:
 //!
 //! - [`abi`] owns CSR geometry, plane layouts, and device allocation receipts.
+//! - [`bcsr`] defines the padded CSR-256 producer ABI and its scalar adapter.
 //! - [`owner`] constructs and certifies CSR-256 register state flow.
 //! - [`oracle`] contains independent dense and CSR-native relation evaluators.
 //! - [`model`] freezes the log-26 work census and M4 Max roof calculation.
@@ -19,6 +20,7 @@
 )]
 
 mod abi;
+mod bcsr;
 mod model;
 mod oracle;
 mod owner;
@@ -28,6 +30,13 @@ pub(crate) use abi::{
     RegisterGeometry, RegisterPlaneAllocations, RegisterPlaneLayout, RegisterProducerIdentity,
     REGISTER_ADDRESS_BITS, REGISTER_CSR_BLOCK_CYCLES, REGISTER_CSR_COLUMNS, REGISTER_FP128_BYTES,
     REGISTER_LOG26_CENSUS, REGISTER_LOG26_CSR_BYTES, REGISTER_LOG26_PRODUCER_BYTES,
+};
+pub(crate) use bcsr::{
+    RegisterBcsr256, RegisterBcsr256Parts, RegisterBcsrGeometry, RegisterBcsrLayout,
+    RegisterBcsrPlaneProvenance, RegisterBcsrPlaneProvenances, RegisterBcsrPlaneShape,
+    RegisterBcsrReadEvent, RegisterBcsrReceipt, RegisterBcsrSourceProvenance,
+    RegisterBcsrStateFlowCertificate, RegisterBcsrWriteEvent, RegistersValInputReceipt,
+    REGISTER_ABSENT_INDEX, REGISTER_BCSR_OFFSET_ENTRIES, REGISTER_BCSR_POSITION_SLOTS,
 };
 pub(crate) use model::{
     GateReport, LifecycleProjection, Log26Accounting, PhaseWork, RoofRates, SpeedupGate,
@@ -50,6 +59,8 @@ use thiserror::Error;
 pub(crate) enum RegistersRwV3Error {
     #[error("register cycle count {0} must be a nonzero power of two in the u32 domain")]
     InvalidCycleCount(usize),
+    #[error("register BCSR cycle count {0} must be nonzero and fit in u32")]
+    InvalidBcsrCycleCount(usize),
     #[error("register v3 size arithmetic overflowed while computing {0}")]
     SizeOverflow(&'static str),
     #[error("register {plane} census has {count} events for {cycles} cycles")]
@@ -117,6 +128,19 @@ pub(crate) enum RegistersRwV3Error {
         expected: usize,
         got: u32,
     },
+    #[error("register v3 {plane} block {block} terminal offset is {got}, maximum {maximum}")]
+    BcsrOffsetTerminal {
+        plane: &'static str,
+        block: usize,
+        maximum: usize,
+        got: u16,
+    },
+    #[error("register v3 {plane} block {block} has nonzero padding at slot {slot}")]
+    BcsrNonzeroPadding {
+        plane: &'static str,
+        block: usize,
+        slot: usize,
+    },
     #[error("register v3 {plane} positions are not increasing at header {header}")]
     PositionOrder { plane: &'static str, header: usize },
     #[error("register v3 {plane} position {position} exceeds block {block} length {block_len}")]
@@ -128,6 +152,10 @@ pub(crate) enum RegistersRwV3Error {
     },
     #[error("register v3 {plane} has more than one event at cycle {cycle}")]
     DuplicateCycleEvent { plane: &'static str, cycle: usize },
+    #[error(
+        "register v3 rd index at cycle {cycle} is {got}, expected {expected} from the write plane"
+    )]
+    RdIndexMismatch { cycle: usize, expected: u8, got: u8 },
     #[error("register v3 block {block} register {register} starts at {got}, expected {expected}")]
     BlockStateMismatch {
         block: usize,
@@ -184,6 +212,8 @@ pub(crate) enum RegistersRwV3Error {
     AnalyticalCensusMismatch,
     #[error("register v3 roof-model parameter {0} must be finite and positive")]
     InvalidRoofParameter(&'static str),
+    #[error("registers-value resident handoff rejects {0} rows")]
+    InvalidRegistersValHandoff(usize),
 }
 
 #[cfg(test)]
@@ -192,3 +222,10 @@ pub(crate) enum RegistersRwV3Error {
     reason = "fixed unit-test fixtures use direct assertions and unwraps"
 )]
 mod tests;
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "fixed BCSR fixtures use direct assertions and unwraps"
+)]
+mod bcsr_tests;
