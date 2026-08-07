@@ -1,0 +1,36 @@
+//! Shared sparse RAM-cycle state for the Metal hybrid backend.
+//!
+//! This module is not registered in the production backend yet. It provides
+//! the checked owner, topology, host value-check sequence, dense oracle, and
+//! analytical selector needed before a Metal shader is admitted.
+
+mod model;
+mod oracle;
+mod owner;
+mod ram_val_check;
+mod selector;
+mod topology;
+
+pub use model::{
+    owner_byte_accounting, read_write_accounting, value_check_accounting, AccountingError,
+    OwnerByteAccounting, ReadWriteAccounting, RoofAccounting, RoofRates, ValueCheckAccounting,
+};
+pub use oracle::DenseRamValCheckOracle;
+pub use owner::{
+    OwnerConfig, OwnerError, RamAccessRecord, RamCycleFamilyOwner, RamCycleFamilyOwnerBuilder,
+    RamCycleFamilyReceipt, RamCycleRow, RamIncrementRecord, RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+};
+pub use ram_val_check::{
+    HostSparseRamValCheck, RamValError, RamValFrontierEntry, RamValMessage, RamValTerminalFactors,
+};
+pub use selector::{
+    select_read_write, select_value_check, CycleCutoffPlan, ExecutionLane, ExecutionOverheads,
+    ExecutionProfile, RwLevelSchedule, SelectionError,
+};
+pub use topology::{
+    BlockMerge, LevelCensus, RamBlockTopology, RamRwGroupEvent, RamRwMergeEvent,
+    RamRwMergeTopology, TopologyError,
+};
+
+#[cfg(test)]
+mod tests;
