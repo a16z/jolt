@@ -222,6 +222,7 @@ pub(crate) struct RegistersClaimBcsrMidpointInvocation {
     sources: RegistersClaimBcsrMidpointSources,
     working: RegistersClaimBcsrMidpointWorking,
     plan: RegistersClaimBcsrMidpointPlan,
+    params: RegistersClaimBcsrMidpointParams,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -412,6 +413,7 @@ impl SolinasMetal {
             limits,
             sources,
             working,
+            params: plan.params,
             plan,
         })
     }
@@ -448,7 +450,7 @@ impl RegistersClaimBcsrMidpointInvocation {
                 0,
             );
             encoder.set_buffer(BCSR_MIDPOINT_OUTPUT_SLOT, Some(&self.working.output), 0);
-            set_inline_bytes(encoder, BCSR_MIDPOINT_PARAMS_SLOT, &self.plan.params);
+            set_inline_bytes(encoder, BCSR_MIDPOINT_PARAMS_SLOT, &self.params);
             encoder.set_threadgroup_memory_length(0, BCSR_MIDPOINT_THREADGROUP_BYTES);
             encoder.dispatch_thread_groups(
                 MTLSize {
@@ -488,9 +490,7 @@ impl RegistersClaimBcsrMidpointInvocation {
     fn validate_state(&self) -> Result<(), RegistersClaimBcsrRuntimeError> {
         self.sources.validate(&self.context, self.plan)?;
         if self.context.offset != REGISTERS_CLAIM_AKITA_OFFSET
-            || self.plan.params.reserved != 0
-            || self.plan.params.blocks as usize != self.plan.blocks
-            || self.plan.params.low_blocks as usize != self.plan.low_blocks
+            || self.params != self.plan.params
             || self.limits.thread_execution_width != REGISTERS_CLAIM_SIMD_WIDTH
             || self.limits.max_total_threads_per_threadgroup
                 < BCSR_MIDPOINT_THREADS_PER_THREADGROUP as usize

@@ -159,7 +159,7 @@ fn resident_bcsr_log26_contract_is_exact() {
     assert_eq!(BCSR_COMPONENT_THREADGROUP_BYTES, 6_160);
     assert_eq!(BCSR_INDEXED_EVENT_BYTES, 512);
     assert_eq!(BCSR_INDEXED_THREADGROUP_BYTES, 528);
-    assert_eq!(BCSR_COMPONENT_THREADGROUPS, 8_192);
+    assert_eq!(BCSR_COMPONENT_THREADGROUPS, 4_096);
     assert_eq!(BCSR_COMPONENT_REDUCE_THREADGROUPS, 96);
     assert_eq!(BCSR_MIDPOINT_THREADGROUPS, 8_192);
     assert_eq!(BCSR_MIDPOINT_THREADGROUP_BYTES, 640);
@@ -170,6 +170,14 @@ fn resident_bcsr_log26_contract_is_exact() {
     assert_eq!(plan.midpoint_output_bytes, 131_072);
     assert_eq!(plan.roof.optimistic_floor_ns, 6_519_528);
     assert_eq!(plan.roof.no_cache_floor_ns, 7_937_740);
+
+    assert_eq!(
+        RegistersClaimBcsrKernelConfig::default(),
+        RegistersClaimBcsrKernelConfig {
+            partial_blocks: 128,
+            replay: RegistersClaimBcsrReplayStrategy::IndexedPredecessor,
+        }
+    );
 
     assert_eq!(
         REGISTERS_CLAIM_LOG26_SOURCE_COSTS.map(RegistersClaimSourceCost::charged_source_bytes),

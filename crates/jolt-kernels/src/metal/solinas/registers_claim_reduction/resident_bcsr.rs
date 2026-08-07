@@ -7,7 +7,8 @@ pub const REGISTERS_CLAIM_BCSR_CYCLES: u64 = 1 << REGISTERS_CLAIM_BCSR_TARGET_LO
 pub const REGISTERS_CLAIM_BCSR_BLOCKS: u64 = REGISTERS_CLAIM_BCSR_CYCLES / 256;
 pub const REGISTERS_CLAIM_BCSR_PREFIX_ELEMENTS: u64 = 8_192;
 pub const REGISTERS_CLAIM_BCSR_SUFFIX_ELEMENTS: u64 = 8_192;
-pub const REGISTERS_CLAIM_BCSR_PARTIAL_BLOCKS: u64 = 256;
+pub const REGISTERS_CLAIM_BCSR_PARTIAL_BLOCKS: u64 = 128;
+pub const REGISTERS_CLAIM_BCSR_COLUMN_MODEL_PARTIAL_BLOCKS: u64 = 256;
 
 pub const REGISTERS_CLAIM_BCSR_RS1_EVENTS: u64 = 59_652_323;
 pub const REGISTERS_CLAIM_BCSR_RS2_EVENTS: u64 = 55_924_053;
@@ -26,7 +27,7 @@ pub const BCSR_INDEXED_COMPONENT_PIPELINE: &str = "solinas_registers_claim_bcsr_
 pub const BCSR_COMPONENT_REDUCE_PIPELINE: &str = "solinas_registers_claim_bcsr_reduce_components";
 pub const BCSR_MIDPOINT_PIPELINE: &str = "solinas_registers_claim_bcsr_fold_rd_midpoint";
 
-pub const BCSR_COMPONENT_THREADGROUPS: u64 = 8_192;
+pub const BCSR_COMPONENT_THREADGROUPS: u64 = 4_096;
 pub const BCSR_COMPONENT_THREADS_PER_THREADGROUP: u64 = 256;
 pub const BCSR_COMPONENT_REPLAY_BYTES: u64 = 3 * 256 * size_of::<u64>() as u64;
 pub const BCSR_COMPONENT_WEIGHT_THREADGROUP_BYTES: u64 = 16;
@@ -81,7 +82,7 @@ impl Default for RegistersClaimBcsrKernelConfig {
     fn default() -> Self {
         Self {
             partial_blocks: REGISTERS_CLAIM_BCSR_PARTIAL_BLOCKS as usize,
-            replay: RegistersClaimBcsrReplayStrategy::ColumnReplay,
+            replay: RegistersClaimBcsrReplayStrategy::IndexedPredecessor,
         }
     }
 }
@@ -244,8 +245,10 @@ pub struct RegistersClaimBcsrPlan {
 
 impl RegistersClaimBcsrPlan {
     pub fn log26() -> Result<Self, RegistersClaimPlanError> {
-        let component_partial_bytes =
-            3 * REGISTERS_CLAIM_BCSR_PARTIAL_BLOCKS * REGISTERS_CLAIM_BCSR_PREFIX_ELEMENTS * 16;
+        let component_partial_bytes = 3
+            * REGISTERS_CLAIM_BCSR_COLUMN_MODEL_PARTIAL_BLOCKS
+            * REGISTERS_CLAIM_BCSR_PREFIX_ELEMENTS
+            * 16;
         let component_carrier_bytes = 3 * REGISTERS_CLAIM_BCSR_PREFIX_ELEMENTS * 16;
         let midpoint_output_bytes = REGISTERS_CLAIM_BCSR_SUFFIX_ELEMENTS * 16;
 
@@ -340,17 +343,18 @@ impl RegistersClaimBcsrPlan {
             blocks: REGISTERS_CLAIM_BCSR_BLOCKS as u32,
             prefix_elements: REGISTERS_CLAIM_BCSR_PREFIX_ELEMENTS as u32,
             suffix_elements: REGISTERS_CLAIM_BCSR_SUFFIX_ELEMENTS as u32,
-            partial_blocks: REGISTERS_CLAIM_BCSR_PARTIAL_BLOCKS as u32,
+            partial_blocks: REGISTERS_CLAIM_BCSR_COLUMN_MODEL_PARTIAL_BLOCKS as u32,
             low_blocks: (REGISTERS_CLAIM_BCSR_PREFIX_ELEMENTS / 256) as u32,
             suffixes_per_partial: (REGISTERS_CLAIM_BCSR_SUFFIX_ELEMENTS
-                / REGISTERS_CLAIM_BCSR_PARTIAL_BLOCKS) as u32,
+                / REGISTERS_CLAIM_BCSR_COLUMN_MODEL_PARTIAL_BLOCKS)
+                as u32,
             columns: 128,
         }
     }
 
     pub const fn reduce_params(self) -> RegistersClaimBcsrReduceParams {
         RegistersClaimBcsrReduceParams {
-            partial_blocks: REGISTERS_CLAIM_BCSR_PARTIAL_BLOCKS as u32,
+            partial_blocks: REGISTERS_CLAIM_BCSR_COLUMN_MODEL_PARTIAL_BLOCKS as u32,
             prefix_elements: REGISTERS_CLAIM_BCSR_PREFIX_ELEMENTS as u32,
             columns: 3,
             reserved: 0,
