@@ -17,6 +17,7 @@ mod change_divisor_w;
 mod div_by_zero;
 mod eq;
 mod gt;
+mod lane_extract_s;
 mod lane_mask;
 mod left_is_zero;
 mod left_shift;
@@ -57,6 +58,7 @@ use change_divisor_w::ChangeDivisorWSuffix;
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;
+use lane_extract_s::{LaneExtractStraddleSuffix, LaneExtractValueSuffix};
 use lane_mask::LaneMaskSuffix;
 use left_is_zero::LeftOperandIsZeroSuffix;
 use left_shift::LeftShiftSuffix;
@@ -157,6 +159,8 @@ pub enum Suffixes {
     LaneMaskH,
     LaneMaskW,
     Pow2Lane,
+    LaneExtractValue,
+    LaneExtractStraddle,
 }
 
 /// Total number of suffix variants.
@@ -237,6 +241,8 @@ impl Suffixes {
             Suffixes::LaneMaskH => LaneMaskSuffix::<2>::suffix_mle(b),
             Suffixes::LaneMaskW => LaneMaskSuffix::<4>::suffix_mle(b),
             Suffixes::Pow2Lane => LaneMaskSuffix::<0>::suffix_mle(b),
+            Suffixes::LaneExtractValue => LaneExtractValueSuffix::suffix_mle(b),
+            Suffixes::LaneExtractStraddle => LaneExtractStraddleSuffix::suffix_mle(b),
         }
     }
 

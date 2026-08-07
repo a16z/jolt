@@ -3,6 +3,7 @@ use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
+use lane_extract_s::LaneExtractSTable;
 use lane_mask::{LaneMaskTable, Pow2LaneTable};
 use lower_half_word::LowerHalfWordTable;
 use movsign::MovsignTable;
@@ -81,6 +82,7 @@ pub mod and;
 pub mod andn;
 pub mod equal;
 pub mod halfword_alignment;
+pub mod lane_extract_s;
 pub mod lane_mask;
 pub mod lower_half_word;
 pub mod movsign;
@@ -169,6 +171,7 @@ pub enum LookupTables<const XLEN: usize> {
     LaneMaskH(LaneMaskTable<XLEN, 2>),
     LaneMaskW(LaneMaskTable<XLEN, 4>),
     Pow2Lane(Pow2LaneTable<XLEN>),
+    LaneExtractS(LaneExtractSTable<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -226,6 +229,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::LaneMaskH(table) => table.materialize(),
             LookupTables::LaneMaskW(table) => table.materialize(),
             LookupTables::Pow2Lane(table) => table.materialize(),
+            LookupTables::LaneExtractS(table) => table.materialize(),
         }
     }
 
@@ -276,6 +280,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::LaneMaskH(table) => table.materialize_entry(index),
             LookupTables::LaneMaskW(table) => table.materialize_entry(index),
             LookupTables::Pow2Lane(table) => table.materialize_entry(index),
+            LookupTables::LaneExtractS(table) => table.materialize_entry(index),
         }
     }
 
@@ -330,6 +335,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::LaneMaskH(table) => table.evaluate_mle(r),
             LookupTables::LaneMaskW(table) => table.evaluate_mle(r),
             LookupTables::Pow2Lane(table) => table.evaluate_mle(r),
+            LookupTables::LaneExtractS(table) => table.evaluate_mle(r),
         }
     }
 
@@ -380,6 +386,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::LaneMaskH(table) => table.suffixes(),
             LookupTables::LaneMaskW(table) => table.suffixes(),
             LookupTables::Pow2Lane(table) => table.suffixes(),
+            LookupTables::LaneExtractS(table) => table.suffixes(),
         }
     }
 
@@ -434,6 +441,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::LaneMaskH(table) => table.combine(prefixes, suffixes),
             LookupTables::LaneMaskW(table) => table.combine(prefixes, suffixes),
             LookupTables::Pow2Lane(table) => table.combine(prefixes, suffixes),
+            LookupTables::LaneExtractS(table) => table.combine(prefixes, suffixes),
         }
     }
 }

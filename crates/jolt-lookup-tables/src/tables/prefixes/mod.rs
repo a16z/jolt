@@ -13,6 +13,7 @@ pub mod change_divisor;
 pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
+pub mod lane_extract_s;
 pub mod lane_mask;
 pub mod left_is_zero;
 pub mod left_operand_msb;
@@ -162,6 +163,9 @@ pub enum Prefixes {
     LaneMaskH,
     LaneMaskW,
     Pow2Lane,
+    LaneSignT,
+    LaneSignS,
+    LastMaskBit,
 }
 
 /// Total number of prefix variants.
@@ -228,6 +232,9 @@ macro_rules! dispatch_prefix {
             Prefixes::LaneMaskH => lane_mask::LaneMaskPrefix::<2>::$method($($args),*),
             Prefixes::LaneMaskW => lane_mask::LaneMaskPrefix::<4>::$method($($args),*),
             Prefixes::Pow2Lane => lane_mask::LaneMaskPrefix::<0>::$method($($args),*),
+            Prefixes::LaneSignT => lane_extract_s::LaneSignTPrefix::$method($($args),*),
+            Prefixes::LaneSignS => lane_extract_s::LaneSignSPrefix::$method($($args),*),
+            Prefixes::LastMaskBit => lane_extract_s::LastMaskBitPrefix::$method($($args),*),
         }
     };
 }

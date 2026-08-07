@@ -161,6 +161,7 @@ macro_rules! for_each_instruction_kind {
                 VirtualLaneMaskH => VirtualLaneMaskH => "jolt.virtual.lane_mask_h",
                 VirtualLaneMaskW => VirtualLaneMaskW => "jolt.virtual.lane_mask_w",
                 VirtualPow2Lane => VirtualPow2Lane => "jolt.virtual.pow2_lane",
+                VirtualLaneExtractS => VirtualLaneExtractS => "jolt.virtual.lane_extract_s",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -259,6 +260,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualLaneMaskH => VirtualLaneMaskH => (0x008b, "jolt.virtual.lane_mask_h"),
                 VirtualLaneMaskW => VirtualLaneMaskW => (0x008c, "jolt.virtual.lane_mask_w"),
                 VirtualPow2Lane => VirtualPow2Lane => (0x008d, "jolt.virtual.pow2_lane"),
+                VirtualLaneExtractS => VirtualLaneExtractS => (0x008e, "jolt.virtual.lane_extract_s"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

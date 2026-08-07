@@ -137,6 +137,7 @@ use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder
 use virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use virtual_change_divisor::VirtualChangeDivisor;
 use virtual_change_divisor_w::VirtualChangeDivisorW;
+use virtual_lane_extract_s::VirtualLaneExtractS;
 use virtual_lane_mask_b::VirtualLaneMaskB;
 use virtual_lane_mask_h::VirtualLaneMaskH;
 use virtual_lane_mask_w::VirtualLaneMaskW;
@@ -328,6 +329,7 @@ pub mod virtual_assert_word_alignment;
 pub mod virtual_change_divisor;
 pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
+pub mod virtual_lane_extract_s;
 pub mod virtual_lane_mask_b;
 pub mod virtual_lane_mask_h;
 pub mod virtual_lane_mask_w;

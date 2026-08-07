@@ -20,6 +20,7 @@ pub mod and;
 pub mod andn;
 pub mod equal;
 pub mod halfword_alignment;
+pub mod lane_extract_s;
 pub mod lane_mask;
 pub mod lower_half_word;
 pub mod mulu_no_overflow;
@@ -62,6 +63,7 @@ use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
+use lane_extract_s::LaneExtractSTable;
 use lane_mask::{LaneMaskTable, Pow2LaneTable};
 use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
@@ -162,6 +164,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     LaneMaskH(LaneMaskTable<XLEN, 2>),
     LaneMaskW(LaneMaskTable<XLEN, 4>),
     Pow2Lane(Pow2LaneTable<XLEN>),
+    LaneExtractS(LaneExtractSTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -216,6 +219,7 @@ macro_rules! dispatch {
             Self::LaneMaskH($t) => $expr,
             Self::LaneMaskW($t) => $expr,
             Self::Pow2Lane($t) => $expr,
+            Self::LaneExtractS($t) => $expr,
         }
     };
 }

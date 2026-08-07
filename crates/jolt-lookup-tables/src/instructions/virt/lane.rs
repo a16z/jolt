@@ -1,7 +1,9 @@
+use crate::tables::lane_extract_s::signed_extract;
 use crate::tables::lane_mask::lane_value;
 use crate::traits::{impl_lookup_table, LookupQuery};
 use jolt_riscv::instructions::{
-    VirtualAlignAddr, VirtualLaneMaskB, VirtualLaneMaskH, VirtualLaneMaskW, VirtualPow2Lane,
+    VirtualAlignAddr, VirtualLaneExtractS, VirtualLaneMaskB, VirtualLaneMaskH, VirtualLaneMaskW,
+    VirtualPow2Lane,
 };
 use jolt_riscv::JoltCycle;
 
@@ -50,6 +52,22 @@ impl_address_lookup!(VirtualLaneMaskW, LaneMaskW, |index: u128| lane_value::<4>(
 impl_address_lookup!(VirtualPow2Lane, Pow2Lane, |index: u128| lane_value::<0>(
     index as u64
 ));
+
+impl_lookup_table!(VirtualLaneExtractS, Some(LaneExtractS));
+
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualLaneExtractS<C> {
+    fn to_instruction_inputs(&self) -> (u64, i128) {
+        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+        (
+            self.0.rs1_val().unwrap_or(0) & mask,
+            i128::from(self.0.rs2_val().unwrap_or(0) & mask),
+        )
+    }
+
+    fn to_lookup_output(&self) -> u64 {
+        signed_extract::<XLEN>(LookupQuery::<XLEN>::to_lookup_index(self))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -106,5 +124,10 @@ mod tests {
         pow2_lane,
         VirtualPow2Lane,
         tracer::instruction::virtual_pow2_lane::VirtualPow2Lane
+    );
+    instruction_tests!(
+        lane_extract_s,
+        VirtualLaneExtractS,
+        tracer::instruction::virtual_lane_extract_s::VirtualLaneExtractS
     );
 }

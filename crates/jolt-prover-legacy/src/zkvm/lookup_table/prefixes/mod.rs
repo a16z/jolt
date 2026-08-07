@@ -29,6 +29,7 @@ use change_divisor::ChangeDivisorPrefix;
 use change_divisor_w::ChangeDivisorWPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
+use lane_extract_s::{LaneSignSPrefix, LaneSignTPrefix, LastMaskBitPrefix};
 use lane_mask::LaneMaskPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
 use left_msb::LeftMsbPrefix;
@@ -59,6 +60,7 @@ pub mod change_divisor;
 pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
+pub mod lane_extract_s;
 pub mod lane_mask;
 pub mod left_is_zero;
 pub mod left_msb;
@@ -194,6 +196,9 @@ pub enum Prefixes {
     LaneMaskH,
     LaneMaskW,
     Pow2Lane,
+    LaneSignT,
+    LaneSignS,
+    LastMaskBit,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -346,6 +351,9 @@ impl Prefixes {
             Prefixes::LaneMaskH => LaneMaskPrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::LaneMaskW => LaneMaskPrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::Pow2Lane => LaneMaskPrefix::<XLEN, 0>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::LaneSignT => LaneSignTPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::LaneSignS => LaneSignSPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::LastMaskBit => LastMaskBitPrefix::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -712,6 +720,19 @@ impl Prefixes {
                 j,
                 suffix_len,
             ),
+            Prefixes::LaneSignT => LaneSignTPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::LaneSignS => {
+                LaneSignSPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
+            }
+            Prefixes::LastMaskBit => {
+                LastMaskBitPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
+            }
         }
     }
 }

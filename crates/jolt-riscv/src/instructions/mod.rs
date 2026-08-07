@@ -119,6 +119,7 @@ pub use virt::VirtualAlignAddr;
 pub use virt::VirtualChangeDivisor;
 pub use virt::VirtualChangeDivisorW;
 pub use virt::VirtualHostIO;
+pub use virt::VirtualLaneExtractS;
 pub use virt::VirtualLaneMaskB;
 pub use virt::VirtualLaneMaskH;
 pub use virt::VirtualLaneMaskW;
@@ -412,6 +413,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualLaneMaskH(VirtualLaneMaskH<T>),
     VirtualLaneMaskW(VirtualLaneMaskW<T>),
     VirtualPow2Lane(VirtualPow2Lane<T>),
+    VirtualLaneExtractS(VirtualLaneExtractS<T>),
     #[cfg(feature = "field-inline")]
     FieldAdd(FieldAdd<T>),
     #[cfg(feature = "field-inline")]
@@ -619,6 +621,7 @@ impl_jolt_instructions_flags! {
     VirtualLaneMaskH => VirtualLaneMaskH,
     VirtualLaneMaskW => VirtualLaneMaskW,
     VirtualPow2Lane => VirtualPow2Lane,
+    VirtualLaneExtractS => VirtualLaneExtractS,
     #[cfg(feature = "field-inline")]
     FieldAdd => FIELD_ADD,
     #[cfg(feature = "field-inline")]

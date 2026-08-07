@@ -27,6 +27,23 @@ pub fn lookup_table_mle_random_test<F: JoltField, T: JoltLookupTable + Default>(
     }
 }
 
+pub fn lookup_table_mle_random_valid_index_test<
+    const XLEN: usize,
+    F: JoltField,
+    T: PrefixSuffixDecomposition<XLEN>,
+>() {
+    let mut rng = StdRng::seed_from_u64(12345);
+
+    for _ in 0..1000 {
+        let index = T::random_lookup_index(&mut rng);
+        assert_eq!(
+            F::from_u64(T::default().materialize_entry(index)),
+            T::default().evaluate_mle::<F, F>(&index_to_field_bitvector(index, XLEN * 2)),
+            "MLE did not match materialized table at index {index}",
+        );
+    }
+}
+
 pub fn lookup_table_mle_full_hypercube_test<F: JoltField, T: JoltLookupTable + Default>() {
     let materialized = T::default().materialize();
     for (i, entry) in materialized.iter().enumerate() {

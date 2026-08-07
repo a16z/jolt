@@ -454,6 +454,9 @@ macro_rules! source_extension_for_marker {
     (VirtualPow2Lane) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualLaneExtractS) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (FieldAdd) => {
         Some(SourceExtension::FieldInline)
     };
@@ -898,6 +901,9 @@ macro_rules! source_side_effects_for_marker {
     (VirtualPow2Lane) => {
         false
     };
+    (VirtualLaneExtractS) => {
+        false
+    };
     (FieldAdd) => {
         true
     };
@@ -1140,6 +1146,9 @@ macro_rules! jolt_target_extension_for_marker {
     };
     (VirtualPow2Lane) => {
         Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (VirtualLaneExtractS) => {
+        Some(JoltTargetExtension::VirtualShifts)
     };
     (FieldAdd) => {
         Some(JoltTargetExtension::FieldInline)
@@ -1406,6 +1415,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualPow2Lane) => {
+        false
+    };
+    (VirtualLaneExtractS) => {
         false
     };
 }

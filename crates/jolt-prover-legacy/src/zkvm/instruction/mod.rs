@@ -354,6 +354,9 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstruction::VirtualLaneMaskH(_) => LookupTables::LaneMaskH(Default::default()),
             JoltInstruction::VirtualLaneMaskW(_) => LookupTables::LaneMaskW(Default::default()),
             JoltInstruction::VirtualPow2Lane(_) => LookupTables::Pow2Lane(Default::default()),
+            JoltInstruction::VirtualLaneExtractS(_) => {
+                LookupTables::LaneExtractS(Default::default())
+            }
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -505,6 +508,7 @@ define_rv64imac_trait_impls! {
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7
         , VirtualAlignAddr, VirtualLaneMaskB, VirtualLaneMaskH, VirtualLaneMaskW, VirtualPow2Lane,
+        VirtualLaneExtractS,
     ]
 }
 

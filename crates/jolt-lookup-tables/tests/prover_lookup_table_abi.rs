@@ -233,6 +233,10 @@ fn modular_lookup_table_indices_match_prover_abi() {
             LookupTableKind::<XLEN>::Pow2Lane(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::Pow2Lane(Default::default())),
         ),
+        (
+            LookupTableKind::<XLEN>::LaneExtractS(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::LaneExtractS(Default::default())),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());
