@@ -558,6 +558,7 @@ fn completed_program_image_claim<F: Field>(
     Ok(CompletedClaim { value, point })
 }
 
+#[jolt_verifier_derive::fs_scope(Reconstruction)]
 pub fn verify<F, C, T>(
     checked: &CheckedInputs,
     sumcheck_proof: Option<&SumcheckProof<F, C>>,

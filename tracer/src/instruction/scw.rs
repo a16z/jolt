@@ -49,24 +49,24 @@ impl RISCVTrace for SCW {
         // doubleword) whose set covers the 4 bytes being written.
         let success = cpu.reservation_covers(address, ReservationWidth::Word);
 
-        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
-
         // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
-        // in the sequence. Locating it by type avoids fragility against
-        // changes to the sequence's prelude.
-        let advice = inline_sequence
-            .iter_mut()
-            .find_map(|i| match i {
-                Instruction::VirtualAdvice(v) => Some(v),
-                _ => None,
-            })
-            .expect("SC.W inline sequence must contain a VirtualAdvice");
-        advice.advice = success as u64;
-
+        // in the sequence, on a per-execution copy of the row. Locating it by
+        // type avoids fragility against changes to the sequence's prelude.
         let mut trace = trace;
-        for instr in inline_sequence {
-            instr.trace(cpu, trace.as_deref_mut());
-        }
+        let mut patched = false;
+        cpu.with_cached_inline_sequence(&Instruction::from(*self), |cpu, rows| {
+            for instr in rows {
+                let mut instr = *instr;
+                if !patched {
+                    if let Instruction::VirtualAdvice(v) = &mut instr {
+                        v.advice = success as u64;
+                        patched = true;
+                    }
+                }
+                instr.trace(cpu, trace.as_deref_mut());
+            }
+        });
+        assert!(patched, "SC.W inline sequence must contain a VirtualAdvice");
 
         cpu.clear_reservation();
     }

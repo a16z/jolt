@@ -129,6 +129,23 @@ impl VirtualRegisterAllocator {
         }
     }
 
+    /// True when no virtual-register guards are outstanding: all transient
+    /// registers are free and no inline clears are pending. Guards are
+    /// strictly intra-tick, so this holds at every tick boundary — chunk
+    /// checkpoints must only be captured in this state.
+    pub fn is_quiescent(&self) -> bool {
+        self.allocated
+            .lock()
+            .expect("Failed to lock virtual register allocator")
+            .iter()
+            .all(|allocated| !*allocated)
+            && self
+                .pending_clearing_inline
+                .lock()
+                .expect("Failed to lock virtual register allocator")
+                .is_empty()
+    }
+
     /// Allocate virtual register that can be used in the inline sequence of
     /// an instruction. Skips reserved registers (32-39) and uses registers 40-47.
     #[cfg(test)]
