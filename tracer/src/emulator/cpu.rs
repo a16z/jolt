@@ -29,6 +29,19 @@ impl AdviceTape {
         Self::default()
     }
 
+    /// Build a tape from raw bytes with the read cursor at 0.
+    pub fn from_bytes(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            read_position: 0,
+        }
+    }
+
+    /// Consume the tape, returning its raw bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.data
+    }
+
     /// Append bytes to the advice tape (called during first emulation pass)
     pub fn write(&mut self, bytes: &[u8]) {
         self.data.extend_from_slice(bytes);
@@ -1458,10 +1471,7 @@ impl Cpu {
         self.executed_instrs = state.executed_instrs;
         self.active_markers.clear();
         self.call_stack.clear();
-        self.advice_tape = AdviceTape {
-            data: state.advice_suffix.clone(),
-            read_position: 0,
-        };
+        self.advice_tape = AdviceTape::from_bytes(state.advice_suffix.clone());
         #[cfg(feature = "field-inline")]
         {
             self.field_registers = state.field_registers.clone();
