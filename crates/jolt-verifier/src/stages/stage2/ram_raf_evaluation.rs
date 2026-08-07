@@ -137,14 +137,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamRafEvaluation<F> {
             // address (`identity(r_address) * 8 + lowest_address`).
             RamRafEvaluationPublic::UnmapAddress => {
                 let point = output_points.ram_ra();
-                if point.len() < self.ram_log_k {
-                    return Err(public_input_failed(format!(
+                let address = point.get(..self.ram_log_k).ok_or_else(|| {
+                    public_input_failed(format!(
                         "RAM RAF opening point is too short: expected at least {}, got {}",
                         self.ram_log_k,
                         point.len()
-                    )));
-                }
-                let address = &point[..self.ram_log_k];
+                    ))
+                })?;
                 Ok(
                     IdentityPolynomial::new(self.ram_log_k).evaluate(address) * F::from_u64(8)
                         + F::from_u64(self.lowest_address),

@@ -633,6 +633,10 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
     }
 }
 
+#[expect(
+    clippy::unreachable,
+    reason = "one-hot K parameters are validated at setup; later dispatch only sees those values"
+)]
 pub(crate) fn one_hot_setup_prover(
     one_hot_k: usize,
     max_num_vars: usize,
@@ -729,6 +733,10 @@ pub(crate) fn dense_polynomials(
 }
 
 #[doc(hidden)]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "jolt_to_akita_index keeps num_vars bits of the reversal, so the index is < 2^num_vars = akita_evals.len()"
+)]
 pub fn jolt_to_akita_evals(
     num_vars: usize,
     jolt_evals: &[AkitaField],
@@ -757,6 +765,10 @@ pub fn jolt_to_akita_evals(
 
 /// Materializes a polynomial's evaluations directly in Akita's (bit-reversed)
 /// index order, avoiding a second full-size buffer for the reorder pass.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "jolt_to_akita_index keeps num_vars bits of the reversal, so the index is < 2^num_vars = evals.len(); for num_vars = 0 the single index for_each_row yields is 0"
+)]
 pub(crate) fn akita_ordered_evaluations<P>(polynomial: &P) -> Result<Vec<AkitaField>, OpeningsError>
 where
     P: MultilinearPoly<AkitaField> + ?Sized,

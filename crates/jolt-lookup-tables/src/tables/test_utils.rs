@@ -215,12 +215,13 @@ fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
     }
 }
 
+#[expect(clippy::expect_used, reason = "writing to a String cannot fail")]
 fn format_prefix_evals<F: Field>(evals: &[PrefixEval<F>]) -> String {
     use std::fmt::Write;
 
     let mut out = String::new();
     for (prefix, eval) in ALL_PREFIXES.iter().zip(evals) {
-        let _ = writeln!(out, "  {prefix:?} = {eval}");
+        writeln!(out, "  {prefix:?} = {eval}").expect("write to String");
     }
     out
 }

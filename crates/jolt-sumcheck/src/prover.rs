@@ -106,11 +106,10 @@ fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F
 /// stage-side, so the stage computes its canonical opening values and calls
 /// `recorder.finish` itself.
 ///
-/// # Panics
-///
-/// Panics if `prelude.max_degree == 0` and the batch has rounds to prove — a
-/// sumcheck round polynomial must have degree at least 1 (the same invariant
-/// `SumcheckClaim::new` enforces on the verify side).
+/// Returns [`SumcheckError::ZeroBatchDegree`] if `prelude.max_degree == 0` and
+/// the batch has rounds to prove — a sumcheck round polynomial must have
+/// degree at least 1 (the same invariant `SumcheckClaim::new` enforces on the
+/// verify side).
 #[tracing::instrument(
     skip_all,
     name = "prove_batch",
@@ -154,10 +153,9 @@ where
         }
     }
     let max_num_vars = prelude.max_num_vars;
-    assert!(
-        max_num_vars == 0 || prelude.max_degree >= 1,
-        "sumcheck round polynomial must have degree >= 1"
-    );
+    if max_num_vars > 0 && prelude.max_degree < 1 {
+        return Err(SumcheckError::ZeroBatchDegree { max_num_vars });
+    }
 
     #[expect(
         clippy::unwrap_used,
@@ -188,22 +186,25 @@ where
         let mut batched_coefficients = vec![F::zero(); prelude.max_degree + 1];
         let mut round_polys: Vec<Option<UnivariatePoly<F>>> = Vec::with_capacity(members.len());
 
-        for (index, member) in members.iter_mut().enumerate() {
-            let described = &prelude.members[index];
+        for (((member, described), &member_claim), pending_bind) in members
+            .iter_mut()
+            .zip(&prelude.members)
+            .zip(&member_claims)
+            .zip(pending_binds.iter_mut())
+        {
             let active = round >= described.offset && round < described.offset + described.rounds;
             if !active {
                 // Inactive: the constant polynomial `claim / 2`, so
                 // `s(0) + s(1)` preserves the member's claim and evaluation at
                 // any challenge halves it.
-                batched_coefficients[0] += described.coefficient * member_claims[index] * two_inv;
+                if let Some(constant) = batched_coefficients.first_mut() {
+                    *constant += described.coefficient * member_claim * two_inv;
+                }
                 round_polys.push(None);
                 continue;
             }
-            let poly = member.prove_round(
-                pending_binds[index].take(),
-                round - described.offset,
-                member_claims[index],
-            )?;
+            let poly =
+                member.prove_round(pending_bind.take(), round - described.offset, member_claim)?;
             let poly_degree = poly.degree();
             if poly_degree > prelude.max_degree {
                 return Err(SumcheckError::DegreeBoundExceeded {
@@ -231,13 +232,17 @@ where
         running_claim = batched_poly.evaluate(challenge);
         challenges.push(challenge);
 
-        for (index, poly) in round_polys.into_iter().enumerate() {
+        for ((member_claim, pending_bind), poly) in member_claims
+            .iter_mut()
+            .zip(pending_binds.iter_mut())
+            .zip(round_polys)
+        {
             match poly {
                 Some(poly) => {
-                    member_claims[index] = poly.evaluate(challenge);
-                    pending_binds[index] = Some(challenge);
+                    *member_claim = poly.evaluate(challenge);
+                    *pending_bind = Some(challenge);
                 }
-                None => member_claims[index] *= two_inv,
+                None => *member_claim *= two_inv,
             }
         }
     }

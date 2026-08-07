@@ -153,8 +153,9 @@ fn fold_stage_values<F: Field>(
     r_address: &[F],
     fold: BytecodeReadRafTableFoldInputs<'_, F>,
 ) -> Result<[F; NUM_BYTECODE_VAL_STAGES], VerifierError> {
-    let expected_domain = 1usize
-        .checked_shl(r_address.len() as u32)
+    let expected_domain = u32::try_from(r_address.len())
+        .ok()
+        .and_then(|address_bits| 1usize.checked_shl(address_bits))
         .ok_or_else(|| public_input_failed("bytecode address domain overflows"))?;
     if fold.bytecode.len() != expected_domain {
         return Err(public_input_failed(format!(
@@ -193,13 +194,19 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 /// (`chunk ++ r_cycle`).
 fn r_cycle_suffix<F: Field>(log_t: usize, opening_point: &[F]) -> Result<&[F], VerifierError> {
     opening_point
-        .get(opening_point.len() - log_t..)
+        .len()
+        .checked_sub(log_t)
+        .and_then(|start| opening_point.get(start..))
         .ok_or_else(|| public_input_failed("bytecode cycle opening point shorter than log_t"))
 }
 
 /// Evaluate the full-program bytecode read-RAF output expression at the produced
 /// `BytecodeRa` openings and public values.
 #[cfg(not(feature = "akita"))]
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
+)]
 fn expected_output_from_publics<F: Field>(
     dimensions: BytecodeReadRafDimensions,
     public_values: &bytecode::BytecodeReadRafPublicValues<F>,
@@ -220,9 +227,9 @@ fn expected_output_from_publics<F: Field>(
     let relation = relations::bytecode::ReadRaf::new(dimensions);
     relation.output_expression::<F>().try_evaluate(
         |id| {
-            for (index, opening) in output_openings.bytecode_ra.iter().enumerate() {
+            for (opening, value) in output_openings.bytecode_ra.iter().zip(bytecode_ra) {
                 if *id == *opening {
-                    return Ok(bytecode_ra[index]);
+                    return Ok(*value);
                 }
             }
             Err(VerifierError::MissingOpeningClaim { id: *id })
@@ -256,6 +263,13 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
         derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
 
+    #[cfg_attr(
+        feature = "akita",
+        expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
+        )
+    )]
     fn expected_output(
         &self,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
@@ -284,10 +298,16 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
         );
         // The base monolith publics carry the five gamma'd stages; the
         // lattice store fold feeds the fused-inc stage resolution below.
+        let mut folded_stage_values = [F::zero(); bytecode::BYTECODE_STAGE_GAMMA_COUNTS.len()];
+        for ((folded, stage_value), stage_cycle_eq) in folded_stage_values
+            .iter_mut()
+            .zip(&stage_values_at_r_address)
+            .zip(&committed.stage_cycle_eqs)
+        {
+            *folded = *stage_value * *stage_cycle_eq;
+        }
         let base_public_values = BytecodeReadRafPublicValues {
-            stage_values: core::array::from_fn(|stage| {
-                stage_values_at_r_address[stage] * committed.stage_cycle_eqs[stage]
-            }),
+            stage_values: folded_stage_values,
             spartan_outer_raf: committed.spartan_outer_raf,
             spartan_shift_raf: committed.spartan_shift_raf,
             entry: committed.entry,
@@ -311,7 +331,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
             // fold (its complement for the register legs) against their own
             // cycle eqs; the `FusedInc` factor is the relation's own opening.
             let base_stages = NUM_BYTECODE_VAL_STAGES - 1;
-            let store_at_r_address = stage_values_at_r_address[base_stages];
+            // The store stage is the last staged wire (index `base_stages`).
+            let store_at_r_address = *stage_values_at_r_address
+                .last()
+                .ok_or_else(|| public_input_failed("bytecode stage fold is empty"))?;
             let fused_stage_value = |stage: usize| -> Result<F, VerifierError> {
                 let address_fold = if stage < base_stages + 2 {
                     store_at_r_address
@@ -338,9 +361,13 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     if *id == bytecode::fused_inc_read_raf_opening() {
                         return Ok(output_values.fused_inc);
                     }
-                    for (index, opening_id) in output_openings.bytecode_ra.iter().enumerate() {
+                    for (opening_id, value) in output_openings
+                        .bytecode_ra
+                        .iter()
+                        .zip(&output_values.bytecode_ra)
+                    {
                         if *id == *opening_id {
-                            return Ok(output_values.bytecode_ra[index]);
+                            return Ok(*value);
                         }
                     }
                     Err(VerifierError::MissingOpeningClaim { id: *id })
@@ -453,6 +480,10 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
 
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
+    )]
     fn expected_output(
         &self,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,

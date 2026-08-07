@@ -58,6 +58,10 @@ impl AkitaScheme {
     /// Commits a group of row-major one-hot polynomials through the
     /// backend's one-hot flavor as one commitment object whose members are
     /// opened together at a shared point.
+    #[expect(
+        clippy::unreachable,
+        reason = "one-hot K parameters are validated at setup; later dispatch only sees those values"
+    )]
     pub fn commit_one_hot_group(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
@@ -113,6 +117,10 @@ impl AkitaScheme {
     /// Commits owned one-hot columns without cloning their hot-index buffers
     /// at the Jolt/Akita boundary. The opening hint retains the backend
     /// representations needed by the prover.
+    #[expect(
+        clippy::unreachable,
+        reason = "one-hot K parameters are validated at setup; later dispatch only sees those values"
+    )]
     pub fn commit_one_hot_group_owned(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
@@ -283,10 +291,18 @@ impl MultilinearPoly<AkitaField> for CommittedOneHotShape {
         self.num_vars
     }
 
+    #[expect(
+        clippy::unreachable,
+        reason = "the Akita backend owns this operation; the trait method is never invoked"
+    )]
     fn evaluate(&self, _point: &[AkitaField]) -> AkitaField {
         unreachable!("hint-owned one-hot witness is evaluated by the Akita backend")
     }
 
+    #[expect(
+        clippy::unreachable,
+        reason = "the Akita backend owns this operation; the trait method is never invoked"
+    )]
     fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[AkitaField])) {
         unreachable!("hint-owned one-hot witness is streamed by the Akita backend")
     }
@@ -388,6 +404,10 @@ impl CommitmentScheme for AkitaScheme {
         prover_setup.verifier.clone()
     }
 
+    #[expect(
+        clippy::unreachable,
+        reason = "one-hot K parameters are validated at setup; later dispatch only sees those values"
+    )]
     fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,
@@ -629,6 +649,7 @@ impl ZkBatchOpeningScheme for AkitaNativeBatching {
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
     #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
+    #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
@@ -861,6 +882,7 @@ mod flavor_bench {
         reason = "bench unwraps successful PCS operations"
     )]
     #![expect(clippy::print_stderr, reason = "bench reports timings to stderr")]
+    #![expect(clippy::indexing_slicing, reason = "bench indexes fixture data")]
     #![expect(
         clippy::unimplemented,
         reason = "the bench stand-in exposes only the one-hot polynomial interface"

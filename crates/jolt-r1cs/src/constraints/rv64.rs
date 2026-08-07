@@ -574,6 +574,7 @@ pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may unwind via panic")]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};

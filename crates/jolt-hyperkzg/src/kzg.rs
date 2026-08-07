@@ -16,13 +16,14 @@ pub(crate) fn kzg_commit<P: PairingGroup>(
     coeffs: &[P::ScalarField],
     setup: &HyperKZGProverSetup<P>,
 ) -> Result<P::G1, HyperKZGError> {
-    if setup.g1_powers.len() < coeffs.len() {
-        return Err(HyperKZGError::SrsTooSmall {
+    let bases = setup
+        .g1_powers
+        .get(..coeffs.len())
+        .ok_or(HyperKZGError::SrsTooSmall {
             have: setup.g1_powers.len(),
             need: coeffs.len(),
-        });
-    }
-    Ok(P::G1::msm(&setup.g1_powers[..coeffs.len()], coeffs))
+        })?;
+    Ok(P::G1::msm(bases, coeffs))
 }
 
 /// Computes the KZG witness polynomial `h(x) = f(x) / (x - u)`.
@@ -36,9 +37,10 @@ pub(crate) fn compute_witness_polynomial<F: Field>(f: &[F], u: F) -> Vec<F> {
         return vec![];
     }
     let mut h = vec![F::zero(); d - 1];
-    h[d - 2] = f[d - 1];
-    for i in (1..d - 1).rev() {
-        h[i - 1] = f[i] + h[i] * u;
+    let mut acc = F::zero();
+    for (hi, &fi) in h.iter_mut().rev().zip(f.iter().skip(1).rev()) {
+        acc = fi + acc * u;
+        *hi = acc;
     }
     h
 }
@@ -94,7 +96,7 @@ where
     let q_powers = challenge_powers(q, k);
 
     // B(x) = sum_j q^j * f_j(x)
-    let poly_len = f[0].len();
+    let poly_len = f.first().map_or(0, Vec::len);
     let mut b_poly = vec![P::ScalarField::zero(); poly_len];
     for (fj, &qj) in f.iter().zip(q_powers.iter()) {
         for (b, &c) in b_poly.iter_mut().zip(fj.iter()) {
@@ -105,7 +107,12 @@ where
     // Compute witness polynomials and commit
     let w: [P::G1; 3] = (*u).map(|ui| {
         let h = compute_witness_polynomial::<P::ScalarField>(&b_poly, ui);
-        P::G1::msm(&setup.g1_powers[..h.len()], &h)
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "prover SRS covers the full polynomial length and the witness polynomial is strictly shorter"
+        )]
+        let bases = &setup.g1_powers[..h.len()];
+        P::G1::msm(bases, &h)
     });
 
     // Absorb witness commitments and mirror the verifier's `d_0` challenge
@@ -165,27 +172,28 @@ where
         q_powers.iter().map(|qp| *qp * q_power_multiplier).collect();
 
     // B(u_i) = sum_j q^j * v[i][j]
-    let b_u: Vec<P::ScalarField> = v
-        .iter()
-        .map(|v_i| {
-            v_i.iter()
-                .zip(q_powers.iter())
-                .map(|(&a, &b)| a * b)
-                .fold(P::ScalarField::zero(), |acc, x| acc + x)
-        })
-        .collect();
+    let b_u: [P::ScalarField; 3] = v.each_ref().map(|v_i| {
+        v_i.iter()
+            .zip(q_powers.iter())
+            .map(|(&a, &b)| a * b)
+            .fold(P::ScalarField::zero(), |acc, x| acc + x)
+    });
 
     // L = MSM over [C_0..C_{k-1}, W_0, W_1, W_2, g1] with scalars
     //   [q_powers_multiplied, u_0, u_1*d_0, u_2*d_1, -(b_u[0] + d_0*b_u[1] + d_1*b_u[2])]
     let mut bases = Vec::with_capacity(k + 4);
-    bases.extend_from_slice(&com[..k]);
+    bases.extend_from_slice(com);
     bases.push(wit[0]);
     bases.push(wit[1]);
     bases.push(wit[2]);
     bases.push(vk.g1);
 
+    // The bases side contributes exactly `com.len()` commitments; a
+    // `challenge_powers` regression returning a different count would
+    // otherwise surface as an MSM length panic instead of a clean mismatch.
+    debug_assert_eq!(q_powers_multiplied.len(), k);
     let mut scalars = Vec::with_capacity(k + 4);
-    scalars.extend_from_slice(&q_powers_multiplied[..k]);
+    scalars.extend_from_slice(&q_powers_multiplied);
     scalars.push(u[0]);
     scalars.push(u[1] * d_0);
     scalars.push(u[2] * d_1);
