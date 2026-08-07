@@ -1,0 +1,92 @@
+{
+  "schema": "metal_piop_profile_evidence_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-07T00:12:00Z",
+  "status": "diagnostic",
+  "artifact": {
+    "path": "/private/tmp/jolt-ram-raf-9de144572/benchmark-runs/metal-piop-eval/20260807-000732-052589/result.json",
+    "sha256": "9e897e25a61157d8336b30d41dbd2124e131d69c77c6cf4b91b6141c40d4fb11",
+    "optimized_trace_sha256": "8ea34d669611e30c2a1837b01406194db722d7807abdf71315e50adf21cdf11d",
+    "metal_trace_sha256": "d704329466367a52de8f01eefb8fd61adbc427238acf29a8d76c51409d3a3b74",
+    "git_revision": "9de144572cb4fe79bb7467fa406b16443a5331c9",
+    "binary_sha256": "92b11abcd43d6017d7c925db2061275f5a0669c9d14c4aefbecdcc50e4854154",
+    "worktree_dirty": true,
+    "worktree_state_sha256": "ca067cec7b5d2379bfb7c7825e142c7adad6c4fd3e8d3d387f07599bc79e9e86",
+    "worktree_note": "The exact detached source revision was unchanged; the only untracked entry was a target symlink used to share the build cache."
+  },
+  "contract": {
+    "command": "python3 scripts/metal_piop_eval.py --mode diagnostic --workload fibonacci --log-n 26 --repeats 1 --timeout-seconds 7200",
+    "workload": "fibonacci",
+    "log_n": 26,
+    "pairs": 1,
+    "order": ["optimized", "metal"],
+    "timed_span": "jolt_prover::piop",
+    "mode": "diagnostic",
+    "acceptance_eligible": false,
+    "rayon_threads": 16,
+    "host_fiat_shamir": true,
+    "device": "Apple M4 Max"
+  },
+  "primary": {
+    "cpu_piop_ms": 27597.394917,
+    "metal_piop_ms": 7592.10575,
+    "piop_speedup": 3.6350119223510555,
+    "minimum_speedup": 5.0,
+    "five_x_metal_cap_ms": 5519.4789834,
+    "remaining_metal_latency_ms": 2072.6267666,
+    "cpu_backend_witness_prepare_ms": 49.804542,
+    "metal_backend_witness_prepare_ms": 1604.435125,
+    "piop_plus_backend_witness_prepare_speedup": 3.006260705495968,
+    "optimized_max_rss_bytes": 46056751104,
+    "metal_max_rss_bytes": 45328089088
+  },
+  "stage_ms": [
+    {"stage": "1", "cpu": 3816.080708, "metal": 530.54225, "speedup": 7.192793},
+    {"stage": "2", "cpu": 1530.577291, "metal": 1236.198834, "speedup": 1.238132},
+    {"stage": "3", "cpu": 1131.885459, "metal": 419.272083, "speedup": 2.699644},
+    {"stage": "4", "cpu": 1482.047417, "metal": 1299.096417, "speedup": 1.140829},
+    {"stage": "5", "cpu": 4757.46, "metal": 2066.997125, "speedup": 2.301628},
+    {"stage": "6a", "cpu": 1343.299583, "metal": 415.768958, "speedup": 3.23088},
+    {"stage": "6b", "cpu": 12099.753375, "metal": 1516.052666, "speedup": 7.98109},
+    {"stage": "7", "cpu": 1436.134458, "metal": 108.077875, "speedup": 13.28796}
+  ],
+  "measured_kernel_ratios": {
+    "outer_remainder": 4.9113466576385685,
+    "instruction_input_service": 5.751663770547366,
+    "bytecode_read_raf_cycle": 10.01670081179399,
+    "booleanity_address": 5.007590006614161,
+    "hamming_weight_claim_reduction": 12.602617606676867,
+    "instruction_ra_virtualization": 13.928674629515138
+  },
+  "ram_raf_overlap": {
+    "submit_span_wall_ms": 0.053667,
+    "join_span_wall_ms": 0.065208,
+    "submit_wall_ns": 51458,
+    "overlap_wall_ns": 667808042,
+    "join_wall_ns": 24708,
+    "lifecycle_wall_ns": 667884250,
+    "gpu_active_ns": 8540917,
+    "completed_before_join": true,
+    "accessed_rows": 190,
+    "live_subtotals": 76,
+    "interpretation": "The command completed during 667.8 ms of intervening stage-2 work. Only 24.7 us of the pending ticket's measured lifecycle was exposed at join; the enclosing join trace span was 65.2 us."
+  },
+  "next_bottlenecks": [
+    {"kernel": "InstructionReadRaf", "metal_ms": 1697.535342, "metal_piop_share": 0.223592},
+    {"kernel": "RegistersReadWriteChecking", "metal_ms": 1022.741994, "metal_piop_share": 0.134711},
+    {"kernel": "Booleanity", "metal_ms": 745.317127, "metal_piop_share": 0.09817},
+    {"kernel": "ProductRemainder", "metal_ms": 434.757751, "metal_piop_share": 0.057264},
+    {"kernel": "RegistersValEvaluation", "metal_ms": 324.999373, "metal_piop_share": 0.042808},
+    {"kernel": "InstructionClaimReduction", "metal_ms": 316.069209, "metal_piop_share": 0.041631}
+  ],
+  "verdict": {
+    "status": "exact_diagnostic_below_global_floor",
+    "reason": "The asynchronous RAM RAF handoff is fully hidden on this sparse Fibonacci trace, but the complete Metal-hybrid PIOP remains 2.073 s above its 5x cap. Stage 2, stage 4, stage 5, and the listed CPU-backed members remain the priority.",
+    "next_test": "Integrate the calibrated ProductRemainder sequence behind the production slot, prove round/output parity at small scale, then rerun a single log-26 diagnostic before spending five-pair validation capacity."
+  },
+  "evidence_limits": [
+    "One pair is diagnostic and cannot satisfy the alternating-order production gate.",
+    "The Fibonacci instance has only 190 live RAM accesses, so the RAM RAF overlap result validates scheduling but does not replace the retained random-topology throughput artifact.",
+    "The primary PIOP metric excludes backend witness preparation; the 1.604 s Metal preparation cost remains reported as a mandatory secondary metric."
+  ]
+}
