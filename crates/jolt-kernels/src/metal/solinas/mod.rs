@@ -47,6 +47,7 @@ pub mod ram_ra_claim_reduction;
 mod ram_raf_evaluation;
 mod ram_val_check;
 pub mod ram_val_check_successor;
+mod registers;
 pub mod registers_claim_reduction;
 mod registers_read_write;
 mod registers_read_write_dense;
@@ -197,6 +198,12 @@ pub use ram_val_check::{
 pub use ram_val_check_successor::{
     PendingRamValSparseFirstMessage, RamValActivePair, RamValSparseFirstMessage,
     RamValSparseFirstMessageStats,
+};
+pub use registers::{
+    CertifiedRegisterOwner, RdIncrement, RdIncrementActivity, RegisterCsr256, RegisterCsr256Parts,
+    RegisterCsrCensus, RegisterEventCounts, RegisterOwnerError, RegisterOwnerRead,
+    RegisterOwnerRow, RegisterOwnerWrite, RegisterStateFlowCertificate, REGISTER_CSR_BLOCK_CYCLES,
+    REGISTER_CSR_COLUMNS, REGISTER_CSR_NON_AUTHORITATIVE_LOG_T_26_CENSUS,
 };
 pub use registers_read_write::{
     RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
