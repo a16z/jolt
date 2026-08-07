@@ -24,6 +24,8 @@ pub mod booleanity_address_successor;
 mod bytecode_cycle;
 #[doc(hidden)]
 pub mod bytecode_read_raf;
+#[doc(hidden)]
+pub mod bytecode_read_raf_v2;
 mod bytecode_row;
 pub mod half_width_probe;
 #[cfg(feature = "test-utils")]
