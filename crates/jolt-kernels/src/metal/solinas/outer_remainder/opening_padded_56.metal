@@ -143,12 +143,15 @@ kernel void solinas_outer_remainder_opening_tiles_padded_56(
             sums[slot] = solinas_zero();
         }
         uint block_start = x_out * params.e_in_length;
+        uint block_rows = min(
+            params.e_in_length,
+            params.source_elements - block_start);
         for (uint tile_start = 0u;
-             tile_start < params.e_in_length;
+             tile_start < block_rows;
              tile_start += OUTER_REMAINDER_PADDED_TILE_ROWS) {
             uint tile_count = min(
                 OUTER_REMAINDER_PADDED_TILE_ROWS,
-                params.e_in_length - tile_start);
+                block_rows - tile_start);
             for (uint flat = tid;
                  flat < tile_count * OUTER_REMAINDER_PADDED_SOURCE_WORDS;
                  flat += threads) {

@@ -381,6 +381,14 @@ impl RowsStore {
             Self::Retained(rows) => rows.len(),
         }
     }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn explicit_rows(&self) -> usize {
+        match self {
+            Self::Owned(rows) => rows.physical_rows().min(rows.cycles()),
+            Self::Retained(rows) => rows.len(),
+        }
+    }
 }
 
 #[cfg(feature = "allocative")]
@@ -542,10 +550,15 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
     let e_out = EqPolynomial::<AkitaField>::evals(out_point, None);
     let e_in = EqPolynomial::<AkitaField>::evals(in_point, None);
     let (extended, resident) = {
+        let explicit_rows = rows.explicit_rows();
         let resident = {
             let _span = tracing::info_span!("MetalSpartanOuterUniskip::row_handoff").entered();
             match session.take::<SpartanOuterUniskipRows>() {
-                Some(resident) if resident.len() == cycles => resident,
+                Some(resident)
+                    if resident.len() == cycles && resident.explicit_rows() == explicit_rows =>
+                {
+                    resident
+                }
                 _ => prepare_metal_spartan_outer_rows(context, &rows, cycles)?,
             }
         };
@@ -556,6 +569,7 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
             compact_rows_storage_id,
             residual_rows_storage_id,
             resident_rows = cycles,
+            explicit_rows,
             compact_row_bytes = 48,
             residual_row_bytes = 112,
             full_domain_copy_bytes = 0,
@@ -649,6 +663,7 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let rows = RowsStore::resolve(witness, cycles).map_err(MetalSpartanDenseRowsError::Kernel)?;
     let access = rows.access();
+    let explicit_rows = rows.explicit_rows();
     let source_kind = rows.production_source_kind();
     let host_repack_rows = rows.host_repack_rows();
     let span = tracing::info_span!(
@@ -668,9 +683,10 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
         compact_rows_storage_id = tracing::field::Empty,
         residual_rows_storage_id = tracing::field::Empty,
         resident_rows = cycles,
+        explicit_rows,
     );
     let _entered = span.enter();
-    let prepared = context
+    let (outer_rows, shift_rows) = context
         .prepare_spartan_outer_uniskip_rows_with_shift_fill(
             cycles,
             |instruction_input, residual, unexpanded_pc, pc, flags| {
@@ -739,6 +755,12 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
             },
         )
         .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let prepared = (
+        outer_rows
+            .with_explicit_rows(explicit_rows)
+            .map_err(MetalSpartanDenseRowsError::Metal)?,
+        shift_rows,
+    );
     let _ = span.record(
         "compact_rows_storage_id",
         prepared.0.instruction_input_allocation_identity(),
@@ -771,6 +793,7 @@ pub(crate) fn prepare_metal_instruction_input_witness_rows(
 ) -> Result<InstructionInputRows, KernelError<AkitaField>> {
     let rows = RowsStore::resolve(witness, cycles)?;
     let access = rows.access();
+    let explicit_rows = rows.explicit_rows();
     let source_kind = rows.production_source_kind();
     let host_repack_rows = rows.host_repack_rows();
     let span = tracing::info_span!(
@@ -790,6 +813,7 @@ pub(crate) fn prepare_metal_instruction_input_witness_rows(
         compact_rows_storage_id = tracing::field::Empty,
         residual_rows_storage_id = 0,
         resident_rows = cycles,
+        explicit_rows,
     );
     let _entered = span.enter();
     let prepared = context
@@ -835,6 +859,7 @@ fn prepare_metal_spartan_outer_rows(
     cycles: usize,
 ) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
     let access = rows.access();
+    let explicit_rows = rows.explicit_rows();
     let source_kind = rows.production_source_kind();
     let host_repack_rows = rows.host_repack_rows();
     let span = tracing::info_span!(
@@ -854,6 +879,7 @@ fn prepare_metal_spartan_outer_rows(
         compact_rows_storage_id = tracing::field::Empty,
         residual_rows_storage_id = tracing::field::Empty,
         resident_rows = cycles,
+        explicit_rows,
     );
     let _entered = span.enter();
     let prepared = context
@@ -895,6 +921,8 @@ fn prepare_metal_spartan_outer_rows(
             }
             Ok(())
         })
+        .map_err(metal_outer_error)?
+        .with_explicit_rows(explicit_rows)
         .map_err(metal_outer_error)?;
     let _ = span.record(
         "compact_rows_storage_id",

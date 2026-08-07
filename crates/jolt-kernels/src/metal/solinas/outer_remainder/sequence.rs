@@ -21,6 +21,8 @@ use super::{
     storage::{write_fields, DenseBuffers, OuterRemainderSequenceStorage, Storage},
 };
 
+const CANONICAL_PADDING_ONE_OPENING: usize = 30;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(super) struct PhaseParams {
@@ -37,6 +39,8 @@ pub(super) struct OpeningParams {
     e_in_length: u32,
     e_out_length: u32,
     blocks: u32,
+    source_elements: u32,
+    reserved: [u32; 3],
 }
 
 #[repr(C)]
@@ -480,14 +484,30 @@ impl OuterRemainderSequence {
         self.require_phase(OuterRemainderPhase::Exported)?;
         let cycles = self.rows()?.len();
         self.validate_weights("opening scan", cycles, e_in, e_out)?;
-        self.write_weights(e_in, e_out)?;
-        let blocks = e_out.len().min(self.storage.max_threadgroups);
+        let explicit_rows = self.rows()?.explicit_rows();
         let output_count = opening_output_count(self.config.product_uniskip_carrier);
+        let padding_weight = canonical_padding_weight(explicit_rows, e_in, e_out);
+        if explicit_rows == 0 {
+            self.product_uniskip_endpoints = self
+                .config
+                .product_uniskip_carrier
+                .then_some([AkitaField::zero(); OUTER_REMAINDER_PRODUCT_ENDPOINTS]);
+            self.phase = OuterRemainderPhase::OpeningsComplete;
+            self.dispatch_counts.opening_scans += 1;
+            let mut openings = [AkitaField::zero(); OUTER_REMAINDER_OPENINGS];
+            openings[CANONICAL_PADDING_ONE_OPENING] = padding_weight;
+            return Ok(openings);
+        }
+        self.write_weights(e_in, e_out)?;
+        let active_e_out = explicit_rows.div_ceil(e_in.len());
+        let blocks = active_e_out.min(self.storage.max_threadgroups);
         let params = OpeningParams {
             columns: to_u32(output_count)?,
             e_in_length: to_u32(e_in.len())?,
-            e_out_length: to_u32(e_out.len())?,
+            e_out_length: to_u32(active_e_out)?,
             blocks: to_u32(blocks)?,
+            source_elements: to_u32(explicit_rows)?,
+            reserved: [0; 3],
         };
         let rows = self.rows()?;
         let threads = self.storage.threads.opening;
@@ -534,7 +554,8 @@ impl OuterRemainderSequence {
         self.storage
             .context
             .validate_inputs("outer openings and carriers", values)?;
-        let openings = std::array::from_fn(|index| values[index].into_jolt_field());
+        let mut openings = std::array::from_fn(|index| values[index].into_jolt_field());
+        openings[CANONICAL_PADDING_ONE_OPENING] += padding_weight;
         self.product_uniskip_endpoints = self.config.product_uniskip_carrier.then(|| {
             std::array::from_fn(|index| values[OUTER_REMAINDER_OPENINGS + index].into_jolt_field())
         });
@@ -786,6 +807,37 @@ impl OuterRemainderSequence {
     }
 }
 
+fn canonical_padding_weight(
+    explicit_rows: usize,
+    e_in: &[AkitaField],
+    e_out: &[AkitaField],
+) -> AkitaField {
+    let inner_sum = e_in
+        .iter()
+        .copied()
+        .fold(AkitaField::zero(), |sum, weight| sum + weight);
+    let outer_sum = e_out
+        .iter()
+        .copied()
+        .fold(AkitaField::zero(), |sum, weight| sum + weight);
+    let complete_blocks = explicit_rows / e_in.len();
+    let partial_rows = explicit_rows % e_in.len();
+    let complete_outer_sum = e_out[..complete_blocks]
+        .iter()
+        .copied()
+        .fold(AkitaField::zero(), |sum, weight| sum + weight);
+    let partial_inner_sum = e_in[..partial_rows]
+        .iter()
+        .copied()
+        .fold(AkitaField::zero(), |sum, weight| sum + weight);
+    let partial_weight = if partial_rows == 0 {
+        AkitaField::zero()
+    } else {
+        e_out[complete_blocks] * partial_inner_sum
+    };
+    inner_sum * outer_sum - (inner_sum * complete_outer_sum + partial_weight)
+}
+
 fn dispatch(encoder: &metal::ComputeCommandEncoderRef, groups: usize, threads: usize) {
     encoder.dispatch_thread_groups(
         MTLSize {
@@ -810,5 +862,5 @@ fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, va
 }
 
 const _: () = assert!(size_of::<PhaseParams>() == 16);
-const _: () = assert!(size_of::<OpeningParams>() == 16);
+const _: () = assert!(size_of::<OpeningParams>() == 32);
 const _: () = assert!(size_of::<ReduceParams>() == 16);

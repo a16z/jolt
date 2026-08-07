@@ -862,6 +862,10 @@ pub enum MetalError {
     },
     #[error("outer remainder needs a power-of-two cycle count of at least four, got {0}")]
     InvalidOuterRemainderRows(usize),
+    #[error(
+        "outer remainder explicit prefix has {explicit} rows, exceeding logical length {logical}"
+    )]
+    OuterRemainderExplicitRows { explicit: usize, logical: usize },
     #[error("outer remainder rows belong to Metal device {got}, but the kernel uses {expected}")]
     OuterRemainderRowDevice { expected: u64, got: u64 },
     #[error("invalid outer remainder configuration: {0}")]

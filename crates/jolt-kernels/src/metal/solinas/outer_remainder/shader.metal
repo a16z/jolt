@@ -20,6 +20,10 @@ struct OuterRemainderOpeningParams {
     uint e_in_length;
     uint e_out_length;
     uint blocks;
+    uint source_elements;
+    uint reserved_0;
+    uint reserved_1;
+    uint reserved_2;
 };
 
 struct OuterRemainderReduceParams {
@@ -1027,12 +1031,15 @@ kernel void solinas_outer_remainder_opening_tiles(
             sums[slot] = solinas_zero();
         }
         uint block_start = x_out * params.e_in_length;
+        uint block_rows = min(
+            params.e_in_length,
+            params.source_elements - block_start);
         for (uint tile_start = 0u;
-             tile_start < params.e_in_length;
+             tile_start < block_rows;
              tile_start += OUTER_REMAINDER_TILE_ROWS) {
             uint tile_count = min(
                 OUTER_REMAINDER_TILE_ROWS,
-                params.e_in_length - tile_start);
+                block_rows - tile_start);
             for (uint flat = tid; flat < tile_count * 20u; flat += threads) {
                 uint tile_row = flat / 20u;
                 uint word = flat - tile_row * 20u;

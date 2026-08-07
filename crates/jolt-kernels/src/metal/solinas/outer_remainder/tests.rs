@@ -68,9 +68,9 @@ fn default_sequence_keeps_the_legacy_binding_plan() {
 }
 
 #[test]
-fn abi_params_are_four_words() {
+fn abi_params_have_stable_sizes() {
     assert_eq!(size_of::<PhaseParams>(), 16);
-    assert_eq!(size_of::<OpeningParams>(), 16);
+    assert_eq!(size_of::<OpeningParams>(), 32);
     assert_eq!(size_of::<ReduceParams>(), 16);
 }
 

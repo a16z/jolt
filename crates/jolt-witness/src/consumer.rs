@@ -185,6 +185,11 @@ impl OwnedRows {
         self.cycles
     }
 
+    /// Number of source rows before canonical cycle-domain padding begins.
+    pub fn physical_rows(&self) -> usize {
+        self.rows.len()
+    }
+
     /// The borrowed random-access view over the held rows.
     pub fn view(&self) -> RandomAccessRows<'_> {
         RandomAccessRows::new(

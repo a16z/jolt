@@ -90,6 +90,7 @@ pub struct SpartanOuterUniskipRows {
     instruction_input_rows: InstructionInputRows,
     residual_buffer: Buffer,
     len: usize,
+    explicit_rows: usize,
     device_registry_id: u64,
     accounts_instruction_input_rows: bool,
 }
@@ -101,6 +102,21 @@ impl SpartanOuterUniskipRows {
 
     pub const fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    pub const fn explicit_rows(&self) -> usize {
+        self.explicit_rows
+    }
+
+    pub(crate) fn with_explicit_rows(mut self, explicit_rows: usize) -> Result<Self, MetalError> {
+        if explicit_rows > self.len {
+            return Err(MetalError::OuterRemainderExplicitRows {
+                explicit: explicit_rows,
+                logical: self.len,
+            });
+        }
+        self.explicit_rows = explicit_rows;
+        Ok(self)
     }
 
     pub(crate) fn instruction_input_buffer(&self) -> &Buffer {
@@ -683,6 +699,7 @@ impl SolinasMetal {
             ),
             residual_buffer,
             len: rows,
+            explicit_rows: rows,
             device_registry_id,
             accounts_instruction_input_rows: true,
         })
@@ -1099,6 +1116,19 @@ mod tests {
     }
 
     #[test]
+    fn canonical_padding_has_one_nonzero_outer_opening() {
+        with_sample_backend(|backend| {
+            let rows: Vec<SpartanOuterRow> = backend.bundles().unwrap();
+            let mut expected = [AkitaField::zero(); 35];
+            expected[30] = AkitaField::one();
+            for row in &rows[2..] {
+                let packed = SpartanOuterUniskipRow::from_spartan_outer(row);
+                assert_eq!(packed.spartan_outer_fields::<AkitaField>(), expected);
+            }
+        });
+    }
+
+    #[test]
     fn invocation_bytes_match_the_split_eq_geometry() {
         assert_eq!(
             spartan_outer_uniskip_invocation_bytes(1 << 26).unwrap(),
@@ -1506,6 +1536,18 @@ mod tests {
             words[19] |= (((index >> 2) & 1) as u64) << FLAG_NEXT_IS_NOOP;
             *row = SpartanOuterUniskipRow::from_words(words);
         }
+        let explicit_rows = 13;
+        let mut padding_words = [0u64; ROW_WORDS];
+        padding_words[19] = (1 << FLAG_NEXT_IS_NOOP)
+            | (1 << FLAG_DO_NOT_UPDATE)
+            | (1 << FLAG_RIGHT_INPUT_POSITIVE)
+            | (1 << FLAG_IMM_POSITIVE)
+            | (1 << FLAG_PRODUCT_POSITIVE);
+        let padding = SpartanOuterUniskipRow::from_words(padding_words);
+        packed[explicit_rows..].fill(padding);
+        let mut padding_openings = [AkitaField::zero(); 35];
+        padding_openings[30] = AkitaField::one();
+        assert_eq!(outer_opening_values(padding), padding_openings);
         let lagrange = std::array::from_fn(|index| {
             AkitaField::from_u64(splitmix(0x600d_f00d ^ index as u64) & ((1 << 48) - 1))
         });
@@ -1519,7 +1561,12 @@ mod tests {
         let expected_first = outer_endpoints(&az, &bz, &initial_in, &initial_out);
 
         let context = SolinasMetal::for_akita().unwrap();
-        let resident = context.prepare_spartan_outer_uniskip_rows(&packed).unwrap();
+        let resident = context
+            .prepare_spartan_outer_uniskip_rows(&packed)
+            .unwrap()
+            .with_explicit_rows(explicit_rows)
+            .unwrap();
+        assert_eq!(resident.explicit_rows(), explicit_rows);
         let compact_id = resident.instruction_input_allocation_identity();
         let residual_id = resident.allocation_identity();
         let mut sequence = context

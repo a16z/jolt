@@ -3777,6 +3777,7 @@ def instruction_input_member_breakdown(
             "compact_rows_storage_id",
             "residual_rows_storage_id",
             "resident_rows",
+            "explicit_rows",
         }:
             raise ValueError("Metal InstructionInput row lifecycle is incomplete")
         row_count = 1 << log_n
@@ -3841,6 +3842,9 @@ def instruction_input_member_breakdown(
         production_rows = positive_trace_integer(
             row_production_args["resident_rows"], "Metal production row count"
         )
+        production_explicit_rows = nonnegative_trace_integer(
+            row_production_args["explicit_rows"], "Metal production explicit row count"
+        )
         stage1_args = unique_span_args(
             events, METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF
         )
@@ -3848,6 +3852,7 @@ def instruction_input_member_breakdown(
             "compact_rows_storage_id",
             "residual_rows_storage_id",
             "resident_rows",
+            "explicit_rows",
             "compact_row_bytes",
             "residual_row_bytes",
             "full_domain_copy_bytes",
@@ -3864,6 +3869,9 @@ def instruction_input_member_breakdown(
         )
         stage1_rows = positive_trace_integer(
             stage1_args["resident_rows"], "Metal stage-1 compact row count"
+        )
+        stage1_explicit_rows = nonnegative_trace_integer(
+            stage1_args["explicit_rows"], "Metal stage-1 explicit row count"
         )
         stage1_row_bytes = positive_trace_integer(
             stage1_args["compact_row_bytes"], "Metal stage-1 compact row width"
@@ -3894,6 +3902,8 @@ def instruction_input_member_breakdown(
             or round_allocations != 0
             or production_rows != row_count
             or stage1_rows != row_count
+            or production_explicit_rows > row_count
+            or stage1_explicit_rows != production_explicit_rows
             or stage3_rows != stage1_rows
             or row_production
             != {
@@ -3935,6 +3945,7 @@ def instruction_input_member_breakdown(
         row_lifecycle = {
             "kind": "metal_compact_resident",
             "rows": stage1_rows,
+            "explicit_rows": stage1_explicit_rows,
             "row_bytes": 48,
             "prepare_storage_id": prepare_storage_id,
             "stage1_storage_id": stage1_storage_id,
