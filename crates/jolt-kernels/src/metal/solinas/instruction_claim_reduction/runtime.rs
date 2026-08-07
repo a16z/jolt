@@ -11,22 +11,69 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits,
+    ProductRemainderRows, SolinasMetal,
 };
 use super::{
     finalize_openings, finish_bind, nontrivial_gamma_powers, InstructionClaimGeometry,
-    InstructionClaimKernelConfig, InstructionClaimOpeningMode, InstructionClaimOpeningParams,
-    InstructionClaimOpenings, InstructionClaimOperandPlanes, InstructionClaimPhaseParams,
-    InstructionClaimReductionParams, InstructionClaimReductionPlan, InstructionClaimStorageLayout,
-    ALIASED_OPENING_PIPELINE, INSTRUCTION_CLAIM_ALIASED_OPENINGS,
+    InstructionClaimKernelConfig, InstructionClaimLookupOperandRow, InstructionClaimOpeningMode,
+    InstructionClaimOpeningParams, InstructionClaimOpenings, InstructionClaimOperandPlanes,
+    InstructionClaimPhaseParams, InstructionClaimReductionParams, InstructionClaimReductionPlan,
+    InstructionClaimStorageLayout, ALIASED_OPENING_PIPELINE, INSTRUCTION_CLAIM_ALIASED_OPENINGS,
     INSTRUCTION_CLAIM_MESSAGE_COLUMNS, INSTRUCTION_CLAIM_SIMD_WIDTH, MATERIALIZE_PIPELINE,
     REDUCTION_PIPELINE, TRANSITION_PIPELINE,
 };
+
+const PRODUCT_ROWS_MATERIALIZE_PIPELINE: &str =
+    "solinas_instruction_claim_materialize_product_rows";
+const LOOKUP_COMPANION_OPENING_PIPELINE: &str = "solinas_instruction_claim_open_lookup_companion";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct InstructionClaimTiming {
     pub wall: Duration,
     pub gpu_active: Duration,
+}
+
+#[derive(Clone)]
+pub struct InstructionClaimLookupRows {
+    buffer: Buffer,
+    len: usize,
+    device_registry_id: u64,
+}
+
+impl InstructionClaimLookupRows {
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub const fn device_registry_id(&self) -> u64 {
+        self.device_registry_id
+    }
+
+    pub fn allocation_identity(&self) -> usize {
+        self.buffer.as_ptr() as usize
+    }
+
+    pub const fn resident_bytes(&self) -> usize {
+        self.len * size_of::<InstructionClaimLookupOperandRow>()
+    }
+
+    fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for InstructionClaimLookupRows {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("device_rows"), self.resident_bytes());
+        visitor.exit();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,12 +97,59 @@ struct InstructionClaimPipelines {
     reduction_limits: PipelineLimits,
 }
 
+enum InstructionClaimRows {
+    Standalone {
+        lookup_output: Buffer,
+        left_lookup_operand: Buffer,
+        right_lookup_operand: Buffer,
+        left_instruction_input: Buffer,
+        right_instruction_input: Buffer,
+    },
+    ProductResident {
+        product: ProductRemainderRows,
+        lookup: InstructionClaimLookupRows,
+    },
+}
+
+impl InstructionClaimRows {
+    fn materialize_pipeline(&self) -> &'static str {
+        match self {
+            Self::Standalone { .. } => MATERIALIZE_PIPELINE,
+            Self::ProductResident { .. } => PRODUCT_ROWS_MATERIALIZE_PIPELINE,
+        }
+    }
+
+    fn aliased_opening_pipeline(&self) -> &'static str {
+        match self {
+            Self::Standalone { .. } => ALIASED_OPENING_PIPELINE,
+            Self::ProductResident { .. } => LOOKUP_COMPANION_OPENING_PIPELINE,
+        }
+    }
+
+    fn allocation_identities(&self) -> Vec<usize> {
+        match self {
+            Self::Standalone {
+                lookup_output,
+                left_lookup_operand,
+                right_lookup_operand,
+                left_instruction_input,
+                right_instruction_input,
+            } => vec![
+                lookup_output.as_ptr() as usize,
+                left_lookup_operand.as_ptr() as usize,
+                right_lookup_operand.as_ptr() as usize,
+                left_instruction_input.as_ptr() as usize,
+                right_instruction_input.as_ptr() as usize,
+            ],
+            Self::ProductResident { product, lookup } => {
+                vec![product.allocation_identity(), lookup.allocation_identity()]
+            }
+        }
+    }
+}
+
 struct InstructionClaimBuffers {
-    lookup_output: Buffer,
-    left_lookup_operand: Buffer,
-    right_lookup_operand: Buffer,
-    left_instruction_input: Buffer,
-    right_instruction_input: Buffer,
+    rows: InstructionClaimRows,
     gamma_powers: Buffer,
     state_a: Buffer,
     state_b: Buffer,
@@ -83,6 +177,27 @@ pub struct InstructionClaimSequence {
     timing: InstructionClaimTiming,
 }
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for InstructionClaimSequence {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_workspace"),
+            self.layout.workspace_bytes(),
+        );
+        match &self.buffers.rows {
+            InstructionClaimRows::Standalone { .. } => visitor.visit_simple(
+                allocative::Key::new("device_operand_rows"),
+                self.layout.resident_bytes() - self.layout.workspace_bytes(),
+            ),
+            InstructionClaimRows::ProductResident { lookup, .. } => {
+                visitor.visit_field(allocative::Key::new("lookup_rows"), lookup);
+            }
+        }
+        visitor.exit();
+    }
+}
+
 pub struct InstructionClaimCpuTail {
     geometry: InstructionClaimGeometry,
     state: Vec<AkitaField>,
@@ -94,14 +209,86 @@ pub struct InstructionClaimCpuTail {
 }
 
 impl SolinasMetal {
+    pub fn prepare_instruction_claim_lookup_rows(
+        &self,
+        rows: &[InstructionClaimLookupOperandRow],
+    ) -> Result<InstructionClaimLookupRows, MetalError> {
+        let _ = InstructionClaimGeometry::new(rows.len())?;
+        let bytes = rows
+            .len()
+            .checked_mul(size_of::<InstructionClaimLookupOperandRow>())
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(rows.len()))?;
+        self.validate_buffer_length(bytes)?;
+        self.validate_additional_working_set(bytes)?;
+        Ok(InstructionClaimLookupRows {
+            buffer: buffer_from_slice(&self.device, rows),
+            len: rows.len(),
+            device_registry_id: self.device_registry_id(),
+        })
+    }
+
     pub fn prepare_instruction_claim_sequence(
         &self,
         planes: &InstructionClaimOperandPlanes,
         gamma: AkitaField,
         config: InstructionClaimKernelConfig,
     ) -> Result<InstructionClaimSequence, MetalError> {
+        let rows = InstructionClaimRows::Standalone {
+            lookup_output: buffer_from_slice(&self.device, planes.lookup_output()),
+            left_lookup_operand: buffer_from_slice(&self.device, planes.left_lookup_operand()),
+            right_lookup_operand: buffer_from_slice(&self.device, planes.right_lookup_operand()),
+            left_instruction_input: buffer_from_slice(
+                &self.device,
+                planes.left_instruction_input(),
+            ),
+            right_instruction_input: buffer_from_slice(
+                &self.device,
+                planes.right_instruction_input(),
+            ),
+        };
+        self.prepare_instruction_claim_sequence_from_rows(rows, planes.len(), gamma, config, true)
+    }
+
+    pub fn prepare_instruction_claim_sequence_with_product_rows(
+        &self,
+        product: ProductRemainderRows,
+        lookup: InstructionClaimLookupRows,
+        gamma: AkitaField,
+        config: InstructionClaimKernelConfig,
+    ) -> Result<InstructionClaimSequence, MetalError> {
+        if product.device_registry_id() != self.device_registry_id()
+            || lookup.device_registry_id() != self.device_registry_id()
+        {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "resident instruction rows belong to a different Metal device",
+            ));
+        }
+        if product.len() != lookup.len() {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "product and lookup-companion row counts differ",
+            ));
+        }
+        let len = product.len();
+        self.prepare_instruction_claim_sequence_from_rows(
+            InstructionClaimRows::ProductResident { product, lookup },
+            len,
+            gamma,
+            config,
+            false,
+        )
+    }
+
+    fn prepare_instruction_claim_sequence_from_rows(
+        &self,
+        rows: InstructionClaimRows,
+        row_count: usize,
+        gamma: AkitaField,
+        config: InstructionClaimKernelConfig,
+        charge_operand_rows: bool,
+    ) -> Result<InstructionClaimSequence, MetalError> {
         let config = config.validate()?;
-        let geometry = InstructionClaimGeometry::new(planes.len())?;
+        let geometry = InstructionClaimGeometry::new(row_count)?;
         let opening = geometry.opening();
         let maximum_buffer = usize::try_from(self.device.max_buffer_length()).unwrap_or(usize::MAX);
         let layout = InstructionClaimStorageLayout::new(
@@ -110,15 +297,22 @@ impl SolinasMetal {
             opening.e_out_length(),
         )?
         .validate_max_buffer_length(maximum_buffer)?;
-        let resident_bytes = u64::try_from(layout.resident_bytes())
-            .map_err(|_| MetalError::InputTooLong(layout.resident_bytes()))?;
+        let charged_bytes = if charge_operand_rows {
+            layout.resident_bytes()
+        } else {
+            layout.workspace_bytes()
+        };
+        let resident_bytes =
+            u64::try_from(charged_bytes).map_err(|_| MetalError::InputTooLong(charged_bytes))?;
         self.validate_additional_working_set(resident_bytes)?;
 
         let opening_mode = InstructionClaimOpeningMode::for_gamma(gamma);
-        let materialize = self.compile_named_pipeline(MATERIALIZE_PIPELINE)?;
+        let materialize_pipeline = rows.materialize_pipeline();
+        let aliased_opening_pipeline = rows.aliased_opening_pipeline();
+        let materialize = self.compile_named_pipeline(materialize_pipeline)?;
         let transition = self.compile_named_pipeline(TRANSITION_PIPELINE)?;
         let opening = self.compile_named_pipeline(opening_mode.pipeline())?;
-        let aliased_opening = self.compile_named_pipeline(ALIASED_OPENING_PIPELINE)?;
+        let aliased_opening = self.compile_named_pipeline(aliased_opening_pipeline)?;
         let reduction = self.compile_named_pipeline(REDUCTION_PIPELINE)?;
         let materialize_limits = Self::limits(&materialize);
         let transition_limits = Self::limits(&transition);
@@ -126,10 +320,10 @@ impl SolinasMetal {
         let aliased_opening_limits = Self::limits(&aliased_opening);
         let reduction_limits = Self::limits(&reduction);
         for (pipeline, limits) in [
-            (MATERIALIZE_PIPELINE, materialize_limits),
+            (materialize_pipeline, materialize_limits),
             (TRANSITION_PIPELINE, transition_limits),
             (opening_mode.pipeline(), opening_limits),
-            (ALIASED_OPENING_PIPELINE, aliased_opening_limits),
+            (aliased_opening_pipeline, aliased_opening_limits),
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != INSTRUCTION_CLAIM_SIMD_WIDTH {
@@ -198,17 +392,7 @@ impl SolinasMetal {
             .collect::<Vec<_>>();
         self.validate_inputs("instruction claim gamma powers", &gamma_powers)?;
         let buffers = InstructionClaimBuffers {
-            lookup_output: buffer_from_slice(&self.device, planes.lookup_output()),
-            left_lookup_operand: buffer_from_slice(&self.device, planes.left_lookup_operand()),
-            right_lookup_operand: buffer_from_slice(&self.device, planes.right_lookup_operand()),
-            left_instruction_input: buffer_from_slice(
-                &self.device,
-                planes.left_instruction_input(),
-            ),
-            right_instruction_input: buffer_from_slice(
-                &self.device,
-                planes.right_instruction_input(),
-            ),
+            rows,
             gamma_powers: buffer_from_slice(&self.device, &gamma_powers),
             state_a: self.new_instruction_claim_buffer(layout.state_a_fields())?,
             state_b: self.new_instruction_claim_buffer(layout.state_b_fields())?,
@@ -293,17 +477,37 @@ impl InstructionClaimSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipelines.materialize);
-            encoder.set_buffer(0, Some(&self.buffers.lookup_output), 0);
-            encoder.set_buffer(1, Some(&self.buffers.left_lookup_operand), 0);
-            encoder.set_buffer(2, Some(&self.buffers.right_lookup_operand), 0);
-            encoder.set_buffer(3, Some(&self.buffers.left_instruction_input), 0);
-            encoder.set_buffer(4, Some(&self.buffers.right_instruction_input), 0);
-            encoder.set_buffer(5, Some(&self.buffers.gamma_powers), 0);
-            encoder.set_buffer(6, Some(&self.buffers.e_in), 0);
-            encoder.set_buffer(7, Some(&self.buffers.e_out), 0);
-            encoder.set_buffer(8, Some(&self.buffers.state_a), 0);
-            encoder.set_buffer(9, Some(&self.buffers.partial_a), 0);
-            set_inline_bytes(encoder, 10, &params);
+            match &self.buffers.rows {
+                InstructionClaimRows::Standalone {
+                    lookup_output,
+                    left_lookup_operand,
+                    right_lookup_operand,
+                    left_instruction_input,
+                    right_instruction_input,
+                } => {
+                    encoder.set_buffer(0, Some(lookup_output), 0);
+                    encoder.set_buffer(1, Some(left_lookup_operand), 0);
+                    encoder.set_buffer(2, Some(right_lookup_operand), 0);
+                    encoder.set_buffer(3, Some(left_instruction_input), 0);
+                    encoder.set_buffer(4, Some(right_instruction_input), 0);
+                    encoder.set_buffer(5, Some(&self.buffers.gamma_powers), 0);
+                    encoder.set_buffer(6, Some(&self.buffers.e_in), 0);
+                    encoder.set_buffer(7, Some(&self.buffers.e_out), 0);
+                    encoder.set_buffer(8, Some(&self.buffers.state_a), 0);
+                    encoder.set_buffer(9, Some(&self.buffers.partial_a), 0);
+                    set_inline_bytes(encoder, 10, &params);
+                }
+                InstructionClaimRows::ProductResident { product, lookup } => {
+                    encoder.set_buffer(0, Some(product.buffer()), 0);
+                    encoder.set_buffer(1, Some(lookup.buffer()), 0);
+                    encoder.set_buffer(2, Some(&self.buffers.gamma_powers), 0);
+                    encoder.set_buffer(3, Some(&self.buffers.e_in), 0);
+                    encoder.set_buffer(4, Some(&self.buffers.e_out), 0);
+                    encoder.set_buffer(5, Some(&self.buffers.state_a), 0);
+                    encoder.set_buffer(6, Some(&self.buffers.partial_a), 0);
+                    set_inline_bytes(encoder, 7, &params);
+                }
+            }
             encoder.set_threadgroup_memory_length(
                 0,
                 self.config.materialize_threadgroup_bytes()? as u64,
@@ -607,12 +811,27 @@ impl InstructionClaimSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipelines.aliased_opening);
-            encoder.set_buffer(0, Some(&self.buffers.left_lookup_operand), 0);
-            encoder.set_buffer(1, Some(&self.buffers.right_lookup_operand), 0);
-            encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
-            encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
-            encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
-            set_inline_bytes(encoder, 5, &params);
+            match &self.buffers.rows {
+                InstructionClaimRows::Standalone {
+                    left_lookup_operand,
+                    right_lookup_operand,
+                    ..
+                } => {
+                    encoder.set_buffer(0, Some(left_lookup_operand), 0);
+                    encoder.set_buffer(1, Some(right_lookup_operand), 0);
+                    encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+                    encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+                    encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+                    set_inline_bytes(encoder, 5, &params);
+                }
+                InstructionClaimRows::ProductResident { lookup, .. } => {
+                    encoder.set_buffer(0, Some(lookup.buffer()), 0);
+                    encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+                    encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+                    encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+                    set_inline_bytes(encoder, 4, &params);
+                }
+            }
             encoder.set_threadgroup_memory_length(
                 0,
                 self.config
@@ -662,23 +881,35 @@ impl InstructionClaimSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipelines.opening);
+            let InstructionClaimRows::Standalone {
+                lookup_output,
+                left_lookup_operand,
+                right_lookup_operand,
+                left_instruction_input,
+                right_instruction_input,
+            } = &self.buffers.rows
+            else {
+                return Err(MetalError::InvalidInstructionClaimState(
+                    "resident product rows support the alias opening path only",
+                ));
+            };
             match self.opening_mode {
                 InstructionClaimOpeningMode::CoreAndRecover => {
-                    encoder.set_buffer(0, Some(&self.buffers.lookup_output), 0);
-                    encoder.set_buffer(1, Some(&self.buffers.left_lookup_operand), 0);
-                    encoder.set_buffer(2, Some(&self.buffers.right_lookup_operand), 0);
-                    encoder.set_buffer(3, Some(&self.buffers.left_instruction_input), 0);
+                    encoder.set_buffer(0, Some(lookup_output), 0);
+                    encoder.set_buffer(1, Some(left_lookup_operand), 0);
+                    encoder.set_buffer(2, Some(right_lookup_operand), 0);
+                    encoder.set_buffer(3, Some(left_instruction_input), 0);
                     encoder.set_buffer(4, Some(&self.buffers.e_in), 0);
                     encoder.set_buffer(5, Some(&self.buffers.e_out), 0);
                     encoder.set_buffer(6, Some(&self.buffers.partial_a), 0);
                     set_inline_bytes(encoder, 7, &params);
                 }
                 InstructionClaimOpeningMode::AllColumns => {
-                    encoder.set_buffer(0, Some(&self.buffers.lookup_output), 0);
-                    encoder.set_buffer(1, Some(&self.buffers.left_lookup_operand), 0);
-                    encoder.set_buffer(2, Some(&self.buffers.right_lookup_operand), 0);
-                    encoder.set_buffer(3, Some(&self.buffers.left_instruction_input), 0);
-                    encoder.set_buffer(4, Some(&self.buffers.right_instruction_input), 0);
+                    encoder.set_buffer(0, Some(lookup_output), 0);
+                    encoder.set_buffer(1, Some(left_lookup_operand), 0);
+                    encoder.set_buffer(2, Some(right_lookup_operand), 0);
+                    encoder.set_buffer(3, Some(left_instruction_input), 0);
+                    encoder.set_buffer(4, Some(right_instruction_input), 0);
                     encoder.set_buffer(5, Some(&self.buffers.e_in), 0);
                     encoder.set_buffer(6, Some(&self.buffers.e_out), 0);
                     encoder.set_buffer(7, Some(&self.buffers.partial_a), 0);
@@ -735,8 +966,8 @@ impl InstructionClaimSequence {
         self.layout
     }
 
-    pub const fn resident_buffer_count(&self) -> usize {
-        12
+    pub fn resident_buffer_count(&self) -> usize {
+        self.buffers.rows.allocation_identities().len() + 7
     }
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
@@ -747,13 +978,9 @@ impl InstructionClaimSequence {
         self.timing
     }
 
-    pub fn allocation_identities(&self) -> [usize; 12] {
-        [
-            self.buffers.lookup_output.as_ptr() as usize,
-            self.buffers.left_lookup_operand.as_ptr() as usize,
-            self.buffers.right_lookup_operand.as_ptr() as usize,
-            self.buffers.left_instruction_input.as_ptr() as usize,
-            self.buffers.right_instruction_input.as_ptr() as usize,
+    pub fn allocation_identities(&self) -> Vec<usize> {
+        let mut identities = self.buffers.rows.allocation_identities();
+        identities.extend([
             self.buffers.gamma_powers.as_ptr() as usize,
             self.buffers.state_a.as_ptr() as usize,
             self.buffers.state_b.as_ptr() as usize,
@@ -761,7 +988,8 @@ impl InstructionClaimSequence {
             self.buffers.e_out.as_ptr() as usize,
             self.buffers.partial_a.as_ptr() as usize,
             self.buffers.partial_b.as_ptr() as usize,
-        ]
+        ]);
+        identities
     }
 
     pub const fn materialize_pipeline_limits(&self) -> PipelineLimits {

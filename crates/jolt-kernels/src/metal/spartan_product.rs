@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Instant};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Instant};
 
 use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{
@@ -15,6 +15,7 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -22,15 +23,21 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::VerifierError;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::witnesses::{
+    InstructionFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput, NextIsNoop, OpFlag,
+    RightInstructionInput, RightLookupOperand,
+};
+use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
 use super::backend::MetalBackend;
 use super::solinas::{
-    MetalError, ProductRemainderRow, ProductRemainderSequence, ProductRemainderSequenceConfig,
+    instruction_claim_reduction::{InstructionClaimLookupOperandRow, InstructionClaimLookupRows},
+    MetalError, ProductRemainderRow, ProductRemainderRows, ProductRemainderSequence,
+    ProductRemainderSequenceConfig,
 };
-use crate::optimized::spartan_product::{
-    OptimizedProductRemainder, OptimizedProductUniskip, SpartanProductRow,
-};
+#[cfg(test)]
+use crate::optimized::spartan_product::SpartanProductRow;
+use crate::optimized::spartan_product::{OptimizedProductRemainder, OptimizedProductUniskip};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -40,6 +47,99 @@ const DOMAIN: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
+
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct Stage2ProductInstructionRow {
+    #[opening(LeftInstructionInput)]
+    left_instruction_input: LeftInstructionInput,
+    #[opening(RightInstructionInput)]
+    right_instruction_input: RightInstructionInput,
+    #[opening(OpFlags(CircuitFlags::Jump))]
+    jump_flag: OpFlag,
+    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD))]
+    write_lookup_output_to_rd: OpFlag,
+    #[opening(LookupOutput)]
+    lookup_output: LookupOutput,
+    #[opening(InstructionFlags(InstructionFlags::Branch))]
+    branch_flag: InstructionFlag,
+    #[opening(NextIsNoop)]
+    next_is_noop: NextIsNoop,
+    #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
+    virtual_instruction: OpFlag,
+    #[opening(LeftLookupOperand)]
+    left_lookup_operand: LeftLookupOperand,
+    #[opening(RightLookupOperand)]
+    right_lookup_operand: RightLookupOperand,
+}
+
+impl Stage2ProductInstructionRow {
+    fn product(self) -> ProductRemainderRow {
+        ProductRemainderRow::new(
+            self.left_instruction_input.0,
+            self.right_instruction_input.0,
+            self.jump_flag.0,
+            self.write_lookup_output_to_rd.0,
+            self.lookup_output.0,
+            self.branch_flag.0,
+            self.next_is_noop.0,
+            self.virtual_instruction.0,
+        )
+    }
+
+    fn lookup(self) -> InstructionClaimLookupOperandRow {
+        InstructionClaimLookupOperandRow::new(
+            self.left_lookup_operand.0,
+            self.right_lookup_operand.0,
+        )
+    }
+}
+
+pub(super) struct MetalInstructionClaimResidentRows {
+    pub(super) log_t: usize,
+    pub(super) product: ProductRemainderRows,
+    pub(super) lookup: InstructionClaimLookupRows,
+    pub(super) device_registry_id: u64,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalInstructionClaimResidentRows {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("product"), &self.product);
+        visitor.visit_field(allocative::Key::new("lookup"), &self.lookup);
+        visitor.exit();
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct MetalInstructionClaimAliases {
+    pub(super) lookup_output: AkitaField,
+    pub(super) left_instruction_input: AkitaField,
+    pub(super) right_instruction_input: AkitaField,
+}
+
+pub(super) struct MetalInstructionClaimAliasOutput {
+    pub(super) row_storage_id: usize,
+    pub(super) challenges: Vec<AkitaField>,
+    pub(super) values: MetalInstructionClaimAliases,
+}
+
+pub(super) type MetalInstructionClaimAliasSlot =
+    Rc<RefCell<Option<MetalInstructionClaimAliasOutput>>>;
+
+pub(super) struct MetalInstructionClaimHandoff {
+    pub(super) rows: MetalInstructionClaimResidentRows,
+    pub(super) aliases: MetalInstructionClaimAliasSlot,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalInstructionClaimHandoff {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("rows"), &self.rows);
+        visitor.exit();
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanProductRemainderMetalConfig {
@@ -76,8 +176,11 @@ impl MetalBackend {
             "MetalProductRemainder::witness_prepare",
             cycles,
             row_bytes = cycles.saturating_mul(std::mem::size_of::<ProductRemainderRow>()),
+            lookup_companion_bytes =
+                cycles.saturating_mul(std::mem::size_of::<InstructionClaimLookupOperandRow>()),
             collect_wall_ns = tracing::field::Empty,
             upload_wall_ns = tracing::field::Empty,
+            lookup_upload_wall_ns = tracing::field::Empty,
             sequence_prepare_wall_ns = tracing::field::Empty,
             workspace_bytes = tracing::field::Empty,
             primer_materialize_wall_ns = tracing::field::Empty,
@@ -90,10 +193,16 @@ impl MetalBackend {
         );
         let _entered = span.enter();
         let started = Instant::now();
-        let rows: Vec<SpartanProductRow> = collect_bundles(witness, cycles)?;
+        let rows: Vec<Stage2ProductInstructionRow> = collect_bundles(witness, cycles)?;
         let packed = rows
             .iter()
-            .map(ProductRemainderRow::from)
+            .copied()
+            .map(Stage2ProductInstructionRow::product)
+            .collect::<Vec<_>>();
+        let lookup = rows
+            .iter()
+            .copied()
+            .map(Stage2ProductInstructionRow::lookup)
             .collect::<Vec<_>>();
         drop(rows);
         let _ = span.record("collect_wall_ns", duration_nanos(started.elapsed()));
@@ -119,9 +228,25 @@ impl MetalBackend {
         let _ = span.record("resident_rows_storage_id", row_storage_id as u64);
         drop(packed);
 
+        let started = Instant::now();
+        let lookup = match self.context.prepare_instruction_claim_lookup_rows(&lookup) {
+            Ok(rows) => Some(rows),
+            Err(error) if error.is_capacity_error() => {
+                tracing::warn!(
+                    target: "jolt::metal",
+                    error = %error,
+                    "instruction claim companion rows were not admitted; using optimized CPU for that member"
+                );
+                None
+            }
+            Err(error) => return Err(metal_prepare_error(error)),
+        };
+        let _ = span.record("lookup_upload_wall_ns", duration_nanos(started.elapsed()));
+
         let e_in_capacity = 1usize << (log_t / 2);
         let e_out_capacity = cycles / e_in_capacity;
         let started = Instant::now();
+        let instruction_product_rows = rows.clone();
         let sequence = self.context.prepare_product_remainder_sequence_with_rows(
             rows,
             [AkitaField::zero(); DOMAIN],
@@ -188,6 +313,14 @@ impl MetalBackend {
         }
         let _ = span.record("admitted", true);
         let _ = span.record("fallback_reason", "none");
+        if let Some(lookup) = lookup {
+            session.park(MetalInstructionClaimResidentRows {
+                log_t,
+                product: instruction_product_rows,
+                lookup,
+                device_registry_id: self.context.device_registry_id(),
+            });
+        }
         session.park(sequence);
         Ok(())
     }
@@ -237,6 +370,8 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         if !use_metal {
             drop(session.take::<ProductRemainderSequence>());
             drop(session.take::<MetalProductUniskipCarry>());
+            drop(session.take::<MetalInstructionClaimResidentRows>());
+            drop(session.take::<MetalInstructionClaimHandoff>());
             return OptimizedProductUniskip.prepare(session, log_t, tau_low, witness);
         }
 
@@ -376,6 +511,8 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         let has_metal_carry = session.state::<MetalProductUniskipCarry>().is_some();
         if !has_metal_carry {
             drop(session.take::<ProductRemainderSequence>());
+            drop(session.take::<MetalInstructionClaimResidentRows>());
+            drop(session.take::<MetalInstructionClaimHandoff>());
             return OptimizedProductRemainder.prepare(session, witness, inputs);
         }
         if cycles < self.config.spartan_product_remainder.trace_cutoff_elements
@@ -475,11 +612,33 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             .product_remainder_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
+        let instruction_aliases = match session.take::<MetalInstructionClaimResidentRows>() {
+            Some(rows)
+                if rows.log_t == rounds
+                    && rows.product.allocation_identity() == row_storage_id
+                    && rows.device_registry_id == self.context.device_registry_id() =>
+            {
+                let aliases = Rc::new(RefCell::new(None));
+                session.park(MetalInstructionClaimHandoff {
+                    rows,
+                    aliases: Rc::clone(&aliases),
+                });
+                Some(aliases)
+            }
+            Some(_) => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "instruction claim resident rows disagree with the product sequence",
+                });
+            }
+            None => None,
+        };
+
         Ok(Box::new(MetalProductRemainderKernel {
             host,
             sequence,
             pending_endpoints: Some(first_message),
             row_storage_id,
+            instruction_aliases,
         }))
     }
 }
@@ -604,6 +763,7 @@ struct MetalProductRemainderKernel {
     sequence: ProductRemainderSequence,
     pending_endpoints: Option<[AkitaField; 2]>,
     row_storage_id: usize,
+    instruction_aliases: Option<MetalInstructionClaimAliasSlot>,
 }
 
 #[cfg(feature = "allocative")]
@@ -711,6 +871,29 @@ impl SumcheckKernel<AkitaField> for MetalProductRemainderKernel {
             .map_err(metal_output_error)?;
         let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
         let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
+        if let Some(slot) = &self.instruction_aliases {
+            let mut slot =
+                slot.try_borrow_mut()
+                    .map_err(|_| SumcheckKernelError::ComputeBackend {
+                        backend: "metal",
+                        message: "instruction claim alias slot is already borrowed".to_string(),
+                    })?;
+            if slot.is_some() {
+                return Err(SumcheckKernelError::ComputeBackend {
+                    backend: "metal",
+                    message: "instruction claim aliases were already published".to_string(),
+                });
+            }
+            *slot = Some(MetalInstructionClaimAliasOutput {
+                row_storage_id: self.row_storage_id,
+                challenges: self.host.challenges.clone(),
+                values: MetalInstructionClaimAliases {
+                    lookup_output: values[4],
+                    left_instruction_input: values[0],
+                    right_instruction_input: values[1],
+                },
+            });
+        }
         let ids = [
             left_instruction_input_product(),
             right_instruction_input_product(),
