@@ -1,0 +1,67 @@
+{
+  "schema": "ram_ra_claim_reduction_complete_screening_v1",
+  "schema_version": 1,
+  "evidence_stage": "prepared_resident_microbenchmark_only",
+  "recorded_at": "2026-08-07T01:26:38Z",
+  "git_revision": "f464ee26d164da47a6cf989ac2e86a6fff382fb3",
+  "source_fingerprints": {
+    "benchmark_sha256": "b593176efceee7930142078ab2a200f3a9c3e1b082f5b48dcb1c5c30c2d31b06",
+    "model_sha256": "2537962548b9bb34f187653c885760c066308116adfd2f5753019daa5548901d",
+    "runtime_sha256": "2f8d03d83382992d9b1c02c0cc41742260edb5e29a06f96b02edfb8c6c341e4d",
+    "host_state_sha256": "cb23b63a70cb60af2a12ea3822dad2306ae6a5cc342747a6a037c1e4aa494e93",
+    "shader_sha256": "4fa9675b00b38cfb4733a65c1433ccda25943de16990c7e137fae5d9e7f0fd3e"
+  },
+  "environment": {
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "exclusive_lock": "/private/tmp/jolt-metal-autoresearch-evaluator.lock",
+    "cargo_target_dir": "/private/tmp/jolt-metal-root-target",
+    "warmup_ms": 500,
+    "measurement_ms": 1000,
+    "samples": 10
+  },
+  "workload": {
+    "log_t": 26,
+    "rows": 67108864,
+    "accessed_rows": 22000000,
+    "q_accumulator": "compact",
+    "useful_full_products": 88000000
+  },
+  "optimized_cpu_control": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260806-133709-697013/result.json",
+    "kernel": "RamRaClaimReduction",
+    "median_ns": 40507503,
+    "five_x_cap_ns": 8101500,
+    "eight_x_cap_ns": 5063437
+  },
+  "criterion_resident_wall": {
+    "estimate_ns": 5280300,
+    "interval_ns": [4431200, 6463000],
+    "point_speedup": 7.6714,
+    "conservative_interval_speedup": 6.2676,
+    "clears_five_x_interval": true,
+    "clears_eight_x_point": false,
+    "high_severe_outliers": 2
+  },
+  "phase_observation": {
+    "setup_ns": 224265000,
+    "cold_wall_ns": 12528000,
+    "warm_wall_ns": 6163000,
+    "q_gpu_active_ns": 2761000,
+    "gather_gpu_active_ns": 932000,
+    "host_prefix_ns": 477000,
+    "host_suffix_ns": 331000
+  },
+  "decision": {
+    "verdict": "five_x_screen_pass_requires_production_validation",
+    "next_gate": "five alternating exact production pairs plus log-27 transfer",
+    "eight_x_action": "retain as headroom target; the point estimate exceeds the 5.063437 ms cap"
+  },
+  "limitations": [
+    "The numerator begins with prepared resident address, Q, and gather invocations.",
+    "The 224.265 ms fixture/setup path is excluded and must be eliminated or charged to a shared producer in production.",
+    "The fixed challenge fixture exercises the exact state machine but does not run a transcript.",
+    "This is one Criterion run, not the five alternating exact-proof promotion evaluator.",
+    "The phase observation is a single warm execution; only the complete resident-wall interval is used for the screen."
+  ]
+}
