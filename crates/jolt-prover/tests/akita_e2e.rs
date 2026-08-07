@@ -265,6 +265,8 @@ mod muldiv {
                 instruction_input: jolt_kernels::metal::InstructionInputMetalConfig {
                     trace_cutoff_elements: 2,
                     cutoff_elements: 2,
+                    dense_storage_mode:
+                        jolt_kernels::metal::InstructionInputDenseStorageMode::OuterResidual,
                     ..Default::default()
                 },
                 instruction_read_raf: jolt_kernels::metal::InstructionReadRafMetalConfig {

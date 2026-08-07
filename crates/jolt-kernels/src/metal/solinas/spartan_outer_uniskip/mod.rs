@@ -1,4 +1,10 @@
-use std::{cell::Cell, mem::size_of, slice, time::Duration};
+use std::{
+    cell::Cell,
+    mem::size_of,
+    slice,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use jolt_field::signed::{S192, S256, S64};
 use jolt_field::{AkitaField, SignedProductAccumulator as _, WithSignedProductAccumulator};
@@ -22,6 +28,7 @@ const RESIDUAL_ROW_WORDS: usize = 14;
 const SIMD_WIDTH: usize = 32;
 const BLOCKS_PIPELINE: &str = "solinas_spartan_outer_uniskip_blocks";
 const REDUCE_PIPELINE: &str = "solinas_spartan_outer_uniskip_reduce";
+static NEXT_OUTER_RESIDUAL_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 const EXTENSION_COEFFICIENTS: [[i64; 10]; SPARTAN_OUTER_EXTENDED_NODES] = [
     [
@@ -85,6 +92,21 @@ pub(crate) struct SpartanOuterUniskipResidualRow {
     words: [u64; RESIDUAL_ROW_WORDS],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OuterResidualArenaKey {
+    pub(crate) generation: u64,
+    pub(crate) rows: usize,
+    pub(crate) device_registry_id: u64,
+    pub(crate) storage_id: usize,
+    pub(crate) storage_bytes: u64,
+    pub(crate) compact_storage_id: usize,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct OuterResidualReleaseReceipt {
+    pub(crate) key: OuterResidualArenaKey,
+}
+
 #[derive(Clone)]
 pub struct SpartanOuterUniskipRows {
     instruction_input_rows: InstructionInputRows,
@@ -92,6 +114,7 @@ pub struct SpartanOuterUniskipRows {
     len: usize,
     explicit_rows: usize,
     device_registry_id: u64,
+    generation: u64,
     accounts_instruction_input_rows: bool,
 }
 
@@ -137,6 +160,17 @@ impl SpartanOuterUniskipRows {
 
     pub fn instruction_input_allocation_identity(&self) -> usize {
         self.instruction_input_rows.allocation_identity()
+    }
+
+    pub(crate) fn residual_arena_key(&self) -> OuterResidualArenaKey {
+        OuterResidualArenaKey {
+            generation: self.generation,
+            rows: self.len,
+            device_registry_id: self.device_registry_id,
+            storage_id: self.allocation_identity(),
+            storage_bytes: self.residual_buffer.length(),
+            compact_storage_id: self.instruction_input_allocation_identity(),
+        }
     }
 
     pub(crate) fn share_instruction_input_rows(&mut self) -> InstructionInputRows {
@@ -691,6 +725,15 @@ impl SolinasMetal {
         };
         fill(instruction_input, residual)?;
         let device_registry_id = self.device_registry_id();
+        let generation = NEXT_OUTER_RESIDUAL_GENERATION
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+            .map_err(|_| {
+                MetalError::InvalidInstructionInputState(
+                    "Outer residual generation counter exhausted",
+                )
+            })?;
         Ok(SpartanOuterUniskipRows {
             instruction_input_rows: InstructionInputRows::from_buffer(
                 instruction_input_buffer,
@@ -701,6 +744,7 @@ impl SolinasMetal {
             len: rows,
             explicit_rows: rows,
             device_registry_id,
+            generation,
             accounts_instruction_input_rows: true,
         })
     }
@@ -1035,6 +1079,10 @@ fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
 
 pub(crate) fn spartan_outer_uniskip_row_bytes(rows: usize) -> Result<u64, MetalError> {
     byte_length::<SpartanOuterUniskipRow>(rows)
+}
+
+pub(crate) fn spartan_outer_uniskip_residual_row_bytes(rows: usize) -> Result<u64, MetalError> {
+    byte_length::<SpartanOuterUniskipResidualRow>(rows)
 }
 
 pub(crate) fn spartan_outer_uniskip_invocation_bytes(rows: usize) -> Result<u64, MetalError> {
@@ -1580,6 +1628,7 @@ mod tests {
                 },
             )
             .unwrap();
+        assert!(sequence.instruction_input_arena_release_receipt().is_err());
         let storage_before_export = sequence.storage_stats().unwrap();
         let initialization = sequence.storage_initialization();
         assert_eq!(
@@ -1678,6 +1727,16 @@ mod tests {
         assert_eq!(
             sequence.take_product_uniskip_endpoints(),
             Some(expected_product_endpoints)
+        );
+        let release = sequence.instruction_input_arena_release_receipt().unwrap();
+        assert_ne!(release.key.generation, 0);
+        assert_eq!(release.key.rows, packed.len());
+        assert_eq!(release.key.device_registry_id, context.device_registry_id());
+        assert_eq!(release.key.storage_id, residual_id);
+        assert_eq!(release.key.compact_storage_id, compact_id);
+        assert_eq!(
+            release.key.storage_bytes,
+            spartan_outer_uniskip_residual_row_bytes(packed.len()).unwrap()
         );
         let stats = sequence.storage_stats().unwrap();
         assert_eq!(stats.compact_row_identity, compact_id);

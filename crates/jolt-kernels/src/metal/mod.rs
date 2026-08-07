@@ -35,7 +35,7 @@ pub use bytecode_read_raf::{
 };
 pub use hamming_weight_claim_reduction::{HammingWeightImplementation, HammingWeightMetalConfig};
 pub use instruction_claim_reduction::InstructionClaimReductionMetalConfig;
-pub use instruction_input::InstructionInputMetalConfig;
+pub use instruction_input::{InstructionInputDenseStorageMode, InstructionInputMetalConfig};
 pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 #[cfg(test)]
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;

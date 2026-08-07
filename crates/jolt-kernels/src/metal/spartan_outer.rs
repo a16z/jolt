@@ -24,10 +24,11 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::backend::{MetalBackend, MetalConfig};
-use super::instruction_input::PreparedInstructionInput;
+use super::instruction_input::{InstructionInputDenseStorageMode, PreparedInstructionInput};
 use super::solinas::{
-    instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
-    instruction_ra_weight_capacities, outer_remainder_sequence_max_buffer_bytes_with_config,
+    instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
+    instruction_input_sequence_storage_bytes, instruction_ra_weight_capacities,
+    outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, spartan_outer_uniskip_invocation_bytes,
     spartan_outer_uniskip_row_bytes, InstructionInputRows, InstructionRaSequenceStorage,
     MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
@@ -99,6 +100,7 @@ fn resident_row_working_set(
     cycles: usize,
     stage1: bool,
     instruction_input: bool,
+    borrow_outer_residual: bool,
     metal_uniskip: bool,
     metal_remainder: bool,
     remainder_dispatch: OuterRemainderSequenceConfig,
@@ -110,7 +112,14 @@ fn resident_row_working_set(
     } else {
         0
     };
-    let instruction_input_bytes = if instruction_input {
+    let instruction_input_bytes = if instruction_input && borrow_outer_residual {
+        if !stage1 {
+            return Err(MetalError::InvalidInstructionInputState(
+                "Outer residual borrowing requires resident Stage-1 rows",
+            ));
+        }
+        instruction_input_sequence_auxiliary_storage_bytes(cycles)?
+    } else if instruction_input {
         instruction_input_sequence_storage_bytes(cycles)?
     } else {
         0
@@ -362,6 +371,11 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             for candidate in
                 resident_row_admission_candidates(stage1_eligible, instruction_input_eligible)
             {
+                let borrow_outer_residual = self.config.instruction_input.dense_storage_mode
+                    == InstructionInputDenseStorageMode::OuterResidual;
+                if borrow_outer_residual && candidate.instruction_input && !candidate.stage1 {
+                    continue;
+                }
                 let residual_bytes = if candidate.stage1 {
                     spartan_outer_uniskip_row_bytes(cycles)
                         .map_err(metal_prepare_error)?
@@ -394,6 +408,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 cycles,
                                 candidate.stage1,
                                 candidate.instruction_input,
+                                borrow_outer_residual && candidate.instruction_input,
                                 candidate.stage1
                                     && cycles
                                         >= self.config.spartan_outer_uniskip.trace_cutoff_elements,
@@ -1737,25 +1752,53 @@ mod tests {
     #[test]
     fn aggregate_instruction_input_working_set_matches_production_geometry() {
         assert_eq!(
-            resident_row_working_set(1 << 26, true, true, true, true, Default::default(),).unwrap(),
+            resident_row_working_set(1 << 26, true, true, false, true, true, Default::default(),)
+                .unwrap(),
             21_482_508_176
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, true, true, true, true, Default::default(),).unwrap(),
+            resident_row_working_set(1 << 28, true, true, false, true, true, Default::default(),)
+                .unwrap(),
             85_909_835_664
         );
         assert_eq!(
-            resident_row_working_set(1 << 26, false, true, false, false, Default::default(),)
+            resident_row_working_set(1 << 26, true, true, true, true, true, Default::default(),)
                 .unwrap(),
+            15_040_057_232
+        );
+        assert_eq!(
+            resident_row_working_set(1 << 28, true, true, true, true, true, Default::default(),)
+                .unwrap(),
+            60_140_031_888
+        );
+        assert_eq!(
+            resident_row_working_set(
+                1 << 26,
+                false,
+                true,
+                false,
+                false,
+                false,
+                Default::default(),
+            )
+            .unwrap(),
             9_664_659_456
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, false, true, false, false, Default::default(),)
-                .unwrap(),
+            resident_row_working_set(
+                1 << 28,
+                false,
+                true,
+                false,
+                false,
+                false,
+                Default::default(),
+            )
+            .unwrap(),
             38_656_671_744
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, true, false, true, true, Default::default(),)
+            resident_row_working_set(1 << 28, true, false, false, true, true, Default::default(),)
                 .unwrap(),
             60_138_065_808
         );

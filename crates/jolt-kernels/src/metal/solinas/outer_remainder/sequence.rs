@@ -3,6 +3,7 @@ use std::{mem::size_of, slice, time::Duration};
 use jolt_field::AkitaField;
 use metal::{objc::rc::autoreleasepool, Buffer, MTLCommandBufferStatus, MTLSize};
 
+use super::super::spartan_outer_uniskip::OuterResidualReleaseReceipt;
 use super::super::{
     command_buffer_timestamp, Fp128, InstructionInputRows, MetalError, PipelineLimits,
     SolinasMetal, SpartanOuterUniskipRows,
@@ -568,6 +569,15 @@ impl OuterRemainderSequence {
         &mut self,
     ) -> Option<[AkitaField; OUTER_REMAINDER_PRODUCT_ENDPOINTS]> {
         self.product_uniskip_endpoints.take()
+    }
+
+    pub(crate) fn instruction_input_arena_release_receipt(
+        &self,
+    ) -> Result<OuterResidualReleaseReceipt, MetalError> {
+        self.require_phase(OuterRemainderPhase::OpeningsComplete)?;
+        Ok(OuterResidualReleaseReceipt {
+            key: self.rows()?.residual_arena_key(),
+        })
     }
 
     pub const fn opening_output_count(&self) -> usize {

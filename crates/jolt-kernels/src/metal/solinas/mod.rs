@@ -122,10 +122,11 @@ pub use hamming_weight_claim_reduction_successor::{
     HammingWeightRetainedConfig, HammingWeightRetainedInvocation, HammingWeightRetainedRuntimeError,
 };
 pub(crate) use instruction_input::{
-    instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
-    instruction_input_weight_capacities, InstructionInputSequenceStorage,
-    PendingInstructionInputPrimer, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
-    INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+    instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
+    instruction_input_sequence_storage_bytes, instruction_input_weight_capacities,
+    InstructionInputSequenceStorage, PendingInstructionInputPrimer,
+    INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS, INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
+    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
 };
 pub use instruction_input::{
     InstructionInputFirstTransition, InstructionInputPrimerStats, InstructionInputRow,
@@ -245,7 +246,8 @@ pub use spartan_outer_uniskip::{
     SpartanOuterUniskipRow, SpartanOuterUniskipRows, SPARTAN_OUTER_EXTENDED_NODES,
 };
 pub(crate) use spartan_outer_uniskip::{
-    spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_row_bytes,
+    spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_residual_row_bytes,
+    spartan_outer_uniskip_row_bytes, OuterResidualArenaKey, OuterResidualReleaseReceipt,
 };
 
 pub const OFFSET_275: u32 = 275;
