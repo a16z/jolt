@@ -34,6 +34,8 @@ pub const RAM_RA_CLAIM_TARGET_FIXED_NS: u64 = 1_500_000;
 
 /// Measured on the M4 Max full-width six-accumulator control, not this shader.
 pub const M4_MAX_SIX_ACCUMULATOR_FULL_WIDTH_PRODUCTS_PER_SECOND: u64 = 18_100_000_000;
+/// Measured on the M4 Max one-chain full-width probe matched to the compact gather.
+pub const M4_MAX_ONE_CHAIN_FULL_WIDTH_PRODUCTS_PER_SECOND: u64 = 45_709_000_000;
 /// Measured on the M4 Max large streaming-copy control.
 pub const M4_MAX_COPY_BYTES_PER_SECOND: u64 = 451_701_710_520;
 
@@ -728,39 +730,66 @@ impl RamRaClaimProjection {
         let q_products_host = checked_product("Q products", RAM_RA_CLAIM_TERMS, accessed_rows)?;
         let q_full_width_products = to_u64("Q products", q_products_host)?;
         let gather_full_width_products = to_u64("gather products", accessed_rows)?;
-        let address_bytes = checked_product("address bytes per pass", rows, size_of::<u32>())?;
+        let address_bytes = checked_product(
+            "compact address entries per pass",
+            accessed_rows,
+            size_of::<u32>(),
+        )?;
         let address_bytes_per_pass = to_u64("address bytes per pass", address_bytes)?;
-        let q_perfect_cache_bytes_host = checked_sum(
-            "Q perfect-cache bytes",
+        let q_offset_bytes = checked_product(
+            "Q compact offsets",
+            shape.prefix_length + 1,
+            size_of::<u32>(),
+        )?;
+        let gather_offset_bytes = checked_product(
+            "gather compact offsets",
+            shape.suffix_length + 1,
+            size_of::<u32>(),
+        )?;
+        let counter_bytes = size_of::<RamRaClaimCounters>();
+        let q_nonlookup_bytes = checked_sum(
+            "Q compact non-lookup bytes",
             &[
                 address_bytes,
+                q_offset_bytes,
                 storage.q_partial_bytes,
                 storage.q_partial_bytes,
                 storage.q_bytes,
+                counter_bytes,
+            ],
+        )?;
+        let gather_nonlookup_bytes = checked_sum(
+            "gather compact non-lookup bytes",
+            &[
+                address_bytes,
+                gather_offset_bytes,
+                storage.h_bytes,
+                counter_bytes,
+            ],
+        )?;
+        let q_perfect_cache_bytes_host = checked_sum(
+            "Q perfect-cache bytes",
+            &[
+                q_nonlookup_bytes,
+                storage.eq_address_bytes,
+                storage.eq_hi_bytes,
             ],
         )?;
         let gather_perfect_cache_bytes_host = checked_sum(
             "gather perfect-cache bytes",
-            &[address_bytes, storage.h_bytes],
+            &[
+                gather_nonlookup_bytes,
+                storage.eq_address_bytes,
+                storage.eq_prefix_bytes,
+            ],
         )?;
-        let q_eq_address_bytes = checked_product(
-            "Q logical address-equality bytes",
+        let q_lookup_fields = checked_product(
+            "Q logical lookup fields",
             accessed_rows,
-            FIELD_BYTES,
+            RAM_RA_CLAIM_TERMS + 1,
         )?;
-        let q_eq_hi_fields = checked_product(
-            "Q logical high-equality fields",
-            rows / RAM_RA_CLAIM_SIMD_WIDTH,
-            RAM_RA_CLAIM_TERMS,
-        )?;
-        let q_eq_hi_bytes =
-            checked_product("Q logical high-equality bytes", q_eq_hi_fields, FIELD_BYTES)?;
         let q_lookup_logical_bytes_host =
-            q_eq_address_bytes
-                .checked_add(q_eq_hi_bytes)
-                .ok_or(RamRaClaimError::SizeOverflow {
-                    label: "Q logical lookup bytes",
-                })?;
+            checked_product("Q logical lookup bytes", q_lookup_fields, FIELD_BYTES)?;
         let gather_lookup_fields =
             checked_product("gather logical lookup fields", accessed_rows, 2)?;
         let gather_lookup_logical_bytes_host = checked_product(
@@ -768,12 +797,12 @@ impl RamRaClaimProjection {
             gather_lookup_fields,
             FIELD_BYTES,
         )?;
-        let q_shader_logical_bytes_host = q_perfect_cache_bytes_host
+        let q_shader_logical_bytes_host = q_nonlookup_bytes
             .checked_add(q_lookup_logical_bytes_host)
             .ok_or(RamRaClaimError::SizeOverflow {
                 label: "Q shader logical bytes",
             })?;
-        let gather_shader_logical_bytes_host = gather_perfect_cache_bytes_host
+        let gather_shader_logical_bytes_host = gather_nonlookup_bytes
             .checked_add(gather_lookup_logical_bytes_host)
             .ok_or(RamRaClaimError::SizeOverflow {
                 label: "gather shader logical bytes",
@@ -795,7 +824,7 @@ impl RamRaClaimProjection {
             gather_shader_logical_bytes_host,
         )?;
 
-        let product_rate = M4_MAX_SIX_ACCUMULATOR_FULL_WIDTH_PRODUCTS_PER_SECOND;
+        let product_rate = M4_MAX_ONE_CHAIN_FULL_WIDTH_PRODUCTS_PER_SECOND;
         let q_product_floor_ns = rate_floor_ns(q_full_width_products, product_rate)?;
         let gather_product_floor_ns = rate_floor_ns(gather_full_width_products, product_rate)?;
         let q_perfect_cache_traffic_floor_ns =

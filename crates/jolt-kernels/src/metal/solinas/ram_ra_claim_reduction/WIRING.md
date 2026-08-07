@@ -1,9 +1,9 @@
 # RAM RA claim-reduction Metal contract
 
-This directory contains an executable first-principles Q slice for
-`RamRaClaimReduction`. Its shaders are registered in the shared Metal library,
-the Rust runtime is checked, and Criterion compares resident compact and dense
-address layouts. It is not yet a production backend or a complete sumcheck
+This directory contains executable first-principles Q and H-prime device
+passes for `RamRaClaimReduction`. Their shaders are registered in the shared
+Metal library, the Rust runtime is checked, and Criterion measures the resident
+compact layouts. It is not yet a production backend or a complete sumcheck
 member.
 
 ## Observed resident Q slice
@@ -40,20 +40,37 @@ The standalone fixture spends about 196 ms constructing and uploading both
 layouts; that time is excluded from the resident slice. This exclusion is valid
 only if the shared RAM producer emits the compact layout during its existing
 trace walk. A production PIOP comparison must charge any separate transpose or
-upload. The complete member still needs the high-index compact gather, host
-rounds/transcript bridge, and alternating end-to-end validation.
+upload. The complete member still needs the host rounds/transcript bridge and
+alternating end-to-end validation.
 
 The matched compact roof explains the observation. The full-width multiply
 probe sustains `45.709` billion products/s, so 66 million useful products have
 a `1.444-ms` arithmetic floor and a `1.805-ms` 80%-of-roof pursuit cap. The
 measured `1.8002 ms` is 80.2% of that probe ceiling. With perfect lookup-table
 reuse, the compact producer/reducer has `95,241,748` compulsory bytes, only a
-`0.211-ms` traffic floor. Its `1,503,208,976` shader-requested bytes would take
+`0.211-ms` traffic floor. Its `1,502,717,460` shader-requested bytes would take
 `3.328 ms` with no lookup-cache reuse; the measurement therefore also confirms
 that the 128-KiB address table and 384-KiB high-equality tables are being served
-effectively from cache. The older six-accumulator `18.10-Gproduct/s` control is
-retained below as a conservative complete-member projection, not as the matched
-Q ceiling.
+effectively from cache.
+
+## Observed resident H-prime slice
+
+The high-index-major compact gather performs the remaining `A = 22,000,000`
+useful products in `0.57147 ms` active at log 26 after a 200-ms residency
+warmup, or `38.498` billion useful products/s. Its Criterion interval was
+`0.57009--0.57570 ms`. This is 84.2% of the matched one-chain full-width
+probe's `45.709 Gproduct/s` ceiling, so no further shader variants are
+justified. The resident-wall estimate was `1.8601 ms`, with a wide
+`1.3907--2.2337 ms` interval; active time is the stable kernel metric and the
+complete-member evaluator must resolve controller noise.
+
+Together, the two accepted device passes take `2.37167 ms` active for 88
+million useful products. Their matched arithmetic floor is `1.925223 ms`, so
+the pair reaches 81.2% of the relevant product ceiling. The independent
+resident-wall estimates sum to `4.5042 ms`, leaving comfortable room under the
+`8.1015-ms` 5x member cap but not enough evidence by themselves for a complete
+member claim. The raw samples and limitations for the second pass are frozen
+in `gather_screening_evidence.json`.
 
 ## Frozen evaluator and hard target
 
@@ -79,18 +96,11 @@ a `35.838878 ms` median and are not GPU evidence. The frozen member spans omit
 generic batch-owned host Fiat-Shamir. A production comparison must charge that
 work to both arms or neither; the intended PIOP evaluator charges it to both.
 
-The retained M4 Max controls originally used for projections are `420.68 GiB/s`
-(`451,701,710,520 B/s`) streaming copy bandwidth and `18.10 Gproduct/s` for a
-six-accumulator full-width Solinas control, recorded in
-`../registers_claim_reduction/WIRING.md`. They are measurements of reusable
-primitives, not measurements of either shader in this directory. The latter is
-intentionally used instead of the unmatched `32.33 Gproduct/s` peak.
-
-Both dense kernels here call `solinas_mul_wide` on canonical equality-table values.
-They perform zero half-width products, and there is no conditional half-width
-rate in this projection. In particular, the 18.10-Gproduct/s control remains a
-conditional projection rate until the three-chain Q loop and one-chain gather
-loop are measured directly.
+The retained M4 Max controls are `420.68 GiB/s` (`451,701,710,520 B/s`)
+streaming copy bandwidth and `45.709 Gproduct/s` for the matched one-chain
+full-width Solinas probe. They are reusable primitive measurements, not either
+shader's result. Both compact kernels call `solinas_mul_wide` on canonical
+equality-table values and perform zero half-width products.
 
 ## Exact relation and ordering
 
@@ -199,10 +209,9 @@ The preferred device work uses compact access views for both scans:
 2. Read back `Q` (`384 KiB` at the target), execute prefix messages 0 through
    12 on the host, and draw challenge 12 on the host.
 3. **H-prime gather.** A second compact view groups packed `(lo, address)`
-   entries by `hi`. Dispatch one or more SIMDgroups per high index, multiply
-   only accessed entries, reduce partition partials, and write `H'(hi)` without
-   field atomics. This successor is not implemented yet; the registered dense
-   gather remains a correctness scaffold.
+   entries by `hi`. One 32-thread SIMDgroup per high index walks only its
+   accessed entries, reduces in-register partials, and writes `H'(hi)` without
+   field atomics. This pass is implemented and benchmarked.
 4. Read back `H'` (`128 KiB`), execute messages 13 through 25 and the terminal
    bind on the host, then return `H'[0]` and validate the three derived values.
 
@@ -217,13 +226,14 @@ of `gamma`; once stage 4 has produced the third input point, it may be submitted
 early and overlapped with other stage-5 preparation. Independent member
 accounting still charges its full service interval.
 
-## Implemented first slice: resident compact Q
+## Implemented device slices
 
-The code in this directory implements only step 1 of that schedule: the compact Q
-producer and product-free reducer in one command buffer and one wait. This is
-the narrowest useful slice because it owns `3A` of the full design's `4A`
-products and can be checked independently of transcript state. It does not yet
-claim to accelerate the complete relation.
+The code in this directory implements both compact device passes. The Q
+producer and product-free reducer use one command buffer and one wait; the
+H-prime gather is a separately prepared command because the host must draw the
+prefix challenges between them. Both can be checked independently of
+transcript state. The host transition and production handoff are still absent,
+so this does not yet claim to accelerate the complete relation.
 
 `RamRaClaimQPlan` freezes the config, ABI parameters, dispatch geometry, and
 allocation sizes. At log 26 the benchmark allocation contract is:
@@ -331,8 +341,10 @@ Register only:
 | Entry point | Purpose |
 | --- | --- |
 | `solinas_ram_ra_claim_build_q_partials` | one coalesced address scan, eight-way partials |
+| `solinas_ram_ra_claim_build_q_partials_compact` | low-major compact Q scan |
 | `solinas_ram_ra_claim_reduce_q` | sum partials into three final `Q` tables |
 | `solinas_ram_ra_claim_gather_h` | one coalesced address scan, one `H'` output |
+| `solinas_ram_ra_claim_gather_h_compact` | high-major compact H-prime scan |
 
 The producer buffers are:
 
@@ -345,11 +357,14 @@ The producer buffers are:
 5 RamRaClaimParams
 ```
 
-The remaining bindings are exact:
+The compact bindings are exact:
 
 ```text
 Q reducer: 0 Q partials, 1 final Q, 2 counters, 3 params
-H gather:  0 address plane, 1 eq_address, 2 E_prefix, 3 H', 4 counters, 5 params
+Q compact producer: 0 entries, 1 offsets, 2 eq_address, 3 E_hi,
+                    4 partials, 5 counters, 6 params
+H compact gather:   0 entries, 1 offsets, 2 eq_address, 3 E_prefix,
+                    4 H', 5 counters, 6 params
 ```
 
 Use `dispatchThreadgroups`, never a rounded `dispatchThreads`: producer
@@ -364,25 +379,26 @@ or address limit is unsupported.
 
 ## Roofline, density admission, and phase bars
 
-Each pass streams the full address plane even when `A` is small. The exact bulk
-perfect-cache bytes and source-level shader-requested lookup bytes are:
+Each compact pass reads one four-byte entry per access plus one offset table.
+The exact compulsory bytes and source-level shader-requested lookup bytes are:
 
 ```text
-B_Q_stream = 4T + 2 * (3 * 8 * I * 16) + 3 * I * 16
-B_Q_lookup = 16A + (3T / 32) * 16 = 16A + 1.5T
+B_Q_compulsory = 4A + 4(I + 1) + 16K + 3(16O)
+                 + 2(3 * 8 * I * 16) + 3I * 16 + 16
+B_Q_lookup = 4A * 16
 
-B_H_stream = 4T + O * 16
+B_H_compulsory = 4A + 4(O + 1) + 16K + 16I + 16O + 16
 B_H_lookup = 2 * 16A.
 ```
 
-The `3T/32` Q loads are the three `E_hi` values loaded by lane zero and
-broadcast once per `(hi, 32-lo)` tile. H requests both `eq_address[address]`
-and `E_prefix[lo]` for every accessed row. At `T = 2^26` and `A = 22,000,000`:
+Q requests one address-equality value and three high-equality values per
+access. H requests one address-equality value and one prefix-equality value.
+At `T = 2^26` and `A = 22,000,000`:
 
-| Phase | Perfect-cache streaming | Logical lookups | Total shader-requested | 80% copy target, perfect cache | 80% copy target, no-cache requests |
+| Phase | Compulsory bytes | Logical lookup bytes | Total shader-requested | Copy floor, compulsory | Copy floor, all requests |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Q | 275,120,128 B | 452,663,296 B | 727,783,424 B | 0.761344 ms | 2.014005 ms |
-| H' | 268,566,528 B | 704,000,000 B | 972,566,528 B | 0.743209 ms | 2.691397 ms |
+| Q | 95,241,748 B | 1,408,000,000 B | 1,502,717,460 B | 0.210851 ms | 3.326792 ms |
+| H' | 88,426,004 B | 704,000,000 B | 792,163,860 B | 0.195762 ms | 1.753733 ms |
 
 The perfect-cache column is the optimistic off-chip floor. The no-cache column
 charges every requested 16-byte field exactly once; it is a sensitivity bound,
@@ -393,38 +409,35 @@ for `eq_address`, 384 KiB for all `E_hi`, and 128 KiB for `E_prefix`. Promotion
 nonetheless requires hardware counters rather than assuming those repeated
 requests hit.
 
-The table excludes constant-parameter fetches and the counter cache line. At
+The table excludes constant-parameter fetches and cache-line amplification; it
+includes the 16 logical counter bytes. At
 the target, Q performs between `ceil(A / 32768)` and `min(A, 2048)`
-SIMD-aggregated accessed-counter atomics depending on row distribution; valid H
-performs none. Those atomics are required telemetry but are too small and too
+SIMD-aggregated accessed-counter atomics depending on row distribution; H
+performs at most one per high index. Those atomics are required telemetry but are too small and too
 cache-dependent to disguise as streaming bytes.
 
 Useful arithmetic is exactly `3A` full-width products in Q and `A` full-width
 products in H'. There are no half-width products. At the registered gate
-`A <= 22,000,000` (`32.7826%` of log-26 rows), the conditional targets derived
-from 80% of the measured six-accumulator control are:
+`A <= 22,000,000` (`32.7826%` of log-26 rows), the matched one-chain probe gives:
 
-| Phase | Full-width floor | 80%-of-control pursuit target |
-| --- | ---: | ---: |
-| Q build (`3A`) | 3.646409 ms | 4.558012 ms |
-| H-prime gather (`A`) | 1.215470 ms | 1.519338 ms |
-| Both device passes | 4.861879 ms | 6.077350 ms |
+| Phase | Full-width floor | 80%-of-probe pursuit | Measured active |
+| --- | ---: | ---: | ---: |
+| Q build (`3A`) | 1.443917 ms | 1.804897 ms | 1.8002 ms |
+| H-prime gather (`A`) | 0.481306 ms | 0.601633 ms | 0.57147 ms |
+| Both device passes | 1.925223 ms | 2.406530 ms | 2.37167 ms |
 
-With perfect lookup caching, the plan reserves `1.500 ms` for small equality
-tables, the host prefix and suffix, both submissions/waits, 512-KiB readback,
-output checks, and host Fiat-Shamir. Its conditional complete projection is
-therefore `7.577350 ms`, or `5.35x`. If every H lookup request reaches memory,
-the same projection becomes `8.749409 ms`, only `4.63x`; H cache behavior is a
-real promotion gate. The mathematical break-even under the perfect-cache fixed
-envelope is `A = 23,897,432` (`35.61%`), but the registered density gate keeps
-measurement margin.
+With perfect lookup caching, the model reserves `1.500 ms` for the host phases,
+submissions/waits, readback, checks, and Fiat-Shamir. Its conditional complete
+projection is `3.906530 ms`, or `10.37x`. Charging every source-level lookup
+request at streaming bandwidth gives `7.850657 ms`, or `5.16x`. These remain
+projections until the host bridge and resident producer are measured together.
 
-At dense `A = T`, `4A / 18.10 Gproduct/s` alone is `14.830688 ms`, already
-slower than the complete 5x cap before waits or host work. Even the unmatched
-`32.33 Gproduct/s` control gives an `8.303 ms` arithmetic floor. Dense inputs
-therefore go directly to optimized CPU; they are not an optimization failure
-to grind through. The access census for the frozen Fibonacci artifact was not
-retained, so eligibility of that exact workload is unknown until a producer
+At dense `A = T`, the matched arithmetic floor is `5.872705 ms`; its
+80%-of-probe pursuit plus the fixed envelope is `8.840882 ms`, or 4.58x. Dense
+inputs therefore remain on optimized CPU. The current `A = 22,000,000` gate is
+also the largest frozen point whose pessimistic all-lookup traffic model clears
+5x with useful margin. The access census for the frozen Fibonacci artifact was
+not retained, so eligibility of that exact workload is unknown until a producer
 counter is measured.
 
 Promotion bars are:
@@ -432,11 +445,11 @@ Promotion bars are:
 | Phase | Bar |
 | --- | ---: |
 | Resident handoff | zero upload; exact validated `A <= 22,000,000` |
-| Q build | pursue <= 4.56 ms; redesign above 5.0 ms |
+| Q build | accepted at 1.8002 ms active |
 | Host prefix through challenge 12 | <= 0.65 ms |
-| H-prime gather | pursue <= 1.52 ms; redesign above 1.8 ms |
+| H-prime gather | accepted at 0.57147 ms active |
 | All non-device work, including both host phases and waits | <= 1.50 ms |
-| Complete hybrid member | hard `5 * metal_ns <= 40_507_503`; pursue <= 7.58 ms |
+| Complete hybrid member | hard `5 * metal_ns <= 40_507_503`; pursue <= 5.06 ms when 8x is clear |
 
 If measured density or cache behavior makes substantially more than 5x
 available, the pursuit target is tightened instead of stopping at the minimum.
@@ -498,20 +511,18 @@ cost from the evaluator.
 
 ## Remaining integration sequence and blockers
 
-The module, shared source registration, GPU parity test, and Criterion Q
-microbenchmark are complete. Continue in this order:
+The module, shared source registration, independent GPU parity tests, and both
+Criterion device microbenchmarks are complete. Continue in this order:
 
 1. make the shared RAM trace producer emit both compact orderings during its
    existing walk, with typed provenance and no standalone transpose;
-2. implement and benchmark the compact H-prime runtime against the same dense
-   oracle;
-3. add host prefix/suffix transitions and the transcript bridge, then promote a
+2. add host prefix/suffix transitions and the transcript bridge, then promote a
    complete hybrid member benchmark; and
-4. retain the shared address owner through stage 6b before enabling the PIOP
+3. retain the shared address owner through stage 6b before enabling the PIOP
    selector.
 
-The genuine blockers to a complete-member claim are the absent H-prime runtime,
-the host prefix/suffix and transcript bridge, the real stage-owned resident
-address handoff, and a measured access census for the frozen workload. Until
-those land, Q measurements are component evidence only; the 5x complete number
-remains a conditional projection.
+The genuine blockers to a complete-member claim are the host prefix/suffix and
+transcript bridge, the real stage-owned resident address handoff, and a measured
+access census for the frozen workload. Until those land, the device
+measurements are component evidence only; complete speedups remain conditional
+projections.

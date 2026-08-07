@@ -1,0 +1,69 @@
+{
+  "schema": "ram_ra_claim_reduction_gather_screening_evidence_v1",
+  "schema_version": 1,
+  "evidence_stage": "executable_slice_screening_only",
+  "working_tree_revision": "803e62b7e",
+  "target": {
+    "workload": "uniform_sparse_address_fixture",
+    "log_t": 26,
+    "rows": 67108864,
+    "accessed_rows": 22000000,
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "useful_full_products": 22000000
+  },
+  "cpu_control": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260806-133709-697013/result.json",
+    "git_revision": "5f520c21e338632aa0bf5936ceb02be6c22fa40f",
+    "kernel": "RamRaClaimReduction",
+    "samples_ns": [42226419, 41593040, 39237041, 35865838, 40507503],
+    "median_ns": 40507503,
+    "five_x_cap_ns": 8101500,
+    "eight_x_cap_ns": 5063437
+  },
+  "criterion_compact": {
+    "warmup_ms": 200,
+    "measurement_ms": 500,
+    "active_estimate_ns": 571470,
+    "active_interval_ns": [570090, 575700],
+    "resident_wall_estimate_ns": 1860100,
+    "resident_wall_interval_ns": [1390700, 2233700],
+    "useful_products_per_second": 38498000000
+  },
+  "roofline": {
+    "matched_one_chain_products_per_second": 45709000000,
+    "arithmetic_floor_ns": 481306,
+    "eighty_percent_pursuit_ns": 601633,
+    "measured_fraction_of_matched_ceiling": 0.8422,
+    "compulsory_bytes": 88426004,
+    "shader_requested_bytes": 792163860
+  },
+  "combined_device_slices": {
+    "q_active_ns": 1800200,
+    "gather_active_ns": 571470,
+    "combined_active_ns": 2371670,
+    "useful_full_products": 88000000,
+    "matched_arithmetic_floor_ns": 1925223,
+    "fraction_of_matched_ceiling": 0.8118
+  },
+  "resident_layout": {
+    "dense_address_bytes": 268435456,
+    "compact_low_major_bytes": 88032772,
+    "compact_high_major_bytes": 88032772,
+    "setup_wall_ns": 234510000,
+    "setup_included_in_timed_slice": false,
+    "execute_device_allocations": 0
+  },
+  "validation": {
+    "independent_direct_oracle": true,
+    "actual_gpu_parity": true,
+    "nextest_tests_passed": 12,
+    "clippy_lib": true
+  },
+  "limitations": [
+    "This is the resident H-prime device pass, not the complete 26-round relation.",
+    "The host fixture builds both compact layouts during setup; production evidence must charge or eliminate that work through a shared producer.",
+    "The resident-wall interval is noisy, so GPU-active time is the promotion metric for this slice.",
+    "The frozen Fibonacci artifact does not retain its actual RAM access census."
+  ]
+}

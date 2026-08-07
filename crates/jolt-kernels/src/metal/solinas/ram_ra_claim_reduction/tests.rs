@@ -176,26 +176,27 @@ fn log26_q_plan_and_five_x_projection_are_exact() {
     assert_eq!(projection.q_full_width_products, 66_000_000);
     assert_eq!(projection.gather_full_width_products, 22_000_000);
     assert_eq!(projection.half_width_products, 0);
-    assert_eq!(projection.q_perfect_cache_bytes, 275_120_128);
-    assert_eq!(projection.gather_perfect_cache_bytes, 268_566_528);
-    assert_eq!(projection.q_lookup_logical_bytes, 452_663_296);
+    assert_eq!(projection.address_bytes_per_pass, 88_000_000);
+    assert_eq!(projection.q_perfect_cache_bytes, 95_241_748);
+    assert_eq!(projection.gather_perfect_cache_bytes, 88_426_004);
+    assert_eq!(projection.q_lookup_logical_bytes, 1_408_000_000);
     assert_eq!(projection.gather_lookup_logical_bytes, 704_000_000);
-    assert_eq!(projection.q_shader_logical_bytes, 727_783_424);
-    assert_eq!(projection.gather_shader_logical_bytes, 972_566_528);
-    assert_eq!(projection.q_product_floor_ns, 3_646_409);
-    assert_eq!(projection.gather_product_floor_ns, 1_215_470);
-    assert_eq!(projection.q_perfect_cache_traffic_floor_ns, 609_075);
-    assert_eq!(projection.gather_perfect_cache_traffic_floor_ns, 594_567);
-    assert_eq!(projection.q_no_cache_request_floor_ns, 1_611_204);
-    assert_eq!(projection.gather_no_cache_request_floor_ns, 2_153_117);
-    assert_eq!(projection.q_pursuit_ns, 4_558_012);
-    assert_eq!(projection.gather_pursuit_ns, 1_519_338);
-    assert_eq!(projection.q_no_cache_pursuit_ns, 4_558_012);
-    assert_eq!(projection.gather_no_cache_pursuit_ns, 2_691_397);
-    assert_eq!(projection.projected_complete_ns, 7_577_350);
-    assert_eq!(projection.projected_no_cache_complete_ns, 8_749_409);
+    assert_eq!(projection.q_shader_logical_bytes, 1_502_717_460);
+    assert_eq!(projection.gather_shader_logical_bytes, 792_163_860);
+    assert_eq!(projection.q_product_floor_ns, 1_443_917);
+    assert_eq!(projection.gather_product_floor_ns, 481_306);
+    assert_eq!(projection.q_perfect_cache_traffic_floor_ns, 210_851);
+    assert_eq!(projection.gather_perfect_cache_traffic_floor_ns, 195_762);
+    assert_eq!(projection.q_no_cache_request_floor_ns, 3_326_792);
+    assert_eq!(projection.gather_no_cache_request_floor_ns, 1_753_733);
+    assert_eq!(projection.q_pursuit_ns, 1_804_897);
+    assert_eq!(projection.gather_pursuit_ns, 601_633);
+    assert_eq!(projection.q_no_cache_pursuit_ns, 4_158_490);
+    assert_eq!(projection.gather_no_cache_pursuit_ns, 2_192_167);
+    assert_eq!(projection.projected_complete_ns, 3_906_530);
+    assert_eq!(projection.projected_no_cache_complete_ns, 7_850_657);
     assert!(projection.clears_target_five_x_under_perfect_cache());
-    assert!(!projection.clears_target_five_x_without_lookup_cache());
+    assert!(projection.clears_target_five_x_without_lookup_cache());
 }
 
 #[test]
