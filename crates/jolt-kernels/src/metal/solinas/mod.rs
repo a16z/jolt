@@ -34,6 +34,8 @@ pub mod hamming_weight_claim_reduction;
 #[cfg(not(feature = "test-utils"))]
 mod hamming_weight_claim_reduction;
 pub mod hamming_weight_claim_reduction_successor;
+#[doc(hidden)]
+pub mod hamming_weight_claim_reduction_v2;
 pub mod instruction_claim_reduction;
 mod instruction_input;
 pub mod instruction_input_successor;
