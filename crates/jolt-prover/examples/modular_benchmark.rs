@@ -554,6 +554,38 @@ mod akita_benchmark {
         BOnlyPadded56V1,
     }
 
+    #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
+    enum BooleanityAddressImplementation {
+        #[default]
+        Accepted,
+        PackedHot,
+    }
+
+    impl BooleanityAddressImplementation {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::Accepted => "accepted",
+                Self::PackedHot => "packed-hot",
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
+    enum HammingWeightImplementation {
+        #[default]
+        AcceptedRows,
+        RetainedHot,
+    }
+
+    impl HammingWeightImplementation {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::AcceptedRows => "accepted-rows",
+                Self::RetainedHot => "retained-hot",
+            }
+        }
+    }
+
     #[cfg(all(feature = "metal", target_os = "macos"))]
     impl OuterRemainderBindingPlan {
         const fn as_str(self) -> &'static str {
@@ -584,6 +616,7 @@ mod akita_benchmark {
 
     #[derive(Debug, Clone, Copy)]
     struct BooleanityAddressMetalTuning {
+        implementation: BooleanityAddressImplementation,
         inner_log2: usize,
         selectors_per_tile: usize,
         tile_threads: usize,
@@ -593,6 +626,7 @@ mod akita_benchmark {
 
     #[derive(Debug, Clone, Copy)]
     struct HammingWeightMetalTuning {
+        implementation: HammingWeightImplementation,
         inner_log2: usize,
         selectors_per_tile: usize,
         tile_threads: usize,
@@ -682,6 +716,9 @@ mod akita_benchmark {
         #[clap(long, default_value_t = 15)]
         booleanity_address_metal_inner_log2: usize,
 
+        #[clap(long, value_enum, default_value = "accepted")]
+        booleanity_address_metal_implementation: BooleanityAddressImplementation,
+
         #[clap(long, default_value_t = 6)]
         booleanity_address_metal_selectors_per_tile: usize,
 
@@ -696,6 +733,9 @@ mod akita_benchmark {
 
         #[clap(long, default_value_t = 15)]
         hamming_weight_metal_inner_log2: usize,
+
+        #[clap(long, value_enum, default_value = "accepted-rows")]
+        hamming_weight_metal_implementation: HammingWeightImplementation,
 
         #[clap(long, default_value_t = 6)]
         hamming_weight_metal_selectors_per_tile: usize,
@@ -780,6 +820,7 @@ mod akita_benchmark {
                 trace_cutoff_log2: cli.instruction_input_metal_trace_cutoff_log2,
             },
             booleanity_address_metal: BooleanityAddressMetalTuning {
+                implementation: cli.booleanity_address_metal_implementation,
                 inner_log2: cli.booleanity_address_metal_inner_log2,
                 selectors_per_tile: cli.booleanity_address_metal_selectors_per_tile,
                 tile_threads: cli.booleanity_address_metal_tile_threads,
@@ -787,6 +828,7 @@ mod akita_benchmark {
                 trace_cutoff_log2: cli.booleanity_address_metal_trace_cutoff_log2,
             },
             hamming_weight_metal: HammingWeightMetalTuning {
+                implementation: cli.hamming_weight_metal_implementation,
                 inner_log2: cli.hamming_weight_metal_inner_log2,
                 selectors_per_tile: cli.hamming_weight_metal_selectors_per_tile,
                 tile_threads: cli.hamming_weight_metal_tile_threads,
@@ -834,6 +876,7 @@ mod akita_benchmark {
                 },
             booleanity_address_metal:
                 BooleanityAddressMetalTuning {
+                    implementation: booleanity_address_metal_implementation,
                     inner_log2: booleanity_address_metal_inner_log2,
                     selectors_per_tile: booleanity_address_metal_selectors_per_tile,
                     tile_threads: booleanity_address_metal_tile_threads,
@@ -842,6 +885,7 @@ mod akita_benchmark {
                 },
             hamming_weight_metal:
                 HammingWeightMetalTuning {
+                    implementation: hamming_weight_metal_implementation,
                     inner_log2: hamming_weight_metal_inner_log2,
                     selectors_per_tile: hamming_weight_metal_selectors_per_tile,
                     tile_threads: hamming_weight_metal_tile_threads,
@@ -990,11 +1034,13 @@ mod akita_benchmark {
             instruction_input_metal_cutoff_log2,
             instruction_input_metal_trace_cutoff_log2,
             booleanity_address_metal_inner_log2,
+            booleanity_address_metal_implementation,
             booleanity_address_metal_selectors_per_tile,
             booleanity_address_metal_tile_threads,
             booleanity_address_metal_finalize_threads,
             booleanity_address_metal_trace_cutoff_log2,
             hamming_weight_metal_inner_log2,
+            hamming_weight_metal_implementation,
             hamming_weight_metal_selectors_per_tile,
             hamming_weight_metal_tile_threads,
             hamming_weight_metal_finalize_threads,
@@ -1085,6 +1131,25 @@ mod akita_benchmark {
                     .checked_shl(instruction_input_metal_trace_cutoff_log2)
                     .expect("InstructionInput Metal trace cutoff log2 must fit usize");
                 config.booleanity_address.dispatch.inner_log2 = booleanity_address_metal_inner_log2;
+                config.booleanity_address.implementation =
+                    match booleanity_address_metal_implementation {
+                        BooleanityAddressImplementation::Accepted => {
+                            jolt_kernels::metal::BooleanityAddressImplementation::Accepted
+                        }
+                        BooleanityAddressImplementation::PackedHot => {
+                            jolt_kernels::metal::BooleanityAddressImplementation::PackedHot
+                        }
+                    };
+                config.booleanity_address.packed_hot.inner_log2 =
+                    booleanity_address_metal_inner_log2;
+                config
+                    .booleanity_address
+                    .packed_hot
+                    .accumulator_threads_per_threadgroup = booleanity_address_metal_tile_threads;
+                config
+                    .booleanity_address
+                    .packed_hot
+                    .finalize_threads_per_threadgroup = booleanity_address_metal_finalize_threads;
                 config.booleanity_address.dispatch.selectors_per_tile =
                     booleanity_address_metal_selectors_per_tile;
                 config
@@ -1101,6 +1166,27 @@ mod akita_benchmark {
                     .expect("Booleanity address Metal trace cutoff log2 must fit usize");
                 config.hamming_weight_claim_reduction.dispatch.inner_log2 =
                     hamming_weight_metal_inner_log2;
+                config.hamming_weight_claim_reduction.implementation =
+                    match hamming_weight_metal_implementation {
+                        HammingWeightImplementation::AcceptedRows => {
+                            jolt_kernels::metal::HammingWeightImplementation::AcceptedRows
+                        }
+                        HammingWeightImplementation::RetainedHot => {
+                            jolt_kernels::metal::HammingWeightImplementation::RetainedHot
+                        }
+                    };
+                config
+                    .hamming_weight_claim_reduction
+                    .retained_hot
+                    .inner_log2 = hamming_weight_metal_inner_log2;
+                config
+                    .hamming_weight_claim_reduction
+                    .retained_hot
+                    .accumulator_threads_per_threadgroup = hamming_weight_metal_tile_threads;
+                config
+                    .hamming_weight_claim_reduction
+                    .retained_hot
+                    .finalize_threads_per_threadgroup = hamming_weight_metal_finalize_threads;
                 config
                     .hamming_weight_claim_reduction
                     .dispatch
@@ -1181,6 +1267,10 @@ mod akita_benchmark {
                     booleanity_address_metal_finalize_threads,
                 );
                 println!(
+                    "BOOLEANITY_ADDRESS_METAL_IMPLEMENTATION value={}",
+                    booleanity_address_metal_implementation.as_str(),
+                );
+                println!(
                     "HAMMING_WEIGHT_METAL_CONFIG backend=metal trace_cutoff={} inner_log2={} selectors_per_tile={} tile_threads={} finalize_threads={}",
                     config
                         .hamming_weight_claim_reduction
@@ -1189,6 +1279,10 @@ mod akita_benchmark {
                     hamming_weight_metal_selectors_per_tile,
                     hamming_weight_metal_tile_threads,
                     hamming_weight_metal_finalize_threads,
+                );
+                println!(
+                    "HAMMING_WEIGHT_METAL_IMPLEMENTATION value={}",
+                    hamming_weight_metal_implementation.as_str(),
                 );
                 println!(
                     "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} materialize_threads={} transition_threads={} output_threads={} max_threadgroups={} binding_plan={} storage_initialization={}",
