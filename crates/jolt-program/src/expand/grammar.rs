@@ -478,6 +478,7 @@ pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
             | SourceInstructionKind::MRET
             | SourceInstructionKind::SLL
             | SourceInstructionKind::SLLI
+            | SourceInstructionKind::SLLIW
             | SourceInstructionKind::SLLW
             | SourceInstructionKind::SRL
             | SourceInstructionKind::SRLI

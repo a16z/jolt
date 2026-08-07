@@ -298,7 +298,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstructionKind::ADDIW
             | JoltInstructionKind::SUBW
             | JoltInstructionKind::MULW
-            | JoltInstructionKind::SLLIW
+            | JoltInstructionKind::VirtualMULIW
             | JoltInstruction::VirtualSignExtendWord(_) => {
                 LookupTables::SignExtendHalfWord(Default::default())
             }
@@ -492,14 +492,14 @@ define_rv64imac_trait_impls! {
     instructions: [
         ADD, ADDI, ADDIW, ADDW, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
-        MULW, SLLIW, SLT, SLTI, SLTIU, SLTU, SUB, SUBW, SD, XOR, XORI,
+        MULW, SLT, SLTI, SLTIU, SLTU, SUB, SUBW, SD, XOR, XORI,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment,
         VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualChangeDivisor, VirtualChangeDivisorW, VirtualAssertMulUNoOverflow,
-        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualPow2,
-        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualMULIW,
+        VirtualPow2, VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
@@ -534,7 +534,6 @@ pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod sd;
-pub mod slliw;
 pub mod slt;
 pub mod slti;
 pub mod sltiu;
@@ -556,6 +555,7 @@ pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_muliw;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
 pub mod virtual_pow2iw;

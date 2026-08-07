@@ -249,6 +249,7 @@ fn expand_source_only_instruction(
         SourceInstructionKind::MRET => expand_mret(row),
         SourceInstructionKind::SLL => expand_sll(row),
         SourceInstructionKind::SLLI => expand_slli(row),
+        SourceInstructionKind::SLLIW => expand_slliw(row),
         SourceInstructionKind::SLLW => expand_sllw(row),
         SourceInstructionKind::SRL => expand_srl(row),
         SourceInstructionKind::SRLI => expand_srli(row),

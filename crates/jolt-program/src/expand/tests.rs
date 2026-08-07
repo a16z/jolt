@@ -412,7 +412,7 @@ fn source_only_expanders_are_not_target_legal() {
         DIV, DIVU, DIVW, DIVUW, REM, REMU, REMW, REMUW,
         SB, SCD, SCW, SH, SW,
         CSRRW, CSRRS, EBREAK, ECALL, MRET,
-        SLL, SLLI, SLLW, SRL, SRLI, SRA, SRAI,
+        SLL, SLLI, SLLIW, SLLW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }
     assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
@@ -436,6 +436,10 @@ fn fused_word_ops_have_expected_row_counts() -> Result<(), ExpansionError> {
         )?);
         assert_eq!(expanded.len(), expected_rows, "{kind:?}");
         if kind == SourceInstructionKind::SLLIW {
+            assert_eq!(
+                expanded[0].instruction_kind,
+                JoltInstructionKind::VirtualMULIW
+            );
             assert_eq!(expanded[0].operands.imm, 1 << 7);
         }
     }

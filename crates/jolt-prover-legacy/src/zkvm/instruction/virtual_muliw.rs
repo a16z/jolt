@@ -1,5 +1,5 @@
 use jolt_riscv::JoltInstructionRowData;
-use tracer::instruction::{slliw::SLLIW, RISCVCycle};
+use tracer::instruction::{virtual_muliw::VirtualMULIW, RISCVCycle};
 
 use crate::zkvm::lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, LookupTables};
 
@@ -8,13 +8,13 @@ use super::{
     NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for SLLIW {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualMULIW {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
         Some(SignExtendHalfWordTable.into())
     }
 }
 
-impl Flags for SLLIW {
+impl Flags for VirtualMULIW {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::MultiplyOperands] = true;
@@ -35,7 +35,7 @@ impl Flags for SLLIW {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<SLLIW> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualMULIW> {
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         (0, x as u128 * y as u64 as u128)
@@ -69,11 +69,11 @@ mod tests {
 
     #[test]
     fn materialize_entry() {
-        materialize_entry_test::<Fr, SLLIW>();
+        materialize_entry_test::<Fr, VirtualMULIW>();
     }
 
     #[test]
     fn lookup_output_matches_trace() {
-        lookup_output_matches_trace_test::<SLLIW>();
+        lookup_output_matches_trace_test::<VirtualMULIW>();
     }
 }

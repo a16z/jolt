@@ -1,10 +1,12 @@
-use super::sign_extend_half_word;
-use crate::traits::{impl_lookup_table, LookupQuery};
-use jolt_riscv::{instructions::SllIW, JoltCycle};
+use crate::{
+    instructions::riscv::sign_extend_half_word,
+    traits::{impl_lookup_table, LookupQuery},
+};
+use jolt_riscv::{instructions::MulIW, JoltCycle};
 
-impl_lookup_table!(SllIW, Some(SignExtendHalfWord));
+impl_lookup_table!(MulIW, Some(SignExtendHalfWord));
 
-impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for SllIW<C> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for MulIW<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
         (
@@ -40,17 +42,20 @@ mod tests {
     };
 
     #[test]
-    fn materialize_entry_slliw() {
-        materialize_entry_test!(SllIW, tracer::instruction::slliw::SLLIW);
+    fn materialize_entry_virtualmuliw() {
+        materialize_entry_test!(MulIW, tracer::instruction::virtual_muliw::VirtualMULIW);
     }
 
     #[test]
-    fn instruction_inputs_match_constraint_slliw() {
-        instruction_inputs_match_constraint_test!(SllIW, tracer::instruction::slliw::SLLIW);
+    fn instruction_inputs_match_constraint_virtualmuliw() {
+        instruction_inputs_match_constraint_test!(
+            MulIW,
+            tracer::instruction::virtual_muliw::VirtualMULIW
+        );
     }
 
     #[test]
-    fn lookup_output_matches_trace_slliw() {
-        lookup_output_matches_trace_test!(SllIW, tracer::instruction::slliw::SLLIW);
+    fn lookup_output_matches_trace_virtualmuliw() {
+        lookup_output_matches_trace_test!(MulIW, tracer::instruction::virtual_muliw::VirtualMULIW);
     }
 }
