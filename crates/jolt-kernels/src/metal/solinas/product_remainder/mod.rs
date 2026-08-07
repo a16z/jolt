@@ -1334,6 +1334,26 @@ impl ProductRemainderSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_OPENINGS], Duration), MetalError> {
+        if self.phase != ProductRemainderPhase::Materialized || self.current_elements != 2 {
+            return Err(MetalError::InvalidProductRemainderState(
+                "openings require every message round to be completed",
+            ));
+        }
+        let (openings, active_time) = self.execute_openings(e_in, e_out)?;
+        self.gpu_active_time += active_time;
+        Ok((openings, active_time))
+    }
+
+    pub(crate) fn openings_after_cpu_tail_timed(
+        &mut self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<([AkitaField; PRODUCT_REMAINDER_OPENINGS], Duration), MetalError> {
+        if self.phase != ProductRemainderPhase::Materialized || self.current_elements <= 2 {
+            return Err(MetalError::InvalidProductRemainderState(
+                "CPU-tail openings require an unfinished resident sequence",
+            ));
+        }
         let (openings, active_time) = self.execute_openings(e_in, e_out)?;
         self.gpu_active_time += active_time;
         Ok((openings, active_time))
@@ -1354,11 +1374,6 @@ impl ProductRemainderSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_OPENINGS], Duration), MetalError> {
-        if self.phase != ProductRemainderPhase::Materialized || self.current_elements != 2 {
-            return Err(MetalError::InvalidProductRemainderState(
-                "openings require every message round to be completed",
-            ));
-        }
         let params =
             ProductRemainderOpeningParams::new(self.layout.rows(), e_in.len(), e_out.len())?;
         self.write_weights(e_in, e_out)?;
@@ -1459,7 +1474,7 @@ impl ProductRemainderSequence {
         self.reduction_limits
     }
 
-    #[cfg(feature = "test-utils")]
+    #[doc(hidden)]
     pub fn read_current_state(&self) -> Result<(Vec<AkitaField>, Vec<AkitaField>), MetalError> {
         if self.phase != ProductRemainderPhase::Materialized {
             return Err(MetalError::InvalidProductRemainderState(

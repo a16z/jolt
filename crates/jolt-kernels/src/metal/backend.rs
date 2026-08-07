@@ -118,6 +118,7 @@ impl MetalBackend {
             config.spartan_outer_uniskip.trace_cutoff_elements,
             config.spartan_outer_remainder.dispatch.cpu_tail_elements,
             config.spartan_product_remainder.trace_cutoff_elements,
+            config.spartan_product_remainder.cpu_tail_elements,
             config.instruction_claim_reduction.trace_cutoff_elements,
             config.instruction_input.trace_cutoff_elements,
             config.instruction_input.cutoff_elements,

@@ -144,6 +144,7 @@ impl allocative::Allocative for MetalInstructionClaimHandoff {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanProductRemainderMetalConfig {
     pub trace_cutoff_elements: usize,
+    pub cpu_tail_elements: usize,
     pub dispatch: ProductRemainderSequenceConfig,
 }
 
@@ -151,6 +152,7 @@ impl Default for SpartanProductRemainderMetalConfig {
     fn default() -> Self {
         Self {
             trace_cutoff_elements: 1 << 18,
+            cpu_tail_elements: 1 << 12,
             dispatch: ProductRemainderSequenceConfig::default(),
         }
     }
@@ -876,6 +878,8 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             pending_endpoints: Some(first_message),
             row_storage_id,
             instruction_aliases,
+            cpu_tail: None,
+            cpu_tail_elements: self.config.spartan_product_remainder.cpu_tail_elements,
         }))
     }
 }
@@ -995,12 +999,98 @@ impl MetalProductRemainderHost {
     }
 }
 
+struct ProductRemainderCpuTail {
+    left: Vec<AkitaField>,
+    right: Vec<AkitaField>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for ProductRemainderCpuTail {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        use crate::backend::vec_heap_bytes;
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("left"), vec_heap_bytes(&self.left));
+        visitor.visit_simple(allocative::Key::new("right"), vec_heap_bytes(&self.right));
+        visitor.exit();
+    }
+}
+
+impl ProductRemainderCpuTail {
+    fn new(
+        left: Vec<AkitaField>,
+        right: Vec<AkitaField>,
+    ) -> Result<Self, SumcheckError<AkitaField>> {
+        if left.len() != right.len() || left.len() < 2 || !left.len().is_power_of_two() {
+            return Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "product-remainder CPU tail received malformed resident state".to_string(),
+            });
+        }
+        Ok(Self { left, right })
+    }
+
+    fn current_elements(&self) -> usize {
+        self.left.len()
+    }
+
+    fn bind_and_message(
+        &mut self,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<[AkitaField; 2], SumcheckError<AkitaField>> {
+        let destination_elements = self.current_elements() / 2;
+        for index in 0..destination_elements {
+            let source = 2 * index;
+            let left_low = self.left[source];
+            let right_low = self.right[source];
+            self.left[index] = left_low + challenge * (self.left[source + 1] - left_low);
+            self.right[index] = right_low + challenge * (self.right[source + 1] - right_low);
+        }
+        self.left.truncate(destination_elements);
+        self.right.truncate(destination_elements);
+        self.message(e_in, e_out)
+    }
+
+    fn message(
+        &self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<[AkitaField; 2], SumcheckError<AkitaField>> {
+        if 2 * e_in.len() * e_out.len() != self.current_elements() {
+            return Err(SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "product-remainder CPU tail equality shape drifted".to_string(),
+            });
+        }
+        let mut endpoints = [AkitaField::zero(); 2];
+        for (x_out, &outer_weight) in e_out.iter().enumerate() {
+            let mut inner = [AkitaField::zero(); 2];
+            for (x_in, &inner_weight) in e_in.iter().enumerate() {
+                let low = 2 * (x_out * e_in.len() + x_in);
+                let high = low + 1;
+                let left_low = self.left[low];
+                let left_high = self.left[high];
+                let right_low = self.right[low];
+                let right_high = self.right[high];
+                inner[0] += inner_weight * (left_low * right_low);
+                inner[1] += inner_weight * ((left_high - left_low) * (right_high - right_low));
+            }
+            endpoints[0] += outer_weight * inner[0];
+            endpoints[1] += outer_weight * inner[1];
+        }
+        Ok(endpoints)
+    }
+}
+
 struct MetalProductRemainderKernel {
     host: MetalProductRemainderHost,
     sequence: ProductRemainderSequence,
     pending_endpoints: Option<[AkitaField; 2]>,
     row_storage_id: usize,
     instruction_aliases: Option<MetalInstructionClaimAliasSlot>,
+    cpu_tail: Option<ProductRemainderCpuTail>,
+    cpu_tail_elements: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -1008,6 +1098,9 @@ impl allocative::Allocative for MetalProductRemainderKernel {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_field(allocative::Key::new("sequence"), &self.sequence);
+        if let Some(cpu_tail) = &self.cpu_tail {
+            visitor.visit_field(allocative::Key::new("cpu_tail"), cpu_tail);
+        }
         visitor.exit();
     }
 }
@@ -1024,6 +1117,32 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
         previous_claim: AkitaField,
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
         let endpoints = if let Some(challenge) = bind {
+            let source_elements = self.cpu_tail.as_ref().map_or_else(
+                || self.sequence.current_elements(),
+                |tail| tail.current_elements(),
+            );
+            if self.cpu_tail.is_none()
+                && source_elements <= self.cpu_tail_elements
+                && source_elements > 2
+            {
+                let span = tracing::info_span!(
+                    "MetalProductRemainder::cpu_tail_handoff",
+                    round,
+                    source_elements,
+                    readback_bytes = source_elements
+                        .saturating_mul(2)
+                        .saturating_mul(std::mem::size_of::<AkitaField>()),
+                    wall_ns = tracing::field::Empty,
+                );
+                let _entered = span.enter();
+                let started = Instant::now();
+                let (left, right) = self
+                    .sequence
+                    .read_current_state()
+                    .map_err(metal_round_error)?;
+                self.cpu_tail = Some(ProductRemainderCpuTail::new(left, right)?);
+                let _ = span.record("wall_ns", duration_nanos(started.elapsed()));
+            }
             self.host.bind(challenge);
             if self.host.challenges.len() != round {
                 return Err(SumcheckError::ComputeBackend {
@@ -1031,25 +1150,38 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
                     message: "product-remainder round order drifted".to_string(),
                 });
             }
-            let source_elements = self.sequence.current_elements();
             let (e_in, e_out) = self.host.current_weights()?;
-            let span = tracing::info_span!(
-                "MetalProductRemainder::bind_and_message",
-                round,
-                source_elements,
-                resident_rows_storage_id = self.row_storage_id as u64,
-                dispatch_wall_ns = tracing::field::Empty,
-                gpu_active_ns = tracing::field::Empty,
-            );
-            let _entered = span.enter();
-            let started = Instant::now();
-            let (message, gpu_active) = self
-                .sequence
-                .bind_and_message_timed(challenge, &e_in, &e_out)
-                .map_err(metal_round_error)?;
-            let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
-            let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
-            message
+            if let Some(cpu_tail) = &mut self.cpu_tail {
+                let span = tracing::info_span!(
+                    "MetalProductRemainder::cpu_tail_round",
+                    round,
+                    source_elements,
+                    wall_ns = tracing::field::Empty,
+                );
+                let _entered = span.enter();
+                let started = Instant::now();
+                let message = cpu_tail.bind_and_message(challenge, &e_in, &e_out)?;
+                let _ = span.record("wall_ns", duration_nanos(started.elapsed()));
+                message
+            } else {
+                let span = tracing::info_span!(
+                    "MetalProductRemainder::bind_and_message",
+                    round,
+                    source_elements,
+                    resident_rows_storage_id = self.row_storage_id as u64,
+                    dispatch_wall_ns = tracing::field::Empty,
+                    gpu_active_ns = tracing::field::Empty,
+                );
+                let _entered = span.enter();
+                let started = Instant::now();
+                let (message, gpu_active) = self
+                    .sequence
+                    .bind_and_message_timed(challenge, &e_in, &e_out)
+                    .map_err(metal_round_error)?;
+                let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
+                let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
+                message
+            }
         } else {
             if round != 0 || !self.host.challenges.is_empty() {
                 return Err(SumcheckError::ComputeBackend {
@@ -1070,7 +1202,11 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
 
     fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
         self.host.bind(bind);
-        if self.host.challenges.len() != self.host.rounds || self.sequence.current_elements() != 2 {
+        let terminal_elements = self.cpu_tail.as_ref().map_or_else(
+            || self.sequence.current_elements(),
+            |tail| tail.current_elements(),
+        );
+        if self.host.challenges.len() != self.host.rounds || terminal_elements != 2 {
             return Err(SumcheckError::ComputeBackend {
                 backend: "metal",
                 message: "product-remainder sequence did not reach its terminal state".to_string(),
@@ -1102,10 +1238,12 @@ impl SumcheckKernel<AkitaField> for MetalProductRemainderKernel {
         );
         let _entered = span.enter();
         let started = Instant::now();
-        let (values, gpu_active) = self
-            .sequence
-            .openings_timed(&e_in, &e_out)
-            .map_err(metal_output_error)?;
+        let (values, gpu_active) = if self.cpu_tail.is_some() {
+            self.sequence.openings_after_cpu_tail_timed(&e_in, &e_out)
+        } else {
+            self.sequence.openings_timed(&e_in, &e_out)
+        }
+        .map_err(metal_output_error)?;
         let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
         let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
         if let Some(slot) = &self.instruction_aliases {
