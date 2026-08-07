@@ -47,6 +47,20 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     }
 }
 
+/// Drops the module's leading import boilerplate — everything through the
+/// closing `};` of the `use super::{…};` block. rustfmt sorts and wraps that
+/// list, so it cannot token-match the emitter's fixed header; the schedule
+/// data below it is what this oracle guards.
+fn strip_import_header(source: &str) -> &str {
+    source
+        .find("use super::{")
+        .and_then(|start| {
+            let rest = &source[start..];
+            rest.find("};").map(|end| &rest[end + 2..])
+        })
+        .unwrap_or(source)
+}
+
 /// Splits Rust source into a whitespace-insensitive token stream:
 /// identifier/number runs stay whole, every other non-whitespace character is
 /// its own token. The planner emits unformatted source while the checked-in
@@ -55,6 +69,7 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
 /// detects every semantic change while ignoring layout. The checked-in file's
 /// formatting itself is enforced by the workspace `cargo fmt` lane.
 fn source_tokens(source: &str) -> Vec<String> {
+    let source = strip_import_header(source);
     let mut tokens = Vec::new();
     let mut current = String::new();
     for ch in source.chars() {
