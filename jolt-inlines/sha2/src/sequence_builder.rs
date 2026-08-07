@@ -1,5 +1,8 @@
 use jolt_inlines_sdk::host::{
-    instruction::andn::ANDN,
+    instruction::{
+        andn::ANDN, ld::LD, srli::SRLI, virtual_rev8w::VirtualRev8W,
+        virtual_xor_rotw::VirtualXORROTW7,
+    },
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
     InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{self, Imm, Reg},
@@ -40,6 +43,8 @@ struct Sha256SequenceBuilder {
     operands: InlineOperands,
     /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
+    /// Whether message words are stored as big-endian bytes in memory.
+    big_endian_input: bool,
 }
 
 impl Sha256SequenceBuilder {
@@ -47,6 +52,7 @@ impl Sha256SequenceBuilder {
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
         initial: bool,
+        big_endian_input: bool,
     ) -> Result<Self, ExpansionError> {
         let state = asm.allocate_inline_array::<8>()?;
         let message = asm.allocate_inline_array::<16>()?;
@@ -56,7 +62,6 @@ impl Sha256SequenceBuilder {
                 iv.push(asm.allocate_for_inline()?);
             }
         }
-
         Ok(Sha256SequenceBuilder {
             asm,
             round: 0,
@@ -65,6 +70,7 @@ impl Sha256SequenceBuilder {
             iv,
             operands,
             initial,
+            big_endian_input,
         })
     }
 
@@ -83,14 +89,19 @@ impl Sha256SequenceBuilder {
             });
         }
         // Load input words into message registers
-        (0..8).for_each(|i| {
-            self.asm.load_paired_u32_dirty(
-                self.operands.rs2,
-                (i as i64) * 8,
-                *self.message[i * 2],
-                *self.message[i * 2 + 1],
-            );
-        });
+        for i in 0..8 {
+            let lo = *self.message[i * 2];
+            let hi = *self.message[i * 2 + 1];
+            if self.big_endian_input {
+                self.asm
+                    .emit_ld::<LD>(lo, self.operands.rs2, (i as i64) * 8);
+                self.asm.emit_r::<VirtualRev8W>(lo, lo, 0);
+                self.asm.emit_i::<SRLI>(hi, lo, 32);
+            } else {
+                self.asm
+                    .load_paired_u32_dirty(self.operands.rs2, (i as i64) * 8, lo, hi);
+            }
+        }
         // Run 64 rounds
         for _ in 0..64 {
             self.round()?;
@@ -220,16 +231,8 @@ impl Sha256SequenceBuilder {
 
     /// Maps working variable (A-H) to its current register location
     /// Variables rotate through state registers as rounds progress
-    /// For custom IV (!initial), values start in iv and gradually move into rotation
     fn vr(&self, shift: char) -> u8 {
         assert!(('A'..='H').contains(&shift));
-        // For custom IV: check if this value hasn't been computed yet
-        // In each round, we compute new A and new E. After rotation:
-        // Round 0: None computed yet, use saved for all
-        // Round 1: A,E computed (now at H,D positions), use saved for B,C,D,F,G,H
-        // Round 2: A,B,E,F computed (now at G,H,C,D positions), use saved for C,D,G,H
-        // Round 3: A,B,C,E,F,G computed (now at F,G,H,B,C,D positions), use saved for D,H
-        // Round 4+: All have been computed, use rotation only
         if !self.initial
             && (self.round == 0
                 || (self.round == 1 && !['A', 'E'].contains(&shift))
@@ -312,8 +315,9 @@ impl Sha256SequenceBuilder {
 
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: u8, rd: u8, ss: u8) {
-        self.asm.rotri_xor_rotri32(Reg(rs1), 7, 18, rd, ss);
-        self.asm.srli(Reg(rs1), 3, ss);
+        self.asm.rotri32(Reg(rs1), 11, ss);
+        self.asm.emit_r::<VirtualXORROTW7>(rd, rs1, ss);
+        self.word_shr(rs1, 3, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
     }
 
@@ -321,8 +325,14 @@ impl Sha256SequenceBuilder {
     fn sha_word_sigma_1(&mut self, rs1: u8, rd: u8, ss: u8) {
         // We don't need to do Imm shenanigans here since words are always in registers
         self.asm.rotri_xor_rotri32(Reg(rs1), 17, 19, rd, ss);
-        self.asm.srli(Reg(rs1), 10, ss);
+        self.word_shr(rs1, 10, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
+    }
+
+    fn word_shr(&mut self, rs1: u8, shift: u32, rd: u8) {
+        let rotated = self.asm.rotri32(Reg(rs1), shift, rd);
+        let mask = (1u64 << (32 - shift)) - 1;
+        self.asm.and(rotated, Imm(mask), rd);
     }
 }
 
@@ -340,7 +350,7 @@ impl InlineOp for Sha256Compression {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Sha256SequenceBuilder::new(asm, operands, false)?.build()
+        Sha256SequenceBuilder::new(asm, operands, false, false)?.build()
     }
 }
 
@@ -358,6 +368,42 @@ impl InlineOp for Sha256CompressionInitial {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Sha256SequenceBuilder::new(asm, operands, true)?.build()
+        Sha256SequenceBuilder::new(asm, operands, true, false)?.build()
+    }
+}
+
+pub struct Sha256CompressionBigEndian;
+
+impl InlineOp for Sha256CompressionBigEndian {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SHA256_BE_FUNCT3;
+    const FUNCT7: u32 = crate::SHA256_BE_FUNCT7;
+    const NAME: &'static str = crate::SHA256_BE_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Sha256SequenceBuilder::new(asm, operands, false, true)?.build()
+    }
+}
+
+pub struct Sha256CompressionInitialBigEndian;
+
+impl InlineOp for Sha256CompressionInitialBigEndian {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::SHA256_INIT_BE_FUNCT3;
+    const FUNCT7: u32 = crate::SHA256_INIT_BE_FUNCT7;
+    const NAME: &'static str = crate::SHA256_INIT_BE_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Sha256SequenceBuilder::new(asm, operands, true, true)?.build()
     }
 }

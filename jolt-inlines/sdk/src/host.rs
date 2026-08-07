@@ -51,6 +51,7 @@ pub mod instruction {
     alias_instruction!(virtual_advice, VirtualAdvice, VirtualAdvice);
     alias_instruction!(virtual_assert_eq, VirtualAssertEQ, AssertEq);
     alias_instruction!(virtual_assert_lte, VirtualAssertLTE, AssertLte);
+    alias_instruction!(virtual_rev8w, VirtualRev8W, VirtualRev8W);
     pub mod virtual_xor_rot {
         pub use jolt_riscv::instructions::VirtualXorRot16 as VirtualXORROT16;
         pub use jolt_riscv::instructions::VirtualXorRot24 as VirtualXORROT24;
