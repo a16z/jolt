@@ -11,6 +11,186 @@ verifier, generated stage-3 output aliases, reference kernel, optimized CPU
 kernel, and generic batched-sumcheck driver. Projected numbers below remain
 models unless explicitly labeled as observed.
 
+## Resident BCSR amendment (2026-08-07)
+
+This section is the current implementation contract. It supersedes the older
+dense-SoA producer choice, roof table, blockers, and integration order later
+in this file. The durable denominator below remains authoritative. The older
+sections remain as evidence for
+the already-executed standalone kernel and the alternatives that were rejected.
+No shader or production adapter is claimed by this amendment.
+
+The authoritative five-pair exact-log-26 optimized-CPU denominator remains
+`99.905582 ms`. The hard 5x gate is `19.981116 ms`, the working 7x target is
+`14.272226 ms`, and the 8x pursue-if-credible gate is `12.488197 ms`. The newer
+`101.146122-ms` one-pair observation is diagnostic context only and cannot
+loosen a promotion cap. All gates are complete-member PIOP wall times with
+host Fiat--Shamir included; GPU-active time alone cannot pass one.
+
+### Selected source boundary
+
+The stage-4 `registers_read_write_v3` BCSR-256 state-flow receipt is the
+selected carrier. Its pre-sumcheck producer must publish an admitted
+`RegisterBcsrReceipt` before the stage-1 command is encoded, and the same
+immutable device allocations must remain live through the stage-3 midpoint.
+Do not publish three dense `u64[T]` planes, and do not add rs1/rs2 event-value
+planes. At the measured log-26 event census, the alternatives are:
+
+| source | new persistent bytes | new producer writes | component reads | midpoint reads | charged source traffic |
+|---|---:|---:|---:|---:|---:|
+| three dense value planes | 1,610,612,736 | 1,610,612,736 | 1,610,612,736 | 536,870,912 | 3,758,096,384 |
+| sparse event-value planes | 924,611,008 | 924,611,008 | 1,494,745,080 | 453,509,120 | 2,872,865,208 |
+| resident BCSR state flow | 0 | 0 | 1,039,896,120 | 520,617,984 | 1,560,514,104 |
+
+The selected row counts are `59,652,323` rs1 events, `55,924,053` rs2
+events, and `50,331,648` rd events. The existing BCSR allocation is
+2,350,383,104 bytes and its initialized producer writes 2,180,746,808 bytes.
+Those shared costs are charged exactly once in a paired resident-PIOP
+evaluation. The incremental numbers above are valid only after an admitted
+BCSR receipt is already resident; a standalone member may not hide its
+producer.
+
+BCSR construction cannot directly produce `q`: `tau_hi` is not available
+then, `gamma` is not drawn until stage 3, and a challenge-combined table cannot
+recover the three stage-1 openings. The correct co-production point is stage
+1, after `product_uniskip_tau_low` is known. It projects three canonical
+component tables and delays only the gamma combination.
+
+### Kernel contract
+
+For log 26, `P = H = 8192`, there are 262,144 BCSR blocks, and
+
+```text
+j         = x_hi * 8192 + x_lo
+low_block = x_lo / 256
+block     = x_hi * 32 + low_block.
+```
+
+`solinas_registers_claim_bcsr_components` dispatches 8,192 threadgroups of
+256 threads: one group for each `(partial, low_block)`, with 256 partials and
+32 low blocks. A group loops over 32 `x_hi` values. Its first 128 threads own
+register columns and replay that block from `start_values`, merging the sorted
+rs1, rs2, and rd position runs. Reads at a cycle emit the pre-write current
+value; an rd emits its post value and updates current only after both reads.
+After barriers, the 256 position threads accumulate
+
+```text
+eq(tau_hi)[x_hi] * (rd, rs1, rs2)
+```
+
+for their `x_lo`. Each accumulator has at most 32 field-by-u64 terms, so seven
+32-bit limbs provide the required 197-bit bound. The group writes
+`partials[component][partial][x_lo]`. It uses 6,144 bytes of threadgroup
+memory for the three 256-entry cycle arrays. A position thread issues the
+field-by-u64 accumulate only for a nonzero emitted value; zero is the additive
+identity. If an implementation instead executes all absent zero terms, its
+roof model must charge `3T`, not the event census used here.
+
+`solinas_registers_claim_bcsr_reduce_components` dispatches 96 groups of 256
+threads and reduces the 256 partials to three canonical `Fp128[P]` tables:
+`Q_rd`, `Q_rs1`, and `Q_rs2`. The host reconstructs the three omitted stage-1
+openings by dotting each with `eq(tau_lo)` (`3P` full products). Once stage 3
+draws `gamma`, the host forms
+
+```text
+q = Q_rd + gamma * Q_rs1 + gamma^2 * Q_rs2
+```
+
+with `2P` full products. This keeps the exact prefix `P * Q` rounds; it makes
+no protocol or transcript change.
+
+After the 13th host prefix challenge has been absorbed,
+`solinas_registers_claim_bcsr_fold_rd_midpoint` dispatches 8,192 groups of 128
+threads. One group owns one `x_hi`, and its lanes own register columns over
+the 32 BCSR blocks for that suffix row. It scans only rd offsets, positions,
+and post values and reduces
+
+```text
+rd_dense[x_hi] = sum_x_lo eq(reverse(r_prefix))[x_lo] * rd_write_value(j).
+```
+
+InstructionInput supplies its resident rs1/rs2 midpoint tables instead of
+replaying them again. The handoff must fail closed on device, allocation
+identity, generation, length, table IDs 1 and 5, and the ordered prefix-point
+digest. The BCSR component receipt must likewise carry the BCSR source
+identity and generation, full `product_uniskip_tau_low` digest, split
+geometry, three allocation identities, canonical encoding, and one-shot
+consumption. Inputs remain immutable until the midpoint receipt is published.
+
+All Fiat--Shamir work remains on the host. A shader receives a challenge only
+after the host has checked and absorbed the preceding round polynomial. The
+last challenge is applied exactly once before the three output openings are
+published in `rd`, `rs1`, `rs2` order.
+
+The exact Rust ABI, buffer slots, geometry, source alternatives, and executable
+log-26 roof census are in `resident_bcsr.rs`. The component pair is encoded in
+the existing stage-1 command buffer and adds no command buffer or wait. The
+midpoint adds one dispatch, one command buffer, and one wait.
+
+### Charged ceiling
+
+| phase | useful half-width terms | cache-unique bytes | shader-requested bytes | compute floor | traffic floor/envelope |
+|---|---:|---:|---:|---:|---:|
+| BCSR components + reduction | 165,908,024 | 1,241,747,000 | 1,245,810,232 | 5.002051 ms | 2.749043 / 2.758038 ms |
+| rd midpoint | 50,331,648 | 520,880,128 | 1,326,055,424 | 1.517477 ms | 1.153151 / 2.935689 ms |
+
+The arithmetic rate is the measured canonical half-width rate of 33.168
+Gterm/s; traffic uses 451.702 GB/s. The optimistic combined floor is
+6.519528 ms and its 80%-roof cap is 8.149410 ms. Charging every midpoint
+equality load as a memory request gives a conservative 7.937740-ms floor and
+9.922175-ms 80%-roof cap. The latter leaves 10.058941 ms under 5x, 4.350051 ms
+under 7x, and 2.566022 ms under 8x for host work, equality generation,
+publication, command/wait latency, and adapter overhead.
+
+Host work remains explicit: `3P` stage-1 opening products, `2P` q-combination
+products, and `4P + 8H - 12` prefix/dense products, or 139,252 full products
+total. Excluding equality-table generation, their logical traffic is exactly
+4,980,272 bytes. The 9.922175-ms envelope is analytical only: it is neither an
+end-to-end performance claim nor promotion evidence.
+
+### Algebraic obligations still open
+
+The protocol algebra itself is unchanged, but implementation parity still has
+three explicit proof obligations. A scalar BCSR replay must show, including a
+same-cycle read/write, that every component is exactly
+
+```text
+Q_v[x_lo] = sum_x_hi eq(tau_hi)[x_hi] * v(x_hi || x_lo).
+```
+
+The midpoint oracle must show that sparse rd-post replay equals the dense
+partial bind at `reverse(r_prefix)`. Finally, InstructionInput must establish
+that tables 1 and 5 are the same rs1/rs2 polynomials at that exact ordered
+point, not merely buffers of the right length. Maximal-value fixtures must
+also validate that 32 accumulated 192-bit products fit the stated 197-bit
+bound before the one canonical reduction.
+
+### Unresolved implementation evidence
+
+1. The sibling BCSR receipt currently proves provenance and layout, but the
+   runtime needs a borrow-only device-buffer view; it must not allocate or
+   copy a replacement carrier.
+2. The three entry points above need shader bodies, scalar-oracle parity, and
+   a runtime that validates every slot and receipt field before encoding.
+3. InstructionInput's two midpoint buffers need a typed same-point resident
+   handoff. CPU reconstruction is not an admissible performance fallback.
+4. A Metal capture must confirm seven-limb register allocation, no spills,
+   6-KiB threadgroup usage, active SIMD residency, and whether midpoint
+   equality reads achieve the cache-unique or requested-byte envelope.
+5. Logs 27 and 28 need explicit partial tiling and max-buffer admission; the
+   log-26 constants must not silently generalize.
+6. The paired evaluator must charge the shared 2.181-GB BCSR producer once,
+   include all host FS and waits, and compare five alternating complete-member
+   samples against the durable five-pair CPU denominator.
+
+The smallest next integration slice stays in this package: implement the
+component/reducer shaders plus their checked runtime, validate them against a
+small BCSR scalar replay, and publish the three-component receipt. The rd
+midpoint and InstructionInput alias receipt are the second slice. Global
+prover selection waits until both slices pass parity and the complete fair
+boundary clears 5x; optimization continues toward 7x and then 8x while the
+measured ceilings leave credible headroom.
+
 ## Observed Q-slice screen
 
 On the retained Apple M4 Max, both registered accumulator variants passed
@@ -34,7 +214,7 @@ control, so the gain comes from avoiding its register-heavy 224-bit live state,
 not dispatch geometry. The complete member still needs the remaining rounds,
 host transcript bridge, and end-to-end alternating validation before promotion.
 
-## Frozen denominator and local gate
+## Durable denominator and historical local analysis
 
 The production artifact
 `benchmark-runs/metal-piop-eval/20260806-133709-697013/result.json` was recorded
@@ -153,7 +333,7 @@ the round polynomial, and draws the next challenge. The Metal adapter receives
 the pending challenge on the next `prove_round` call. It never hashes or draws
 on device, and `finish_rounds` applies the final challenge exactly once.
 
-## Preferred resident PIOP architecture: stage-1 partial-q handoff
+## Historical resident PIOP architecture: dense-SoA partial-q handoff
 
 There is a stronger producer boundary than a stage-3 scan. Stage 1 already
 evaluates all 35 outer-remainder openings at
@@ -647,9 +827,10 @@ The integration harness must cover:
 ## Kill and escalation bars
 
 - Reject Metal if the complete fair-boundary log-26 median exceeds
-  `19.981116400 ms`.
-- Continue toward 8x whenever the complete result reaches
-  `12.488197750 ms` or capture plus measured fixed overhead makes it credible.
+  `19.981116 ms`.
+- Treat `14.272226 ms` as the working target and continue toward 8x whenever
+  the complete result reaches `12.488197 ms` or capture plus measured fixed
+  overhead makes it credible.
 - Reject `AliasLinear` if the midpoint handoff cannot fail closed on table and
   point identity; retain `DirectLinear` for correctness.
 - Redesign the q build if it misses its matched 80%-roof cap or capture shows

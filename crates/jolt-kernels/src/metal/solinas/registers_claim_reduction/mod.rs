@@ -1,8 +1,10 @@
 //! Checked geometry, roof model, midpoint-alias contract, and scalar oracle for
 //! registers claim reduction.
 
+mod resident_bcsr;
 mod runtime;
 
+pub use resident_bcsr::*;
 pub use runtime::*;
 
 #[cfg(test)]
@@ -31,6 +33,7 @@ pub const REGISTERS_CLAIM_AKITA_OFFSET: u32 = 0xffff_a7f7;
 
 pub const REGISTERS_CLAIM_FROZEN_CPU_NS: u64 = 99_905_582;
 pub const REGISTERS_CLAIM_FIVE_X_GATE_NS: u64 = 19_981_116;
+pub const REGISTERS_CLAIM_SEVEN_X_GATE_NS: u64 = 14_272_226;
 pub const REGISTERS_CLAIM_EIGHT_X_GATE_NS: u64 = 12_488_197;
 pub const REGISTERS_CLAIM_HALF_WIDTH_FLOOR_PER_SECOND: u64 = 26_272_000_000;
 pub const REGISTERS_CLAIM_COPY_BYTES_PER_SECOND: u64 = 451_701_710_520;

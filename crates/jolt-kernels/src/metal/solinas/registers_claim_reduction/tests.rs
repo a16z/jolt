@@ -70,6 +70,29 @@ fn assert_unfactored_oracle(rows: usize, gamma: AkitaField) {
 }
 
 #[test]
+fn resident_bcsr_log26_contract_is_exact() {
+    assert_eq!(size_of::<RegistersClaimBcsrComponentParams>(), 32);
+    assert_eq!(size_of::<RegistersClaimBcsrReduceParams>(), 16);
+    assert_eq!(size_of::<RegistersClaimBcsrMidpointParams>(), 32);
+    assert_eq!(BCSR_COMPONENT_THREADGROUP_BYTES, 6_144);
+    assert_eq!(BCSR_COMPONENT_THREADGROUPS, 8_192);
+    assert_eq!(BCSR_COMPONENT_REDUCE_THREADGROUPS, 96);
+    assert_eq!(BCSR_MIDPOINT_THREADGROUPS, 8_192);
+
+    let plan = RegistersClaimBcsrPlan::log26().unwrap();
+    assert_eq!(plan.component_partial_bytes, 100_663_296);
+    assert_eq!(plan.component_carrier_bytes, 393_216);
+    assert_eq!(plan.midpoint_output_bytes, 131_072);
+    assert_eq!(plan.roof.optimistic_floor_ns, 6_519_528);
+    assert_eq!(plan.roof.no_cache_floor_ns, 7_937_740);
+
+    assert_eq!(
+        REGISTERS_CLAIM_LOG26_SOURCE_COSTS.map(RegistersClaimSourceCost::charged_source_bytes),
+        [3_758_096_384, 2_872_865_208, 1_560_514_104]
+    );
+}
+
+#[test]
 fn linear_q_abi_and_slots_are_fixed() {
     assert_eq!(REGISTERS_CLAIM_AKITA_OFFSET, 0xffff_a7f7);
     assert_eq!(size_of::<RegistersClaimParams>(), 16);
