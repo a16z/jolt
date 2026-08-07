@@ -44,14 +44,20 @@ pub(in crate::expand) fn expand_sw(
         format_i_imm(-1),
     );
     asm.expand_i(SourceInstructionKind::SRLI, v3.operand(), v3.operand(), 32);
-    asm.expand_r(
-        SourceInstructionKind::SLL,
+    asm.expand_i(
+        SourceInstructionKind::VirtualPow2,
+        v0.operand(),
+        v0.operand(),
+        0,
+    );
+    asm.emit_r(
+        JoltInstructionKind::MUL,
         v3.operand(),
         v3.operand(),
         v0.operand(),
     );
-    asm.expand_r(
-        SourceInstructionKind::SLL,
+    asm.emit_r(
+        JoltInstructionKind::MUL,
         v0.operand(),
         reg(rs2(instruction)?),
         v0.operand(),

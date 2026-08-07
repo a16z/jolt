@@ -55,26 +55,38 @@ pub(in crate::expand) fn expand_byte_load(
         format_i_imm(-8),
     );
     asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // Under the RV64 shift mask, ((address ^ 7) << 3) is
-    // (7 - byte_offset) * 8, moving the selected byte to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 7);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
-        SourceInstructionKind::SLL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
-    asm.expand_i(
-        if signed {
-            SourceInstructionKind::SRAI
-        } else {
-            SourceInstructionKind::SRLI
-        },
-        reg(rd(instruction)?),
-        v1.operand(),
-        56,
-    );
+    if signed {
+        // Under the RV64 shift mask, ((address ^ 7) << 3) is
+        // (7 - byte_offset) * 8, moving the selected byte to the high end.
+        asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 7);
+        asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+        asm.expand_r(
+            SourceInstructionKind::SLL,
+            v1.operand(),
+            v1.operand(),
+            v0.operand(),
+        );
+        asm.expand_i(
+            SourceInstructionKind::SRAI,
+            reg(rd(instruction)?),
+            v1.operand(),
+            56,
+        );
+    } else {
+        asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
+        asm.expand_r(
+            SourceInstructionKind::SRL,
+            v1.operand(),
+            v1.operand(),
+            v0.operand(),
+        );
+        asm.expand_i(
+            SourceInstructionKind::ANDI,
+            reg(rd(instruction)?),
+            v1.operand(),
+            0xff,
+        );
+    }
     asm.release_many([v0, v1]);
 
     asm.finalize()
@@ -513,14 +525,20 @@ pub(in crate::expand) fn expand_narrow_store(
     asm.expand_u(SourceInstructionKind::LUI, v0.operand(), mask);
     // As in the word-store and AMO paths, masked-XOR replacement updates only
     // the selected narrow lane.
-    asm.expand_r(
-        SourceInstructionKind::SLL,
+    asm.expand_i(
+        SourceInstructionKind::VirtualPow2,
+        v3.operand(),
+        v3.operand(),
+        0,
+    );
+    asm.emit_r(
+        JoltInstructionKind::MUL,
         v0.operand(),
         v0.operand(),
         v3.operand(),
     );
-    asm.expand_r(
-        SourceInstructionKind::SLL,
+    asm.emit_r(
+        JoltInstructionKind::MUL,
         v3.operand(),
         reg(rs2(instruction)?),
         v3.operand(),
