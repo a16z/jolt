@@ -1,18 +1,18 @@
 use crate::zkvm::instruction::{InstructionFlags, NUM_INSTRUCTION_FLAGS};
-use tracer::instruction::{virtual_change_divisor_w::VirtualChangeDivisorW, RISCVCycle};
+use tracer::instruction::{virtual_negate_if::VirtualNegateIf, RISCVCycle};
 
-use crate::zkvm::lookup_table::virtual_change_divisor_w::VirtualChangeDivisorWTable;
+use crate::zkvm::lookup_table::virtual_negate_if::VirtualNegateIfTable;
 use crate::zkvm::lookup_table::LookupTables;
 
 use super::{CircuitFlags, Flags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS};
 
-impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualChangeDivisorW {
+impl<const XLEN: usize> InstructionLookup<XLEN> for VirtualNegateIf {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(VirtualChangeDivisorWTable.into())
+        Some(VirtualNegateIfTable.into())
     }
 }
 
-impl Flags for VirtualChangeDivisorW {
+impl Flags for VirtualNegateIf {
     fn circuit_flags(&self) -> [bool; NUM_CIRCUIT_FLAGS] {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::WriteLookupOutputToRD] = true;
@@ -32,23 +32,22 @@ impl Flags for VirtualChangeDivisorW {
     }
 }
 
-impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> {
+impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualNegateIf> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (self.register_state.rs1, self.register_state.rs2 as i128)
+        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+        (
+            self.register_state.rs1 & mask,
+            (self.register_state.rs2 & mask) as i128,
+        )
     }
 
     fn to_lookup_output(&self) -> u64 {
-        let (dividend, divisor) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        // `as i32` truncates to the low 32 bits of each operand — the
-        // `W` semantics.
-        let dividend = dividend as i32;
-        let divisor = divisor as i32;
-
-        if dividend == i32::MIN && divisor == -1 {
-            1
+        let (sign_source, value) = LookupQuery::<XLEN>::to_instruction_inputs(self);
+        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+        if sign_source & (1 << (XLEN - 1)) == 0 {
+            value as u64
         } else {
-            // Sign-extend the 32-bit result to 64 bits
-            divisor as i64 as u64
+            (value as u64).wrapping_neg() & mask
         }
     }
 }
@@ -64,11 +63,11 @@ mod test {
 
     #[test]
     fn materialize_entry() {
-        materialize_entry_test::<Fr, VirtualChangeDivisorW>();
+        materialize_entry_test::<Fr, VirtualNegateIf>();
     }
 
     #[test]
     fn lookup_output_matches_trace() {
-        lookup_output_matches_trace_test::<VirtualChangeDivisorW>();
+        lookup_output_matches_trace_test::<VirtualNegateIf>();
     }
 }

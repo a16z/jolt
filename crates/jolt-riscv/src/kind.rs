@@ -358,10 +358,7 @@ macro_rules! source_extension_for_marker {
     (VirtualHostIO) => {
         Some(SourceExtension::JoltCustom)
     };
-    (VirtualChangeDivisor) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualZeroExtendWord) => {
@@ -787,10 +784,7 @@ macro_rules! source_side_effects_for_marker {
     (VirtualAdviceLen) => {
         false
     };
-    (VirtualChangeDivisor) => {
-        false
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         false
     };
     (VirtualZeroExtendWord) => {
@@ -1012,10 +1006,7 @@ macro_rules! jolt_target_extension_for_marker {
     (AssertMulUNoOverflow) => {
         Some(JoltTargetExtension::VirtualAssertions)
     };
-    (VirtualChangeDivisor) => {
-        Some(JoltTargetExtension::VirtualArithmetic)
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (VirtualZeroExtendWord) => {
@@ -1267,10 +1258,7 @@ macro_rules! jolt_side_effects_for_marker {
     (VirtualAdviceLen) => {
         false
     };
-    (VirtualChangeDivisor) => {
-        false
-    };
-    (VirtualChangeDivisorW) => {
+    (VirtualNegateIf) => {
         false
     };
     (VirtualZeroExtendWord) => {

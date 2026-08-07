@@ -18,9 +18,9 @@ pub(in crate::expand) fn expand_signed_div_rem(
     let dividend = word_dividend.map_or(rs1, TempId::operand);
     let divisor = word_divisor.map_or(rs2, TempId::operand);
     let quotient = asm.allocate()?;
-    let dividend_sign = asm.allocate()?;
+    let sign_source = asm.allocate()?;
     let abs_dividend = asm.allocate()?;
-    let divisor_sign = asm.allocate()?;
+    let quotient_magnitude = asm.allocate()?;
     let abs_divisor = asm.allocate()?;
     let product = asm.allocate()?;
 
@@ -57,77 +57,47 @@ pub(in crate::expand) fn expand_signed_div_rem(
         );
     }
 
-    asm.emit_i(
-        JoltInstructionKind::VirtualMovsign,
-        dividend_sign.operand(),
-        dividend,
-        0,
-    );
-    asm.expand_r(
-        SourceInstructionKind::XOR,
+    asm.emit_r(
+        JoltInstructionKind::VirtualNegateIf(jolt_riscv::instructions::VirtualNegateIf(())),
         abs_dividend.operand(),
         dividend,
-        dividend_sign.operand(),
+        dividend,
     );
-    asm.expand_r(
-        SourceInstructionKind::SUB,
-        abs_dividend.operand(),
-        abs_dividend.operand(),
-        dividend_sign.operand(),
-    );
-    asm.emit_i(
-        JoltInstructionKind::VirtualMovsign,
-        divisor_sign.operand(),
-        divisor,
-        0,
-    );
-    asm.expand_r(
-        SourceInstructionKind::XOR,
+    asm.emit_r(
+        JoltInstructionKind::VirtualNegateIf(jolt_riscv::instructions::VirtualNegateIf(())),
         abs_divisor.operand(),
         divisor,
-        divisor_sign.operand(),
-    );
-    asm.expand_r(
-        SourceInstructionKind::SUB,
-        abs_divisor.operand(),
-        abs_divisor.operand(),
-        divisor_sign.operand(),
+        divisor,
     );
 
-    let quotient_magnitude = if remainder_output {
-        quotient
+    let proved_quotient = if remainder_output {
+        quotient.operand()
     } else {
         asm.expand_r(
             SourceInstructionKind::XOR,
-            dividend_sign.operand(),
-            dividend_sign.operand(),
-            divisor_sign.operand(),
+            sign_source.operand(),
+            dividend,
+            divisor,
         );
-        asm.expand_r(
-            SourceInstructionKind::XOR,
-            divisor_sign.operand(),
+        asm.emit_r(
+            JoltInstructionKind::VirtualNegateIf(jolt_riscv::instructions::VirtualNegateIf(())),
+            quotient_magnitude.operand(),
+            sign_source.operand(),
             quotient.operand(),
-            dividend_sign.operand(),
         );
-        asm.expand_r(
-            SourceInstructionKind::SUB,
-            divisor_sign.operand(),
-            divisor_sign.operand(),
-            dividend_sign.operand(),
-        );
-        divisor_sign
+        quotient_magnitude.operand()
     };
 
     asm.expand_b(
         SourceInstructionKind::VirtualAssertMulUNoOverflow,
-        quotient_magnitude.operand(),
+        proved_quotient,
         abs_divisor.operand(),
         0,
     );
     asm.expand_r(
         SourceInstructionKind::MUL,
         product.operand(),
-        quotient_magnitude.operand(),
+        proved_quotient,
         abs_divisor.operand(),
     );
     asm.expand_b(
@@ -150,17 +120,11 @@ pub(in crate::expand) fn expand_signed_div_rem(
     );
 
     if remainder_output {
-        asm.expand_r(
-            SourceInstructionKind::XOR,
-            divisor_sign.operand(),
-            product.operand(),
-            dividend_sign.operand(),
-        );
-        asm.expand_r(
-            SourceInstructionKind::SUB,
+        asm.emit_r(
+            JoltInstructionKind::VirtualNegateIf(jolt_riscv::instructions::VirtualNegateIf(())),
             reg(rd(instruction)?),
-            divisor_sign.operand(),
-            dividend_sign.operand(),
+            dividend,
+            product.operand(),
         );
     } else if word {
         asm.expand_i(
@@ -182,9 +146,9 @@ pub(in crate::expand) fn expand_signed_div_rem(
 
     asm.release_many([
         quotient,
-        dividend_sign,
+        sign_source,
         abs_dividend,
-        divisor_sign,
+        quotient_magnitude,
         abs_divisor,
         product,
     ]);

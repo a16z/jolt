@@ -40,8 +40,7 @@ pub mod unsigned_less_than_equal;
 pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_unsigned_remainder;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
+pub mod virtual_negate_if;
 pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
@@ -78,8 +77,7 @@ use unsigned_less_than_equal::UnsignedLessThanEqualTable;
 use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
-use virtual_change_divisor::VirtualChangeDivisorTable;
-use virtual_change_divisor_w::VirtualChangeDivisorWTable;
+use virtual_negate_if::VirtualNegateIfTable;
 use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualROTRTable;
 use virtual_rotrw::VirtualROTRWTable;
@@ -142,8 +140,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualSRA(VirtualSRATable<XLEN>),
     VirtualROTR(VirtualROTRTable<XLEN>),
     VirtualROTRW(VirtualROTRWTable<XLEN>),
-    VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
-    VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
+    VirtualNegateIf(VirtualNegateIfTable<XLEN>),
     MulUNoOverflow(MulUNoOverflowTable<XLEN>),
     VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
@@ -191,8 +188,7 @@ macro_rules! dispatch {
             Self::VirtualSRA($t) => $expr,
             Self::VirtualROTR($t) => $expr,
             Self::VirtualROTRW($t) => $expr,
-            Self::VirtualChangeDivisor($t) => $expr,
-            Self::VirtualChangeDivisorW($t) => $expr,
+            Self::VirtualNegateIf($t) => $expr,
             Self::MulUNoOverflow($t) => $expr,
             Self::VirtualXORROT32($t) => $expr,
             Self::VirtualXORROT24($t) => $expr,
