@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786070562712,
+  "lastUpdate": 1786125248191,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -133186,6 +133186,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866324,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "zk_albi@proton.me",
+            "name": "Alberto Centelles",
+            "username": "Acentelles"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "41849540904a34d34106fe4d7f24c5a150473300",
+          "message": "test(jolt-eval): trace-generation benchmarks and baseline harness (x86-tracer slice 0) (#1727)\n\n* feat(jolt-eval): trace-generation benchmarks and baseline harness (x86-tracer slice 0)\n\nBackend-generic trace-gen measurement infrastructure per\nspecs/x86-tracer-backend.md AC1, landed before any x86 codegen:\n\n- TraceGenObjective + build_trace_setup measuring eager\n  ExecutionBackend::trace with guest build and JoltProgram construction\n  excluded from the timed region.\n- Criterion bench targets trace_gen_fibonacci / trace_gen_sha2_chain\n  (prover_time_* precedent: registered via sync_targets.sh, deliberately\n  not in the optimizer enum), rows/s via Throughput::Elements; x86 and\n  x86_fast ids join in slice 5.\n- Guest inputs pinned to the e2e_profiling.rs defaults (fibonacci\n  n=400000, sha2-chain sized to ~15M cycles); new GuestConfig::label()\n  gives objective-neutral names, bench_name defaults preserved.\n- New profile-guest configs: sha2, sha3, sha3-chain, btreemap.\n- trace-gen-baseline bin: subprocess-per-guest throughput + peak RSS\n  (VmHWM on Linux, getrusage fallback elsewhere), markdown table output.\n\n(cherry picked from commit c273f095ffea3f85c3b0f9387ffaf10feabfd318)\n\n* bench(jolt-eval): pin TRACER_PARALLEL in trace-generation harnesses\n\ncrate::trace env-dispatches to the two-pass parallel pipeline; unset it\nin the benches and the baseline bin so measurements are\nenvironment-independent.\n\n* docs(specs): carry the x86-tracer-backend spec (#1713) with its implementation stack\n\nCurrent spec text as of the PR head (includes the RowEmitter seam,\nAlternative 11 copy-and-patch stencils, and the fused fast-mode groups\ndesign). The spec merges via #1713; this copy rides along so the\nimplementation stack is self-describing (and spec-tracking labels it\ncorrectly).\n\n* fix(jolt-eval): keep jolt-eval-macros out of the non-linux dependency table\n\nThe peak-RSS helper's `libc` dependency was added as a\n`[target.'cfg(all(unix, not(target_os = \"linux\")))'.dependencies]` table\ninserted in the middle of `[dependencies]`, so every entry after it —\nincluding `jolt-eval-macros` — became non-linux-only. The crate built on\nmacOS and failed on linux with 19 errors, `cannot find module or crate\njolt_eval_macros` among them.\n\nMove the target table below the dependency list, where a table header\ncannot swallow unrelated entries.\n\n* test(jolt-eval): decompose the trace-generation baseline\n\nReview follow-up on #1727. The seam total alone is not an interpretable\ndenominator for AC8/AC9: the `Cycle` to `TraceRow` conversion is 55-86%\nof it across the profile guests, and a backend emitting `TraceRow`\ndirectly skips that work entirely. Reporting only the total would let a\nbackend bank the conversion share as if it were codegen speedup.\n\n- `raw_trace_cycles`: the `tracer::trace` call `TracerBackend::trace`\n  wraps, without the conversion. One helper behind both consumers so the\n  bench and the harness cannot drift apart.\n- `reference_raw` Criterion id beside `reference` in both trace_gen\n  targets, same group and throughput, so the pair decomposes the seam.\n- Baseline table gains raw seconds, raw MHz and the conversion share.\n\nAlso from review:\n\n- Provenance in the footer (CPU model, core count, commit hash with a\n  dirty marker) and per-guest min-max next to the median. A table quoted\n  months from now needs to say which machine produced it, and the spread\n  makes a contended run visible instead of silently low.\n- Peak RSS is `Option<u64>`: a failed parse or an unsupported platform\n  rendered `0.0 MiB`, which reads as a measurement rather than the\n  absence of one. It now prints `n/a`.\n- The measurement JSON carries a `BASELINE_JSON: ` marker and the parser\n  takes the last marked line. Guests share this stdout and\n  `handle_jolt_print` emits without a trailing newline, so a guest ending\n  in `print!` would have prepended itself to the JSON rather than merely\n  adding a line. Latent today; none of the six baseline guests print.\n- Both bench ids assert the returned row count equals `setup.trace_len`.\n  `Throughput::Elements` is fixed at setup, so a backend id joining this\n  group with a different row count would report MHz against the wrong\n  denominator. Row equality is AC5's job; this keeps the units honest.\n- Footnotes: the memory config actually used (stack 4 KiB, heap 32 KiB\n  from `GuestConfig`, not the 32 MiB `Program::new` default), and that\n  MHz is comparable only within a guest, since four of the six are under\n  10^5 rows where per-trace fixed costs are a visible share.\n\n* test(jolt-eval): one-shot AC1 baseline runner for a linux-x86_64 box\n\nAC1 wants the reference numbers recorded before codegen lands, measured\non linux-x86_64 rather than a dev machine. Renting a box for that is a\nshort session, so the setup should not be the expensive part: this takes\na bare host to a paste-ready table (toolchain, the ZeroOS musl toolchain\nthe guest builds shell out to, the CLI from this checkout, serial mode\npinned) and writes /tmp/ac1-baseline.md.\n\nIt refuses to run on non-x86_64 or non-Linux instead of emitting a table\nthat looks authoritative and is not comparable, and it warns when the\nhost is virtualized or the governor is not `performance` — a baseline\nthat later gates AC8/AC9 has to be reproducible, and a noisy-neighbour\nvCPU is not.",
+          "timestamp": "2026-08-07T12:45:58-04:00",
+          "tree_id": "e10db729a50460c5a8d516726f63b7f35bf92462",
+          "url": "https://github.com/a16z/jolt/commit/41849540904a34d34106fe4d7f24c5a150473300"
+        },
+        "date": 1786125242581,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9355,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 870756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.322,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 501924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 497264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 497580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7226,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5844,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 509184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.3384,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502656,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 6.1811,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 193652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4169,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 863568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5566,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 510964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.46,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 501140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.5607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8002,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.8139,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1109468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.3686,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 646544,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 103.7046,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2107744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4841,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.563,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 506904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.385,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866224,
             "unit": "KB",
             "extra": ""
           }
