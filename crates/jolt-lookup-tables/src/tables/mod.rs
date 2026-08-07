@@ -29,6 +29,7 @@ pub mod prefixes;
 pub mod range_check;
 pub mod range_check_aligned;
 pub mod shift_right_bitmask;
+pub mod shift_right_bitmask_w;
 pub mod sign_extend_half_word;
 pub mod sign_mask;
 pub mod signed_greater_than_equal;
@@ -46,7 +47,9 @@ pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
 pub mod virtual_sra;
+pub mod virtual_sraw;
 pub mod virtual_srl;
+pub mod virtual_srlw;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;
 pub mod word_alignment;
@@ -68,6 +71,7 @@ use pow2_w::Pow2WTable;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
+use shift_right_bitmask_w::ShiftRightBitmaskWTable;
 use sign_extend_half_word::SignExtendHalfWordTable;
 use sign_mask::SignMaskTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
@@ -84,7 +88,9 @@ use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualROTRTable;
 use virtual_rotrw::VirtualROTRWTable;
 use virtual_sra::VirtualSRATable;
+use virtual_sraw::VirtualSRAWTable;
 use virtual_srl::VirtualSRLTable;
+use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
 use virtual_xor_rotw::VirtualXORROTWTable;
 use word_alignment::WordAlignmentTable;
@@ -153,6 +159,9 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTW12(VirtualXORROTWTable<XLEN, 12>),
     VirtualXORROTW8(VirtualXORROTWTable<XLEN, 8>),
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
+    ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
+    VirtualSRLW(VirtualSRLWTable<XLEN>),
+    VirtualSRAW(VirtualSRAWTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -202,6 +211,9 @@ macro_rules! dispatch {
             Self::VirtualXORROTW12($t) => $expr,
             Self::VirtualXORROTW8($t) => $expr,
             Self::VirtualXORROTW7($t) => $expr,
+            Self::ShiftRightBitmaskW($t) => $expr,
+            Self::VirtualSRLW($t) => $expr,
+            Self::VirtualSRAW($t) => $expr,
         }
     };
 }

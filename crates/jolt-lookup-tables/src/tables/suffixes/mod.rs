@@ -42,8 +42,10 @@ mod right_shift_w_helper;
 mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
+mod sign_extension_w;
 mod two_lsb;
 mod upper_word;
+mod x31_y0;
 mod xor;
 mod xor_rot;
 mod xor_rotw;
@@ -80,8 +82,10 @@ use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use sign_extension_w::SignExtensionWSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
@@ -148,6 +152,8 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    SignExtensionW,
+    X31Y0,
 }
 
 /// Total number of suffix variants.
@@ -223,6 +229,8 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::SignExtensionW => SignExtensionWSuffix::suffix_mle(b),
+            Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
         }
     }
 

@@ -20,6 +20,8 @@ pub mod format_t;
 pub mod format_u;
 pub mod format_virtual_right_shift_i;
 pub mod format_virtual_right_shift_r;
+pub mod format_virtual_right_shift_w_i;
+pub mod format_virtual_right_shift_w_r;
 
 pub trait InstructionFormat:
     Default + Debug + From<NormalizedOperands> + Into<NormalizedOperands>

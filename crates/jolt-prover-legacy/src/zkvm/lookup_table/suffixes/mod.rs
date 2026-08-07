@@ -26,6 +26,7 @@ use right_shift_w::RightShiftWSuffix;
 use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use sign_extension_w::SignExtensionWSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
 use and::AndSuffix;
@@ -36,6 +37,7 @@ use one::OneSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
@@ -72,8 +74,10 @@ pub mod right_shift_w_helper;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod sign_extension_w;
 pub mod two_lsb;
 pub mod upper_word;
+pub mod x31_y0;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotw;
@@ -131,6 +135,8 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    SignExtensionW,
+    X31Y0,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -208,6 +214,8 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::SignExtensionW => SignExtensionWSuffix::<XLEN>::suffix_mle(b),
+            Suffixes::X31Y0 => X31Y0Suffix::<XLEN>::suffix_mle(b),
         }
     }
 }

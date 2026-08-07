@@ -42,8 +42,11 @@ pub mod right_shift_w;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod sign_extension_w;
+pub mod srlw_sext;
 pub mod two_lsb;
 pub mod upper_word;
+pub mod word_msb;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotw;
@@ -155,6 +158,9 @@ pub enum Prefixes {
     XorRotW8,
     XorRotW12,
     XorRotW16,
+    WordMsb,
+    SignExtensionW,
+    SrlwSext,
 }
 
 /// Total number of prefix variants.
@@ -216,6 +222,9 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
             Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
+            Prefixes::WordMsb => word_msb::WordMsbPrefix::$method($($args),*),
+            Prefixes::SignExtensionW => sign_extension_w::SignExtensionWPrefix::$method($($args),*),
+            Prefixes::SrlwSext => srlw_sext::SrlwSextPrefix::$method($($args),*),
         }
     };
 }

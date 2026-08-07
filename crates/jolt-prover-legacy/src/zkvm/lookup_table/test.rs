@@ -46,6 +46,13 @@ pub fn gen_bitmask_lookup_index(rng: &mut StdRng) -> u128 {
     interleave_bits(x, y)
 }
 
+pub fn gen_bitmask_w_lookup_index(rng: &mut StdRng) -> u128 {
+    let x = rng.next_u64();
+    let shift = rng.gen_range(0..XLEN / 2);
+    let y = ((1u128 << (XLEN / 2)) - (1u128 << shift)) as u64;
+    interleave_bits(x, y)
+}
+
 pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomposition<XLEN>>() {
     const ROUNDS_PER_PHASE: usize = 16;
     let total_phases: usize = XLEN * 2 / ROUNDS_PER_PHASE;

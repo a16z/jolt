@@ -439,6 +439,21 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRotW7) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualShiftRightBitmaskW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSrlw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSrliw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSraw) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualSraiw) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (FieldAdd) => {
         Some(SourceExtension::FieldInline)
     };
@@ -868,6 +883,21 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRotW7) => {
         false
     };
+    (VirtualShiftRightBitmaskW) => {
+        false
+    };
+    (VirtualSrlw) => {
+        false
+    };
+    (VirtualSrliw) => {
+        false
+    };
+    (VirtualSraw) => {
+        false
+    };
+    (VirtualSraiw) => {
+        false
+    };
     (FieldAdd) => {
         true
     };
@@ -1094,6 +1124,21 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRotW7) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualShiftRightBitmaskW) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualSrlw) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualSrliw) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualSraw) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualSraiw) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (FieldAdd) => {
@@ -1346,6 +1391,21 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRotW7) => {
+        false
+    };
+    (VirtualShiftRightBitmaskW) => {
+        false
+    };
+    (VirtualSrlw) => {
+        false
+    };
+    (VirtualSrliw) => {
+        false
+    };
+    (VirtualSraw) => {
+        false
+    };
+    (VirtualSraiw) => {
         false
     };
 }
