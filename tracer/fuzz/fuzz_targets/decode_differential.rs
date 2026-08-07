@@ -263,7 +263,8 @@ fn matches_program_kind_tracer_mask(kind: SourceInstructionKind, word: u32) -> b
             matches_tracer_mask::<tracer::instruction::xori::XORI>(word)
         }
         // Every word-decodable kind in this build (no `field-inline`, so no
-        // FIELD_* arm) is mapped above; the remaining Virtual* kinds are
+        // FIELD_* arm) is mapped above; `InlineDispatch` is skipped by the
+        // caller before the lookup, and the remaining Virtual* kinds are
         // sequence-only and never come out of `decode_instruction`. A silent
         // `true` here would wave a future word-decodable kind through with a
         // wrong mask assumption, so fail loudly instead.
@@ -288,6 +289,13 @@ fuzz_target!(|data: &[u8]| {
     let Ok(program_instruction) = program_result else {
         return;
     };
+    // Inline classification is a decoder-profile choice, not a shared ISA
+    // decode; skip it before the mask lookup, which has no tracer entry for
+    // `InlineDispatch` (post-#1717 `decode_instruction` classifies inline
+    // opcodes itself instead of leaving them to expansion).
+    if program_instruction.kind() == SourceInstructionKind::Inline {
+        return;
+    }
     // `decode_instruction` is allowed to classify structurally-valid words
     // whose reserved operand bits fail the tracer constructor's exact mask.
     if !matches_program_kind_tracer_mask(program_instruction.kind(), word) {
@@ -297,11 +305,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let tracer_source = tracer_instruction.source_instruction();
-    // Inline classification is a decoder-profile choice, not a shared ISA
-    // decode; skip those rather than flag a benign difference.
-    if tracer_source.kind() == SourceInstructionKind::Inline
-        || program_instruction.kind() == SourceInstructionKind::Inline
-    {
+    // Same skip for the tracer side: its decoder may classify a word as
+    // inline that jolt-program decodes structurally.
+    if tracer_source.kind() == SourceInstructionKind::Inline {
         return;
     }
     assert_eq!(
