@@ -170,6 +170,57 @@ The cache costs a `4T * 16`-byte write and read. It is admitted only if the
 measured end-to-end cycle wall wins; the product saving alone is not evidence
 of a net win.
 
+### First dense transition: factor then sample
+
+The first unregistered transition binds the five factor-major tables from
+`N = 2^25` to `M = 2^24` and produces the next Product5 message in the same
+command. Keep the persistent destination unweighted. Weight only factor zero's
+threadgroup copy by `e_in`; after tile reduction, multiply each of the five
+sample columns by `e_out` exactly once. Applying `e_out` in the main kernel
+would repeat the same product for every tile.
+
+Two launch shapes remain for the first screen:
+
+| shape | pairs per threadgroup | main threadgroups | dynamic memory |
+| --- | ---: | ---: | ---: |
+| tile-32 | 32 | 262,144 | 5,120 B |
+| tile-64 | 64 | 131,072 | 10,240 B |
+
+Each 160-thread group assigns one SIMDgroup to each factor. It reads four
+source fields per pair, writes two bound fields, and retains both endpoints in
+factor-major threadgroup scratch. The five SIMDgroups then independently
+accumulate `q(1)`, `q(2)`, `q(3)`, `q(4)`, and `q(infinity)`. A second dispatch
+collapses tiles into 8,192 outer partials and applies `e_out`; the existing
+Product5 reducer performs `8192 -> 256 -> 8 -> 1`. Main, tile collapse, and
+the three reductions use one encoder and command buffer, with dead tile
+storage reused as reduction scratch.
+
+The ABI is factor-major source and destination, `e_in`, `e_out`, unweighted
+tile partials, and one 32-byte parameter block containing `N`, `M`, both
+equality lengths, tile width, tiles per outer coordinate, total tiles, and a
+zero reserved word. Admission validates `N = 4 * |e_in| * |e_out|`, `M=N/2`,
+tile width 32 or 64, exact divisibility, and every derived count fitting `u32`.
+The message field order is fixed as `[q(1), q(2), q(3), q(4), q(infinity)]`.
+
+The exact useful work is 268,476,416 full-field products: 83,886,080 for five
+binds, 16,777,216 for the two factor-zero endpoint weights, 167,772,160 for
+five four-product samples, and 40,960 outer weights. At 18.10 Gproduct/s the
+compute floor is 14.832952 ms. Tile-64 moves 4,048,856,400 logical large-state
+bytes, a copy-roof floor of 8.963562 ms, so this transition should be
+compute-bound. Its persistent peak, including resident source and destination,
+both equality tables, and the largest partial buffers, is 4,037,820,416 bytes
+before allocator padding; only 10,240 bytes are threadgroup-local.
+
+The first implementation is a probe, not a production registration. It must
+match the independent dense transition oracle, the Akita/BigUint Product5
+oracle, and the current Metal Product5 path for all five bound tables and
+message fields. Prepare once, allocate and upload nothing in the timed region,
+and measure the complete five-dispatch command. Promote the better fixed tile
+only if median GPU-active time is at most 18.6 ms, there are no spills, and a
+capture records registers, resident SIMDgroups, external bytes, and achieved
+products per second. If both shapes miss 18.6 ms, kill this factor-then-sample
+candidate before implementing cache-writing successors.
+
 ## 5. Falsification and promotion
 
 Implementation order is deliberately narrow:
