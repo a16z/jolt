@@ -15,7 +15,7 @@
 
 use crate::NUM_LANES;
 use jolt_inlines_sdk::host::{
-    instruction::andn::ANDN,
+    instruction::{andn::ANDN, virtual_xor_rot::VirtualXORROTL1},
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
     InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{Imm, Reg},
@@ -165,10 +165,7 @@ impl Keccak256SequenceBuilder {
             let d_reg = *self.vr[55 + x];
             let c_prev = *self.vr[50 + (x + 4) % 5];
             let c_next = *self.vr[50 + (x + 1) % 5];
-            let temp_rot_reg = *self.vr[65]; // Use a scratch register for the rotation result
-
-            self.asm.rotl64(Reg(c_next), 1, temp_rot_reg);
-            self.asm.xor(Reg(c_prev), Reg(temp_rot_reg), d_reg);
+            self.asm.emit_r::<VirtualXORROTL1>(d_reg, c_prev, c_next);
         }
 
         // --- A[x,y] ^= D[x] ---

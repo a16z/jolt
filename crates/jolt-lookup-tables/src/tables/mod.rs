@@ -48,6 +48,7 @@ pub mod virtual_rotrw;
 pub mod virtual_sra;
 pub mod virtual_srl;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod word_alignment;
 pub mod xor;
@@ -86,6 +87,7 @@ use virtual_rotrw::VirtualROTRWTable;
 use virtual_sra::VirtualSRATable;
 use virtual_srl::VirtualSRLTable;
 use virtual_xor_rot::VirtualXORROTTable;
+use virtual_xor_rotl1::VirtualXORROTL1Table;
 use virtual_xor_rotw::VirtualXORROTWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
@@ -153,6 +155,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTW12(VirtualXORROTWTable<XLEN, 12>),
     VirtualXORROTW8(VirtualXORROTWTable<XLEN, 8>),
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
+    VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -202,6 +205,7 @@ macro_rules! dispatch {
             Self::VirtualXORROTW12($t) => $expr,
             Self::VirtualXORROTW8($t) => $expr,
             Self::VirtualXORROTW7($t) => $expr,
+            Self::VirtualXORROTL1($t) => $expr,
         }
     };
 }

@@ -47,8 +47,18 @@ pub fn gen_bitmask_lookup_index(rng: &mut StdRng) -> u128 {
 }
 
 pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomposition<XLEN>>() {
-    const ROUNDS_PER_PHASE: usize = 16;
-    let total_phases: usize = XLEN * 2 / ROUNDS_PER_PHASE;
+    prefix_suffix_test_with_phase::<XLEN, F, T>(16);
+}
+
+pub fn prefix_suffix_test_with_phase<
+    const XLEN: usize,
+    F: JoltField,
+    T: PrefixSuffixDecomposition<XLEN>,
+>(
+    rounds_per_phase: usize,
+) {
+    assert_eq!((XLEN * 2) % rounds_per_phase, 0);
+    let total_phases: usize = XLEN * 2 / rounds_per_phase;
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..300 {
@@ -57,9 +67,9 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
         let mut j = 0;
         let mut r: Vec<F> = vec![];
         for phase in 0..total_phases {
-            let suffix_len = (total_phases - 1 - phase) * ROUNDS_PER_PHASE;
+            let suffix_len = (total_phases - 1 - phase) * rounds_per_phase;
             let (mut prefix_bits, suffix_bits) =
-                LookupBits::new(lookup_index, XLEN * 2 - phase * ROUNDS_PER_PHASE)
+                LookupBits::new(lookup_index, XLEN * 2 - phase * rounds_per_phase)
                     .split(suffix_len);
 
             let suffix_evals: Vec<_> = T::default()
@@ -68,7 +78,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 .map(|suffix| SuffixEval::from(F::from_u64(suffix.suffix_mle::<XLEN>(suffix_bits))))
                 .collect();
 
-            for _ in 0..ROUNDS_PER_PHASE {
+            for _ in 0..rounds_per_phase {
                 let mut eval_point = r.clone();
                 let c = if rng.next_u64().is_even() { 0 } else { 2 };
                 eval_point.push(F::from_u32(c));

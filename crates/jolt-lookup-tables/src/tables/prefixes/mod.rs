@@ -46,6 +46,7 @@ pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 
 use jolt_field::Field;
@@ -155,6 +156,9 @@ pub enum Prefixes {
     XorRotW8,
     XorRotW12,
     XorRotW16,
+    XorRotL1Acc,
+    XorRotL1Straddle,
+    XorRotL1Wrap,
 }
 
 /// Total number of prefix variants.
@@ -216,6 +220,9 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
             Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
+            Prefixes::XorRotL1Acc => xor_rotl1::XorRotL1AccPrefix::$method($($args),*),
+            Prefixes::XorRotL1Straddle => xor_rotl1::XorRotL1StraddlePrefix::$method($($args),*),
+            Prefixes::XorRotL1Wrap => xor_rotl1::XorRotL1WrapPrefix::$method($($args),*),
         }
     };
 }

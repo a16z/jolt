@@ -30,5 +30,6 @@ pub mod srai;
 pub mod srl;
 pub mod srli;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 pub mod zero_extend_word;
