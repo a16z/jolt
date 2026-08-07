@@ -17,7 +17,9 @@ mod spartan_outer;
 mod spartan_product;
 
 pub use backend::{MetalBackend, MetalConfig};
-pub use booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
+pub use booleanity::{
+    BooleanityAddressImplementation, BooleanityAddressMetalConfig, BooleanityMetalConfig,
+};
 pub use bytecode_read_raf::{BytecodeReadRafMetalConfig, BytecodeReadRafResidentRows};
 pub use hamming_weight_claim_reduction::HammingWeightMetalConfig;
 pub use instruction_claim_reduction::InstructionClaimReductionMetalConfig;

@@ -77,6 +77,10 @@ pub use booleanity::{
 };
 pub use booleanity::{BooleanityRows, HammingHotRows};
 pub use booleanity_address::{BooleanityAddressPushforward, BooleanityAddressPushforwardConfig};
+pub use booleanity_address_successor::{
+    BooleanityAddressSuccessorConfig, BooleanityAddressSuccessorInvocation,
+    BooleanityAddressSuccessorRuntimeError,
+};
 pub use bytecode_cycle::{
     BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables,
     BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,

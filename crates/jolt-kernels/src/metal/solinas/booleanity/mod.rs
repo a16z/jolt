@@ -222,6 +222,27 @@ pub enum BooleanitySelector {
     FusedIncMsb,
 }
 
+impl BooleanitySelector {
+    pub(crate) const fn packed_hot_plane(self) -> Option<usize> {
+        match self {
+            Self::Lookup { shift } if shift <= 120 && shift.is_multiple_of(8) => {
+                Some(15 - shift as usize / 8)
+            }
+            Self::Bytecode { shift } if shift <= 8 && shift.is_multiple_of(8) => {
+                Some(17 - shift as usize / 8)
+            }
+            Self::Ram { shift } if shift <= 8 && shift.is_multiple_of(8) => {
+                Some(19 - shift as usize / 8)
+            }
+            Self::FusedInc { shift } if shift <= 56 && shift.is_multiple_of(8) => {
+                Some(20 + shift as usize / 8)
+            }
+            Self::FusedIncMsb => Some(28),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BooleanitySequenceConfig {
     pub threads_per_threadgroup: Option<usize>,
