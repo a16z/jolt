@@ -1,4 +1,7 @@
-use std::mem::{align_of, offset_of, size_of};
+use std::{
+    mem::{align_of, offset_of, size_of},
+    time::Duration,
+};
 
 use jolt_field::{AkitaField, CanonicalBytes, CanonicalU64, FromPrimitiveInt};
 
@@ -28,6 +31,84 @@ fn as_u128(value: F) -> u128 {
     let mut bytes = [0u8; 16];
     value.to_bytes_le(&mut bytes);
     u128::from_le_bytes(bytes)
+}
+
+#[derive(Clone, Copy)]
+struct FixtureRowsLease {
+    rows: usize,
+    device_registry_id: u64,
+    allocation_identity: usize,
+}
+
+impl BytecodeReadRafResidentRowsLease for FixtureRowsLease {
+    fn rows(&self) -> usize {
+        self.rows
+    }
+
+    fn device_registry_id(&self) -> u64 {
+        self.device_registry_id
+    }
+
+    fn allocation_identity(&self) -> usize {
+        self.allocation_identity
+    }
+}
+
+fn direct_handoff_fixture() -> (
+    BytecodeReadRafShape,
+    FixtureRowsLease,
+    BytecodeReadRafCsrObservation,
+    ProducerAddressCountsReceipt,
+) {
+    let shape = BytecodeReadRafShape::new(1 << 15, BYTECODE_ADDRESS_DOMAIN).unwrap();
+    let source_lease = FixtureRowsLease {
+        rows: shape.rows(),
+        device_registry_id: 7,
+        allocation_identity: 71,
+    };
+    let status = BytecodeReadRafStatus {
+        short_runs: 0,
+        long_runs: 1,
+        invalid_rows: 0,
+        completed_groups: 1,
+        occurrence_rows: 1 << 15,
+        reserved: [0; 3],
+    };
+    let mut diagnostics = BytecodeReadRafDiagnostics {
+        short_occurrences: 0,
+        long_occurrences: 1 << 15,
+        maximum_run: 1 << 15,
+        reserved: 0,
+        run_histogram: [0; BYTECODE_ADDRESS_RUN_HISTOGRAM_BUCKETS],
+    };
+    diagnostics.run_histogram[15] = 1;
+    let observation = BytecodeReadRafCsrObservation {
+        output: vec![f(7); BYTECODE_ADDRESS_STAGES * shape.addresses()],
+        submit_wall: Duration::from_micros(11),
+        overlap_wall: Duration::from_micros(12),
+        join_wall: Duration::from_micros(13),
+        total_wall: Duration::from_micros(36),
+        gpu_active: Duration::from_micros(17),
+        completed_before_join: true,
+        telemetry: BytecodeReadRafCsrTelemetry {
+            status,
+            diagnostics,
+        },
+        source_rows_device_registry_id: source_lease.device_registry_id,
+        source_rows_storage_id: source_lease.allocation_identity,
+        static_buffer_identities: [101, 102, 103, 104, 105, 106, 107, 108, 109],
+    };
+    let producer_counts = ProducerAddressCountsReceipt {
+        device_registry_id: source_lease.device_registry_id,
+        source_rows_allocation_identity: source_lease.allocation_identity,
+        allocation_identity: 89,
+        generation: 3,
+        initialization_serial: 4,
+        completed_serial: 4,
+        elements: shape.outer_length() * shape.addresses(),
+        bytes: shape.outer_length() * shape.addresses() * BYTECODE_ADDRESS_COUNT_BYTES,
+    };
+    (shape, source_lease, observation, producer_counts)
 }
 
 #[test]
@@ -593,6 +674,8 @@ fn roof_model_requires_topology_and_matched_controls() {
     assert_eq!(projection.nine_accumulator_roof_ns, 520_192);
     assert_eq!(projection.run_compute_roof_ns, 1_981_464_576);
 
+    assert_eq!(BYTECODE_ADDRESS_LOG26_CPU_MEDIAN_NS, 190_915_958);
+    assert_eq!(BYTECODE_ADDRESS_LATEST_DIAGNOSTIC_CPU_NS, 206_118_083);
     assert_eq!(BYTECODE_ADDRESS_FIVE_X_CAP_NS, 38_183_191);
     assert_eq!(BYTECODE_ADDRESS_EIGHT_X_CAP_NS, 23_864_494);
     assert_eq!(BYTECODE_ADDRESS_LOG26_CPU_PREPARE_MEDIAN_NS, 182_930_333);
@@ -603,6 +686,26 @@ fn roof_model_requires_topology_and_matched_controls() {
     assert!(!BytecodeReadRafWorkload::clears_five_x(
         BYTECODE_ADDRESS_FIVE_X_CAP_NS + 1
     ));
+
+    let screen = bytecode_read_raf_log26_direct_consumption_screen().unwrap();
+    assert_eq!(screen.csr_complete_slice_ns, 29_109_917);
+    assert_eq!(screen.current_scheduling_screen_ns, 37_028_168);
+    assert_eq!(screen.current_unmeasured_headroom_ns, 1_155_023);
+    assert_eq!(screen.producer_count_plane_bytes, 67_108_864);
+    assert_eq!(screen.producer_count_consumer_savings_bytes, 2_617_245_696);
+    assert_eq!(
+        screen.producer_count_fully_charged_savings_bytes,
+        2_550_136_832
+    );
+    assert_eq!(screen.producer_count_consumer_savings_floor_ns, 5_794_191);
+    assert_eq!(
+        screen.producer_count_fully_charged_savings_floor_ns,
+        5_645_622
+    );
+    assert_eq!(screen.optimistic_shared_count_screen_ns, 31_233_977);
+    assert_eq!(screen.optimistic_fully_charged_count_screen_ns, 31_382_546);
+    assert!(screen.current_five_x_is_credible());
+    assert!(!screen.current_screen_is_complete_evidence());
 }
 
 #[test]
@@ -932,5 +1035,110 @@ fn message_output_and_round_orientation_match_the_frozen_fixture() {
         (0..BYTECODE_ADDRESS_ROUNDS as u64)
             .rev()
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn direct_handoff_admits_a_complete_owned_observation() {
+    let (shape, source_lease, observation, producer_counts) = direct_handoff_fixture();
+    let expected_checksum = canonical_field_checksum(&observation.output);
+    let handoff =
+        admit_csr_observation(source_lease, shape, observation, 37, Some(producer_counts)).unwrap();
+
+    assert_eq!(BYTECODE_ADDRESS_DIRECT_HANDOFF_SCHEMA_VERSION, 1);
+    assert_eq!(handoff.shape(), shape);
+    assert_eq!(handoff.entry_trace_address(), 37);
+    assert_eq!(handoff.output_checksum(), expected_checksum);
+    assert_eq!(handoff.source_rows_device_registry_id(), 7);
+    assert_eq!(handoff.source_rows_allocation_identity(), 71);
+    assert_eq!(handoff.output_allocation_identity(), 109);
+    assert_eq!(handoff.producer_counts(), Some(producer_counts));
+    assert_eq!(handoff.timing().total_wall, Duration::from_micros(36));
+    assert!(handoff.timing().completed_before_join);
+    assert_eq!(handoff.source_lease().allocation_identity(), 71);
+
+    let tables = handoff.pushforward_tables().collect::<Vec<_>>();
+    assert_eq!(tables.len(), BYTECODE_ADDRESS_STAGES);
+    assert!(tables.iter().all(|table| table.len() == shape.addresses()));
+    assert_eq!(tables[0][0], f(7));
+
+    let committed = BytecodeReadRafHostShellContract::new(true);
+    assert_eq!(committed.address_rounds(), 13);
+    assert_eq!(committed.pushforward_tables(), 9);
+    assert_eq!(committed.raw_value_tables(), 6);
+    assert_eq!(committed.committed_output_values(), 6);
+    assert!(committed.committed_program());
+    let uncommitted = BytecodeReadRafHostShellContract::new(false);
+    assert_eq!(uncommitted.committed_output_values(), 0);
+    assert!(!uncommitted.committed_program());
+
+    let flattened = handoff.into_flattened_pushforwards();
+    assert_eq!(flattened.len(), BYTECODE_ADDRESS_STAGES * shape.addresses());
+}
+
+#[test]
+fn direct_handoff_rejects_stale_or_aliased_resources() {
+    let (shape, source_lease, mut observation, producer_counts) = direct_handoff_fixture();
+    observation.source_rows_storage_id += 1;
+    assert_eq!(
+        admit_csr_observation(source_lease, shape, observation, 0, Some(producer_counts)).err(),
+        Some(BytecodeReadRafHandoffError::ObservationSourceMismatch)
+    );
+
+    let (shape, source_lease, mut observation, producer_counts) = direct_handoff_fixture();
+    observation.static_buffer_identities[4] = source_lease.allocation_identity;
+    assert_eq!(
+        admit_csr_observation(source_lease, shape, observation, 0, Some(producer_counts)).err(),
+        Some(BytecodeReadRafHandoffError::AliasedAllocation(
+            source_lease.allocation_identity
+        ))
+    );
+
+    let (shape, source_lease, observation, mut producer_counts) = direct_handoff_fixture();
+    producer_counts.completed_serial = producer_counts.initialization_serial - 1;
+    assert_eq!(
+        admit_csr_observation(source_lease, shape, observation, 0, Some(producer_counts)).err(),
+        Some(BytecodeReadRafHandoffError::ProducerCountsIncomplete {
+            initialized: 4,
+            completed: 3,
+        })
+    );
+}
+
+#[test]
+fn direct_handoff_rejects_bad_shape_entry_and_telemetry() {
+    let (shape, source_lease, mut observation, producer_counts) = direct_handoff_fixture();
+    let _ = observation.output.pop();
+    assert_eq!(
+        admit_csr_observation(source_lease, shape, observation, 0, Some(producer_counts)).err(),
+        Some(BytecodeReadRafHandoffError::OutputElements {
+            expected: BYTECODE_ADDRESS_STAGES * shape.addresses(),
+            got: BYTECODE_ADDRESS_STAGES * shape.addresses() - 1,
+        })
+    );
+
+    let (shape, source_lease, observation, producer_counts) = direct_handoff_fixture();
+    assert_eq!(
+        admit_csr_observation(
+            source_lease,
+            shape,
+            observation,
+            shape.addresses(),
+            Some(producer_counts),
+        )
+        .err(),
+        Some(BytecodeReadRafHandoffError::EntryTraceOutsideDomain {
+            got: shape.addresses(),
+            addresses: shape.addresses(),
+        })
+    );
+
+    let (shape, source_lease, mut observation, producer_counts) = direct_handoff_fixture();
+    observation.telemetry.status.invalid_rows = 1;
+    assert_eq!(
+        admit_csr_observation(source_lease, shape, observation, 0, Some(producer_counts)).err(),
+        Some(BytecodeReadRafHandoffError::Packet(
+            BytecodeReadRafError::InvalidStatusRows(1)
+        ))
     );
 }

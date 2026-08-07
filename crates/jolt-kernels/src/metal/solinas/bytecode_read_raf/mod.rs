@@ -1,12 +1,14 @@
 //! Static successor packet for the packed bytecode read/RAF address phase.
 
 mod abi;
+mod handoff;
 mod model;
 mod oracle;
 mod runtime;
 mod slice;
 
 pub use abi::*;
+pub use handoff::*;
 pub use model::*;
 pub use oracle::*;
 pub use runtime::*;

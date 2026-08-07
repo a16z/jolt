@@ -4,6 +4,11 @@ This directory is an isolated successor for the packed Akita
 `BytecodeReadRafAddressPhase`. It does not replace the existing stage-6b cycle
 kernel. Nothing here is registered yet.
 
+> **Direct-consumption amendment:** [`DIRECT_HANDOFF.md`](DIRECT_HANDOFF.md)
+> supersedes the integration boundary below. The latest one-pair diagnostic CPU
+> time is 206,118,083 ns, but it does not replace the durable five-pair
+> denominator or its strict 38,183,191 ns promotion cap.
+
 ## Evidence status
 
 The optimized-CPU denominator is durable production evidence. The test-utils

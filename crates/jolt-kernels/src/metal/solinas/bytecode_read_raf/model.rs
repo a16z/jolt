@@ -1,6 +1,7 @@
 use super::{
     BytecodeReadRafDiagnostics, BytecodeReadRafError, BytecodeReadRafShape, BytecodeReadRafStatus,
-    BYTECODE_ADDRESS_AKITA_OFFSET, BYTECODE_ADDRESS_SIMD_WIDTH,
+    BYTECODE_ADDRESS_AKITA_OFFSET, BYTECODE_ADDRESS_DOMAIN, BYTECODE_ADDRESS_SHORT_THRESHOLD,
+    BYTECODE_ADDRESS_SIMD_WIDTH,
 };
 
 pub const BYTECODE_ADDRESS_LOG26_CPU_SAMPLES_NS: [u64; 5] = [
@@ -11,10 +12,13 @@ pub const BYTECODE_ADDRESS_LOG26_CPU_SAMPLES_NS: [u64; 5] = [
     198_945_292,
 ];
 pub const BYTECODE_ADDRESS_LOG26_CPU_MEDIAN_NS: u64 = 190_915_958;
+pub const BYTECODE_ADDRESS_LATEST_DIAGNOSTIC_CPU_NS: u64 = 206_118_083;
 pub const BYTECODE_ADDRESS_LOG26_CPU_PREPARE_MEDIAN_NS: u64 = 182_930_333;
 pub const BYTECODE_ADDRESS_LOG26_PROVE_ROUND_TOTAL_NS: u64 = 7_918_251;
 pub const BYTECODE_ADDRESS_FIVE_X_CAP_NS: u64 = BYTECODE_ADDRESS_LOG26_CPU_MEDIAN_NS / 5;
 pub const BYTECODE_ADDRESS_EIGHT_X_CAP_NS: u64 = BYTECODE_ADDRESS_LOG26_CPU_MEDIAN_NS / 8;
+pub const BYTECODE_ADDRESS_LOG26_CSR_COMPLETE_SLICE_NS: u64 = 29_109_917;
+pub const BYTECODE_ADDRESS_LOG26_OBSERVED_RUNS: u64 = 53_248;
 pub const BYTECODE_ADDRESS_COPY_BYTES_PER_SECOND: u64 = 451_701_710_520;
 pub const BYTECODE_ADDRESS_FULL_PRODUCTS_PER_SECOND: u64 = 18_100_000_000;
 pub const BYTECODE_ADDRESS_U64_ACCEPTANCE_FLOOR_PER_SECOND: u64 = 26_272_000_000;
@@ -73,6 +77,7 @@ pub fn exact_signed_u64_product_oracle(
 pub enum BytecodeReadRafCsrCharge {
     LogicalTwoPass,
     CachedSecondPass,
+    ProducerAddressCounts,
     ReusedProducer,
 }
 
@@ -161,6 +166,7 @@ struct ValidatedRoofRates {
 pub struct BytecodeReadRafWorkload {
     rows: u64,
     outer_blocks: u64,
+    address_cells: u64,
     runs: u64,
     long_runs: u64,
 }
@@ -297,6 +303,13 @@ impl BytecodeReadRafWorkload {
         Ok(Self {
             rows: shape.rows as u64,
             outer_blocks: shape.outer_length as u64,
+            address_cells: u64::try_from(
+                shape
+                    .outer_length
+                    .checked_mul(shape.addresses)
+                    .ok_or(BytecodeReadRafError::ArithmeticOverflow("address cells"))?,
+            )
+            .map_err(|_| BytecodeReadRafError::ArithmeticOverflow("address cells"))?,
             runs: runs as u64,
             long_runs: long_runs as u64,
         })
@@ -324,6 +337,10 @@ impl BytecodeReadRafWorkload {
 
     pub const fn runs(self) -> u64 {
         self.runs
+    }
+
+    pub const fn address_cells(self) -> u64 {
+        self.address_cells
     }
 
     pub const fn long_runs(self) -> u64 {
@@ -399,6 +416,11 @@ impl BytecodeReadRafWorkload {
             BytecodeReadRafCsrCharge::CachedSecondPass => {
                 checked_linear_u64("cached CSR bytes", 44, self.rows, 40, self.runs)
             }
+            BytecodeReadRafCsrCharge::ProducerAddressCounts => checked_add_u64(
+                "resident-count CSR bytes",
+                checked_linear_u64("one-pass CSR bytes", 44, self.rows, 40, self.runs)?,
+                self.producer_address_count_plane_bytes()?,
+            ),
             BytecodeReadRafCsrCharge::ReusedProducer => return Ok(0),
         }?;
         checked_add_u64(
@@ -406,6 +428,26 @@ impl BytecodeReadRafWorkload {
             row_and_run_bytes,
             checked_product_u64("CSR status bytes", 32, self.outer_blocks)?,
         )
+    }
+
+    pub fn producer_address_count_plane_bytes(self) -> Result<u64, BytecodeReadRafError> {
+        checked_product_u64("producer address-count plane", 4, self.address_cells)
+    }
+
+    pub fn producer_count_consumer_savings_bytes(self) -> Result<u64, BytecodeReadRafError> {
+        self.csr_bytes(BytecodeReadRafCsrCharge::LogicalTwoPass)?
+            .checked_sub(self.csr_bytes(BytecodeReadRafCsrCharge::ProducerAddressCounts)?)
+            .ok_or(BytecodeReadRafError::ArithmeticOverflow(
+                "producer-count consumer savings",
+            ))
+    }
+
+    pub fn producer_count_fully_charged_savings_bytes(self) -> Result<u64, BytecodeReadRafError> {
+        self.producer_count_consumer_savings_bytes()?
+            .checked_sub(self.producer_address_count_plane_bytes()?)
+            .ok_or(BytecodeReadRafError::ArithmeticOverflow(
+                "producer-count fully charged savings",
+            ))
     }
 
     pub fn run_bytes(self) -> Result<u64, BytecodeReadRafError> {
@@ -529,6 +571,82 @@ pub struct BytecodeReadRafRoofProjection {
     pub csr_cap_ns: u64,
     pub run_cap_ns: u64,
     pub gpu_cap_ns: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BytecodeReadRafDirectConsumptionScreen {
+    pub cpu_denominator_ns: u64,
+    pub five_x_cap_ns: u64,
+    pub csr_complete_slice_ns: u64,
+    pub retained_rounds_ns: u64,
+    pub current_scheduling_screen_ns: u64,
+    pub current_unmeasured_headroom_ns: u64,
+    pub producer_count_plane_bytes: u64,
+    pub producer_count_consumer_savings_bytes: u64,
+    pub producer_count_fully_charged_savings_bytes: u64,
+    pub producer_count_consumer_savings_floor_ns: u64,
+    pub producer_count_fully_charged_savings_floor_ns: u64,
+    pub optimistic_shared_count_screen_ns: u64,
+    pub optimistic_fully_charged_count_screen_ns: u64,
+}
+
+impl BytecodeReadRafDirectConsumptionScreen {
+    pub const fn current_five_x_is_credible(self) -> bool {
+        self.current_scheduling_screen_ns <= self.five_x_cap_ns
+    }
+
+    pub const fn current_screen_is_complete_evidence(self) -> bool {
+        false
+    }
+}
+
+pub fn bytecode_read_raf_log26_direct_consumption_screen(
+) -> Result<BytecodeReadRafDirectConsumptionScreen, BytecodeReadRafError> {
+    let shape = BytecodeReadRafShape::new(1 << 26, BYTECODE_ADDRESS_DOMAIN)?;
+    let workload = BytecodeReadRafWorkload::new(
+        shape,
+        BYTECODE_ADDRESS_LOG26_OBSERVED_RUNS as usize,
+        BYTECODE_ADDRESS_LOG26_OBSERVED_RUNS as usize,
+        BYTECODE_ADDRESS_SHORT_THRESHOLD,
+    )?;
+    let current_scheduling_screen_ns = checked_add_u64(
+        "direct-consumption scheduling screen",
+        BYTECODE_ADDRESS_LOG26_CSR_COMPLETE_SLICE_NS,
+        BYTECODE_ADDRESS_LOG26_PROVE_ROUND_TOTAL_NS,
+    )?;
+    let current_unmeasured_headroom_ns = BYTECODE_ADDRESS_FIVE_X_CAP_NS
+        .checked_sub(current_scheduling_screen_ns)
+        .ok_or(BytecodeReadRafError::ArithmeticOverflow(
+            "direct-consumption headroom",
+        ))?;
+    let producer_count_consumer_savings_bytes = workload.producer_count_consumer_savings_bytes()?;
+    let producer_count_fully_charged_savings_bytes =
+        workload.producer_count_fully_charged_savings_bytes()?;
+    let producer_count_consumer_savings_floor_ns = rate_ns(
+        producer_count_consumer_savings_bytes,
+        BYTECODE_ADDRESS_COPY_BYTES_PER_SECOND,
+    )?;
+    let producer_count_fully_charged_savings_floor_ns = rate_ns(
+        producer_count_fully_charged_savings_bytes,
+        BYTECODE_ADDRESS_COPY_BYTES_PER_SECOND,
+    )?;
+    Ok(BytecodeReadRafDirectConsumptionScreen {
+        cpu_denominator_ns: BYTECODE_ADDRESS_LOG26_CPU_MEDIAN_NS,
+        five_x_cap_ns: BYTECODE_ADDRESS_FIVE_X_CAP_NS,
+        csr_complete_slice_ns: BYTECODE_ADDRESS_LOG26_CSR_COMPLETE_SLICE_NS,
+        retained_rounds_ns: BYTECODE_ADDRESS_LOG26_PROVE_ROUND_TOTAL_NS,
+        current_scheduling_screen_ns,
+        current_unmeasured_headroom_ns,
+        producer_count_plane_bytes: workload.producer_address_count_plane_bytes()?,
+        producer_count_consumer_savings_bytes,
+        producer_count_fully_charged_savings_bytes,
+        producer_count_consumer_savings_floor_ns,
+        producer_count_fully_charged_savings_floor_ns,
+        optimistic_shared_count_screen_ns: current_scheduling_screen_ns
+            .saturating_sub(producer_count_consumer_savings_floor_ns),
+        optimistic_fully_charged_count_screen_ns: current_scheduling_screen_ns
+            .saturating_sub(producer_count_fully_charged_savings_floor_ns),
+    })
 }
 
 /// Maximum attainable long-run count after applying the limit in every outer block.
