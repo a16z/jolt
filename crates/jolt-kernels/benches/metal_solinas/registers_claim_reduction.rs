@@ -4,7 +4,8 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_field::AkitaField;
 use jolt_kernels::metal::solinas::{
     registers_claim_reduction::{
-        RegistersClaimKernelConfig, RegistersClaimRoofRates, REGISTERS_CLAIM_FIVE_X_GATE_NS,
+        RegistersClaimAccumulator, RegistersClaimKernelConfig, RegistersClaimLinearQInvocation,
+        RegistersClaimRoofRates, REGISTERS_CLAIM_FIVE_X_GATE_NS,
     },
     SolinasMetal,
 };
@@ -16,6 +17,7 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     let config = RegistersClaimKernelConfig {
         build_threads_per_threadgroup: setting("JOLT_METAL_REGISTERS_CLAIM_BUILD_THREADS", 128)
             as usize,
+        accumulator: accumulator(),
         ..RegistersClaimKernelConfig::default()
     };
     let rd_value = u64::MAX;
@@ -37,6 +39,19 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     let invocation = context
         .prepare_registers_claim_linear_q(&resident, &tau, gamma, config)
         .expect("registers claim linear-q invocation should prepare");
+    let control = paired_control().then(|| {
+        context
+            .prepare_registers_claim_linear_q(
+                &resident,
+                &tau,
+                gamma,
+                RegistersClaimKernelConfig {
+                    accumulator: RegistersClaimAccumulator::Deferred224,
+                    ..config
+                },
+            )
+            .expect("registers claim deferred control should prepare")
+    });
     drop(resident);
     let setup_wall = setup_started.elapsed();
 
@@ -47,6 +62,12 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         .execute_timed()
         .expect("registers claim linear-q should execute");
     assert!(cold.q.iter().all(|&value| value == expected));
+    if let Some(control) = &control {
+        let observation = control
+            .execute_timed()
+            .expect("registers claim deferred control should execute");
+        assert_eq!(observation.q, cold.q);
+    }
     assert_eq!(invocation.execute_device_buffer_allocations(), 0);
     assert!(!invocation
         .source_allocation_identities()
@@ -56,16 +77,20 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         .execute_timed()
         .expect("warm registers claim linear-q should execute");
     assert_eq!(cold.checksum, warm.checksum);
+    if let Some(control) = &control {
+        report_paired_screen(&invocation, control);
+    }
     let work = invocation.plan().work().expect("checked work should fit");
     let ceiling = work
         .calibrated_ceiling(RegistersClaimRoofRates::CONSERVATIVE, 80)
         .expect("calibrated ceiling should fit");
     eprintln!(
-        "registers-claim-linear-q n={elements} resident-bytes={} setup-ms={:.3} \
+        "registers-claim-linear-q n={elements} accumulator={} resident-bytes={} setup-ms={:.3} \
          cold-active-ms={:.3} warm-active-ms={:.3} warm-wall-ms={:.3} \
          half-width-terms={} full-products={} traffic-floor-ms={:.3} \
          arithmetic-floor-ms={:.3} active-80pct-cap-ms={:.3} five-x-member-gate-ms={:.3} \
          tew={} max-threads={} tg={}",
+        config.accumulator.name(),
         invocation.plan().storage.total_resident_bytes,
         setup_wall.as_secs_f64() * 1e3,
         cold.gpu_active.as_secs_f64() * 1e3,
@@ -84,7 +109,11 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         invocation.threads_per_threadgroup(),
     );
 
-    let suffix = format!("n{elements}_tg{}", invocation.threads_per_threadgroup());
+    let suffix = format!(
+        "n{elements}_{}_tg{}",
+        config.accumulator.name(),
+        invocation.threads_per_threadgroup()
+    );
     let mut group = c.benchmark_group("metal_sumcheck/registers_claim_linear_q");
     let _ = group
         .sample_size(10)
@@ -146,4 +175,65 @@ fn setting(name: &str, default: u64) -> u64 {
             .parse()
             .unwrap_or_else(|_| panic!("{name} should be a nonnegative integer"))
     })
+}
+
+fn accumulator() -> RegistersClaimAccumulator {
+    match env::var("JOLT_METAL_REGISTERS_CLAIM_ACCUMULATOR").as_deref() {
+        Ok("deferred224") => RegistersClaimAccumulator::Deferred224,
+        Ok("canonical128") | Err(_) => RegistersClaimAccumulator::Canonical128,
+        Ok(value) => panic!(
+            "JOLT_METAL_REGISTERS_CLAIM_ACCUMULATOR must be `deferred224` or `canonical128`, got `{value}`"
+        ),
+    }
+}
+
+fn paired_control() -> bool {
+    setting("JOLT_METAL_REGISTERS_CLAIM_PAIRED", 0) != 0
+}
+
+fn report_paired_screen(
+    candidate: &RegistersClaimLinearQInvocation,
+    control: &RegistersClaimLinearQInvocation,
+) {
+    let mut candidate_active = Vec::with_capacity(10);
+    let mut candidate_wall = Vec::with_capacity(10);
+    let mut control_active = Vec::with_capacity(10);
+    let mut control_wall = Vec::with_capacity(10);
+    for pair in 0usize..10 {
+        let sample = |invocation: &RegistersClaimLinearQInvocation| {
+            invocation
+                .execute_timed()
+                .expect("paired registers claim invocation should execute")
+        };
+        let (candidate_sample, control_sample) = if pair.is_multiple_of(2) {
+            (sample(candidate), sample(control))
+        } else {
+            let control_sample = sample(control);
+            (sample(candidate), control_sample)
+        };
+        assert_eq!(candidate_sample.checksum, control_sample.checksum);
+        candidate_active.push(candidate_sample.gpu_active);
+        candidate_wall.push(candidate_sample.resident_wall);
+        control_active.push(control_sample.gpu_active);
+        control_wall.push(control_sample.resident_wall);
+    }
+    let candidate_active_median = median(&candidate_active);
+    let candidate_wall_median = median(&candidate_wall);
+    let control_active_median = median(&control_active);
+    let control_wall_median = median(&control_wall);
+    eprintln!(
+        "registers-claim-linear-q-paired candidate-active={candidate_active:?} \
+         control-active={control_active:?} candidate-wall={candidate_wall:?} \
+         control-wall={control_wall:?} candidate-active-median={candidate_active_median:?} \
+         control-active-median={control_active_median:?} candidate-wall-median={candidate_wall_median:?} \
+         control-wall-median={control_wall_median:?} active-speedup={} wall-speedup={}",
+        control_active_median.as_secs_f64() / candidate_active_median.as_secs_f64(),
+        control_wall_median.as_secs_f64() / candidate_wall_median.as_secs_f64(),
+    );
+}
+
+fn median(samples: &[Duration]) -> Duration {
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    sorted[sorted.len() / 2]
 }

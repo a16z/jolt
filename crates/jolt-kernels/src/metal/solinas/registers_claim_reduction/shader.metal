@@ -119,6 +119,43 @@ kernel void solinas_registers_claim_build_linear_q(
     q[x_lo] = value;
 }
 
+kernel void solinas_registers_claim_build_linear_q_canonical(
+    device const ulong* rd_write_value [[buffer(0)]],
+    device const ulong* rs1_value [[buffer(1)]],
+    device const ulong* rs2_value [[buffer(2)]],
+    device const SolinasFp128* gamma_powers [[buffer(3)]],
+    device const SolinasFp128* eq_suffix [[buffer(4)]],
+    device SolinasFp128* q [[buffer(5)]],
+    constant RegistersClaimParams& params [[buffer(6)]],
+    uint x_lo [[thread_position_in_grid]])
+{
+    if (x_lo >= params.prefix_elements) {
+        return;
+    }
+
+    SolinasFp128 rd = solinas_zero();
+    SolinasFp128 rs1 = solinas_zero();
+    SolinasFp128 rs2 = solinas_zero();
+    for (uint x_hi = 0u; x_hi < params.suffix_elements; x_hi++) {
+        uint row = x_hi * params.prefix_elements + x_lo;
+        SolinasFp128 weight = eq_suffix[x_hi];
+        rd = solinas_add(
+            rd,
+            solinas_half_width_mul_u64(weight, rd_write_value[row]));
+        rs1 = solinas_add(
+            rs1,
+            solinas_half_width_mul_u64(weight, rs1_value[row]));
+        rs2 = solinas_add(
+            rs2,
+            solinas_half_width_mul_u64(weight, rs2_value[row]));
+    }
+
+    SolinasFp128 value = rd;
+    value = solinas_add(value, solinas_mul_wide(gamma_powers[0], rs1));
+    value = solinas_add(value, solinas_mul_wide(gamma_powers[1], rs2));
+    q[x_lo] = value;
+}
+
 kernel void solinas_registers_claim_fold_alias_rd(
     device const ulong* rd_write_value [[buffer(0)]],
     device const SolinasFp128* eq_prefix [[buffer(1)]],

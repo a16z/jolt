@@ -87,6 +87,7 @@ fn linear_q_abi_and_slots_are_fixed() {
         [0, 1, 2, 3, 4, 5, 6]
     );
     assert!(SOURCE.contains("kernel void solinas_registers_claim_build_linear_q"));
+    assert!(SOURCE.contains("kernel void solinas_registers_claim_build_linear_q_canonical"));
 }
 
 #[test]
@@ -214,33 +215,41 @@ fn metal_linear_q_matches_the_unfactored_oracle() {
     ));
     for gamma in [field(0), field(1), -field(1), field(0xfeed_face_cafe_beef)] {
         let expected = build_dense_reference_q(geometry, planes, &tau, gamma).unwrap();
-        let invocation = context
-            .prepare_registers_claim_linear_q(
-                &resident,
-                &tau,
-                gamma,
-                RegistersClaimKernelConfig::default(),
-            )
-            .unwrap();
+        for accumulator in [
+            RegistersClaimAccumulator::Deferred224,
+            RegistersClaimAccumulator::Canonical128,
+        ] {
+            let invocation = context
+                .prepare_registers_claim_linear_q(
+                    &resident,
+                    &tau,
+                    gamma,
+                    RegistersClaimKernelConfig {
+                        accumulator,
+                        ..RegistersClaimKernelConfig::default()
+                    },
+                )
+                .unwrap();
 
-        assert_eq!(invocation.execute_device_buffer_allocations(), 0);
-        assert_eq!(
-            invocation.source_allocation_identities(),
-            resident.allocation_identities()
-        );
-        assert!(!invocation
-            .source_allocation_identities()
-            .contains(&invocation.output_allocation_identity()));
-        let observation = invocation.execute_timed().unwrap();
-        assert_eq!(observation.q, expected.q);
-        assert_eq!(
-            observation.checksum,
-            registers_claim_q_checksum(&expected.q)
-        );
-        assert_eq!(observation.useful_half_width_terms, 3 * rows as u64);
-        assert_eq!(
-            observation.full_products,
-            2 * geometry.prefix_elements() as u64
-        );
+            assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+            assert_eq!(
+                invocation.source_allocation_identities(),
+                resident.allocation_identities()
+            );
+            assert!(!invocation
+                .source_allocation_identities()
+                .contains(&invocation.output_allocation_identity()));
+            let observation = invocation.execute_timed().unwrap();
+            assert_eq!(observation.q, expected.q);
+            assert_eq!(
+                observation.checksum,
+                registers_claim_q_checksum(&expected.q)
+            );
+            assert_eq!(observation.useful_half_width_terms, 3 * rows as u64);
+            assert_eq!(
+                observation.full_products,
+                2 * geometry.prefix_elements() as u64
+            );
+        }
     }
 }

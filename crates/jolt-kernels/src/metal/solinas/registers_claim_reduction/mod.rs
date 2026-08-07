@@ -44,6 +44,31 @@ pub const LINEAR_Q_OUTPUT_SLOT: u64 = 5;
 pub const LINEAR_Q_PARAMS_SLOT: u64 = 6;
 
 pub(crate) const BUILD_LINEAR_PIPELINE: &str = "solinas_registers_claim_build_linear_q";
+pub(crate) const BUILD_LINEAR_CANONICAL_PIPELINE: &str =
+    "solinas_registers_claim_build_linear_q_canonical";
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RegistersClaimAccumulator {
+    Deferred224,
+    #[default]
+    Canonical128,
+}
+
+impl RegistersClaimAccumulator {
+    pub(crate) const fn pipeline(self) -> &'static str {
+        match self {
+            Self::Deferred224 => BUILD_LINEAR_PIPELINE,
+            Self::Canonical128 => BUILD_LINEAR_CANONICAL_PIPELINE,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Deferred224 => "deferred224",
+            Self::Canonical128 => "canonical128",
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -61,6 +86,7 @@ const _: [(); 4] = [(); align_of::<RegistersClaimParams>()];
 pub struct RegistersClaimKernelConfig {
     pub build_threads_per_threadgroup: usize,
     pub fold_threads_per_threadgroup: usize,
+    pub accumulator: RegistersClaimAccumulator,
 }
 
 impl Default for RegistersClaimKernelConfig {
@@ -68,6 +94,7 @@ impl Default for RegistersClaimKernelConfig {
         Self {
             build_threads_per_threadgroup: 128,
             fold_threads_per_threadgroup: 128,
+            accumulator: RegistersClaimAccumulator::Canonical128,
         }
     }
 }

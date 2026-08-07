@@ -13,23 +13,26 @@ models unless explicitly labeled as observed.
 
 ## Observed Q-slice screen
 
-On the retained Apple M4 Max, the registered shader passed parity against the
-independent unfactored oracle, including maximal carry chains. At log 26 with
-resident inputs and 128 threads per threadgroup, Criterion measured:
+On the retained Apple M4 Max, both registered accumulator variants passed
+parity against the independent unfactored oracle, including maximal carry
+chains. At log 26 with resident inputs and 128 threads per threadgroup, ten
+same-binary alternating pairs measured:
 
 ```text
-GPU active median: 12.919 ms
-resident wall median: 13.453 ms
+                         canonical 128-bit   deferred 224-bit   speedup
+GPU active median:          6.092375 ms        13.246667 ms      2.174x
+resident wall median:       6.701125 ms        13.892833 ms      2.073x
 useful half-width terms: 201,326,592
-GPU-active throughput: 15.584 billion terms/s
 ```
 
-The active result is below the full member's `19.981116 ms` 5x gate, but it is
-1.35x slower than the Q slice's `9.580085 ms` 80%-roof cap. Threadgroup widths
-32, 64, 128, and 256 all measured within roughly 1.5%, so dispatch geometry is
-not the primary deficit. This slice remains an optimization candidate rather
-than a promoted kernel; it leaves too little of the full-member budget for the
-remaining rounds and host bridge.
+Criterion independently measured the canonical path at `6.0699 ms` active
+(`33.168` billion useful terms/s) and `6.5903 ms` resident wall. The canonical
+path is now the default. It beats the Q slice's `9.580085 ms` conservative
+80%-roof cap and uses 33.0% of the full member's `19.981116 ms` 5x budget.
+Threadgroup widths 32, 64, 128, and 256 were indistinguishable on the deferred
+control, so the gain comes from avoiding its register-heavy 224-bit live state,
+not dispatch geometry. The complete member still needs the remaining rounds,
+host transcript bridge, and end-to-end alternating validation before promotion.
 
 ## Frozen denominator and local gate
 

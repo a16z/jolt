@@ -17,10 +17,10 @@ use super::super::{
 };
 use super::{
     RegistersClaimGeometry, RegistersClaimKernelConfig, RegistersClaimLinearQPlan,
-    RegistersClaimPlanError, BUILD_LINEAR_PIPELINE, LINEAR_Q_EQ_SUFFIX_SLOT,
-    LINEAR_Q_GAMMA_POWERS_SLOT, LINEAR_Q_OUTPUT_SLOT, LINEAR_Q_PARAMS_SLOT,
-    LINEAR_Q_RD_WRITE_VALUE_SLOT, LINEAR_Q_RS1_VALUE_SLOT, LINEAR_Q_RS2_VALUE_SLOT,
-    REGISTERS_CLAIM_AKITA_OFFSET, REGISTERS_CLAIM_SIMD_WIDTH,
+    RegistersClaimPlanError, LINEAR_Q_EQ_SUFFIX_SLOT, LINEAR_Q_GAMMA_POWERS_SLOT,
+    LINEAR_Q_OUTPUT_SLOT, LINEAR_Q_PARAMS_SLOT, LINEAR_Q_RD_WRITE_VALUE_SLOT,
+    LINEAR_Q_RS1_VALUE_SLOT, LINEAR_Q_RS2_VALUE_SLOT, REGISTERS_CLAIM_AKITA_OFFSET,
+    REGISTERS_CLAIM_SIMD_WIDTH,
 };
 
 #[derive(Debug, Error)]
@@ -298,11 +298,12 @@ impl SolinasMetal {
             self.validate_buffer_length(to_u64(bytes)?)?;
         }
 
-        let pipeline = self.compile_named_pipeline(BUILD_LINEAR_PIPELINE)?;
+        let pipeline_name = plan.config.accumulator.pipeline();
+        let pipeline = self.compile_named_pipeline(pipeline_name)?;
         let limits = Self::limits(&pipeline);
         if limits.thread_execution_width != REGISTERS_CLAIM_SIMD_WIDTH {
             return Err(RegistersClaimLinearQError::UnsupportedExecutionWidth {
-                pipeline: BUILD_LINEAR_PIPELINE,
+                pipeline: pipeline_name,
                 expected: REGISTERS_CLAIM_SIMD_WIDTH,
                 got: limits.thread_execution_width,
             });
