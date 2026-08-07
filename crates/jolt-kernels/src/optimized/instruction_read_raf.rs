@@ -1833,6 +1833,10 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
         &self,
         context: &SolinasMetal,
     ) -> Result<BooleanityRows, MetalError> {
+        if self.bytecode_outer_support_offsets.len() <= 1 {
+            return context
+                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&self.rows));
+        }
         if self.bytecode_address_out_of_range {
             return Err(MetalError::InvalidBooleanityRow);
         }
