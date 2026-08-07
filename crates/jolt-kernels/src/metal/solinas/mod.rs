@@ -459,6 +459,8 @@ pub enum MetalError {
     },
     #[error("address phase table-major layout has {got} rows, expected {expected}")]
     AddressPhaseLayoutLength { expected: usize, got: usize },
+    #[error("invalid grouped InstructionReadRaf state: {0}")]
+    InvalidInstructionReadRafGrouped(String),
     #[error("address cycle phase tables contain {got} fields, expected {expected}")]
     AddressCyclePhaseTableShape { expected: usize, got: usize },
     #[error("address cycle has {got} table values, expected {expected}")]

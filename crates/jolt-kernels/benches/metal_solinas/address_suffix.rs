@@ -177,6 +177,7 @@ pub fn bench_resident_phase(c: &mut Criterion, context: &SolinasMetal) {
             },
         ),
         threads_per_threadgroup: scan_config.threads_per_threadgroup,
+        fused_grouped_phase: true,
     };
     let mut group = c.benchmark_group("metal_sumcheck/instruction_read_raf_address_resident_phase");
     let _ = group
@@ -274,6 +275,7 @@ pub fn eval_resident_phase(context: &SolinasMetal) {
             },
         ),
         threads_per_threadgroup: scan_config.threads_per_threadgroup,
+        fused_grouped_phase: true,
     };
     for elements in cases() {
         let (rows, weights, buckets) = inputs(elements);

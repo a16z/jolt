@@ -1662,6 +1662,7 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
                 self.rows.len(),
                 &self.buckets,
                 config,
+                |index| self.rows[index].raf_flag(),
                 |index| {
                     let row = &self.rows[index];
                     (

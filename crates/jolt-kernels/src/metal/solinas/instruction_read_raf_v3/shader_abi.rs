@@ -5,21 +5,22 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
 use super::{InstructionReadRafV3Error, ADDRESS_BINS, ADDRESS_PHASES, ADDRESS_PHASE_BITS};
 
-pub(super) const TABLES: usize = LookupTableKind::<RISCV_XLEN>::COUNT;
+pub(crate) const TABLES: usize = LookupTableKind::<RISCV_XLEN>::COUNT;
 pub(super) const TABLE_VALUES: usize = TABLES + 1;
 pub(super) const RAF_VALUES: usize = 2;
-pub(super) const SEGMENTS: usize = TABLE_VALUES * RAF_VALUES;
-pub(super) const SEGMENT_OFFSETS: usize = SEGMENTS + 1;
+pub(crate) const SEGMENTS: usize = TABLE_VALUES * RAF_VALUES;
+pub(crate) const SEGMENT_OFFSETS: usize = SEGMENTS + 1;
 pub(super) const RAF_LANES: usize = 3;
 pub(super) const EXPLICIT_SUFFIX_LANES: usize = 3;
 pub(super) const JOB_LANES: usize = RAF_LANES + EXPLICIT_SUFFIX_LANES;
-pub(super) const MAX_SUFFIXES: usize = 4;
-pub(super) const TOTAL_SUFFIXES: usize = 88;
-pub(super) const JOB_FIELDS: usize = JOB_LANES * ADDRESS_BINS;
+pub(crate) const MAX_SUFFIXES: usize = 4;
+pub(crate) const TOTAL_SUFFIXES: usize = 88;
+pub(crate) const JOB_FIELDS: usize = JOB_LANES * ADDRESS_BINS;
 pub(super) const FLAG_COLUMNS: usize = TABLES + 1;
 pub(super) const DEFERRED_WORDS: usize = 5;
-pub(super) const SIMD_WIDTH: usize = 32;
-pub(super) const PHASE_THREADGROUP_BYTES: usize = JOB_FIELDS * DEFERRED_WORDS * size_of::<u32>();
+pub(crate) const SIMD_WIDTH: usize = 32;
+pub(crate) const PHASE_THREADGROUP_BYTES: usize =
+    JOB_FIELDS * DEFERRED_WORDS * size_of::<u32>();
 pub(super) const FLAG_THREADGROUP_BYTES: usize = FLAG_COLUMNS * DEFERRED_WORDS * size_of::<u32>();
 
 const _: () = assert!(TABLES == 40);
@@ -48,11 +49,11 @@ impl AddressLookup {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct AddressJob {
-    pub(super) start: u32,
-    pub(super) end: u32,
-    pub(super) segment: u32,
-    pub(super) reserved: u32,
+pub(crate) struct AddressJob {
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+    pub(crate) segment: u32,
+    pub(crate) reserved: u32,
 }
 
 #[repr(C)]
@@ -84,7 +85,7 @@ pub(super) struct SplitAtom {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct TableDescriptor {
+pub(crate) struct TableDescriptor {
     pub(super) output_start: u32,
     pub(super) suffix_count: u32,
     pub(super) segment_raf_zero: u32,
@@ -93,7 +94,7 @@ pub(super) struct TableDescriptor {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct AtomPhaseParams {
+pub(crate) struct AtomPhaseParams {
     pub(super) suffix_len: u32,
     pub(super) job_count: u32,
     pub(super) reserved: [u32; 2],
@@ -113,6 +114,23 @@ impl AtomPhaseParams {
         Ok(Self {
             suffix_len: shader_u32(suffix_len, "address suffix length")?,
             job_count: shader_u32(job_count, "address job count")?,
+            reserved: [0; 2],
+        })
+    }
+
+    pub(crate) fn grouped(
+        suffix_len: usize,
+        job_count: usize,
+    ) -> Result<Self, InstructionReadRafV3Error> {
+        validate_phase(suffix_len, suffix_len != 120)?;
+        if job_count == 0 {
+            return Err(InstructionReadRafV3Error::InvalidShaderAbi(
+                "grouped address phase has no jobs",
+            ));
+        }
+        Ok(Self {
+            suffix_len: shader_u32(suffix_len, "grouped address suffix length")?,
+            job_count: shader_u32(job_count, "grouped address job count")?,
             reserved: [0; 2],
         })
     }
@@ -248,7 +266,7 @@ impl ReductionParams {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SuffixPlan {
+pub(crate) struct SuffixPlan {
     explicit_kinds: [u8; TABLES * EXPLICIT_SUFFIX_LANES],
     explicit_counts: [u8; TABLES],
     output_lanes: [u8; TABLES * MAX_SUFFIXES],
@@ -256,7 +274,7 @@ pub(super) struct SuffixPlan {
 }
 
 impl SuffixPlan {
-    pub(super) fn production() -> Result<Self, InstructionReadRafV3Error> {
+    pub(crate) fn production() -> Result<Self, InstructionReadRafV3Error> {
         let mut plan = Self {
             explicit_kinds: [0; TABLES * EXPLICIT_SUFFIX_LANES],
             explicit_counts: [0; TABLES],
@@ -308,19 +326,19 @@ impl SuffixPlan {
         Ok(plan)
     }
 
-    pub(super) const fn explicit_kinds(&self) -> &[u8; TABLES * EXPLICIT_SUFFIX_LANES] {
+    pub(crate) const fn explicit_kinds(&self) -> &[u8; TABLES * EXPLICIT_SUFFIX_LANES] {
         &self.explicit_kinds
     }
 
-    pub(super) const fn explicit_counts(&self) -> &[u8; TABLES] {
+    pub(crate) const fn explicit_counts(&self) -> &[u8; TABLES] {
         &self.explicit_counts
     }
 
-    pub(super) const fn output_lanes(&self) -> &[u8; TABLES * MAX_SUFFIXES] {
+    pub(crate) const fn output_lanes(&self) -> &[u8; TABLES * MAX_SUFFIXES] {
         &self.output_lanes
     }
 
-    pub(super) const fn descriptors(&self) -> &[TableDescriptor; TABLES] {
+    pub(crate) const fn descriptors(&self) -> &[TableDescriptor; TABLES] {
         &self.descriptors
     }
 }

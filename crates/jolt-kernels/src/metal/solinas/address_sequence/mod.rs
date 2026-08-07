@@ -9,6 +9,10 @@ use metal::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+mod grouped;
+
+use grouped::GroupedAddressPhase;
+
 use super::{
     address_raf::{AddressRafScanRow, AddressRafSums},
     address_suffix_full::AddressSuffixFullSums,
@@ -41,6 +45,7 @@ const CYCLE_BIND_THREADS_PER_THREADGROUP: usize = 256;
 pub struct AddressPhaseSequenceConfig {
     pub rows_per_threadgroup: usize,
     pub threads_per_threadgroup: Option<usize>,
+    pub fused_grouped_phase: bool,
 }
 
 impl Default for AddressPhaseSequenceConfig {
@@ -48,6 +53,7 @@ impl Default for AddressPhaseSequenceConfig {
         Self {
             rows_per_threadgroup: 1 << 16,
             threads_per_threadgroup: Some(1024),
+            fused_grouped_phase: false,
         }
     }
 }
@@ -204,6 +210,7 @@ pub struct AddressPhaseSequence {
     cycle_transition_pipeline: ComputePipelineState,
     cycle_reduce_pipeline: ComputePipelineState,
     cycle_reduce_limits: PipelineLimits,
+    grouped_phase: Option<GroupedAddressPhase>,
     buffers: AddressPhaseBuffers,
     rows: usize,
     raf_threadgroups: usize,
@@ -275,9 +282,13 @@ impl SolinasMetal {
                     .push(u32::try_from(index).map_err(|_| MetalError::InputTooLong(index))?);
             }
         }
-        self.prepare_address_phase_sequence_from_buckets(rows.len(), &buckets, config, |index| {
-            (rows[index], weights[index])
-        })
+        self.prepare_address_phase_sequence_from_buckets(
+            rows.len(),
+            &buckets,
+            config,
+            |index| rows[index].raf_flag(),
+            |index| (rows[index], weights[index]),
+        )
     }
 
     pub(crate) fn prepare_address_phase_sequence_from_buckets(
@@ -285,6 +296,7 @@ impl SolinasMetal {
         rows: usize,
         buckets: &[Vec<u32>],
         config: AddressPhaseSequenceConfig,
+        raf_flag: impl Fn(usize) -> bool + Sync,
         source: impl Fn(usize) -> (AddressRafScanRow, Fp128) + Sync,
     ) -> Result<AddressPhaseSequence, MetalError> {
         if rows == 0 {
@@ -345,6 +357,9 @@ impl SolinasMetal {
         let mut suffix_jobs = Vec::new();
         let mut suffix_tables = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
         let mut table_row_ranges = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
+        let mut segment_ranges: [std::ops::Range<usize>;
+            crate::metal::solinas::instruction_read_raf_v3::SEGMENTS] =
+            std::array::from_fn(|_| 0..0);
         for (table, bucket) in buckets.iter().enumerate() {
             let job_start = u32::try_from(suffix_jobs.len())
                 .map_err(|_| MetalError::InputTooLong(suffix_jobs.len()))?;
@@ -361,9 +376,28 @@ impl SolinasMetal {
                     });
                 }
                 table_selected[row] = true;
-                cycle_to_table_major[row] = u32::try_from(table_major_len)
-                    .map_err(|_| MetalError::InputTooLong(table_major_len))?;
-                table_major_len += 1;
+            }
+            if config.fused_grouped_phase {
+                for flag in [false, true] {
+                    let segment_start = table_major_len;
+                    for &row in bucket {
+                        let row = row as usize;
+                        if raf_flag(row) == flag {
+                            cycle_to_table_major[row] = u32::try_from(table_major_len)
+                                .map_err(|_| MetalError::InputTooLong(table_major_len))?;
+                            table_major_len += 1;
+                        }
+                    }
+                    let segment = 2 * (table + 1) + usize::from(flag);
+                    segment_ranges[segment] = segment_start..table_major_len;
+                }
+            } else {
+                for &row in bucket {
+                    let row = row as usize;
+                    cycle_to_table_major[row] = u32::try_from(table_major_len)
+                        .map_err(|_| MetalError::InputTooLong(table_major_len))?;
+                    table_major_len += 1;
+                }
             }
             for local_start in (0..bucket.len()).step_by(config.rows_per_threadgroup) {
                 let local_end = (local_start + config.rows_per_threadgroup).min(bucket.len());
@@ -390,11 +424,25 @@ impl SolinasMetal {
             return Err(MetalError::EmptyAddressSuffixBuckets);
         }
         let no_table_start = table_major_len;
-        for (cycle, &selected) in table_selected.iter().enumerate() {
-            if !selected {
-                cycle_to_table_major[cycle] = u32::try_from(table_major_len)
-                    .map_err(|_| MetalError::InputTooLong(table_major_len))?;
-                table_major_len += 1;
+        if config.fused_grouped_phase {
+            for flag in [false, true] {
+                let segment_start = table_major_len;
+                for (cycle, &selected) in table_selected.iter().enumerate() {
+                    if !selected && raf_flag(cycle) == flag {
+                        cycle_to_table_major[cycle] = u32::try_from(table_major_len)
+                            .map_err(|_| MetalError::InputTooLong(table_major_len))?;
+                        table_major_len += 1;
+                    }
+                }
+                segment_ranges[usize::from(flag)] = segment_start..table_major_len;
+            }
+        } else {
+            for (cycle, &selected) in table_selected.iter().enumerate() {
+                if !selected {
+                    cycle_to_table_major[cycle] = u32::try_from(table_major_len)
+                        .map_err(|_| MetalError::InputTooLong(table_major_len))?;
+                    table_major_len += 1;
+                }
             }
         }
         drop(table_selected);
@@ -505,6 +553,19 @@ impl SolinasMetal {
             });
         }
         self.validate_inputs("resident address weights", table_major_weights)?;
+
+        let grouped_phase = config
+            .fused_grouped_phase
+            .then(|| {
+                GroupedAddressPhase::prepare(
+                    self,
+                    rows,
+                    &segment_ranges,
+                    config.rows_per_threadgroup,
+                    config.threads_per_threadgroup,
+                )
+            })
+            .transpose()?;
 
         let raf_tile_pipeline = self.compile_named_pipeline(RAF_TILE_PIPELINE)?;
         let raf_finalize_pipeline = self.compile_named_pipeline(RAF_FINALIZE_PIPELINE)?;
@@ -689,6 +750,7 @@ impl SolinasMetal {
             cycle_transition_pipeline,
             cycle_reduce_pipeline,
             cycle_reduce_limits,
+            grouped_phase,
             buffers: AddressPhaseBuffers {
                 packed_rows: packed_rows_buffer,
                 lookups: lookups_buffer,
@@ -786,6 +848,18 @@ impl AddressPhaseSequence {
             self.context
                 .validate_inputs("resident address condensation table", table)?;
             write_buffer(&self.buffers.previous_phase_table, table);
+        }
+        if let Some(grouped) = self.grouped_phase.as_ref() {
+            let sums = grouped.execute(
+                &self.buffers.lookups,
+                &self.buffers.weights,
+                &self.buffers.previous_phase_table,
+                suffix_len,
+                &self.table_offsets,
+            )?;
+            self.gpu_active_time += sums.gpu_active_time();
+            self.phases_executed += 1;
+            return Ok(sums);
         }
         write_value(
             &self.buffers.raf_params,
@@ -1413,6 +1487,7 @@ mod tests {
         let sequence_config = AddressPhaseSequenceConfig {
             rows_per_threadgroup: 64,
             threads_per_threadgroup: Some(128),
+            fused_grouped_phase: true,
         };
         let scan_config = |suffix_len| AddressRafScanConfig {
             suffix_len,
