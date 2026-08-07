@@ -3568,15 +3568,15 @@ def validate_outer_remainder_local_result(
         raise ValueError("OuterRemainder evaluator resource accounting is invalid")
 
     local_gate = (
-        statistics.median(paired) >= 4.0
-        and statistics.median(paired[0::2]) >= 4.0
-        and statistics.median(paired[1::2]) >= 4.0
+        statistics.median(paired) >= 5.0
+        and statistics.median(paired[0::2]) >= 5.0
+        and statistics.median(paired[1::2]) >= 5.0
         and statistics.median(metal_ns) < statistics.median(cpu_ns)
         and improvement_median > 3.0 * improvement_mad
     )
     if output["promotion"] != {
         "eligible": local_gate,
-        "minimum_speedup": 4.0,
+        "minimum_speedup": 5.0,
         "production_holdout_required": True,
         "continue_above_floor": True,
     }:
@@ -4911,17 +4911,21 @@ def validate_production_outer_remainder_member(
         or handoff.get("row_upload_bytes") != 0
         or handoff.get("device_allocations") != 0
         or any(release.get(field) != value for field, value in handoff.items())
-        or release.get("release_completed") is not True
-        or release.get("residual_released") is not True
+        or release.get("release_mode") != "proof_session_deferred"
+        or release.get("cleanup_scope") != "proof_session"
+        or release.get("ownership_transfer_completed") is not True
+        or release.get("physical_release_completed") is not False
+        or release.get("residual_released") is not False
+        or release.get("residual_deferred") is not True
         or release.get("compact_retained") is not True
         or type(release.get("residual_row_bytes")) is not int
         or release["residual_row_bytes"] <= 0
         or release.get("remaining_sequence_storage_bytes") != owned_bytes
         or release.get("compact_release_bytes") != 0
-        or release.get("released_owned_bytes")
+        or release.get("deferred_owned_bytes")
         != owned_bytes + release["residual_row_bytes"]
     ):
-        raise ValueError("production OuterRemainder row lifecycle is inconsistent")
+        raise ValueError("production OuterRemainder row lifetime is inconsistent")
     if resources["readback"] != {
         "readbacks": 1,
         "elements": 2 * (1 << cutoff_log2),

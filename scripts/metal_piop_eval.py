@@ -1698,9 +1698,13 @@ def outer_remainder_member_breakdown(
             "residual_row_bytes",
             "remaining_sequence_storage_bytes",
             "compact_release_bytes",
-            "released_owned_bytes",
-            "release_completed",
+            "deferred_owned_bytes",
+            "release_mode",
+            "cleanup_scope",
+            "ownership_transfer_completed",
+            "physical_release_completed",
             "residual_released",
+            "residual_deferred",
             "compact_retained",
         }
         release_raw = required_span_args(
@@ -1709,17 +1713,38 @@ def outer_remainder_member_breakdown(
         release = {
             field: nonnegative_trace_integer(release_raw[field], field)
             for field in release_fields
-            if field not in {"release_completed", "residual_released", "compact_retained"}
+            if field
+            not in {
+                "release_mode",
+                "cleanup_scope",
+                "ownership_transfer_completed",
+                "physical_release_completed",
+                "residual_released",
+                "residual_deferred",
+                "compact_retained",
+            }
         }
-        for field in ("release_completed", "residual_released", "compact_retained"):
+        for field in (
+            "ownership_transfer_completed",
+            "physical_release_completed",
+            "residual_released",
+            "residual_deferred",
+            "compact_retained",
+        ):
             release[field] = trace_boolean(release_raw[field])
+        release["release_mode"] = trace_string(release_raw["release_mode"], "release_mode")
+        release["cleanup_scope"] = trace_string(release_raw["cleanup_scope"], "cleanup_scope")
         if (
             any(release[field] != handoff[field] for field in handoff_fields)
-            or release["release_completed"] is not True
-            or release["residual_released"] is not True
+            or release["release_mode"] != "proof_session_deferred"
+            or release["cleanup_scope"] != "proof_session"
+            or release["ownership_transfer_completed"] is not True
+            or release["physical_release_completed"] is not False
+            or release["residual_released"] is not False
+            or release["residual_deferred"] is not True
             or release["compact_retained"] is not True
         ):
-            raise ValueError("OuterRemainder resident row release is inconsistent")
+            raise ValueError("OuterRemainder resident row lifetime transfer is inconsistent")
         resource_observation = {
             "storage": storage,
             "sequence": sequence,

@@ -153,7 +153,7 @@
       },
       "local_kernel": "OuterRemainder",
       "metric": "outer_remainder_speedup",
-      "minimum_local_speedup": 4.0,
+      "minimum_local_speedup": 5.0,
       "minimum_log_n": 26,
       "minimum_pairs": 5,
       "paired_metric": "paired_outer_remainder_speedups",
@@ -181,7 +181,7 @@
       "workload": "fibonacci"
     }
   },
-  "goal": "maximize exact OuterRemainder complete-member throughput at log 26; 4x is a floor, not a cap, and pursue clearly available headroom",
+  "goal": "maximize exact OuterRemainder complete-member throughput at log 26; 5x is a floor, not a cap, and pursue clearly available headroom",
   "guards": {
     "required_true": [
       "correctness_exact",
@@ -210,7 +210,7 @@
       "all_exact"
     ]
   },
-  "hypothesis": "resident rows, fused bind-and-message transitions, and a single 35-column opening scan can sustain at least 4x over optimized CPU while preserving exact proofs",
+  "hypothesis": "resident rows, fused bind-and-message transitions, and a single 35-column opening scan can sustain at least 5x over optimized CPU while preserving exact proofs",
   "kernel": "OuterRemainder",
   "metric": {
     "direction": "max",
@@ -264,6 +264,6 @@
     "no exact candidate clears the noise-qualified 3 percent promotion threshold",
     "the fixed local evaluator or production holdout fails",
     "the measured bottleneck requires a new accumulation architecture and therefore a new frozen phase",
-    "continue beyond 4x whenever the measured ceiling or profile shows clear headroom"
+    "continue beyond 5x whenever the measured ceiling or profile shows clear headroom"
   ]
 }

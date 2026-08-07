@@ -1104,18 +1104,22 @@ def complete_outer_remainder_trace(
         "residual_row_bytes": rows * 112,
         "remaining_sequence_storage_bytes": geometry["owned_bytes"],
         "compact_release_bytes": 0,
-        "released_owned_bytes": geometry["owned_bytes"] + rows * 112,
-        "release_completed": True,
-        "residual_released": True,
+        "deferred_owned_bytes": geometry["owned_bytes"] + rows * 112,
+        "release_mode": "proof_session_deferred",
+        "cleanup_scope": "proof_session",
+        "ownership_transfer_completed": True,
+        "physical_release_completed": False,
+        "residual_released": False,
+        "residual_deferred": True,
         "compact_retained": True,
     }
     events.append(event("MetalOuterRemainder::output_claims", terminal + 30.0, 80.0, output_args))
-    events.append(event("MetalOuterRemainder::row_release", terminal + 40.0, 20.0, release))
+    events.append(event("MetalOuterRemainder::row_release", terminal + 115.0, 20.0, release))
     if product_uniskip_carrier:
         events.append(
             event(
                 "MetalOuterRemainder::product_uniskip_carrier_park",
-                terminal + 65.0,
+                terminal + 140.0,
                 5.0,
                 {
                     "rows": rows,

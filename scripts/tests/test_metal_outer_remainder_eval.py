@@ -319,8 +319,8 @@ def arm_events(
             ),
             complete(
                 EVAL.METAL_ROW_RELEASE,
-                output_start + output_duration * 0.85,
-                output_duration * 0.10,
+                output_start + output_duration + 1,
+                output_duration * 0.01,
                 {
                     "compact_rows_storage_id": str(
                         compact_id + 99 if wrong_compact_release else compact_id
@@ -335,12 +335,16 @@ def arm_events(
                         EVAL.REMAINING_SEQUENCE_STORAGE_BYTES
                     ),
                     "compact_release_bytes": "0",
-                    "released_owned_bytes": str(
+                    "deferred_owned_bytes": str(
                         rows * EVAL.RESIDUAL_ROW_BYTES
                         + EVAL.REMAINING_SEQUENCE_STORAGE_BYTES
                     ),
-                    "release_completed": "true",
-                    "residual_released": "true",
+                    "release_mode": "proof_session_deferred",
+                    "cleanup_scope": "proof_session",
+                    "ownership_transfer_completed": "true",
+                    "physical_release_completed": "false",
+                    "residual_released": "false",
+                    "residual_deferred": "true",
                     "compact_retained": "true",
                 },
             ),
@@ -383,7 +387,7 @@ def fixture(
                 pair,
                 "metal",
                 base + offsets["metal"],
-                200_000.0,
+                175_000.0,
                 order.index("metal"),
                 wrong_compact_release=wrong_compact_release,
                 wrong_storage_id=wrong_storage_id,
@@ -444,7 +448,9 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
         self.assertEqual(result["schema"], EVAL.SCHEMA)
         self.assertTrue(result["all_exact"])
         self.assertTrue(result["promotion"]["eligible"])
-        self.assertAlmostEqual(result["metrics"]["median_paired_speedup"], 4.5)
+        self.assertAlmostEqual(
+            result["metrics"]["median_paired_speedup"], 900_000 / 175_000
+        )
         self.assertLess(
             result["metrics"]["median_cold_inclusive_speedup"],
             result["metrics"]["median_paired_speedup"],
@@ -611,26 +617,38 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
         self.assertFalse(result["guards"]["metal_sequence_geometry_exact"])
         self.assertFalse(result["promotion"]["eligible"])
 
-    def test_release_owned_byte_count_is_checked(self) -> None:
+    def test_deferred_owned_byte_count_is_checked(self) -> None:
         events, runner = fixture()
         release = next(
             event
             for event in events
             if event["name"] == EVAL.METAL_ROW_RELEASE and event["ph"] == "X"
         )
-        release["args"]["released_owned_bytes"] = "1"
+        release["args"]["deferred_owned_bytes"] = "1"
         result = self.parse(events, runner)
         self.assertFalse(result["guards"]["resident_row_lifecycle_exact"])
         self.assertFalse(result["promotion"]["eligible"])
 
-    def test_incomplete_release_is_rejected(self) -> None:
+    def test_incomplete_lifetime_transfer_is_rejected(self) -> None:
         events, runner = fixture()
         release = next(
             event
             for event in events
             if event["name"] == EVAL.METAL_ROW_RELEASE and event["ph"] == "X"
         )
-        release["args"]["release_completed"] = "false"
+        release["args"]["ownership_transfer_completed"] = "false"
+        result = self.parse(events, runner)
+        self.assertFalse(result["guards"]["resident_row_lifecycle_exact"])
+        self.assertFalse(result["promotion"]["eligible"])
+
+    def test_claiming_physical_release_is_rejected(self) -> None:
+        events, runner = fixture()
+        release = next(
+            event
+            for event in events
+            if event["name"] == EVAL.METAL_ROW_RELEASE and event["ph"] == "X"
+        )
+        release["args"]["physical_release_completed"] = "true"
         result = self.parse(events, runner)
         self.assertFalse(result["guards"]["resident_row_lifecycle_exact"])
         self.assertFalse(result["promotion"]["eligible"])

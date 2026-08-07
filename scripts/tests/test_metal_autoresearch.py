@@ -2390,9 +2390,9 @@ class MetalAutoresearchTests(unittest.TestCase):
 
     def test_outer_remainder_production_requires_equal_input_local_bar(self) -> None:
         config, _, _ = self.outer_remainder_local_contract_fixture()
-        metal_autoresearch.validate_accepted_parent_for_production(config, 4.0)
+        metal_autoresearch.validate_accepted_parent_for_production(config, 5.0)
         with self.assertRaisesRegex(ValueError, "full-protocol search gate"):
-            metal_autoresearch.validate_accepted_parent_for_production(config, 3.99)
+            metal_autoresearch.validate_accepted_parent_for_production(config, 4.99)
 
     def test_outer_remainder_production_member_is_closed_from_raw_evidence(self) -> None:
         from scripts.tests.test_metal_piop_eval import (

@@ -25,7 +25,6 @@ use rayon::prelude::*;
 
 use super::backend::{MetalBackend, MetalConfig};
 use super::instruction_input::PreparedInstructionInput;
-use super::spartan_product::MetalProductUniskipEndpointCarrier;
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
     instruction_ra_weight_capacities, outer_remainder_sequence_max_buffer_bytes_with_config,
@@ -34,6 +33,7 @@ use super::solinas::{
     MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
     OuterRemainderSequenceStorage, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
+use super::spartan_product::MetalProductUniskipEndpointCarrier;
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
 use crate::optimized::spartan_outer::{
     prepare_metal_instruction_input_witness_rows, prepare_metal_spartan_outer_uniskip,
@@ -985,11 +985,7 @@ impl MetalOuterRemainderHost {
     }
 
     fn product_tau_low(&self) -> Vec<AkitaField> {
-        self.challenges[1..]
-            .iter()
-            .rev()
-            .copied()
-            .collect()
+        self.challenges[1..].iter().rev().copied().collect()
     }
 
     fn output_claims(
@@ -1074,6 +1070,14 @@ struct MetalOuterResidentMetadata {
     compact_retained: bool,
 }
 
+#[derive(Clone, Copy)]
+struct MetalOuterDeferredReleaseBytes {
+    sequence_storage: u64,
+    residual_rows: u64,
+    compact: u64,
+    total: u64,
+}
+
 struct MetalOuterRemainderKernel {
     host: MetalOuterRemainderHost,
     sequence: Option<OuterRemainderSequence>,
@@ -1088,6 +1092,7 @@ struct MetalOuterRemainderKernel {
     cpu_tail_elements: usize,
     gpu_active_breakdown: OuterRemainderGpuActiveBreakdown,
     product_uniskip_endpoint_carrier: Option<MetalProductUniskipEndpointCarrier>,
+    deferred_release_bytes: Option<MetalOuterDeferredReleaseBytes>,
     #[cfg(feature = "test-utils")]
     completed_gpu_active: Option<Duration>,
     #[cfg(feature = "test-utils")]
@@ -1180,6 +1185,7 @@ impl MetalOuterRemainderKernel {
                 ..OuterRemainderGpuActiveBreakdown::default()
             },
             product_uniskip_endpoint_carrier: None,
+            deferred_release_bytes: None,
             #[cfg(feature = "test-utils")]
             completed_gpu_active: None,
             #[cfg(feature = "test-utils")]
@@ -1351,9 +1357,9 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             return Err(SumcheckKernelError::NotFullyBound { remaining });
         }
         let (e_in, e_out) = self.host.opening_weights();
-        let mut sequence = self
+        let sequence = self
             .sequence
-            .take()
+            .as_mut()
             .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "Metal outer remainder released resident rows before openings",
             })?;
@@ -1403,10 +1409,16 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             self.completed_round_device_buffer_allocations =
                 Some(sequence.round_device_buffer_allocations());
         }
-        let remaining_sequence_storage_bytes = sequence
-            .storage_stats()
-            .map_err(metal_output_error)?
-            .owned_bytes;
+        let storage = sequence.storage_stats().map_err(metal_output_error)?;
+        if storage.compact_row_identity != self.compact_rows_storage_id
+            || storage.residual_row_identity != self.residual_rows_storage_id
+            || storage.row_device_registry_id != self.device_registry_id
+        {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "Metal outer remainder changed its resident row allocation",
+            });
+        }
+        let remaining_sequence_storage_bytes = storage.owned_bytes;
         let compact_row_bytes =
             instruction_input_row_bytes(self.resident_rows).map_err(metal_output_error)?;
         let residual_row_bytes = spartan_outer_uniskip_row_bytes(self.resident_rows)
@@ -1420,42 +1432,18 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
         } else {
             compact_row_bytes
         };
-        let released_owned_bytes = remaining_sequence_storage_bytes
+        let deferred_owned_bytes = remaining_sequence_storage_bytes
             .checked_add(residual_row_bytes)
             .and_then(|bytes| bytes.checked_add(compact_release_bytes))
             .ok_or(SumcheckKernelError::InvariantViolation {
-                reason: "outer-remainder release byte count overflowed",
+                reason: "outer-remainder deferred byte count overflowed",
             })?;
-        let release = tracing::info_span!(
-            "MetalOuterRemainder::row_release",
-            compact_rows_storage_id = self.compact_rows_storage_id,
-            residual_rows_storage_id = self.residual_rows_storage_id,
-            device_registry_id = self.device_registry_id,
-            resident_rows = self.resident_rows,
-            row_upload_bytes = 0u64,
-            device_allocations = 0u64,
-            residual_row_bytes,
-            remaining_sequence_storage_bytes,
-            compact_release_bytes,
-            released_owned_bytes,
-            release_completed = tracing::field::Empty,
-            residual_released = tracing::field::Empty,
-            compact_retained = self.compact_retained,
-        );
-        {
-            let _release = release.enter();
-            let compact = sequence
-                .into_instruction_input_rows()
-                .map_err(metal_output_error)?;
-            if compact.allocation_identity() != self.compact_rows_storage_id {
-                return Err(SumcheckKernelError::InvariantViolation {
-                    reason: "Metal outer remainder changed the shared compact allocation",
-                });
-            }
-            drop(compact);
-            let _ = release.record("release_completed", true);
-            let _ = release.record("residual_released", true);
-        }
+        self.deferred_release_bytes = Some(MetalOuterDeferredReleaseBytes {
+            sequence_storage: remaining_sequence_storage_bytes,
+            residual_rows: residual_row_bytes,
+            compact: compact_release_bytes,
+            total: deferred_owned_bytes,
+        });
         self.host.output_claims(inputs, &claimed)
     }
 
@@ -1471,6 +1459,33 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
     }
 
     fn park_residue(mut self: Box<Self>, session: &mut ProofSession) {
+        if let (Some(sequence), Some(deferred)) =
+            (self.sequence.take(), self.deferred_release_bytes.take())
+        {
+            let release = tracing::info_span!(
+                "MetalOuterRemainder::row_release",
+                compact_rows_storage_id = self.compact_rows_storage_id,
+                residual_rows_storage_id = self.residual_rows_storage_id,
+                device_registry_id = self.device_registry_id,
+                resident_rows = self.resident_rows,
+                row_upload_bytes = 0u64,
+                device_allocations = 0u64,
+                residual_row_bytes = deferred.residual_rows,
+                remaining_sequence_storage_bytes = deferred.sequence_storage,
+                compact_release_bytes = deferred.compact,
+                deferred_owned_bytes = deferred.total,
+                release_mode = "proof_session_deferred",
+                cleanup_scope = "proof_session",
+                ownership_transfer_completed = tracing::field::Empty,
+                physical_release_completed = false,
+                residual_released = false,
+                residual_deferred = true,
+                compact_retained = self.compact_retained,
+            );
+            let _release = release.enter();
+            session.park(sequence);
+            let _ = release.record("ownership_transfer_completed", true);
+        }
         if let Some(carrier) = self.product_uniskip_endpoint_carrier.take() {
             let _span = tracing::info_span!(
                 "MetalOuterRemainder::product_uniskip_carrier_park",
@@ -1505,7 +1520,9 @@ mod tests {
         MetalOuterRemainderHost, OuterRemainder, ResidentRowPlan, SpartanOuterDimensions,
         OUTER_DOMAIN, OUTER_VARIABLES,
     };
-    use crate::metal::solinas::{MetalError, OuterRemainderSequenceConfig};
+    use crate::metal::solinas::{
+        MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
+    };
     #[cfg(feature = "test-utils")]
     use crate::metal::solinas::{OuterBindingPlan, OuterKernelArtifact};
     use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
@@ -1890,6 +1907,9 @@ mod tests {
             device
                 .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
                 .unwrap();
+            device.park_residue(&mut metal_session);
+            let deferred = metal_session.state::<OuterRemainderSequence>().unwrap();
+            assert_eq!(deferred.phase(), OuterRemainderPhase::OpeningsComplete);
         });
     }
 

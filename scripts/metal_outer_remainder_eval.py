@@ -40,7 +40,7 @@ STORAGE_BYTES = 4_300_082_928
 DENSE_STORAGE_BYTES = 4 * (1 << 30)
 REMAINING_SEQUENCE_STORAGE_BYTES = STORAGE_BYTES - DENSE_STORAGE_BYTES
 MAXIMUM_STORAGE_BUFFER_BYTES = 2 * (1 << 30)
-MIN_SPEEDUP = 4.0
+MIN_SPEEDUP = 5.0
 RAYON_THREADS = 16
 TRACE_EPSILON_US = 1e-6
 
@@ -400,7 +400,7 @@ def parse_outer_remainder_member(
     cpu_tail.sort(key=lambda span: span.start_us)
     metal_output = unique(descendants(member_spans, output, METAL_OUTPUT), "Metal outputs")
     row_handoff = unique(descendants(member_spans, metal_prepare, METAL_ROW_HANDOFF), "row handoff")
-    row_release = unique(descendants(member_spans, output, METAL_ROW_RELEASE), "row release")
+    row_release = unique(descendants(member_spans, member, METAL_ROW_RELEASE), "row release")
 
     dense_rounds = [
         index
@@ -490,6 +490,7 @@ def parse_outer_remainder_member(
         allocation.end_us <= row_handoff.start_us + TRACE_EPSILON_US
         and row_handoff.end_us <= sequence.start_us + TRACE_EPSILON_US
         and sequence.end_us <= first_message.start_us + TRACE_EPSILON_US
+        and metal_output.end_us <= row_release.start_us + TRACE_EPSILON_US
     )
 
     result.update(
@@ -842,15 +843,34 @@ def parse_outer_remainder_result(
             )
             == 0
             and trace_int(
-                release_args.get("released_owned_bytes"),
-                "row_release.released_owned_bytes",
+                release_args.get("deferred_owned_bytes"),
+                "row_release.deferred_owned_bytes",
             )
             == rows * RESIDUAL_ROW_BYTES + REMAINING_SEQUENCE_STORAGE_BYTES
-            and trace_bool(
-                release_args.get("release_completed"),
-                "row_release.release_completed",
+            and trace_string(
+                release_args.get("release_mode"), "row_release.release_mode"
             )
-            and trace_bool(release_args.get("residual_released"), "row_release.residual_released")
+            == "proof_session_deferred"
+            and trace_string(
+                release_args.get("cleanup_scope"), "row_release.cleanup_scope"
+            )
+            == "proof_session"
+            and trace_bool(
+                release_args.get("ownership_transfer_completed"),
+                "row_release.ownership_transfer_completed",
+            )
+            and not trace_bool(
+                release_args.get("physical_release_completed"),
+                "row_release.physical_release_completed",
+            )
+            and not trace_bool(
+                release_args.get("residual_released"),
+                "row_release.residual_released",
+            )
+            and trace_bool(
+                release_args.get("residual_deferred"),
+                "row_release.residual_deferred",
+            )
             and trace_bool(release_args.get("compact_retained"), "row_release.compact_retained")
             and trace_int(handoff_args.get("device_registry_id"), "row_handoff.device_registry_id", positive=True)
             == trace_int(sequence_args.get("device_registry_id"), "sequence.device_registry_id", positive=True)

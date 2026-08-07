@@ -178,6 +178,10 @@ where
         &mut transcript,
     )?;
     drop(piop_span);
+    {
+        let _span = tracing::info_span!("jolt_prover::proof_session_drop").entered();
+        drop(session);
+    }
 
     // The auxiliary objects' opening material, transparently re-derived from
     // the public shapes and cross-checked against the passed precommitted
