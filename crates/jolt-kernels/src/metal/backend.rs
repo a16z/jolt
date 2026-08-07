@@ -13,6 +13,7 @@ use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::instruction_read_raf::InstructionReadRafMetalConfig;
 use super::ram_ra_claim_reduction::RamRaClaimReductionMetalConfig;
+use super::ram_ra_virtualization::RamRaVirtualizationMetalConfig;
 use super::ram_raf_evaluation::RamRafEvaluationMetalConfig;
 use super::ram_val_check::RamValCheckMetalConfig;
 use super::registers_claim_reduction::RegistersClaimReductionMetalConfig;
@@ -52,6 +53,8 @@ pub struct MetalConfig {
     pub ram_val_check: RamValCheckMetalConfig,
     /// Stage-5 RAM RA claim-reduction settings.
     pub ram_ra_claim_reduction: RamRaClaimReductionMetalConfig,
+    /// Stage-6b RAM RA virtualization settings.
+    pub ram_ra_virtualization: RamRaVirtualizationMetalConfig,
     /// Stage-6a Booleanity address settings.
     pub booleanity_address: BooleanityAddressMetalConfig,
     /// Stage-6a bytecode read-RAF address settings.
@@ -91,6 +94,8 @@ pub struct MetalBackend {
     pub(super) ram_read_write_sparse_sequences: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) ram_ra_claim_sparse_sequences: Arc<AtomicUsize>,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) ram_ra_virtualization_sparse_sequences: Arc<AtomicUsize>,
 }
 
 impl MetalBackend {
@@ -150,6 +155,7 @@ impl MetalBackend {
             config.ram_raf_evaluation.dispatch.trace_cutoff,
             config.ram_val_check.trace_cutoff_elements,
             config.ram_ra_claim_reduction.trace_cutoff_elements,
+            config.ram_ra_virtualization.trace_cutoff_elements,
             config.booleanity_address.trace_cutoff_elements,
             config.bytecode_read_raf_address.dispatch.trace_cutoff,
             config.booleanity_cycle.trace_cutoff_elements,
@@ -198,6 +204,8 @@ impl MetalBackend {
             ram_read_write_sparse_sequences: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
             ram_ra_claim_sparse_sequences: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "test-utils"))]
+            ram_ra_virtualization_sparse_sequences: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -270,6 +278,13 @@ impl MetalBackend {
         self.ram_ra_claim_sparse_sequences
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
+    pub fn ram_ra_virtualization_sparse_sequences(&self) -> usize {
+        self.ram_ra_virtualization_sparse_sequences
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl<PCS> JoltBackend<AkitaField, PCS>
@@ -290,6 +305,7 @@ where
         self.ram_raf_evaluation = Box::new(metal.clone());
         self.ram_val_check = Box::new(metal.clone());
         self.ram_ra_claim_reduction = Box::new(metal.clone());
+        self.ram_ra_virtualization = Box::new(metal.clone());
         self.instruction_read_raf = Box::new(metal.clone());
         self.booleanity_address = Box::new(metal.clone());
         self.bytecode_read_raf_address = Box::new(metal.clone());

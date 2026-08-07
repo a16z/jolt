@@ -12,6 +12,7 @@ mod instruction_ra_virtualization;
 mod instruction_read_raf;
 mod ram_cycle_family;
 mod ram_ra_claim_reduction;
+mod ram_ra_virtualization;
 mod ram_raf_evaluation;
 mod ram_read_write;
 mod ram_val_check;
@@ -41,6 +42,7 @@ pub use instruction_read_raf::{
     InstructionReadRafAddressImplementation, InstructionReadRafMetalConfig,
 };
 pub use ram_raf_evaluation::RamRafEvaluationMetalConfig;
+pub use ram_ra_virtualization::RamRaVirtualizationMetalConfig;
 pub use ram_val_check::RamValCheckMetalConfig;
 pub use registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
