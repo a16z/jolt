@@ -1,0 +1,33 @@
+{
+  "schema": "spartan_outer_opening_probe_v1",
+  "candidate": "deferred_u64_column_accumulation",
+  "status": "rejected",
+  "hardware": "Apple M4 Max",
+  "contract": {
+    "outputs": 35,
+    "exact": true,
+    "pairs": 4,
+    "orders": "alternating",
+    "product_uniskip_carrier": false
+  },
+  "fingerprint": {
+    "runner_binary_sha256": "5eebf2b62aa3dda4695e43f73c2545ebeadc4853301d2d1b8a11d04a786462a0",
+    "parent_artifact_sha256": "953be69c5ac1cd01c130ba98163342ead11d0d9cf782c90aeb14f78be9c0cdc7",
+    "candidate_artifact_sha256": "d8cd0ec58151c63e5904b5c92510c02b2eb6bfa4896a43155bdcb4f4c521a29d",
+    "candidate_source_sha256": "01a13fd3df8a51e831bbc7d08c1ee7449a4674cf818c052ea955ea13ec2eb801"
+  },
+  "log20": {
+    "parent_opening_gpu_active_ms": 1.353125,
+    "candidate_opening_gpu_active_ms": 2.190563,
+    "complete_member_speedup": 0.8380353938641751
+  },
+  "log25": {
+    "parent_opening_gpu_active_ms": 35.068813,
+    "candidate_opening_gpu_active_ms": 60.369459,
+    "complete_member_speedup": 0.8032373232515753
+  },
+  "decision": {
+    "verdict": "reject",
+    "reason": "Replacing per-row field reductions with five-limb-by-two-limb carry chains increased register pressure and serialized integer carry work enough to dominate the saved reductions. The candidate was exact but 72.15% slower in the representative opening phase."
+  }
+}

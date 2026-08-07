@@ -1,6 +1,6 @@
 {
   "schema": "spartan_outer_successor_screening_v1",
-  "status": "first_probe_rejected",
+  "status": "successor_promoted_to_production_candidate",
   "recorded_at": "2026-08-07T01:22:01Z",
   "hardware": "Apple M4 Max",
   "scale": {
@@ -120,6 +120,35 @@
       }
     },
     "verdict": "reject_deferred_b_above_75ms_and_advance_to_collapsed_az"
+  },
+  "production_successor": {
+    "recorded_at": "2026-08-07T09:00:00Z",
+    "retained_changes": [
+      "deferred signed B accumulation with one exact reduction per stream",
+      "three-read collapsed A lookup for materialization and the first bind",
+      "column-class-hoisted half-width opening products"
+    ],
+    "small_fixture_parity": {
+      "log_t": 12,
+      "samples": 3,
+      "deferred_b_full_state": true,
+      "deferred_b_message": true,
+      "collapsed_a_full_state": true,
+      "collapsed_a_message": true
+    },
+    "sealed_log25_screen": {
+      "artifact": "benchmark-runs/metal-outer-remainder-eval/20260807-085037/result.json",
+      "result_sha256": "7b1003c87650a961b37cbfe870e0e11f423c11fec37c64a1e4faa0dc0911c492",
+      "source_sha256": "c8b5fecdfdd515bdf8502048eedec415d02ac76fa5199be0e4dba4761e127389",
+      "pairs": 3,
+      "orders": "alternating",
+      "all_exact": true,
+      "cpu_member_median_ns": 487286166,
+      "metal_member_median_ns": 105913042,
+      "hybrid_speedup": 4.626180230040007,
+      "opening_gpu_active_median_ns": 31030500
+    },
+    "decision": "retain for the log26 five-pair production gate"
   },
   "evidence_limits": [
     "The latest attribution is one diagnostic pair and cannot promote a kernel.",

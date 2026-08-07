@@ -12,15 +12,19 @@ use metal::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::MATERIALIZE_PIPELINE;
+use super::{COLLAPSED_A_STREAM_PIPELINE, MATERIALIZE_PIPELINE};
 use crate::metal::solinas::{
     buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
     SpartanOuterUniskipRow, SpartanOuterUniskipRows,
 };
 
 const PARENT_MATERIALIZE_PIPELINE: &str = "solinas_outer_remainder_materialize_b_and_message";
+const PARENT_STREAM_PIPELINE: &str = "solinas_outer_remainder_stream_bind_and_message";
 const REDUCTION_PIPELINE: &str = "solinas_outer_remainder_reduce_columns";
 const SIMD_WIDTH: usize = 32;
+const STREAM_ROWS: usize = 10;
+const COLLAPSED_A_FIELDS: usize = 96;
+const MATERIALIZED_A_FIELDS: usize = STREAM_ROWS + 2 * COLLAPSED_A_FIELDS;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanOuterDeferredBProbeConfig {
@@ -45,6 +49,29 @@ pub struct SpartanOuterDeferredBProbeStats {
     pub pipeline_limits: PipelineLimits,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpartanOuterCollapsedAProbeConfig {
+    pub threads_per_threadgroup: Option<usize>,
+    pub max_threadgroups: usize,
+}
+
+impl Default for SpartanOuterCollapsedAProbeConfig {
+    fn default() -> Self {
+        Self {
+            threads_per_threadgroup: Some(128),
+            max_threadgroups: 8192,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpartanOuterCollapsedAProbeStats {
+    pub wall: Duration,
+    pub gpu_active: Duration,
+    pub message: [AkitaField; 2],
+    pub pipeline_limits: PipelineLimits,
+}
+
 struct Pipelines {
     parent: ComputePipelineState,
     candidate: ComputePipelineState,
@@ -53,6 +80,7 @@ struct Pipelines {
 
 struct Buffers {
     lagrange: Buffer,
+    parent_a_lookup: Buffer,
     e_in: Buffer,
     e_out: Buffer,
     b_state: Buffer,
@@ -84,6 +112,38 @@ pub struct SpartanOuterDeferredBProbe {
     parent_limits: PipelineLimits,
     candidate_limits: PipelineLimits,
     buffers: Buffers,
+    params: PhaseParams,
+    threads: usize,
+    reduction_threads: usize,
+    lagrange_fields: [AkitaField; 10],
+    completed: bool,
+}
+
+struct StreamPipelines {
+    parent: ComputePipelineState,
+    candidate: ComputePipelineState,
+    reduction: ComputePipelineState,
+}
+
+struct StreamBuffers {
+    lagrange: Buffer,
+    lookup: Buffer,
+    e_in: Buffer,
+    e_out: Buffer,
+    b_source: Buffer,
+    destination: Buffer,
+    partials: Buffer,
+    output: Buffer,
+}
+
+pub struct SpartanOuterCollapsedAProbe {
+    context: SolinasMetal,
+    rows: SpartanOuterUniskipRows,
+    pipelines: StreamPipelines,
+    parent_limits: PipelineLimits,
+    candidate_limits: PipelineLimits,
+    buffers: StreamBuffers,
+    challenge: Fp128,
     params: PhaseParams,
     threads: usize,
     reduction_threads: usize,
@@ -148,10 +208,13 @@ impl SolinasMetal {
             });
         }
 
+        let lagrange_fields = *lagrange;
         let lagrange = fields(lagrange);
+        let parent_a_lookup = fields(&materialized_a_lookup(&lagrange_fields));
         let e_in = fields(e_in);
         let e_out = fields(e_out);
         self.validate_inputs("deferred-B Lagrange weights", &lagrange)?;
+        self.validate_inputs("deferred-B parent A lookup", &parent_a_lookup)?;
         self.validate_inputs("deferred-B inner weights", &e_in)?;
         self.validate_inputs("deferred-B outer weights", &e_out)?;
 
@@ -190,6 +253,7 @@ impl SolinasMetal {
             .ok_or(MetalError::InputTooLong(blocks))?;
         let element_counts = [
             lagrange.len(),
+            parent_a_lookup.len(),
             e_in.len(),
             e_out.len(),
             state_elements,
@@ -208,6 +272,7 @@ impl SolinasMetal {
 
         let buffers = Buffers {
             lagrange: buffer_from_slice(&self.device, &lagrange),
+            parent_a_lookup: buffer_from_slice(&self.device, &parent_a_lookup),
             e_in: buffer_from_slice(&self.device, &e_in),
             e_out: buffer_from_slice(&self.device, &e_out),
             b_state: new_field_buffer(self, state_elements)?,
@@ -235,6 +300,7 @@ impl SolinasMetal {
             params,
             threads,
             reduction_threads,
+            lagrange_fields,
             completed: false,
         })
     }
@@ -247,6 +313,136 @@ impl SpartanOuterDeferredBProbe {
 
     pub fn run_candidate(&mut self) -> Result<SpartanOuterDeferredBProbeStats, MetalError> {
         self.run(true)
+    }
+
+    pub fn into_collapsed_a_probe(
+        self,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+        config: SpartanOuterCollapsedAProbeConfig,
+    ) -> Result<SpartanOuterCollapsedAProbe, MetalError> {
+        if !self.completed {
+            return Err(MetalError::NotExecuted);
+        }
+        if config.max_threadgroups == 0 {
+            return Err(MetalError::InvalidOuterRemainderConfig(
+                "the collapsed-A probe needs at least one threadgroup",
+            ));
+        }
+        let expected = self.rows.len() / 2;
+        let weight_elements = e_in
+            .len()
+            .checked_mul(e_out.len())
+            .ok_or(MetalError::InputTooLong(expected))?;
+        if weight_elements != expected {
+            return Err(MetalError::OuterRemainderWeightShape {
+                phase: "collapsed-A stream probe",
+                expected,
+                e_in: e_in.len(),
+                e_out: e_out.len(),
+            });
+        }
+
+        let context = self.context;
+        let challenge_field = challenge;
+        let challenge = Fp128::from_jolt_field(&challenge);
+        context.validate_inputs("collapsed-A challenge", slice::from_ref(&challenge))?;
+        let lookup = fields(&collapsed_a_lookup(&self.lagrange_fields, challenge_field));
+        let e_in = fields(e_in);
+        let e_out = fields(e_out);
+        context.validate_inputs("collapsed-A lookup", &lookup)?;
+        context.validate_inputs("collapsed-A inner weights", &e_in)?;
+        context.validate_inputs("collapsed-A outer weights", &e_out)?;
+
+        let parent = context.compile_named_pipeline(PARENT_STREAM_PIPELINE)?;
+        let candidate = context.compile_named_pipeline(COLLAPSED_A_STREAM_PIPELINE)?;
+        let reduction = self.pipelines.reduction;
+        let parent_limits = SolinasMetal::limits(&parent);
+        let candidate_limits = SolinasMetal::limits(&candidate);
+        let reduction_limits = SolinasMetal::limits(&reduction);
+        for (pipeline, limits) in [
+            (PARENT_STREAM_PIPELINE, parent_limits),
+            (COLLAPSED_A_STREAM_PIPELINE, candidate_limits),
+            (REDUCTION_PIPELINE, reduction_limits),
+        ] {
+            if limits.thread_execution_width != SIMD_WIDTH {
+                return Err(MetalError::UnsupportedOuterRemainderExecutionWidth {
+                    pipeline,
+                    expected: SIMD_WIDTH,
+                    got: limits.thread_execution_width,
+                });
+            }
+        }
+        let threads = SolinasMetal::resolve_threadgroup_width(
+            config.threads_per_threadgroup,
+            tighter_limits(parent_limits, candidate_limits),
+        )?;
+        let reduction_threads = SolinasMetal::resolve_threadgroup_width(None, reduction_limits)?;
+        let blocks = e_out.len().min(config.max_threadgroups);
+        let state_elements = self
+            .rows
+            .len()
+            .checked_mul(2)
+            .ok_or(MetalError::InputTooLong(self.rows.len()))?;
+        let partial_elements = blocks
+            .checked_mul(2)
+            .ok_or(MetalError::InputTooLong(blocks))?;
+        let element_counts = [
+            lookup.len(),
+            e_in.len(),
+            e_out.len(),
+            state_elements,
+            partial_elements,
+            2,
+        ];
+        let mut additional_bytes = 0_u64;
+        for elements in element_counts {
+            let bytes = field_bytes(elements)?;
+            context.validate_buffer_length(bytes)?;
+            additional_bytes = additional_bytes
+                .checked_add(bytes)
+                .ok_or(MetalError::InputTooLong(elements))?;
+        }
+        context.validate_additional_working_set(additional_bytes)?;
+
+        let Buffers {
+            lagrange, b_state, ..
+        } = self.buffers;
+        let buffers = StreamBuffers {
+            lagrange,
+            lookup: buffer_from_slice(&context.device, &lookup),
+            e_in: buffer_from_slice(&context.device, &e_in),
+            e_out: buffer_from_slice(&context.device, &e_out),
+            b_source: b_state,
+            destination: new_field_buffer(&context, state_elements)?,
+            partials: new_field_buffer(&context, partial_elements)?,
+            output: new_field_buffer(&context, 2)?,
+        };
+        let params = PhaseParams {
+            source_elements: to_u32(state_elements)?,
+            e_in_length: to_u32(e_in.len())?,
+            e_out_length: to_u32(e_out.len())?,
+            blocks: to_u32(blocks)?,
+        };
+
+        Ok(SpartanOuterCollapsedAProbe {
+            context,
+            rows: self.rows,
+            pipelines: StreamPipelines {
+                parent,
+                candidate,
+                reduction,
+            },
+            parent_limits,
+            candidate_limits,
+            buffers,
+            challenge,
+            params,
+            threads,
+            reduction_threads,
+            completed: false,
+        })
     }
 
     pub fn read_b_state(&self) -> Result<Vec<AkitaField>, MetalError> {
@@ -287,7 +483,12 @@ impl SpartanOuterDeferredBProbe {
             encoder.set_compute_pipeline_state(pipeline);
             encoder.set_buffer(0, Some(self.rows.instruction_input_buffer()), 0);
             encoder.set_buffer(1, Some(self.rows.residual_buffer()), 0);
-            encoder.set_buffer(2, Some(&self.buffers.lagrange), 0);
+            let a_weights = if candidate {
+                &self.buffers.lagrange
+            } else {
+                &self.buffers.parent_a_lookup
+            };
+            encoder.set_buffer(2, Some(a_weights), 0);
             encoder.set_buffer(3, Some(&self.buffers.e_in), 0);
             encoder.set_buffer(4, Some(&self.buffers.e_out), 0);
             encoder.set_buffer(5, Some(&self.buffers.b_state), 0);
@@ -346,6 +547,112 @@ impl SpartanOuterDeferredBProbe {
     }
 }
 
+impl SpartanOuterCollapsedAProbe {
+    pub fn run_parent(&mut self) -> Result<SpartanOuterCollapsedAProbeStats, MetalError> {
+        self.run(false)
+    }
+
+    pub fn run_candidate(&mut self) -> Result<SpartanOuterCollapsedAProbeStats, MetalError> {
+        self.run(true)
+    }
+
+    pub fn read_dense_state(&self) -> Result<Vec<AkitaField>, MetalError> {
+        if !self.completed {
+            return Err(MetalError::NotExecuted);
+        }
+        let elements = self.rows.len() * 2;
+        // SAFETY: the completed stream kernel initializes exactly two field
+        // elements per resident cycle in the shared destination buffer.
+        let values = unsafe {
+            slice::from_raw_parts(
+                self.buffers.destination.contents().cast::<Fp128>(),
+                elements,
+            )
+        };
+        self.context.validate_inputs("collapsed-A state", values)?;
+        Ok(values
+            .iter()
+            .copied()
+            .map(Fp128::into_jolt_field::<AkitaField>)
+            .collect())
+    }
+
+    fn run(&mut self, candidate: bool) -> Result<SpartanOuterCollapsedAProbeStats, MetalError> {
+        self.completed = false;
+        let pipeline = if candidate {
+            &self.pipelines.candidate
+        } else {
+            &self.pipelines.parent
+        };
+        let a_weights = if candidate {
+            &self.buffers.lookup
+        } else {
+            &self.buffers.lagrange
+        };
+        let pipeline_limits = if candidate {
+            self.candidate_limits
+        } else {
+            self.parent_limits
+        };
+        let queue = self.context.queue.clone();
+        let command_buffer = queue.new_command_buffer();
+        let wall_started = Instant::now();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.rows.instruction_input_buffer()), 0);
+            encoder.set_buffer(1, Some(&self.buffers.b_source), 0);
+            encoder.set_buffer(2, Some(&self.buffers.destination), 0);
+            encoder.set_buffer(3, Some(a_weights), 0);
+            encoder.set_buffer(4, Some(&self.buffers.e_in), 0);
+            encoder.set_buffer(5, Some(&self.buffers.e_out), 0);
+            encoder.set_buffer(6, Some(&self.buffers.partials), 0);
+            set_inline_bytes(encoder, 7, &self.challenge);
+            set_inline_bytes(encoder, 8, &self.params);
+            encoder.set_threadgroup_memory_length(
+                0,
+                (2 * (self.threads / SIMD_WIDTH) * size_of::<Fp128>()) as u64,
+            );
+            dispatch(encoder, self.params.blocks as usize, self.threads);
+
+            let reduce = ReduceParams {
+                input_count: self.params.blocks,
+                columns: 2,
+                reserved: [0; 2],
+            };
+            encoder.set_compute_pipeline_state(&self.pipelines.reduction);
+            encoder.set_buffer(0, Some(&self.buffers.partials), 0);
+            encoder.set_buffer(1, Some(&self.buffers.output), 0);
+            set_inline_bytes(encoder, 2, &reduce);
+            encoder.set_threadgroup_memory_length(
+                0,
+                ((self.reduction_threads / SIMD_WIDTH) * size_of::<Fp128>()) as u64,
+            );
+            dispatch(encoder, 2, self.reduction_threads);
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        let wall = wall_started.elapsed();
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        self.completed = true;
+        let message = read_message(&self.context, &self.buffers.output, "collapsed-A message")?;
+        Ok(SpartanOuterCollapsedAProbeStats {
+            wall,
+            gpu_active: Duration::from_secs_f64(end - start),
+            message,
+            pipeline_limits,
+        })
+    }
+}
+
 fn tighter_limits(left: PipelineLimits, right: PipelineLimits) -> PipelineLimits {
     PipelineLimits {
         thread_execution_width: left.thread_execution_width,
@@ -360,6 +667,112 @@ fn tighter_limits(left: PipelineLimits, right: PipelineLimits) -> PipelineLimits
 
 fn fields(values: &[AkitaField]) -> Vec<Fp128> {
     values.iter().map(Fp128::from_jolt_field).collect()
+}
+
+fn collapsed_a_coefficients(
+    lagrange: &[AkitaField; 10],
+    challenge: AkitaField,
+) -> [AkitaField; 16] {
+    let [first, second] = a_endpoint_coefficients(lagrange);
+    std::array::from_fn(|index| first[index] + challenge * (second[index] - first[index]))
+}
+
+fn a_endpoint_coefficients(lagrange: &[AkitaField; STREAM_ROWS]) -> [[AkitaField; 16]; 2] {
+    let first_base = lagrange[0] + lagrange[5];
+    let second_base = lagrange[4] + lagrange[8];
+    let operation = lagrange[4] - lagrange[5];
+    let first = [
+        first_base,
+        -lagrange[0] + lagrange[1] + lagrange[2],
+        -lagrange[0] + lagrange[3],
+        operation,
+        operation,
+        operation,
+        AkitaField::zero(),
+        AkitaField::zero(),
+        lagrange[6],
+        lagrange[7],
+        lagrange[8],
+        -lagrange[8],
+        lagrange[9],
+        -lagrange[9],
+        AkitaField::zero(),
+        AkitaField::zero(),
+    ];
+    let second = [
+        second_base,
+        lagrange[0],
+        lagrange[0],
+        lagrange[1] - lagrange[4],
+        lagrange[2] - lagrange[4],
+        lagrange[3] - lagrange[4],
+        lagrange[6] - lagrange[8],
+        lagrange[7] - lagrange[8],
+        AkitaField::zero(),
+        AkitaField::zero(),
+        AkitaField::zero(),
+        AkitaField::zero(),
+        AkitaField::zero(),
+        AkitaField::zero(),
+        -lagrange[4],
+        lagrange[5],
+    ];
+    [first, second]
+}
+
+fn a_lookup(coefficients: &[AkitaField; 16]) -> [AkitaField; COLLAPSED_A_FIELDS] {
+    std::array::from_fn(|index| {
+        let group = index / 32;
+        let mask = index % 32;
+        let mut value = if group == 0 {
+            coefficients[0]
+        } else {
+            AkitaField::zero()
+        };
+        for bit in 0..5 {
+            if mask & (1 << bit) != 0 {
+                value += coefficients[1 + 5 * group + bit];
+            }
+        }
+        value
+    })
+}
+
+fn materialized_a_lookup(
+    lagrange: &[AkitaField; STREAM_ROWS],
+) -> [AkitaField; MATERIALIZED_A_FIELDS] {
+    let [first, second] = a_endpoint_coefficients(lagrange);
+    let first = a_lookup(&first);
+    let second = a_lookup(&second);
+    std::array::from_fn(|index| {
+        if index < STREAM_ROWS {
+            lagrange[index]
+        } else if index < STREAM_ROWS + COLLAPSED_A_FIELDS {
+            first[index - STREAM_ROWS]
+        } else {
+            second[index - STREAM_ROWS - COLLAPSED_A_FIELDS]
+        }
+    })
+}
+
+fn collapsed_a_lookup(
+    lagrange: &[AkitaField; STREAM_ROWS],
+    challenge: AkitaField,
+) -> [AkitaField; COLLAPSED_A_FIELDS] {
+    let coefficients = collapsed_a_coefficients(lagrange, challenge);
+    a_lookup(&coefficients)
+}
+
+fn read_message(
+    context: &SolinasMetal,
+    output: &Buffer,
+    side: &'static str,
+) -> Result<[AkitaField; 2], MetalError> {
+    // SAFETY: callers wait for the two-column reduction to initialize this
+    // shared two-field buffer before reading it.
+    let values = unsafe { slice::from_raw_parts(output.contents().cast::<Fp128>(), 2) };
+    context.validate_inputs(side, values)?;
+    Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
 }
 
 fn synthetic_row(index: usize, seed: u64) -> SpartanOuterUniskipRow {

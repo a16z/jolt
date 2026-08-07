@@ -1,10 +1,14 @@
 pub const SOURCE: &str = include_str!("shader.metal");
 pub const MATERIALIZE_PIPELINE: &str = "solinas_outer_remainder_deferred_b_materialize";
+pub const COLLAPSED_A_STREAM_PIPELINE: &str =
+    "solinas_outer_remainder_collapsed_a_stream_bind_probe";
 
 mod runtime;
 
 pub use runtime::{
-    SpartanOuterDeferredBProbe, SpartanOuterDeferredBProbeConfig, SpartanOuterDeferredBProbeStats,
+    SpartanOuterCollapsedAProbe, SpartanOuterCollapsedAProbeConfig,
+    SpartanOuterCollapsedAProbeStats, SpartanOuterDeferredBProbe, SpartanOuterDeferredBProbeConfig,
+    SpartanOuterDeferredBProbeStats,
 };
 
 #[cfg(test)]
@@ -12,7 +16,7 @@ pub use runtime::{
 mod tests {
     use jolt_field::AkitaField;
 
-    use super::{MATERIALIZE_PIPELINE, SOURCE};
+    use super::{COLLAPSED_A_STREAM_PIPELINE, MATERIALIZE_PIPELINE, SOURCE};
     use crate::metal::solinas::{
         OuterBindingPlan, OuterKernelArtifact, SolinasMetal, SpartanOuterUniskipRow,
     };
@@ -45,18 +49,18 @@ mod tests {
     }
 
     #[test]
-    fn compiler_accepts_deferred_b_materializer() {
+    fn compiler_accepts_successor_pipelines() {
         let artifact =
             OuterKernelArtifact::new(SOURCE.to_owned(), OuterBindingPlan::BOnlyV1).unwrap();
         let context = SolinasMetal::for_akita_with_outer_artifact(&artifact).unwrap();
-        let pipeline = context
-            .compile_named_pipeline(MATERIALIZE_PIPELINE)
-            .unwrap();
-        let limits = SolinasMetal::limits(&pipeline);
+        for name in [MATERIALIZE_PIPELINE, COLLAPSED_A_STREAM_PIPELINE] {
+            let pipeline = context.compile_named_pipeline(name).unwrap();
+            let limits = SolinasMetal::limits(&pipeline);
 
-        assert_eq!(limits.thread_execution_width, 32);
-        assert!(limits.max_total_threads_per_threadgroup >= 256);
-        assert_eq!(limits.static_threadgroup_memory_length, 0);
+            assert_eq!(limits.thread_execution_width, 32);
+            assert!(limits.max_total_threads_per_threadgroup >= 256);
+            assert_eq!(limits.static_threadgroup_memory_length, 0);
+        }
     }
 
     #[test]
@@ -93,6 +97,25 @@ mod tests {
         assert_eq!(candidate.message, parent.message);
         assert_eq!(candidate_state, parent_state);
         assert_eq!(candidate.pipeline_limits.thread_execution_width, 32);
+        assert!(candidate.wall >= candidate.gpu_active);
+
+        let challenge = AkitaField::from_u64(101);
+        let stream_e_in = (0..8)
+            .map(|index| AkitaField::from_u64(splitmix(0x3333 ^ index)))
+            .collect::<Vec<_>>();
+        let stream_e_out = (0..16)
+            .map(|index| AkitaField::from_u64(splitmix(0x4444 ^ index)))
+            .collect::<Vec<_>>();
+        let mut stream = probe
+            .into_collapsed_a_probe(challenge, &stream_e_in, &stream_e_out, Default::default())
+            .unwrap();
+        let parent = stream.run_parent().unwrap();
+        let parent_state = stream.read_dense_state().unwrap();
+        let candidate = stream.run_candidate().unwrap();
+        let candidate_state = stream.read_dense_state().unwrap();
+
+        assert_eq!(candidate.message, parent.message);
+        assert_eq!(candidate_state, parent_state);
         assert!(candidate.wall >= candidate.gpu_active);
     }
 }
