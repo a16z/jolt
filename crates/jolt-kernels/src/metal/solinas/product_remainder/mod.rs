@@ -797,10 +797,15 @@ impl ProductRemainderSequence {
             ));
         }
 
+        // Production overwrites these values; nonzero state makes the primer
+        // exercise both resident arenas instead of only their zero pages.
+        let primer_weights = std::array::from_fn(|index| AkitaField::from_u64(index as u64 + 1));
+        self.set_lagrange_weights(primer_weights)?;
+
         let (materialize_e_in_len, materialize_e_out_len) =
             balanced_weight_shape(self.layout.rows() / 2);
-        let materialize_e_in = vec![AkitaField::zero(); materialize_e_in_len];
-        let materialize_e_out = vec![AkitaField::zero(); materialize_e_out_len];
+        let materialize_e_in = vec![AkitaField::one(); materialize_e_in_len];
+        let materialize_e_out = vec![AkitaField::one(); materialize_e_out_len];
         let started = Instant::now();
         let (_, materialize_gpu_active) =
             self.execute_materialize_message(&materialize_e_in, &materialize_e_out)?;
@@ -809,11 +814,11 @@ impl ProductRemainderSequence {
 
         let (transition_e_in_len, transition_e_out_len) =
             balanced_weight_shape(self.layout.rows() / 4);
-        let transition_e_in = vec![AkitaField::zero(); transition_e_in_len];
-        let transition_e_out = vec![AkitaField::zero(); transition_e_out_len];
+        let transition_e_in = vec![AkitaField::one(); transition_e_in_len];
+        let transition_e_out = vec![AkitaField::one(); transition_e_out_len];
         let started = Instant::now();
         let (_, transition_gpu_active) = self.execute_current_bind_and_message(
-            AkitaField::zero(),
+            AkitaField::from_u64(5),
             &transition_e_in,
             &transition_e_out,
         )?;
