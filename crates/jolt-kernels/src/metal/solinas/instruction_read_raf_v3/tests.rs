@@ -1,5 +1,8 @@
+use core::mem::size_of;
+
 use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_field::{Field, Fr, FromPrimitiveInt};
+use jolt_lookup_tables::tables::suffixes::{Suffixes, NUM_SUFFIXES};
 
 use super::abi::{
     AddressAtomTopologyReceipt, AddressStateReceipt, CycleFactorReceipt, HostRoundBoundary,
@@ -10,6 +13,12 @@ use super::abi::{
 use super::model::{
     choose_cycle_cutoff, AddressCensus, ExecutionModel, RoofRates, M4_MAX_RETAINED_RATES,
 };
+use super::shader_abi::{
+    pack_claim, segment_index, AddressJob, AddressLookup, AtomMassFinalizeParams, AtomMassGroup,
+    AtomMassJob, AtomMassPhaseParams, AtomPhaseParams, FlagOpeningParams, ReductionParams,
+    SplitAtom, SuffixPlan, TableDescriptor, EXPLICIT_SUFFIX_LANES, FLAG_COLUMNS, JOB_LANES,
+    MAX_SUFFIXES, SEGMENTS, TABLES, TOTAL_SUFFIXES,
+};
 use super::{
     aggregate_address_atoms, atom_address_message, DenseReadRafOracle, InstructionReadRafRow,
     InstructionReadRafV3Error, ADDRESS_BITS, ADDRESS_PHASES, FP128_BYTES, INSTRUCTION_ROW_BYTES,
@@ -17,6 +26,123 @@ use super::{
 
 fn f(value: u64) -> Fr {
     Fr::from_u64(value)
+}
+
+#[test]
+fn shader_abi_layout_and_suffix_discriminants_are_stable() {
+    assert_eq!(size_of::<AddressLookup>(), 16);
+    assert_eq!(size_of::<AddressJob>(), 16);
+    assert_eq!(size_of::<AtomMassJob>(), 16);
+    assert_eq!(size_of::<AtomMassGroup>(), 16);
+    assert_eq!(size_of::<SplitAtom>(), 16);
+    assert_eq!(size_of::<TableDescriptor>(), 16);
+    assert_eq!(size_of::<AtomPhaseParams>(), 16);
+    assert_eq!(size_of::<AtomMassPhaseParams>(), 32);
+    assert_eq!(size_of::<AtomMassFinalizeParams>(), 16);
+    assert_eq!(size_of::<FlagOpeningParams>(), 16);
+    assert_eq!(size_of::<ReductionParams>(), 16);
+
+    let suffixes = [
+        Suffixes::One,
+        Suffixes::And,
+        Suffixes::AndNot,
+        Suffixes::Xor,
+        Suffixes::Or,
+        Suffixes::RightOperand,
+        Suffixes::RightOperandW,
+        Suffixes::ChangeDivisor,
+        Suffixes::ChangeDivisorW,
+        Suffixes::UpperWord,
+        Suffixes::LowerWord,
+        Suffixes::LowerHalfWord,
+        Suffixes::LessThan,
+        Suffixes::GreaterThan,
+        Suffixes::Eq,
+        Suffixes::LeftOperandIsZero,
+        Suffixes::RightOperandIsZero,
+        Suffixes::Lsb,
+        Suffixes::DivByZero,
+        Suffixes::Pow2,
+        Suffixes::Pow2W,
+        Suffixes::Rev8W,
+        Suffixes::RightShiftPadding,
+        Suffixes::RightShift,
+        Suffixes::RightShiftHelper,
+        Suffixes::SignExtension,
+        Suffixes::LeftShift,
+        Suffixes::TwoLsb,
+        Suffixes::SignExtensionUpperHalf,
+        Suffixes::SignExtensionRightOperand,
+        Suffixes::RightShiftW,
+        Suffixes::RightShiftWHelper,
+        Suffixes::LeftShiftWHelper,
+        Suffixes::LeftShiftW,
+        Suffixes::OverflowBitsZero,
+        Suffixes::XorRot16,
+        Suffixes::XorRot24,
+        Suffixes::XorRot32,
+        Suffixes::XorRot63,
+        Suffixes::XorRotW16,
+        Suffixes::XorRotW12,
+        Suffixes::XorRotW8,
+        Suffixes::XorRotW7,
+    ];
+    assert_eq!(suffixes.len(), NUM_SUFFIXES);
+    for (index, suffix) in suffixes.into_iter().enumerate() {
+        assert_eq!(suffix as usize, index);
+    }
+}
+
+#[test]
+fn shader_abi_production_suffix_plan_is_total_and_bounded() {
+    let plan = SuffixPlan::production().unwrap();
+    assert_eq!(TABLES, 40);
+    assert_eq!(SEGMENTS, 82);
+    assert_eq!(FLAG_COLUMNS, 41);
+    assert_eq!(JOB_LANES, 6);
+    assert_eq!(AddressLookup::new(u128::MAX).value(), u128::MAX);
+
+    let mut outputs = 0usize;
+    for table in 0..TABLES {
+        let descriptor = plan.descriptors()[table];
+        assert_eq!(descriptor.output_start as usize, outputs);
+        assert!(descriptor.suffix_count as usize <= MAX_SUFFIXES);
+        assert!(plan.explicit_counts()[table] as usize <= EXPLICIT_SUFFIX_LANES);
+        for slot in 0..descriptor.suffix_count as usize {
+            assert!((plan.output_lanes()[table * MAX_SUFFIXES + slot] as usize) < JOB_LANES);
+        }
+        for slot in 0..plan.explicit_counts()[table] as usize {
+            assert_ne!(
+                plan.explicit_kinds()[table * EXPLICIT_SUFFIX_LANES + slot],
+                Suffixes::One as u8
+            );
+        }
+        outputs += descriptor.suffix_count as usize;
+    }
+    assert_eq!(outputs, TOTAL_SUFFIXES);
+
+    assert_eq!(pack_claim(None, false).unwrap(), 0);
+    assert_eq!(pack_claim(Some(0), true).unwrap(), 0x81);
+    assert_eq!(segment_index(None, false).unwrap(), 0);
+    assert_eq!(segment_index(None, true).unwrap(), 1);
+    assert_eq!(segment_index(Some(TABLES - 1), true).unwrap(), SEGMENTS - 1);
+    assert!(pack_claim(Some(TABLES), false).is_err());
+}
+
+#[test]
+fn shader_abi_parameter_constructors_reject_partial_shapes() {
+    assert!(AtomPhaseParams::new(112, 1).is_ok());
+    assert!(AtomPhaseParams::new(120, 1).is_err());
+    assert!(AtomPhaseParams::new(111, 1).is_err());
+    assert!(AtomPhaseParams::new(112, 0).is_err());
+    assert!(AtomMassPhaseParams::new(8, 4, 4, 2, 4, 2).is_ok());
+    assert!(AtomMassPhaseParams::new(8, 9, 9, 2, 4, 2).is_err());
+    assert!(AtomMassFinalizeParams::new(4, 1, 2).is_ok());
+    assert!(AtomMassFinalizeParams::new(4, 1, 1).is_err());
+    assert!(FlagOpeningParams::new(8, 4, 2).is_ok());
+    assert!(FlagOpeningParams::new(8, 2, 2).is_err());
+    assert_eq!(ReductionParams::new(33).unwrap().output_count, 2);
+    assert!(ReductionParams::new(0).is_err());
 }
 
 fn fixture_rows() -> Vec<InstructionReadRafRow> {
@@ -115,8 +241,8 @@ fn facts() -> ResidentInstructionFacts {
 fn reduction_eq() -> ReductionEqReceipt {
     ReductionEqReceipt::new(
         producer(),
-        descriptor(102, 2, 2 * FP128_BYTES),
-        descriptor(103, 4, 4 * FP128_BYTES),
+        descriptor(102, 4, 4 * FP128_BYTES),
+        descriptor(103, 2, 2 * FP128_BYTES),
     )
     .unwrap()
 }
@@ -137,6 +263,10 @@ fn topology(first_id: usize) -> AddressAtomTopologyReceipt {
 
 #[test]
 fn resident_contracts_fail_closed_and_preserve_one_owner() {
+    assert!(matches!(
+        InstructionReadRafGeometry::new(8, 2),
+        Err(InstructionReadRafV3Error::InvalidVirtualRa(2))
+    ));
     let wrong_bytes = ResidentInstructionFacts::new(
         producer(),
         descriptor(100, 8, 8 * INSTRUCTION_ROW_BYTES - 1),
@@ -149,6 +279,18 @@ fn resident_contracts_fail_closed_and_preserve_one_owner() {
             ..
         })
     ));
+    let wrong_source = ResidentInstructionFacts::new(
+        producer(),
+        descriptor(99, 8, 8 * INSTRUCTION_ROW_BYTES),
+        descriptor(101, 8, 8),
+    );
+    assert!(matches!(
+        wrong_source,
+        Err(InstructionReadRafV3Error::SourceAllocationMismatch {
+            expected: 100,
+            got: 99,
+        })
+    ));
 
     let aliased_topology = topology(100);
     assert!(matches!(
@@ -159,6 +301,8 @@ fn resident_contracts_fail_closed_and_preserve_one_owner() {
         ResidentReadRafInputs::new(&facts(), &reduction_eq(), Some(&topology(104))).unwrap();
     assert!(inputs.uses_atom_path());
     assert_eq!(inputs.atoms().unwrap().atoms(), 4);
+    assert_eq!(inputs.reduction_eq().e_in().descriptor().elements(), 4);
+    assert_eq!(inputs.reduction_eq().e_out().descriptor().elements(), 2);
 
     let phase_tables = ADDRESS_PHASES * 256;
     let address = AddressStateReceipt::new(
@@ -213,6 +357,8 @@ fn log26_model_charges_topology_and_exposes_atom_headroom() {
     let census = AddressCensus {
         rows,
         atoms: rows / 16,
+        mass_jobs: rows / 16,
+        split_atoms: 0,
         split_mass_partials: 0,
         phase_jobs: [1_024; ADDRESS_PHASES],
         raf_scalar_products: rows,
@@ -223,12 +369,27 @@ fn log26_model_charges_topology_and_exposes_atom_headroom() {
     };
     let compressed = ExecutionModel::compressed(geometry, census, 1 << 16).unwrap();
     let dense = ExecutionModel::dense(geometry, census, 1 << 16).unwrap();
+    let invalid_jobs = AddressCensus {
+        mass_jobs: census.mass_jobs + 1,
+        ..census
+    };
+    assert!(matches!(
+        ExecutionModel::compressed(geometry, invalid_jobs, 1 << 16),
+        Err(InstructionReadRafV3Error::InvalidCensus(
+            "mass jobs must equal atoms - split atoms + mass partials"
+        ))
+    ));
     assert_eq!(
         compressed.address.useful_products,
         rows as u128 + 15 * (rows / 16) as u128 + 3 * rows as u128
     );
     assert!(compressed.address.requested_bytes < dense.address.requested_bytes);
     assert!(compressed.address.arithmetic_intensity().is_finite());
+    assert_eq!(compressed.address.dispatches, 49);
+    assert_eq!(dense.address.dispatches, 48);
+    assert_eq!(compressed.cycle.useful_products, 2_616_983_552);
+    assert_eq!(compressed.cycle.dispatches, 48);
+    assert_eq!(compressed.cycle.peak_owned_bytes, 7_026_638_848);
 
     let report = compressed
         .gate(3.574, 0.020, M4_MAX_RETAINED_RATES, 0.80, 5.0)

@@ -57,17 +57,16 @@
 mod abi;
 mod model;
 mod oracle;
+mod shader_abi;
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 
-pub(crate) const ATOM_MASS_PHASE_PIPELINE: &str =
-    "solinas_instruction_read_raf_v3_atom_mass_phase";
+pub(crate) const ATOM_MASS_PHASE_PIPELINE: &str = "solinas_instruction_read_raf_v3_atom_mass_phase";
 pub(crate) const ATOM_MASS_FINALIZE_PIPELINE: &str =
     "solinas_instruction_read_raf_v3_atom_mass_finalize";
 pub(crate) const ATOM_PHASE_PIPELINE: &str = "solinas_instruction_read_raf_v3_atom_phase";
 pub(crate) const FINALIZE_RAF_PIPELINE: &str = "solinas_instruction_read_raf_v3_finalize_raf";
-pub(crate) const FINALIZE_SUFFIX_PIPELINE: &str =
-    "solinas_instruction_read_raf_v3_finalize_suffix";
+pub(crate) const FINALIZE_SUFFIX_PIPELINE: &str = "solinas_instruction_read_raf_v3_finalize_suffix";
 pub(crate) const OPEN_FLAGS_PIPELINE: &str = "solinas_instruction_read_raf_v3_open_flags";
 pub(crate) const REDUCE_PIPELINE: &str = "solinas_instruction_read_raf_v3_reduce";
 
@@ -120,6 +119,10 @@ pub(crate) enum InstructionReadRafV3Error {
     },
     #[error("InstructionReadRaf {plane} belongs to a different producer")]
     ProducerMismatch { plane: &'static str },
+    #[error(
+        "InstructionReadRaf source allocation identity is {got}, expected authoritative allocation {expected}"
+    )]
+    SourceAllocationMismatch { expected: usize, got: usize },
     #[error("InstructionReadRaf {plane} initialization generation is {got}, expected {expected}")]
     GenerationMismatch {
         plane: &'static str,
@@ -172,6 +175,8 @@ pub(crate) enum InstructionReadRafV3Error {
     InvalidModelParameter(&'static str),
     #[error("InstructionReadRaf address census is inconsistent: {0}")]
     InvalidCensus(&'static str),
+    #[error("InstructionReadRaf shader ABI is invalid: {0}")]
+    InvalidShaderAbi(&'static str),
 }
 
 #[cfg(test)]

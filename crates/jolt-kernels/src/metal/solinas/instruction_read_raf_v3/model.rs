@@ -12,7 +12,9 @@ const OFFSET_BYTES: u128 = 4;
 const JOB_BYTES: u128 = 16;
 const ADDRESS_JOB_LANES: u128 = 6;
 const ADDRESS_EXPANDED_LANES: u128 = 6 + 88;
-const ADDRESS_ROUND_EVALS: u128 = 3;
+const ATOM_ADDRESS_DISPATCHES: u64 = 4 + 15 * 3;
+const GROUPED_ADDRESS_DISPATCHES: u64 = 16 * 3;
+const CYCLE_TILE_PAIRS: u128 = 64;
 
 const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT == 40);
 const _: () = assert!(ADDRESS_EXPANDED_LANES == 94);
@@ -30,6 +32,7 @@ pub(crate) struct SequenceWork {
     pub(crate) useful_products: u128,
     pub(crate) compulsory_bytes: u128,
     pub(crate) cache_unique_bytes: u128,
+    pub(crate) cacheable_requested_bytes: u128,
     pub(crate) requested_bytes: u128,
     pub(crate) peak_owned_bytes: u128,
     pub(crate) dispatches: u64,
@@ -52,6 +55,11 @@ impl SequenceWork {
                 "cache-unique bytes",
                 self.cache_unique_bytes,
                 other.cache_unique_bytes,
+            )?,
+            cacheable_requested_bytes: checked_add(
+                "cacheable requested bytes",
+                self.cacheable_requested_bytes,
+                other.cacheable_requested_bytes,
             )?,
             requested_bytes: checked_add(
                 "requested bytes",
@@ -115,6 +123,8 @@ impl RoofRates {
 pub(crate) struct AddressCensus {
     pub(crate) rows: u64,
     pub(crate) atoms: u64,
+    pub(crate) mass_jobs: u64,
+    pub(crate) split_atoms: u64,
     pub(crate) split_mass_partials: u64,
     pub(crate) phase_jobs: [u64; ADDRESS_PHASES],
     pub(crate) raf_scalar_products: u64,
@@ -151,6 +161,23 @@ impl AddressCensus {
         if self.split_mass_partials > self.rows {
             return Err(InstructionReadRafV3Error::InvalidCensus(
                 "split mass partials exceed rows",
+            ));
+        }
+        if self.split_atoms > self.atoms {
+            return Err(InstructionReadRafV3Error::InvalidCensus(
+                "split atoms exceed atom count",
+            ));
+        }
+        let expected_mass_jobs = self
+            .atoms
+            .checked_sub(self.split_atoms)
+            .and_then(|value| value.checked_add(self.split_mass_partials))
+            .ok_or(InstructionReadRafV3Error::InvalidCensus(
+                "mass-job identity overflowed",
+            ))?;
+        if self.mass_jobs != expected_mass_jobs {
+            return Err(InstructionReadRafV3Error::InvalidCensus(
+                "mass jobs must equal atoms - split atoms + mass partials",
             ));
         }
         if topology_required && !self.producer_coowned && self.topology_build_bytes == 0 {
@@ -322,6 +349,7 @@ fn compressed_address_work(
 ) -> Result<SequenceWork, InstructionReadRafV3Error> {
     let rows = census.rows as u128;
     let atoms = census.atoms as u128;
+    let mass_jobs = census.mass_jobs as u128;
     let split = census.split_mass_partials as u128;
     let jobs: u128 = census.phase_jobs.iter().map(|value| *value as u128).sum();
     let useful_products = checked_sum(&[
@@ -336,8 +364,8 @@ fn compressed_address_work(
     // mass in place.  Split mass partials are written and read once.
     let phase_zero = checked_sum(&[
         CYCLE_INDEX_BYTES * rows,
-        2 * FP128_BYTES as u128 * rows,
-        (JOB_BYTES + LOOKUP_BYTES) * census.phase_jobs[0] as u128,
+        JOB_BYTES * mass_jobs,
+        LOOKUP_BYTES * mass_jobs,
         FP128_BYTES as u128 * atoms,
         2 * FP128_BYTES as u128 * split,
     ])?;
@@ -349,6 +377,8 @@ fn compressed_address_work(
         OFFSET_BYTES * (atoms + 1),
         (LOOKUP_BYTES + CLAIM_BYTES) * atoms,
         OFFSET_BYTES * super::abi::ADDRESS_SEGMENT_OFFSETS as u128,
+        JOB_BYTES * mass_jobs,
+        JOB_BYTES * jobs,
     ])?;
     let partial_peak = largest_partial_bytes(&census.phase_jobs)?;
     let output_bytes = ADDRESS_EXPANDED_LANES * ADDRESS_BINS as u128 * FP128_BYTES as u128;
@@ -365,6 +395,10 @@ fn compressed_address_work(
         useful_products,
         compulsory_bytes,
         cache_unique_bytes: checked_sum(&[compulsory_bytes, equality_cache, phase_tables])?,
+        cacheable_requested_bytes: checked_sum(&[
+            2 * FP128_BYTES as u128 * rows,
+            15 * FP128_BYTES as u128 * atoms,
+        ])?,
         requested_bytes,
         peak_owned_bytes: checked_sum(&[
             topology,
@@ -374,8 +408,7 @@ fn compressed_address_work(
             output_bytes,
             phase_tables,
         ])?,
-        dispatches: u64::try_from(2 * ADDRESS_PHASES)
-            .map_err(|_| InstructionReadRafV3Error::SizeOverflow("address dispatch count"))?,
+        dispatches: ATOM_ADDRESS_DISPATCHES,
     })
 }
 
@@ -394,7 +427,7 @@ fn dense_address_work(
     // each 40-byte producer row.  Phase zero also requests two split-eq
     // factors and writes the mutable weight.  Fifteen phases read 24 row bytes
     // and read/write the 16-byte weight.
-    let phase_zero = (24 + 2 * FP128_BYTES as u128 + FP128_BYTES as u128) * rows;
+    let phase_zero = (24 + FP128_BYTES as u128) * rows;
     let later_phases = 15 * (24 + 2 * FP128_BYTES as u128) * rows;
     let common = address_partial_and_host_bytes(jobs)?;
     let requested_bytes = checked_sum(&[phase_zero, later_phases, common])?;
@@ -412,6 +445,10 @@ fn dense_address_work(
         useful_products,
         compulsory_bytes,
         cache_unique_bytes: checked_sum(&[compulsory_bytes, equality_cache, phase_tables])?,
+        cacheable_requested_bytes: checked_sum(&[
+            2 * FP128_BYTES as u128 * rows,
+            15 * FP128_BYTES as u128 * rows,
+        ])?,
         requested_bytes,
         peak_owned_bytes: checked_sum(&[
             FP128_BYTES as u128 * rows,
@@ -419,8 +456,7 @@ fn dense_address_work(
             output_bytes,
             phase_tables,
         ])?,
-        dispatches: u64::try_from(2 * ADDRESS_PHASES)
-            .map_err(|_| InstructionReadRafV3Error::SizeOverflow("address dispatch count"))?,
+        dispatches: GROUPED_ADDRESS_DISPATCHES,
     })
 }
 
@@ -429,19 +465,14 @@ fn address_partial_and_host_bytes(jobs: u128) -> Result<u128, InstructionReadRaf
     let partial_write_read = 2 * partial_fields * FP128_BYTES as u128;
     let expanded_output = ADDRESS_EXPANDED_LANES * ADDRESS_BINS as u128 * FP128_BYTES as u128;
     let output_write_and_host_read = 2 * ADDRESS_PHASES as u128 * expanded_output;
-    let phase_table_uploads = ADDRESS_PHASES as u128 * ADDRESS_BINS as u128 * FP128_BYTES as u128;
-    let round_message_readbacks = ADDRESS_BITS_U128 * ADDRESS_ROUND_EVALS * FP128_BYTES as u128;
-    let challenge_uploads = ADDRESS_BITS_U128 * FP128_BYTES as u128;
+    let phase_table_uploads =
+        (ADDRESS_PHASES - 1) as u128 * ADDRESS_BINS as u128 * FP128_BYTES as u128;
     checked_sum(&[
         partial_write_read,
         output_write_and_host_read,
         phase_table_uploads,
-        round_message_readbacks,
-        challenge_uploads,
     ])
 }
-
-const ADDRESS_BITS_U128: u128 = super::ADDRESS_BITS as u128;
 
 fn cycle_work(
     geometry: InstructionReadRafGeometry,
@@ -453,88 +484,146 @@ fn cycle_work(
             "cycle cutoff",
         ));
     }
-    let factors = geometry.cycle_factors();
-    let cycles_u128 = cycles as u128;
-    let factor_bytes = factors as u128 * FP128_BYTES as u128;
-
-    // First message reads the producer row and split equality factors without
-    // writing full-width factor tables.  After the host challenge, the fused
-    // handoff rereads the source, writes the half-width factors, and computes
-    // the following message before those values leave registers.
-    let first_message_bytes = (24 + 2 * FP128_BYTES as u128) * cycles_u128;
-    let handoff_bytes = 24 * cycles_u128 + factor_bytes * (cycles_u128 / 2);
-    let mut requested_bytes = checked_sum(&[first_message_bytes, handoff_bytes])?;
-    let mut useful_products = cycle_message_products(cycles_u128 / 2, factors)?;
-    useful_products = checked_add(
-        "cycle useful products",
-        useful_products,
-        factors as u128 * cycles_u128 / 2,
-    )?;
-    useful_products = checked_add(
-        "cycle useful products",
-        useful_products,
-        cycle_message_products(cycles_u128 / 4, factors)?,
-    )?;
-
-    let mut width = cycles / 2;
-    let mut dispatches = 2u64;
-    while width > cutoff_elements {
-        let transition = product5_transition_work(width as u128, factors)?;
-        requested_bytes = checked_add(
-            "cycle requested bytes",
-            requested_bytes,
-            transition.requested_bytes,
-        )?;
-        useful_products = checked_add(
-            "cycle useful products",
-            useful_products,
-            transition.useful_products,
-        )?;
-        dispatches = dispatches
-            .checked_add(1)
-            .ok_or(InstructionReadRafV3Error::SizeOverflow(
-                "cycle dispatch count",
-            ))?;
-        width /= 2;
+    let factors = geometry.cycle_factors() as u128;
+    let cycles = cycles as u128;
+    let cutoff = cutoff_elements as u128;
+    let e_out = 1u128 << (geometry.log_t() / 2);
+    let first_e_in = cycles / 2 / e_out;
+    let handoff_e_in = cycles / 4 / e_out;
+    if first_e_in == 0 || handoff_e_in == 0 {
+        return Err(InstructionReadRafV3Error::InvalidModelParameter(
+            "cycle split-equality geometry",
+        ));
     }
-    let readback_bytes = factor_bytes * width as u128;
 
-    // Terminal flags read the co-produced byte plane.  Equality-factor
-    // requests are logical traffic; the split tables are cache-unique.
-    let flag_bytes = checked_sum(&[
-        CLAIM_BYTES * cycles_u128,
-        2 * FP128_BYTES as u128 * cycles_u128,
-        2 * (LookupTableKind::<RISCV_XLEN>::COUNT as u128 + 1)
-            * FP128_BYTES as u128
-            * (1u128 << (geometry.log_t() / 2)),
-    ])?;
-    requested_bytes = checked_sum(&[requested_bytes, readback_bytes, flag_bytes])?;
-    useful_products = checked_add("cycle useful products", useful_products, cycles_u128)?;
-    dispatches = dispatches
-        .checked_add(4)
-        .ok_or(InstructionReadRafV3Error::SizeOverflow(
-            "flag dispatch count",
+    let dense_rounds = geometry
+        .log_t()
+        .checked_sub(1 + cutoff_elements.trailing_zeros() as usize)
+        .ok_or(InstructionReadRafV3Error::InvalidModelParameter(
+            "cycle cutoff rounds",
         ))?;
+    let dense_source = cycles - 2 * cutoff;
+    let first_partial = 3 * cycle_partial_bytes(e_out, first_e_in, factors)?;
+    let handoff_partial = 3 * cycle_partial_bytes(e_out, handoff_e_in, factors)?;
+    let mut dense_partial = 0u128;
+    let mut dense_outer_weights = 0u128;
+    let mut source_width = cycles / 2;
+    while source_width > cutoff {
+        let e_in = source_width / 4 / e_out;
+        dense_partial = checked_add(
+            "dense cycle partial bytes",
+            dense_partial,
+            3 * cycle_partial_bytes(e_out, e_in, factors)?,
+        )?;
+        dense_outer_weights = checked_add(
+            "dense cycle outer-weight requests",
+            dense_outer_weights,
+            cycle_outer_weight_bytes(e_out, e_in)?,
+        )?;
+        source_width /= 2;
+    }
 
-    let half_factor_arena = factor_bytes * (cycles_u128 / 2);
-    let flag_partials = (LookupTableKind::<RISCV_XLEN>::COUNT as u128 + 1)
-        * FP128_BYTES as u128
-        * (1u128 << (geometry.log_t() / 2));
+    let outer_products = factors * e_out;
+    let first_products = 23 * cycles + outer_products;
+    let handoff_products = 8 * cycles + outer_products;
+    let dense_products = 8 * dense_source + dense_rounds as u128 * outer_products;
+    let flag_columns = LookupTableKind::<RISCV_XLEN>::COUNT as u128 + 1;
+    let flag_products = flag_columns * e_out;
+    let useful_products = checked_sum(&[
+        first_products,
+        handoff_products,
+        dense_products,
+        flag_products,
+    ])?;
+
+    let first_bytes = 81 * cycles + first_partial;
+    let handoff_bytes = 105 * cycles + handoff_partial;
+    let dense_bytes = 120 * dense_source + dense_partial;
+    let factor_bytes = factors * FP128_BYTES as u128;
+    let readback_bytes = factor_bytes * cutoff;
+    let flag_partials = flag_columns * FP128_BYTES as u128 * e_out;
+    let flag_bytes = CLAIM_BYTES * cycles + 2 * flag_partials;
+    let requested_bytes = checked_sum(&[
+        first_bytes,
+        handoff_bytes,
+        dense_bytes,
+        readback_bytes,
+        flag_bytes,
+    ])?;
+    let cacheable_requested_bytes = checked_sum(&[
+        280 * cycles,
+        cycle_outer_weight_bytes(e_out, first_e_in)?,
+        20 * cycles,
+        cycle_outer_weight_bytes(e_out, handoff_e_in)?,
+        4 * dense_source,
+        dense_outer_weights,
+        2 * FP128_BYTES as u128 * cycles,
+    ])?;
+
+    let ra_cache = 4 * FP128_BYTES as u128 * cycles;
+    let half_factor_arena = factor_bytes * cycles / 2;
+    let phase_table_cache = (ADDRESS_PHASES as u128 * ADDRESS_BINS as u128
+        + LookupTableKind::<RISCV_XLEN>::COUNT as u128
+        + 1)
+        * FP128_BYTES as u128;
     let compulsory_bytes = checked_sum(&[
-        INSTRUCTION_ROW_BYTES as u128 * cycles_u128,
-        CLAIM_BYTES * cycles_u128,
+        (LOOKUP_BYTES + CLAIM_BYTES) * cycles,
+        ra_cache,
         half_factor_arena,
+        first_partial / 3,
         flag_partials,
         split_eq_cache_bytes(geometry)?,
     ])?;
+    let message_commands =
+        2usize
+            .checked_add(dense_rounds)
+            .ok_or(InstructionReadRafV3Error::SizeOverflow(
+                "cycle command count",
+            ))?;
+    let dispatches = u64::try_from(4 * message_commands + 4)
+        .map_err(|_| InstructionReadRafV3Error::SizeOverflow("cycle dispatch count"))?;
     Ok(SequenceWork {
         useful_products,
         compulsory_bytes,
-        cache_unique_bytes: compulsory_bytes,
+        cache_unique_bytes: checked_add(
+            "cycle cache-unique bytes",
+            compulsory_bytes,
+            phase_table_cache,
+        )?,
+        cacheable_requested_bytes,
         requested_bytes,
-        peak_owned_bytes: checked_sum(&[half_factor_arena, flag_partials])?,
+        peak_owned_bytes: checked_sum(&[
+            ra_cache,
+            half_factor_arena,
+            first_partial / 3,
+            flag_partials,
+        ])?,
         dispatches,
     })
+}
+
+fn cycle_partial_bytes(
+    e_out: u128,
+    e_in: u128,
+    factors: u128,
+) -> Result<u128, InstructionReadRafV3Error> {
+    let tiles = e_in.div_ceil(CYCLE_TILE_PAIRS);
+    factors
+        .checked_mul(e_out)
+        .and_then(|value| value.checked_mul(tiles))
+        .and_then(|value| value.checked_mul(FP128_BYTES as u128))
+        .ok_or(InstructionReadRafV3Error::SizeOverflow(
+            "cycle partial bytes",
+        ))
+}
+
+fn cycle_outer_weight_bytes(e_out: u128, e_in: u128) -> Result<u128, InstructionReadRafV3Error> {
+    e_out
+        .checked_mul(e_in.div_ceil(CYCLE_TILE_PAIRS))
+        .and_then(|value| value.checked_mul(FP128_BYTES as u128))
+        .ok_or(InstructionReadRafV3Error::SizeOverflow(
+            "cycle outer-weight bytes",
+        ))
 }
 
 fn product5_transition_work(
@@ -558,6 +647,7 @@ fn product5_transition_work(
         useful_products,
         compulsory_bytes: requested_bytes,
         cache_unique_bytes: requested_bytes,
+        cacheable_requested_bytes: 0,
         requested_bytes,
         peak_owned_bytes: factors * FP128_BYTES as u128 * pairs,
         dispatches: 1,

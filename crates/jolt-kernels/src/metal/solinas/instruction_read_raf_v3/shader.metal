@@ -482,59 +482,6 @@ kernel void solinas_instruction_read_raf_v3_atom_mass_finalize(
     atom_masses[split.atom] = mass;
 }
 
-kernel void solinas_instruction_read_raf_v3_phase(
-    device const InstructionReadRafV3Lookup* lookups [[buffer(0)]],
-    device SolinasFp128* weights [[buffer(1)]],
-    device const SolinasFp128* previous_phase_table [[buffer(2)]],
-    device const InstructionReadRafV3Job* jobs [[buffer(3)]],
-    device const uchar* suffix_kinds [[buffer(4)]],
-    device const uchar* suffix_counts [[buffer(5)]],
-    device SolinasFp128* partials [[buffer(6)]],
-    constant InstructionReadRafV3PhaseParams& params [[buffer(7)]],
-    threadgroup atomic_uint* sums [[threadgroup(0)]],
-    uint job_index [[threadgroup_position_in_grid]],
-    uint tid [[thread_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
-{
-    if (job_index >= params.job_count) {
-        return;
-    }
-    for (uint counter = tid;
-         counter < INSTRUCTION_READ_RAF_V3_JOB_FIELDS
-            * INSTRUCTION_READ_RAF_V3_WORDS;
-         counter += threads) {
-        atomic_store_explicit(&sums[counter], 0u, memory_order_relaxed);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    InstructionReadRafV3Job job = jobs[job_index];
-    for (uint row = job.start + tid; row < job.end; row += threads) {
-        InstructionReadRafV3Lookup lookup = lookups[row];
-        SolinasFp128 weight = weights[row];
-        if (params.condense != 0u) {
-            uint previous_chunk = instruction_read_raf_v3_lookup_byte(
-                lookup,
-                params.suffix_len + 8u);
-            weight = solinas_mul_wide(weight, previous_phase_table[previous_chunk]);
-            weights[row] = weight;
-        }
-        instruction_read_raf_v3_accumulate(
-            sums,
-            lookup,
-            job.segment,
-            params.suffix_len,
-            suffix_kinds,
-            suffix_counts,
-            weight);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    uint output_base = job_index * INSTRUCTION_READ_RAF_V3_JOB_FIELDS;
-    for (uint field = tid; field < INSTRUCTION_READ_RAF_V3_JOB_FIELDS;
-         field += threads) {
-        partials[output_base + field] = solinas_deferred_atomic_reduce_5(sums, field);
-    }
-}
 
 kernel void solinas_instruction_read_raf_v3_atom_phase(
     device const InstructionReadRafV3Lookup* atom_lookups [[buffer(0)]],
@@ -728,4 +675,3 @@ kernel void solinas_instruction_read_raf_v3_reduce(
         }
     }
 }
-

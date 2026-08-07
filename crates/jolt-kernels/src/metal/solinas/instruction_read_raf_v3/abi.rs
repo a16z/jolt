@@ -4,7 +4,7 @@ use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
 use super::{
     InstructionReadRafV3Error, ADDRESS_BINS, ADDRESS_BITS, ADDRESS_PHASES, FP128_BYTES,
-    INSTRUCTION_ROW_BYTES,
+    INSTRUCTION_ROW_BYTES, PRODUCTION_VIRTUAL_RA,
 };
 
 pub(crate) const LOOKUP_TABLES: usize = LookupTableKind::<RISCV_XLEN>::COUNT;
@@ -24,10 +24,7 @@ impl InstructionReadRafGeometry {
         if cycles == 0 || !cycles.is_power_of_two() || cycles > u32::MAX as usize {
             return Err(InstructionReadRafV3Error::InvalidCycles(cycles));
         }
-        if virtual_ra == 0
-            || !ADDRESS_PHASES.is_multiple_of(virtual_ra)
-            || !ADDRESS_BITS.is_multiple_of(virtual_ra)
-        {
+        if virtual_ra != PRODUCTION_VIRTUAL_RA {
             return Err(InstructionReadRafV3Error::InvalidVirtualRa(virtual_ra));
         }
         Ok(Self {
@@ -302,6 +299,12 @@ impl ResidentInstructionFacts {
     ) -> Result<Self, InstructionReadRafV3Error> {
         same_producer(producer, rows, "instruction rows")?;
         same_producer(producer, claims, "claim bytes")?;
+        if rows.allocation_identity() != producer.source_allocation_identity() {
+            return Err(InstructionReadRafV3Error::SourceAllocationMismatch {
+                expected: producer.source_allocation_identity(),
+                got: rows.allocation_identity(),
+            });
+        }
         let cycles = producer.geometry().cycles();
         let rows = ResidentPlane::checked(
             rows,
@@ -350,8 +353,8 @@ impl ReductionEqReceipt {
         same_producer(producer, e_in, "reduction E_in")?;
         same_producer(producer, e_out, "reduction E_out")?;
         let log_t = producer.geometry().log_t();
-        let in_len = 1usize << (log_t / 2);
-        let out_len = 1usize << (log_t - log_t / 2);
+        let out_len = 1usize << (log_t / 2);
+        let in_len = 1usize << (log_t - log_t / 2);
         let e_in = ResidentPlane::checked(
             e_in,
             in_len,
