@@ -1,0 +1,61 @@
+{
+  "schema": "metal_ram_hamming_booleanity_sparse_log26_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-07",
+  "status": "retained_log26_diagnostic",
+  "implementation_revision": "1512e4d49",
+  "evaluated_revision": "a29dff54fc728d4293e58107e55ebeb3c1fec412",
+  "contract": {
+    "device": "Apple M4 Max",
+    "workload": "fibonacci",
+    "host_fiat_shamir": true,
+    "selector": "host_topology_sparse",
+    "shared_owner": "RamCycleFamilyOwner",
+    "relation": "eq_cycle * (ram_hamming_weight^2 - ram_hamming_weight)",
+    "command": "python3 scripts/metal_piop_eval.py --mode diagnostic --workload fibonacci --log-n 26 --repeats 1 --timeout-seconds 1200"
+  },
+  "artifact": {
+    "path": "benchmark-runs/metal-piop-eval/20260807-182452-244468",
+    "result_sha256": "ae2e10e4abc84a3827c6d7b50ebe3e53ea259b729feb2f49b7e5abcab18151d1",
+    "optimized_trace_sha256": "65097f669d37d08755d58246edc88c5e9a2aa3e277fa34c5a66eb571ec20ea2e",
+    "metal_trace_sha256": "d66a2044f141728b35ca305d5577b7a1a99c9f33826442e0a14c25d4dd411ff7",
+    "binary_sha256": "9ca79162c582c9194833a6dbae9b52ba0aa1c4d67d2ce5a4ef2698391e20a03f",
+    "worktree_state_sha256": "298060c90b6f3333d26d36395ac1c5d5426c124099adbdf845dc2407b5f2e786"
+  },
+  "topology": {
+    "trace_elements": 67108864,
+    "access_records": 190,
+    "parent_nodes": 636,
+    "estimated_products": 5347,
+    "dense_hamming_table_materialized": false,
+    "metal_dispatches": 0,
+    "host_sparse_selected": true
+  },
+  "measurement": {
+    "optimized_complete_member_ms": 152.48362799998372,
+    "metal_hybrid_complete_member_ms": 0.09049999997764825,
+    "member_speedup": 1684.901967266787,
+    "optimized_piop_ms": 20672.5285,
+    "metal_hybrid_piop_ms": 4633.917916999996,
+    "piop_speedup": 4.46113394114314
+  },
+  "guards": {
+    "cpu_proof_verified": true,
+    "metal_proof_verified": true,
+    "round_lockstep_against_independent_dense_relation_passed": true,
+    "round_lockstep_against_optimized_cpu_passed": true,
+    "hamming_witness_certificate_checked": true,
+    "clippy_metal_test_utils_lib_passed": true,
+    "stable_binary": true,
+    "stable_source": true,
+    "five_x_member_floor_passed": true,
+    "ten_x_pursue_bar_passed": true,
+    "acceptance_eligible": false
+  },
+  "verdict": {
+    "decision": "retain",
+    "reason": "The access-only topology preserves every cubic message and terminal evaluation while replacing a 2^26 dense scan with 190 leaves and 636 parent nodes.",
+    "portfolio_interpretation": "RAM Hamming booleanity is no longer material. The full diagnostic PIOP reaches 4.46x, while InstructionReadRaf at 3.57x and InstructionClaimReduction at 4.88x remain below the 5x member floor.",
+    "next_gate": "Co-produce InstructionReadRaf address atoms upstream, then benchmark that integration under the fixed alternating-pair evaluator. Full promotion still requires five clean alternating log26 pairs."
+  }
+}
