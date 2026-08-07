@@ -38,6 +38,7 @@ use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
+use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
 use xor_rotw::XorRotWSuffix;
 
 pub mod and;
@@ -76,6 +77,7 @@ pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 
 pub trait SparseDenseSuffix: 'static + Sync {
@@ -131,6 +133,9 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    XorRotL1Pairs,
+    TopYBit,
+    BottomXBit,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -156,6 +161,8 @@ impl Suffixes {
                 | Suffixes::OverflowBitsZero
                 | Suffixes::ChangeDivisor
                 | Suffixes::ChangeDivisorW
+                | Suffixes::TopYBit
+                | Suffixes::BottomXBit
         )
     }
 
@@ -208,6 +215,9 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
+            Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
+            Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
         }
     }
 }

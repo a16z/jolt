@@ -56,6 +56,7 @@ pub mod instruction {
         pub use jolt_riscv::instructions::VirtualXorRot24 as VirtualXORROT24;
         pub use jolt_riscv::instructions::VirtualXorRot32 as VirtualXORROT32;
         pub use jolt_riscv::instructions::VirtualXorRot63 as VirtualXORROT63;
+        pub use jolt_riscv::instructions::VirtualXorRotL1 as VirtualXORROTL1;
     }
     pub mod virtual_xor_rotw {
         pub use jolt_riscv::instructions::VirtualXorRotW12 as VirtualXORROTW12;
