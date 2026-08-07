@@ -18,6 +18,10 @@ struct SolinasCorrection {
     uint carry;
 };
 
+struct SolinasHalfWidthWide192 {
+    uint limb[6];
+};
+
 inline SolinasFp128 solinas_zero() {
     SolinasFp128 result;
     for (uint i = 0; i < 4; i++) {
@@ -133,4 +137,128 @@ inline SolinasFp128 solinas_reduce(SolinasWide256 product) {
 
 inline SolinasFp128 solinas_mul_wide(SolinasFp128 lhs, SolinasFp128 rhs) {
     return solinas_reduce(solinas_product_wide(lhs, rhs));
+}
+
+inline SolinasHalfWidthWide192 solinas_half_width_product_u64(
+    SolinasFp128 lhs,
+    ulong rhs)
+{
+    uint rhs_lo = (uint)rhs;
+    uint rhs_hi = (uint)(rhs >> 32);
+    SolinasHalfWidthWide192 product;
+    product.limb[0] = 0u;
+    product.limb[1] = 0u;
+    product.limb[2] = 0u;
+    product.limb[3] = 0u;
+    product.limb[4] = 0u;
+    product.limb[5] = 0u;
+
+    ulong carry = 0ul;
+    ulong word = (ulong)lhs.limb[0] * (ulong)rhs_lo;
+    product.limb[0] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)lhs.limb[0] * (ulong)rhs_hi + carry;
+    product.limb[1] = (uint)word;
+    product.limb[2] = (uint)(word >> 32);
+
+    word = (ulong)lhs.limb[1] * (ulong)rhs_lo
+        + (ulong)product.limb[1];
+    product.limb[1] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)lhs.limb[1] * (ulong)rhs_hi
+        + (ulong)product.limb[2]
+        + carry;
+    product.limb[2] = (uint)word;
+    product.limb[3] = (uint)(word >> 32);
+
+    word = (ulong)lhs.limb[2] * (ulong)rhs_lo
+        + (ulong)product.limb[2];
+    product.limb[2] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)lhs.limb[2] * (ulong)rhs_hi
+        + (ulong)product.limb[3]
+        + carry;
+    product.limb[3] = (uint)word;
+    product.limb[4] = (uint)(word >> 32);
+
+    word = (ulong)lhs.limb[3] * (ulong)rhs_lo
+        + (ulong)product.limb[3];
+    product.limb[3] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)lhs.limb[3] * (ulong)rhs_hi
+        + (ulong)product.limb[4]
+        + carry;
+    product.limb[4] = (uint)word;
+    product.limb[5] = (uint)(word >> 32);
+    return product;
+}
+
+inline SolinasFp128 solinas_half_width_reduce_u192(
+    SolinasHalfWidthWide192 product)
+{
+    SolinasFp128 folded;
+    ulong word = (ulong)product.limb[4] * (ulong)SOLINAS_OFFSET
+        + (ulong)product.limb[0];
+    folded.limb[0] = (uint)word;
+    ulong carry = word >> 32;
+    word = (ulong)product.limb[5] * (ulong)SOLINAS_OFFSET
+        + (ulong)product.limb[1]
+        + carry;
+    folded.limb[1] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)product.limb[2] + carry;
+    folded.limb[2] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)product.limb[3] + carry;
+    folded.limb[3] = (uint)word;
+    ulong first_fold_carry = word >> 32;
+
+    // For a canonical 128-by-64 product, the first carry is at most one and
+    // its residue is below 2^96. Adding one offset therefore cannot overflow.
+    word = (ulong)folded.limb[0]
+        + first_fold_carry * (ulong)SOLINAS_OFFSET;
+    folded.limb[0] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)folded.limb[1] + carry;
+    folded.limb[1] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)folded.limb[2] + carry;
+    folded.limb[2] = (uint)word;
+    carry = word >> 32;
+    word = (ulong)folded.limb[3] + carry;
+    folded.limb[3] = (uint)word;
+
+    SolinasCorrection corrected = solinas_add_offset(folded);
+    return solinas_select(corrected.carry != 0u, corrected.value, folded);
+}
+
+inline SolinasFp128 solinas_half_width_mul_u64(
+    SolinasFp128 coefficient,
+    ulong scalar)
+{
+    return solinas_half_width_reduce_u192(
+        solinas_half_width_product_u64(coefficient, scalar));
+}
+
+inline SolinasFp128 solinas_half_width_mul_signed_u64(
+    SolinasFp128 coefficient,
+    ulong magnitude,
+    bool negative)
+{
+    SolinasFp128 positive = solinas_half_width_mul_u64(coefficient, magnitude);
+    SolinasFp128 negated = solinas_sub(solinas_zero(), positive);
+    return solinas_select(!negative, positive, negated);
+}
+
+inline SolinasFp128 solinas_half_width_mul_u64_delta(
+    SolinasFp128 coefficient,
+    ulong minuend,
+    ulong subtrahend)
+{
+    bool negative = minuend < subtrahend;
+    ulong forward = minuend - subtrahend;
+    ulong reverse = subtrahend - minuend;
+    ulong magnitude = negative ? reverse : forward;
+    return solinas_half_width_mul_signed_u64(
+        coefficient, magnitude, negative);
 }
