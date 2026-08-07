@@ -4,6 +4,8 @@
 use std::ops::Range;
 
 use jolt_program::execution::TraceRow;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use crate::bundle::WitnessBundle;
 use crate::witnesses::WitnessEnv;
@@ -12,7 +14,7 @@ use crate::WitnessError;
 /// One consumer of a bundle stream. `Option<C>` is also a consumer:
 /// membership in a set is static, presence is runtime.
 pub trait StreamConsumer: Send + Sync {
-    type Witness: WitnessBundle;
+    type Witness: WitnessBundle + Send;
 
     fn consume(&mut self, chunk: &[Self::Witness]);
 
@@ -49,6 +51,11 @@ pub trait ConsumerSet {
     ) -> Result<(), WitnessError>;
 }
 
+/// Buffers below this size extract serially — rayon dispatch would cost more
+/// than the extraction itself.
+#[cfg(feature = "parallel")]
+const PAR_EXTRACT_THRESHOLD: usize = 128;
+
 fn deliver<C: StreamConsumer>(
     consumer: &mut C,
     rows: &[TraceRow],
@@ -58,11 +65,29 @@ fn deliver<C: StreamConsumer>(
     if !consumer.is_active() {
         return Ok(());
     }
-    let mut bundles = Vec::with_capacity(rows.len());
-    for (index, row) in rows.iter().enumerate() {
-        let next = rows.get(index + 1).or(next_after);
-        bundles.push(C::Witness::from_row(row, next, env)?);
-    }
+    // Extraction is pure per cycle window, so buffers extract in parallel;
+    // chunk order (the consumer's contract) is unchanged.
+    let extract = |(index, row): (usize, &TraceRow)| {
+        C::Witness::from_row(row, rows.get(index + 1).or(next_after), env)
+    };
+    #[cfg(feature = "parallel")]
+    let bundles: Vec<C::Witness> = if rows.len() >= PAR_EXTRACT_THRESHOLD {
+        rows.par_iter()
+            .enumerate()
+            .map(extract)
+            .collect::<Result<_, _>>()?
+    } else {
+        rows.iter()
+            .enumerate()
+            .map(extract)
+            .collect::<Result<_, _>>()?
+    };
+    #[cfg(not(feature = "parallel"))]
+    let bundles: Vec<C::Witness> = rows
+        .iter()
+        .enumerate()
+        .map(extract)
+        .collect::<Result<_, _>>()?;
     consumer.consume(&bundles);
     Ok(())
 }
@@ -99,7 +124,8 @@ pub type ChunkVisitor<'a> =
     dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
 /// Sequential row access for the pass: trace-backed today, segment-backed
-/// later. Random access is deliberately inexpressible.
+/// later. Slice-backed sources may also expose their rows for
+/// order-insensitive whole-range collection.
 pub trait RowSource {
     /// Visits the half-open cycle `range` in order as buffers of at most
     /// `chunk_size` rows; `[0, T)` today, segments later.
@@ -109,6 +135,11 @@ pub trait RowSource {
         chunk_size: usize,
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
+
+    /// The full physical row sequence, when borrowing it is supported.
+    fn rows(&self) -> Option<&[TraceRow]> {
+        None
+    }
 }
 
 /// The fused pass: walk `range` once and deliver each chunk to every

@@ -131,8 +131,6 @@ macro_rules! for_each_instruction_kind {
                 VirtualAssertMulUNoOverflow => AssertMulUNoOverflow => "jolt.virtual.assert_mul_u_no_overflow",
                 VirtualChangeDivisor => VirtualChangeDivisor => "jolt.virtual.change_divisor",
                 VirtualChangeDivisorW => VirtualChangeDivisorW => "jolt.virtual.change_divisor_w",
-                VirtualLW => VirtualLw => "jolt.virtual.lw",
-                VirtualSW => VirtualSw => "jolt.virtual.sw",
                 VirtualZeroExtendWord => VirtualZeroExtendWord => "jolt.virtual.zero_extend_word",
                 VirtualSignExtendWord => VirtualSignExtendWord => "jolt.virtual.sign_extend_word",
                 VirtualPow2W => Pow2W => "jolt.virtual.pow2_w",

@@ -1365,8 +1365,6 @@ fn log2_power_of_two<F>(name: &'static str, value: usize) -> Result<usize, Prove
 where
     F: Field,
 {
-    if value == 0 || !value.is_power_of_two() {
-        return Err(ProverError::InvalidPowerOfTwo { name, value });
-    }
-    Ok(value.trailing_zeros() as usize)
+    jolt_utils::checked_log2_power_of_two(value)
+        .ok_or(ProverError::InvalidPowerOfTwo { name, value })
 }

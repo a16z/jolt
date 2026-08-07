@@ -32,6 +32,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use clap::ValueEnum;
@@ -161,21 +162,34 @@ impl OutputFormat {
     }
 }
 
-/// Prover backend selector. `reference` is the only backend today and is a
-/// test oracle: absolute numbers are provisional, attribution is meaningful
-/// relatively, and optimized backends slot into the same instrumented seams.
+/// Prover backend selector. `reference` is the naive test oracle (absolute
+/// numbers provisional, attribution meaningful relatively); `optimized` is
+/// the performance tier, slotting into the same instrumented seams.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
 pub enum BackendKind {
     Reference,
+    Optimized,
 }
 
 impl BackendKind {
     /// The canonical name — the `run.backend` value telemetry consumers key
-    /// on. Adding a backend variant forces an arm here, which keeps the
-    /// summary metadata honest without a hand-maintained string elsewhere.
+    /// on, and the CSV identity column. Adding a backend variant forces an
+    /// arm here, which keeps the summary metadata honest without a
+    /// hand-maintained string elsewhere.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Reference => "reference",
+            Self::Optimized => "optimized",
+        }
+    }
+
+    /// Artifact-name suffix: reference keeps the bare `modular_{name}_{scale}`
+    /// identity (the deterministic path `jolt-eval` telemetry reads);
+    /// optimized runs get their own artifact set next to it.
+    const fn trace_suffix(self) -> &'static str {
+        match self {
+            Self::Reference => "",
+            Self::Optimized => "_optimized",
         }
     }
 }
@@ -224,6 +238,9 @@ pub struct BenchmarkArgs {
 
     #[clap(long, value_enum, default_value = "chrome")]
     pub format: OutputFormat,
+
+    #[clap(long, value_enum, default_value = "reference")]
+    pub backend: BackendKind,
 }
 
 /// Artifact paths of one profile run (`None` unless `--format chrome`).
@@ -292,7 +309,11 @@ impl Drop for RunLock {
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
-    let trace_name = format!("modular_{}_{scale}", args.name.as_str().replace('-', "_"));
+    let trace_name = format!(
+        "modular_{}_{scale}{}",
+        args.name.as_str().replace('-', "_"),
+        args.backend.trace_suffix()
+    );
     let _run_lock = RunLock::acquire(&trace_name);
 
     // One directory per run — benchmark-runs/{timestamp}_{trace_name}/ —
@@ -417,11 +438,13 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
         println!("=== Running benchmarks at scale 2^{scale} ===");
         for &workload in &workloads {
             let name = workload.as_str();
+            let backend = args.backend.as_str();
             // A completed run flips the `latest_` link, so its presence is
             // the resume marker (dangling links read as absent).
             let latest_link = format!(
-                "benchmark-runs/latest_modular_{}_{scale}",
-                name.replace('-', "_")
+                "benchmark-runs/latest_modular_{}_{scale}{}",
+                name.replace('-', "_"),
+                args.backend.trace_suffix()
             );
             if args.resume && std::path::Path::new(&latest_link).exists() {
                 println!("  ⏭ Skipping {name} (found {latest_link})");
@@ -431,7 +454,7 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
 
             let scale_arg = scale.to_string();
             let command_line = format!(
-                "{} profile --name {name} --scale {scale_arg} --format {}",
+                "{} profile --name {name} --scale {scale_arg} --format {} --backend {backend}",
                 exe.display(),
                 args.format.as_cli_str(),
             );
@@ -444,6 +467,8 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
                     &scale_arg,
                     "--format",
                     args.format.as_cli_str(),
+                    "--backend",
+                    backend,
                 ])
                 .status();
             match status {
@@ -518,10 +543,9 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
     let program_preprocessing = verifier_preprocessing
         .program
-        .as_full()
-        .expect("full program preprocessing")
-        .clone();
-    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+        .as_full_arc()
+        .expect("full program preprocessing");
+    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
 
     // --- Modular trace (unmeasured, like legacy's `gen_from_elf` emulation).
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
@@ -538,14 +562,14 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     let public_io = trace_output.device.clone();
     let padded_output = pad_trace(trace_output, config.trace_length);
 
-    let witness = TraceBackend::new(
+    let witness = Arc::new(TraceBackend::new(
         JoltVmWitnessConfig::new(
             config.trace_length.ilog2() as usize,
             config.ram_K,
             config.one_hot_config,
         ),
         JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-    );
+    ));
 
     // PCS setup sized like the byte-diff harness: the main one-hot matrix
     // maxed with both advice candidates (always included in setup sizing,
@@ -559,8 +583,10 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         pcs_setup: DoryScheme::setup_prover(total_vars),
         committed_program: None,
     };
+    let backend_label = backend.as_str();
     let backend = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
     };
 
     // --- The measured window: the full modular prove (witness
@@ -573,7 +599,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         &prover_preprocessing,
         &config,
         None,
-        &witness,
+        Arc::clone(&witness),
         &public_io,
     )
     .expect("modular prove");
@@ -595,7 +621,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
     let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
     println!(
-        "modular {} (2^{}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
+        "modular {} (2^{}, {backend_label}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -604,21 +630,21 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     );
     if let Some(peak) = peak_rss_bytes() {
         println!(
-            "modular {} (2^{}): Peak RSS {}",
+            "modular {} (2^{}, {backend_label}): Peak RSS {}",
             bench_name,
             scale,
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
     }
 
-    // The same 7-field CSV line the legacy harness writes, in the run
-    // directory. Field 7 (`proof_size_compressed`)
+    // The legacy harness's 7 CSV fields plus a trailing backend column, in
+    // the backend-specific run directory. Field 7 (`proof_size_compressed`)
     // duplicates the raw size exactly as legacy does — its
     // `prove_example_with_trace` returns `proof_size` for both fields, the
     // compressed encoding having been retired — so the columns stay
     // directly comparable across the two harnesses.
     let summary_line = format!(
-        "{},{},{:.2},{},{:.2},{},{}\n",
+        "{},{},{:.2},{},{:.2},{},{},{backend_label}\n",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -643,7 +669,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     } else {
         format!(
             "benchmark_name,scale,prover_time_s,trace_length,proving_hz,\
-             proof_size,proof_size_compressed\n{summary_line}"
+             proof_size,proof_size_compressed,backend\n{summary_line}"
         )
     };
     if let Err(e) = fs::OpenOptions::new()
@@ -690,7 +716,9 @@ fn pad_trace(
     trace_output: TraceOutput<OwnedTrace>,
     trace_length: usize,
 ) -> TraceOutput<OwnedTrace> {
-    let mut rows = trace_output.trace.rows().to_vec();
+    let source = trace_output.trace.rows();
+    let mut rows = Vec::with_capacity(trace_length.max(source.len()));
+    rows.extend_from_slice(source);
     rows.resize(trace_length, TraceRow::default());
     TraceOutput::new(
         OwnedTrace::new(rows),
