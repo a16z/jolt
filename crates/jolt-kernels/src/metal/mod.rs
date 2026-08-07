@@ -16,6 +16,7 @@ mod registers_val_evaluation;
 pub mod solinas;
 mod spartan_outer;
 mod spartan_product;
+mod spartan_shift;
 
 pub use backend::{MetalBackend, MetalConfig};
 pub use booleanity::{
@@ -43,3 +44,4 @@ pub use spartan_outer::{
 };
 pub use spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
 pub use spartan_product::SpartanProductRemainderMetalConfig;
+pub use spartan_shift::SpartanShiftMetalConfig;

@@ -20,6 +20,7 @@ use super::solinas::OuterKernelArtifact;
 use super::solinas::{MetalError, SolinasMetal};
 use super::spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
 use super::spartan_product::SpartanProductRemainderMetalConfig;
+use super::spartan_shift::SpartanShiftMetalConfig;
 use crate::JoltBackend;
 
 /// Tuning values for all currently implemented Metal slots.
@@ -31,6 +32,8 @@ pub struct MetalConfig {
     pub spartan_outer_remainder: SpartanOuterRemainderMetalConfig,
     /// Stage-2 Spartan product-remainder settings.
     pub spartan_product_remainder: SpartanProductRemainderMetalConfig,
+    /// Stage-3 Spartan shift settings.
+    pub spartan_shift: SpartanShiftMetalConfig,
     /// Stage-2 instruction claim-reduction settings.
     pub instruction_claim_reduction: InstructionClaimReductionMetalConfig,
     /// Stage-3 instruction-input virtualization settings.
@@ -104,6 +107,7 @@ impl MetalBackend {
     }
 
     fn validate_config(config: &MetalConfig) -> Result<(), MetalError> {
+        let _ = config.spartan_shift.dispatch.validate()?;
         let remainder_trace_cutoff = config.spartan_outer_remainder.trace_cutoff_elements;
         if remainder_trace_cutoff < 4 || !remainder_trace_cutoff.is_power_of_two() {
             return Err(MetalError::InvalidHybridCutoff(remainder_trace_cutoff));
@@ -126,6 +130,7 @@ impl MetalBackend {
             config.spartan_outer_remainder.dispatch.cpu_tail_elements,
             config.spartan_product_remainder.trace_cutoff_elements,
             config.spartan_product_remainder.cpu_tail_elements,
+            config.spartan_shift.trace_cutoff_elements,
             config.instruction_claim_reduction.trace_cutoff_elements,
             config.instruction_input.trace_cutoff_elements,
             config.instruction_input.cutoff_elements,
@@ -247,6 +252,7 @@ where
         self.spartan_outer_remainder = Box::new(metal.clone());
         self.spartan_product_uniskip = Box::new(metal.clone());
         self.spartan_product_remainder = Box::new(metal.clone());
+        self.spartan_shift = Box::new(metal.clone());
         self.instruction_claim_reduction = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
         self.ram_read_write = Box::new(metal.clone());
