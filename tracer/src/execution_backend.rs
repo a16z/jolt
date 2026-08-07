@@ -99,20 +99,23 @@ struct WorkerSeed {
 
 /// Inner checkpoints are captured at chunk-mark crossings, but at most one
 /// per this many rows: each carries a full-size memory image, so denser
-/// capture (e.g. the chunk-size-1 sweep test) would blow up memory.
-/// `skip_rows` absorbs the gap; per-chunk replay cost stays bounded by
-/// spacing + chunk_size + one tick's rows.
+/// capture (e.g. a small chunk size over a long trace) would blow up
+/// memory. `skip_rows` absorbs the gap; per-chunk replay cost stays bounded
+/// by spacing + chunk_size + one tick's rows.
 const MIN_INNER_SPACING_ROWS: usize = 1 << 16;
 
-impl ChunkedExecutionBackend for TracerBackend {
-    type Checkpoint = TracerChunkCheckpoint;
-
-    fn execute(
+impl TracerBackend {
+    /// [`ChunkedExecutionBackend::execute`] with an explicit inner-checkpoint
+    /// spacing floor. The trait method passes [`MIN_INNER_SPACING_ROWS`];
+    /// tests pass a tighter floor to exercise multi-inner selection on guests
+    /// whose whole trace is shorter than the production floor.
+    fn execute_chunked(
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
         chunk_size: usize,
-    ) -> Result<ExecutionSummary<Self::Checkpoint>, TraceError> {
+        min_inner_spacing: usize,
+    ) -> Result<ExecutionSummary<TracerChunkCheckpoint>, TraceError> {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
@@ -156,7 +159,7 @@ impl ChunkedExecutionBackend for TracerBackend {
             if pass.rows() >= next_mark {
                 #[expect(clippy::expect_used)]
                 let last_rows = inners.last().expect("initial checkpoint present").rows;
-                if pass.rows() - last_rows >= MIN_INNER_SPACING_ROWS.min(chunk_size) {
+                if pass.rows() - last_rows >= min_inner_spacing {
                     inners.push(capture(&pass, &mut pool));
                 }
                 next_mark = (pass.rows() / chunk_size + 1) * chunk_size;
@@ -207,6 +210,19 @@ impl ChunkedExecutionBackend for TracerBackend {
             final_memory,
             advice_tape: Some(advice_tape),
         })
+    }
+}
+
+impl ChunkedExecutionBackend for TracerBackend {
+    type Checkpoint = TracerChunkCheckpoint;
+
+    fn execute(
+        &mut self,
+        program: &JoltProgram,
+        inputs: TraceInputs,
+        chunk_size: usize,
+    ) -> Result<ExecutionSummary<Self::Checkpoint>, TraceError> {
+        self.execute_chunked(program, inputs, chunk_size, MIN_INNER_SPACING_ROWS)
     }
 
     fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError> {
@@ -327,10 +343,13 @@ mod chunked_tests {
         assert!(!eager_rows.is_empty());
 
         // Chunk size 1 forces checkpoint marks inside multi-row expansions.
+        // Spacing = chunk_size keeps inner checkpoints dense enough to
+        // exercise multi-inner selection on a trace shorter than the
+        // production floor (the floor itself is covered below).
         for chunk_size in [1usize, 100, 1 << 18, eager_rows.len() + 1] {
             let mut backend = TracerBackend::new();
             let summary = backend
-                .execute(&program, inputs.clone(), chunk_size)
+                .execute_chunked(&program, inputs.clone(), chunk_size, chunk_size)
                 .expect("execute failed");
 
             assert_eq!(
@@ -376,6 +395,45 @@ mod chunked_tests {
             let concat: Vec<TraceRow> = replayed.into_iter().flatten().collect();
             assert_eq!(concat.as_slice(), eager_rows, "chunk_size {chunk_size}");
         }
+    }
+
+    /// The public trait method applies the production spacing floor: the
+    /// muldiv trace is shorter than [`MIN_INNER_SPACING_ROWS`], so every
+    /// chunk resumes from the single initial checkpoint and `skip_rows`
+    /// grows to nearly the whole trace for the last chunk.
+    #[test]
+    fn default_spacing_floor_replays_through_large_skips() {
+        let (program, inputs) = muldiv_setup();
+        let mut backend = TracerBackend::new();
+        let eager = backend
+            .trace(&program, inputs.clone())
+            .expect("eager trace failed");
+        let eager_rows = eager.trace.rows();
+
+        const CHUNK_SIZE: usize = 100;
+        assert!(eager_rows.len() > CHUNK_SIZE);
+        assert!(
+            eager_rows.len() < MIN_INNER_SPACING_ROWS,
+            "muldiv trace grew past the floor; this test no longer exercises single-inner skips"
+        );
+
+        let summary = backend
+            .execute(&program, inputs, CHUNK_SIZE)
+            .expect("execute failed");
+        assert_eq!(summary.trace_len, eager_rows.len());
+
+        let first = backend
+            .replay_chunk(&summary.checkpoints[0])
+            .expect("replay failed")
+            .into_rows();
+        assert_eq!(first.as_slice(), &eager_rows[..CHUNK_SIZE]);
+
+        let last_mark = (summary.checkpoints.len() - 1) * CHUNK_SIZE;
+        let last = backend
+            .replay_chunk(summary.checkpoints.last().expect("nonempty trace"))
+            .expect("replay failed")
+            .into_rows();
+        assert_eq!(last.as_slice(), &eager_rows[last_mark..]);
     }
 
     /// Advice-tape plumbing: a seeded tape reaches the emulator and the
