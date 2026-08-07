@@ -1,7 +1,9 @@
 //! Checked plan and independent oracles for RAM RA claim reduction.
 
+mod host;
 mod runtime;
 
+pub use host::*;
 pub use runtime::*;
 
 #[cfg(test)]

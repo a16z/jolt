@@ -4,13 +4,173 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_field::AkitaField;
 use jolt_kernels::metal::solinas::{
     ram_ra_claim_reduction::{
-        RamRaClaimConfig, RamRaClaimGatherInvocation, RamRaClaimQAccumulator,
-        RamRaClaimQInvocation, RAM_RA_CLAIM_ADDRESS_DOMAIN, RAM_RA_CLAIM_NO_ACCESS,
-        RAM_RA_CLAIM_TARGET_ACCESSED_ROWS, RAM_RA_CLAIM_TARGET_CPU_NS,
+        RamRaClaimConfig, RamRaClaimGatherInvocation, RamRaClaimHostOutput, RamRaClaimPrefixState,
+        RamRaClaimQAccumulator, RamRaClaimQInvocation, RAM_RA_CLAIM_ADDRESS_DOMAIN,
+        RAM_RA_CLAIM_NO_ACCESS, RAM_RA_CLAIM_TARGET_ACCESSED_ROWS, RAM_RA_CLAIM_TARGET_CPU_NS,
         RAM_RA_CLAIM_TARGET_FIVE_X_NS, RAM_RA_CLAIM_TARGET_ROWS,
     },
     SolinasMetal,
 };
+
+pub fn bench_complete(c: &mut Criterion, context: &SolinasMetal) {
+    let rows = trace_rows();
+    let accessed_rows = accessed_rows(rows);
+    let addresses = uniform_addresses(rows, accessed_rows);
+    let r_address = point(RAM_RA_CLAIM_ADDRESS_DOMAIN.ilog2() as usize, 0xa11c_e001);
+    let cycle_points = [
+        point(rows.ilog2() as usize, 0xc1c1_0001),
+        point(rows.ilog2() as usize, 0xc1c1_0002),
+        point(rows.ilog2() as usize, 0xc1c1_0003),
+    ];
+    let cycle_refs = cycle_points.each_ref().map(Vec::as_slice);
+    let challenges = point(rows.ilog2() as usize, 0xc1c1_2001);
+    let gamma = AkitaField::from_u64(0x5a17_0001);
+    let config = RamRaClaimConfig {
+        trace_cutoff: rows,
+        q_partitions: q_partitions(),
+        q_accumulator: RamRaClaimQAccumulator::Compact,
+        ..RamRaClaimConfig::default()
+    };
+
+    let setup_started = Instant::now();
+    let resident = context
+        .prepare_ram_ra_claim_addresses(&addresses)
+        .expect("RAM RA claim address plane should prepare");
+    drop(addresses);
+    let q = context
+        .prepare_ram_ra_claim_q(&resident, &r_address, cycle_refs, config)
+        .expect("RAM RA claim Q invocation should prepare");
+    let q_seed = q
+        .execute_timed()
+        .expect("RAM RA claim Q seed should execute");
+    let mut prefix = RamRaClaimPrefixState::new(q.plan().shape, q_seed.q, cycle_refs, gamma)
+        .expect("RAM RA claim prefix should prepare");
+    for &challenge in &challenges[..q.plan().shape.prefix_bits()] {
+        let _ = prefix
+            .message_evals()
+            .expect("RAM RA claim prefix message should evaluate");
+        prefix
+            .bind(challenge)
+            .expect("RAM RA claim prefix should bind");
+    }
+    let seed = prefix.finish().expect("RAM RA claim prefix should finish");
+    let gather = context
+        .prepare_ram_ra_claim_gather(&resident, &r_address, seed.r_prefix(), config)
+        .expect("RAM RA claim gather invocation should prepare");
+    drop(resident);
+    let setup_wall = setup_started.elapsed();
+
+    let cold = execute_complete(&q, &gather, cycle_refs, &challenges, gamma);
+    let warm = execute_complete(&q, &gather, cycle_refs, &challenges, gamma);
+    assert_eq!(cold.output, warm.output);
+    let speedup = RAM_RA_CLAIM_TARGET_CPU_NS as f64 / warm.wall.as_nanos() as f64;
+    eprintln!(
+        "ram-ra-claim-complete rows={rows} accessed={accessed_rows} setup-ms={:.3} \
+         cold-wall-ms={:.3} warm-wall-ms={:.3} q-active-ms={:.3} gather-active-ms={:.3} \
+         host-prefix-ms={:.3} host-suffix-ms={:.3} useful-products={} cpu-member-ms={:.3} \
+         resident-speedup={speedup:.3}x",
+        setup_wall.as_secs_f64() * 1e3,
+        cold.wall.as_secs_f64() * 1e3,
+        warm.wall.as_secs_f64() * 1e3,
+        warm.q_active.as_secs_f64() * 1e3,
+        warm.gather_active.as_secs_f64() * 1e3,
+        warm.host_prefix.as_secs_f64() * 1e3,
+        warm.host_suffix.as_secs_f64() * 1e3,
+        q.projection().q_full_width_products + gather.projection().gather_full_width_products,
+        RAM_RA_CLAIM_TARGET_CPU_NS as f64 / 1e6,
+    );
+
+    let suffix = format!("n{rows}_a{accessed_rows}_compact");
+    let mut group = c.benchmark_group("metal_sumcheck/ram_ra_claim_complete");
+    let _ = group
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(setting(
+            "JOLT_METAL_RAM_RA_CLAIM_WARMUP_MS",
+            200,
+        )))
+        .measurement_time(Duration::from_millis(setting(
+            "JOLT_METAL_RAM_RA_CLAIM_MEASUREMENT_MS",
+            1_000,
+        )))
+        .throughput(Throughput::Elements(
+            q.projection().q_full_width_products + gather.projection().gather_full_width_products,
+        ));
+    let _ = group.bench_function(BenchmarkId::new("resident_wall", &suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut wall = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = execute_complete(&q, &gather, cycle_refs, &challenges, gamma);
+                let _ = black_box(observation.output);
+                wall += observation.wall;
+            }
+            wall
+        });
+    });
+    group.finish();
+}
+
+struct CompleteObservation {
+    output: RamRaClaimHostOutput<AkitaField>,
+    q_active: Duration,
+    gather_active: Duration,
+    host_prefix: Duration,
+    host_suffix: Duration,
+    wall: Duration,
+}
+
+fn execute_complete(
+    q: &RamRaClaimQInvocation,
+    gather: &RamRaClaimGatherInvocation,
+    cycle_points: [&[AkitaField]; 3],
+    challenges: &[AkitaField],
+    gamma: AkitaField,
+) -> CompleteObservation {
+    let wall_started = Instant::now();
+    let q_observation = q.execute_timed().expect("RAM RA claim Q should execute");
+    let shape = q.plan().shape;
+    let prefix_started = Instant::now();
+    let mut prefix = RamRaClaimPrefixState::new(shape, q_observation.q, cycle_points, gamma)
+        .expect("RAM RA claim prefix should prepare");
+    for &challenge in &challenges[..shape.prefix_bits()] {
+        let _ = black_box(
+            prefix
+                .message_evals()
+                .expect("RAM RA claim prefix message should evaluate"),
+        );
+        prefix
+            .bind(challenge)
+            .expect("RAM RA claim prefix should bind");
+    }
+    let seed = prefix.finish().expect("RAM RA claim prefix should finish");
+    let host_prefix = prefix_started.elapsed();
+    let gather_observation = gather
+        .execute_timed()
+        .expect("RAM RA claim gather should execute");
+    let suffix_started = Instant::now();
+    let mut suffix = seed
+        .start(gather_observation.h_prime)
+        .expect("RAM RA claim suffix should prepare");
+    for &challenge in &challenges[shape.prefix_bits()..] {
+        let _ = black_box(
+            suffix
+                .message_evals()
+                .expect("RAM RA claim suffix message should evaluate"),
+        );
+        suffix
+            .bind(challenge)
+            .expect("RAM RA claim suffix should bind");
+    }
+    let output = suffix.finish().expect("RAM RA claim suffix should finish");
+    let host_suffix = suffix_started.elapsed();
+    CompleteObservation {
+        output,
+        q_active: q_observation.gpu_active,
+        gather_active: gather_observation.gpu_active,
+        host_prefix,
+        host_suffix,
+        wall: wall_started.elapsed(),
+    }
+}
 
 pub fn bench_gather(c: &mut Criterion, context: &SolinasMetal) {
     let rows = trace_rows();
