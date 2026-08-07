@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "evidence_stage": "five_pair_log26_production",
+  "kernel": "ProductRemainder",
+  "machine": "Apple M4 Max, 40-core GPU",
+  "artifact": "benchmark-runs/metal-piop-eval/20260807-072030-939267",
+  "result_sha256": "07865fda7deceda372ed6d6e43ddf3afebe576ad0cd3dca914c67e5dd14c169a",
+  "source": {
+    "revision": "2447f0f619680d8e938300a26f9a0fc916aaaeb6",
+    "worktree_dirty": false,
+    "binary_sha256": "ae4859e9e6e39725d5b76412fe75639c102cbb5a7a8d490d95be0e365fcee197"
+  },
+  "configuration": {
+    "workload": "fibonacci",
+    "log_n": 26,
+    "rayon_threads": 16,
+    "pairs": 5,
+    "alternating_order": true,
+    "cpu_tail_elements": 4096,
+    "cpu_tail_readback_bytes": 131072,
+    "product_uniskip_outer_carrier": true
+  },
+  "correctness": {
+    "cpu_proofs_verified": true,
+    "metal_proofs_verified": true,
+    "stable_source": true,
+    "stable_binary": true,
+    "target_scale": true,
+    "production_contract": true
+  },
+  "product_remainder": {
+    "optimized_cpu_ms_median": 439.132709,
+    "metal_ms_median": 30.34154,
+    "median_speedup": 14.398820874625391,
+    "paired_speedups": [
+      14.398820874625391,
+      17.876629778832697,
+      18.097476081790155,
+      14.180910626153878,
+      14.04643977743126
+    ],
+    "optimized_first_median_speedup": 14.398820874625391,
+    "metal_first_median_speedup": 16.028770202493288,
+    "strict_5x_cap_ms": 87.8265418,
+    "strict_8x_cap_ms": 54.891588625,
+    "promotion_gate_clears": true
+  },
+  "cpu_tail": {
+    "handoff_ms_median": 0.239375,
+    "tail_rounds_ms_median": 0.068709,
+    "gpu_rounds_ms_median": 23.69096,
+    "output_claims_ms_median": 5.57225
+  },
+  "outer_product_family": {
+    "optimized_cpu_ms_median": 1579.798297,
+    "metal_ms_median": 266.668917,
+    "median_speedup": 5.924193620960989,
+    "promotion_gate_clears": true
+  },
+  "piop": {
+    "diagnostic_speedup": 3.7341626080206995
+  },
+  "decision": {
+    "status": "promoted",
+    "reason": "The 4096-element CPU tail removes command-latency-dominated late Metal rounds. Product and the combined Outer+Product family clear their five-pair production gates with exact proofs in both order strata."
+  }
+}
