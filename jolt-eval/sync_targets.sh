@@ -78,8 +78,14 @@ done
 # Regenerate fuzz/Cargo.toml [[bin]] entries
 {
     sed '/^\[\[bin\]\]/,$d' "$FUZZ_DIR/Cargo.toml"
+    first_target=true
     while read -r snake _; do
         [ -z "$snake" ] && continue
+        if [ "$first_target" = true ]; then
+            first_target=false
+        else
+            echo
+        fi
         cat <<EOF
 [[bin]]
 name = "$snake"
@@ -87,7 +93,6 @@ path = "fuzz_targets/${snake}.rs"
 test = false
 doc = false
 bench = false
-
 EOF
     done < /tmp/jolt_fuzz_entries
 } > "$FUZZ_DIR/Cargo.toml.tmp"
