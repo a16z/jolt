@@ -16,10 +16,10 @@ const DEFAULT_MASS_JOB_CYCLES: usize = DEFAULT_PHASE_ZERO_CYCLES_PER_GROUP / 32;
 const DEFAULT_ATOMS_PER_PHASE_JOB: usize = 1 << 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct AddressAtomTopologyConfig {
-    pub(super) phase_zero_cycles_per_group: usize,
-    pub(super) mass_job_cycles: usize,
-    pub(super) atoms_per_phase_job: usize,
+pub(crate) struct AddressAtomTopologyConfig {
+    pub(crate) phase_zero_cycles_per_group: usize,
+    pub(crate) mass_job_cycles: usize,
+    pub(crate) atoms_per_phase_job: usize,
 }
 
 impl Default for AddressAtomTopologyConfig {
@@ -59,7 +59,7 @@ impl AddressAtomTopologyConfig {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct AddressAtomTopologyCensus {
+pub(crate) struct AddressAtomTopologyCensus {
     pub(super) rows: usize,
     pub(super) atoms: usize,
     pub(super) mass_jobs: usize,
@@ -71,7 +71,7 @@ pub(super) struct AddressAtomTopologyCensus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct AddressAtomTopology {
+pub(crate) struct AddressAtomTopology {
     rows: usize,
     atom_lookups: Vec<AddressLookup>,
     atom_cycle_offsets: Vec<u32>,
@@ -88,21 +88,30 @@ pub(super) struct AddressAtomTopology {
 
 impl AddressAtomTopology {
     /// Publishes topology only after verifying an exact-key sorted permutation.
-    pub(super) fn from_sorted_cycles(
+    pub(crate) fn from_sorted_cycles(
         rows: &[InstructionReadRafRow],
         sorted_cycles: &[u32],
         config: AddressAtomTopologyConfig,
     ) -> Result<Self, InstructionReadRafV3Error> {
-        let _geometry = InstructionReadRafGeometry::new(rows.len(), PRODUCTION_VIRTUAL_RA)?;
+        Self::from_sorted_cycles_by(rows.len(), sorted_cycles, config, |cycle| Ok(rows[cycle]))
+    }
+
+    pub(crate) fn from_sorted_cycles_by(
+        rows: usize,
+        sorted_cycles: &[u32],
+        config: AddressAtomTopologyConfig,
+        mut row_at: impl FnMut(usize) -> Result<InstructionReadRafRow, InstructionReadRafV3Error>,
+    ) -> Result<Self, InstructionReadRafV3Error> {
+        let _geometry = InstructionReadRafGeometry::new(rows, PRODUCTION_VIRTUAL_RA)?;
         let config = config.validate()?;
-        if sorted_cycles.len() != rows.len() {
+        if sorted_cycles.len() != rows {
             return Err(InstructionReadRafV3Error::TopologyCycleLength {
-                expected: rows.len(),
+                expected: rows,
                 got: sorted_cycles.len(),
             });
         }
 
-        let mut seen = vec![0u64; rows.len().div_ceil(64)];
+        let mut seen = vec![0u64; rows.div_ceil(64)];
         let mut atom_lookups = Vec::new();
         let mut atom_cycle_offsets = vec![0u32];
         let mut segment_atom_counts = [0usize; SEGMENTS];
@@ -110,11 +119,11 @@ impl AddressAtomTopology {
 
         for (position, &cycle_u32) in sorted_cycles.iter().enumerate() {
             let cycle = cycle_u32 as usize;
-            if cycle >= rows.len() {
+            if cycle >= rows {
                 return Err(InstructionReadRafV3Error::TopologyCycleOutOfRange {
                     position,
                     cycle,
-                    rows: rows.len(),
+                    rows,
                 });
             }
             let seen_word = &mut seen[cycle / 64];
@@ -124,7 +133,7 @@ impl AddressAtomTopology {
             }
             *seen_word |= seen_bit;
 
-            let row = rows[cycle];
+            let row = row_at(cycle)?;
             let segment = segment_index(row.table_index(), row.raf_flag())?;
             let key = (segment, row.lookup_index());
             if previous_key.is_some_and(|previous| key < previous) {
@@ -141,8 +150,8 @@ impl AddressAtomTopology {
                 previous_key = Some(key);
             }
         }
-        atom_cycle_offsets.push(shader_u32(rows.len(), "terminal atom cycle offset")?);
-        if atom_lookups.is_empty() || atom_lookups.len() > rows.len() {
+        atom_cycle_offsets.push(shader_u32(rows, "terminal atom cycle offset")?);
+        if atom_lookups.is_empty() || atom_lookups.len() > rows {
             return Err(InstructionReadRafV3Error::InvalidTopology(
                 "atom count is outside 1..=rows",
             ));
@@ -162,7 +171,7 @@ impl AddressAtomTopology {
 
         let plans = build_job_plans(&atom_cycle_offsets, &segment_atom_offsets, config)?;
         let topology = Self {
-            rows: rows.len(),
+            rows,
             atom_lookups,
             atom_cycle_offsets,
             cycle_indices: sorted_cycles.to_vec(),

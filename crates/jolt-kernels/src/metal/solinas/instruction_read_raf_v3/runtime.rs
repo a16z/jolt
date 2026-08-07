@@ -11,12 +11,12 @@ use metal::{
 };
 
 use super::super::{
-    command_buffer_timestamp, AddressRafSums, AddressSuffixFullSums, Fp128, MetalError,
-    PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
+    command_buffer_timestamp, AddressPhaseSums, AddressRafSums, AddressSuffixFullSums, Fp128,
+    MetalError, PipelineLimits, ResidentLookupIndexPlane, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
 };
 use super::shader_abi::{
-    AtomMassFinalizeParams, AtomMassPhaseParams, AtomPhaseParams, SuffixPlan, JOB_FIELDS,
-    PHASE_THREADGROUP_BYTES, SIMD_WIDTH, TABLES, TOTAL_SUFFIXES,
+    AddressLookup, AtomMassFinalizeParams, AtomMassPhaseParams, AtomPhaseParams, SuffixPlan,
+    JOB_FIELDS, PHASE_THREADGROUP_BYTES, SIMD_WIDTH, TABLES, TOTAL_SUFFIXES,
 };
 use super::topology::{AddressAtomTopology, AddressAtomTopologyCensus};
 use super::{
@@ -146,11 +146,11 @@ pub fn run_address_atom_probe(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct AddressAtomRuntimeConfig {
-    pub(super) phase: usize,
-    pub(super) mass_finalize: usize,
-    pub(super) raf_finalize: usize,
-    pub(super) suffix_finalize: usize,
+pub(crate) struct AddressAtomRuntimeConfig {
+    pub(crate) phase: usize,
+    pub(crate) mass_finalize: usize,
+    pub(crate) raf_finalize: usize,
+    pub(crate) suffix_finalize: usize,
 }
 
 impl Default for AddressAtomRuntimeConfig {
@@ -165,7 +165,7 @@ impl Default for AddressAtomRuntimeConfig {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum AddressAtomRuntimeError {
+pub(crate) enum AddressAtomRuntimeError {
     #[error(transparent)]
     Plan(#[from] InstructionReadRafV3Error),
     #[error(transparent)]
@@ -230,7 +230,7 @@ struct Buffers {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct AddressAtomPhaseOutput {
+pub(crate) struct AddressAtomPhaseOutput {
     phase: usize,
     suffix_len: usize,
     raf: AddressRafSums,
@@ -239,28 +239,32 @@ pub(super) struct AddressAtomPhaseOutput {
 }
 
 impl AddressAtomPhaseOutput {
-    pub(super) const fn phase(&self) -> usize {
+    pub(crate) const fn phase(&self) -> usize {
         self.phase
     }
 
-    pub(super) const fn suffix_len(&self) -> usize {
+    pub(crate) const fn suffix_len(&self) -> usize {
         self.suffix_len
     }
 
-    pub(super) const fn raf(&self) -> &AddressRafSums {
+    pub(crate) const fn raf(&self) -> &AddressRafSums {
         &self.raf
     }
 
-    pub(super) const fn suffix(&self) -> &AddressSuffixFullSums {
+    pub(crate) const fn suffix(&self) -> &AddressSuffixFullSums {
         &self.suffix
     }
 
-    pub(super) const fn gpu_active(&self) -> Duration {
+    pub(crate) const fn gpu_active(&self) -> Duration {
         self.gpu_active
+    }
+
+    pub(crate) fn into_phase_sums(self) -> AddressPhaseSums {
+        AddressPhaseSums::from_parts(self.raf, self.suffix, self.gpu_active)
     }
 }
 
-pub(super) struct AddressAtomSequence {
+pub(crate) struct AddressAtomSequence {
     context: SolinasMetal,
     pipelines: Pipelines,
     buffers: Buffers,
@@ -276,7 +280,53 @@ pub(super) struct AddressAtomSequence {
 }
 
 impl SolinasMetal {
-    pub(super) fn prepare_instruction_read_raf_v3_address(
+    pub(crate) fn prepare_instruction_read_raf_v3_lookup_plane(
+        &self,
+        topology: &AddressAtomTopology,
+    ) -> Result<ResidentLookupIndexPlane, AddressAtomRuntimeError> {
+        let rows = topology.rows();
+        let lookup_bytes = checked_bytes::<AddressLookup>(rows, "resident lookup plane")?;
+        let inverse_bytes = checked_bytes::<u32>(rows, "resident lookup inverse")?;
+        let maximum = self.device.max_buffer_length();
+        for requested in [lookup_bytes, inverse_bytes] {
+            if requested > maximum {
+                return Err(MetalError::BufferTooLong { requested, maximum }.into());
+            }
+        }
+        let lookups = self
+            .device
+            .new_buffer(lookup_bytes, MTLResourceOptions::StorageModeShared);
+        let inverse = self
+            .device
+            .new_buffer(inverse_bytes, MTLResourceOptions::StorageModeShared);
+        // SAFETY: both buffers are fresh, shared allocations with exactly
+        // `rows` elements and remain CPU-exclusive until this function returns.
+        let lookup_values =
+            unsafe { slice::from_raw_parts_mut(lookups.contents().cast::<AddressLookup>(), rows) };
+        // SAFETY: the same allocation and exclusivity argument applies.
+        let inverse_values =
+            unsafe { slice::from_raw_parts_mut(inverse.contents().cast::<u32>(), rows) };
+        for (atom, lookup) in topology.atom_lookups().iter().copied().enumerate() {
+            let start = topology.atom_cycle_offsets()[atom] as usize;
+            let end = topology.atom_cycle_offsets()[atom + 1] as usize;
+            for (local_position, lookup_value) in lookup_values[start..end].iter_mut().enumerate() {
+                let position = start + local_position;
+                let cycle = topology.cycle_indices()[position] as usize;
+                *lookup_value = lookup;
+                inverse_values[cycle] = u32::try_from(position).map_err(|_| {
+                    InstructionReadRafV3Error::SizeOverflow("resident lookup position")
+                })?;
+            }
+        }
+        Ok(ResidentLookupIndexPlane::from_buffers(
+            lookups,
+            inverse,
+            rows,
+            self.device.registry_id(),
+        ))
+    }
+
+    pub(crate) fn prepare_instruction_read_raf_v3_address(
         &self,
         topology: AddressAtomTopology,
         reduction_point: &[AkitaField],
@@ -476,7 +526,7 @@ impl SolinasMetal {
 }
 
 impl AddressAtomSequence {
-    pub(super) fn first_phase(
+    pub(crate) fn first_phase(
         &mut self,
     ) -> Result<AddressAtomPhaseOutput, AddressAtomRuntimeError> {
         if self.phases_executed != 0 || self.finished {
@@ -487,7 +537,7 @@ impl AddressAtomSequence {
         self.execute_phase()
     }
 
-    pub(super) fn next_phase(
+    pub(crate) fn next_phase(
         &mut self,
         previous_phase_challenges: [AkitaField; PHASE_CHALLENGES],
     ) -> Result<AddressAtomPhaseOutput, AddressAtomRuntimeError> {
@@ -500,7 +550,7 @@ impl AddressAtomSequence {
         self.execute_phase()
     }
 
-    pub(super) fn finish_address(
+    pub(crate) fn finish_address(
         &mut self,
         final_phase_challenges: [AkitaField; PHASE_CHALLENGES],
     ) -> Result<(), AddressAtomRuntimeError> {
@@ -514,23 +564,27 @@ impl AddressAtomSequence {
         Ok(())
     }
 
-    pub(super) fn census(&self) -> Result<AddressAtomTopologyCensus, AddressAtomRuntimeError> {
+    pub(crate) fn census(&self) -> Result<AddressAtomTopologyCensus, AddressAtomRuntimeError> {
         Ok(self.topology.census()?)
     }
 
-    pub(super) const fn phases_executed(&self) -> usize {
+    pub(crate) fn atom_count(&self) -> Result<usize, AddressAtomRuntimeError> {
+        Ok(self.census()?.atoms)
+    }
+
+    pub(crate) const fn phases_executed(&self) -> usize {
         self.phases_executed
     }
 
-    pub(super) const fn is_finished(&self) -> bool {
+    pub(crate) const fn is_finished(&self) -> bool {
         self.finished
     }
 
-    pub(super) const fn gpu_active(&self) -> Duration {
+    pub(crate) const fn gpu_active(&self) -> Duration {
         self.gpu_active
     }
 
-    pub(super) fn phase_challenges(&self) -> &[[AkitaField; PHASE_CHALLENGES]] {
+    pub(crate) fn phase_challenges(&self) -> &[[AkitaField; PHASE_CHALLENGES]] {
         &self.challenge_batches
     }
 

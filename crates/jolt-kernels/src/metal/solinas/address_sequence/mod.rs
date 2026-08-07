@@ -228,6 +228,18 @@ pub struct AddressPhaseSums {
 }
 
 impl AddressPhaseSums {
+    pub(super) fn from_parts(
+        raf: AddressRafSums,
+        suffix: AddressSuffixFullSums,
+        gpu_active_time: Duration,
+    ) -> Self {
+        Self {
+            raf,
+            suffix,
+            gpu_active_time,
+        }
+    }
+
     pub const fn raf(&self) -> &AddressRafSums {
         &self.raf
     }

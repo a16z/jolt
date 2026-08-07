@@ -64,6 +64,11 @@ mod topology;
 #[cfg(feature = "test-utils")]
 pub use runtime::{run_address_atom_probe, AddressAtomProbeResult};
 
+pub(crate) use runtime::{
+    AddressAtomPhaseOutput, AddressAtomRuntimeConfig, AddressAtomRuntimeError, AddressAtomSequence,
+};
+pub(crate) use topology::{AddressAtomTopology, AddressAtomTopologyConfig};
+
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 
 pub(crate) const ATOM_MASS_PHASE_PIPELINE: &str = "solinas_instruction_read_raf_v3_atom_mass_phase";
