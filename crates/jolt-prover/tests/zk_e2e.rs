@@ -133,6 +133,7 @@ mod support {
             OwnedTrace::new(rows),
             trace_output.device,
             trace_output.final_memory,
+            trace_output.advice_tape,
         )
     }
 

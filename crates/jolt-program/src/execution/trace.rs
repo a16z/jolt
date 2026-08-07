@@ -310,18 +310,21 @@ pub struct TraceOutput<T> {
 }
 
 impl<T> TraceOutput<T> {
-    pub fn new(trace: T, device: JoltDevice, final_memory: Option<MemoryImage>) -> Self {
+    /// `advice_tape` is a required parameter so that a backend (or a
+    /// rebuild of an existing output) cannot silently discard a populated
+    /// tape — the seam this field exists to plug.
+    pub fn new(
+        trace: T,
+        device: JoltDevice,
+        final_memory: Option<MemoryImage>,
+        advice_tape: Option<Vec<u8>>,
+    ) -> Self {
         Self {
             trace,
             device,
             final_memory,
-            advice_tape: None,
+            advice_tape,
         }
-    }
-
-    pub fn with_advice_tape(mut self, advice_tape: Option<Vec<u8>>) -> Self {
-        self.advice_tape = advice_tape;
-        self
     }
 }
 

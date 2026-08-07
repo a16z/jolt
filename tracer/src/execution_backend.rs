@@ -65,8 +65,8 @@ impl ExecutionBackend for TracerBackend {
             Some(MemoryImage {
                 bytes: final_memory.materialized_nonzero_bytes(),
             }),
-        )
-        .with_advice_tape(Some(advice_tape.into_bytes())))
+            Some(advice_tape.into_bytes()),
+        ))
     }
 }
 
