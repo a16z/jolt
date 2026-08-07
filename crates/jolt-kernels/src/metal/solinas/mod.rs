@@ -43,6 +43,9 @@ mod registers_val;
 pub mod registers_val_evaluation_backend;
 mod runtime;
 mod source;
+#[cfg(feature = "test-utils")]
+#[doc(hidden)]
+pub mod spartan_outer_successor;
 mod spartan_outer_uniskip;
 pub mod spartan_shift;
 

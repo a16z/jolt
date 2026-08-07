@@ -1,8 +1,10 @@
 # Spartan outer successor design
 
-Status: implement the remainder successor after a focused arithmetic probe. Keep
-the current uni-skip kernel. This directory is unregistered and changes no runtime
-source, backend slot, transcript, or protocol.
+Status: the deferred signed-`Bz` arithmetic probe is exact but rejected on its
+predeclared log-26 activity bar. Continue with challenge-collapsed `Az`; keep the
+current uni-skip and production remainder kernels. The probe is available only
+through the `test-utils` runtime-artifact path and changes no backend slot,
+transcript, or protocol.
 
 The latest same-binary log-26 diagnostic measured the complete optimized stage 1
 at 3,816.081 ms and Metal at 530.542 ms, or 7.193x. The split is decisive:
@@ -149,6 +151,22 @@ materialization microbenchmark with compiler and occupancy capture. Reject it if
 generalized reduction, spills, or lower occupancy keep materialize GPU-active above
 75 ms.
 
+Root ran the compiled parent and candidate through the same resident buffers,
+threadgroup width, reduction dispatch, allocation lifetime, and alternating order.
+The candidate matched every `Bz` state cell at log 8 and both message endpoints at
+every scale. It did not meet the activity bar:
+
+| log T | parent active | deferred active | active speedup |
+|---:|---:|---:|---:|
+| 20 | 1.646 ms | 1.526 ms | 1.079x |
+| 24 | 25.033 ms | 23.184 ms | 1.080x |
+| 26 | 99.386 ms | 92.555 ms | 1.074x |
+
+The log-26 candidate is 17.555 ms above the 75-ms kill threshold. Retain the
+shader and evaluator as a rejected-parent artifact; do not compose this wider
+accumulator into the next probe unless another lever removes enough work to price
+its register cost again.
+
 ### 2. Challenge-collapsed `Az` for the stream bind
 
 Round zero still needs both `Az` stream values. After the stream challenge is known,
@@ -250,9 +268,9 @@ Immediate kill rules:
 
 Start with three isolated probes, not a full production build:
 
-1. Compare the current and deferred signed `Bz` dot on resident synthetic rows,
-   including maximum signed values. Record wall, GPU-active, pipeline limits, ISA,
-   registers, spills, and active SIMD groups.
+1. ~~Compare the current and deferred signed `Bz` dot.~~ Rejected at 92.555 ms
+   GPU-active versus the 75-ms bar despite exact parity and a 1.074x matched-parent
+   gain.
 2. Compare current stream bind with challenge-collapsed `Az`, first without a flag
    sidecar. Add the sidecar only after the stride charge is observed.
 3. Compare current opening ownership with scalar low-coordinate partials. Only an

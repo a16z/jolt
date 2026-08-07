@@ -1,6 +1,6 @@
 {
   "schema": "spartan_outer_successor_screening_v1",
-  "status": "static_design_only",
+  "status": "first_probe_rejected",
   "recorded_at": "2026-08-07T01:22:01Z",
   "hardware": "Apple M4 Max",
   "scale": {
@@ -75,10 +75,56 @@
     "standalone_remainder_eight_x": "rejected under unchanged work bound",
     "complete_stage_eight_x": "analytically viable at 169 ms remainder"
   },
+  "root_validation": {
+    "recorded_at": "2026-08-07T03:00:00Z",
+    "candidate_shader_sha256": "027859ba45f0789609f82916549d1f213cfb90c04bad1a40d52cb250d1485ff5",
+    "arithmetic_oracle_sha256": "30c029e47a6ff21b127a29cc5315fb4408bfe2dfef0278ca1a77c1b917f89261",
+    "evaluator_sha256": "3ef66e2d4be18a6f716431534efcc1604264e85edec90bd3960b3561382fe378",
+    "arithmetic_tests": {
+      "passed": 5,
+      "failed": 0,
+      "coverage": "positive and negative extrema, cancellation, 256 deterministic mixed inputs, and the strict less-than-2^130 row bound"
+    },
+    "metal_compile": {
+      "device": "Apple M4 Max",
+      "thread_execution_width": 32,
+      "max_total_threads_per_threadgroup": 1024,
+      "static_threadgroup_memory_bytes": 0
+    },
+    "parity": {
+      "full_b_state_log_t": 8,
+      "message_scales": [8, 20, 24, 26],
+      "result": "exact"
+    },
+    "alternating_medians": {
+      "log20": {
+        "samples": 7,
+        "parent_gpu_active_ns": 1645625,
+        "candidate_gpu_active_ns": 1525500,
+        "active_speedup": 1.0787446739
+      },
+      "log24": {
+        "samples": 5,
+        "parent_gpu_active_ns": 25033125,
+        "candidate_gpu_active_ns": 23184333,
+        "active_speedup": 1.079743161
+      },
+      "log26": {
+        "samples": 5,
+        "parent_wall_ns": 99575916,
+        "candidate_wall_ns": 92795292,
+        "parent_gpu_active_ns": 99385875,
+        "candidate_gpu_active_ns": 92554625,
+        "wall_speedup": 1.073070776,
+        "active_speedup": 1.0738077649
+      }
+    },
+    "verdict": "reject_deferred_b_above_75ms_and_advance_to_collapsed_az"
+  },
   "evidence_limits": [
     "The latest attribution is one diagnostic pair and cannot promote a kernel.",
     "Traffic is a logical-byte model, not a hardware-counter capture.",
     "Occupancy, register count, spills, and achieved issue rates are not measured.",
-    "No Rust, Metal, compiler, Cargo, or GPU test was run for this design-only packet."
+    "No ISA, register, spill, or active-SIMD-group capture was available; the candidate already failed its wall-independent GPU-active kill bar."
   ]
 }

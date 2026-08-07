@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::{AkitaField, CanonicalBytes, Field, ReducingBytes};
 
 pub const OUTER_COLUMNS: usize = 35;
 pub const SHIFT_COLUMNS: [usize; 4] = [5, 4, 28, 33];
@@ -119,6 +119,163 @@ pub fn challenge_collapsed_a<F: Field>(lagrange: &[F; 10], flags: OuterAFlags, c
     first + challenge * (second - first)
 }
 
+pub const AKITA_OFFSET: u32 = 0xffff_a7f7;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SignedMagnitude160 {
+    limbs: [u32; 5],
+    negative: bool,
+}
+
+impl SignedMagnitude160 {
+    pub fn new(limbs: [u32; 5], negative: bool) -> Result<Self, DeferredDotError> {
+        if limbs[4] > 3 {
+            return Err(DeferredDotError::MagnitudeOutOfRange);
+        }
+        Ok(Self { limbs, negative })
+    }
+
+    pub const fn limbs(&self) -> &[u32; 5] {
+        &self.limbs
+    }
+
+    pub const fn is_negative(&self) -> bool {
+        self.negative
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeferredDotError {
+    LengthMismatch,
+    MagnitudeOutOfRange,
+    AccumulatorOverflow,
+    FoldOverflow,
+}
+
+pub fn deferred_signed_dot(
+    weights: &[AkitaField],
+    terms: &[SignedMagnitude160],
+) -> Result<AkitaField, DeferredDotError> {
+    if weights.len() != terms.len() {
+        return Err(DeferredDotError::LengthMismatch);
+    }
+    let mut accumulator = [0_u32; 10];
+    for (&weight, term) in weights.iter().zip(terms) {
+        let mut product = multiply_160_by_field(term.limbs, weight);
+        if term.negative {
+            negate_limbs(&mut product);
+        }
+        add_signed(&mut accumulator, product)?;
+    }
+    reduce_signed_320(accumulator)
+}
+
+fn multiply_160_by_field(magnitude: [u32; 5], weight: AkitaField) -> [u32; 10] {
+    let mut weight_bytes = [0_u8; 16];
+    weight.to_bytes_le(&mut weight_bytes);
+    let weight: [u32; 4] = std::array::from_fn(|index| {
+        let offset = 4 * index;
+        u32::from_le_bytes([
+            weight_bytes[offset],
+            weight_bytes[offset + 1],
+            weight_bytes[offset + 2],
+            weight_bytes[offset + 3],
+        ])
+    });
+    let mut product = [0_u32; 10];
+    for (i, &magnitude_limb) in magnitude.iter().enumerate() {
+        let mut carry = 0_u64;
+        for (j, &weight_limb) in weight.iter().enumerate() {
+            let k = i + j;
+            let word =
+                u64::from(magnitude_limb) * u64::from(weight_limb) + u64::from(product[k]) + carry;
+            product[k] = word as u32;
+            carry = word >> 32;
+        }
+        product[i + 4] = carry as u32;
+    }
+    product
+}
+
+fn negate_limbs<const N: usize>(value: &mut [u32; N]) {
+    let mut carry = 1_u64;
+    for limb in value {
+        let word = u64::from(!*limb) + carry;
+        *limb = word as u32;
+        carry = word >> 32;
+    }
+}
+
+fn add_signed(accumulator: &mut [u32; 10], value: [u32; 10]) -> Result<(), DeferredDotError> {
+    let accumulator_negative = accumulator[9] >> 31 != 0;
+    let value_negative = value[9] >> 31 != 0;
+    let mut carry = 0_u64;
+    for (accumulator_limb, value_limb) in accumulator.iter_mut().zip(value) {
+        let word = u64::from(*accumulator_limb) + u64::from(value_limb) + carry;
+        *accumulator_limb = word as u32;
+        carry = word >> 32;
+    }
+    let result_negative = accumulator[9] >> 31 != 0;
+    if accumulator_negative == value_negative && result_negative != accumulator_negative {
+        return Err(DeferredDotError::AccumulatorOverflow);
+    }
+    Ok(())
+}
+
+fn add_carry(value: &mut [u32; 8], index: usize, mut carry: u64) -> bool {
+    for limb in &mut value[index..] {
+        if carry == 0 {
+            return true;
+        }
+        let word = u64::from(*limb) + carry;
+        *limb = word as u32;
+        carry = word >> 32;
+    }
+    carry == 0
+}
+
+fn reduce_signed_320(mut value: [u32; 10]) -> Result<AkitaField, DeferredDotError> {
+    let negative = value[9] >> 31 != 0;
+    if negative {
+        negate_limbs(&mut value);
+    }
+
+    let mut folded = [0_u32; 8];
+    folded[..4].copy_from_slice(&value[..4]);
+    let mut carry = 0_u64;
+    for i in 0..4 {
+        let word = u64::from(value[i + 4]) * u64::from(AKITA_OFFSET) + u64::from(folded[i]) + carry;
+        folded[i] = word as u32;
+        carry = word >> 32;
+    }
+    if !add_carry(&mut folded, 4, carry) {
+        return Err(DeferredDotError::FoldOverflow);
+    }
+
+    let offset_squared = u64::from(AKITA_OFFSET) * u64::from(AKITA_OFFSET);
+    let factor = [offset_squared as u32, (offset_squared >> 32) as u32];
+    for i in 0..2 {
+        carry = 0;
+        for (j, &factor_limb) in factor.iter().enumerate() {
+            let k = i + j;
+            let word =
+                u64::from(value[i + 8]) * u64::from(factor_limb) + u64::from(folded[k]) + carry;
+            folded[k] = word as u32;
+            carry = word >> 32;
+        }
+        if !add_carry(&mut folded, i + 2, carry) {
+            return Err(DeferredDotError::FoldOverflow);
+        }
+    }
+
+    let mut bytes = [0_u8; 32];
+    for (index, limb) in folded.into_iter().enumerate() {
+        bytes[4 * index..4 * index + 4].copy_from_slice(&limb.to_le_bytes());
+    }
+    let reduced = AkitaField::from_le_bytes_mod_order(&bytes);
+    Ok(if negative { -reduced } else { reduced })
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpeningCarrier<F: Field> {
     pub current: Vec<Vec<F>>,
@@ -185,12 +342,31 @@ pub fn direct_openings<F: Field>(
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::AkitaField;
+    use jolt_field::{AkitaField, FromPrimitiveInt, ReducingBytes};
 
     use super::*;
 
     fn field(value: u64) -> AkitaField {
         AkitaField::from_u64(value)
+    }
+
+    fn direct_signed_dot(weights: &[AkitaField], terms: &[SignedMagnitude160]) -> AkitaField {
+        weights
+            .iter()
+            .zip(terms)
+            .fold(AkitaField::zero(), |sum, (&weight, term)| {
+                let mut bytes = [0_u8; 20];
+                for (index, limb) in term.limbs().iter().enumerate() {
+                    bytes[4 * index..4 * index + 4].copy_from_slice(&limb.to_le_bytes());
+                }
+                let magnitude = AkitaField::from_le_bytes_mod_order(&bytes);
+                let product = weight * magnitude;
+                sum + if term.is_negative() {
+                    -product
+                } else {
+                    product
+                }
+            })
     }
 
     #[test]
@@ -259,5 +435,89 @@ mod tests {
                 assert_eq!(carrier.successor[slot][x_low], expected);
             }
         }
+    }
+
+    #[test]
+    fn deferred_signed_dot_matches_extrema_and_cancellation() {
+        let modulus = u128::MAX - u128::from(AKITA_OFFSET) + 1;
+        let weights = [
+            AkitaField::from_u128(modulus - 1),
+            AkitaField::from_u128(modulus - 2),
+            AkitaField::from_u128((1_u128 << 127) + 17),
+            field(0),
+            field(1),
+            field(41),
+            AkitaField::from_u128(modulus - 33),
+            field(7),
+            field(11),
+            field(13),
+        ];
+        let maximum = [u32::MAX, u32::MAX, u32::MAX, u32::MAX, 3];
+        let terms = [
+            SignedMagnitude160::new(maximum, false).unwrap(),
+            SignedMagnitude160::new(maximum, true).unwrap(),
+            SignedMagnitude160::new([0, 0, 0, 0x8000_0000, 0], false).unwrap(),
+            SignedMagnitude160::new(maximum, false).unwrap(),
+            SignedMagnitude160::new([1, 0, 0, 0, 0], true).unwrap(),
+            SignedMagnitude160::new([u32::MAX, 17, 0, 0, 0], false).unwrap(),
+            SignedMagnitude160::new([u32::MAX, 17, 0, 0, 0], true).unwrap(),
+            SignedMagnitude160::new([5, 4, 3, 2, 1], false).unwrap(),
+            SignedMagnitude160::new([5, 4, 3, 2, 1], true).unwrap(),
+            SignedMagnitude160::new([0; 5], true).unwrap(),
+        ];
+        assert_eq!(
+            deferred_signed_dot(&weights, &terms).unwrap(),
+            direct_signed_dot(&weights, &terms)
+        );
+        let same_sign_terms = [SignedMagnitude160::new(maximum, false).unwrap(); 10];
+        assert_eq!(
+            deferred_signed_dot(&weights, &same_sign_terms).unwrap(),
+            direct_signed_dot(&weights, &same_sign_terms)
+        );
+    }
+
+    #[test]
+    fn deferred_signed_dot_matches_deterministic_mixed_inputs() {
+        let modulus = u128::MAX - u128::from(AKITA_OFFSET) + 1;
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        for case in 0..256 {
+            let mut next = || {
+                state ^= state << 7;
+                state ^= state >> 9;
+                state ^= state << 8;
+                state
+            };
+            let weights: [AkitaField; 10] = std::array::from_fn(|_| {
+                let value = (u128::from(next()) << 64) | u128::from(next());
+                AkitaField::from_u128(if value >= modulus {
+                    value - modulus
+                } else {
+                    value
+                })
+            });
+            let terms: [SignedMagnitude160; 10] = std::array::from_fn(|index| {
+                let limbs = [
+                    next() as u32,
+                    next() as u32,
+                    next() as u32,
+                    next() as u32,
+                    (next() & 3) as u32,
+                ];
+                SignedMagnitude160::new(limbs, (case + index) % 3 == 0).unwrap()
+            });
+            assert_eq!(
+                deferred_signed_dot(&weights, &terms).unwrap(),
+                direct_signed_dot(&weights, &terms),
+                "case {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn deferred_signed_dot_rejects_a_row_outside_the_proven_bound() {
+        assert_eq!(
+            SignedMagnitude160::new([0, 0, 0, 0, 4], false),
+            Err(DeferredDotError::MagnitudeOutOfRange)
+        );
     }
 }
