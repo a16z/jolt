@@ -544,27 +544,35 @@ mod tests {
         assert_eq!(memory.read_doubleword(8), 222);
 
         let checkpoint = memory.data.save_checkpoint();
-        assert_eq!(checkpoint.memory.get(&0), Some(&111), "pre-write value");
-        assert_eq!(checkpoint.memory.get(&1), Some(&222), "read snapshot");
-        assert_eq!(checkpoint.memory.get(&2), None, "untouched word absent");
+        let MemoryBacking::Sparse(snapshot) = &checkpoint.backing else {
+            panic!("checkpoint replay memory must have a sparse backing");
+        };
+        assert_eq!(snapshot.get(&0), Some(&111), "pre-write value");
+        assert_eq!(snapshot.get(&1), Some(&222), "read snapshot");
+        assert_eq!(snapshot.get(&2), None, "untouched word absent");
         assert_eq!(checkpoint.get_num_doublewords(), 8);
 
         // Saving started a fresh chunk: only new accesses are recorded
         memory.write_doubleword(16, 5);
         let next = memory.data.save_checkpoint();
-        assert_eq!(next.memory.len(), 1);
-        assert_eq!(next.memory.get(&2), Some(&0));
+        let MemoryBacking::Sparse(snapshot) = &next.backing else {
+            panic!("checkpoint replay memory must have a sparse backing");
+        };
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot.get(&2), Some(&0));
     }
 
     #[test]
-    fn take_memory_preserves_capacity_but_empties_content() {
+    fn take_memory_moves_capacity_and_content_to_the_taken_memory() {
         let mut memory = memory(64);
         memory.write_doubleword(0, 42);
         let taken = memory.take_memory();
         assert_eq!(taken.data.get_num_doublewords(), 8);
         assert_eq!(taken.data.get_u64(0), 42);
-        assert_eq!(memory.data.get_num_doublewords(), 8);
-        assert_eq!(memory.data.get_u64(0), 0, "content moved out");
+        // The emptied source reports zero capacity, consistent with its
+        // empty backing; every address is now out of bounds.
+        assert_eq!(memory.data.get_num_doublewords(), 0);
+        assert!(!memory.validate_address(0), "content moved out");
     }
 
     #[test]

@@ -2805,13 +2805,13 @@ mod tests {
 
     #[test]
     fn div_expands_to_a_virtual_sequence_with_advice_slots() {
-        let cpu = exec_cpu();
+        let mut cpu = exec_cpu();
         let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
 
         // DIV has no final Jolt row; it must be expanded
         assert!(div.try_jolt_instruction_row().is_err());
 
-        let mut sequence = div.inline_sequence(&cpu.vr_allocator);
+        let sequence = div.inline_sequence(&cpu.vr_allocator);
         assert!(
             sequence.len() > 1,
             "DIV must expand to multiple instructions"
@@ -2822,34 +2822,40 @@ mod tests {
             .count();
         assert_eq!(advice_count, 2, "DIV advises quotient and remainder");
 
-        fill_virtual_advice(&mut sequence, &[123, 45]);
-        let filled: Vec<u64> = sequence
+        // `fill_virtual_advice`'s successor patches the values into
+        // per-execution copies of the advice rows while tracing. With
+        // x1 = x2 = 0 the sequence's own assertions require the RISC-V
+        // division-by-zero pair: quotient all-ones, remainder 0.
+        let mut trace = Vec::new();
+        trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX, 0], Some(&mut trace));
+        let filled: Vec<u64> = trace
             .iter()
-            .filter_map(|instr| match instr {
-                Instruction::VirtualAdvice(advice) => Some(advice.advice),
+            .filter_map(|cycle| match cycle {
+                Cycle::VirtualAdvice(cycle) => Some(cycle.instruction.advice),
                 _ => None,
             })
             .collect();
-        assert_eq!(filled, vec![123, 45]);
+        assert_eq!(filled, vec![u64::MAX, 0]);
     }
 
     #[test]
     #[should_panic(expected = "did not contain enough virtual advice")]
-    fn fill_virtual_advice_panics_when_values_outnumber_slots() {
-        let cpu = exec_cpu();
+    fn trace_with_advice_panics_when_values_outnumber_slots() {
+        let mut cpu = exec_cpu();
         let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
-        let mut sequence = div.inline_sequence(&cpu.vr_allocator);
-        // 3 values for 2 advice slots
-        fill_virtual_advice(&mut sequence, &[1, 2, 3]);
+        // 3 values for 2 advice slots; the first two are the correct pair for
+        // x1 = x2 = 0, so the mismatch check fires rather than a division
+        // assertion inside the sequence.
+        trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX, 0, 3], None);
     }
 
     #[test]
     #[should_panic(expected = "did not contain enough virtual advice")]
-    fn fill_virtual_advice_panics_when_slots_outnumber_values() {
-        let cpu = exec_cpu();
+    fn trace_with_advice_panics_when_slots_outnumber_values() {
+        let mut cpu = exec_cpu();
         let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
-        let mut sequence = div.inline_sequence(&cpu.vr_allocator);
-        fill_virtual_advice(&mut sequence, &[1]);
+        // 1 value for 2 advice slots: the second advice row finds no value.
+        trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX], None);
     }
 
     #[test]

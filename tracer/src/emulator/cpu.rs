@@ -2340,9 +2340,8 @@ mod test_cpu {
     #[test]
     fn call_stack_is_a_bounded_ring_buffer() {
         let mut cpu = create_cpu();
-        let operands = NormalizedOperands::default();
         for i in 0..(MAX_CALL_STACK_DEPTH as u64 + 2) {
-            cpu.track_call(0x8000_0000 + 4 * i, operands);
+            cpu.track_call(0x8000_0000 + 4 * i);
         }
         let stack = cpu.get_call_stack();
         assert_eq!(stack.len(), MAX_CALL_STACK_DEPTH);

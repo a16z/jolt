@@ -307,8 +307,7 @@ mod tests {
         let loader = addr2line::Loader::new(&path).expect("loader parses the ELF");
         let frame = CallFrame {
             call_site: 0x8000_0004, // inside _start (size 8)
-            x: [0; REGISTER_COUNT as usize],
-            operands: NormalizedOperands::default(),
+            x: None,
             cycle_count: 3,
         };
         let resolved = resolve_frame(&loader, &frame).expect("symbol found");
@@ -341,9 +340,7 @@ mod tests {
         std::fs::write(&garbage, b"not an elf").unwrap();
         let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
         emulator.set_elf_path(&garbage);
-        emulator
-            .get_mut_cpu()
-            .track_call(0x8000_0004, NormalizedOperands::default());
+        emulator.get_mut_cpu().track_call(0x8000_0004);
         display_panic_backtrace(&emulator);
         std::fs::remove_file(&garbage).ok();
 
@@ -351,12 +348,8 @@ mod tests {
         let path = write_test_elf();
         let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
         emulator.set_elf_path(&path);
-        emulator
-            .get_mut_cpu()
-            .track_call(0x8000_0004, NormalizedOperands::default());
-        emulator
-            .get_mut_cpu()
-            .track_call(0x9000_0000, NormalizedOperands::default());
+        emulator.get_mut_cpu().track_call(0x8000_0004);
+        emulator.get_mut_cpu().track_call(0x9000_0000);
         display_panic_backtrace(&emulator);
         std::fs::remove_file(&path).ok();
     }
