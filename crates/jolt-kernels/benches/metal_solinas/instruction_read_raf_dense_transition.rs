@@ -2,8 +2,7 @@ use std::{env, hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_kernels::metal::solinas::{
-    instruction_read_raf_v3::DenseTransitionTile, Fp128, Product5Config, SolinasMetal,
-    PRODUCT5_FACTORS,
+    DenseTransitionTile, Fp128, Product5Config, SolinasMetal, PRODUCT5_FACTORS,
 };
 
 use super::reference::values;
@@ -19,7 +18,7 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     let source = values(PRODUCT5_FACTORS * elements);
     let challenge = Fp128::from_u128(0x243f_6a88_85a3_08d3_1319_8a2e_0370_7344);
     let useful_products = 8 * elements as u64 + PRODUCT5_FACTORS as u64 * e_out.len() as u64;
-    let mut group = c.benchmark_group("metal_solinas/instruction_read_raf_dense_transition");
+    let mut group = c.benchmark_group("metal_solinas/product5_tiled_transition");
     let _ = group
         .sample_size(20)
         .warm_up_time(Duration::from_secs(2))
@@ -69,9 +68,7 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         DenseTransitionTile::Pairs128,
     ] {
         let invocation = context
-            .prepare_instruction_read_raf_dense_transition(
-                &source, elements, challenge, &e_in, &e_out, tile,
-            )
+            .prepare_product5_tiled_transition(&source, elements, challenge, &e_in, &e_out, tile)
             .expect("dense transition candidate should prepare");
         let params = invocation.params();
         eprintln!(

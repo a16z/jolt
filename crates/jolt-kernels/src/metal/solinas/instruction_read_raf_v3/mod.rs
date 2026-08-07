@@ -55,19 +55,12 @@
 )]
 
 mod abi;
-#[cfg(feature = "test-utils")]
-mod cycle_transition;
 mod model;
 mod oracle;
 mod runtime;
 mod shader_abi;
 mod topology;
 
-#[cfg(feature = "test-utils")]
-pub use cycle_transition::{
-    DenseTransitionError, DenseTransitionInvocation, DenseTransitionObservation,
-    DenseTransitionParams, DenseTransitionTile,
-};
 #[cfg(feature = "test-utils")]
 pub use runtime::{run_address_atom_probe, AddressAtomProbeResult};
 
@@ -81,8 +74,6 @@ pub(crate) use shader_abi::{
 pub(crate) use topology::{AddressAtomTopology, AddressAtomTopologyConfig};
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
-#[cfg(feature = "test-utils")]
-pub(super) const DENSE_TRANSITION_SOURCE: &str = include_str!("cycle_transition/shader.metal");
 
 pub(crate) const ATOM_MASS_PHASE_PIPELINE: &str = "solinas_instruction_read_raf_v3_atom_mass_phase";
 pub(crate) const ATOM_MASS_FINALIZE_PIPELINE: &str =

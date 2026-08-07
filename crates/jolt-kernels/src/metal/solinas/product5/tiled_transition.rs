@@ -1,3 +1,5 @@
+//! Tiled five-factor bind-and-message transition.
+
 use core::mem::size_of;
 use std::{cell::Cell, slice, time::Duration, time::Instant};
 
@@ -14,7 +16,7 @@ const FACTORS: usize = 5;
 const MAIN_THREADS: usize = 160;
 const SIMD_WIDTH: usize = 32;
 const REDUCE_PIPELINE: &str = "solinas_product5_reduce";
-const WEIGHT_TILES_PIPELINE: &str = "solinas_instruction_read_raf_dense_weight_tiles";
+const WEIGHT_TILES_PIPELINE: &str = "solinas_product5_tiled_weight_tiles";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DenseTransitionTile {
@@ -34,9 +36,9 @@ impl DenseTransitionTile {
 
     const fn pipeline(self) -> &'static str {
         match self {
-            Self::Pairs32 => "solinas_instruction_read_raf_dense_factor_sample_32",
-            Self::Pairs64 => "solinas_instruction_read_raf_dense_factor_sample_64",
-            Self::Pairs128 => "solinas_instruction_read_raf_dense_factor_sample_128",
+            Self::Pairs32 => "solinas_product5_tiled_factor_sample_32",
+            Self::Pairs64 => "solinas_product5_tiled_factor_sample_64",
+            Self::Pairs128 => "solinas_product5_tiled_factor_sample_128",
         }
     }
 }
@@ -70,18 +72,22 @@ const _: [(); 16] = [(); size_of::<ReductionParams>()];
 pub enum DenseTransitionError {
     #[error(transparent)]
     Metal(#[from] MetalError),
-    #[error("dense cycle transition needs a power-of-two source length of at least four, got {0}")]
+    #[error(
+        "tiled Product5 transition needs a power-of-two source length of at least four, got {0}"
+    )]
     InvalidSourceElements(usize),
-    #[error("dense cycle transition source has {got} fields, expected {expected}")]
+    #[error("tiled Product5 transition source has {got} fields, expected {expected}")]
     SourceLength { expected: usize, got: usize },
-    #[error("dense cycle transition weights cover {covered} pairs, expected {expected}")]
+    #[error("tiled Product5 transition weights cover {covered} pairs, expected {expected}")]
     WeightShape { expected: usize, covered: usize },
-    #[error("dense cycle transition inner length {inner} is not divisible by tile width {tile}")]
+    #[error(
+        "tiled Product5 transition inner length {inner} is not divisible by tile width {tile}"
+    )]
     TileShape { inner: usize, tile: usize },
-    #[error("dense cycle transition pipeline `{pipeline}` requires SIMD width 32, got {got}")]
+    #[error("tiled Product5 pipeline `{pipeline}` requires SIMD width 32, got {got}")]
     ExecutionWidth { pipeline: &'static str, got: usize },
     #[error(
-        "dense cycle transition pipeline `{pipeline}` needs {requested} threads, maximum is {maximum}"
+        "tiled Product5 pipeline `{pipeline}` needs {requested} threads, maximum is {maximum}"
     )]
     ThreadLimit {
         pipeline: &'static str,
@@ -89,10 +95,10 @@ pub enum DenseTransitionError {
         maximum: usize,
     },
     #[error(
-        "dense cycle transition needs {requested} threadgroup bytes, device maximum is {maximum}"
+        "tiled Product5 transition needs {requested} threadgroup bytes, device maximum is {maximum}"
     )]
     ThreadgroupMemory { requested: u64, maximum: u64 },
-    #[error("dense cycle transition size arithmetic overflowed")]
+    #[error("tiled Product5 transition size arithmetic overflowed")]
     SizeOverflow,
 }
 
@@ -148,7 +154,7 @@ pub struct DenseTransitionInvocation {
 }
 
 impl SolinasMetal {
-    pub fn prepare_instruction_read_raf_dense_transition(
+    pub fn prepare_product5_tiled_transition(
         &self,
         source: &[Fp128],
         source_elements: usize,
@@ -203,13 +209,10 @@ impl SolinasMetal {
             total_tiles: abi_count(total_tiles)?,
             reserved: 0,
         };
-        self.validate_inputs("InstructionReadRaf dense source", source)?;
-        self.validate_inputs("InstructionReadRaf dense e_in", e_in)?;
-        self.validate_inputs("InstructionReadRaf dense e_out", e_out)?;
-        self.validate_inputs(
-            "InstructionReadRaf dense challenge",
-            slice::from_ref(&challenge),
-        )?;
+        self.validate_inputs("tiled Product5 source", source)?;
+        self.validate_inputs("tiled Product5 e_in", e_in)?;
+        self.validate_inputs("tiled Product5 e_out", e_out)?;
+        self.validate_inputs("tiled Product5 challenge", slice::from_ref(&challenge))?;
 
         let main_pipeline = self.compile_named_pipeline(tile.pipeline())?;
         let weight_pipeline = self.compile_named_pipeline(WEIGHT_TILES_PIPELINE)?;
@@ -516,7 +519,7 @@ impl DenseTransitionInvocation {
             slice::from_raw_parts(self.buffers.destination.contents().cast::<Fp128>(), fields)
         };
         self.context
-            .validate_inputs("InstructionReadRaf dense destination", values)?;
+            .validate_inputs("tiled Product5 destination", values)?;
         Ok(values.to_vec())
     }
 
@@ -530,7 +533,7 @@ impl DenseTransitionInvocation {
         // SAFETY: the final reduction writes five contiguous fields.
         let values = unsafe { slice::from_raw_parts(buffer.contents().cast::<Fp128>(), FACTORS) };
         self.context
-            .validate_inputs("InstructionReadRaf dense message", values)?;
+            .validate_inputs("tiled Product5 message", values)?;
         Ok(std::array::from_fn(|index| values[index]))
     }
 

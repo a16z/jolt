@@ -157,7 +157,9 @@ pub use outer_remainder::{
 #[cfg(feature = "test-utils")]
 pub use outer_remainder::{OuterKernelArtifact, SealedOuterArtifact};
 pub use product5::{
-    Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
+    DenseTransitionError, DenseTransitionInvocation, DenseTransitionObservation,
+    DenseTransitionParams, DenseTransitionTile, Product5Config, Product5Invocation,
+    Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
 };
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;

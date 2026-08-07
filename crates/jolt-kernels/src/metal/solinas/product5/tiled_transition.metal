@@ -1,4 +1,4 @@
-struct InstructionReadRafDenseTransitionParams {
+struct Product5TiledTransitionParams {
     uint source_elements;
     uint destination_elements;
     uint e_in_length;
@@ -10,13 +10,13 @@ struct InstructionReadRafDenseTransitionParams {
 };
 
 template <uint tile_pairs>
-inline void instruction_read_raf_dense_factor_sample_impl(
+inline void product5_tiled_factor_sample_impl(
     device const SolinasFp128* source,
     device SolinasFp128* destination,
     device const SolinasFp128* e_in,
     device SolinasFp128* tile_partials,
     constant SolinasFp128& challenge,
-    constant InstructionReadRafDenseTransitionParams& params,
+    constant Product5TiledTransitionParams& params,
     threadgroup SolinasFp128* scratch,
     uint tile,
     uint lane,
@@ -83,62 +83,62 @@ inline void instruction_read_raf_dense_factor_sample_impl(
     }
 }
 
-kernel void solinas_instruction_read_raf_dense_factor_sample_32(
+kernel void solinas_product5_tiled_factor_sample_32(
     device const SolinasFp128* source [[buffer(0)]],
     device SolinasFp128* destination [[buffer(1)]],
     device const SolinasFp128* e_in [[buffer(2)]],
     device SolinasFp128* tile_partials [[buffer(3)]],
     constant SolinasFp128& challenge [[buffer(4)]],
-    constant InstructionReadRafDenseTransitionParams& params [[buffer(5)]],
+    constant Product5TiledTransitionParams& params [[buffer(5)]],
     threadgroup SolinasFp128* scratch [[threadgroup(0)]],
     uint tile [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_simdgroup]],
     uint simdgroup [[simdgroup_index_in_threadgroup]])
 {
-    instruction_read_raf_dense_factor_sample_impl<32u>(
+    product5_tiled_factor_sample_impl<32u>(
         source, destination, e_in, tile_partials, challenge, params,
         scratch, tile, lane, simdgroup);
 }
 
-kernel void solinas_instruction_read_raf_dense_factor_sample_64(
+kernel void solinas_product5_tiled_factor_sample_64(
     device const SolinasFp128* source [[buffer(0)]],
     device SolinasFp128* destination [[buffer(1)]],
     device const SolinasFp128* e_in [[buffer(2)]],
     device SolinasFp128* tile_partials [[buffer(3)]],
     constant SolinasFp128& challenge [[buffer(4)]],
-    constant InstructionReadRafDenseTransitionParams& params [[buffer(5)]],
+    constant Product5TiledTransitionParams& params [[buffer(5)]],
     threadgroup SolinasFp128* scratch [[threadgroup(0)]],
     uint tile [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_simdgroup]],
     uint simdgroup [[simdgroup_index_in_threadgroup]])
 {
-    instruction_read_raf_dense_factor_sample_impl<64u>(
+    product5_tiled_factor_sample_impl<64u>(
         source, destination, e_in, tile_partials, challenge, params,
         scratch, tile, lane, simdgroup);
 }
 
-kernel void solinas_instruction_read_raf_dense_factor_sample_128(
+kernel void solinas_product5_tiled_factor_sample_128(
     device const SolinasFp128* source [[buffer(0)]],
     device SolinasFp128* destination [[buffer(1)]],
     device const SolinasFp128* e_in [[buffer(2)]],
     device SolinasFp128* tile_partials [[buffer(3)]],
     constant SolinasFp128& challenge [[buffer(4)]],
-    constant InstructionReadRafDenseTransitionParams& params [[buffer(5)]],
+    constant Product5TiledTransitionParams& params [[buffer(5)]],
     threadgroup SolinasFp128* scratch [[threadgroup(0)]],
     uint tile [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_simdgroup]],
     uint simdgroup [[simdgroup_index_in_threadgroup]])
 {
-    instruction_read_raf_dense_factor_sample_impl<128u>(
+    product5_tiled_factor_sample_impl<128u>(
         source, destination, e_in, tile_partials, challenge, params,
         scratch, tile, lane, simdgroup);
 }
 
-kernel void solinas_instruction_read_raf_dense_weight_tiles(
+kernel void solinas_product5_tiled_weight_tiles(
     device const SolinasFp128* tile_partials [[buffer(0)]],
     device const SolinasFp128* e_out [[buffer(1)]],
     device SolinasFp128* outer_partials [[buffer(2)]],
-    constant InstructionReadRafDenseTransitionParams& params [[buffer(3)]],
+    constant Product5TiledTransitionParams& params [[buffer(3)]],
     uint x_out [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_simdgroup]])
 {
