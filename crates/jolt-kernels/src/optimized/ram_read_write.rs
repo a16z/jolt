@@ -48,6 +48,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 use super::rw_matrix::{AddressMajorMatrix, CycleMajorEntry, CycleMajorMatrix};
 use super::OptimizedBackend;
+use crate::ram_access::{RamAccessRecord, RamAccessTape};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -304,36 +305,71 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
         }
 
         let (columns, values) = RamAccessColumns::shared_with_values(session, witness, log_t)?;
-        columns.validate_addresses(1usize << log_k)?;
-
-        let entries: Vec<CycleMajorEntry<F>> = columns
-            .addresses
-            .iter()
-            .enumerate()
-            .filter(|&(_, &address)| address != NO_ACCESS)
-            .map(|(cycle, &address)| {
-                let pre_value = values.pre_values[cycle];
-                CycleMajorEntry {
-                    row: cycle,
-                    col: address as usize,
-                    prev_val: pre_value,
-                    next_val: values.post_values[cycle],
-                    val: F::from_u64(pre_value),
-                    ra: F::one(),
-                }
-            })
-            .collect();
+        let address_domain = 1usize << log_k;
+        let ram_access_tape =
+            session
+                .state::<RamAccessTape>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "RAM access collection did not publish its sparse tape",
+                })?;
+        ram_access_tape
+            .validate(log_t, address_domain)
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "RAM access tape disagrees with the relation geometry",
+            })?;
 
         let inc = Polynomial::new(witness.oracle_table(ram_inc().polynomial_id())?);
-        let val_final = witness.oracle_table(JoltPolynomialId::Virtual(
+        let mut val_init = witness.oracle_table(JoltPolynomialId::Virtual(
             JoltVirtualPolynomial::RamValFinal,
         ))?;
-        if inc.len() != 1usize << log_t || val_final.len() != 1usize << log_k {
+        if inc.len() != 1usize << log_t || val_init.len() != address_domain {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM read-write witness tables disagree with the relation geometry",
             });
         }
-        let val_init = Polynomial::new(columns.reconstruct_val_init(&values.pre_values, val_final));
+
+        let entries: Vec<CycleMajorEntry<F>> = if let Some(records) = ram_access_tape.records() {
+            let mut seen = vec![false; address_domain];
+            records
+                .iter()
+                .map(|record: &RamAccessRecord| {
+                    let address = record.address as usize;
+                    if !seen[address] {
+                        seen[address] = true;
+                        val_init[address] = F::from_u64(record.pre_value);
+                    }
+                    CycleMajorEntry {
+                        row: record.cycle as usize,
+                        col: address,
+                        prev_val: record.pre_value,
+                        next_val: record.post_value,
+                        val: F::from_u64(record.pre_value),
+                        ra: F::one(),
+                    }
+                })
+                .collect()
+        } else {
+            columns.validate_addresses(address_domain)?;
+            val_init = columns.reconstruct_val_init(&values.pre_values, val_init);
+            columns
+                .addresses
+                .iter()
+                .enumerate()
+                .filter(|&(_, &address)| address != NO_ACCESS)
+                .map(|(cycle, &address)| {
+                    let pre_value = values.pre_values[cycle];
+                    CycleMajorEntry {
+                        row: cycle,
+                        col: address as usize,
+                        prev_val: pre_value,
+                        next_val: values.post_values[cycle],
+                        val: F::from_u64(pre_value),
+                        ra: F::one(),
+                    }
+                })
+                .collect()
+        };
+        let val_init = Polynomial::new(val_init);
 
         Ok(Box::new(RamReadWriteKernel {
             phase: Some(Phase::Cycle {
@@ -366,6 +402,7 @@ mod tests {
         assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
     };
     use super::*;
+    use crate::ram_access::RamAccessTape;
     use crate::ReferenceBackend;
 
     /// The independently computed true input claim:
@@ -440,6 +477,7 @@ mod tests {
             .unwrap();
             assert!(session.state::<RamAccessValues>().is_none());
             assert!(session.state::<Arc<RamAccessColumns>>().is_some());
+            assert!(session.state::<RamAccessTape>().is_some());
 
             let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k);
             assert_parity(

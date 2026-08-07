@@ -7,18 +7,23 @@
 //! post-access word values. `ra(k, j)` is 1 exactly at `(addresses[j], j)`;
 //! `val(k, j)` walks from the initial state through the writes.
 
+#[cfg(feature = "parallel")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 #[cfg(feature = "parallel")]
 use std::sync::OnceLock;
 
 use jolt_field::Field;
-use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
+use jolt_witness::witnesses::{
+    RamHammingWeight, RamInc, RamReadValue, RamWriteValue, RemappedRamAddress,
+};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use jolt_witness::{RandomAccessRows, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use crate::ram_access::{RamAccessRecord, RamAccessTape, MAX_RETAINED_RAM_ACCESSES};
 use crate::{KernelError, ProofSession};
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
@@ -29,12 +34,15 @@ struct RamAccessBundle {
     address: RemappedRamAddress,
     pre_value: RamReadValue,
     post_value: RamWriteValue,
+    ram_inc: RamInc,
+    ram_hamming_weight: RamHammingWeight,
 }
 
 #[derive(Clone, Copy)]
 enum AddressEncodingError {
     TooLarge,
     SentinelCollision,
+    CycleTooLarge,
 }
 
 impl AddressEncodingError {
@@ -44,6 +52,7 @@ impl AddressEncodingError {
             Self::SentinelCollision => {
                 "optimized RAM kernels reserve u32::MAX as the no-access sentinel"
             }
+            Self::CycleTooLarge => "optimized RAM kernels require cycle indices below 2^32",
         };
         KernelError::Unsupported { reason }
     }
@@ -66,6 +75,10 @@ struct CollectRamAccessColumns {
     post_values: Vec<u64>,
     ram_increment_cycles: Vec<u64>,
     ram_increments: Vec<i128>,
+    access_count: usize,
+    access_records: Option<Vec<RamAccessRecord>>,
+    increment_compatible: bool,
+    ram_ra_compatible: bool,
     address_error: Option<AddressEncodingError>,
 }
 
@@ -82,11 +95,37 @@ impl StreamConsumer for CollectRamAccessColumns {
             self.pre_values.push(bundle.pre_value.0);
             self.post_values.push(bundle.post_value.0);
             let cycle = self.addresses.len() - 1;
-            if let Some((cycle, increment)) =
-                encode_ram_increment(cycle, bundle.pre_value.0, bundle.post_value.0)
-            {
+            if let Some((cycle, increment)) = encode_ram_increment(cycle, bundle.ram_inc.0) {
                 self.ram_increment_cycles.push(cycle);
                 self.ram_increments.push(increment);
+            }
+            let delta = i128::from(bundle.post_value.0) - i128::from(bundle.pre_value.0);
+            self.increment_compatible &=
+                bundle.ram_inc.0 == delta && (address != NO_ACCESS || bundle.ram_inc.0 == 0);
+            self.ram_ra_compatible &= !(bundle.ram_hamming_weight.0 && address == NO_ACCESS);
+            if address != NO_ACCESS {
+                self.access_count += 1;
+                if self
+                    .access_records
+                    .as_ref()
+                    .is_some_and(|records| records.len() == MAX_RETAINED_RAM_ACCESSES)
+                {
+                    self.access_records = None;
+                } else if let Some(records) = &mut self.access_records {
+                    match u32::try_from(cycle) {
+                        Ok(cycle) => records.push(RamAccessRecord {
+                            cycle,
+                            address,
+                            pre_value: bundle.pre_value.0,
+                            post_value: bundle.post_value.0,
+                        }),
+                        Err(_) => {
+                            let _ = self
+                                .address_error
+                                .get_or_insert(AddressEncodingError::CycleTooLarge);
+                        }
+                    }
+                }
             }
         }
     }
@@ -96,6 +135,14 @@ impl StreamConsumer for CollectRamAccessColumns {
 enum CollectFailure {
     Witness(WitnessError),
     Address(AddressEncodingError),
+}
+
+#[cfg(feature = "parallel")]
+struct SparseChunk {
+    access_records: Vec<RamAccessRecord>,
+    activity_records: Vec<(u64, i128)>,
+    increment_compatible: bool,
+    ram_ra_compatible: bool,
 }
 
 /// Column-major per-cycle RAM access data over the full padded cycle domain.
@@ -167,8 +214,7 @@ impl RamIncrementActivity {
     }
 }
 
-fn encode_ram_increment(cycle: usize, pre: u64, post: u64) -> Option<(u64, i128)> {
-    let increment = i128::from(post) - i128::from(pre);
+fn encode_ram_increment(cycle: usize, increment: i128) -> Option<(u64, i128)> {
     if increment == 0 {
         return None;
     }
@@ -196,12 +242,17 @@ impl RamAccessColumns {
     fn collect<F: Field>(
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
-    ) -> Result<(Self, RamAccessValues, RamIncrementActivity), KernelError<F>> {
+    ) -> Result<(Self, RamAccessValues, RamIncrementActivity, RamAccessTape), KernelError<F>> {
+        if log_t > u32::BITS as usize {
+            return Err(KernelError::Unsupported {
+                reason: "optimized RAM kernels require at most 32 cycle variables",
+            });
+        }
         let cycles = 1usize << log_t;
         #[cfg(feature = "parallel")]
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                return Self::collect_par(&access, cycles);
+                return Self::collect_par(&access, cycles, log_t);
             }
         }
 
@@ -212,6 +263,10 @@ impl RamAccessColumns {
             post_values: Vec::with_capacity(cycles),
             ram_increment_cycles: Vec::new(),
             ram_increments: Vec::new(),
+            access_count: 0,
+            access_records: Some(Vec::new()),
+            increment_compatible: true,
+            ram_ra_compatible: true,
             address_error: None,
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
@@ -231,6 +286,13 @@ impl RamAccessColumns {
                 cycles: collected.ram_increment_cycles,
                 increments: collected.ram_increments,
             },
+            RamAccessTape::new(
+                log_t,
+                collected.access_count,
+                collected.access_records,
+                collected.increment_compatible,
+                collected.ram_ra_compatible,
+            ),
         ))
     }
 
@@ -240,14 +302,16 @@ impl RamAccessColumns {
     fn collect_par<F: Field>(
         access: &RandomAccessRows<'_>,
         cycles: usize,
-    ) -> Result<(Self, RamAccessValues, RamIncrementActivity), KernelError<F>> {
+        log_t: usize,
+    ) -> Result<(Self, RamAccessValues, RamIncrementActivity, RamAccessTape), KernelError<F>> {
         const CHUNK: usize = 1 << 12;
         let mut addresses = Vec::with_capacity(cycles);
         let mut pre_values = Vec::with_capacity(cycles);
         let mut post_values = Vec::with_capacity(cycles);
-        let mut activity_chunks = (0..cycles.div_ceil(CHUNK))
+        let mut sparse_chunks = (0..cycles.div_ceil(CHUNK))
             .map(|_| OnceLock::new())
             .collect::<Vec<_>>();
+        let access_count = AtomicUsize::new(0);
         let error = std::sync::Mutex::new(None);
         (
             addresses.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
@@ -259,11 +323,14 @@ impl RamAccessColumns {
             .for_each(|(chunk_index, (addresses, pre_values, post_values))| {
                 let base = chunk_index * CHUNK;
                 let mut activity = Vec::new();
+                let mut access_records = Vec::new();
+                let mut increment_compatible = true;
+                let mut ram_ra_compatible = true;
                 for offset in 0..addresses.len() {
                     let bundle = match access.window::<RamAccessBundle>(base + offset) {
                         Ok(bundle) => bundle,
                         Err(failure) => {
-                            if let Ok(mut guard) = error.try_lock() {
+                            if let Ok(mut guard) = error.lock() {
                                 let _ = guard.get_or_insert(CollectFailure::Witness(failure));
                             }
                             return;
@@ -272,7 +339,7 @@ impl RamAccessColumns {
                     let address = match encode_address(bundle.address.0) {
                         Ok(address) => address,
                         Err(failure) => {
-                            if let Ok(mut guard) = error.try_lock() {
+                            if let Ok(mut guard) = error.lock() {
                                 let _ = guard.get_or_insert(CollectFailure::Address(failure));
                             }
                             return;
@@ -281,13 +348,47 @@ impl RamAccessColumns {
                     let _ = addresses[offset].write(address);
                     let _ = pre_values[offset].write(bundle.pre_value.0);
                     let _ = post_values[offset].write(bundle.post_value.0);
-                    if let Some(record) =
-                        encode_ram_increment(base + offset, bundle.pre_value.0, bundle.post_value.0)
-                    {
+                    let cycle = base + offset;
+                    if let Some(record) = encode_ram_increment(cycle, bundle.ram_inc.0) {
                         activity.push(record);
                     }
+                    let delta = i128::from(bundle.post_value.0) - i128::from(bundle.pre_value.0);
+                    increment_compatible &= bundle.ram_inc.0 == delta
+                        && (address != NO_ACCESS || bundle.ram_inc.0 == 0);
+                    ram_ra_compatible &= !(bundle.ram_hamming_weight.0 && address == NO_ACCESS);
+                    if address != NO_ACCESS {
+                        let cycle = if let Ok(cycle) = u32::try_from(cycle) {
+                            cycle
+                        } else {
+                            if let Ok(mut guard) = error.lock() {
+                                let _ = guard.get_or_insert(CollectFailure::Address(
+                                    AddressEncodingError::CycleTooLarge,
+                                ));
+                            }
+                            return;
+                        };
+                        access_records.push(RamAccessRecord {
+                            cycle,
+                            address,
+                            pre_value: bundle.pre_value.0,
+                            post_value: bundle.post_value.0,
+                        });
+                    }
                 }
-                let _ = activity_chunks[chunk_index].set(activity);
+                let chunk_accesses = access_records.len();
+                let preceding_accesses = access_count.fetch_add(chunk_accesses, Ordering::Relaxed);
+                if preceding_accesses
+                    .checked_add(chunk_accesses)
+                    .is_none_or(|end| end > MAX_RETAINED_RAM_ACCESSES)
+                {
+                    access_records = Vec::new();
+                }
+                let _ = sparse_chunks[chunk_index].set(SparseChunk {
+                    access_records,
+                    activity_records: activity,
+                    increment_compatible,
+                    ram_ra_compatible,
+                });
             });
         #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
         if let Some(failure) = error.into_inner().unwrap() {
@@ -303,11 +404,25 @@ impl RamAccessColumns {
             pre_values.set_len(cycles);
             post_values.set_len(cycles);
         }
-        let activity_records = activity_chunks
-            .drain(..)
-            .filter_map(OnceLock::into_inner)
-            .flatten()
-            .collect::<Vec<_>>();
+        let total_accesses = access_count.load(Ordering::Relaxed);
+        let mut retained_records = (total_accesses <= MAX_RETAINED_RAM_ACCESSES)
+            .then(|| Vec::with_capacity(total_accesses));
+        let mut activity_records = Vec::new();
+        let mut increment_compatible = true;
+        let mut ram_ra_compatible = true;
+        for chunk in sparse_chunks.drain(..) {
+            let Some(chunk) = chunk.into_inner() else {
+                return Err(KernelError::InvariantViolation {
+                    reason: "parallel RAM collection left an incomplete chunk",
+                });
+            };
+            increment_compatible &= chunk.increment_compatible;
+            ram_ra_compatible &= chunk.ram_ra_compatible;
+            activity_records.extend(chunk.activity_records);
+            if let Some(records) = &mut retained_records {
+                records.extend(chunk.access_records);
+            }
+        }
         let (cycles, increments) = activity_records.into_iter().unzip();
         Ok((
             Self { addresses },
@@ -316,6 +431,13 @@ impl RamAccessColumns {
                 post_values,
             },
             RamIncrementActivity { cycles, increments },
+            RamAccessTape::new(
+                log_t,
+                total_accesses,
+                retained_records,
+                increment_compatible,
+                ram_ra_compatible,
+            ),
         ))
     }
 
@@ -331,11 +453,12 @@ impl RamAccessColumns {
         log_t: usize,
     ) -> Result<Arc<Self>, KernelError<F>> {
         if session.state::<Arc<Self>>().is_none() {
-            let (columns, values, activity) = Self::collect(witness, log_t)?;
+            let (columns, values, activity, tape) = Self::collect(witness, log_t)?;
             let columns = Arc::new(columns);
             session.park(columns);
             session.park(values);
             session.park(activity);
+            session.park(tape);
         }
         let columns = Arc::clone(
             session
@@ -436,5 +559,91 @@ impl RamAccessColumns {
             }
         }
         val_init
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collector() -> CollectRamAccessColumns {
+        CollectRamAccessColumns {
+            addresses: Vec::new(),
+            pre_values: Vec::new(),
+            post_values: Vec::new(),
+            ram_increment_cycles: Vec::new(),
+            ram_increments: Vec::new(),
+            access_count: 0,
+            access_records: Some(Vec::new()),
+            increment_compatible: true,
+            ram_ra_compatible: true,
+            address_error: None,
+        }
+    }
+
+    fn bundle(
+        address: Option<u64>,
+        pre: u64,
+        post: u64,
+        ram_inc: i128,
+        hamming: bool,
+    ) -> RamAccessBundle {
+        RamAccessBundle {
+            address: RemappedRamAddress(address),
+            pre_value: RamReadValue(pre),
+            post_value: RamWriteValue(post),
+            ram_inc: RamInc(ram_inc),
+            ram_hamming_weight: RamHammingWeight(hamming),
+        }
+    }
+
+    fn feed(collector: &mut CollectRamAccessColumns, row: RamAccessBundle, count: usize) {
+        const CHUNK: usize = 1 << 12;
+        let rows = vec![row; CHUNK.min(count)];
+        let mut remaining = count;
+        while remaining != 0 {
+            let take = remaining.min(rows.len());
+            collector.consume(&rows[..take]);
+            remaining -= take;
+        }
+    }
+
+    #[test]
+    fn certificates_distinguish_raw_zero_and_failed_remap() {
+        let mut raw_zero = collector();
+        raw_zero.consume(&[bundle(None, 2, 9, 7, false)]);
+        assert!(raw_zero.ram_ra_compatible);
+        assert!(!raw_zero.increment_compatible);
+        assert_eq!(raw_zero.access_count, 0);
+        assert_eq!(raw_zero.ram_increment_cycles, vec![0]);
+        assert_eq!(raw_zero.ram_increments, vec![7]);
+
+        let mut failed_remap = collector();
+        failed_remap.consume(&[bundle(None, 4, 4, 0, true)]);
+        assert!(!failed_remap.ram_ra_compatible);
+        assert!(failed_remap.increment_compatible);
+
+        let mut mapped_zero = collector();
+        mapped_zero.consume(&[bundle(Some(0), 5, 5, 0, true)]);
+        assert!(mapped_zero.ram_ra_compatible);
+        assert!(mapped_zero.increment_compatible);
+        assert_eq!(mapped_zero.access_records.unwrap()[0].address, 0);
+    }
+
+    #[test]
+    fn sparse_retention_is_complete_at_cap_and_absent_above_it() {
+        let row = bundle(Some(1), 0, 0, 0, true);
+        let mut at_cap = collector();
+        feed(&mut at_cap, row, MAX_RETAINED_RAM_ACCESSES);
+        assert_eq!(at_cap.access_count, MAX_RETAINED_RAM_ACCESSES);
+        assert_eq!(
+            at_cap.access_records.as_ref().map(Vec::len),
+            Some(MAX_RETAINED_RAM_ACCESSES)
+        );
+
+        let mut above_cap = collector();
+        feed(&mut above_cap, row, MAX_RETAINED_RAM_ACCESSES + 1);
+        assert_eq!(above_cap.access_count, MAX_RETAINED_RAM_ACCESSES + 1);
+        assert!(above_cap.access_records.is_none());
     }
 }

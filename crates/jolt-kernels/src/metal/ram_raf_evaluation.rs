@@ -23,9 +23,12 @@ use super::solinas::{
 };
 use crate::optimized::ram_trace::RamAccessColumns;
 use crate::optimized::OptimizedBackend;
+use crate::ram_access::{RamAccessCensus, RamAccessTape};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+const RAM_SPARSE_CENSUS_THREADGROUP_WIDTH: usize = 256;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RamRafEvaluationMetalConfig {
@@ -73,7 +76,50 @@ impl MetalBackend {
             return Ok(());
         }
         let columns = RamAccessColumns::shared(session, witness, log_t)?;
-        columns.validate_addresses(RAM_RAF_ADDRESS_DOMAIN)?;
+        let (access_count, increment_compatible, ram_ra_compatible, census) = {
+            let tape = session
+                .state::<RamAccessTape>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "RAM access collection did not publish its sparse tape",
+                })?;
+            let census = tape
+                .census(
+                    log_t,
+                    RAM_RAF_ADDRESS_DOMAIN,
+                    RAM_SPARSE_CENSUS_THREADGROUP_WIDTH,
+                )
+                .map_err(|_| KernelError::InvariantViolation {
+                    reason: "RAM sparse census rejected the collected access tape",
+                })?;
+            (
+                tape.access_count(),
+                tape.increment_compatible(),
+                tape.ram_ra_compatible(),
+                census,
+            )
+        };
+        if let Some(census) = census {
+            tracing::info!(
+                target: "jolt::metal",
+                access_count,
+                increment_compatible,
+                ram_ra_compatible,
+                sparse_entries = census.entries_per_level().iter().sum::<usize>(),
+                sparse_groups = census.groups_per_level().iter().sum::<usize>(),
+                sparse_dispatches = census.dispatches_per_level().iter().sum::<usize>(),
+                "RAM sparse access census"
+            );
+            session.park::<RamAccessCensus>(census);
+        } else {
+            columns.validate_addresses(RAM_RAF_ADDRESS_DOMAIN)?;
+            tracing::info!(
+                target: "jolt::metal",
+                access_count,
+                increment_compatible,
+                ram_ra_compatible,
+                "RAM sparse access tape exceeded its retention bound"
+            );
+        }
         let plane = match self
             .context
             .prepare_ram_raf_addresses(&columns.addresses, config)

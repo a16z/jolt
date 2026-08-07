@@ -44,6 +44,7 @@ pub mod metal;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;
+mod ram_access;
 pub mod reference;
 pub mod uniskip;
 
