@@ -17,8 +17,11 @@ pub(super) struct PipelineNames {
 
 pub(super) const B_ONLY_MATERIALIZE_PIPELINE: &str =
     "solinas_outer_remainder_materialize_b_and_message";
-pub(super) const B_ONLY_STREAM_BIND_PIPELINE: &str =
+#[cfg(test)]
+pub(super) const B_ONLY_STREAM_BIND_REFERENCE_PIPELINE: &str =
     "solinas_outer_remainder_stream_bind_and_message";
+pub(super) const B_ONLY_STREAM_BIND_PIPELINE: &str =
+    "solinas_outer_remainder_collapsed_a_stream_bind";
 pub(super) const TRANSITION_PIPELINE: &str = "solinas_outer_remainder_bind_and_message";
 pub(super) const OPENING_PIPELINE: &str = "solinas_outer_remainder_opening_tiles";
 pub(super) const PADDED_56_OPENING_PIPELINE: &str =
@@ -47,9 +50,9 @@ pub(super) const fn pipeline_names(plan: OuterBindingPlan) -> PipelineNames {
 #[cfg(test)]
 mod tests {
     use super::{
-        pipeline_names, B_ONLY_MATERIALIZE_PIPELINE, B_ONLY_STREAM_BIND_PIPELINE, OPENING_PIPELINE,
-        PADDED_56_OPENING_PIPELINE, PADDED_56_SOURCE, REDUCTION_PIPELINE, SOURCE,
-        TRANSITION_PIPELINE,
+        pipeline_names, B_ONLY_MATERIALIZE_PIPELINE, B_ONLY_STREAM_BIND_PIPELINE,
+        B_ONLY_STREAM_BIND_REFERENCE_PIPELINE, OPENING_PIPELINE, PADDED_56_OPENING_PIPELINE,
+        PADDED_56_SOURCE, REDUCTION_PIPELINE, SOURCE, TRANSITION_PIPELINE,
     };
     use crate::metal::solinas::OuterBindingPlan;
 
@@ -57,6 +60,7 @@ mod tests {
     fn pipeline_constants_match_shader_entry_points() {
         for name in [
             B_ONLY_MATERIALIZE_PIPELINE,
+            B_ONLY_STREAM_BIND_REFERENCE_PIPELINE,
             B_ONLY_STREAM_BIND_PIPELINE,
             TRANSITION_PIPELINE,
             OPENING_PIPELINE,
@@ -82,9 +86,9 @@ mod tests {
                     .matches("kernel void solinas_outer_remainder_")
                     .count(),
             if cfg!(feature = "metal-runtime-artifact-only") {
-                5
-            } else {
                 6
+            } else {
+                7
             },
         );
         assert_eq!(

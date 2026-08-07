@@ -11,12 +11,12 @@ use super::{
     api::{
         OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequenceConfig,
         OuterRemainderStorageInitializationStats, OuterRemainderStorageStats,
-        OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_PRODUCT_ENDPOINTS,
-        OUTER_REMAINDER_STREAM_ROWS,
+        OUTER_REMAINDER_A_LOOKUP_FIELDS, OUTER_REMAINDER_COLLAPSED_A_FIELDS,
+        OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_PRODUCT_ENDPOINTS, OUTER_REMAINDER_STREAM_ROWS,
     },
     plan::{
-        message_threadgroup_bytes, opening_output_count, opening_threadgroup_memory_lengths, to_u32,
-        SIMD_WIDTH,
+        message_threadgroup_bytes, opening_output_count, opening_threadgroup_memory_lengths,
+        to_u32, SIMD_WIDTH,
     },
     storage::{write_fields, DenseBuffers, OuterRemainderSequenceStorage, Storage},
 };
@@ -45,6 +45,96 @@ pub(super) struct ReduceParams {
     input_count: u32,
     columns: u32,
     reserved: [u32; 2],
+}
+
+fn a_endpoint_coefficients(
+    lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
+) -> [[AkitaField; 16]; 2] {
+    let first_base = lagrange[0] + lagrange[5];
+    let second_base = lagrange[4] + lagrange[8];
+    let operation = lagrange[4] - lagrange[5];
+    let first = [
+        first_base,
+        -lagrange[0] + lagrange[1] + lagrange[2],
+        -lagrange[0] + lagrange[3],
+        operation,
+        operation,
+        operation,
+        AkitaField::zero(),
+        AkitaField::zero(),
+        lagrange[6],
+        lagrange[7],
+        lagrange[8],
+        -lagrange[8],
+        lagrange[9],
+        -lagrange[9],
+        AkitaField::zero(),
+        AkitaField::zero(),
+    ];
+    let second = [
+        second_base,
+        lagrange[0],
+        lagrange[0],
+        lagrange[1] - lagrange[4],
+        lagrange[2] - lagrange[4],
+        lagrange[3] - lagrange[4],
+        lagrange[6] - lagrange[8],
+        lagrange[7] - lagrange[8],
+        AkitaField::zero(),
+        AkitaField::zero(),
+        AkitaField::zero(),
+        AkitaField::zero(),
+        AkitaField::zero(),
+        AkitaField::zero(),
+        -lagrange[4],
+        lagrange[5],
+    ];
+    [first, second]
+}
+
+fn a_lookup(coefficients: &[AkitaField; 16]) -> [AkitaField; OUTER_REMAINDER_COLLAPSED_A_FIELDS] {
+    std::array::from_fn(|index| {
+        let group = index / 32;
+        let mask = index % 32;
+        let mut value = if group == 0 {
+            coefficients[0]
+        } else {
+            AkitaField::zero()
+        };
+        for bit in 0..5 {
+            if mask & (1 << bit) != 0 {
+                value += coefficients[1 + 5 * group + bit];
+            }
+        }
+        value
+    })
+}
+
+fn materialize_a_lookup(
+    lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
+) -> [AkitaField; OUTER_REMAINDER_A_LOOKUP_FIELDS] {
+    let endpoints = a_endpoint_coefficients(lagrange);
+    let first = a_lookup(&endpoints[0]);
+    let second = a_lookup(&endpoints[1]);
+    std::array::from_fn(|index| {
+        if index < OUTER_REMAINDER_STREAM_ROWS {
+            lagrange[index]
+        } else if index < OUTER_REMAINDER_STREAM_ROWS + OUTER_REMAINDER_COLLAPSED_A_FIELDS {
+            first[index - OUTER_REMAINDER_STREAM_ROWS]
+        } else {
+            second[index - OUTER_REMAINDER_STREAM_ROWS - OUTER_REMAINDER_COLLAPSED_A_FIELDS]
+        }
+    })
+}
+
+fn collapsed_a_lookup(
+    lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
+    challenge: AkitaField,
+) -> [AkitaField; OUTER_REMAINDER_COLLAPSED_A_FIELDS] {
+    let [first, second] = a_endpoint_coefficients(lagrange);
+    let coefficients =
+        std::array::from_fn(|index| first[index] + challenge * (second[index] - first[index]));
+    a_lookup(&coefficients)
 }
 
 pub struct OuterRemainderSequence {
@@ -136,11 +226,12 @@ impl OuterRemainderSequence {
     ) -> Result<[AkitaField; 2], MetalError> {
         self.require_phase(OuterRemainderPhase::BeforeMaterialize)?;
         self.validate_weights("materialization", self.current_elements / 2, e_in, e_out)?;
+        let a_lookup = materialize_a_lookup(stream_lagrange);
         write_fields(
             &self.storage.context,
-            &self.storage.buffers.lagrange,
-            OUTER_REMAINDER_STREAM_ROWS,
-            stream_lagrange,
+            &self.storage.buffers.a_lookup,
+            OUTER_REMAINDER_A_LOOKUP_FIELDS,
+            &a_lookup,
         )?;
         self.write_weights(e_in, e_out)?;
         let blocks = e_out.len().min(self.storage.max_threadgroups);
@@ -154,7 +245,7 @@ impl OuterRemainderSequence {
             encoder.set_compute_pipeline_state(&self.storage.pipelines.materialize);
             encoder.set_buffer(0, Some(rows.instruction_input_buffer()), 0);
             encoder.set_buffer(1, Some(rows.residual_buffer()), 0);
-            encoder.set_buffer(2, Some(&self.storage.buffers.lagrange), 0);
+            encoder.set_buffer(2, Some(&self.storage.buffers.a_lookup), 0);
             encoder.set_buffer(3, Some(&self.storage.buffers.e_in), 0);
             encoder.set_buffer(4, Some(&self.storage.buffers.e_out), 0);
             encoder.set_buffer(5, Some(&dense.state_a), 0);
@@ -201,11 +292,12 @@ impl OuterRemainderSequence {
             });
         }
         self.validate_weights("stream transition", self.current_elements / 4, e_in, e_out)?;
+        let collapsed_a = collapsed_a_lookup(stream_lagrange, challenge);
         write_fields(
             &self.storage.context,
-            &self.storage.buffers.lagrange,
-            OUTER_REMAINDER_STREAM_ROWS,
-            stream_lagrange,
+            &self.storage.buffers.a_lookup,
+            OUTER_REMAINDER_COLLAPSED_A_FIELDS,
+            &collapsed_a,
         )?;
         self.write_weights(e_in, e_out)?;
         let blocks = e_out.len().min(self.storage.max_threadgroups);
@@ -224,7 +316,7 @@ impl OuterRemainderSequence {
             encoder.set_buffer(0, Some(rows.instruction_input_buffer()), 0);
             encoder.set_buffer(1, Some(&dense.state_a), 0);
             encoder.set_buffer(2, Some(&dense.state_b), 0);
-            encoder.set_buffer(3, Some(&self.storage.buffers.lagrange), 0);
+            encoder.set_buffer(3, Some(&self.storage.buffers.a_lookup), 0);
             encoder.set_buffer(4, Some(&self.storage.buffers.e_in), 0);
             encoder.set_buffer(5, Some(&self.storage.buffers.e_out), 0);
             encoder.set_buffer(6, Some(&self.storage.buffers.message_partials), 0);
@@ -399,12 +491,11 @@ impl OuterRemainderSequence {
         };
         let rows = self.rows()?;
         let threads = self.storage.threads.opening;
-        let threadgroup_memory =
-            opening_threadgroup_memory_lengths(
-                self.config.binding_plan,
-                threads,
-                self.config.product_uniskip_carrier,
-            )?;
+        let threadgroup_memory = opening_threadgroup_memory_lengths(
+            self.config.binding_plan,
+            threads,
+            self.config.product_uniskip_carrier,
+        )?;
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
         autoreleasepool(|| {
@@ -438,17 +529,14 @@ impl OuterRemainderSequence {
         let output = self.storage.buffers.opening_output.clone();
         // SAFETY: the completed reduction initializes `output_count` fields in
         // the shared output buffer before this CPU-visible read.
-        let values = unsafe {
-            slice::from_raw_parts(output.contents().cast::<Fp128>(), output_count)
-        };
+        let values =
+            unsafe { slice::from_raw_parts(output.contents().cast::<Fp128>(), output_count) };
         self.storage
             .context
             .validate_inputs("outer openings and carriers", values)?;
         let openings = std::array::from_fn(|index| values[index].into_jolt_field());
         self.product_uniskip_endpoints = self.config.product_uniskip_carrier.then(|| {
-            std::array::from_fn(|index| {
-                values[OUTER_REMAINDER_OPENINGS + index].into_jolt_field()
-            })
+            std::array::from_fn(|index| values[OUTER_REMAINDER_OPENINGS + index].into_jolt_field())
         });
         self.phase = OuterRemainderPhase::OpeningsComplete;
         self.dispatch_counts.opening_scans += 1;

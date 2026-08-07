@@ -100,6 +100,7 @@ OUTER_REMAINDER_METAL_PHASES = (
     "product_uniskip_carrier_park",
 )
 OUTER_REMAINDER_MIN_SPEEDUP = 5.0
+OUTER_REMAINDER_A_LOOKUP_FIELDS = 202
 PRODUCT_UNISKIP_KERNEL = "SpartanProductUniskip"
 METAL_PRODUCT_UNISKIP_STANDALONE = "MetalProductUniskip::prepare"
 METAL_PRODUCT_UNISKIP_CARRIER = "MetalProductUniskip::outer_opening_carrier"
@@ -1301,7 +1302,7 @@ def outer_remainder_storage_geometry(
         2 * rows,
         weight_capacity,
         weight_capacity,
-        10,
+        OUTER_REMAINDER_A_LOOKUP_FIELDS,
         2 * threadgroups,
         2,
         opening_outputs * threadgroups,

@@ -26,13 +26,13 @@ OUTER_BINDING_PLANS = {
         **_COMMON_ENTRYPOINTS,
         "materialize": "solinas_outer_remainder_materialize_b_and_message",
         "opening": "solinas_outer_remainder_opening_tiles",
-        "stream_bind": "solinas_outer_remainder_stream_bind_and_message",
+        "stream_bind": "solinas_outer_remainder_collapsed_a_stream_bind",
     },
     "b_only_padded_56_v1": {
         **_COMMON_ENTRYPOINTS,
         "materialize": "solinas_outer_remainder_materialize_b_and_message",
         "opening": "solinas_outer_remainder_opening_tiles_padded_56",
-        "stream_bind": "solinas_outer_remainder_stream_bind_and_message",
+        "stream_bind": "solinas_outer_remainder_collapsed_a_stream_bind",
     },
 }
 OUTER_DISPATCH_PARAMETERS = {

@@ -29,10 +29,10 @@ class OuterRemainderScreenTests(unittest.TestCase):
             self.assertEqual(screen.evaluator.LOG_N, 25)
             self.assertEqual(screen.evaluator.PAIRS, 3)
             self.assertEqual(screen.evaluator.ROUNDS, 26)
-            self.assertEqual(screen.evaluator.STORAGE_BYTES, 2_152_596_208)
+            self.assertEqual(screen.evaluator.STORAGE_BYTES, 2_152_599_280)
             self.assertEqual(
                 screen.evaluator.REMAINING_SEQUENCE_STORAGE_BYTES,
-                5_112_560,
+                5_115_632,
             )
             self.assertEqual(screen.evaluator.MAXIMUM_STORAGE_BUFFER_BYTES, 1 << 30)
             self.assertEqual(

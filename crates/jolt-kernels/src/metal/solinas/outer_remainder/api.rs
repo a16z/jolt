@@ -7,6 +7,9 @@ pub(super) const OUTER_REMAINDER_PRODUCT_ENDPOINTS: usize = 2;
 pub(super) const OUTER_REMAINDER_MAX_OUTPUTS: usize =
     OUTER_REMAINDER_OPENINGS + OUTER_REMAINDER_PRODUCT_ENDPOINTS;
 pub(super) const OUTER_REMAINDER_STREAM_ROWS: usize = 10;
+pub(super) const OUTER_REMAINDER_COLLAPSED_A_FIELDS: usize = 96;
+pub(super) const OUTER_REMAINDER_A_LOOKUP_FIELDS: usize =
+    OUTER_REMAINDER_STREAM_ROWS + 2 * OUTER_REMAINDER_COLLAPSED_A_FIELDS;
 pub(super) const DEVICE_BUFFERS: usize = 9;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

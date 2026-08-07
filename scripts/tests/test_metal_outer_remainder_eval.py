@@ -463,9 +463,9 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
             LOG_N=25,
             PAIRS=3,
             ROUNDS=26,
-            STORAGE_BYTES=2_152_596_208,
+            STORAGE_BYTES=2_152_599_280,
             DENSE_STORAGE_BYTES=2 * (1 << 30),
-            REMAINING_SEQUENCE_STORAGE_BYTES=5_112_560,
+            REMAINING_SEQUENCE_STORAGE_BYTES=5_115_632,
             MAXIMUM_STORAGE_BUFFER_BYTES=1 << 30,
         ):
             result = self.parse(*fixture())
@@ -477,7 +477,7 @@ class OuterRemainderEvaluatorTests(unittest.TestCase):
         self.assertTrue(result["all_exact"])
         self.assertEqual(
             result["resources"]["outer_remainder_storage_bytes"],
-            2_152_596_208,
+            2_152_599_280,
         )
 
     def test_gpu_accounting_includes_warmup_and_all_timed_metal_arms(self) -> None:

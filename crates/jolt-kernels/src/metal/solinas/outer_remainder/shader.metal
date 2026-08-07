@@ -323,21 +323,153 @@ inline SolinasFp128 outer_fold_a(
     return sum;
 }
 
+inline SolinasFp128 outer_fold_a_lookup(
+    device const InstructionInputRow& compact,
+    constant const SolinasFp128* lookup)
+{
+    ulong flags = instruction_input_row_word(compact, 5u);
+    uint low = (uint)(flags & 31ul);
+    uint middle = (uint)((flags >> 5) & 31ul);
+    uint high = (uint)((flags >> 10) & 31ul);
+    return solinas_add(
+        solinas_add(lookup[low], lookup[32u + middle]),
+        lookup[64u + high]);
+}
+
+struct OuterDeferredSigned320 {
+    uint limb[10];
+};
+
+inline OuterDeferredSigned320 outer_deferred_s320_zero() {
+    OuterDeferredSigned320 value;
+    for (uint i = 0u; i < 10u; i++) {
+        value.limb[i] = 0u;
+    }
+    return value;
+}
+
+inline OuterDeferredSigned320 outer_deferred_s320_negate(
+    OuterDeferredSigned320 value)
+{
+    ulong carry = 1ul;
+    for (uint i = 0u; i < 10u; i++) {
+        ulong word = (ulong)(~value.limb[i]) + carry;
+        value.limb[i] = (uint)word;
+        carry = word >> 32;
+    }
+    return value;
+}
+
+inline void outer_deferred_s320_add(
+    thread OuterDeferredSigned320& accumulator,
+    OuterDeferredSigned320 value)
+{
+    ulong carry = 0ul;
+    for (uint i = 0u; i < 10u; i++) {
+        ulong word = (ulong)accumulator.limb[i] + (ulong)value.limb[i] + carry;
+        accumulator.limb[i] = (uint)word;
+        carry = word >> 32;
+    }
+}
+
+inline void outer_deferred_s320_fmadd(
+    thread OuterDeferredSigned320& accumulator,
+    SolinasFp128 weight,
+    SpartanSigned192 value)
+{
+    bool negative = (value.limb[5] & 0x80000000u) != 0u;
+    if (negative) {
+        value = spartan_s192_negate(value);
+    }
+
+    OuterDeferredSigned320 product = outer_deferred_s320_zero();
+    for (uint i = 0u; i < 5u; i++) {
+        ulong carry = 0ul;
+        for (uint j = 0u; j < 4u; j++) {
+            uint k = i + j;
+            ulong word = (ulong)value.limb[i] * (ulong)weight.limb[j]
+                + (ulong)product.limb[k]
+                + carry;
+            product.limb[k] = (uint)word;
+            carry = word >> 32;
+        }
+        product.limb[i + 4u] = (uint)carry;
+    }
+    outer_deferred_s320_add(
+        accumulator,
+        negative ? outer_deferred_s320_negate(product) : product);
+}
+
+inline void outer_deferred_s320_add_carry(
+    thread SolinasWide256& value,
+    uint index,
+    ulong carry)
+{
+    for (uint i = index; i < 8u && carry != 0ul; i++) {
+        ulong word = (ulong)value.limb[i] + carry;
+        value.limb[i] = (uint)word;
+        carry = word >> 32;
+    }
+}
+
+inline SolinasFp128 outer_deferred_s320_reduce(OuterDeferredSigned320 value) {
+    bool negative = (value.limb[9] & 0x80000000u) != 0u;
+    if (negative) {
+        value = outer_deferred_s320_negate(value);
+    }
+
+    SolinasWide256 folded;
+    for (uint i = 0u; i < 8u; i++) {
+        folded.limb[i] = i < 4u ? value.limb[i] : 0u;
+    }
+
+    ulong carry = 0ul;
+    for (uint i = 0u; i < 4u; i++) {
+        ulong word = (ulong)value.limb[i + 4u] * (ulong)SOLINAS_OFFSET
+            + (ulong)folded.limb[i]
+            + carry;
+        folded.limb[i] = (uint)word;
+        carry = word >> 32;
+    }
+    outer_deferred_s320_add_carry(folded, 4u, carry);
+
+    ulong offset_squared = (ulong)SOLINAS_OFFSET * (ulong)SOLINAS_OFFSET;
+    uint factor[2] = {
+        (uint)offset_squared,
+        (uint)(offset_squared >> 32),
+    };
+    for (uint i = 0u; i < 2u; i++) {
+        carry = 0ul;
+        for (uint j = 0u; j < 2u; j++) {
+            uint k = i + j;
+            ulong word = (ulong)value.limb[i + 8u] * (ulong)factor[j]
+                + (ulong)folded.limb[k]
+                + carry;
+            folded.limb[k] = (uint)word;
+            carry = word >> 32;
+        }
+        outer_deferred_s320_add_carry(folded, i + 2u, carry);
+    }
+
+    SolinasFp128 reduced = solinas_reduce(folded);
+    return negative ? solinas_sub(solinas_zero(), reduced) : reduced;
+}
+
 inline SolinasFp128 outer_fold_b(
     device const InstructionInputRow& compact,
     device const SpartanOuterUniskipResidualRow& residual,
-    device const SolinasFp128* lagrange,
+    constant const SolinasFp128* lagrange,
     bool second_stream)
 {
     uint count = second_stream ? 9u : 10u;
-    SolinasFp128 sum = solinas_zero();
+    OuterDeferredSigned320 sum = outer_deferred_s320_zero();
     for (uint row = 0; row < count; row++) {
-        SpartanSigned192 value = outer_b_row(compact, residual, row, second_stream);
-        sum = solinas_add(
+        outer_deferred_s320_fmadd(
             sum,
-            solinas_mul_wide(lagrange[row], spartan_small_times_s192(1, value)));
+            lagrange[row],
+            outer_b_row(compact, residual, row, second_stream));
     }
-    return sum;
+    return outer_deferred_s320_reduce(sum);
 }
 
 inline void outer_finish_two_columns(
@@ -378,7 +510,7 @@ inline void outer_finish_two_columns(
 kernel void solinas_outer_remainder_materialize_b_and_message(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
     device const SpartanOuterUniskipResidualRow* residual_rows [[buffer(1)]],
-    device const SolinasFp128* lagrange [[buffer(2)]],
+    constant const SolinasFp128* a_lookup [[buffer(2)]],
     device const SolinasFp128* e_in [[buffer(3)]],
     device const SolinasFp128* e_out [[buffer(4)]],
     device SolinasFp128* b_state [[buffer(5)]],
@@ -399,12 +531,14 @@ kernel void solinas_outer_remainder_materialize_b_and_message(
         SolinasFp128 q_infinity = solinas_zero();
         for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
             uint cycle = x_out * params.e_in_length + x_in;
-            SolinasFp128 az_0 = outer_fold_a(compact_rows[cycle], lagrange, false);
-            SolinasFp128 az_1 = outer_fold_a(compact_rows[cycle], lagrange, true);
+            SolinasFp128 az_0 = outer_fold_a_lookup(
+                compact_rows[cycle], a_lookup + 10u);
+            SolinasFp128 az_1 = outer_fold_a_lookup(
+                compact_rows[cycle], a_lookup + 106u);
             SolinasFp128 bz_0 = outer_fold_b(
-                compact_rows[cycle], residual_rows[cycle], lagrange, false);
+                compact_rows[cycle], residual_rows[cycle], a_lookup, false);
             SolinasFp128 bz_1 = outer_fold_b(
-                compact_rows[cycle], residual_rows[cycle], lagrange, true);
+                compact_rows[cycle], residual_rows[cycle], a_lookup, true);
             b_state[2u * cycle] = bz_0;
             b_state[2u * cycle + 1u] = bz_1;
             SolinasFp128 weight = e_in[x_in];
@@ -502,6 +636,85 @@ kernel void solinas_outer_remainder_stream_bind_and_message(
         threads,
         accumulate);
       accumulate = true;
+    }
+}
+
+inline SolinasFp128 outer_fold_a_collapsed(
+    device const InstructionInputRow& compact,
+    constant const SolinasFp128* lookup)
+{
+    return outer_fold_a_lookup(compact, lookup);
+}
+
+kernel void solinas_outer_remainder_collapsed_a_stream_bind(
+    device const InstructionInputRow* compact_rows [[buffer(0)]],
+    device const SolinasFp128* b_source [[buffer(1)]],
+    device SolinasFp128* destination [[buffer(2)]],
+    constant const SolinasFp128* a_lookup [[buffer(3)]],
+    device const SolinasFp128* e_in [[buffer(4)]],
+    device const SolinasFp128* e_out [[buffer(5)]],
+    device SolinasFp128* partials [[buffer(6)]],
+    constant SolinasFp128& challenge [[buffer(7)]],
+    constant OuterRemainderPhaseParams& params [[buffer(8)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint block [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    bool accumulate = false;
+    for (uint x_out = block;
+         x_out < params.e_out_length;
+         x_out += params.blocks) {
+        SolinasFp128 q_zero = solinas_zero();
+        SolinasFp128 q_infinity = solinas_zero();
+        for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
+            uint pair = x_out * params.e_in_length + x_in;
+            uint cycle_0 = 2u * pair;
+            uint cycle_1 = cycle_0 + 1u;
+            SolinasFp128 az_0 = outer_fold_a_collapsed(
+                compact_rows[cycle_0], a_lookup);
+            SolinasFp128 az_1 = outer_fold_a_collapsed(
+                compact_rows[cycle_1], a_lookup);
+            SolinasFp128 bz_0 = outer_bind(
+                b_source[2u * cycle_0],
+                b_source[2u * cycle_0 + 1u],
+                challenge);
+            SolinasFp128 bz_1 = outer_bind(
+                b_source[2u * cycle_1],
+                b_source[2u * cycle_1 + 1u],
+                challenge);
+            destination[2u * cycle_0] = az_0;
+            destination[2u * cycle_0 + 1u] = bz_0;
+            destination[2u * cycle_1] = az_1;
+            destination[2u * cycle_1 + 1u] = bz_1;
+
+            SolinasFp128 weight = e_in[x_in];
+            q_zero = solinas_add(
+                q_zero,
+                solinas_mul_wide(weight, solinas_mul_wide(az_0, bz_0)));
+            q_infinity = solinas_add(
+                q_infinity,
+                solinas_mul_wide(
+                    weight,
+                    solinas_mul_wide(
+                        solinas_sub(az_1, az_0),
+                        solinas_sub(bz_1, bz_0))));
+        }
+        outer_finish_two_columns(
+            q_zero,
+            q_infinity,
+            e_out[x_out],
+            partials,
+            block,
+            shared,
+            tid,
+            lane,
+            simdgroup,
+            threads,
+            accumulate);
+        accumulate = true;
     }
 }
 
@@ -626,15 +839,6 @@ inline SolinasFp128 outer_opening_value(
     uint column)
 {
     ulong flags = outer_staged_word(row_words, row, 5u);
-    bool load = outer_flag(flags, 0u) != 0;
-    bool store = outer_flag(flags, 1u) != 0;
-    ulong rs2 = outer_staged_word(row_words, row, 2u);
-    ulong memory_0 = outer_staged_word(row_words, row, 12u);
-    ulong memory_1 = outer_staged_word(row_words, row, 13u);
-    ulong ram_address = load || store ? memory_0 : 0ul;
-    ulong rd_write = store ? 0ul : (load ? memory_1 : memory_0);
-    ulong ram_read = load || store ? memory_1 : 0ul;
-    ulong ram_write = load ? memory_1 : (store ? rs2 : 0ul);
 
     switch (column) {
         case 0u: return outer_from_u64(outer_staged_word(row_words, row, 6u));
@@ -656,12 +860,36 @@ inline SolinasFp128 outer_opening_value(
                 outer_staged_word(row_words, row, 3u),
                 outer_staged_word(row_words, row, 4u),
                 outer_flag(flags, 18u) != 0);
-        case 7u: return outer_from_u64(ram_address);
+        case 7u: {
+            bool access = outer_flag(flags, 0u) != 0 ||
+                outer_flag(flags, 1u) != 0;
+            ulong value = access ? outer_staged_word(row_words, row, 12u) : 0ul;
+            return outer_from_u64(value);
+        }
         case 8u: return outer_from_u64(outer_staged_word(row_words, row, 0u));
-        case 9u: return outer_from_u64(rs2);
-        case 10u: return outer_from_u64(rd_write);
-        case 11u: return outer_from_u64(ram_read);
-        case 12u: return outer_from_u64(ram_write);
+        case 9u: return outer_from_u64(outer_staged_word(row_words, row, 2u));
+        case 10u: {
+            bool load = outer_flag(flags, 0u) != 0;
+            bool store = outer_flag(flags, 1u) != 0;
+            ulong value = store
+                ? 0ul
+                : outer_staged_word(row_words, row, load ? 13u : 12u);
+            return outer_from_u64(value);
+        }
+        case 11u: {
+            bool access = outer_flag(flags, 0u) != 0 ||
+                outer_flag(flags, 1u) != 0;
+            ulong value = access ? outer_staged_word(row_words, row, 13u) : 0ul;
+            return outer_from_u64(value);
+        }
+        case 12u: {
+            bool load = outer_flag(flags, 0u) != 0;
+            bool store = outer_flag(flags, 1u) != 0;
+            ulong value = load
+                ? outer_staged_word(row_words, row, 13u)
+                : (store ? outer_staged_word(row_words, row, 2u) : 0ul);
+            return outer_from_u64(value);
+        }
         case 13u: return outer_from_u64(outer_staged_word(row_words, row, 14u));
         case 14u:
             return outer_from_signed_u128(
@@ -715,6 +943,55 @@ inline bool outer_opening_is_boolean(uint column) {
     return column == 3u || column == 17u || column == 18u ||
         column == 20u ||
         (column >= 21u && column < OUTER_REMAINDER_CANONICAL_OPENINGS);
+}
+
+inline bool outer_opening_is_u64(uint column) {
+    return column == 0u || (column >= 4u && column <= 5u) ||
+        (column >= 7u && column <= 13u) ||
+        (column >= 15u && column <= 16u) || column == 19u;
+}
+
+inline ulong outer_opening_u64(
+    threadgroup const ulong* row_words,
+    uint row,
+    uint column)
+{
+    ulong flags = outer_staged_word(row_words, row, 5u);
+    switch (column) {
+        case 0u: return outer_staged_word(row_words, row, 6u);
+        case 4u: return outer_staged_word(row_words, row, 11u);
+        case 5u: return outer_staged_word(row_words, row, 1u);
+        case 7u: {
+            bool access = outer_flag(flags, 0u) != 0 ||
+                outer_flag(flags, 1u) != 0;
+            return access ? outer_staged_word(row_words, row, 12u) : 0ul;
+        }
+        case 8u: return outer_staged_word(row_words, row, 0u);
+        case 9u: return outer_staged_word(row_words, row, 2u);
+        case 10u: {
+            bool load = outer_flag(flags, 0u) != 0;
+            bool store = outer_flag(flags, 1u) != 0;
+            return store
+                ? 0ul
+                : outer_staged_word(row_words, row, load ? 13u : 12u);
+        }
+        case 11u: {
+            bool access = outer_flag(flags, 0u) != 0 ||
+                outer_flag(flags, 1u) != 0;
+            return access ? outer_staged_word(row_words, row, 13u) : 0ul;
+        }
+        case 12u: {
+            bool load = outer_flag(flags, 0u) != 0;
+            bool store = outer_flag(flags, 1u) != 0;
+            return load
+                ? outer_staged_word(row_words, row, 13u)
+                : (store ? outer_staged_word(row_words, row, 2u) : 0ul);
+        }
+        case 13u: return outer_staged_word(row_words, row, 14u);
+        case 15u: return outer_staged_word(row_words, row, 17u);
+        case 16u: return outer_staged_word(row_words, row, 18u);
+        default: return outer_staged_word(row_words, row, 19u);
+    }
 }
 
 kernel void solinas_outer_remainder_opening_tiles(
@@ -776,22 +1053,38 @@ kernel void solinas_outer_remainder_opening_tiles(
                 uint column = simdgroup + slot * simdgroups;
                 if (column < params.columns) {
                     SolinasFp128 sum = sums[slot];
-                    for (uint tile_row = lane;
-                         tile_row < tile_count;
-                         tile_row += OUTER_REMAINDER_SIMD_WIDTH) {
-                        SolinasFp128 value = outer_opening_value(
-                            row_words, tile_row, column);
-                        SolinasFp128 contribution;
-                        if (outer_opening_is_boolean(column)) {
+                    if (outer_opening_is_boolean(column)) {
+                        for (uint tile_row = lane;
+                             tile_row < tile_count;
+                             tile_row += OUTER_REMAINDER_SIMD_WIDTH) {
+                            SolinasFp128 value = outer_opening_value(
+                                row_words, tile_row, column);
                             bool set = value.limb[0] != 0u;
-                            contribution = set
-                                ? tile_weights[tile_row]
-                                : solinas_zero();
-                        } else {
-                            contribution = solinas_mul_wide(
-                                tile_weights[tile_row], value);
+                            if (set) {
+                                sum = solinas_add(sum, tile_weights[tile_row]);
+                            }
                         }
-                        sum = solinas_add(sum, contribution);
+                    } else if (outer_opening_is_u64(column)) {
+                        for (uint tile_row = lane;
+                             tile_row < tile_count;
+                             tile_row += OUTER_REMAINDER_SIMD_WIDTH) {
+                            sum = solinas_add(
+                                sum,
+                                solinas_half_width_mul_u64(
+                                    tile_weights[tile_row],
+                                    outer_opening_u64(
+                                        row_words, tile_row, column)));
+                        }
+                    } else {
+                        for (uint tile_row = lane;
+                             tile_row < tile_count;
+                             tile_row += OUTER_REMAINDER_SIMD_WIDTH) {
+                            SolinasFp128 value = outer_opening_value(
+                                row_words, tile_row, column);
+                            sum = solinas_add(
+                                sum,
+                                solinas_mul_wide(tile_weights[tile_row], value));
+                        }
                     }
                     sums[slot] = sum;
                 }

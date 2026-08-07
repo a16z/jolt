@@ -2,8 +2,8 @@ use std::mem::size_of;
 
 use super::super::{Fp128, MetalError, PipelineLimits, SolinasMetal};
 use super::api::{
-    OuterRemainderSequenceConfig, DEVICE_BUFFERS, OUTER_REMAINDER_MAX_OUTPUTS,
-    OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_STREAM_ROWS,
+    OuterRemainderSequenceConfig, DEVICE_BUFFERS, OUTER_REMAINDER_A_LOOKUP_FIELDS,
+    OUTER_REMAINDER_MAX_OUTPUTS, OUTER_REMAINDER_OPENINGS,
 };
 use super::artifact::OuterBindingPlan;
 
@@ -166,7 +166,7 @@ pub(super) fn storage_geometry(
         current_elements,
         weight_capacity,
         weight_capacity,
-        OUTER_REMAINDER_STREAM_ROWS,
+        OUTER_REMAINDER_A_LOOKUP_FIELDS,
         message_partials,
         2,
         opening_partials,

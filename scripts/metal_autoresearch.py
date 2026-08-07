@@ -3554,7 +3554,7 @@ def validate_outer_remainder_local_result(
         or resources["compact_row_bytes"] != 48
         or resources["residual_row_bytes"] != 112
         or resources["resident_row_bytes"] != rows * 160
-        or resources["outer_remainder_storage_bytes"] != 4_300_079_856
+        or resources["outer_remainder_storage_bytes"] != 4_300_082_928
         or resources["maximum_storage_buffer_bytes"] != 2 * (1 << 30)
         or resources["table_readback_bytes"] != 32 * (1 << expected["cutoff_log2"])
         or resources["output_readback_bytes"] != 560
@@ -4765,6 +4765,7 @@ def validate_production_outer_remainder_member(
             "cpu_tail",
             "output_claims",
             "row_release",
+            "product_uniskip_carrier_park",
         )
     }
     if backend == "optimized":
@@ -4813,7 +4814,7 @@ def validate_production_outer_remainder_member(
         2 * rows,
         weight_capacity,
         weight_capacity,
-        10,
+        202,
         2 * threadgroups,
         2,
         35 * threadgroups,
