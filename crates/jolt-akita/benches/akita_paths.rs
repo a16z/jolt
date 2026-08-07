@@ -41,11 +41,12 @@ use akita_config::{
 use akita_pcs::{AkitaCommitmentScheme, ComputeBackendSetup, CpuBackend};
 use akita_prover::{
     AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, OneHotPoly,
-    ProverOpeningData,
+    PreparedProverGroup, ProverOpeningData, SelectedProverOpeningData,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PolynomialGroupClaims,
+    AkitaCommitmentHint, BasisMode, CommittedGroup, CommittedGroupBatchProfile, OpeningClaims,
+    PolynomialGroupClaims,
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
@@ -70,7 +71,7 @@ const DEFAULT_TRACE_NUM_VARS: usize = 20;
 
 type BackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 type OneHotBackendScheme = AkitaCommitmentScheme<AkitaOneHotConfig>;
-type BackendCommitment = Commitment<AkitaField>;
+type BackendCommitment = CommittedGroup<AkitaField>;
 type BackendDensePoly = DensePoly<AkitaField>;
 type BackendHint = AkitaCommitmentHint<AkitaField>;
 type BackendSetup = BackendProverSetup<AkitaField>;
@@ -585,17 +586,31 @@ fn akita_prover_commit_one_hot(
     .expect("Akita backend one-hot commit should succeed")
 }
 
-fn akita_prover_claims<'a, P>(
+fn akita_prover_claims<'a, Cfg, P>(
     point: &[AkitaField],
     evaluations: Vec<AkitaField>,
     polynomials: &'a [&'a P],
     commitment: &BackendCommitment,
     hint: BackendHint,
-) -> ProverOpeningData<'a, AkitaField, P, AkitaField> {
+) -> SelectedProverOpeningData<'a, AkitaField, PreparedProverGroup<'a, P>, AkitaField>
+where
+    Cfg: CommitmentConfig,
+    P: akita_prover::RootPolyMeta<AkitaField>,
+{
     let group = PolynomialGroupClaims::new(point.to_vec(), evaluations, commitment.clone())
         .expect("prover group claims");
     let claims = OpeningClaims::from_groups(vec![group]).expect("prover claims");
-    ProverOpeningData::new(claims, vec![hint], vec![polynomials]).expect("prover opening data")
+    let profiles = CommittedGroupBatchProfile {
+        final_group: *commitment.profile(),
+        precommitteds: Vec::new(),
+    };
+    let selection = Cfg::select_schedule_for_profiles(&profiles)
+        .expect("prover schedule selection")
+        .selection();
+    (
+        selection,
+        ProverOpeningData::new(claims, vec![hint], vec![polynomials]).expect("prover opening data"),
+    )
 }
 
 fn akita_prover_open_dense(
@@ -615,7 +630,13 @@ fn akita_prover_open_dense(
     let mut transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/native-bench");
     BackendScheme::batched_prove(
         &case.akita_prover_setup.dense_prover,
-        akita_prover_claims(&case.point, vec![evaluation], &poly_refs, &commitment, hint),
+        akita_prover_claims::<AkitaConfig, _>(
+            &case.point,
+            vec![evaluation],
+            &poly_refs,
+            &commitment,
+            hint,
+        ),
         &stack,
         &mut transcript,
         BasisMode::Lagrange,
@@ -641,7 +662,7 @@ fn akita_prover_open_one_hot(
     let mut transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/native-bench");
     OneHotBackendScheme::batched_prove(
         &case.akita_prover_setup.one_hot_prover,
-        akita_prover_claims(
+        akita_prover_claims::<AkitaOneHotConfig, _>(
             &backend_point,
             vec![evaluation],
             &poly_refs,

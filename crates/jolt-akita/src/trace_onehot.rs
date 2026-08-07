@@ -872,13 +872,9 @@ fn commit_packed<const D: usize>(
         .checked_mul(plan.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
     let expanded = backend.prepared_expanded_setup(prepared);
-    let a_matrix = expanded.shared_matrix().covering_at_dyn(
-        plan.n_a
-            .checked_mul(active_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A extent overflow".to_string()))?,
-        D,
-    )?;
-    let a_view = a_matrix.ring_view::<D>(plan.n_a, active_cols)?;
+    let a_view = expanded
+        .shared_matrix()
+        .ring_view::<D>(plan.n_a, active_cols)?;
     let a_rows = a_view.rows().collect::<Vec<_>>();
     let max_per_ring = (D / source.one_hot_k).max(1);
     drop(_prepare_span);
@@ -2247,7 +2243,6 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
                     num_digits,
                 )?,
             )),
-            DecomposeFoldBatchPlan::Tensor { .. } => Ok(BatchDecomposeFoldOutcome::Unsupported),
         }
     }
 }

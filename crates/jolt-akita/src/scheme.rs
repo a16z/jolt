@@ -326,8 +326,8 @@ impl AkitaScheme {
             poly_count: polynomials.len(),
             one_hot_k,
             ring_dimension,
-            backend_coeff_len: backend_commitment.0.coeff_len(),
-            serialized_backend_bytes: serialize_akita(&backend_commitment)?,
+            backend_coeff_len: backend_commitment.rows().coeff_len(),
+            serialized_backend_bytes: serialize_akita(backend_commitment.commitment())?,
         };
         Ok((
             commitment.clone(),
@@ -974,7 +974,7 @@ mod tests {
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
         let (_, verifier_setup) =
-            AkitaScheme::setup(AkitaSetupParams::new(13, 1, [3; 32])).unwrap();
+            AkitaScheme::setup(AkitaSetupParams::new(14, 1, [3; 32])).unwrap();
         let json = serde_json::to_string(&verifier_setup).unwrap();
         let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
         assert_eq!(transported, verifier_setup);
@@ -993,10 +993,10 @@ mod tests {
 
     #[test]
     fn direct_opening_requires_statement_commitment_layout_digest() {
-        let setup_params = AkitaSetupParams::new(13, 1, [7; 32]);
+        let setup_params = AkitaSetupParams::new(14, 1, [7; 32]);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let polynomial = Polynomial::new(
-            (0..(1u64 << 13))
+            (0..(1u64 << 14))
                 .map(|i| AkitaField::from_u64(2 + 5 * i))
                 .collect(),
         );
@@ -1009,7 +1009,7 @@ mod tests {
         .expect("direct commitment may use its own layout digest");
         assert_eq!(commitment.layout_digest, commitment_digest);
 
-        let point = (3..16).map(AkitaField::from_u64).collect::<Vec<_>>();
+        let point = (3..17).map(AkitaField::from_u64).collect::<Vec<_>>();
         let claim = polynomial.evaluate(&point);
         let statement = vec![VerifierOpeningClaim {
             commitment: commitment.clone(),

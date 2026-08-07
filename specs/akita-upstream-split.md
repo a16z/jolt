@@ -49,17 +49,21 @@ streamed 29-lane commitment input, virtualized zero/selector prefixes, lazy RA
 materialization, compact sparse entries and instruction rows, deferred Fp128
 accumulators, stage-local ownership, and early release of setup, NTT, RAM, and
 opening state. The external Akita dependency is the corresponding performance
-stack at `04c2f1e41a992035a967cb32f1bbc2a4922702b4`.
+stack at `a9f3c296`, reconciled with Akita `origin/main`: upstream's flattened
+setup and exact NTT caches supersede the branch's parallel releasable-store
+machinery, and the planner, config policy surface, and catalog identity match
+upstream.
 
-Akita's `perf/akita-protocol-opts` adds rank-aware direct schedule selection and
-preserves that objective when an empty-precommit key passes through the grouped
-planner. It changes deterministic schedule selection and catalog identity, but
-not transcript order, verifier equations, or any SIS/fold acceptance bound. The
-optimized Akita branch also contains shared setup-cache plumbing and one
-verifier setup-read call site. That stays with the prover stack: it re-derives
-the same public matrix coefficients and preserves serialized setup bytes. Any
-later change to a verifier equation or proof container must move to the
-protocol branch before review.
+The rank-aware (payload-slack) schedule selection formerly stacked under this
+work was dropped after upstream planner review (LayerZero-Labs/akita#344,
+closed): the planner is being reworked upstream and a slack policy must not
+bake into catalog identity. Schedule selection now uses Akita's default
+minimum-payload objective everywhere. The optimized Akita branch still
+contains shared setup-cache plumbing and one verifier setup-read call site.
+That stays with the prover stack: it re-derives the same public matrix
+coefficients and preserves serialized setup bytes. Any later change to a
+verifier equation or proof container must move to the protocol branch before
+review.
 
 ## Delivery and compatibility
 
@@ -71,7 +75,8 @@ The intended review order is:
    to the merged Akita prover commit.
 
 The Jolt prover branch contains the initial protocol head through merge commit
-`843afb6a5` and the corrected rank-aware schedule head through `f8bba81bd`.
+`843afb6a5`, the rank-aware schedule head through `f8bba81bd`, and the
+subsequent payload-slack removal (upstream-main pin, min-payload catalogs).
 D128 and schedule-catalog patches had already been replayed after the modular
 port, so the overlapping adapter conflicts kept the prover's streaming
 implementation. The resulting proof statement is the one reviewed on the
@@ -97,18 +102,19 @@ memory change may not add repeatable prover time, and a speed change must
 report any analytical-memory trade. Dory is reported from the same harness
 but is not changed by this stack.
 
-Minimum-payload planning uses D64 rank 7 with `P = 2^20` at 2^26 and D128 rank
-4 with `P = 2^18` at 2^28. Both lower-rank alternatives are accepted by the
-current SIS and fold-bound analysis. With 1% payload slack, the current planner
-selects D64 rank 6 and D128 rank 3 with `P = 2^21`; the D64 proof grows by 112
-bytes and the D128 proof payload is unchanged. Exact schedule tests pin both
-geometries so future planner-policy drift fails locally.
+Production planning uses the default minimum-payload objective: D64 rank 7
+with `P = 2^20` at 2^26 and D128 rank 4 with `P = 2^18` at 2^28. Exact
+schedule tests pin these geometries so future planner-policy drift fails
+locally.
 
-The corrected head completed verified runs at 2^20, 2^22, 2^24, 2^26, and
-2^28 in 1.46 s, 4.33 s, 15.49 s, 49.78 s, and 173.48 s, with peak RSS of 1.44
-GiB, 3.96 GiB, 11.03 GiB, 31.22 GiB, and 72.40 GiB. The 2^26 D64 schedule is
-3.7% faster than the rank-7 control but costs 5.0 GiB RSS. The 2^28 D128
-schedule is 15.6% faster and uses 4.01 GiB less RSS than the rank-4 control;
-it caused no swapouts and measures 289.6 B/cycle. The retained traces and
+The schedule-controlled acceptance runs at these geometries are 51.67 s /
+26.22 GiB peak RSS at 2^26 and 205.45 s / 76.41 GiB at 2^28 (no swapouts,
+~305.6 B/cycle); low-scale runs are 1.46 s, 4.33 s, and 15.49 s at 2^20,
+2^22, and 2^24, where schedule selection is unaffected. The retired
+payload-slack policy selected D64 rank 6 and D128 rank 3 with `P = 2^21`,
+measuring 49.78 s (+5.0 GiB RSS, +112 proof bytes) at 2^26 and 173.48 s
+(−4.01 GiB RSS, unchanged payload) at 2^28. The 2^28 case is an equal-payload
+tie-break rather than a payload trade; recovering it belongs to a
+planner-native mechanism upstream, not to this stack. The retained traces and
 schedule-controlled comparison are recorded in
 `benchmark-runs/akita-upstream-prover-stack-2026-07-31.md`.

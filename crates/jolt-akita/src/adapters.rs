@@ -8,6 +8,7 @@ use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
+    CommittedGroup as AkitaBackendCommittedGroup,
 };
 use jolt_field::CanonicalBytes;
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
@@ -34,7 +35,8 @@ pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 pub(crate) type AkitaOneHotK16BackendScheme = AkitaCommitmentScheme<AkitaOneHotK16Config>;
 pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256Config>;
 pub(crate) type AkitaOneHotK256D128BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256D128Config>;
-pub(crate) type AkitaBackendCommitment = AkitaBackendRingCommitment<AkitaField>;
+pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
+pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
 pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
 pub(crate) type AkitaBackendProof = AkitaBackendBatchProof<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
