@@ -5,6 +5,43 @@ use jolt_field::Field;
 const ABSENT_REGISTER: u8 = u8::MAX;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CubicCoefficients<F> {
+    pub coefficients: [F; 4],
+}
+
+impl<F: Field> CubicCoefficients<F> {
+    pub fn from_device_samples(
+        previous_claim: F,
+        device_samples: [F; 3],
+    ) -> Result<Self, RegistersValOracleError> {
+        let [at_0, at_2, at_3] = device_samples;
+        let at_1 = previous_claim - at_0;
+        let two = F::from_u64(2);
+        let three = F::from_u64(3);
+        let inverse_two = two
+            .inverse()
+            .ok_or(RegistersValOracleError::NonInvertibleInterpolationDenominator)?;
+        let inverse_six = F::from_u64(6)
+            .inverse()
+            .ok_or(RegistersValOracleError::NonInvertibleInterpolationDenominator)?;
+        let delta_1 = at_1 - at_0;
+        let c2_plus_3c3 = (at_2 - at_0 - two * delta_1) * inverse_two;
+        let c2_plus_4c3 = (at_3 - at_0 - three * delta_1) * inverse_six;
+        let c3 = c2_plus_4c3 - c2_plus_3c3;
+        let c2 = c2_plus_3c3 - three * c3;
+        let c1 = delta_1 - c2 - c3;
+        Ok(Self {
+            coefficients: [at_0, c1, c2, c3],
+        })
+    }
+
+    pub fn evaluate(self, point: F) -> F {
+        let [c0, c1, c2, c3] = self.coefficients;
+        c0 + point * (c1 + point * (c2 + point * c3))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RoundSamples<F> {
     pub at_0: F,
     pub at_1: F,
@@ -317,6 +354,7 @@ pub enum RegistersValOracleError {
     RegisterOutsideDomain {
         got: u8,
     },
+    NonInvertibleInterpolationDenominator,
     BindBeforeFirstMessage,
     MissingPendingBind,
     ClaimMismatch,
@@ -384,6 +422,13 @@ mod tests {
         let first = oracle.prove_round(None, oracle.current_claim()).unwrap();
         assert_eq!(first, direct_samples(&inc, &wa, &lt));
         assert_eq!(first.device_samples(), [first.at_0, first.at_2, first.at_3]);
+        let cubic =
+            CubicCoefficients::from_device_samples(oracle.current_claim(), first.device_samples())
+                .unwrap();
+        assert_eq!(cubic.evaluate(AkitaField::zero()), first.at_0);
+        assert_eq!(cubic.evaluate(AkitaField::one()), first.at_1);
+        assert_eq!(cubic.evaluate(field(2)), first.at_2);
+        assert_eq!(cubic.evaluate(field(3)), first.at_3);
 
         let first_challenge = field(37);
         inc = bind(&inc, first_challenge);

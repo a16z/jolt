@@ -6,6 +6,7 @@ pub const FROZEN_EVALUATOR: &str = "benchmark-runs/metal-piop-eval/20260806-1337
 pub const FROZEN_REVISION: &str = "5f520c21e338632aa0bf5936ceb02be6c22fa40f";
 pub const FROZEN_COMPLETE_CPU_NS: u64 = 337_038_126;
 pub const TARGET_FIVE_X_NS: u64 = FROZEN_COMPLETE_CPU_NS / 5;
+pub const TARGET_SEVEN_X_NS: u64 = FROZEN_COMPLETE_CPU_NS / 7;
 pub const TARGET_EIGHT_X_NS: u64 = FROZEN_COMPLETE_CPU_NS / 8;
 pub const TARGET_LOG_T: usize = 26;
 pub const FROZEN_CPU_TAIL_2_16_NS: u64 = 3_808_875;
@@ -18,7 +19,7 @@ pub const STAGE4_SOURCE_BYTES_PER_ROW: u128 = FIELD_BYTES + HOST_OPTION_INDEX_BY
 pub const STAGE4_PUBLISH_BYTES_PER_ROW: u128 =
     STAGE4_SOURCE_BYTES_PER_ROW + RESIDENT_INPUT_BYTES_PER_ROW;
 pub const REGISTER_ADDRESS_DOMAIN: usize = 128;
-pub const DEFAULT_TRACE_CUTOFF_ELEMENTS: usize = 1 << 20;
+pub const DEFAULT_TRACE_CUTOFF_ELEMENTS: usize = 1 << 25;
 pub const DEFAULT_CPU_TAIL_ELEMENTS: usize = 1 << 16;
 
 pub const M4_MAX_COPY_BYTES_PER_SECOND: u64 = 451_701_710_520;
@@ -29,6 +30,10 @@ const _: () = assert!(size_of::<Option<u8>>() == HOST_OPTION_INDEX_BYTES as usiz
 
 pub const fn five_x_accepts(metal_ns: u64) -> bool {
     (metal_ns as u128) * 5 <= FROZEN_COMPLETE_CPU_NS as u128
+}
+
+pub const fn seven_x_accepts(metal_ns: u64) -> bool {
+    (metal_ns as u128) * 7 <= FROZEN_COMPLETE_CPU_NS as u128
 }
 
 pub const fn eight_x_accepts(metal_ns: u64) -> bool {
@@ -489,6 +494,21 @@ impl RegistersValPlan {
             accounted_ns,
         })
     }
+
+    /// Projection when stage 4 lends the two already-initialized BCSR planes.
+    pub fn resident_boundary_projection(
+        &self,
+        variant: KernelVariant,
+        controls: RegistersValRoofControls,
+    ) -> Result<FixedBoundaryProjection, RegistersValPlanError> {
+        let mut projection = self.fixed_boundary_projection(variant, controls)?;
+        projection.accounted_ns = projection
+            .accounted_ns
+            .checked_sub(projection.producer_admitted_ns)
+            .ok_or(RegistersValPlanError::SizeOverflow)?;
+        projection.producer_admitted_ns = 0;
+        Ok(projection)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -675,6 +695,13 @@ mod tests {
         assert_eq!(factorized.accounted_ns, 47_406_005);
         assert_eq!(factorized.headroom_ns(TARGET_FIVE_X_NS), Some(20_001_620));
 
+        let resident = plan
+            .resident_boundary_projection(KernelVariant::FactorizedSixAccumulator, controls)
+            .unwrap();
+        assert_eq!(resident.producer_admitted_ns, 0);
+        assert_eq!(resident.accounted_ns, 40_906_111);
+        assert_eq!(resident.headroom_ns(TARGET_EIGHT_X_NS), Some(1_223_654));
+
         let direct = plan
             .fixed_boundary_projection(KernelVariant::DirectLtThreeAccumulator, controls)
             .unwrap();
@@ -730,6 +757,8 @@ mod tests {
     fn acceptance_uses_cross_multiplication() {
         assert!(five_x_accepts(67_407_625));
         assert!(!five_x_accepts(67_407_626));
+        assert!(seven_x_accepts(48_148_303));
+        assert!(!seven_x_accepts(48_148_304));
         assert!(eight_x_accepts(42_129_765));
         assert!(!eight_x_accepts(42_129_766));
     }

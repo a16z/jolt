@@ -154,6 +154,15 @@ first-message screen compared both candidates against it before timing. The
 production integration test separately compares the complete hybrid sequence
 against `OptimizedRegistersValEvaluation`.
 
+The stage-4 BCSR-256 packet now defines the intended zero-copy input receipt:
+canonical `rd_inc: Fp128[T]` and cycle-major `rd_index: u8[T]`, with device,
+generation, initialization-serial, allocation-identity, and ordered-prefix
+provenance. It is not wired to this backend yet. Charging those planes as already
+resident gives a 40.906111-ms factorized analytical projection at log 26, including
+the 2 MiB suffix export and frozen CPU tail. That clears the frozen 8x cap of
+42.129765 ms by 1.223654 ms, so implementation has little command-service margin;
+only a complete-member run can validate the projection.
+
 The kernel's fully bound LT scalar must equal
 
 ```text
