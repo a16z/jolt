@@ -153,13 +153,13 @@ mod tests {
     use proptest::prelude::*;
 
     use super::super::address_phase::{DeviceRows, CHUNK_LEN};
-    use crate::reference::views::eq_table;
     use super::super::context::shared_context;
     use super::super::testing::fr;
     use super::{build_cycle_tables, HandoffInputs};
     use crate::reference::instruction_read_raf::{
         InstructionReadRafKernel, InstructionReadRafWitness,
     };
+    use crate::reference::views::eq_table;
 
     const ADDRESS_BITS: usize = 128;
     const RA_COUNT: usize = 8;
@@ -186,17 +186,20 @@ mod tests {
             .collect()
     }
 
-    fn reference_at_handoff(log_t: usize, seed: u64) -> (InstructionReadRafKernel<Fr>, Vec<Vec<Fr>>) {
-        let dimensions = InstructionReadRafDimensions::try_from((
-            log_t,
-            ADDRESS_BITS,
-            RA_COUNT,
-        ))
-        .expect("dimensions");
+    fn reference_at_handoff(
+        log_t: usize,
+        seed: u64,
+    ) -> (InstructionReadRafKernel<Fr>, Vec<Vec<Fr>>) {
+        let dimensions = InstructionReadRafDimensions::try_from((log_t, ADDRESS_BITS, RA_COUNT))
+            .expect("dimensions");
         let r_reduction: Vec<Fr> = (0..log_t).map(|i| fr(seed + i as u64 + 3)).collect();
-        let mut kernel =
-            InstructionReadRafKernel::new(dimensions, &r_reduction, rows(log_t, seed), fr(seed + 1))
-                .expect("reference kernel");
+        let mut kernel = InstructionReadRafKernel::new(
+            dimensions,
+            &r_reduction,
+            rows(log_t, seed),
+            fr(seed + 1),
+        )
+        .expect("reference kernel");
         for round in 0..ADDRESS_BITS {
             kernel
                 .bind(fr(seed + round as u64 + 71))

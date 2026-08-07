@@ -68,6 +68,19 @@ extern "C" __global__ void ap_scatter_kernel(const unsigned int *__restrict__ ke
     order[offsets[key] + slot] = j;
 }
 
+__device__ __forceinline__ void ap_block_reduce_folded(u64 *scratch, const u64 *acc) {
+    unsigned int tid = threadIdx.x;
+    for (int i = 0; i < 2 * UNR_SLOTS; i++) scratch[tid * (2 * UNR_SLOTS) + i] = acc[i];
+    __syncthreads();
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            unr_add_folded(scratch + tid * (2 * UNR_SLOTS),
+                           scratch + (tid + stride) * (2 * UNR_SLOTS));
+        }
+        __syncthreads();
+    }
+}
+
 __device__ __forceinline__ void ap_block_reduce(u64 *scratch, u64 *acc) {
     unsigned int tid = threadIdx.x;
     store4(scratch + tid * LIMBS, acc);
@@ -99,10 +112,8 @@ extern "C" __global__ void ap_raf_reduce_kernel(const unsigned int *__restrict__
     unsigned int start = offsets[bucket];
     unsigned int count = counts[bucket];
 
-    u64 acc[AP_RAF_LANES][LIMBS];
-    for (int lane = 0; lane < AP_RAF_LANES; lane++) {
-        for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
-    }
+    u64 acc[AP_RAF_LANES][2 * UNR_SLOTS];
+    for (int lane = 0; lane < AP_RAF_LANES; lane++) unr_zero(acc[lane]);
 
     for (unsigned int i = threadIdx.x; i < count; i += blockDim.x) {
         unsigned int j = order[start + i];
@@ -115,50 +126,32 @@ extern "C" __global__ void ap_raf_reduce_kernel(const unsigned int *__restrict__
             u128 ones = ((u128)1 << upper_suffix_bits) - 1;
             if (upper_suffix_bits == 0u ||
                 (suffix_bits >> (suffix_len - upper_suffix_bits)) == ones) {
-                fr_add(acc[5], u, acc[5]);
+                unr_add_field(acc[5], u);
             }
         }
 
         if (raf_flags[j] == 0u) {
-            fr_add(acc[0], u, acc[0]);
+            unr_add_field(acc[0], u);
             sfx_bits whole = sfx_new(suffix_bits, suffix_len);
             sfx_bits left, right;
             sfx_uninterleave(whole, &left, &right);
             unsigned long long left_value = sfx_u64(left);
-            if (left_value != 0ULL) {
-                u64 mont[LIMBS], term[LIMBS];
-                u64 raw[LIMBS] = {left_value, 0, 0, 0};
-                fr_to_mont(raw, mont);
-                fr_mul(u, mont, term);
-                fr_add(acc[2], term, acc[2]);
-            }
+            unr_mul_words(u, &left_value, 1u, acc[2]);
             unsigned long long right_value = sfx_u64(right);
-            if (right_value != 0ULL) {
-                u64 mont[LIMBS], term[LIMBS];
-                u64 raw[LIMBS] = {right_value, 0, 0, 0};
-                fr_to_mont(raw, mont);
-                fr_mul(u, mont, term);
-                fr_add(acc[3], term, acc[3]);
-            }
+            unr_mul_words(u, &right_value, 1u, acc[3]);
         } else {
-            fr_add(acc[1], u, acc[1]);
-            if (suffix_bits != 0) {
-                u64 mont[LIMBS], term[LIMBS];
-                u64 raw[LIMBS] = {(unsigned long long)suffix_bits,
-                                  (unsigned long long)(suffix_bits >> 64), 0, 0};
-                fr_to_mont(raw, mont);
-                fr_mul(u, mont, term);
-                fr_add(acc[4], term, acc[4]);
-            }
+            unr_add_field(acc[1], u);
+            unsigned long long identity[2] = {(unsigned long long)suffix_bits,
+                                              (unsigned long long)(suffix_bits >> 64)};
+            unr_mul_words(u, identity, 2u, acc[4]);
         }
     }
 
     for (int lane = 0; lane < AP_RAF_LANES; lane++) {
-        ap_block_reduce(scratch, acc[lane]);
+        ap_block_reduce_folded(scratch, acc[lane]);
         if (threadIdx.x == 0) {
-            u64 total[LIMBS];
-            load4(scratch, total);
-            store4(buckets + ((unsigned long long)lane * AP_CHUNK_SIZE + bucket) * LIMBS, total);
+            unr_finalize(scratch,
+                         buckets + ((unsigned long long)lane * AP_CHUNK_SIZE + bucket) * LIMBS);
         }
         __syncthreads();
     }
@@ -183,10 +176,8 @@ extern "C" __global__ void ap_suffix_reduce_kernel(
     unsigned int families = suffix_counts[slot];
     unsigned int family_base = suffix_offsets[slot];
 
-    u64 acc[AP_MAX_SUFFIXES][LIMBS];
-    for (int s = 0; s < AP_MAX_SUFFIXES; s++) {
-        for (int l = 0; l < LIMBS; l++) acc[s][l] = 0;
-    }
+    u64 acc[AP_MAX_SUFFIXES][2 * UNR_SLOTS];
+    for (int s = 0; s < AP_MAX_SUFFIXES; s++) unr_zero(acc[s]);
 
     for (unsigned int i = threadIdx.x; i < count; i += blockDim.x) {
         unsigned int j = order[start + i];
@@ -198,26 +189,20 @@ extern "C" __global__ void ap_suffix_reduce_kernel(
         for (unsigned int s = 0; s < families; s++) {
             unsigned long long value = sfx_eval(suffix_ids[family_base + s], suffix);
             if (value == 0ULL) continue;
-            u64 term[LIMBS];
             if (value == 1ULL) {
-                fr_add(acc[s], u, acc[s]);
+                unr_add_field(acc[s], u);
                 continue;
             }
-            u64 mont[LIMBS];
-            u64 raw[LIMBS] = {value, 0, 0, 0};
-            fr_to_mont(raw, mont);
-            fr_mul(u, mont, term);
-            fr_add(acc[s], term, acc[s]);
+            unr_mul_words(u, &value, 1u, acc[s]);
         }
     }
 
     for (unsigned int s = 0; s < families; s++) {
-        ap_block_reduce(scratch, acc[s]);
+        ap_block_reduce_folded(scratch, acc[s]);
         if (threadIdx.x == 0) {
-            u64 total[LIMBS];
-            load4(scratch, total);
-            store4(buckets + ((unsigned long long)(family_base + s) * AP_CHUNK_SIZE + bucket) * LIMBS,
-                   total);
+            unr_finalize(
+                scratch,
+                buckets + ((unsigned long long)(family_base + s) * AP_CHUNK_SIZE + bucket) * LIMBS);
         }
         __syncthreads();
     }

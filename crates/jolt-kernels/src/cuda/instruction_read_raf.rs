@@ -1,7 +1,7 @@
+use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
 };
-use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_field::{Field, Fr};
 use jolt_lookup_tables::lookup_bits::LookupBits;
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
@@ -243,11 +243,12 @@ impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
                     kind: "cuda address phase",
                 })?;
             let evals = device
-                .round_message(self.context, require_fr(self.gamma).map_err(|_| {
-                    SumcheckError::MissingEvaluationSource {
+                .round_message(
+                    self.context,
+                    require_fr(self.gamma).map_err(|_| SumcheckError::MissingEvaluationSource {
                         kind: "cuda address gamma",
-                    }
-                })?)
+                    })?,
+                )
                 .map_err(|_| SumcheckError::MissingEvaluationSource {
                     kind: "cuda address round message",
                 })?;
@@ -321,11 +322,12 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
                     kind: "cuda cycle-round bind",
                 })?;
             self.rounds_bound += 1;
-            self.cycle_challenges.push(require_fr(challenge).map_err(|_| {
-                SumcheckError::MissingEvaluationSource {
-                    kind: "cuda cycle-round challenge",
-                }
-            })?);
+            self.cycle_challenges
+                .push(require_fr(challenge).map_err(|_| {
+                    SumcheckError::MissingEvaluationSource {
+                        kind: "cuda cycle-round challenge",
+                    }
+                })?);
             Ok(())
         }
     }

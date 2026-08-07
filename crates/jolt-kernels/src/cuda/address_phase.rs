@@ -10,6 +10,7 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{DeviceFrVec, LIMBS};
+use super::unreduced::ACCUM_LIMBS;
 use super::error::CudaError;
 
 pub const CHUNK_LEN: usize = 8;
@@ -191,12 +192,13 @@ pub fn init_raf_buckets(
     // `lookup_index` (`2 * cycles`), `raf_flag` and `u_evals` (`cycles`) reads.
     // Thread 0 writes `buckets[lane * CHUNK_SIZE + bucket]` for
     // `lane < RAF_LANES`, one slot per (lane, bucket) of `RAF_LANES * CHUNK_SIZE`.
-    // Shared memory is `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`.
+    // Shared memory is `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded accumulator
+    // width the reduction tree operates on — matching `shared_mem_bytes`.
     let _ = unsafe {
         builder.launch(LaunchConfig {
             grid_dim: (chunk_count, 1, 1),
             block_dim: (BLOCK, 1, 1),
-            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+            shared_mem_bytes: BLOCK * 2 * ACCUM_LIMBS as u32 * size_of::<u64>() as u32,
         })
     }?;
     context.stream().synchronize()?;
@@ -320,12 +322,13 @@ pub fn init_suffix_buckets(
     // `suffix_ids.len() * CHUNK_SIZE`; distinct blocks have distinct
     // `(slot, bucket)`, so targets are distinct. `acc` is indexed by
     // `s < families <= MAX_SUFFIXES`, its declared extent. Shared memory is
-    // `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`.
+    // `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded accumulator width the reduction
+    // tree operates on — matching `shared_mem_bytes`.
     let _ = unsafe {
         builder.launch(LaunchConfig {
             grid_dim: (blocks, 1, 1),
             block_dim: (BLOCK, 1, 1),
-            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+            shared_mem_bytes: BLOCK * 2 * ACCUM_LIMBS as u32 * size_of::<u64>() as u32,
         })
     }?;
     context.stream().synchronize()?;

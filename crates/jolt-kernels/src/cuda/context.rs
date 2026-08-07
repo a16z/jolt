@@ -41,6 +41,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("kernels/combine.cu"),
     "\n",
+    include_str!("kernels/unreduced.cu"),
+    "\n",
     include_str!("kernels/address_phase.cu"),
 );
 
@@ -96,6 +98,8 @@ pub struct CudaKernelContext {
     ap_flag_keys: CudaFunction,
     ap_flag_sums: CudaFunction,
     ap_raf_flag_sum: CudaFunction,
+    unr_mul_scatter: CudaFunction,
+    unr_reduce: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -160,6 +164,8 @@ impl CudaKernelContext {
             ap_flag_keys: module.load_function("ap_flag_keys_kernel")?,
             ap_flag_sums: module.load_function("ap_flag_sums_kernel")?,
             ap_raf_flag_sum: module.load_function("ap_raf_flag_sum_kernel")?,
+            unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
+            unr_reduce: module.load_function("unr_reduce_kernel")?,
         })
     }
 
@@ -379,6 +385,14 @@ impl CudaKernelContext {
 
     pub(super) const fn ap_raf_flag_sum(&self) -> &CudaFunction {
         &self.ap_raf_flag_sum
+    }
+
+    pub(super) const fn unr_mul_scatter(&self) -> &CudaFunction {
+        &self.unr_mul_scatter
+    }
+
+    pub(super) const fn unr_reduce(&self) -> &CudaFunction {
+        &self.unr_reduce
     }
 
     pub(super) fn copy_into(
