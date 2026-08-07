@@ -364,12 +364,6 @@ macro_rules! source_extension_for_marker {
     (VirtualChangeDivisorW) => {
         Some(SourceExtension::JoltCustom)
     };
-    (VirtualLw) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualSw) => {
-        Some(SourceExtension::JoltCustom)
-    };
     (VirtualZeroExtendWord) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -631,9 +625,6 @@ macro_rules! source_side_effects_for_marker {
     (VirtualHostIO) => {
         true
     };
-    (VirtualSw) => {
-        true
-    };
     (Add) => {
         false
     };
@@ -800,9 +791,6 @@ macro_rules! source_side_effects_for_marker {
         false
     };
     (VirtualChangeDivisorW) => {
-        false
-    };
-    (VirtualLw) => {
         false
     };
     (VirtualZeroExtendWord) => {

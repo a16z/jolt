@@ -168,8 +168,6 @@ pub use virt::AdviceLb;
 pub use virt::AdviceLd;
 pub use virt::AdviceLh;
 pub use virt::AdviceLw;
-pub use virt::VirtualLw;
-pub use virt::VirtualSw;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
@@ -330,10 +328,9 @@ crate::for_each_instruction_kind!(define_source_instruction);
 ///
 /// Deliberately omitted instruction kinds (declared and re-exported above
 /// but not proven by Jolt): the Zicsr ops (`Csrrs`, `Csrrw`), `Mret`,
-/// the atomic family (`Amo*`, `Lr*`, `Sc*`),
-/// the advice-load helpers (`AdviceLb`/`Ld`/`Lh`/`Lw`), and `VirtualLw` /
-/// `VirtualSw`. These are intentionally absent from `JoltInstruction` and
-/// from the flag-exclusivity tests below.
+/// the atomic family (`Amo*`, `Lr*`, `Sc*`), and the advice-load helpers
+/// (`AdviceLb`/`Ld`/`Lh`/`Lw`). These are intentionally absent from
+/// `JoltInstruction` and from the flag-exclusivity tests below.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoltInstruction<T = JoltInstructionRow> {
@@ -769,7 +766,6 @@ mod tests {
             SourceInstructionKind::SW,
             SourceInstructionKind::AMOADDW,
             SourceInstructionKind::CSRRS,
-            SourceInstructionKind::VirtualSW,
         ] {
             assert_eq!(
                 JoltInstructionRow::try_from(&SourceInstruction::new(
