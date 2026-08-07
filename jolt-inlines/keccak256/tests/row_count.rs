@@ -45,4 +45,17 @@ fn count_keccak256_rows() {
         3087,
         "keccak256 inline row count changed; update this ratchet deliberately"
     );
+
+    let absorb_instr = InlineTestHarness::create_default_instruction(
+        jolt_inlines_keccak256::INLINE_OPCODE,
+        jolt_inlines_keccak256::KECCAK256_ABSORB_PERMUTE_FUNCT3,
+        jolt_inlines_keccak256::KECCAK256_FUNCT7,
+    );
+    let absorb_sequence = absorb_instr.inline_sequence(&VirtualRegisterAllocator::default());
+    // The fused entry adds 17 block LD + 17 XOR rows to the permutation.
+    assert_eq!(
+        absorb_sequence.len(),
+        3121,
+        "keccak256 absorb-permute row count changed; update this ratchet deliberately"
+    );
 }

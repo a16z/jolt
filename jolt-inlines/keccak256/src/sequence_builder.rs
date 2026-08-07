@@ -4,9 +4,9 @@
 //! single 24-lane cycle in place, leaving one rotated lane in a temporary
 //! register until χ consumes it. D[3] and D[4] reuse dead C registers.
 
-use crate::NUM_LANES;
+use crate::{NUM_LANES, RATE_IN_U64};
 use jolt_inlines_sdk::host::{
-    instruction::{andn::ANDN, virtual_xor_rot::VirtualXORROTL1},
+    instruction::{andn::ANDN, ld::LD, virtual_xor_rot::VirtualXORROTL1},
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
     InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{Imm, Reg},
@@ -48,6 +48,7 @@ struct Keccak256SequenceBuilder {
     pi_temp: InlineRegister,
     chi_temp: [InlineRegister; 2],
     scratch: InlineRegister,
+    absorb_block: bool,
     operands: InlineOperands,
 }
 
@@ -55,6 +56,7 @@ impl Keccak256SequenceBuilder {
     fn new(
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
+        absorb_block: bool,
     ) -> Result<Self, ExpansionError> {
         let a = asm.allocate_inline_array::<NUM_LANES>()?;
         let c = asm.allocate_inline_array::<5>()?;
@@ -71,6 +73,7 @@ impl Keccak256SequenceBuilder {
             pi_temp,
             chi_temp,
             scratch,
+            absorb_block,
             operands,
         })
     }
@@ -97,6 +100,17 @@ impl Keccak256SequenceBuilder {
 
     fn load_state(&mut self) {
         self.asm.load_u64_range(self.operands.rs1, 0, &self.a);
+        if self.absorb_block {
+            let scratch = *self.scratch;
+            for i in 0..RATE_IN_U64 {
+                self.asm.emit_ld::<LD>(
+                    scratch,
+                    self.operands.rs2,
+                    i as i64 * size_of::<u64>() as i64,
+                );
+                self.asm.xor(Reg(*self.a[i]), Reg(scratch), *self.a[i]);
+            }
+        }
     }
 
     fn store_state(&mut self) {
@@ -231,6 +245,24 @@ impl InlineOp for Keccak256Permutation {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Keccak256SequenceBuilder::new(asm, operands)?.build()
+        Keccak256SequenceBuilder::new(asm, operands, false)?.build()
+    }
+}
+
+pub struct Keccak256AbsorbPermutation;
+
+impl InlineOp for Keccak256AbsorbPermutation {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = crate::INLINE_OPCODE;
+    const FUNCT3: u32 = crate::KECCAK256_ABSORB_PERMUTE_FUNCT3;
+    const FUNCT7: u32 = crate::KECCAK256_FUNCT7;
+    const NAME: &'static str = crate::KECCAK256_ABSORB_PERMUTE_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Keccak256SequenceBuilder::new(asm, operands, true)?.build()
     }
 }

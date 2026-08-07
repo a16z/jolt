@@ -1,7 +1,7 @@
 #![cfg(all(test, feature = "host"))]
 
 mod exec {
-    use crate::sequence_builder::Keccak256Permutation;
+    use crate::sequence_builder::{Keccak256AbsorbPermutation, Keccak256Permutation};
     use jolt_inlines_sdk::{
         assert_edge_cases_match_reference, assert_random_cases_match_reference,
     };
@@ -14,6 +14,12 @@ mod exec {
     #[test]
     fn test_keccak256_random_direct_execution() {
         assert_random_cases_match_reference::<Keccak256Permutation>(0xEC_CAC, 100);
+    }
+
+    #[test]
+    fn test_keccak256_absorb_permute_direct_execution() {
+        assert_edge_cases_match_reference::<Keccak256AbsorbPermutation>();
+        assert_random_cases_match_reference::<Keccak256AbsorbPermutation>(0x00AB_50BB, 100);
     }
 
     #[test]
