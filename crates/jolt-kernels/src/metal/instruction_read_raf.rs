@@ -42,7 +42,7 @@ impl Default for InstructionReadRafMetalConfig {
         Self {
             address_cutoff_elements: 1 << 18,
             address_implementation: InstructionReadRafAddressImplementation::AtomV3,
-            address_atom_max_unique: 1 << 20,
+            address_atom_max_unique: 1 << 16,
             address_dispatch: AddressPhaseSequenceConfig::default(),
             cutoff_elements: 1 << 16,
             dispatch: Product5SequenceConfig::default(),

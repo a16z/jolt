@@ -1712,6 +1712,14 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
                 Entry::Occupied(entry) => *entry.get(),
                 Entry::Vacant(entry) => {
                     if next_atom >= max_atoms {
+                        let rejection = tracing::info_span!(
+                            "MetalInstructionReadRaf::atom_v3_admission_rejected",
+                            cycles_scanned = (cycle_atoms.len() + 1) as u64,
+                            observed_atoms = (next_atom + 1) as u64,
+                            maximum_atoms = max_atoms as u64,
+                        )
+                        .entered();
+                        drop(rejection);
                         return Ok(None);
                     }
                     let atom = u32::try_from(next_atom)
