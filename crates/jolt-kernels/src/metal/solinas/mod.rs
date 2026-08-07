@@ -33,6 +33,7 @@ mod product5;
 mod product_remainder;
 mod product_uniskip;
 mod ram_output_check;
+pub mod ram_ra_claim_reduction;
 mod ram_raf_evaluation;
 mod ram_val_check;
 pub mod registers_claim_reduction;

@@ -77,6 +77,10 @@ mod ram_val_check;
 mod ram_raf_evaluation;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/ram_ra_claim_reduction.rs"]
+mod ram_ra_claim_reduction;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/ram_output_check.rs"]
 mod ram_output_check;
 
@@ -124,7 +128,7 @@ mod macos {
         address_raf, address_suffix, booleanity, booleanity_address, bytecode_cycle, cpu, cycle,
         half_width_probe, instruction_claim_reduction, instruction_input, instruction_ra,
         instruction_ra_sequence, product5, product_remainder, product_uniskip, ram_output_check,
-        ram_raf_evaluation, ram_val_check,
+        ram_ra_claim_reduction, ram_raf_evaluation, ram_val_check,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         registers_claim_reduction, registers_read_write, registers_read_write_dense, registers_val,
         spartan_outer_uniskip, spartan_shift,
@@ -171,6 +175,7 @@ mod macos {
                 "product-uniskip" => product_uniskip::bench(c, &context),
                 "ram-val-check" => ram_val_check::bench(c, &context),
                 "ram-raf" => ram_raf_evaluation::bench(c, &context),
+                "ram-ra-claim-q" => ram_ra_claim_reduction::bench(c, &context),
                 "ram-output-check" => ram_output_check::bench(c, &context),
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
                 "instruction-ra-first-message" => instruction_ra::bench(c, &context),
