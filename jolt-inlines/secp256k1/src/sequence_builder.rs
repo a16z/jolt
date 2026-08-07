@@ -6,10 +6,10 @@ use jolt_inlines_sdk::host::{
         virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, ExpandedInstructionSequence,
-    ExpansionError, FormatInline, GlvDecompositionAdvice, InlineAdviceContext, InlineBuilderExt,
-    InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister, ModularDivisionAdvice,
-    MulqType, QuotientAdvice,
+    limbs_to_nbiguint, load_field_element_limbs, mulq_division_advice, mulq_quotient_advice,
+    ExpandedInstructionSequence, ExpansionError, FormatInline, GlvDecompositionAdvice,
+    InlineAdviceContext, InlineAdviceError, InlineBuilderExt, InlineExpansionBuilder, InlineOp,
+    InlineOperands, InlineRegister, ModularDivisionAdvice, MulqType, QuotientAdvice,
 };
 
 /// inline constructor for GLV decomposition in secp256k1 scalar field
@@ -27,16 +27,16 @@ impl GlvrAdvBuilder {
         let vr = asm.allocate_for_inline()?;
         Ok(GlvrAdvBuilder { asm, vr, operands })
     }
-    fn advice(operands: FormatInline, ctx: &mut dyn InlineAdviceContext) -> GlvDecompositionAdvice {
+    fn advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<GlvDecompositionAdvice, InlineAdviceError> {
         let k_addr = ctx.register(operands.rs1 as usize);
-        let kr = [
-            ctx.load_doubleword(k_addr).unwrap(),
-            ctx.load_doubleword(k_addr + 8).unwrap(),
-            ctx.load_doubleword(k_addr + 16).unwrap(),
-            ctx.load_doubleword(k_addr + 24).unwrap(),
-        ];
+        let kr = load_field_element_limbs(ctx, k_addr)?;
         let k = Fr::new(BigInt(kr)).into_bigint().into();
-        GlvDecompositionAdvice::from_sign_abs(crate::glv::decompose_scalar(k))
+        Ok(GlvDecompositionAdvice::from_sign_abs(
+            crate::glv::decompose_scalar(k),
+        ))
     }
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.asm.emit_advice_stores(*self.vr, self.operands.rs3, 6);
@@ -129,7 +129,7 @@ impl MulqBuilder {
         ctx: &mut dyn InlineAdviceContext,
         is_scalar_field: bool,
         op_type: &MulqType,
-    ) -> QuotientAdvice {
+    ) -> Result<QuotientAdvice, InlineAdviceError> {
         mulq_quotient_advice(&operands, ctx, is_scalar_field, op_type, secp256k1_modulus)
     }
 
@@ -137,7 +137,7 @@ impl MulqBuilder {
         operands: FormatInline,
         ctx: &mut dyn InlineAdviceContext,
         is_scalar_field: bool,
-    ) -> ModularDivisionAdvice {
+    ) -> Result<ModularDivisionAdvice, InlineAdviceError> {
         mulq_division_advice(
             &operands,
             ctx,
@@ -480,7 +480,7 @@ macro_rules! secp256k1_mulq_op {
             fn build_advice(
                 operands: FormatInline,
                 ctx: &mut dyn InlineAdviceContext,
-            ) -> Self::Advice {
+            ) -> Result<Self::Advice, InlineAdviceError> {
                 MulqBuilder::division_advice(operands, ctx, $is_scalar)
             }
         }
@@ -503,7 +503,7 @@ macro_rules! secp256k1_mulq_op {
             fn build_advice(
                 operands: FormatInline,
                 ctx: &mut dyn InlineAdviceContext,
-            ) -> Self::Advice {
+            ) -> Result<Self::Advice, InlineAdviceError> {
                 MulqBuilder::quotient_advice(operands, ctx, $is_scalar, &$mul_type)
             }
         }
@@ -531,7 +531,10 @@ impl InlineOp for Secp256k1GlvrAdv {
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         GlvrAdvBuilder::new(asm, operands)?.inline_sequence()
     }
-    fn build_advice(operands: FormatInline, ctx: &mut dyn InlineAdviceContext) -> Self::Advice {
+    fn build_advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Self::Advice, InlineAdviceError> {
         GlvrAdvBuilder::advice(operands, ctx)
     }
 }

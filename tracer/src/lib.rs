@@ -28,7 +28,8 @@ pub use common::jolt_device::JoltDevice;
 pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
 pub use execution_backend::TracerBackend;
 pub use instruction::inline::{
-    list_registered_inlines, InlineAdviceContext, InlineRegistration, TracerInlineExpansionProvider,
+    list_registered_inlines, InlineAdviceContext, InlineAdviceError, InlineRegistration,
+    TracerInlineExpansionProvider,
 };
 pub use jolt_riscv::InlineExtension;
 pub use trace_row::{build_trace_rows, cycle_to_trace_row, CycleConversionError};
