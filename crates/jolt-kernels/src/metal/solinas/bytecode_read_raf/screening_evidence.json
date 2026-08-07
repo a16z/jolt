@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "evidence_stage": "long_worker_screening_only",
+  "kernel": "bytecode_read_raf_address",
+  "machine": "Apple M4 Max, 40-core GPU",
+  "cpu_complete_member_ms_median": 190.915958,
+  "complete_member_caps_ms": {
+    "5x": 38.183191,
+    "8x": 23.864494
+  },
+  "correctness": {
+    "log_15_full_matches_direct_oracle": true,
+    "log_15_u64_matches_direct_oracle": true,
+    "log_26_full_matches_exact_uniform_run_oracle": true,
+    "log_26_u64_matches_exact_uniform_run_oracle": true,
+    "resident_stage5_rows_reused": true,
+    "static_buffers_stable": true
+  },
+  "log_26_full_width": {
+    "samples": 5,
+    "gpu_active_ms": [
+      9.134208,
+      9.148208,
+      9.164542,
+      9.283417,
+      9.32875
+    ],
+    "gpu_active_ms_median": 9.164542,
+    "complete_slice_ms_median": 9.732375,
+    "useful_products": 268453888,
+    "useful_gproducts_per_second": 29.292668198803607,
+    "owned_bytes": 544538768,
+    "borrowed_row_bytes": 2684354560
+  },
+  "log_26_exact_u64": {
+    "samples": 5,
+    "gpu_active_ms": [
+      9.005625,
+      9.058625,
+      9.3655,
+      9.461833,
+      9.5165
+    ],
+    "gpu_active_ms_median": 9.3655,
+    "complete_slice_ms_median": 9.97025,
+    "useful_products": 268453888,
+    "useful_gproducts_per_second": 28.664127702738774
+  },
+  "screen": {
+    "promote_active_ms": 12.85,
+    "hard_kill_active_ms": 30.124,
+    "full_width_clears": true,
+    "exact_u64_clears": true,
+    "selected_path": "full_width",
+    "full_width_active_improvement_over_u64": 0.021457263360205002,
+    "remaining_5x_complete_budget_ms": 28.450816,
+    "remaining_8x_complete_budget_ms": 14.132119
+  },
+  "decision": {
+    "status": "promote_long_worker_to_csr_integration",
+    "speedup_claim": null,
+    "reason": "The worker slice excludes CSR construction and all host address rounds, so its CPU/member ratio is not a speedup. Its exact complete slice fits both the 5x and 8x residual budgets; integrate and measure CSR next. The full-width field path is retained because it is faster than the specialized u64 path."
+  }
+}
