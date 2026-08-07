@@ -837,7 +837,7 @@ fn product_rows_sequence_matches_standalone_sequence() {
     let lookup = context
         .prepare_instruction_claim_lookup_rows(&lookup)
         .expect("lookup rows should prepare");
-    let mut shared = context
+    let shared = context
         .prepare_instruction_claim_sequence_with_product_rows(
             product,
             lookup,
@@ -858,10 +858,14 @@ fn product_rows_sequence_matches_standalone_sequence() {
         .map(|index| AkitaField::from_u64(401 + 4 * index as u64))
         .collect::<Vec<_>>();
     let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let pending = shared
+        .submit_initial_message(gruen.e_in_current(), gruen.e_out_current())
+        .unwrap();
+    let (mut shared, shared_message, stats) = pending.join().unwrap();
+    assert!(stats.wall >= stats.submit_wall);
+    assert!(stats.wall >= stats.join_wall);
     assert_eq!(
-        shared
-            .message(gruen.e_in_current(), gruen.e_out_current())
-            .unwrap(),
+        shared_message,
         standalone
             .message(gruen.e_in_current(), gruen.e_out_current())
             .unwrap()

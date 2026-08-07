@@ -16,6 +16,7 @@ use super::backend::MetalBackend;
 use super::solinas::instruction_claim_reduction::{
     finalize_aliased_openings, round_polynomial_from_q_endpoints, InstructionClaimAliasedOpenings,
     InstructionClaimKernelConfig, InstructionClaimSequence,
+    PendingInstructionClaimInitialMessage,
 };
 use super::solinas::MetalError;
 use super::spartan_product::{MetalInstructionClaimAliasOutput, MetalInstructionClaimHandoff};
@@ -88,11 +89,9 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
             row_upload_bytes = 0u64,
             round_device_buffer_allocations = 0u64,
             workspace_bytes = tracing::field::Empty,
-            materialize_wall_ns = tracing::field::Empty,
-            materialize_gpu_active_ns = tracing::field::Empty,
         );
         let _entered = prepare_span.enter();
-        let mut sequence = match self
+        let sequence = match self
             .context
             .prepare_instruction_claim_sequence_with_product_rows(
                 handoff.rows.product,
@@ -115,26 +114,31 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
             "workspace_bytes",
             sequence.storage_layout().workspace_bytes(),
         );
-        let started = Instant::now();
         let (e_in, e_out) = host.current_weights();
-        let first = sequence.message_timed(e_in, e_out);
-        let materialize_wall = started.elapsed();
-        let (first_message, materialize_gpu_active) = match first {
-            Ok(result) => result,
+        let submit_span = tracing::info_span!(
+            "MetalInstructionClaimReduction::first_message_submit",
+            resident_rows_storage_id = row_storage_id as u64,
+            lookup_rows_storage_id = lookup_storage_id as u64,
+            command_committed = tracing::field::Empty,
+            submit_wall_ns = tracing::field::Empty,
+        );
+        let _submit_entered = submit_span.enter();
+        let pending_initial = match sequence.submit_initial_message(e_in, e_out) {
+            Ok(pending) => pending,
             Err(error) if instruction_prepare_fallback_reason(&error).is_some() => {
                 tracing::warn!(
                     target: "jolt::metal",
                     error = %error,
-                    "instruction claim first dispatch failed before round absorption; using optimized CPU"
+                    "instruction claim first submission failed before round absorption; using optimized CPU"
                 );
                 return OptimizedInstructionClaimReduction.prepare(session, witness, inputs);
             }
             Err(error) => return Err(metal_prepare_error(error)),
         };
-        let _ = prepare_span.record("materialize_wall_ns", duration_nanos(materialize_wall));
-        let _ = prepare_span.record(
-            "materialize_gpu_active_ns",
-            duration_nanos(materialize_gpu_active.gpu_active),
+        let _ = submit_span.record("command_committed", true);
+        let _ = submit_span.record(
+            "submit_wall_ns",
+            duration_nanos(pending_initial.submit_wall()),
         );
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
@@ -143,9 +147,9 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
 
         Ok(Box::new(MetalInstructionClaimKernel {
             host,
-            sequence,
+            pending_initial: Some(pending_initial),
+            sequence: None,
             gamma: inputs.challenges.gamma,
-            pending_endpoints: Some(first_message),
             combined_claim: None,
             aliases: handoff.aliases,
             row_storage_id,
@@ -240,9 +244,9 @@ impl MetalInstructionClaimHost {
 
 struct MetalInstructionClaimKernel {
     host: MetalInstructionClaimHost,
-    sequence: InstructionClaimSequence,
+    pending_initial: Option<PendingInstructionClaimInitialMessage>,
+    sequence: Option<InstructionClaimSequence>,
     gamma: AkitaField,
-    pending_endpoints: Option<[AkitaField; 2]>,
     combined_claim: Option<AkitaField>,
     aliases: super::spartan_product::MetalInstructionClaimAliasSlot,
     row_storage_id: usize,
@@ -252,7 +256,12 @@ struct MetalInstructionClaimKernel {
 impl allocative::Allocative for MetalInstructionClaimKernel {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_field(allocative::Key::new("sequence"), &self.sequence);
+        if let Some(pending) = &self.pending_initial {
+            visitor.visit_field(allocative::Key::new("pending_initial"), pending);
+        }
+        if let Some(sequence) = &self.sequence {
+            visitor.visit_field(allocative::Key::new("sequence"), sequence);
+        }
         visitor.exit();
     }
 }
@@ -276,7 +285,19 @@ impl ProveRounds<AkitaField> for MetalInstructionClaimKernel {
                     message: "instruction claim round order drifted".to_string(),
                 });
             }
-            let source_elements = self.sequence.current_elements();
+            if self.pending_initial.is_some() {
+                return Err(SumcheckError::ComputeBackend {
+                    backend: "metal",
+                    message: "instruction claim first message was not joined".to_string(),
+                });
+            }
+            let sequence = self.sequence.as_mut().ok_or_else(|| {
+                SumcheckError::ComputeBackend {
+                    backend: "metal",
+                    message: "instruction claim resident sequence is missing".to_string(),
+                }
+            })?;
+            let source_elements = sequence.current_elements();
             let span = tracing::info_span!(
                 "MetalInstructionClaimReduction::bind_and_message",
                 round,
@@ -288,8 +309,7 @@ impl ProveRounds<AkitaField> for MetalInstructionClaimKernel {
             let _entered = span.enter();
             let started = Instant::now();
             let (e_in, e_out) = self.host.current_weights();
-            let (message, timing) = self
-                .sequence
+            let (message, timing) = sequence
                 .bind_and_message_timed(challenge, e_in, e_out)
                 .map_err(metal_round_error)?;
             let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
@@ -303,12 +323,40 @@ impl ProveRounds<AkitaField> for MetalInstructionClaimKernel {
                         .to_string(),
                 });
             }
-            self.pending_endpoints
-                .take()
-                .ok_or_else(|| SumcheckError::ComputeBackend {
+            if self.sequence.is_some() {
+                return Err(SumcheckError::ComputeBackend {
                     backend: "metal",
                     message: "instruction claim first message was already consumed".to_string(),
-                })?
+                });
+            }
+            let pending = self.pending_initial.take().ok_or_else(|| {
+                SumcheckError::ComputeBackend {
+                    backend: "metal",
+                    message: "instruction claim first message is missing".to_string(),
+                }
+            })?;
+            let span = tracing::info_span!(
+                "MetalInstructionClaimReduction::first_message_join",
+                resident_rows_storage_id = self.row_storage_id as u64,
+                command_completed = tracing::field::Empty,
+                completed_before_join = tracing::field::Empty,
+                submit_wall_ns = tracing::field::Empty,
+                overlap_wall_ns = tracing::field::Empty,
+                join_wall_ns = tracing::field::Empty,
+                lifecycle_wall_ns = tracing::field::Empty,
+                gpu_active_ns = tracing::field::Empty,
+            );
+            let _entered = span.enter();
+            let (sequence, message, stats) = pending.join().map_err(metal_round_error)?;
+            let _ = span.record("command_completed", true);
+            let _ = span.record("completed_before_join", stats.completed_before_join);
+            let _ = span.record("submit_wall_ns", duration_nanos(stats.submit_wall));
+            let _ = span.record("overlap_wall_ns", duration_nanos(stats.overlap_wall));
+            let _ = span.record("join_wall_ns", duration_nanos(stats.join_wall));
+            let _ = span.record("lifecycle_wall_ns", duration_nanos(stats.wall));
+            let _ = span.record("gpu_active_ns", duration_nanos(stats.gpu_active));
+            self.sequence = Some(sequence);
+            message
         };
         Ok(self.host.polynomial(endpoints, previous_claim))
     }
@@ -321,7 +369,13 @@ impl ProveRounds<AkitaField> for MetalInstructionClaimKernel {
                 message: "instruction claim did not receive every bind challenge".to_string(),
             });
         }
-        self.combined_claim = Some(self.sequence.finish(bind).map_err(metal_round_error)?);
+        let sequence = self.sequence.as_mut().ok_or_else(|| {
+            SumcheckError::ComputeBackend {
+                backend: "metal",
+                message: "instruction claim resident sequence is missing".to_string(),
+            }
+        })?;
+        self.combined_claim = Some(sequence.finish(bind).map_err(metal_round_error)?);
         Ok(())
     }
 }
@@ -351,8 +405,11 @@ impl SumcheckKernel<AkitaField> for MetalInstructionClaimKernel {
         );
         let _entered = span.enter();
         let started = Instant::now();
-        let (lookup_operands, timing) = self
+        let sequence = self
             .sequence
+            .as_mut()
+            .ok_or_else(|| metal_output_error("instruction claim resident sequence is missing"))?;
+        let (lookup_operands, timing) = sequence
             .aliased_openings_timed(&e_in, &e_out)
             .map_err(metal_output_error)?;
         let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));

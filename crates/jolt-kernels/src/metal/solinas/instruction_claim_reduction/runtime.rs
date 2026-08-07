@@ -6,8 +6,8 @@ use std::{
 
 use jolt_field::AkitaField;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 
 use super::super::{
@@ -32,6 +32,83 @@ const LOOKUP_COMPANION_OPENING_PIPELINE: &str = "solinas_instruction_claim_open_
 pub struct InstructionClaimTiming {
     pub wall: Duration,
     pub gpu_active: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InstructionClaimInitialMessageStats {
+    pub wall: Duration,
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
+    pub gpu_active: Duration,
+    pub completed_before_join: bool,
+}
+
+struct InstructionClaimInitialMessageCommand {
+    command_buffer: CommandBuffer,
+    output: Buffer,
+    submitted_at: Instant,
+    submit_wall: Duration,
+    sequence_identity: usize,
+    generation: u64,
+}
+
+#[must_use = "a submitted instruction claim message must be joined"]
+pub struct PendingInstructionClaimInitialMessage {
+    sequence: Option<InstructionClaimSequence>,
+    command: Option<InstructionClaimInitialMessageCommand>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PendingInstructionClaimInitialMessage {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(sequence) = &self.sequence {
+            visitor.visit_field(allocative::Key::new("sequence"), sequence);
+        }
+        visitor.exit();
+    }
+}
+
+impl Drop for PendingInstructionClaimInitialMessage {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl PendingInstructionClaimInitialMessage {
+    pub const fn submit_wall(&self) -> Duration {
+        match &self.command {
+            Some(command) => command.submit_wall,
+            None => Duration::ZERO,
+        }
+    }
+
+    pub fn join(
+        mut self,
+    ) -> Result<
+        (
+            InstructionClaimSequence,
+            [AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
+            InstructionClaimInitialMessageStats,
+        ),
+        MetalError,
+    > {
+        let mut sequence = self.sequence.take().ok_or(
+            MetalError::InvalidInstructionClaimState(
+                "the pending first message lost its resident sequence",
+            ),
+        )?;
+        let command = self.command.take().ok_or(
+            MetalError::InvalidInstructionClaimState(
+                "the pending first message lost its command buffer",
+            ),
+        )?;
+        let (message, stats) = sequence.complete_initial_message(command)?;
+        Ok((sequence, message, stats))
+    }
 }
 
 #[derive(Clone)]
@@ -464,17 +541,43 @@ impl InstructionClaimSequence {
         ),
         MetalError,
     > {
+        let command = self.submit_initial_message_command(e_in, e_out)?;
+        let (message, stats) = self.complete_initial_message(command)?;
+        let timing = InstructionClaimTiming {
+            wall: stats.wall,
+            gpu_active: stats.gpu_active,
+        };
+        Ok((message, timing))
+    }
+
+    pub fn submit_initial_message(
+        self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<PendingInstructionClaimInitialMessage, MetalError> {
+        let command = self.submit_initial_message_command(e_in, e_out)?;
+        Ok(PendingInstructionClaimInitialMessage {
+            sequence: Some(self),
+            command: Some(command),
+        })
+    }
+
+    fn submit_initial_message_command(
+        &self,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<InstructionClaimInitialMessageCommand, MetalError> {
         if self.phase != InstructionClaimPhase::Raw {
             return Err(MetalError::InvalidInstructionClaimState(
                 "the materialization message was already emitted",
             ));
         }
-        let started = Instant::now();
+        let submitted_at = Instant::now();
         let params =
             InstructionClaimPhaseParams::materialize(self.geometry, e_in.len(), e_out.len())?;
         self.write_weights(e_in, e_out)?;
-        let (message, gpu_active) = autoreleasepool(|| {
-            let command_buffer = self.context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer().to_owned();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipelines.materialize);
             match &self.buffers.rows {
@@ -526,25 +629,90 @@ impl InstructionClaimSequence {
                 INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
             )?;
             encoder.end_encoding();
-            finish_command::<INSTRUCTION_CLAIM_MESSAGE_COLUMNS>(
-                &self.context,
+            let output = if final_in_a {
+                self.buffers.partial_a.clone()
+            } else {
+                self.buffers.partial_b.clone()
+            };
+            command_buffer.commit();
+            Ok(InstructionClaimInitialMessageCommand {
                 command_buffer,
-                if final_in_a {
-                    &self.buffers.partial_a
-                } else {
-                    &self.buffers.partial_b
-                },
-                "instruction claim first message",
+                output,
+                submitted_at,
+                submit_wall: submitted_at.elapsed(),
+                sequence_identity: self.buffers.gamma_powers.as_ptr() as usize,
+                generation: self.generation,
+            })
+        })
+    }
+
+    fn complete_initial_message(
+        &mut self,
+        command: InstructionClaimInitialMessageCommand,
+    ) -> Result<
+        (
+            [AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
+            InstructionClaimInitialMessageStats,
+        ),
+        MetalError,
+    > {
+        if self.phase != InstructionClaimPhase::Raw
+            || command.sequence_identity != self.buffers.gamma_powers.as_ptr() as usize
+            || command.generation != self.generation
+        {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "the pending first message belongs to a different sequence generation",
+            ));
+        }
+        let completed_before_join =
+            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(command.submitted_at)
+            .saturating_sub(command.submit_wall);
+        command.command_buffer.wait_until_completed();
+        let status = command.command_buffer.status();
+        if status != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(status));
+        }
+        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
+        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        let values = unsafe {
+            // SAFETY: the completed reduction wrote two fields at the front
+            // of the selected shared output buffer.
+            slice::from_raw_parts(
+                command.output.contents().cast::<Fp128>(),
+                INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
             )
-        })?;
-        let timing = InstructionClaimTiming {
-            wall: started.elapsed(),
-            gpu_active,
+        };
+        self.context
+            .validate_inputs("instruction claim first message", values)?;
+        let message = values
+            .iter()
+            .copied()
+            .map(Fp128::into_jolt_field)
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| {
+                MetalError::InvalidInstructionClaimState(
+                    "the first-message output column count changed",
+                )
+            })?;
+        let stats = InstructionClaimInitialMessageStats {
+            wall: command.submitted_at.elapsed(),
+            submit_wall: command.submit_wall,
+            overlap_wall,
+            join_wall: join_started.elapsed(),
+            gpu_active: Duration::from_secs_f64(end - start),
+            completed_before_join,
         };
         self.phase = InstructionClaimPhase::Materialized;
-        self.timing.wall += timing.wall;
-        self.timing.gpu_active += timing.gpu_active;
-        Ok((message, timing))
+        self.timing.wall += stats.wall;
+        self.timing.gpu_active += stats.gpu_active;
+        Ok((message, stats))
     }
 
     pub fn bind_and_message(
