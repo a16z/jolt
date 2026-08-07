@@ -34,7 +34,10 @@ pub(crate) use model::{
     M4_MAX_ROOF_RATES,
 };
 pub(crate) use oracle::{
-    CycleRoundReference, DenseCell, DenseRegisterRelation, Round8Junction, SparseRegisterRelation,
+    CycleRoundReference, DenseCell, DenseRegisterRelation, Round8Junction, RoundZeroBasisSums,
+    RoundZeroInfinityEvent, RoundZeroPairEvents, RoundZeroTernaryBasis, RoundZeroValueEvent,
+    SignedU64, SparseRegisterRelation, ROUND_ZERO_CONSTANT_BASIS, ROUND_ZERO_GAMMA_BASIS,
+    ROUND_ZERO_GAMMA_SQ_BASIS,
 };
 pub(crate) use owner::{
     CertifiedRegisterOwner, CertifiedRegisterOwnerReceipt, RegisterCsr256, RegisterCsr256Parts,

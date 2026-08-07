@@ -54,6 +54,317 @@ impl<F: Field> CycleRoundReference<F> {
     }
 }
 
+pub(crate) const ROUND_ZERO_CONSTANT_BASIS: u8 = 1;
+pub(crate) const ROUND_ZERO_GAMMA_BASIS: u8 = 1 << 1;
+pub(crate) const ROUND_ZERO_GAMMA_SQ_BASIS: u8 = 1 << 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RoundZeroValueEvent {
+    register: u8,
+    value: u64,
+    basis_mask: u8,
+}
+
+impl RoundZeroValueEvent {
+    pub(crate) const fn register(self) -> u8 {
+        self.register
+    }
+
+    pub(crate) const fn value(self) -> u64 {
+        self.value
+    }
+
+    pub(crate) const fn basis_mask(self) -> u8 {
+        self.basis_mask
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SignedU64 {
+    magnitude: u64,
+    negative: bool,
+}
+
+impl SignedU64 {
+    pub(crate) const fn from_endpoints(pre_value: u64, post_value: u64) -> Self {
+        if post_value >= pre_value {
+            Self {
+                magnitude: post_value - pre_value,
+                negative: false,
+            }
+        } else {
+            Self {
+                magnitude: pre_value - post_value,
+                negative: true,
+            }
+        }
+    }
+
+    pub(crate) const fn magnitude(self) -> u64 {
+        self.magnitude
+    }
+
+    pub(crate) const fn is_negative(self) -> bool {
+        self.negative
+    }
+
+    fn to_field<F: Field>(self) -> F {
+        let magnitude = F::from_u64(self.magnitude);
+        if self.negative {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RoundZeroTernaryBasis {
+    coefficients: [i8; 3],
+}
+
+impl RoundZeroTernaryBasis {
+    const fn new(constant: i8, gamma: i8, gamma_sq: i8) -> Self {
+        Self {
+            coefficients: [constant, gamma, gamma_sq],
+        }
+    }
+
+    pub(crate) const fn coefficients(self) -> [i8; 3] {
+        self.coefficients
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RoundZeroInfinityEvent {
+    delta: SignedU64,
+    basis: RoundZeroTernaryBasis,
+}
+
+impl RoundZeroInfinityEvent {
+    pub(crate) const fn delta(self) -> SignedU64 {
+        self.delta
+    }
+
+    pub(crate) const fn basis(self) -> RoundZeroTernaryBasis {
+        self.basis
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RoundZeroPairEvents {
+    zero_events: [Option<RoundZeroValueEvent>; 3],
+    zero_len: usize,
+    infinity_event: Option<RoundZeroInfinityEvent>,
+}
+
+impl RoundZeroPairEvents {
+    /// Builds raw events assuming both rows satisfy the register state flow.
+    pub(crate) fn from_rows_assuming_state_flow(
+        even: RegisterRow,
+        odd: RegisterRow,
+    ) -> Result<Self, RegistersRwV3Error> {
+        validate_round_zero_row(0, even)?;
+        validate_round_zero_row(1, odd)?;
+
+        let mut q_zero = [None; 3];
+        let mut q_zero_len = 0usize;
+        if let Some(write) = even.rd() {
+            push_round_zero_event(
+                &mut q_zero,
+                &mut q_zero_len,
+                RoundZeroValueEvent {
+                    register: write.register(),
+                    value: write.post_value(),
+                    basis_mask: ROUND_ZERO_CONSTANT_BASIS,
+                },
+            );
+        }
+        if let Some(read) = even.rs1() {
+            push_round_zero_event(
+                &mut q_zero,
+                &mut q_zero_len,
+                RoundZeroValueEvent {
+                    register: read.register(),
+                    value: read.value(),
+                    basis_mask: ROUND_ZERO_GAMMA_BASIS,
+                },
+            );
+        }
+        if let Some(read) = even.rs2() {
+            let aliased_rs1 = q_zero[..q_zero_len].iter_mut().flatten().find(|event| {
+                event.basis_mask == ROUND_ZERO_GAMMA_BASIS
+                    && event.register == read.register()
+                    && event.value == read.value()
+            });
+            if let Some(event) = aliased_rs1 {
+                event.basis_mask |= ROUND_ZERO_GAMMA_SQ_BASIS;
+            } else {
+                push_round_zero_event(
+                    &mut q_zero,
+                    &mut q_zero_len,
+                    RoundZeroValueEvent {
+                        register: read.register(),
+                        value: read.value(),
+                        basis_mask: ROUND_ZERO_GAMMA_SQ_BASIS,
+                    },
+                );
+            }
+        }
+
+        let q_infinity = round_zero_infinity_event(even, odd);
+        Ok(Self {
+            zero_events: q_zero,
+            zero_len: q_zero_len,
+            infinity_event: q_infinity,
+        })
+    }
+
+    pub(crate) fn q_zero_events(&self) -> impl Iterator<Item = RoundZeroValueEvent> + '_ {
+        self.zero_events[..self.zero_len].iter().flatten().copied()
+    }
+
+    pub(crate) const fn q_zero_event_count(&self) -> usize {
+        self.zero_len
+    }
+
+    pub(crate) const fn q_infinity_event(&self) -> Option<RoundZeroInfinityEvent> {
+        self.infinity_event
+    }
+
+    /// Multiplies each retained raw event by `weight` once, then scatters that
+    /// product into its constant, gamma, and gamma-squared lanes.
+    pub(crate) fn accumulate_weighted<F: Field>(
+        &self,
+        weight: F,
+        sums: &mut RoundZeroBasisSums<F>,
+    ) -> usize {
+        let mut products = 0usize;
+        for event in self.q_zero_events() {
+            let product = weight * F::from_u64(event.value);
+            products += 1;
+            for (basis, sum) in sums.q_zero.iter_mut().enumerate() {
+                if event.basis_mask & (1 << basis) != 0 {
+                    *sum += product;
+                }
+            }
+        }
+
+        if let Some(event) = self.infinity_event {
+            let product = weight * event.delta.to_field::<F>();
+            products += 1;
+            for (&coefficient, sum) in event
+                .basis
+                .coefficients
+                .iter()
+                .zip(sums.q_infinity.iter_mut())
+            {
+                match coefficient {
+                    -1 => *sum -= product,
+                    0 => {}
+                    1 => *sum += product,
+                    _ => unreachable!("round-zero basis coefficients are ternary"),
+                }
+            }
+        }
+        products
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RoundZeroBasisSums<F> {
+    q_zero: [F; 3],
+    q_infinity: [F; 3],
+}
+
+impl<F: Field> RoundZeroBasisSums<F> {
+    pub(crate) fn zero() -> Self {
+        Self {
+            q_zero: [F::zero(); 3],
+            q_infinity: [F::zero(); 3],
+        }
+    }
+
+    pub(crate) const fn q_zero_basis(self) -> [F; 3] {
+        self.q_zero
+    }
+
+    pub(crate) const fn q_infinity_basis(self) -> [F; 3] {
+        self.q_infinity
+    }
+
+    pub(crate) fn endpoints(self, gamma: F) -> [F; 2] {
+        let gamma_sq = gamma * gamma;
+        [
+            self.q_zero[0] + gamma * self.q_zero[1] + gamma_sq * self.q_zero[2],
+            self.q_infinity[0] + gamma * self.q_infinity[1] + gamma_sq * self.q_infinity[2],
+        ]
+    }
+}
+
+fn push_round_zero_event(
+    events: &mut [Option<RoundZeroValueEvent>; 3],
+    length: &mut usize,
+    event: RoundZeroValueEvent,
+) {
+    debug_assert!(*length < events.len());
+    events[*length] = Some(event);
+    *length += 1;
+}
+
+fn round_zero_infinity_event(
+    even: RegisterRow,
+    odd: RegisterRow,
+) -> Option<RoundZeroInfinityEvent> {
+    let even_write = even.rd();
+    let odd_write = odd.rd();
+    match (even_write, odd_write) {
+        (None, None) => None,
+        (None, Some(write)) => Some(RoundZeroInfinityEvent {
+            delta: SignedU64::from_endpoints(write.pre_value(), write.post_value()),
+            basis: RoundZeroTernaryBasis::new(1, 0, 0),
+        }),
+        (Some(write), odd_write) => {
+            let register = write.register();
+            let gamma = read_indicator(odd.rs1(), register) - read_indicator(even.rs1(), register);
+            let gamma_sq =
+                read_indicator(odd.rs2(), register) - read_indicator(even.rs2(), register);
+            let constant = if odd_write.is_some_and(|odd| odd.register() != register) {
+                -1
+            } else {
+                0
+            };
+            Some(RoundZeroInfinityEvent {
+                delta: SignedU64::from_endpoints(write.pre_value(), write.post_value()),
+                basis: RoundZeroTernaryBasis::new(constant, gamma, gamma_sq),
+            })
+        }
+    }
+}
+
+fn read_indicator(read: Option<RegisterRead>, register: u8) -> i8 {
+    i8::from(read.is_some_and(|read| read.register() == register))
+}
+
+fn validate_round_zero_row(cycle: usize, row: RegisterRow) -> Result<(), RegistersRwV3Error> {
+    for (access, register) in [
+        ("rs1", row.rs1().map(|read| read.register())),
+        ("rs2", row.rs2().map(|read| read.register())),
+        ("rd", row.rd().map(|write| write.register())),
+    ] {
+        if let Some(register) = register {
+            if usize::from(register) >= REGISTER_CSR_COLUMNS {
+                return Err(RegistersRwV3Error::InvalidRegister {
+                    cycle,
+                    access,
+                    register,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Round8Junction<F> {
     round: CycleRoundReference<F>,

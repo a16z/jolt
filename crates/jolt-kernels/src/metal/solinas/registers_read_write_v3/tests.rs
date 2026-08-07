@@ -116,6 +116,123 @@ fn fixture(cycles: usize) -> (Vec<RegisterRow>, [u64; 128], Vec<F>, [u64; 128]) 
     (rows, initial, rd_inc, state)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PairWriteCase {
+    None,
+    EvenOnly,
+    OddOnly,
+    BothSame,
+    BothDifferent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PairReadChoice {
+    None,
+    EvenRd,
+    OddRd,
+    Other,
+}
+
+const PAIR_WRITE_CASES: [PairWriteCase; 5] = [
+    PairWriteCase::None,
+    PairWriteCase::EvenOnly,
+    PairWriteCase::OddOnly,
+    PairWriteCase::BothSame,
+    PairWriteCase::BothDifferent,
+];
+const PAIR_READ_CHOICES: [PairReadChoice; 4] = [
+    PairReadChoice::None,
+    PairReadChoice::EvenRd,
+    PairReadChoice::OddRd,
+    PairReadChoice::Other,
+];
+const PAIR_DELTA_ENDPOINTS: [(u64, u64); 5] =
+    [(23, 23), (17, 29), (29, 17), (0, u64::MAX), (u64::MAX, 0)];
+
+fn pair_read_register(choice: PairReadChoice, write_case: PairWriteCase) -> Option<u8> {
+    match choice {
+        PairReadChoice::None => None,
+        PairReadChoice::EvenRd => Some(7),
+        PairReadChoice::OddRd => Some(if write_case == PairWriteCase::BothSame {
+            7
+        } else {
+            11
+        }),
+        PairReadChoice::Other => Some(13),
+    }
+}
+
+fn pair_read(
+    choice: PairReadChoice,
+    write_case: PairWriteCase,
+    state: &[u64; 128],
+) -> Option<RegisterRead> {
+    pair_read_register(choice, write_case)
+        .map(|register| RegisterRead::new(register, state[usize::from(register)]))
+}
+
+fn pair_fixture(
+    write_case: PairWriteCase,
+    selected_delta: (u64, u64),
+    reads: [PairReadChoice; 4],
+) -> ([RegisterRow; 2], [u64; 128], [F; 2]) {
+    let mut initial = core::array::from_fn(|register| register as u64 * 17 + 3);
+    match write_case {
+        PairWriteCase::EvenOnly | PairWriteCase::BothSame | PairWriteCase::BothDifferent => {
+            initial[7] = selected_delta.0;
+        }
+        PairWriteCase::OddOnly => initial[11] = selected_delta.0,
+        PairWriteCase::None => {}
+    }
+    let mut state = initial;
+
+    let even_rd = match write_case {
+        PairWriteCase::EvenOnly | PairWriteCase::BothSame | PairWriteCase::BothDifferent => {
+            Some(RegisterWrite::new(7, selected_delta.0, selected_delta.1))
+        }
+        PairWriteCase::None | PairWriteCase::OddOnly => None,
+    };
+    let even = RegisterRow::new(
+        pair_read(reads[0], write_case, &state),
+        pair_read(reads[1], write_case, &state),
+        even_rd,
+    );
+    if let Some(write) = even_rd {
+        state[usize::from(write.register())] = write.post_value();
+    }
+
+    let odd_rd = match write_case {
+        PairWriteCase::OddOnly => Some(RegisterWrite::new(11, selected_delta.0, selected_delta.1)),
+        PairWriteCase::BothSame => {
+            let pre = state[7];
+            let post = if pre == u64::MAX { pre - 1 } else { pre + 1 };
+            Some(RegisterWrite::new(7, pre, post))
+        }
+        PairWriteCase::BothDifferent => {
+            let pre = state[11];
+            Some(RegisterWrite::new(11, pre, pre + 1))
+        }
+        PairWriteCase::None | PairWriteCase::EvenOnly => None,
+    };
+    let odd = RegisterRow::new(
+        pair_read(reads[2], write_case, &state),
+        pair_read(reads[3], write_case, &state),
+        odd_rd,
+    );
+
+    let increment = |write: Option<RegisterWrite>| {
+        write.map_or_else(
+            || f(0),
+            |write| F::from_i128(i128::from(write.post_value()) - i128::from(write.pre_value())),
+        )
+    };
+    (
+        [even, odd],
+        initial,
+        [increment(even_rd), increment(odd_rd)],
+    )
+}
+
 fn event_counts(rows: &[RegisterRow]) -> RegisterEventCounts {
     RegisterEventCounts::new(
         rows.iter().filter(|row| row.rs1().is_some()).count(),
@@ -225,6 +342,126 @@ fn log26_geometry_census_and_roof_are_reconstructed() {
         0.000_001,
     );
     assert_near(ROUND8_JUNCTION_CAP_SECONDS, 0.007_941_690, 1e-12);
+}
+
+#[test]
+fn round_zero_basis_events_match_dense_relation_exhaustively() {
+    let gammas = [f(0), f(1), f(19)];
+    let weights = [f(0), f(1), f(23), F::from_u64(u64::MAX)];
+    for write_case in PAIR_WRITE_CASES {
+        let deltas = if write_case == PairWriteCase::None {
+            &PAIR_DELTA_ENDPOINTS[..1]
+        } else {
+            &PAIR_DELTA_ENDPOINTS[..]
+        };
+        for &selected_delta in deltas {
+            for &even_rs1 in &PAIR_READ_CHOICES {
+                for &even_rs2 in &PAIR_READ_CHOICES {
+                    for &odd_rs1 in &PAIR_READ_CHOICES {
+                        for &odd_rs2 in &PAIR_READ_CHOICES {
+                            let reads = [even_rs1, even_rs2, odd_rs1, odd_rs2];
+                            let (rows, initial, rd_inc) =
+                                pair_fixture(write_case, selected_delta, reads);
+                            let events = RoundZeroPairEvents::from_rows_assuming_state_flow(
+                                rows[0], rows[1],
+                            )
+                            .unwrap();
+                            assert!(events.q_zero_event_count() <= 3);
+                            let expected_products = events.q_zero_event_count()
+                                + usize::from(events.q_infinity_event().is_some());
+                            for gamma in gammas {
+                                let dense = DenseRegisterRelation::build(
+                                    &rows,
+                                    &initial,
+                                    &[f(37)],
+                                    gamma,
+                                    &rd_inc,
+                                )
+                                .unwrap()
+                                .cycle_round()
+                                .unwrap();
+                                for weight in weights {
+                                    let mut sums = RoundZeroBasisSums::zero();
+                                    let products = events.accumulate_weighted(weight, &mut sums);
+                                    assert_eq!(products, expected_products);
+                                    assert_eq!(
+                                        sums.endpoints(gamma),
+                                        [
+                                            weight * dense.q_zero(),
+                                            weight * dense.q_infinity()
+                                        ],
+                                        "write={write_case:?} delta={selected_delta:?} reads={reads:?} gamma={gamma:?} weight={weight:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn round_zero_correction_table_keeps_zero_delta_writes_present() {
+    let reads = [
+        PairReadChoice::EvenRd,
+        PairReadChoice::None,
+        PairReadChoice::None,
+        PairReadChoice::EvenRd,
+    ];
+    let expected = [
+        (PairWriteCase::None, None),
+        (PairWriteCase::EvenOnly, Some([0, -1, 1])),
+        (PairWriteCase::OddOnly, Some([1, 0, 0])),
+        (PairWriteCase::BothSame, Some([0, -1, 1])),
+        (PairWriteCase::BothDifferent, Some([-1, -1, 1])),
+    ];
+
+    for (write_case, coefficients) in expected {
+        let (rows, _, _) = pair_fixture(write_case, (23, 23), reads);
+        let events = RoundZeroPairEvents::from_rows_assuming_state_flow(rows[0], rows[1]).unwrap();
+        let event = events.q_infinity_event();
+        assert_eq!(
+            event.map(|event| event.basis().coefficients()),
+            coefficients,
+            "correction event mismatch for {write_case:?}"
+        );
+        if let Some(event) = event {
+            assert_eq!(event.delta().magnitude(), 0);
+            assert!(!event.delta().is_negative());
+        }
+    }
+}
+
+#[test]
+fn round_zero_q_zero_reuses_one_product_for_aliased_reads() {
+    let reads = [
+        PairReadChoice::Other,
+        PairReadChoice::Other,
+        PairReadChoice::None,
+        PairReadChoice::None,
+    ];
+    let (rows, _, _) = pair_fixture(PairWriteCase::None, (23, 23), reads);
+    let events = RoundZeroPairEvents::from_rows_assuming_state_flow(rows[0], rows[1]).unwrap();
+    let q_zero = events.q_zero_events().collect::<Vec<_>>();
+    assert_eq!(q_zero.len(), 1);
+    assert_eq!(q_zero[0].register(), 13);
+    assert_eq!(q_zero[0].value(), 13 * 17 + 3);
+    assert_eq!(
+        q_zero[0].basis_mask(),
+        ROUND_ZERO_GAMMA_BASIS | ROUND_ZERO_GAMMA_SQ_BASIS
+    );
+}
+
+#[test]
+fn signed_u64_covers_the_full_endpoint_difference_range() {
+    let positive = SignedU64::from_endpoints(0, u64::MAX);
+    assert_eq!(positive.magnitude(), u64::MAX);
+    assert!(!positive.is_negative());
+    let negative = SignedU64::from_endpoints(u64::MAX, 0);
+    assert_eq!(negative.magnitude(), u64::MAX);
+    assert!(negative.is_negative());
 }
 
 #[test]
