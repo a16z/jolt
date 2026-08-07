@@ -1,0 +1,84 @@
+{
+  "schema": "spartan_outer_successor_screening_v1",
+  "status": "static_design_only",
+  "recorded_at": "2026-08-07T01:22:01Z",
+  "hardware": "Apple M4 Max",
+  "scale": {
+    "log_t": 26,
+    "cycles": 67108864,
+    "rayon_threads": 16
+  },
+  "source_fingerprints": {
+    "optimized_spartan_outer_sha256": "7d957fc73e8cf7f034de503e4a42d2ae8f7d690e4640db8796bfd1a9bce39a47",
+    "metal_adapter_sha256": "1648b618f22227d13d5999946f7cbe83255e3f5bcc628f7be640018dc7cd38de",
+    "uniskip_shader_sha256": "b1a7caab539c944334534e89ecdd6bc3e8966f6983c5d81385687d48ed6f5c8d",
+    "remainder_shader_sha256": "39cc30443fb69992f353016a568f29da4002a3250931651d98e90e2fc6242996",
+    "outer_spec_sha256": "993132c45e5460ff448d7b8cf53c73ebb3c5a038c32cbf09869a2c4b8d8fda6e"
+  },
+  "measured_diagnostic": {
+    "revision": "9de144572cb4fe79bb7467fa406b16443a5331c9",
+    "artifact": "/private/tmp/jolt-ram-raf-9de144572/benchmark-runs/metal-piop-eval/20260807-000732-052589/result.json",
+    "pairs": 1,
+    "exact_proofs": true,
+    "acceptance_eligible": false,
+    "cpu_uniskip_ms": 2722.459375,
+    "metal_uniskip_ms": 307.663833,
+    "uniskip_speedup": 8.8488118621,
+    "cpu_remainder_ms": 1093.453625,
+    "metal_remainder_ms": 222.63825,
+    "remainder_speedup": 4.9113466576,
+    "cpu_stage_ms": 3816.080708,
+    "metal_stage_ms": 530.54225,
+    "stage_speedup": 7.1927932375,
+    "metal_gpu_active_ms": {
+      "materialize": 84.8365,
+      "first_bind": 25.013958,
+      "dense_prefix": 15.002958,
+      "openings": 61.812625
+    }
+  },
+  "retained_controls": {
+    "copy_gib_per_second": 420.68,
+    "bind_message_gproducts_per_second": 24.08,
+    "uniskip_gproducts_per_second": 16.42,
+    "u32_gmadds_per_second": 958.0
+  },
+  "derived_bounds_ms": {
+    "materialize_compute": 64.098998,
+    "prefix_traffic": 24.948,
+    "opening_compute": 47.37752,
+    "remainder_bottomed_out": 136.43,
+    "remainder_eighty_percent_roof": 170.54,
+    "remainder_five_x_cap": 218.690725,
+    "remainder_eight_x_cap": 136.681703,
+    "stage_eight_x_cap": 477.010089,
+    "remainder_needed_for_stage_eight_x": 169.132298
+  },
+  "candidate_envelopes_ms": {
+    "materialize": 75.0,
+    "stream_and_prefix": 32.0,
+    "scalar_openings": 55.0,
+    "host_and_service": 7.0,
+    "scalar_remainder_total": 169.0,
+    "scalar_remainder_speedup": 6.4701397929,
+    "complete_stage_speedup": 8.0022193946,
+    "carrier_extra_product_floor": 5.574,
+    "carrier_max_incremental_stage_wall": 7.0
+  },
+  "decision": {
+    "verdict": "implement_arithmetic_probe_then_successor",
+    "retain_uniskip": true,
+    "first_probe": "deferred signed Bz dot with one generalized reduction per stream",
+    "second_probe": "challenge-collapsed Az stream bind",
+    "third_probe": "low-coordinate scalar opening partials",
+    "portfolio_probe": "retain exact current/successor partials for Spartan Shift",
+    "standalone_remainder_eight_x": "rejected under unchanged work bound",
+    "complete_stage_eight_x": "analytically viable at 169 ms remainder"
+  },
+  "evidence_limits": [
+    "The latest attribution is one diagnostic pair and cannot promote a kernel.",
+    "Traffic is a logical-byte model, not a hardware-counter capture.",
+    "Occupancy, register count, spills, and achieved issue rates are not measured.",
+    "No Rust, Metal, compiler, Cargo, or GPU test was run for this design-only packet."
+  ]
+}
