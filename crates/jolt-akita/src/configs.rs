@@ -74,7 +74,6 @@ macro_rules! delegate_preset {
         $name:ident,
         $base:ty,
         $catalog:expr,
-        $selection_payload_slack_permille:expr,
         $basis_range:expr,
         $onehot_chunk_size:expr
     ) => {
@@ -156,10 +155,6 @@ macro_rules! delegate_preset {
                 <$base>::recursive_setup_planning()
             }
 
-            fn selection_payload_slack_permille() -> u32 {
-                $selection_payload_slack_permille
-            }
-
             fn supports_multi_group_final_commit() -> bool {
                 <$base>::supports_multi_group_final_commit()
             }
@@ -205,7 +200,6 @@ delegate_preset!(
     JoltD64OneHotK16,
     akita_config::proof_optimized::fp128::D64OneHotK16,
     crate::schedules::jolt_fp128_d64_onehot_k16_table(),
-    10,
     akita_config::proof_optimized::fp128::D64OneHotK16::basis_range(),
     akita_config::proof_optimized::fp128::D64OneHotK16::onehot_chunk_size()
 );
@@ -215,7 +209,6 @@ delegate_preset!(
     JoltD64OneHotK256,
     akita_config::proof_optimized::fp128::D64OneHot,
     crate::schedules::jolt_fp128_d64_onehot_k256_table(),
-    10,
     akita_config::proof_optimized::fp128::D64OneHot::basis_range(),
     akita_config::proof_optimized::fp128::D64OneHot::onehot_chunk_size()
 );
@@ -225,7 +218,6 @@ delegate_preset!(
     JoltD128OneHotK256,
     akita_config::proof_optimized::fp128::D128OneHot,
     None,
-    10,
     (6, 6),
     256
 );
@@ -235,7 +227,6 @@ delegate_preset!(
     JoltD64Dense,
     akita_config::proof_optimized::fp128::D64Dense,
     None,
-    0,
     akita_config::proof_optimized::fp128::D64Dense::basis_range(),
     akita_config::proof_optimized::fp128::D64Dense::onehot_chunk_size()
 );
@@ -261,20 +252,20 @@ mod tests {
         let layout = akita_types::OpeningClaimsLayout::new(41, 1).unwrap();
         let schedule = JoltD128OneHotK256::get_params_for_prove(&layout).unwrap();
         let commitment = &schedule.root.params.final_group.commitment;
-        assert_eq!(commitment.inner_commit_matrix.output_rank(), 3);
-        assert_eq!(commitment.num_positions_per_block, 1 << 21);
+        assert_eq!(commitment.inner_commit_matrix.output_rank(), 4);
+        assert_eq!(commitment.num_positions_per_block, 1 << 18);
 
         let envelope = JoltD128OneHotK256::max_setup_matrix_size(41, 1).unwrap();
-        assert_eq!(envelope.max_setup_len * 128 * 16, 12usize << 30);
+        assert_eq!(envelope.max_setup_len * 128 * 16, 11usize << 30);
     }
 
     #[test]
     #[expect(clippy::unwrap_used)]
-    fn d64_k256_policy_prefers_a_narrower_root_within_payload_slack() {
+    fn d64_k256_policy_uses_the_min_payload_geometry() {
         let layout = akita_types::OpeningClaimsLayout::new(39, 1).unwrap();
         let schedule = JoltD64OneHotK256::get_params_for_prove(&layout).unwrap();
         let commitment = &schedule.root.params.final_group.commitment;
-        assert_eq!(commitment.inner_commit_matrix.output_rank(), 6);
-        assert_eq!(commitment.num_positions_per_block, 1 << 21);
+        assert_eq!(commitment.inner_commit_matrix.output_rank(), 7);
+        assert_eq!(commitment.num_positions_per_block, 1 << 20);
     }
 }
