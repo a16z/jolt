@@ -29,6 +29,7 @@ use super::super::geometry::byte_place_vars;
     deserialize = "C: serde::Deserialize<'de>"
 ))]
 #[relation(ProgramImageReconstruction)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct ProgramImageReconstructionOutputClaims<C> {
     #[opening(committed = ProgramImageBytes)]
     pub bytes: C,

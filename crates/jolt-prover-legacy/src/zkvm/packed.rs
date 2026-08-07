@@ -34,6 +34,7 @@ use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCom
 use jolt_openings::{
     prove_packed_openings, CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim,
     PackedProverGroup, PackedProverObject, PrefixPackedStatement, PrefixPacking,
+    TransparentObjectSetup,
 };
 use jolt_poly::OneHotPolynomial;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
@@ -393,28 +394,6 @@ impl crate::zkvm::proof::ProofCurve<AkitaFp128> for AkitaNoCurve {
     }
 }
 
-/// The transparent setup of a singleton commitment object (advice byte
-/// columns, `ProgramOneHot`): one polynomial at `num_vars`, fixed zero seed — the
-/// convention `akita_verifier_preprocessing` re-derives on the verifier
-/// side, so the two must stay a single definition.
-fn transparent_object_setup(
-    num_vars: usize,
-) -> Result<
-    (
-        <AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
-        <AkitaScheme as VerifierCommitmentScheme>::VerifierSetup,
-    ),
-    jolt_openings::OpeningsError,
-> {
-    // Every auxiliary packed object (advice byte columns, the precommitted
-    // program) commits through the sparse-unit/dense flavor, so the one-hot
-    // backend setup — which dominates the setup cost at these shapes — is
-    // never built.
-    <AkitaScheme as VerifierCommitmentScheme>::setup(jolt_akita::AkitaSetupParams::dense_only(
-        num_vars, 1, [0u8; 32],
-    ))
-}
-
 /// Builds the advice commitment object's prover setup from the public advice
 /// shape alone — preprocessing-time data, so per-prove commits reuse it via
 /// [`JoltProverPreprocessing::untrusted_advice_object_setup`].
@@ -423,11 +402,12 @@ pub fn advice_object_setup(
 ) -> Result<<AkitaScheme as VerifierCommitmentScheme>::ProverSetup, VerifierError> {
     let word_vars = (max_advice_bytes / 8).next_power_of_two().log_2();
     let cell_vars = word_byte_num_vars(word_vars);
-    let (setup, _verifier_setup) = transparent_object_setup(cell_vars).map_err(|error| {
-        VerifierError::FinalOpeningVerificationFailed {
-            reason: error.to_string(),
-        }
-    })?;
+    let (setup, _verifier_setup) =
+        AkitaScheme::transparent_object_setup(cell_vars).map_err(|error| {
+            VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            }
+        })?;
     Ok(setup)
 }
 
@@ -547,7 +527,7 @@ pub fn commit_program_one_hot(
     )
     .map_err(commit_failed)?;
     let witness = SparseUnitPolynomial::<AkitaField>::new(packing.packed_num_vars, one_positions);
-    let (setup, _verifier_setup) = transparent_object_setup(packing.packed_num_vars)
+    let (setup, _verifier_setup) = AkitaScheme::transparent_object_setup(packing.packed_num_vars)
         .map_err(|error| commit_failed(error.to_string()))?;
     let (commitment, hint) = <AkitaScheme as VerifierCommitmentScheme>::commit(&witness, &setup)
         .map_err(|error| commit_failed(error.to_string()))?;
@@ -1691,8 +1671,9 @@ pub fn akita_verifier_preprocessing(
     let advice_setup = |max_bytes: usize| {
         (max_bytes > 0).then(|| {
             let word_vars = (max_bytes / 8).next_power_of_two().log_2();
-            let (_, verifier_setup) = transparent_object_setup(word_byte_num_vars(word_vars))
-                .expect("the transparent advice-shape setup must derive");
+            let (_, verifier_setup) =
+                AkitaScheme::transparent_object_setup(word_byte_num_vars(word_vars))
+                    .expect("the transparent advice-shape setup must derive");
             verifier_setup
         })
     };
@@ -1722,8 +1703,9 @@ pub fn akita_verifier_preprocessing(
         };
         let packing =
             precommitted_packing(&shape).expect("the canonical precommitted packing must exist");
-        let (_, program_verifier_setup) = transparent_object_setup(packing.packed_num_vars)
-            .expect("the transparent program-shape setup must derive");
+        let (_, program_verifier_setup) =
+            AkitaScheme::transparent_object_setup(packing.packed_num_vars)
+                .expect("the transparent program-shape setup must derive");
         verifier_preprocessing.program_one_hot_setup = Some(program_verifier_setup);
     }
     verifier_preprocessing

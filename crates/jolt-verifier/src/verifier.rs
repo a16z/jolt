@@ -664,18 +664,41 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         }
     }
     #[cfg(feature = "akita")]
-    {
-        append_length_prefixed(transcript, b"commitment", &proof.commitments);
-        if let Some(commitment) = proof.untrusted_advice_commitment.as_ref() {
-            append_length_prefixed(transcript, b"untrusted_advice", commitment);
-        }
-        if let Some(commitment) = trusted_advice_commitment {
-            append_length_prefixed(transcript, b"trusted_advice", commitment);
-        }
-        if let Some(committed) = preprocessing.program.committed() {
-            let commitment = &committed.program_one_hot_commitment;
-            append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
-        }
+    absorb_packed_commitments(
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
+        trusted_advice_commitment,
+        preprocessing
+            .program
+            .committed()
+            .map(|committed| &committed.program_one_hot_commitment),
+        transcript,
+    );
+}
+
+/// Absorbs the packed commitment objects in canonical object order:
+/// `OneHotTrace`, untrusted advice, trusted advice, `ProgramOneHot`. Shared
+/// verbatim by the packed prover's stage 0.
+#[cfg(feature = "akita")]
+pub fn absorb_packed_commitments<C, T>(
+    one_hot_trace: &C,
+    untrusted_advice_commitment: Option<&C>,
+    trusted_advice_commitment: Option<&C>,
+    program_one_hot_commitment: Option<&C>,
+    transcript: &mut T,
+) where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    append_length_prefixed(transcript, b"commitment", one_hot_trace);
+    if let Some(commitment) = untrusted_advice_commitment {
+        append_length_prefixed(transcript, b"untrusted_advice", commitment);
+    }
+    if let Some(commitment) = trusted_advice_commitment {
+        append_length_prefixed(transcript, b"trusted_advice", commitment);
+    }
+    if let Some(commitment) = program_one_hot_commitment {
+        append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
     }
 }
 

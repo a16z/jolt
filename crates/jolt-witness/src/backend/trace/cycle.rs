@@ -72,6 +72,34 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         Ok(values)
     }
 
+    /// Materializes one `UnsignedIncChunk`/`UnsignedIncMsb` column of the
+    /// packed (lattice) witness as the flat address-major `(K x T)` grid,
+    /// `K = 2^committed_chunk_bits`. Every cycle is hot: padding rows encode
+    /// the zero delta as lane 0 of each chunk and lane 1 of the msb.
+    pub(crate) fn materialize_unsigned_inc_one_hot<F: Field>(
+        &self,
+        lane: crate::witnesses::UnsignedIncLane,
+    ) -> Result<Vec<F>, WitnessError> {
+        let chunk_bits = self.config.one_hot.committed_chunk_bits();
+        let cycles = checked_pow2(self.config.log_t)?;
+        let hot_addresses: Vec<usize> = self.walk_cycles(|row, next, env| {
+            crate::witnesses::UnsignedIncHot::extract_indexed(lane, row, next, env).map(|hot| hot.0)
+        })?;
+        let mut values = vec![F::zero(); checked_pow2(self.one_hot_log_rows()?)?];
+        for (cycle, address) in hot_addresses.into_iter().enumerate() {
+            if address >> chunk_bits != 0 {
+                return Err(WitnessError::InvalidWitnessData {
+                    label: JOLT_VM_LABEL,
+                    reason: format!(
+                        "unsigned-inc hot lane {address} outside the 2^{chunk_bits} lane domain"
+                    ),
+                });
+            }
+            values[address * cycles + cycle] = F::one();
+        }
+        Ok(values)
+    }
+
     /// One pass over `2^log_t` cycles with the one-row lookahead window;
     /// rows beyond the trace are padding (default) rows.
     ///

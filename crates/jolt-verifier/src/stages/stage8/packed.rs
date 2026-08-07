@@ -342,7 +342,7 @@ where
 
 /// Assembles one object's statement: each of its packing's canonical columns
 /// paired with that column's leaf claim.
-fn object_statement<F, C>(
+pub fn object_statement<F, C>(
     packing: &PrefixPacking<JoltCommittedPolynomial>,
     commitment: C,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
@@ -371,7 +371,7 @@ where
 /// reconstruction outputs and keyed by committed polynomial. Coverage against
 /// the packings is machine-checked downstream by `prepare_statement`
 /// (one-claim-per-slot, no gaps, per-slot point arity).
-fn leaf_claims<F: Field>(
+pub fn leaf_claims<F: Field>(
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
 ) -> BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>> {

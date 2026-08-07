@@ -52,6 +52,7 @@ impl LatticeBooleanityDimensions {
     deserialize = "C: serde::Deserialize<'de>"
 ))]
 #[relation(Booleanity)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct LatticeBooleanityOutputClaims<C> {
     #[opening(committed = InstructionRa)]
     pub instruction_ra: Vec<C>,

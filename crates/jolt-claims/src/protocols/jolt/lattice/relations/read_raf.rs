@@ -133,6 +133,7 @@ impl SymbolicSumcheck for LatticeReadRafAddressPhase {
     deserialize = "C: serde::Deserialize<'de>"
 ))]
 #[relation(BytecodeReadRaf)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct LatticeBytecodeReadRafOutputClaims<C> {
     #[opening(committed = BytecodeRa)]
     pub bytecode_ra: Vec<C>,
