@@ -59,7 +59,7 @@ mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
-mod support;
+pub(crate) mod support;
 
 pub use bytecode_read_raf::{
     BytecodeCycleAlgebra, OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle,

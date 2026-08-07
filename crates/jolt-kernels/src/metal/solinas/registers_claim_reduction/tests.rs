@@ -86,8 +86,21 @@ fn linear_q_abi_and_slots_are_fixed() {
         ],
         [0, 1, 2, 3, 4, 5, 6]
     );
+    assert_eq!(
+        [
+            DIRECT_FOLD_RD_WRITE_VALUE_SLOT,
+            DIRECT_FOLD_RS1_VALUE_SLOT,
+            DIRECT_FOLD_RS2_VALUE_SLOT,
+            DIRECT_FOLD_EQ_PREFIX_SLOT,
+            DIRECT_FOLD_OUTPUT_SLOT,
+            DIRECT_FOLD_PARAMS_SLOT,
+            DIRECT_FOLD_THREADGROUP_SLOT,
+        ],
+        [0, 1, 2, 3, 4, 5, 0]
+    );
     assert!(SOURCE.contains("kernel void solinas_registers_claim_build_linear_q"));
     assert!(SOURCE.contains("kernel void solinas_registers_claim_build_linear_q_canonical"));
+    assert!(SOURCE.contains("kernel void solinas_registers_claim_fold_direct"));
 }
 
 #[test]
@@ -252,4 +265,30 @@ fn metal_linear_q_matches_the_unfactored_oracle() {
             );
         }
     }
+
+    let prefix_challenges = challenge_point(geometry.prefix_vars());
+    assert!(matches!(
+        context.prepare_registers_claim_direct_fold(
+            &resident,
+            &prefix_challenges[..prefix_challenges.len() - 1],
+            RegistersClaimKernelConfig::default(),
+        ),
+        Err(RegistersClaimLinearQError::WrongPrefixChallengeCount {
+            expected: 6,
+            actual: 5,
+        })
+    ));
+    let expected = fold_direct(geometry, planes, &prefix_challenges).unwrap();
+    let invocation = context
+        .prepare_registers_claim_direct_fold(
+            &resident,
+            &prefix_challenges,
+            RegistersClaimKernelConfig::default(),
+        )
+        .unwrap();
+    assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+    let observation = invocation.execute_timed().unwrap();
+    assert_eq!(observation.outputs, expected);
+    assert_eq!(observation.useful_half_width_terms, 3 * rows as u64);
+    assert_eq!(observation.threadgroups, geometry.suffix_elements());
 }

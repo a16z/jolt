@@ -47,9 +47,18 @@ pub const LINEAR_Q_EQ_SUFFIX_SLOT: u64 = 4;
 pub const LINEAR_Q_OUTPUT_SLOT: u64 = 5;
 pub const LINEAR_Q_PARAMS_SLOT: u64 = 6;
 
+pub const DIRECT_FOLD_RD_WRITE_VALUE_SLOT: u64 = 0;
+pub const DIRECT_FOLD_RS1_VALUE_SLOT: u64 = 1;
+pub const DIRECT_FOLD_RS2_VALUE_SLOT: u64 = 2;
+pub const DIRECT_FOLD_EQ_PREFIX_SLOT: u64 = 3;
+pub const DIRECT_FOLD_OUTPUT_SLOT: u64 = 4;
+pub const DIRECT_FOLD_PARAMS_SLOT: u64 = 5;
+pub const DIRECT_FOLD_THREADGROUP_SLOT: u64 = 0;
+
 pub(crate) const BUILD_LINEAR_PIPELINE: &str = "solinas_registers_claim_build_linear_q";
 pub(crate) const BUILD_LINEAR_CANONICAL_PIPELINE: &str =
     "solinas_registers_claim_build_linear_q_canonical";
+pub(crate) const DIRECT_FOLD_PIPELINE: &str = "solinas_registers_claim_fold_direct";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RegistersClaimAccumulator {

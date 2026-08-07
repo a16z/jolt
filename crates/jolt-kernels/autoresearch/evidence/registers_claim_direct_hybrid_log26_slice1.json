@@ -1,0 +1,78 @@
+{
+  "schema": "jolt-metal-kernel-screen/v1",
+  "recorded_at": "2026-08-07T08:54:24-04:00",
+  "classification": "diagnostic_slice_not_promotion_evidence",
+  "device": {
+    "name": "Apple M4 Max",
+    "macos": "26.6",
+    "metal_execution_width": 32,
+    "max_buffer_length_bytes": 86586540032,
+    "max_threadgroup_memory_bytes": 32768
+  },
+  "geometry": {
+    "trace_elements": 67108864,
+    "log_trace_elements": 26,
+    "prefix_elements": 8192,
+    "suffix_elements": 8192
+  },
+  "command": "JOLT_SOLINAS_BENCH_FAMILY=registers-claim-linear-q JOLT_SOLINAS_BENCH_ELEMENTS=67108864 JOLT_METAL_REGISTERS_CLAIM_WARMUP_MS=100 JOLT_METAL_REGISTERS_CLAIM_MEASUREMENT_MS=500 cargo bench -p jolt-kernels --features metal,test-utils --bench metal_solinas -- --noplot",
+  "criterion": {
+    "sample_size": 10,
+    "q_projection": {
+      "useful_half_width_terms": 201326592,
+      "threads_per_threadgroup": 128,
+      "active_ms": {
+        "lower": 6.0726,
+        "estimate": 6.0791,
+        "upper": 6.0871
+      },
+      "resident_wall_ms": {
+        "lower": 6.6264,
+        "estimate": 6.6554,
+        "upper": 6.6767
+      },
+      "active_useful_terms_per_second": 33118000000
+    },
+    "direct_midpoint_fold": {
+      "useful_half_width_terms": 201326592,
+      "threads_per_threadgroup": 128,
+      "dynamic_threadgroup_bytes": 192,
+      "active_ms": {
+        "lower": 5.5908,
+        "estimate": 5.5966,
+        "upper": 5.6040
+      },
+      "resident_wall_ms": {
+        "lower": 6.0984,
+        "estimate": 6.1429,
+        "upper": 6.1897
+      },
+      "active_useful_terms_per_second": 35973000000
+    }
+  },
+  "single_cold_screen": {
+    "temporary_standalone_setup_ms": 73.835,
+    "q_active_ms": 15.073,
+    "q_warm_active_ms": 6.420,
+    "q_warm_wall_ms": 6.991,
+    "direct_fold_active_ms": 5.629,
+    "direct_fold_wall_ms": 6.348
+  },
+  "frozen_cpu_member": {
+    "optimized_cpu_median_ms": 99.905582,
+    "five_x_budget_ms": 19.981116,
+    "eight_x_budget_ms": 12.488197
+  },
+  "analysis": {
+    "two_gpu_phase_resident_wall_estimate_ms": 12.7983,
+    "five_x_remaining_budget_ms": 7.182816,
+    "gpu_phase_only_speedup_over_cpu": 7.806159,
+    "promotion_blockers": [
+      "The 73.835 ms second producer/upload is outside the two resident phase medians and makes the standalone path ineligible.",
+      "A fair resident-PIOP boundary must co-produce or replace the native register planes in the stage-1 owner.",
+      "Complete host prefix/suffix round time and producer attribution have not been measured in alternating pairs.",
+      "The midpoint still folds all three columns; the planned InstructionInput rs1/rs2 alias handoff can reduce this to the rd column."
+    ],
+    "decision": "Keep the exact DirectHybrid state machine and runtime. Do not enable it by default until the one-pass owner and complete-member five-pair evaluator clear 5x."
+  }
+}

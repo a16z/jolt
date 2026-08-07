@@ -14,6 +14,7 @@ use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig
 use super::instruction_read_raf::InstructionReadRafMetalConfig;
 use super::ram_raf_evaluation::RamRafEvaluationMetalConfig;
 use super::ram_val_check::RamValCheckMetalConfig;
+use super::registers_claim_reduction::RegistersClaimReductionMetalConfig;
 use super::registers_val_evaluation::RegistersValEvaluationMetalConfig;
 #[cfg(feature = "test-utils")]
 use super::solinas::OuterKernelArtifact;
@@ -38,6 +39,8 @@ pub struct MetalConfig {
     pub instruction_claim_reduction: InstructionClaimReductionMetalConfig,
     /// Stage-3 instruction-input virtualization settings.
     pub instruction_input: InstructionInputMetalConfig,
+    /// Stage-3 registers claim-reduction settings.
+    pub registers_claim_reduction: RegistersClaimReductionMetalConfig,
     /// Stage-5 instruction read-RAF settings.
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-5 registers value-evaluation settings.
@@ -134,6 +137,7 @@ impl MetalBackend {
             config.instruction_claim_reduction.trace_cutoff_elements,
             config.instruction_input.trace_cutoff_elements,
             config.instruction_input.cutoff_elements,
+            config.registers_claim_reduction.trace_cutoff_elements,
             config.registers_val_evaluation.trace_cutoff_elements,
             config.registers_val_evaluation.cutoff_elements,
             config.ram_raf_evaluation.dispatch.trace_cutoff,
@@ -255,6 +259,7 @@ where
         self.spartan_shift = Box::new(metal.clone());
         self.instruction_claim_reduction = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
+        self.registers_claim_reduction = Box::new(metal.clone());
         self.ram_read_write = Box::new(metal.clone());
         self.ram_raf_evaluation = Box::new(metal.clone());
         self.ram_val_check = Box::new(metal.clone());

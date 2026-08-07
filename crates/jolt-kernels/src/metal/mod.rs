@@ -12,6 +12,7 @@ mod instruction_ra_virtualization;
 mod instruction_read_raf;
 mod ram_raf_evaluation;
 mod ram_val_check;
+mod registers_claim_reduction;
 mod registers_val_evaluation;
 pub mod solinas;
 mod spartan_outer;
@@ -35,6 +36,9 @@ pub use instruction_read_raf::InstructionReadRafMetalConfig;
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
 pub use ram_raf_evaluation::RamRafEvaluationMetalConfig;
 pub use ram_val_check::RamValCheckMetalConfig;
+pub use registers_claim_reduction::{
+    RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
+};
 pub use registers_val_evaluation::RegistersValEvaluationMetalConfig;
 #[cfg(feature = "test-utils")]
 #[doc(hidden)]

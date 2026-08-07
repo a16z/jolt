@@ -50,7 +50,7 @@ use crate::{
 /// Per-cycle `[rd write value, rs1 value, rs2 value]`, kept as raw `u64`s so
 /// the eq folds run on small-scalar fused multiply-adds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct RegisterValuesRow([u64; 3]);
+pub(crate) struct RegisterValuesRow(pub(crate) [u64; 3]);
 
 impl WitnessBundle for RegisterValuesRow {
     fn from_row(

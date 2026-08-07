@@ -39,6 +39,10 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     let invocation = context
         .prepare_registers_claim_linear_q(&resident, &tau, gamma, config)
         .expect("registers claim linear-q invocation should prepare");
+    let prefix_challenges = tau[..tau.len() - tau.len() / 2].to_vec();
+    let fold_invocation = context
+        .prepare_registers_claim_direct_fold(&resident, &prefix_challenges, config)
+        .expect("registers claim direct-fold invocation should prepare");
     let control = paired_control().then(|| {
         context
             .prepare_registers_claim_linear_q(
@@ -77,6 +81,24 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         .execute_timed()
         .expect("warm registers claim linear-q should execute");
     assert_eq!(cold.checksum, warm.checksum);
+    let fold_cold = fold_invocation
+        .execute_timed()
+        .expect("registers claim direct fold should execute");
+    assert!(fold_cold
+        .outputs
+        .rd_write_value
+        .iter()
+        .all(|&value| value == AkitaField::from_u64(rd_value)));
+    assert!(fold_cold
+        .outputs
+        .rs1_value
+        .iter()
+        .all(|&value| value == AkitaField::from_u64(rs1_value)));
+    assert!(fold_cold
+        .outputs
+        .rs2_value
+        .iter()
+        .all(|&value| value == AkitaField::from_u64(rs2_value)));
     if let Some(control) = &control {
         report_paired_screen(&invocation, control);
     }
@@ -107,6 +129,20 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
             .pipeline_limits()
             .max_total_threads_per_threadgroup,
         invocation.threads_per_threadgroup(),
+    );
+    eprintln!(
+        "registers-claim-direct-fold n={elements} active-ms={:.3} wall-ms={:.3} \
+         half-width-terms={} threadgroups={} tew={} max-threads={} tg={} tg-bytes={}",
+        fold_cold.gpu_active.as_secs_f64() * 1e3,
+        fold_cold.resident_wall.as_secs_f64() * 1e3,
+        fold_cold.useful_half_width_terms,
+        fold_cold.threadgroups,
+        fold_invocation.pipeline_limits().thread_execution_width,
+        fold_invocation
+            .pipeline_limits()
+            .max_total_threads_per_threadgroup,
+        fold_invocation.threads_per_threadgroup(),
+        fold_invocation.dynamic_threadgroup_bytes(),
     );
 
     let suffix = format!(
@@ -153,6 +189,50 @@ pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
         });
     });
     group.finish();
+
+    let fold_suffix = format!(
+        "n{elements}_tg{}",
+        fold_invocation.threads_per_threadgroup()
+    );
+    let mut fold_group = c.benchmark_group("metal_sumcheck/registers_claim_direct_fold");
+    let _ = fold_group
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(setting(
+            "JOLT_METAL_REGISTERS_CLAIM_WARMUP_MS",
+            200,
+        )))
+        .measurement_time(Duration::from_millis(setting(
+            "JOLT_METAL_REGISTERS_CLAIM_MEASUREMENT_MS",
+            1_000,
+        )))
+        .throughput(Throughput::Elements(fold_cold.useful_half_width_terms));
+    let _ = fold_group.bench_function(BenchmarkId::new("resident_active", &fold_suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut active = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = fold_invocation
+                    .execute_timed()
+                    .expect("timed registers claim direct fold should execute");
+                let _ = black_box(observation.outputs.rd_write_value[0]);
+                active += observation.gpu_active;
+            }
+            active
+        });
+    });
+    let _ = fold_group.bench_function(BenchmarkId::new("resident_wall", &fold_suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut wall = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = fold_invocation
+                    .execute_timed()
+                    .expect("timed registers claim direct fold should execute");
+                let _ = black_box(observation.outputs.rd_write_value[0]);
+                wall += observation.resident_wall;
+            }
+            wall
+        });
+    });
+    fold_group.finish();
 }
 
 fn trace_elements() -> usize {
