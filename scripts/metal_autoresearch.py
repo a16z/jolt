@@ -189,6 +189,21 @@ PRODUCTION_LOCAL_KERNELS = {
             "rayon_threads_pinned",
         },
     },
+    "InstructionClaimReduction": {
+        "metric": "instruction_claim_reduction_critical_path_speedup",
+        "paired_metric": "paired_instruction_claim_reduction_critical_path_speedups",
+        "parameters": frozenset(),
+        "required_guards": COMMON_PRODUCTION_GUARDS
+        | {
+            "instruction_claim_cpu_control",
+            "instruction_claim_metal_backend_exercised",
+            "instruction_claim_async_lifecycle_exact",
+            "instruction_claim_product_rows_reused",
+            "instruction_claim_local_gate",
+            "product_instruction_claim_family_local_gate",
+            "rayon_threads_pinned",
+        },
+    },
 }
 LOCAL_RESULT_CONTRACTS = {
     "bytecode_read_raf_cycle_v1",
@@ -6018,6 +6033,334 @@ def validate_production_result(
             raise ValueError(
                 "production Hamming-weight decision disagrees with recomputed raw-pair decision"
             )
+    if local_kernel == "InstructionClaimReduction":
+        instruction_claim_fingerprint = result.get("fingerprint")
+        if not isinstance(instruction_claim_fingerprint, dict):
+            raise ValueError("production Instruction Claim result has no fingerprint")
+        log_n = instruction_claim_fingerprint.get("log_n")
+        if type(log_n) is not int or log_n < 1:
+            raise ValueError("production Instruction Claim result has invalid geometry")
+        decision = metrics.get("instruction_claim_reduction_critical_path_decision")
+        family_decision = metrics.get("product_instruction_claim_family_decision")
+        if (
+            not isinstance(decision, dict)
+            or decision.get("clears") is not True
+            or not isinstance(family_decision, dict)
+            or family_decision.get("clears") is not True
+        ):
+            raise ValueError(
+                "production Instruction Claim result did not clear both fixed decisions"
+            )
+        if pair_records is None or len(pair_records) != len(local_pairs):
+            raise ValueError(
+                "production Instruction Claim result has incomplete raw pair records"
+            )
+        raw_cpu_members = []
+        raw_metal_members = []
+        raw_metal_isolated = []
+        raw_cpu_family = []
+        raw_metal_family = []
+        for record, local_speedup in zip(pair_records, local_pairs):
+            arms = record.get("arms", {})
+            try:
+                cpu_arm = arms["optimized"]
+                metal_arm = arms["metal"]
+                cpu_local = cpu_arm["local"]
+                metal_local = metal_arm["local"]
+                cpu_observation = cpu_arm["instruction_claim"]
+                metal_observation = metal_arm["instruction_claim"]
+                cpu_product = cpu_arm["product_remainder_ns"]
+                metal_product = metal_arm["product_remainder_ns"]
+                cpu_isolated = cpu_arm["instruction_claim_isolated_service_ns"]
+                metal_isolated = metal_arm["instruction_claim_isolated_service_ns"]
+            except (KeyError, TypeError) as error:
+                raise ValueError(
+                    "production Instruction Claim raw pair is incomplete"
+                ) from error
+            if (
+                not isinstance(cpu_local, dict)
+                or not isinstance(metal_local, dict)
+                or set(cpu_local) != {"kernel", "primary_ns"}
+                or set(metal_local) != {"kernel", "primary_ns"}
+                or cpu_local.get("kernel") != "InstructionClaimReduction"
+                or metal_local.get("kernel") != "InstructionClaimReduction"
+            ):
+                raise ValueError(
+                    "production Instruction Claim local timing seam is invalid"
+                )
+            cpu_member = cpu_local["primary_ns"]
+            metal_member = metal_local["primary_ns"]
+            integer_timings = (
+                cpu_member,
+                metal_member,
+                cpu_product,
+                metal_product,
+                cpu_isolated,
+                metal_isolated,
+            )
+            if any(type(value) is not int or value <= 0 for value in integer_timings):
+                raise ValueError(
+                    "production Instruction Claim raw timing is invalid"
+                )
+            expected_outer_counts = {
+                "prepare": 1,
+                "prove_round": log_n,
+                "finish_rounds": 1,
+                "output_claims": 1,
+            }
+            expected_cpu_metal_counts = {
+                "first_message_submit": 0,
+                "prepare": 0,
+                "first_message_join": 0,
+                "bind_and_message": 0,
+                "output_claims": 0,
+            }
+            expected_metal_counts = {
+                "first_message_submit": 1,
+                "prepare": 1,
+                "first_message_join": 1,
+                "bind_and_message": log_n - 1,
+                "output_claims": 1,
+            }
+            if (
+                not isinstance(cpu_observation, dict)
+                or not isinstance(metal_observation, dict)
+                or cpu_observation.get("outer_counts") != expected_outer_counts
+                or metal_observation.get("outer_counts") != expected_outer_counts
+                or cpu_observation.get("metal_counts") != expected_cpu_metal_counts
+                or metal_observation.get("metal_counts") != expected_metal_counts
+                or cpu_observation.get("resource_observation") is not None
+            ):
+                raise ValueError(
+                    "production Instruction Claim trace topology is invalid"
+                )
+            resources = metal_observation.get("resource_observation")
+            required_resource_fields = {
+                "resident_rows_storage_id",
+                "lookup_rows_storage_id",
+                "producer_rows_storage_id",
+                "command_committed",
+                "command_completed",
+                "completed_before_join",
+                "submit_wall_ns",
+                "overlap_wall_ns",
+                "join_wall_ns",
+                "lifecycle_wall_ns",
+                "initial_gpu_active_ns",
+                "bind_dispatches",
+                "bind_dispatch_wall_ns",
+                "bind_gpu_active_ns",
+                "output_dispatch_wall_ns",
+                "output_gpu_active_ns",
+                "row_upload_bytes",
+                "round_device_buffer_allocations",
+            }
+            if not isinstance(resources, dict) or set(resources) != required_resource_fields:
+                raise ValueError(
+                    "production Instruction Claim lifecycle record is incomplete"
+                )
+            positive_resource_fields = {
+                "resident_rows_storage_id",
+                "lookup_rows_storage_id",
+                "producer_rows_storage_id",
+                "submit_wall_ns",
+                "join_wall_ns",
+                "lifecycle_wall_ns",
+                "initial_gpu_active_ns",
+                "bind_dispatches",
+                "bind_dispatch_wall_ns",
+                "bind_gpu_active_ns",
+                "output_dispatch_wall_ns",
+                "output_gpu_active_ns",
+            }
+            if (
+                resources["command_committed"] is not True
+                or resources["command_completed"] is not True
+                or type(resources["completed_before_join"]) is not bool
+                or any(
+                    type(resources[name]) is not int or resources[name] <= 0
+                    for name in positive_resource_fields
+                )
+                or type(resources["overlap_wall_ns"]) is not int
+                or resources["overlap_wall_ns"] <= 0
+                or resources["resident_rows_storage_id"]
+                != resources["producer_rows_storage_id"]
+                or resources["lookup_rows_storage_id"]
+                == resources["resident_rows_storage_id"]
+                or resources["bind_dispatches"] != log_n - 1
+                or resources["row_upload_bytes"] != 0
+                or resources["round_device_buffer_allocations"] != 0
+                or resources["initial_gpu_active_ns"]
+                > resources["lifecycle_wall_ns"]
+                or abs(
+                    resources["lifecycle_wall_ns"]
+                    - (
+                        resources["submit_wall_ns"]
+                        + resources["overlap_wall_ns"]
+                        + resources["join_wall_ns"]
+                    )
+                )
+                > 100_000
+                or cpu_isolated != cpu_member
+                or abs(
+                    metal_isolated
+                    - (metal_member + resources["overlap_wall_ns"])
+                )
+                > 1
+                or not math.isclose(
+                    float(local_speedup), cpu_member / metal_member, rel_tol=1e-9
+                )
+            ):
+                raise ValueError(
+                    "production Instruction Claim lifecycle or timing is inconsistent"
+                )
+            raw_cpu_members.append(cpu_member)
+            raw_metal_members.append(metal_member)
+            raw_metal_isolated.append(metal_isolated)
+            raw_cpu_family.append(cpu_product + cpu_member)
+            raw_metal_family.append(metal_product + metal_member)
+
+        sample_contracts = (
+            (
+                "cpu_instruction_claim_reduction_critical_path_ms_samples",
+                raw_cpu_members,
+            ),
+            (
+                "metal_instruction_claim_reduction_critical_path_ms_samples",
+                raw_metal_members,
+            ),
+            (
+                "metal_instruction_claim_reduction_isolated_service_ms_samples",
+                raw_metal_isolated,
+            ),
+            ("cpu_product_instruction_claim_family_ms_samples", raw_cpu_family),
+            ("metal_product_instruction_claim_family_ms_samples", raw_metal_family),
+        )
+        for name, raw_samples in sample_contracts:
+            reported_samples = metrics.get(name)
+            if (
+                not isinstance(reported_samples, list)
+                or len(reported_samples) != len(raw_samples)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isclose(
+                        float(reported) * 1e6,
+                        raw,
+                        rel_tol=1e-12,
+                        abs_tol=0.500001,
+                    )
+                    for reported, raw in zip(reported_samples, raw_samples)
+                )
+            ):
+                raise ValueError(
+                    "production Instruction Claim sample summary is invalid"
+                )
+        isolated_speedups = [
+            cpu / metal for cpu, metal in zip(raw_cpu_members, raw_metal_isolated)
+        ]
+        family_speedups = [
+            cpu / metal for cpu, metal in zip(raw_cpu_family, raw_metal_family)
+        ]
+        for name, expected_values in (
+            (
+                "paired_instruction_claim_reduction_isolated_service_speedups",
+                isolated_speedups,
+            ),
+            ("paired_product_instruction_claim_family_speedups", family_speedups),
+        ):
+            reported_values = metrics.get(name)
+            if (
+                not isinstance(reported_values, list)
+                or len(reported_values) != len(expected_values)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isclose(float(reported), expected, rel_tol=1e-9)
+                    for reported, expected in zip(reported_values, expected_values)
+                )
+            ):
+                raise ValueError(
+                    "production Instruction Claim derived speedup is invalid"
+                )
+        minimum_speedup = float(gate["minimum_local_speedup"])
+        recomputed_improvements, recomputed_decision = recompute_local_member_decision(
+            pair_records,
+            raw_cpu_members,
+            raw_metal_members,
+            minimum_speedup,
+            int(gate["minimum_pairs"]),
+        )
+        family_improvements, recomputed_family_decision = recompute_local_member_decision(
+            pair_records,
+            raw_cpu_family,
+            raw_metal_family,
+            minimum_speedup,
+            int(gate["minimum_pairs"]),
+        )
+        reported_isolated_speedup = metrics.get(
+            "instruction_claim_reduction_isolated_service_speedup"
+        )
+        reported_family_speedup = metrics.get(
+            "product_instruction_claim_family_speedup"
+        )
+        optimized_first_median = float(
+            recomputed_decision["optimized_first_median_speedup"]
+        )
+        metal_first_median = float(
+            recomputed_decision["metal_first_median_speedup"]
+        )
+        for name, expected_values in (
+            (
+                "paired_instruction_claim_reduction_critical_path_fractional_improvements",
+                recomputed_improvements,
+            ),
+            (
+                "paired_product_instruction_claim_family_fractional_improvements",
+                family_improvements,
+            ),
+        ):
+            reported_values = metrics.get(name)
+            if (
+                not isinstance(reported_values, list)
+                or len(reported_values) != len(expected_values)
+                or any(
+                    isinstance(reported, bool)
+                    or not isinstance(reported, (int, float))
+                    or not math.isclose(
+                        float(reported), expected, rel_tol=1e-9, abs_tol=1e-12
+                    )
+                    for reported, expected in zip(reported_values, expected_values)
+                )
+            ):
+                raise ValueError(
+                    "production Instruction Claim fractional improvement is invalid"
+                )
+        if (
+            recomputed_decision["clears"] is not True
+            or recomputed_family_decision["clears"] is not True
+            or not decisions_match(decision, recomputed_decision)
+            or not decisions_match(family_decision, recomputed_family_decision)
+            or isinstance(reported_isolated_speedup, bool)
+            or not isinstance(reported_isolated_speedup, (int, float))
+            or not math.isfinite(reported_isolated_speedup)
+            or not math.isclose(
+                float(reported_isolated_speedup),
+                statistics.median(isolated_speedups),
+                rel_tol=1e-12,
+            )
+            or isinstance(reported_family_speedup, bool)
+            or not isinstance(reported_family_speedup, (int, float))
+            or not math.isfinite(reported_family_speedup)
+            or not math.isclose(
+                float(reported_family_speedup),
+                statistics.median(family_speedups),
+                rel_tol=1e-12,
+            )
+        ):
+            raise ValueError(
+                "production Instruction Claim decisions disagree with raw pairs"
+            )
     if local_kernel == "OuterRemainder":
         outer_fingerprint = result.get("fingerprint")
         if not isinstance(outer_fingerprint, dict):
@@ -6210,6 +6553,7 @@ def validate_production_result(
                 "InstructionInput",
                 "BooleanityAddressPhase",
                 "HammingWeightClaimReduction",
+                "InstructionClaimReduction",
                 "OuterRemainder",
             }
             else {}

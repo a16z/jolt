@@ -1711,6 +1711,191 @@ class MetalAutoresearchTests(unittest.TestCase):
         )
         return config, params, result
 
+    def production_instruction_claim_result_fixture(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, object]]:
+        _, _, result = self.production_booleanity_address_result_fixture()
+        descriptor = metal_autoresearch.PRODUCTION_LOCAL_KERNELS[
+            "InstructionClaimReduction"
+        ]
+        pair_count = 5
+        cpu_member_ns = 500
+        metal_member_ns = 100
+        cpu_product_ns = 500
+        metal_product_ns = 100
+        overlap_ns = 50
+        metal_isolated_ns = metal_member_ns + overlap_ns
+        config = {
+            "final_validation": {
+                "production_gate": {
+                    "evaluator": {"schema_version": 7},
+                    "metric": descriptor["metric"],
+                    "paired_metric": descriptor["paired_metric"],
+                    "local_kernel": "InstructionClaimReduction",
+                    "minimum_local_speedup": 5.0,
+                    "minimum_log_n": 26,
+                    "minimum_pairs": pair_count,
+                    "require_alternating_orders": True,
+                    "require_clean_worktree": True,
+                    "workload": "fibonacci",
+                    "required_guards": sorted(descriptor["required_guards"]),
+                }
+            }
+        }
+        for pair in result["pairs"]:
+            for backend, member_ns, product_ns, isolated_ns in (
+                (
+                    "optimized",
+                    cpu_member_ns,
+                    cpu_product_ns,
+                    cpu_member_ns,
+                ),
+                (
+                    "metal",
+                    metal_member_ns,
+                    metal_product_ns,
+                    metal_isolated_ns,
+                ),
+            ):
+                arm = pair["arms"][backend]
+                arm["local"] = {
+                    "kernel": "InstructionClaimReduction",
+                    "primary_ns": member_ns,
+                }
+                arm["product_remainder_ns"] = product_ns
+                arm["instruction_claim_isolated_service_ns"] = isolated_ns
+                arm["instruction_claim"] = {
+                    "outer_counts": {
+                        "prepare": 1,
+                        "prove_round": 26,
+                        "finish_rounds": 1,
+                        "output_claims": 1,
+                    },
+                    "metal_counts": {
+                        "first_message_submit": 1 if backend == "metal" else 0,
+                        "prepare": 1 if backend == "metal" else 0,
+                        "first_message_join": 1 if backend == "metal" else 0,
+                        "bind_and_message": 25 if backend == "metal" else 0,
+                        "output_claims": 1 if backend == "metal" else 0,
+                    },
+                    "resource_observation": (
+                        {
+                            "resident_rows_storage_id": 401,
+                            "lookup_rows_storage_id": 402,
+                            "producer_rows_storage_id": 401,
+                            "command_committed": True,
+                            "command_completed": True,
+                            "completed_before_join": False,
+                            "submit_wall_ns": 1,
+                            "overlap_wall_ns": overlap_ns,
+                            "join_wall_ns": 10,
+                            "lifecycle_wall_ns": 61,
+                            "initial_gpu_active_ns": 10,
+                            "bind_dispatches": 25,
+                            "bind_dispatch_wall_ns": 25,
+                            "bind_gpu_active_ns": 20,
+                            "output_dispatch_wall_ns": 2,
+                            "output_gpu_active_ns": 1,
+                            "row_upload_bytes": 0,
+                            "round_device_buffer_allocations": 0,
+                        }
+                        if backend == "metal"
+                        else None
+                    ),
+                }
+        pairs = result["pairs"]
+        critical_improvements, critical_decision = (
+            metal_autoresearch.recompute_local_member_decision(
+                pairs,
+                [cpu_member_ns] * pair_count,
+                [metal_member_ns] * pair_count,
+                5.0,
+                pair_count,
+            )
+        )
+        family_improvements, family_decision = (
+            metal_autoresearch.recompute_local_member_decision(
+                pairs,
+                [cpu_member_ns + cpu_product_ns] * pair_count,
+                [metal_member_ns + metal_product_ns] * pair_count,
+                5.0,
+                pair_count,
+            )
+        )
+        result["local_kernel"] = "InstructionClaimReduction"
+        result["local_metric"] = {
+            "metric": descriptor["metric"],
+            "paired_metric": descriptor["paired_metric"],
+        }
+        result["guards"] = {
+            name: True for name in config["final_validation"]["production_gate"]["required_guards"]
+        }
+        result["metrics"].update(
+            {
+                "instruction_claim_reduction_critical_path_speedup": 5.0,
+                "instruction_claim_reduction_isolated_service_speedup": (
+                    cpu_member_ns / metal_isolated_ns
+                ),
+                "product_instruction_claim_family_speedup": 5.0,
+                "paired_instruction_claim_reduction_critical_path_speedups": [
+                    5.0
+                ]
+                * pair_count,
+                "paired_instruction_claim_reduction_critical_path_fractional_improvements": (
+                    critical_improvements
+                ),
+                "paired_instruction_claim_reduction_isolated_service_speedups": [
+                    cpu_member_ns / metal_isolated_ns
+                ]
+                * pair_count,
+                "paired_product_instruction_claim_family_speedups": [5.0]
+                * pair_count,
+                "paired_product_instruction_claim_family_fractional_improvements": (
+                    family_improvements
+                ),
+                "cpu_instruction_claim_reduction_critical_path_ms_samples": [
+                    cpu_member_ns / 1e6
+                ]
+                * pair_count,
+                "metal_instruction_claim_reduction_critical_path_ms_samples": [
+                    metal_member_ns / 1e6
+                ]
+                * pair_count,
+                "metal_instruction_claim_reduction_isolated_service_ms_samples": [
+                    metal_isolated_ns / 1e6
+                ]
+                * pair_count,
+                "cpu_product_instruction_claim_family_ms_samples": [
+                    (cpu_member_ns + cpu_product_ns) / 1e6
+                ]
+                * pair_count,
+                "metal_product_instruction_claim_family_ms_samples": [
+                    (metal_member_ns + metal_product_ns) / 1e6
+                ]
+                * pair_count,
+                "instruction_claim_reduction_critical_path_decision": critical_decision,
+                "product_instruction_claim_family_decision": family_decision,
+            }
+        )
+        result["fingerprint"]["local_kernel"] = "InstructionClaimReduction"
+        return config, {}, result
+
+    def test_validates_instruction_claim_critical_path_and_family(self) -> None:
+        config, params, result = self.production_instruction_claim_result_fixture()
+        evidence = metal_autoresearch.validate_production_result(
+            config, result, "abc", params, True
+        )
+        self.assertEqual(evidence["metric_value"], 5.0)
+        self.assertEqual(evidence["optimized_first_median_speedup"], 5.0)
+
+        result["pairs"][0]["arms"]["metal"]["instruction_claim"][
+            "resource_observation"
+        ]["row_upload_bytes"] = 1
+        with self.assertRaisesRegex(ValueError, "lifecycle"):
+            metal_autoresearch.validate_production_result(
+                config, result, "abc", params, True
+            )
+
     def test_schema_five_parser_requires_one_result_record(self) -> None:
         record = '{"schema_version": 5, "kernel": "akita_piop"}'
         self.assertEqual(

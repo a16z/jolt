@@ -887,7 +887,160 @@ def complete_outer_remainder_trace(
     return events
 
 
+def complete_instruction_claim_trace(
+    log_n: int, backend: str
+) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    events = [
+        event("jolt_prover::piop", 0.0, 20_000.0),
+        event("InstructionClaimReduction::prepare", 100.0, 20.0),
+        *[
+            event("InstructionClaimReduction::prove_round", 200.0 + round_index, 1.0)
+            for round_index in range(log_n)
+        ],
+        event("InstructionClaimReduction::finish_rounds", 300.0, 1.0),
+        event("InstructionClaimReduction::output_claims", 310.0, 2.0),
+    ]
+    if backend == "optimized":
+        return events
+
+    resident_id = 401
+    lookup_id = 402
+    submit_wall_ns = 40_000
+    overlap_wall_ns = 46_000_000
+    join_wall_ns = 6_000_000
+    lifecycle_wall_ns = submit_wall_ns + overlap_wall_ns + join_wall_ns
+    events.extend(
+        [
+            event(
+                "MetalProductRemainder::prepare",
+                50.0,
+                10.0,
+                {
+                    "resident_rows_storage_id": str(resident_id),
+                    "row_upload_bytes": "0",
+                },
+            ),
+            event(
+                "MetalInstructionClaimReduction::first_message_submit",
+                101.0,
+                1.0,
+                {
+                    "command_committed": "true",
+                    "lookup_rows_storage_id": str(lookup_id),
+                    "resident_rows_storage_id": str(resident_id),
+                    "submit_wall_ns": str(submit_wall_ns),
+                },
+            ),
+            event(
+                "MetalInstructionClaimReduction::prepare",
+                102.0,
+                1.0,
+                {
+                    "cycles": str(1 << log_n),
+                    "lookup_rows_storage_id": str(lookup_id),
+                    "resident_rows_storage_id": str(resident_id),
+                    "round_device_buffer_allocations": "0",
+                    "rounds": str(log_n),
+                    "row_upload_bytes": "0",
+                    "workspace_bytes": "1024",
+                },
+            ),
+            event(
+                "MetalInstructionClaimReduction::first_message_join",
+                200.0,
+                2.0,
+                {
+                    "command_completed": "true",
+                    "completed_before_join": "false",
+                    "gpu_active_ns": "12000000",
+                    "join_wall_ns": str(join_wall_ns),
+                    "lifecycle_wall_ns": str(lifecycle_wall_ns),
+                    "overlap_wall_ns": str(overlap_wall_ns),
+                    "resident_rows_storage_id": str(resident_id),
+                    "submit_wall_ns": str(submit_wall_ns),
+                },
+            ),
+            *[
+                event(
+                    "MetalInstructionClaimReduction::bind_and_message",
+                    210.0 + round_index,
+                    1.0,
+                    {
+                        "dispatch_wall_ns": "1000",
+                        "gpu_active_ns": "800",
+                        "resident_rows_storage_id": str(resident_id),
+                        "round": str(round_index),
+                        "source_elements": str(
+                            1 << (log_n - round_index + 1)
+                        ),
+                    },
+                )
+                for round_index in range(1, log_n)
+            ],
+            event(
+                "MetalInstructionClaimReduction::output_claims",
+                320.0,
+                2.0,
+                {
+                    "dispatch_wall_ns": "2000",
+                    "gpu_active_ns": "1500",
+                    "resident_rows_storage_id": str(resident_id),
+                    "row_upload_bytes": "0",
+                },
+            ),
+        ]
+    )
+    return events
+
+
 class MetalPiopEvalTests(unittest.TestCase):
+    def test_instruction_claim_observation_proves_async_residency(self) -> None:
+        optimized = metal_piop_eval.instruction_claim_observation(
+            complete_instruction_claim_trace(26, "optimized"), "optimized", 26
+        )
+        self.assertIsNone(optimized["resource_observation"])
+
+        observed = metal_piop_eval.instruction_claim_observation(
+            complete_instruction_claim_trace(26, "metal"), "metal", 26
+        )
+        resources = observed["resource_observation"]
+        self.assertEqual(resources["overlap_wall_ns"], 46_000_000)
+        self.assertEqual(resources["bind_dispatches"], 25)
+        self.assertEqual(
+            resources["resident_rows_storage_id"],
+            resources["producer_rows_storage_id"],
+        )
+        self.assertEqual(resources["row_upload_bytes"], 0)
+
+    def test_instruction_claim_observation_rejects_producer_identity_drift(self) -> None:
+        events = complete_instruction_claim_trace(26, "metal")
+        producer = next(
+            event
+            for event in events
+            if event["name"] == "MetalProductRemainder::prepare"
+        )
+        producer["args"]["resident_rows_storage_id"] = "999"
+        with self.assertRaisesRegex(ValueError, "lifecycle"):
+            metal_piop_eval.instruction_claim_observation(events, "metal", 26)
+
     def test_outer_remainder_complete_member_is_the_local_timing_boundary(self) -> None:
         optimized = metal_piop_eval.outer_remainder_member_breakdown(
             complete_outer_remainder_trace(26, "optimized"), "optimized", 26
@@ -1070,6 +1223,54 @@ class MetalPiopEvalTests(unittest.TestCase):
         incomplete[0].pop("cpu_hamming_weight_us")
         with self.assertRaisesRegex(ValueError, "missing Hamming-weight timing"):
             metal_piop_eval.summarize_pairs(incomplete)
+
+    def test_instruction_claim_gate_requires_critical_path_and_family(self) -> None:
+        pair = {
+            "cpu_us": 2_000.0,
+            "metal_us": 500.0,
+            "cpu_prepare_us": 1.0,
+            "metal_prepare_us": 1.0,
+            "cpu_instruction_ra_us": 700.0,
+            "metal_instruction_ra_us": 100.0,
+            "cpu_bytecode_us": 1_000.0,
+            "metal_bytecode_us": 200.0,
+            "cpu_instruction_input_us": 800.0,
+            "metal_instruction_input_us": 160.0,
+            "cpu_booleanity_address_us": 1_000.0,
+            "metal_booleanity_address_us": 200.0,
+            "cpu_hamming_weight_us": 900.0,
+            "metal_hamming_weight_us": 180.0,
+            "cpu_hamming_weight_service_us": 990.0,
+            "metal_hamming_weight_service_us": 180.0,
+            "cpu_product_remainder_us": 400.0,
+            "metal_product_remainder_us": 40.0,
+            "cpu_instruction_claim_us": 300.0,
+            "metal_instruction_claim_us": 30.0,
+            "metal_instruction_claim_isolated_service_us": 80.0,
+        }
+        pairs = [
+            {
+                **pair,
+                "order": ["optimized", "metal"]
+                if index % 2 == 0
+                else ["metal", "optimized"],
+            }
+            for index in range(5)
+        ]
+        metrics = metal_piop_eval.summarize_pairs(pairs)
+        self.assertEqual(
+            metrics["instruction_claim_reduction_critical_path_speedup"], 10.0
+        )
+        self.assertEqual(
+            metrics["instruction_claim_reduction_isolated_service_speedup"], 3.75
+        )
+        self.assertEqual(metrics["product_instruction_claim_family_speedup"], 10.0)
+        self.assertTrue(
+            metrics["instruction_claim_reduction_critical_path_decision"]["clears"]
+        )
+        self.assertTrue(
+            metrics["product_instruction_claim_family_decision"]["clears"]
+        )
 
     def test_validates_target_bytecode_records(self) -> None:
         optimized = "\n".join(

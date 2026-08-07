@@ -100,6 +100,8 @@ OUTER_REMAINDER_METAL_PHASES = (
 OUTER_REMAINDER_MIN_SPEEDUP = 5.0
 PRODUCT_REMAINDER_KERNEL = "ProductRemainder"
 PRODUCT_REMAINDER_MIN_SPEEDUP = 5.0
+INSTRUCTION_CLAIM_KERNEL = "InstructionClaimReduction"
+INSTRUCTION_CLAIM_MIN_SPEEDUP = 5.0
 OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE = (
     "OptimizedHammingWeightClaimReduction::row_source"
 )
@@ -169,6 +171,12 @@ LOCAL_KERNELS = {
         "metric": "product_remainder_speedup",
         "paired_metric": "paired_product_remainder_speedups",
         "backend_prefix": "MetalProductRemainder::",
+    },
+    "InstructionClaimReduction": {
+        "name": INSTRUCTION_CLAIM_KERNEL,
+        "metric": "instruction_claim_reduction_critical_path_speedup",
+        "paired_metric": "paired_instruction_claim_reduction_critical_path_speedups",
+        "backend_prefix": "MetalInstructionClaimReduction::",
     },
 }
 
@@ -955,6 +963,295 @@ def required_span_args(
     if missing:
         raise ValueError(f"{name} is missing argument fields: {sorted(missing)}")
     return {field: args[field] for field in fields}
+
+
+def instruction_claim_trace_integer(value: Any, field: str, *, allow_zero: bool = False) -> int:
+    if type(value) is int:
+        parsed = value
+    elif isinstance(value, str) and value.isascii() and value.isdecimal():
+        parsed = int(value)
+    else:
+        raise ValueError(f"Instruction Claim trace has invalid {field}")
+    if parsed < 0 or (parsed == 0 and not allow_zero):
+        raise ValueError(f"Instruction Claim trace has invalid {field}")
+    return parsed
+
+
+def instruction_claim_observation(
+    events: list[dict[str, Any]], backend: str, log_n: int
+) -> dict[str, Any]:
+    if backend not in {"optimized", "metal"}:
+        raise ValueError(f"unsupported Instruction Claim backend {backend!r}")
+    if log_n < 1:
+        raise ValueError("Instruction Claim requires a non-empty trace")
+
+    outer_counts = {
+        component: positive_span_count(
+            events, f"{INSTRUCTION_CLAIM_KERNEL}::{component}"
+        )
+        for component in ("prepare", "prove_round", "finish_rounds", "output_claims")
+    }
+    if outer_counts != {
+        "prepare": 1,
+        "prove_round": log_n,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }:
+        raise ValueError("Instruction Claim member span counts do not match the trace")
+
+    phases = (
+        "first_message_submit",
+        "prepare",
+        "first_message_join",
+        "bind_and_message",
+        "output_claims",
+    )
+    expected_names = {
+        f"Metal{INSTRUCTION_CLAIM_KERNEL}::{phase}" for phase in phases
+    }
+    observed_names = {
+        name
+        for name, _, _ in span_intervals_us(events)
+        if name.startswith(f"Metal{INSTRUCTION_CLAIM_KERNEL}::")
+    }
+    unknown_names = observed_names - expected_names
+    if unknown_names:
+        raise ValueError(
+            f"Instruction Claim trace contains unknown Metal phases: {sorted(unknown_names)}"
+        )
+    metal_counts = {
+        phase: positive_span_count(
+            events, f"Metal{INSTRUCTION_CLAIM_KERNEL}::{phase}"
+        )
+        for phase in phases
+    }
+    if backend == "optimized":
+        if any(metal_counts.values()):
+            raise ValueError("optimized Instruction Claim trace exercised Metal")
+        return {
+            "outer_counts": outer_counts,
+            "metal_counts": metal_counts,
+            "resource_observation": None,
+        }
+    if metal_counts != {
+        "first_message_submit": 1,
+        "prepare": 1,
+        "first_message_join": 1,
+        "bind_and_message": log_n - 1,
+        "output_claims": 1,
+    }:
+        raise ValueError("Instruction Claim Metal phase counts are incomplete")
+
+    prefix = f"Metal{INSTRUCTION_CLAIM_KERNEL}"
+    submit = exact_span_args(
+        events,
+        f"{prefix}::first_message_submit",
+        {
+            "command_committed",
+            "lookup_rows_storage_id",
+            "resident_rows_storage_id",
+            "submit_wall_ns",
+        },
+    )
+    prepare = exact_span_args(
+        events,
+        f"{prefix}::prepare",
+        {
+            "cycles",
+            "lookup_rows_storage_id",
+            "resident_rows_storage_id",
+            "round_device_buffer_allocations",
+            "rounds",
+            "row_upload_bytes",
+            "workspace_bytes",
+        },
+    )
+    join = exact_span_args(
+        events,
+        f"{prefix}::first_message_join",
+        {
+            "command_completed",
+            "completed_before_join",
+            "gpu_active_ns",
+            "join_wall_ns",
+            "lifecycle_wall_ns",
+            "overlap_wall_ns",
+            "resident_rows_storage_id",
+            "submit_wall_ns",
+        },
+    )
+    output = exact_span_args(
+        events,
+        f"{prefix}::output_claims",
+        {
+            "dispatch_wall_ns",
+            "gpu_active_ns",
+            "resident_rows_storage_id",
+            "row_upload_bytes",
+        },
+    )
+    producer = required_span_args(
+        events,
+        f"Metal{PRODUCT_REMAINDER_KERNEL}::prepare",
+        {"resident_rows_storage_id", "row_upload_bytes"},
+    )
+
+    resident_id = instruction_claim_trace_integer(
+        submit["resident_rows_storage_id"], "resident row storage ID"
+    )
+    lookup_id = instruction_claim_trace_integer(
+        submit["lookup_rows_storage_id"], "lookup row storage ID"
+    )
+    submit_wall_ns = instruction_claim_trace_integer(
+        submit["submit_wall_ns"], "submit wall time"
+    )
+    overlap_wall_ns = instruction_claim_trace_integer(
+        join["overlap_wall_ns"], "overlap wall time", allow_zero=True
+    )
+    join_wall_ns = instruction_claim_trace_integer(
+        join["join_wall_ns"], "join wall time"
+    )
+    lifecycle_wall_ns = instruction_claim_trace_integer(
+        join["lifecycle_wall_ns"], "lifecycle wall time"
+    )
+    initial_gpu_active_ns = instruction_claim_trace_integer(
+        join["gpu_active_ns"], "initial-message GPU time"
+    )
+    if (
+        trace_boolean(submit["command_committed"]) is not True
+        or trace_boolean(join["command_completed"]) is not True
+        or trace_boolean(join["completed_before_join"]) is None
+        or instruction_claim_trace_integer(prepare["cycles"], "cycle count")
+        != 1 << log_n
+        or instruction_claim_trace_integer(prepare["rounds"], "round count")
+        != log_n
+        or instruction_claim_trace_integer(
+            prepare["round_device_buffer_allocations"],
+            "round device-buffer allocation count",
+            allow_zero=True,
+        )
+        != 0
+        or instruction_claim_trace_integer(
+            prepare["row_upload_bytes"], "prepare row uploads", allow_zero=True
+        )
+        != 0
+        or instruction_claim_trace_integer(
+            output["row_upload_bytes"], "output row uploads", allow_zero=True
+        )
+        != 0
+        or instruction_claim_trace_integer(
+            prepare["workspace_bytes"], "workspace size"
+        )
+        <= 0
+        or lookup_id == resident_id
+        or instruction_claim_trace_integer(
+            producer["resident_rows_storage_id"], "producer resident storage ID"
+        )
+        != resident_id
+        or instruction_claim_trace_integer(
+            producer["row_upload_bytes"], "producer row uploads", allow_zero=True
+        )
+        != 0
+        or any(
+            instruction_claim_trace_integer(record[field], field) != expected
+            for record, field, expected in (
+                (prepare, "resident_rows_storage_id", resident_id),
+                (prepare, "lookup_rows_storage_id", lookup_id),
+                (join, "resident_rows_storage_id", resident_id),
+                (output, "resident_rows_storage_id", resident_id),
+                (join, "submit_wall_ns", submit_wall_ns),
+            )
+        )
+        or initial_gpu_active_ns > lifecycle_wall_ns
+        or abs(
+            lifecycle_wall_ns
+            - (submit_wall_ns + overlap_wall_ns + join_wall_ns)
+        )
+        > 100_000
+    ):
+        raise ValueError("Instruction Claim Metal lifecycle is inconsistent")
+
+    bind_records = [
+        event.get("args")
+        for event in events
+        if event.get("name") == f"{prefix}::bind_and_message"
+        and event.get("ph") in {"E", "X"}
+    ]
+    if len(bind_records) != log_n - 1 or any(
+        not isinstance(record, dict) for record in bind_records
+    ):
+        raise ValueError("Instruction Claim bind records are incomplete")
+    bind_gpu_active_ns = 0
+    bind_dispatch_wall_ns = 0
+    observed_rounds = set()
+    for record in bind_records:
+        assert isinstance(record, dict)
+        if set(record) != {
+            "dispatch_wall_ns",
+            "gpu_active_ns",
+            "resident_rows_storage_id",
+            "round",
+            "source_elements",
+        }:
+            raise ValueError("Instruction Claim bind record fields are incomplete")
+        round_index = instruction_claim_trace_integer(record["round"], "bind round")
+        source_elements = instruction_claim_trace_integer(
+            record["source_elements"], "bind source size"
+        )
+        dispatch_wall_ns = instruction_claim_trace_integer(
+            record["dispatch_wall_ns"], "bind dispatch wall time"
+        )
+        gpu_active_ns = instruction_claim_trace_integer(
+            record["gpu_active_ns"], "bind GPU time"
+        )
+        if (
+            round_index >= log_n
+            or source_elements != 1 << (log_n - round_index + 1)
+            or instruction_claim_trace_integer(
+                record["resident_rows_storage_id"], "bind resident storage ID"
+            )
+            != resident_id
+            or gpu_active_ns > dispatch_wall_ns
+        ):
+            raise ValueError("Instruction Claim bind schedule is inconsistent")
+        observed_rounds.add(round_index)
+        bind_dispatch_wall_ns += dispatch_wall_ns
+        bind_gpu_active_ns += gpu_active_ns
+    if observed_rounds != set(range(1, log_n)):
+        raise ValueError("Instruction Claim bind rounds are not exact")
+
+    output_dispatch_wall_ns = instruction_claim_trace_integer(
+        output["dispatch_wall_ns"], "output dispatch wall time"
+    )
+    output_gpu_active_ns = instruction_claim_trace_integer(
+        output["gpu_active_ns"], "output GPU time"
+    )
+    if output_gpu_active_ns > output_dispatch_wall_ns:
+        raise ValueError("Instruction Claim output GPU time exceeds dispatch time")
+    return {
+        "outer_counts": outer_counts,
+        "metal_counts": metal_counts,
+        "resource_observation": {
+            "resident_rows_storage_id": resident_id,
+            "lookup_rows_storage_id": lookup_id,
+            "producer_rows_storage_id": resident_id,
+            "command_committed": True,
+            "command_completed": True,
+            "completed_before_join": trace_boolean(join["completed_before_join"]),
+            "submit_wall_ns": submit_wall_ns,
+            "overlap_wall_ns": overlap_wall_ns,
+            "join_wall_ns": join_wall_ns,
+            "lifecycle_wall_ns": lifecycle_wall_ns,
+            "initial_gpu_active_ns": initial_gpu_active_ns,
+            "bind_dispatches": len(bind_records),
+            "bind_dispatch_wall_ns": bind_dispatch_wall_ns,
+            "bind_gpu_active_ns": bind_gpu_active_ns,
+            "output_dispatch_wall_ns": output_dispatch_wall_ns,
+            "output_gpu_active_ns": output_gpu_active_ns,
+            "row_upload_bytes": 0,
+            "round_device_buffer_allocations": 0,
+        },
+    }
 
 
 def outer_remainder_storage_geometry(log_n: int) -> dict[str, Any]:
@@ -2991,6 +3288,35 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         )
         for pair in pairs
     ]
+    cpu_instruction_claim = [
+        float(pair.get("cpu_instruction_claim_us", pair["cpu_hamming_weight_us"]))
+        for pair in pairs
+    ]
+    metal_instruction_claim = [
+        float(pair.get("metal_instruction_claim_us", pair["metal_hamming_weight_us"]))
+        for pair in pairs
+    ]
+    metal_instruction_claim_isolated_service = [
+        float(
+            pair.get(
+                "metal_instruction_claim_isolated_service_us",
+                pair.get("metal_instruction_claim_us", pair["metal_hamming_weight_us"]),
+            )
+        )
+        for pair in pairs
+    ]
+    cpu_product_instruction_claim = [
+        product + instruction
+        for product, instruction in zip(
+            cpu_product_remainder, cpu_instruction_claim
+        )
+    ]
+    metal_product_instruction_claim = [
+        product + instruction
+        for product, instruction in zip(
+            metal_product_remainder, metal_instruction_claim
+        )
+    ]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
@@ -3015,6 +3341,11 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_outer_remainder
         + cpu_product_remainder
         + metal_product_remainder
+        + cpu_instruction_claim
+        + metal_instruction_claim
+        + metal_instruction_claim_isolated_service
+        + cpu_product_instruction_claim
+        + metal_product_instruction_claim
     ):
         raise ValueError("kernel durations must be finite and positive")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
@@ -3086,6 +3417,32 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         metal_product_remainder,
         PRODUCT_REMAINDER_MIN_SPEEDUP,
     )
+    (
+        instruction_claim_speedups,
+        instruction_claim_improvements,
+        instruction_claim_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_instruction_claim,
+        metal_instruction_claim,
+        INSTRUCTION_CLAIM_MIN_SPEEDUP,
+    )
+    instruction_claim_isolated_service_speedups = [
+        cpu_us / metal_us
+        for cpu_us, metal_us in zip(
+            cpu_instruction_claim, metal_instruction_claim_isolated_service
+        )
+    ]
+    (
+        product_instruction_claim_speedups,
+        product_instruction_claim_improvements,
+        product_instruction_claim_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_product_instruction_claim,
+        metal_product_instruction_claim,
+        INSTRUCTION_CLAIM_MIN_SPEEDUP,
+    )
     paired_with_prepare = [
         (cpu_us + cpu_prepare_us) / (metal_us + metal_prepare_us)
         for cpu_us, metal_us, cpu_prepare_us, metal_prepare_us in zip(
@@ -3153,6 +3510,15 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "outer_remainder_speedup": statistics.median(outer_remainder_speedups),
         "product_remainder_speedup": statistics.median(product_remainder_speedups),
+        "instruction_claim_reduction_critical_path_speedup": statistics.median(
+            instruction_claim_speedups
+        ),
+        "instruction_claim_reduction_isolated_service_speedup": statistics.median(
+            instruction_claim_isolated_service_speedups
+        ),
+        "product_instruction_claim_family_speedup": statistics.median(
+            product_instruction_claim_speedups
+        ),
         "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
@@ -3174,6 +3540,17 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_outer_remainder_fractional_improvements": outer_remainder_improvements,
         "paired_product_remainder_speedups": product_remainder_speedups,
         "paired_product_remainder_fractional_improvements": product_remainder_improvements,
+        "paired_instruction_claim_reduction_critical_path_speedups": instruction_claim_speedups,
+        "paired_instruction_claim_reduction_critical_path_fractional_improvements": (
+            instruction_claim_improvements
+        ),
+        "paired_instruction_claim_reduction_isolated_service_speedups": (
+            instruction_claim_isolated_service_speedups
+        ),
+        "paired_product_instruction_claim_family_speedups": product_instruction_claim_speedups,
+        "paired_product_instruction_claim_family_fractional_improvements": (
+            product_instruction_claim_improvements
+        ),
         "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
@@ -3227,11 +3604,28 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_product_remainder_ms_samples": [
             value / 1000.0 for value in metal_product_remainder
         ],
+        "cpu_instruction_claim_reduction_critical_path_ms_samples": [
+            value / 1000.0 for value in cpu_instruction_claim
+        ],
+        "metal_instruction_claim_reduction_critical_path_ms_samples": [
+            value / 1000.0 for value in metal_instruction_claim
+        ],
+        "metal_instruction_claim_reduction_isolated_service_ms_samples": [
+            value / 1000.0 for value in metal_instruction_claim_isolated_service
+        ],
+        "cpu_product_instruction_claim_family_ms_samples": [
+            value / 1000.0 for value in cpu_product_instruction_claim
+        ],
+        "metal_product_instruction_claim_family_ms_samples": [
+            value / 1000.0 for value in metal_product_instruction_claim
+        ],
         "instruction_input_kernel_service_decision": instruction_input_decision,
         "booleanity_address_phase_decision": booleanity_address_decision,
         "hamming_weight_claim_reduction_decision": hamming_weight_decision,
         "outer_remainder_decision": outer_remainder_decision,
         "product_remainder_decision": product_remainder_decision,
+        "instruction_claim_reduction_critical_path_decision": instruction_claim_decision,
+        "product_instruction_claim_family_decision": product_instruction_claim_decision,
         "bytecode_read_raf_cycle_decision": {
             "minimum_speedup": BYTECODE_MIN_SPEEDUP,
             "minimum_pairs": PRODUCTION_PAIRS,
@@ -3350,6 +3744,8 @@ def local_kernel_primary_us(result: dict[str, Any], kernel: str) -> float:
     elif kernel == OUTER_REMAINDER_KERNEL:
         value = result["outer_remainder_member"]["components"]["member_us"]
     elif kernel == PRODUCT_REMAINDER_KERNEL:
+        value = kernel_wall_us(result["attribution"], kernel)
+    elif kernel == INSTRUCTION_CLAIM_KERNEL:
         value = kernel_wall_us(result["attribution"], kernel)
     else:
         raise ValueError(f"unsupported local kernel {kernel}")
@@ -3588,6 +3984,7 @@ def run_backend(
         outer_remainder_cutoff_log2,
         outer_remainder_trace_cutoff_log2,
     )
+    instruction_claim = instruction_claim_observation(events, backend, log_n)
     attribution = trace_attribution(events)
     for name, member in (
         (BYTECODE_KERNEL, bytecode_member),
@@ -3628,6 +4025,7 @@ def run_backend(
         "hamming_weight_member": hamming_weight_member,
         "outer_remainder_config": outer_remainder_config,
         "outer_remainder_member": outer_remainder_member,
+        "instruction_claim": instruction_claim,
         "execution_config": execution_config,
         "command": command,
         "max_rss_bytes": max_rss,
@@ -4081,6 +4479,17 @@ def main() -> int:
                 )
                 for backend in ("optimized", "metal")
             }
+            metal_instruction_claim_resources = results["metal"][
+                "instruction_claim"
+            ]["resource_observation"]
+            if metal_instruction_claim_resources is None:
+                raise ValueError("Metal Instruction Claim observation is missing")
+            cpu_instruction_claim_us = kernel_wall_us(
+                results["optimized"]["attribution"], INSTRUCTION_CLAIM_KERNEL
+            )
+            metal_instruction_claim_us = kernel_wall_us(
+                results["metal"]["attribution"], INSTRUCTION_CLAIM_KERNEL
+            )
             pairs.append(
                 {
                     "order": order,
@@ -4158,6 +4567,13 @@ def main() -> int:
                     "metal_product_remainder_us": kernel_wall_us(
                         results["metal"]["attribution"], PRODUCT_REMAINDER_KERNEL
                     ),
+                    "cpu_instruction_claim_us": cpu_instruction_claim_us,
+                    "metal_instruction_claim_us": metal_instruction_claim_us,
+                    "metal_instruction_claim_isolated_service_us": (
+                        metal_instruction_claim_us
+                        + float(metal_instruction_claim_resources["overlap_wall_ns"])
+                        / 1000.0
+                    ),
                 }
             )
             attributions.append(
@@ -4210,6 +4626,10 @@ def main() -> int:
                         ],
                         "metal_member": results["metal"]["outer_remainder_member"],
                     },
+                    "instruction_claim": {
+                        "optimized": results["optimized"]["instruction_claim"],
+                        "metal": results["metal"]["instruction_claim"],
+                    },
                     "execution": {
                         "optimized": results["optimized"]["execution_config"],
                         "metal": results["metal"]["execution_config"],
@@ -4255,6 +4675,34 @@ def main() -> int:
                             "outer_remainder_row_lifecycle": results[backend][
                                 "outer_remainder_member"
                             ]["row_lifecycle"],
+                            "instruction_claim": results[backend][
+                                "instruction_claim"
+                            ],
+                            "product_remainder_ns": microseconds_to_nanoseconds(
+                                kernel_wall_us(
+                                    results[backend]["attribution"],
+                                    PRODUCT_REMAINDER_KERNEL,
+                                )
+                            ),
+                            "instruction_claim_isolated_service_ns": microseconds_to_nanoseconds(
+                                kernel_wall_us(
+                                    results[backend]["attribution"],
+                                    INSTRUCTION_CLAIM_KERNEL,
+                                )
+                                + (
+                                    float(
+                                        results[backend]["instruction_claim"][
+                                            "resource_observation"
+                                        ]["overlap_wall_ns"]
+                                    )
+                                    / 1000.0
+                                    if results[backend]["instruction_claim"][
+                                        "resource_observation"
+                                    ]
+                                    is not None
+                                    else 0.0
+                                )
+                            ),
                             "local": {
                                 "kernel": local_kernel["name"],
                                 "primary_ns": microseconds_to_nanoseconds(
@@ -4803,6 +5251,62 @@ def main() -> int:
                 ]["clears"],
                 "product_remainder_local_gate": metrics[
                     "product_remainder_decision"
+                ]["clears"],
+                "instruction_claim_cpu_control": all(
+                    sample["instruction_claim"]["optimized"][
+                        "resource_observation"
+                    ]
+                    is None
+                    and not any(
+                        sample["instruction_claim"]["optimized"][
+                            "metal_counts"
+                        ].values()
+                    )
+                    for sample in attributions
+                ),
+                "instruction_claim_metal_backend_exercised": all(
+                    sample["instruction_claim"]["metal"]["metal_counts"]
+                    == {
+                        "first_message_submit": 1,
+                        "prepare": 1,
+                        "first_message_join": 1,
+                        "bind_and_message": args.log_n - 1,
+                        "output_claims": 1,
+                    }
+                    for sample in attributions
+                ),
+                "instruction_claim_async_lifecycle_exact": all(
+                    (observation := sample["instruction_claim"]["metal"][
+                        "resource_observation"
+                    ])
+                    is not None
+                    and observation["command_committed"] is True
+                    and observation["command_completed"] is True
+                    and observation["submit_wall_ns"] > 0
+                    and observation["overlap_wall_ns"] > 0
+                    and observation["join_wall_ns"] > 0
+                    and observation["initial_gpu_active_ns"] > 0
+                    and observation["lifecycle_wall_ns"] > 0
+                    for sample in attributions
+                ),
+                "instruction_claim_product_rows_reused": all(
+                    (observation := sample["instruction_claim"]["metal"][
+                        "resource_observation"
+                    ])
+                    is not None
+                    and observation["resident_rows_storage_id"]
+                    == observation["producer_rows_storage_id"]
+                    and observation["lookup_rows_storage_id"]
+                    != observation["resident_rows_storage_id"]
+                    and observation["row_upload_bytes"] == 0
+                    and observation["round_device_buffer_allocations"] == 0
+                    for sample in attributions
+                ),
+                "instruction_claim_local_gate": metrics[
+                    "instruction_claim_reduction_critical_path_decision"
+                ]["clears"],
+                "product_instruction_claim_family_local_gate": metrics[
+                    "product_instruction_claim_family_decision"
                 ]["clears"],
                 "outer_remainder_cpu_control": all(
                     sample["outer_remainder"]["optimized_config"] is None
