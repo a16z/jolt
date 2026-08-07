@@ -10,7 +10,7 @@ use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_openings::{EvaluationClaim, OpeningsError, PrefixPackedClaims, PrefixPackedLayout};
 use jolt_poly::eq_index_msb;
-use jolt_poly::math::Math;
+use jolt_utils::Math;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
 use super::super::geometry::dimensions::REGISTER_ADDRESS_BITS;
