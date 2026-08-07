@@ -146,10 +146,7 @@ impl<F: Field> DenseReadRafOracle<F> {
         self.rows
             .iter()
             .enumerate()
-            .map(|(cycle, &row)| {
-                eq_index(&self.r_reduction, cycle)
-                    * combined_value(row, &boolean_address(row.lookup_index), self.gamma)
-            })
+            .map(|(cycle, &row)| eq_index(&self.r_reduction, cycle) * input_value(row, self.gamma))
             .sum()
     }
 
@@ -495,6 +492,25 @@ fn combined_value<F: Field>(row: InstructionReadRafRow, address: &[F], gamma: F)
     } else {
         let left = OperandPolynomial::new(ADDRESS_BITS, OperandSide::Left).evaluate(address);
         let right = OperandPolynomial::new(ADDRESS_BITS, OperandSide::Right).evaluate(address);
+        table + gamma * left + gamma2 * right
+    }
+}
+
+fn input_value<F: Field>(row: InstructionReadRafRow, gamma: F) -> F {
+    // The canonical-address term constrains the relation; it is not an
+    // upstream lookup-operand opening and therefore is absent here.
+    let address = boolean_address(row.lookup_index);
+    let table = row.table_index.map_or_else(F::zero, |index| {
+        LookupTableKind::<RISCV_XLEN>::iter()
+            .find(|table| table.index() == index)
+            .map_or_else(F::zero, |table| table.evaluate_mle::<F, F>(&address))
+    });
+    let gamma2 = gamma * gamma;
+    if row.raf_flag {
+        table + gamma2 * IdentityPolynomial::new(ADDRESS_BITS).evaluate(&address)
+    } else {
+        let left = OperandPolynomial::new(ADDRESS_BITS, OperandSide::Left).evaluate(&address);
+        let right = OperandPolynomial::new(ADDRESS_BITS, OperandSide::Right).evaluate(&address);
         table + gamma * left + gamma2 * right
     }
 }

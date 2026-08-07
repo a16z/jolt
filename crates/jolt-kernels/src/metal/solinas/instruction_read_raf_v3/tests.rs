@@ -1,3 +1,4 @@
+use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_field::{Field, Fr, FromPrimitiveInt};
 
 use super::abi::{
@@ -24,14 +25,28 @@ fn fixture_rows() -> Vec<InstructionReadRafRow> {
         (0, Some(0), false),
         (5, Some(1), false),
         (5, Some(1), false),
-        (u128::MAX, None, true),
-        (u128::MAX, None, true),
+        (u64::MAX as u128, None, true),
+        (u64::MAX as u128, None, true),
         (1u128 << 127, Some(2), true),
         (42, None, false),
     ]
     .into_iter()
     .map(|(lookup, table, raf)| InstructionReadRafRow::new(lookup, table, raf).unwrap())
     .collect()
+}
+
+#[test]
+fn noncanonical_address_is_not_part_of_the_input_claim() {
+    if !CANONICAL_INSTRUCTION_ADDRESS {
+        return;
+    }
+    let row = InstructionReadRafRow::new(u128::MAX, None, true).unwrap();
+    let oracle = DenseReadRafOracle::new(vec![row], vec![], f(7), 4).unwrap();
+
+    assert_ne!(
+        oracle.input_claim(),
+        oracle.address_message().unwrap().sum_at_boolean_points()
+    );
 }
 
 #[test]
