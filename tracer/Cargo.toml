@@ -76,15 +76,14 @@ blake3.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 
-# Tracer regression harnesses (developer-invoked; not run by cargo test/bench).
-# trace_golden checks fixtures in tests/fixtures/golden_traces.json; the other
-# two gates and the throughput bench are documented in each file's header.
+# Tracer regression harnesses (developer-invoked; not run by cargo test/bench;
+# trace_equivalence also runs in CI). Each file's header documents its gate.
 [[example]]
 name = "trace_bench"
 required-features = ["std"]
 
 [[example]]
-name = "trace_golden"
+name = "trace_equivalence"
 required-features = ["std"]
 
 [[example]]

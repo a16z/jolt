@@ -3939,8 +3939,10 @@ dependencies = [
  "jolt-verifier-derive",
  "num-traits",
  "postcard",
+ "quote",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "thiserror 2.0.18",
 ]
 
@@ -3963,7 +3965,6 @@ dependencies = [
  "jolt-lookup-tables",
  "jolt-program",
  "jolt-riscv",
- "jolt-utils",
  "jolt-witness-derive",
  "rayon",
  "thiserror 2.0.18",

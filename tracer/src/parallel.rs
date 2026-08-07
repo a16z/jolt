@@ -15,6 +15,7 @@ use crate::emulator::mmu::ChunkMmuState;
 use crate::emulator::terminal::DummyTerminal;
 use crate::emulator::Emulator;
 use crate::instruction::Cycle;
+use std::sync::{Arc, OnceLock};
 
 /// Everything needed to seed a bit-exact trace-mode replay from a tick
 /// boundary, except the memory image (pooled separately — see
@@ -359,7 +360,8 @@ impl Default for TwoPassConfig {
 
 struct ChunkJob<'trace> {
     index: usize,
-    checkpoint: ChunkCheckpoint,
+    checkpoint: Arc<ChunkCheckpoint>,
+    end: Arc<OnceLock<Arc<ChunkCheckpoint>>>,
     image: Vec<u64>,
     ticks: usize,
     rows: usize,
@@ -369,14 +371,17 @@ struct ChunkJob<'trace> {
     window: Option<&'trace mut [core::mem::MaybeUninit<Cycle>]>,
 }
 
-/// Flags worker death on unwind. Without it, a systematic replay divergence
-/// (every worker tripping its row-count assert) would leave pass-1 blocked
-/// forever on the full job queue — the receiver lives until the scope ends,
-/// and `thread::scope` only re-raises worker panics after the closure
-/// returns.
-struct WorkerPanicGuard<'flag>(&'flag std::sync::atomic::AtomicBool);
+/// Flags pipeline death on unwind, on both sides. Without the worker-side
+/// guard, a systematic replay divergence (every worker tripping its
+/// row-count assert) would leave pass-1 blocked forever on the full job
+/// queue; without the pass-1-side guard, a pass-1 panic (e.g. its own
+/// boundary assert firing after a sibling worker died) would leave workers
+/// blocked forever on an end-boundary slot that is never published — in both
+/// cases the receiver lives until the scope ends, and `thread::scope` only
+/// re-raises panics after joining every thread.
+struct PanicGuard<'flag>(&'flag std::sync::atomic::AtomicBool);
 
-impl Drop for WorkerPanicGuard<'_> {
+impl Drop for PanicGuard<'_> {
     fn drop(&mut self) {
         if std::thread::panicking() {
             self.0.store(true, std::sync::atomic::Ordering::Release);
@@ -389,6 +394,13 @@ impl Drop for WorkerPanicGuard<'_> {
 /// propagation path, which no divergence-free gate reaches).
 #[cfg(test)]
 pub(crate) static TEST_CORRUPT_ROW_COUNTS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Test-only fault injection: flip one worker register after replay (row
+/// counts preserved) so the boundary-state verification trips (exercises the
+/// tripwire that a count-preserving divergence must hit).
+#[cfg(test)]
+pub(crate) static TEST_CORRUPT_BOUNDARY_STATE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Two-pass parallel trace: pass-1 executes on the calling thread, cutting
@@ -436,8 +448,10 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
     let windowed_rows = std::thread::scope(|scope| {
         // Owned by the scope closure: ANY pass-1-side panic must drop the
         // sender before the scope joins, or workers blocked in `recv` would
-        // deadlock the join itself.
+        // deadlock the join itself. The guard covers the other blocking site:
+        // workers polling an end-boundary slot pass-1 will never publish.
         let job_tx = job_tx;
+        let _panic_guard = PanicGuard(&worker_panicked);
         for _ in 0..workers {
             let job_rx = &job_rx;
             let worker_panicked = &worker_panicked;
@@ -446,7 +460,7 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
             let seed_device = seed_device.clone();
             let seed_decode = seed_decode.clone();
             scope.spawn(move || {
-                let _panic_guard = WorkerPanicGuard(worker_panicked);
+                let _panic_guard = PanicGuard(worker_panicked);
                 demote_worker_thread();
                 let mut worker = ChunkWorker::from_seed(seed_device, seed_decode);
                 // Per-tick row buffer, reused across ticks and chunks: it
@@ -483,6 +497,37 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                             out_tx.send((job.index, rows)).expect("collector hung up");
                         }
                     }
+                    #[cfg(test)]
+                    if TEST_CORRUPT_BOUNDARY_STATE.load(std::sync::atomic::Ordering::Relaxed) {
+                        worker.cpu.x[31] ^= 1;
+                    }
+                    // Boundary verification: the replay must land exactly on
+                    // the next chunk's captured state. Row counts alone miss
+                    // divergences that preserve them (e.g. a value-level
+                    // advice mismatch); the state is already captured, so
+                    // this costs one comparison per chunk. The slot is
+                    // already set in the steady state: pass-1 published this
+                    // checkpoint when it started the next chunk. Poll rather
+                    // than `wait()`: if pass-1 dies before publishing (its
+                    // boundary assert fires after a sibling worker panics),
+                    // a blocking wait would never wake and the scope join
+                    // would hang instead of re-raising the panic.
+                    let end = loop {
+                        if let Some(end) = job.end.get() {
+                            break end;
+                        }
+                        assert!(
+                            !worker_panicked.load(std::sync::atomic::Ordering::Acquire),
+                            "pipeline died while waiting for the chunk end boundary"
+                        );
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                    };
+                    if let Some(diff) = end.diff_vs_cpu(worker.cpu()) {
+                        panic!(
+                            "chunk {}: replay diverged from pass-1 at the chunk boundary: {diff}",
+                            job.index
+                        );
+                    }
                 }
             });
         }
@@ -502,6 +547,9 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
         let mut chunk_index = 0usize;
         let mut windowed_rows = 0usize;
         let mut overflowed = false;
+        // The previous chunk's end-boundary slot, published at the next
+        // capture (every boundary is both an end and a start).
+        let mut pending_end: Option<Arc<OnceLock<Arc<ChunkCheckpoint>>>> = None;
         loop {
             // Fail at the next chunk boundary (not only when the queue
             // fills) so a dead pool surfaces promptly even on long traces.
@@ -514,7 +562,10 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                 pool.put(buffer);
             }
             let t0 = std::time::Instant::now();
-            let checkpoint = pass1.checkpoint();
+            let checkpoint = Arc::new(pass1.checkpoint());
+            if let Some(slot) = pending_end.take() {
+                let _ = slot.set(Arc::clone(&checkpoint));
+            }
             let image = pool.capture(&pass1.emulator().get_cpu().mmu.memory.memory);
             let t1 = std::time::Instant::now();
             capture_time += t1 - t0;
@@ -548,9 +599,11 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
             // Poll rather than block on the bounded queue: a blocking send
             // would hang forever if every worker died (the receiver lives
             // until the scope ends), turning a divergence panic into a hang.
+            let end_slot: Arc<OnceLock<Arc<ChunkCheckpoint>>> = Arc::new(OnceLock::new());
             let mut job = ChunkJob {
                 index: chunk_index,
                 checkpoint,
+                end: Arc::clone(&end_slot),
                 image,
                 ticks,
                 rows,
@@ -574,10 +627,15 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                 }
             }
             send_time += t2.elapsed();
+            pending_end = Some(end_slot);
             chunk_index += 1;
             if pass1.is_done() {
                 break;
             }
+        }
+        // The last chunk's end boundary is the final pass-1 state.
+        if let Some(slot) = pending_end.take() {
+            let _ = slot.set(Arc::new(pass1.checkpoint()));
         }
         drop(job_tx);
         let pass1_done = started.elapsed();

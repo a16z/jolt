@@ -63,6 +63,7 @@ pub struct Stage8BatchEntry<'a, F: Field, C> {
     reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
 )]
 #[cfg(not(feature = "akita"))]
+#[jolt_verifier_derive::fs_scope(Stage8)]
 pub fn verify<F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -435,6 +436,7 @@ fn require_commitment_layout<C>(
     clippy::too_many_arguments,
     reason = "same signature as the homomorphic build's verify"
 )]
+#[jolt_verifier_derive::fs_scope(Stage8)]
 pub fn verify<F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,

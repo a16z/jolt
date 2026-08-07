@@ -738,6 +738,7 @@ where
     }))
 }
 
+#[jolt_verifier_derive::fs_scope(Reconstruction)]
 pub fn verify<F, C, T>(
     checked: &CheckedInputs,
     sumcheck_proof: Option<&SumcheckProof<F, C>>,

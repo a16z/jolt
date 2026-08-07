@@ -115,9 +115,82 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Fields, GenericArgument, GenericParam, Ident,
-    Meta, PathArguments, Token, Type,
+    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericArgument,
+    GenericParam, Ident, ItemFn, Meta, PathArguments, Token, Type,
 };
+
+/// Assign a verifier function's transcript operations to a Fiat-Shamir audit scope.
+///
+/// The annotation has no effect unless `jolt-verifier` is built with `fs-audit`.
+///
+/// ```ignore
+/// #[fs_scope(Stage3)]
+/// pub fn verify(...) -> Result<..., VerifierError> {
+///     // ...
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn fs_scope(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let scope = parse_macro_input!(attr as Ident);
+    let mut function = parse_macro_input!(item as ItemFn);
+
+    if let Err(error) = validate_fs_scope(&scope) {
+        return error.into_compile_error().into();
+    }
+
+    let guard = fs_scope_guard_statement(&scope);
+    function.block.stmts.insert(0, parse_quote!(#guard));
+    quote!(#function).into()
+}
+
+/// Assign the remainder of the current block to a Fiat-Shamir audit scope.
+///
+/// Use this when one verifier function contains multiple protocol regions:
+///
+/// ```ignore
+/// jolt_verifier_derive::fs_scope_guard!(BlindFold);
+/// ```
+#[proc_macro]
+pub fn fs_scope_guard(input: TokenStream) -> TokenStream {
+    let scope = parse_macro_input!(input as Ident);
+    if let Err(error) = validate_fs_scope(&scope) {
+        return error.into_compile_error().into();
+    }
+    fs_scope_guard_statement(&scope).into()
+}
+
+fn validate_fs_scope(scope: &Ident) -> syn::Result<()> {
+    let valid = matches!(
+        scope.to_string().as_str(),
+        "Preamble"
+            | "Commitments"
+            | "Stage1"
+            | "Stage2"
+            | "Stage3"
+            | "Stage4"
+            | "Stage5"
+            | "Stage6a"
+            | "Stage6b"
+            | "Stage7"
+            | "Reconstruction"
+            | "Stage8"
+            | "BlindFold"
+    );
+    if !valid {
+        return Err(syn::Error::new_spanned(
+            scope,
+            "unknown Fiat-Shamir verifier scope",
+        ));
+    }
+    Ok(())
+}
+
+fn fs_scope_guard_statement(scope: &Ident) -> TokenStream2 {
+    quote! {
+        #[cfg(feature = "fs-audit")]
+        let _fs_scope = crate::fs_audit::enter(crate::fs_audit::FsScope::#scope);
+    }
+}
 
 /// Generate a stage's aggregate claim types (`StageN{Input,Output}{Claims,Points}`
 /// / `StageNChallenges`) from a struct of `ConcreteSumcheck` instances. See the
