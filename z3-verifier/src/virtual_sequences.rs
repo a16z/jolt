@@ -369,7 +369,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             let shift = trailing_zeros(&rs2, cpu.bv_bits);
-            cpu.x[operands.rd as usize] = rs1.bvlshr(&shift);
+            cpu.x[operands.rd as usize] = rs1.bvlshr(&shift) & rs2.bvlshr(&shift);
         }
         Instruction::VirtualShiftRightBitmask(VirtualShiftRightBitmask { operands, .. }) => {
             let shift = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((cpu.bv_bits - 1) as u64);

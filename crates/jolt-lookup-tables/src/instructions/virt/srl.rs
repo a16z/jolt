@@ -16,8 +16,18 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSrl<C> {
     fn to_lookup_output(&self) -> u64 {
         let (rs1, rs2) = LookupQuery::<XLEN>::to_instruction_inputs(self);
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        let shift = (rs2 as u64).trailing_zeros();
-        (rs1 & mask) >> shift
+        let mut x = rs1 & mask;
+        let mut y = rs2 as u64 & mask;
+        let mut result = 0;
+        for _ in 0..XLEN {
+            let x_i = x >> (XLEN - 1) & 1;
+            let y_i = y >> (XLEN - 1) & 1;
+            result *= 1 + y_i;
+            result += x_i * y_i;
+            x <<= 1;
+            y <<= 1;
+        }
+        result
     }
 }
 
