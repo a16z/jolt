@@ -270,3 +270,77 @@ impl InlineTestHarness {
         Self::create_instruction(opcode, funct3, funct7, INLINE_RS1, INLINE_RS2, INLINE_RS3)
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test-only assertions")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_input_layout_round_trips_data_through_disjoint_regions() {
+        let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(32, 16));
+
+        harness.load_input32(&[0x1111_2222, 0x3333_4444]);
+        harness.load_state32(&[0xaaaa_bbbb, 0xcccc_dddd]);
+        // State (output region) reads back unclobbered by the input words
+        assert_eq!(harness.read_output32(2), vec![0xaaaa_bbbb, 0xcccc_dddd]);
+
+        harness.load_state64(&[0x0102_0304_0506_0708]);
+        assert_eq!(harness.read_output64(1), vec![0x0102_0304_0506_0708]);
+
+        // The input region is exactly input_size bytes below the output region
+        harness.load_input64(&[0x9999_8888_7777_6666]);
+        let (input_value, _) = harness.cpu.mmu.load_doubleword(DRAM_BASE).unwrap();
+        assert_eq!(input_value, 0x9999_8888_7777_6666);
+
+        // rs1 -> output, rs2 -> input for the single-input convention
+        harness.setup_registers();
+        assert_eq!(harness.cpu.x[INLINE_RS1 as usize] as u64, DRAM_BASE + 32);
+        assert_eq!(harness.cpu.x[INLINE_RS2 as usize] as u64, DRAM_BASE);
+    }
+
+    #[test]
+    fn two_input_layout_maps_rs3_to_the_output_region() {
+        let mut harness = InlineTestHarness::new(InlineMemoryLayout::two_inputs(16, 16, 8));
+        harness.load_input2_32(&[0x5555_6666]);
+        harness.load_input2_64(&[0x0a0b_0c0d_0e0f_1011]);
+        let (value, _) = harness.cpu.mmu.load_doubleword(DRAM_BASE + 16).unwrap();
+        assert_eq!(value, 0x0a0b_0c0d_0e0f_1011);
+
+        harness.setup_registers();
+        assert_eq!(harness.cpu.x[INLINE_RS1 as usize] as u64, DRAM_BASE);
+        assert_eq!(harness.cpu.x[INLINE_RS2 as usize] as u64, DRAM_BASE + 16);
+        assert_eq!(harness.cpu.x[INLINE_RS3 as usize] as u64, DRAM_BASE + 32);
+    }
+
+    #[test]
+    fn execute_sequence_runs_plain_instructions_on_the_harness_cpu() {
+        let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(16, 16));
+        // add x5, x10, x11
+        let word = (11 << 20) | (10 << 15) | (5 << 7) | 0x33;
+        let add = crate::instruction::Instruction::decode(word, DRAM_BASE, false).unwrap();
+        harness.cpu.write_register(10, 20);
+        harness.cpu.write_register(11, 22);
+        harness.execute_sequence(&[add]);
+        assert_eq!(harness.cpu.x[5], 42);
+    }
+
+    #[test]
+    fn execute_inline_expands_the_registered_test_inline() {
+        // TEST_INLINE_PROFILE (registered in instruction::inline::tests) emits
+        // a VirtualROTRIW x5, rs1 with a bitmask selecting a 32-bit rotation:
+        // rd receives the zero-extended low word of rs1.
+        let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(16, 16));
+        harness.setup_registers();
+        harness
+            .cpu
+            .write_register(INLINE_RS1 as usize, 0xdead_beef_1234_5678_u64 as i64);
+
+        let instruction = InlineTestHarness::create_default_instruction(0x2b, 0x6, 0x7e);
+        assert_eq!(instruction.opcode, 0x2b);
+        assert_eq!(instruction.operands.rs1, INLINE_RS1);
+        harness.execute_inline(instruction);
+
+        assert_eq!(harness.cpu.x[5] as u64, 0x1234_5678);
+    }
+}

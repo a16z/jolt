@@ -1,0 +1,50 @@
+# Modules covered by the nightly mutation-testing report
+# (.github/workflows/coverage-nightly.yml). Report-only, never a merge gate.
+#
+# Scope: soundness-critical verification code — modules where a surviving
+# mutant means "a check that accepts things it should reject and no test
+# notices". Sized to fit the nightly time budget; grow deliberately.
+#
+# Optional per-target key `features`: cargo features to enable when building
+# and testing that package's mutants. The kill signal is only as strong as the
+# tests that run — a mutant is "missed" relative to the enabled suites, so a
+# target whose strongest oracle is feature-gated must list those features here.
+#
+# Optional per-target key `test_packages`: packages whose test suites judge the
+# mutants (repeated --test-package). Defaults to the mutated package itself;
+# list it explicitly if its own tests should still run alongside others'.
+
+[[target]]
+package = "jolt-sumcheck"
+files = ["src/**/*.rs"]
+
+[[target]]
+package = "jolt-openings"
+files = ["src/**/*.rs"]
+
+[[target]]
+package = "jolt-blindfold"
+files = ["src/verify.rs", "src/protocol.rs", "src/relaxed.rs", "src/r1cs.rs"]
+
+# prover-fixtures compiles in the completeness and tamper suites — the only
+# tests that kill stage-wiring mutants (e.g. nulling out a claim-chaining
+# function survives the default-feature suite). Generated fixtures are cached
+# on disk after the baseline run, so per-mutant test time stays flat.
+[[target]]
+package = "jolt-verifier"
+files = ["src/stages/**/*.rs", "src/verifier.rs"]
+features = ["prover-fixtures"]
+
+# Proc-macro: cargo-mutants cannot see macro *expansions*, but the generator is
+# ordinary Rust, so mutating it probes the claim-wiring logic (plan_field,
+# id_expr, canonical_order emission). Judged by the crate's own expansion
+# snapshots and error-path tests, which pin the output of every grammar path,
+# plus jolt-claims, whose compilation exercises the #[proc_macro_derive] entry
+# wrappers that unit tests cannot reach (proc_macro::TokenStream only exists
+# in a real macro invocation). (Do not add `features` here: cargo-mutants
+# builds the mutated package alone, which rejects features it does not
+# declare.)
+[[target]]
+package = "jolt-claims-derive"
+files = ["src/lib.rs"]
+test_packages = ["jolt-claims-derive", "jolt-claims"]

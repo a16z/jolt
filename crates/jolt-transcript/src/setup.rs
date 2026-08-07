@@ -143,3 +143,31 @@ where
 pub fn transcript_builder() -> DomainSeparator<WithoutInstance, WithoutSession> {
     DomainSeparator::new(PROTOCOL_ID)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pad_id_left_aligns_and_zero_pads_to_64_bytes() {
+        assert_eq!(
+            pad_id(b"a16z/jolt-transcript/v1"),
+            PROTOCOL_ID,
+            "PROTOCOL_ID must be the padded ASCII identifier"
+        );
+        let short = pad_id(b"xy");
+        assert_eq!(&short[..2], b"xy");
+        assert!(short[2..].iter().all(|&byte| byte == 0));
+        let full = [0x41u8; 64];
+        assert_eq!(pad_id(&full), full, "a 64-byte id is passed through");
+    }
+
+    /// The instance digest is absorbed as its raw 32 bytes (no framing);
+    /// the legacy empty instance encodes to nothing.
+    #[test]
+    fn instance_encodings_are_raw_bytes() {
+        let digest = InstanceDigest([0xA5; 32]);
+        assert_eq!(digest.encode().as_ref(), &[0xA5; 32]);
+        assert!(EmptyInstance.encode().as_ref().is_empty());
+    }
+}

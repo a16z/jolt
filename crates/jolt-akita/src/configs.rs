@@ -169,6 +169,7 @@ delegate_preset!(
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
+    clippy::expect_used,
     reason = "catalog setup tests should fail loudly on malformed schedules"
 )]
 mod tests {
@@ -185,5 +186,58 @@ mod tests {
         assert!(catalog_setup_envelope::<JoltD64OneHotK256>(k256, 38, 41)
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn setup_sizing_rejects_zero_batched_polynomials() {
+        let err = JoltD64OneHotK16::max_setup_matrix_size(4, 0)
+            .expect_err("zero batched polynomials must be rejected");
+        assert!(
+            err.to_string().contains("at least 1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A shape outside the checked-in catalog grid must fall back to the
+    /// upstream preset's sizing rather than inventing an envelope:
+    /// poly-count 2 is not a reachable `OneHotTrace` width in either family,
+    /// so the delegated outcome (envelope or sizing error) must equal the
+    /// base preset's, dimension by dimension.
+    #[test]
+    #[expect(
+        clippy::panic,
+        reason = "delegation must not turn a base sizing error into an envelope or vice versa"
+    )]
+    fn non_catalogued_shape_falls_back_to_upstream_preset_sizing() {
+        for max_num_vars in [6, 17] {
+            let k16 = crate::schedules::jolt_fp128_d64_onehot_k16_table().unwrap();
+            assert!(
+                catalog_setup_envelope::<JoltD64OneHotK16>(k16, max_num_vars, 2)
+                    .unwrap()
+                    .is_none(),
+                "poly-count 2 must not be treated as catalogued"
+            );
+
+            let delegated = JoltD64OneHotK16::max_setup_matrix_size(max_num_vars, 2);
+            let base = akita_config::proof_optimized::fp128::D64OneHotK16::max_setup_matrix_size(
+                max_num_vars,
+                2,
+            );
+            match (delegated, base) {
+                (Ok(delegated), Ok(base)) => assert_eq!(
+                    delegated.max_setup_len, base.max_setup_len,
+                    "fallback must delegate to the base preset's envelope"
+                ),
+                (Err(delegated), Err(base)) => assert_eq!(
+                    delegated.to_string(),
+                    base.to_string(),
+                    "fallback must surface the base preset's sizing error"
+                ),
+                (delegated, base) => panic!(
+                    "fallback diverged from the base preset at {max_num_vars} vars: \
+                     delegated={delegated:?} base={base:?}"
+                ),
+            }
+        }
     }
 }

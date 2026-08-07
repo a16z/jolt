@@ -33,3 +33,22 @@ impl Terminal for DefaultTerminal {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buffers_are_independent_fifos_that_drain_to_zero() {
+        let mut terminal = DefaultTerminal::default();
+        terminal.put_byte(b'a');
+        terminal.put_byte(b'b');
+        terminal.put_input(b'x');
+
+        assert_eq!(terminal.get_output(), b'a');
+        assert_eq!(terminal.get_output(), b'b');
+        assert_eq!(terminal.get_output(), 0, "drained buffer yields 0");
+        assert_eq!(terminal.get_input(), b'x');
+        assert_eq!(terminal.get_input(), 0);
+    }
+}

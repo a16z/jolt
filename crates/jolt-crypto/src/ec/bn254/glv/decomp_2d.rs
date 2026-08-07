@@ -87,3 +87,131 @@ pub fn glv_endomorphism(point: &G1Projective) -> G1Projective {
     res.x *= ENDO_COEFF;
     res
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests invert fixed curve constants that are nonzero by construction"
+)]
+mod tests {
+    use super::*;
+    use ark_bn254::G1Affine;
+    use ark_ec::AffineRepr;
+    use ark_ff::Field;
+    use ark_std::UniformRand;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    /// Signed lattice basis entries in Fr, matching `decompose_scalar_2d`'s
+    /// sign convention (`true` = positive).
+    fn basis_fr() -> [Fr; 4] {
+        SCALAR_DECOMP_COEFFS.map(|(positive, magnitude)| {
+            let value = Fr::from_bigint(magnitude).unwrap();
+            if positive {
+                value
+            } else {
+                -value
+            }
+        })
+    }
+
+    /// The GLV eigenvalue λ derived from the lattice basis itself: every
+    /// basis row (a, b) lies in {(a, b) : a + b·λ ≡ 0 (mod r)}, so
+    /// λ = -n11/n12. Anchored by the second basis row and the cube-root
+    /// identity before use.
+    fn lambda() -> Fr {
+        let [n11, n12, n21, n22] = basis_fr();
+        let lambda = -n11 * n12.inverse().unwrap();
+        assert_eq!(
+            n21 + n22 * lambda,
+            Fr::from(0u64),
+            "second basis row must vanish"
+        );
+        assert_eq!(
+            lambda * lambda * lambda,
+            Fr::from(1u64),
+            "lambda must be a cube root of unity"
+        );
+        assert_ne!(lambda, Fr::from(1u64), "lambda must be nontrivial");
+        lambda
+    }
+
+    fn signed_fr(magnitude: <Fr as PrimeField>::BigInt, positive: bool) -> Fr {
+        let value = Fr::from_bigint(magnitude).unwrap();
+        if positive {
+            value
+        } else {
+            -value
+        }
+    }
+
+    fn magnitude(value: <Fr as PrimeField>::BigInt) -> BigUint {
+        BigUint::from_bytes_be(&value.to_bytes_be())
+    }
+
+    // Ties the scalar-field lambda used by the reconstruction check to the
+    // actual curve endomorphism the multiplication routines apply.
+    #[test]
+    fn lattice_lambda_is_the_endomorphism_eigenvalue_on_g1() {
+        let g = G1Affine::generator().into_group();
+        assert_eq!(glv_endomorphism(&g), g * lambda());
+    }
+
+    #[test]
+    fn decomposition_reconstructs_scalar_within_half_bitlength_bounds() {
+        let lambda = lambda();
+        let [n11_abs, n12_abs, n21_abs, n22_abs] =
+            SCALAR_DECOMP_COEFFS.map(|(_, value)| magnitude(value));
+        // The Babai coefficients round to nearest for positive products but
+        // truncate toward zero for negative ones (the `2*rem > r` round-up
+        // never fires on a negative remainder), so each coefficient error is
+        // below 1 and |k0| <= |n11| + |n21|, |k1| <= |n12| + |n22|, with one
+        // unit of slack. Both sums are ~2^128 — the documented halving of the
+        // 254-bit scalar.
+        let bound_0: BigUint = n11_abs.clone() + n21_abs + BigUint::one();
+        let bound_1: BigUint = n12_abs + n22_abs.clone() + BigUint::one();
+        assert!(
+            bound_0.bits() <= 128 && bound_1.bits() <= 128,
+            "lattice bounds must confirm the documented ~128-bit components"
+        );
+
+        let mut rng = ChaCha20Rng::seed_from_u64(0x2d61);
+        let mut scalars: Vec<Fr> = (0..64).map(|_| Fr::rand(&mut rng)).collect();
+        scalars.extend([
+            Fr::from(0u64),
+            Fr::from(1u64),
+            -Fr::from(1u64), // r - 1
+            lambda,
+            lambda - Fr::from(1u64),
+            lambda + Fr::from(1u64),
+            -lambda,
+            Fr::from(BigUint::one() << 127),
+            Fr::from(BigUint::one() << 128),
+            // scalars sitting on lattice basis magnitudes
+            Fr::from(n11_abs),
+            Fr::from(n22_abs.clone()),
+            Fr::from(n22_abs) + Fr::from(1u64),
+            Fr::from(bound_0.clone()),
+            Fr::from(bound_1.clone()),
+        ]);
+
+        for scalar in scalars {
+            let (coeffs, signs) = decompose_scalar_2d(scalar);
+            let k0 = signed_fr(coeffs[0], signs[0]);
+            let k1 = signed_fr(coeffs[1], signs[1]);
+            assert_eq!(
+                k0 + k1 * lambda,
+                scalar,
+                "k0 + k1*lambda must reconstruct {scalar}"
+            );
+            assert!(
+                magnitude(coeffs[0]) <= bound_0,
+                "|k0| exceeds the lattice bound for {scalar}"
+            );
+            assert!(
+                magnitude(coeffs[1]) <= bound_1,
+                "|k1| exceeds the lattice bound for {scalar}"
+            );
+        }
+    }
+}

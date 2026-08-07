@@ -699,3 +699,275 @@ impl ElfAnalyzer {
         data
     }
 }
+
+/// Hand-assembled ELF64 fixtures for emulator tests. Field offsets follow the
+/// System V gABI ELF64 layout, so these bytes are an oracle independent of the
+/// analyzer under test.
+#[cfg(test)]
+pub(crate) mod test_elf {
+    pub(crate) struct TestSymbol {
+        pub name: &'static str,
+        pub value: u64,
+        /// st_info (binding << 4 | type), e.g. 0x10 = GLOBAL|NOTYPE, 0x12 = GLOBAL|FUNC
+        pub info: u8,
+        pub size: u64,
+    }
+
+    /// Builds a minimal but well-formed RV64 ELF: `.text` loaded at
+    /// 0x8000_0000 with the given instruction words, plus a symbol table.
+    pub(crate) fn build_elf64(text: &[u32], symbols: &[TestSymbol]) -> Vec<u8> {
+        const TEXT_ADDR: u64 = 0x8000_0000;
+        let text_bytes: Vec<u8> = text.iter().flat_map(|w| w.to_le_bytes()).collect();
+
+        let align8 = |offset: usize| offset.div_ceil(8) * 8;
+
+        let text_offset = 0x40; // right after the 64-byte ELF header
+        let symtab_offset = align8(text_offset + text_bytes.len());
+        let symtab_size = 24 * (symbols.len() + 1); // null entry + symbols
+
+        // .strtab: leading NUL, then NUL-terminated names
+        let mut strtab = vec![0u8];
+        let mut name_offsets = Vec::new();
+        for symbol in symbols {
+            name_offsets.push(strtab.len() as u32);
+            strtab.extend_from_slice(symbol.name.as_bytes());
+            strtab.push(0);
+        }
+        let strtab_offset = symtab_offset + symtab_size;
+
+        let shstrtab: &[u8] = b"\0.text\0.symtab\0.strtab\0.shstrtab\0";
+        let shstrtab_offset = strtab_offset + strtab.len();
+        let shoff = align8(shstrtab_offset + shstrtab.len());
+
+        let mut elf = Vec::new();
+        // ELF header
+        elf.extend_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        elf.extend_from_slice(&2u16.to_le_bytes()); // e_type = EXEC
+        elf.extend_from_slice(&0xf3u16.to_le_bytes()); // e_machine = RISC-V
+        elf.extend_from_slice(&1u32.to_le_bytes()); // e_version
+        elf.extend_from_slice(&TEXT_ADDR.to_le_bytes()); // e_entry
+        elf.extend_from_slice(&0u64.to_le_bytes()); // e_phoff
+        elf.extend_from_slice(&(shoff as u64).to_le_bytes()); // e_shoff
+        elf.extend_from_slice(&0u32.to_le_bytes()); // e_flags
+        elf.extend_from_slice(&64u16.to_le_bytes()); // e_ehsize
+        elf.extend_from_slice(&56u16.to_le_bytes()); // e_phentsize
+        elf.extend_from_slice(&0u16.to_le_bytes()); // e_phnum
+        elf.extend_from_slice(&64u16.to_le_bytes()); // e_shentsize
+        elf.extend_from_slice(&5u16.to_le_bytes()); // e_shnum
+        elf.extend_from_slice(&4u16.to_le_bytes()); // e_shstrndx
+        assert_eq!(elf.len(), 0x40);
+
+        // .text content
+        elf.extend_from_slice(&text_bytes);
+        elf.resize(symtab_offset, 0);
+
+        // .symtab: null entry then the given symbols (st_shndx = .text)
+        elf.extend_from_slice(&[0u8; 24]);
+        for (symbol, name_offset) in symbols.iter().zip(&name_offsets) {
+            elf.extend_from_slice(&name_offset.to_le_bytes());
+            elf.push(symbol.info);
+            elf.push(0); // st_other
+            elf.extend_from_slice(&1u16.to_le_bytes()); // st_shndx
+            elf.extend_from_slice(&symbol.value.to_le_bytes());
+            elf.extend_from_slice(&symbol.size.to_le_bytes());
+        }
+
+        elf.extend_from_slice(&strtab);
+        elf.extend_from_slice(shstrtab);
+        elf.resize(shoff, 0);
+
+        let mut push_shdr = |name: u32,
+                             sh_type: u32,
+                             flags: u64,
+                             addr: u64,
+                             offset: u64,
+                             size: u64,
+                             link: u32,
+                             info: u32,
+                             addralign: u64,
+                             entsize: u64| {
+            let elf = &mut elf;
+            elf.extend_from_slice(&name.to_le_bytes());
+            elf.extend_from_slice(&sh_type.to_le_bytes());
+            elf.extend_from_slice(&flags.to_le_bytes());
+            elf.extend_from_slice(&addr.to_le_bytes());
+            elf.extend_from_slice(&offset.to_le_bytes());
+            elf.extend_from_slice(&size.to_le_bytes());
+            elf.extend_from_slice(&link.to_le_bytes());
+            elf.extend_from_slice(&info.to_le_bytes());
+            elf.extend_from_slice(&addralign.to_le_bytes());
+            elf.extend_from_slice(&entsize.to_le_bytes());
+        };
+
+        push_shdr(0, 0, 0, 0, 0, 0, 0, 0, 0, 0); // SHT_NULL
+        push_shdr(
+            1,   // ".text"
+            1,   // SHT_PROGBITS
+            0x6, // ALLOC | EXECINSTR
+            TEXT_ADDR,
+            text_offset as u64,
+            text_bytes.len() as u64,
+            0,
+            0,
+            4,
+            0,
+        );
+        push_shdr(
+            7, // ".symtab"
+            2, // SHT_SYMTAB
+            0,
+            0,
+            symtab_offset as u64,
+            symtab_size as u64,
+            3, // link to .strtab
+            1, // one local symbol (the null entry)
+            8,
+            24,
+        );
+        push_shdr(
+            15, // ".strtab"
+            3,  // SHT_STRTAB
+            0,
+            0,
+            strtab_offset as u64,
+            strtab.len() as u64,
+            0,
+            0,
+            1,
+            0,
+        );
+        push_shdr(
+            23, // ".shstrtab"
+            3,
+            0,
+            0,
+            shstrtab_offset as u64,
+            shstrtab.len() as u64,
+            0,
+            0,
+            1,
+            0,
+        );
+
+        elf
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "test-only assertions")]
+mod tests {
+    use super::test_elf::{build_elf64, TestSymbol};
+    use super::*;
+
+    fn fixture() -> ElfAnalyzer {
+        let elf = build_elf64(
+            &[0x0010_0093, 0x0000_006f], // addi x1,x0,1 ; j .
+            &[
+                TestSymbol {
+                    name: "_start",
+                    value: 0x8000_0000,
+                    info: 0x12, // GLOBAL | FUNC
+                    size: 8,
+                },
+                TestSymbol {
+                    name: "tohost",
+                    value: 0x8000_3000,
+                    info: 0x10, // GLOBAL | NOTYPE
+                    size: 8,
+                },
+                TestSymbol {
+                    name: "an_object",
+                    value: 0x8000_4000,
+                    info: 0x11, // GLOBAL | OBJECT: filtered from the symbol map
+                    size: 8,
+                },
+            ],
+        );
+        ElfAnalyzer::new(&elf)
+    }
+
+    #[test]
+    fn validate_requires_the_elf_magic() {
+        assert!(fixture().validate());
+        assert!(!ElfAnalyzer::new(&[]).validate());
+        assert!(!ElfAnalyzer::new(&[0x7f, b'E', b'L']).validate());
+        assert!(!ElfAnalyzer::new(b"\x7fBAD").validate());
+    }
+
+    #[test]
+    fn read_header_extracts_the_elf64_fields() {
+        let header = fixture().read_header();
+        assert_eq!(header.e_width, 64);
+        assert_eq!(header.e_entry, 0x8000_0000);
+        assert_eq!(header.e_shnum, 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown e_class")]
+    fn read_header_rejects_unknown_classes() {
+        let mut elf = build_elf64(&[], &[]);
+        elf[4] = 9; // neither ELFCLASS32 nor ELFCLASS64
+        let _ = ElfAnalyzer::new(&elf).read_header();
+    }
+
+    #[test]
+    fn section_headers_describe_text_symtab_and_strtab() {
+        let analyzer = fixture();
+        let header = analyzer.read_header();
+        let sections = analyzer.read_section_headers(&header);
+        assert_eq!(sections.len(), 5);
+
+        assert_eq!(sections[0].sh_type, 0);
+        // .text: PROGBITS at the load address with 2 instruction words
+        assert_eq!(sections[1].sh_type, 1);
+        assert_eq!(sections[1].sh_addr, 0x8000_0000);
+        assert_eq!(sections[1].sh_offset, 0x40);
+        assert_eq!(sections[1].sh_size, 8);
+        // .symtab: 4 entries of 24 bytes (null + 3 symbols)
+        assert_eq!(sections[2].sh_type, 2);
+        assert_eq!(sections[2].sh_size, 96);
+        // both string tables
+        assert_eq!(sections[3].sh_type, 3);
+        assert_eq!(sections[4].sh_type, 3);
+    }
+
+    #[test]
+    fn symbol_map_keeps_functions_and_notype_but_drops_objects() {
+        let analyzer = fixture();
+        let header = analyzer.read_header();
+        let sections = analyzer.read_section_headers(&header);
+        let symtabs: Vec<&SectionHeader> = sections.iter().filter(|s| s.sh_type == 2).collect();
+        let strtabs: Vec<&SectionHeader> = sections.iter().filter(|s| s.sh_type == 3).collect();
+
+        let entries = analyzer.read_symbol_entries(&header, &symtabs);
+        assert_eq!(entries.len(), 4, "null entry plus three symbols");
+
+        let map = analyzer.create_symbol_map(&entries, strtabs[0]);
+        assert_eq!(map.get("_start"), Some(&0x8000_0000));
+        assert_eq!(map.get("tohost"), Some(&0x8000_3000));
+        assert_eq!(
+            map.get("an_object"),
+            None,
+            "STT_OBJECT symbols are excluded from the map"
+        );
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn read_strings_stops_at_nul_and_section_end() {
+        let analyzer = fixture();
+        let header = analyzer.read_header();
+        let sections = analyzer.read_section_headers(&header);
+        let strtab = sections
+            .iter()
+            .find(|s| s.sh_type == 3)
+            .expect("strtab present");
+
+        // Offset 1 is "_start" (the table begins with a NUL byte)
+        assert_eq!(analyzer.read_strings(strtab, 1), "_start");
+        // Reading from the final NUL yields an empty string
+        assert_eq!(analyzer.read_strings(strtab, strtab.sh_size - 1), "");
+        // Reading at the section end yields an empty string instead of overrunning
+        assert_eq!(analyzer.read_strings(strtab, strtab.sh_size), "");
+    }
+}
