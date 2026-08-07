@@ -24,15 +24,19 @@ use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+
 /// One explicit matrix entry while cycle variables bind (row-major order).
 /// `prev_val`/`next_val` stay raw `u64`s: cycle binding always starts from
 /// the unbound trace, so implicit neighbors are unbound memory values.
+/// Indices are `u32` (the prepare guards `log_T`, `log_K` ≤ 32); the merge
+/// predicates and `/2` pairing are order-isomorphic under the narrowing.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CycleMajorEntry<F> {
     /// Cycle index; in `[0, T)` before binding.
-    pub row: usize,
+    pub row: u32,
     /// Address index; in `[0, K)` (columns never bind in this phase).
-    pub col: usize,
+    pub col: u32,
     /// The unbound memory value right before this entry's row range.
     pub prev_val: u64,
     /// The unbound memory value right after this entry's row start.
@@ -46,8 +50,8 @@ pub(crate) struct CycleMajorEntry<F> {
 /// them across column pairs.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AddressMajorEntry<F> {
-    pub row: usize,
-    pub col: usize,
+    pub row: u32,
+    pub col: u32,
     pub prev_val: F,
     pub next_val: F,
     pub val: F,
@@ -290,7 +294,7 @@ impl<F: Field> CycleMajorMatrix<F> {
         gamma: F,
     ) -> [F; 2] {
         let per_group = |group: &[CycleMajorEntry<F>]| -> [F; 2] {
-            let pair = group[0].row / 2;
+            let pair = (group[0].row / 2) as usize;
             let inc_0 = inc.evals()[2 * pair];
             let inc_evals = [inc_0, inc.evals()[2 * pair + 1] - inc_0];
             let (even, odd) = CycleMajorEntry::split_row_pair(group);
@@ -334,6 +338,113 @@ impl<F: Field> CycleMajorMatrix<F> {
             .collect();
         AddressMajorMatrix { entries }
     }
+}
+
+/// The round-0 entry of `cycle`, reconstructed from the access columns:
+/// `val = F(prev_val)`, `ra = 1` — exactly the values the materialized
+/// entry vector held, so the round-0 message and bind are value-identical
+/// without the vector ever existing.
+#[inline]
+fn round0_entry<F: Field>(columns: &RamAccessColumns, cycle: usize) -> Option<CycleMajorEntry<F>> {
+    let address = columns.addresses[cycle];
+    (address != NO_ACCESS).then(|| {
+        let pre_value = columns.pre_values[cycle];
+        CycleMajorEntry {
+            row: cycle as u32,
+            col: address as u32,
+            prev_val: pre_value,
+            next_val: columns.post_values[cycle],
+            val: F::from_u64(pre_value),
+            ra: F::one(),
+        }
+    })
+}
+
+/// [`CycleMajorMatrix::quadratic_coefficients`] for round 0, straight off
+/// the access columns. Every row holds at most one entry (a cycle accesses
+/// at most one address), so a pair group is just the two optional per-cycle
+/// entries; groups with no access contribute nothing, exactly like the
+/// absent groups of the sparse iteration.
+pub(crate) fn round0_quadratic_coefficients<F: Field>(
+    columns: &RamAccessColumns,
+    eq_head: impl Fn(usize) -> F + Sync,
+    inc: &Polynomial<F>,
+    gamma: F,
+) -> [F; 2] {
+    let pairs = columns.addresses.len() / 2;
+    let per_pair = |pair: usize| -> [F; 2] {
+        let even = round0_entry::<F>(columns, 2 * pair);
+        let odd = round0_entry::<F>(columns, 2 * pair + 1);
+        if even.is_none() && odd.is_none() {
+            return [F::zero(); 2];
+        }
+        let inc_0 = inc.evals()[2 * pair];
+        let inc_evals = [inc_0, inc.evals()[2 * pair + 1] - inc_0];
+        let inner = match (&even, &odd) {
+            (Some(even), Some(odd)) if even.col != odd.col => {
+                let lone_even =
+                    CycleMajorEntry::quadratic_evals(Some(even), None, inc_evals, gamma);
+                let lone_odd = CycleMajorEntry::quadratic_evals(None, Some(odd), inc_evals, gamma);
+                [lone_even[0] + lone_odd[0], lone_even[1] + lone_odd[1]]
+            }
+            _ => CycleMajorEntry::quadratic_evals(even.as_ref(), odd.as_ref(), inc_evals, gamma),
+        };
+        let head = eq_head(pair);
+        [head * inner[0], head * inner[1]]
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        (0..pairs)
+            .into_par_iter()
+            .map(per_pair)
+            .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        (0..pairs)
+            .map(per_pair)
+            .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
+    }
+}
+
+/// The round-0 [`CycleMajorMatrix::bind`], materializing the bound matrix
+/// straight off the access columns — the first entry vector to exist is the
+/// bind's OUTPUT. Entry order matches the sparse merge exactly: pairs in
+/// cycle order, a differing-col pair's two lone-side outputs in col order.
+pub(crate) fn round0_bind<F: Field>(columns: &RamAccessColumns, r: F) -> CycleMajorMatrix<F> {
+    let pairs = columns.addresses.len() / 2;
+    let per_pair = |pair: usize| -> [Option<CycleMajorEntry<F>>; 2] {
+        let even = round0_entry::<F>(columns, 2 * pair);
+        let odd = round0_entry::<F>(columns, 2 * pair + 1);
+        match (&even, &odd) {
+            (None, None) => [None, None],
+            (Some(even), Some(odd)) if even.col != odd.col => {
+                let lone_even = CycleMajorEntry::bind(Some(even), None, r);
+                let lone_odd = CycleMajorEntry::bind(None, Some(odd), r);
+                if even.col < odd.col {
+                    [Some(lone_even), Some(lone_odd)]
+                } else {
+                    [Some(lone_odd), Some(lone_even)]
+                }
+            }
+            _ => [
+                Some(CycleMajorEntry::bind(even.as_ref(), odd.as_ref(), r)),
+                None,
+            ],
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    let entries: Vec<CycleMajorEntry<F>> = (0..pairs)
+        .into_par_iter()
+        .flat_map_iter(|pair| per_pair(pair).into_iter().flatten())
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let entries: Vec<CycleMajorEntry<F>> = (0..pairs)
+        .flat_map(|pair| per_pair(pair).into_iter().flatten())
+        .collect();
+    CycleMajorMatrix { entries }
 }
 
 impl<F: Field> AddressMajorEntry<F> {
@@ -524,8 +635,8 @@ impl<F: Field> AddressMajorEntry<F> {
                         Some(&odd[j]),
                         even_checkpoint,
                         odd_checkpoint,
-                        inc.evals()[even[i].row],
-                        eq.evals()[even[i].row],
+                        inc.evals()[even[i].row as usize],
+                        eq.evals()[even[i].row as usize],
                         gamma,
                     ));
                     even_checkpoint = even[i].next_val;
@@ -539,8 +650,8 @@ impl<F: Field> AddressMajorEntry<F> {
                         None,
                         even_checkpoint,
                         odd_checkpoint,
-                        inc.evals()[even[i].row],
-                        eq.evals()[even[i].row],
+                        inc.evals()[even[i].row as usize],
+                        eq.evals()[even[i].row as usize],
                         gamma,
                     ));
                     even_checkpoint = even[i].next_val;
@@ -552,8 +663,8 @@ impl<F: Field> AddressMajorEntry<F> {
                         Some(&odd[j]),
                         even_checkpoint,
                         odd_checkpoint,
-                        inc.evals()[odd[j].row],
-                        eq.evals()[odd[j].row],
+                        inc.evals()[odd[j].row as usize],
+                        eq.evals()[odd[j].row as usize],
                         gamma,
                     ));
                     odd_checkpoint = odd[j].next_val;
@@ -567,8 +678,8 @@ impl<F: Field> AddressMajorEntry<F> {
                 None,
                 even_checkpoint,
                 odd_checkpoint,
-                inc.evals()[entry.row],
-                eq.evals()[entry.row],
+                inc.evals()[entry.row as usize],
+                eq.evals()[entry.row as usize],
                 gamma,
             ));
             even_checkpoint = entry.next_val;
@@ -579,8 +690,8 @@ impl<F: Field> AddressMajorEntry<F> {
                 Some(entry),
                 even_checkpoint,
                 odd_checkpoint,
-                inc.evals()[entry.row],
-                eq.evals()[entry.row],
+                inc.evals()[entry.row as usize],
+                eq.evals()[entry.row as usize],
                 gamma,
             ));
             odd_checkpoint = entry.next_val;
@@ -604,7 +715,7 @@ impl<F: Field> AddressMajorMatrix<F> {
             .par_chunk_by(|a, b| a.col / 2 == b.col / 2)
             .flat_map_iter(|group| {
                 let (even, odd) = AddressMajorEntry::split_col_pair(group);
-                let even_col = 2 * (group[0].col / 2);
+                let even_col = 2 * (group[0].col / 2) as usize;
                 let mut out = Vec::with_capacity(group.len());
                 AddressMajorEntry::merge_bind_cols(
                     even,
@@ -622,7 +733,7 @@ impl<F: Field> AddressMajorMatrix<F> {
             let mut out = Vec::with_capacity(self.entries.len());
             for group in self.entries.chunk_by(|a, b| a.col / 2 == b.col / 2) {
                 let (even, odd) = AddressMajorEntry::split_col_pair(group);
-                let even_col = 2 * (group[0].col / 2);
+                let even_col = 2 * (group[0].col / 2) as usize;
                 AddressMajorEntry::merge_bind_cols(
                     even,
                     odd,
@@ -649,7 +760,7 @@ impl<F: Field> AddressMajorMatrix<F> {
     ) -> [F; 2] {
         let per_group = |group: &[AddressMajorEntry<F>]| -> [F; 2] {
             let (even, odd) = AddressMajorEntry::split_col_pair(group);
-            let even_col = 2 * (group[0].col / 2);
+            let even_col = 2 * (group[0].col / 2) as usize;
             AddressMajorEntry::merge_address_round_evals(
                 even,
                 odd,

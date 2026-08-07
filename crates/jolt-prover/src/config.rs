@@ -64,7 +64,7 @@ impl ProverConfig {
         let touched = rows
             .iter()
             .filter_map(|row| {
-                let address = match row.ram_access {
+                let address = match row.ram_access() {
                     RamAccess::Read(read) => read.address,
                     RamAccess::Write(write) => write.address,
                     RamAccess::NoOp => 0,

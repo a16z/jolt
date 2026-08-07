@@ -38,6 +38,8 @@ use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
     VerifierOpeningClaim, ZkOpeningScheme,
 };
+#[cfg(not(feature = "zk"))]
+use jolt_poly::MultilinearPoly;
 use jolt_poly::Point;
 use jolt_transcript::Transcript;
 use jolt_verifier::proof::JoltCommitments;
@@ -73,7 +75,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     commitments: &JoltCommitments<PCS::Output>,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    hints: &[(JoltCommittedPolynomial, PCS::OpeningHint)],
+    hints: impl IntoHints<(JoltCommittedPolynomial, PCS::OpeningHint)>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
@@ -224,18 +226,22 @@ where
             .joint_opening
             .prepare(session, witness, &order, &precommitted_tables, grid)
     })?;
+    // Reorder by move, not clone: the stage-0 hints have no consumer after
+    // this stage, and `combine_hints` takes them by value — cloning here
+    // double-held every row commitment through the whole batch opening.
+    let mut hint_by_id: BTreeMap<JoltCommittedPolynomial, PCS::OpeningHint> =
+        hints.into_hints().into_iter().collect();
     let ordered_hints: Vec<PCS::OpeningHint> = order
         .iter()
         .map(|polynomial| {
-            hints
-                .iter()
-                .find(|(id, _)| id == polynomial)
-                .map(|(_, hint)| hint.clone())
+            hint_by_id
+                .remove(polynomial)
                 .ok_or(ProverError::InvariantViolation {
                     reason: "missing stage-0 opening hint for a batched polynomial",
                 })
         })
         .collect::<Result<_, _>>()?;
+    drop(hint_by_id);
 
     // The transcript tails are twins of the verifier's two stage-8 arms:
     // clear absorbs the scaled claims and opens transparently
@@ -244,10 +250,20 @@ where
     // joint evaluation and blind for BlindFold.
     #[cfg(not(feature = "zk"))]
     {
+        // In the transparent arm each view's tier-1 fold is its last read
+        // (the Dory reduce consumes the folded vector; `evaluate` is a
+        // hiding-mode-only call). Wrap every view fold-once so the shared
+        // trace columns (~64 B/cycle) free mid-open instead of living
+        // through the whole ~PCS reduce, and the last fold returns the
+        // freed pages to the OS.
+        let polynomials: Vec<FoldOnce<F>> = FoldOnce::wrap(polynomials);
         let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
             &preprocessing.pcs_setup,
             statement,
-            polynomials.iter().map(|poly| &**poly).collect(),
+            polynomials
+                .iter()
+                .map(|poly| poly as &dyn MultilinearPoly<F>)
+                .collect(),
             ordered_hints,
             transcript,
         )
@@ -283,5 +299,111 @@ where
             joint_evaluation: opening.joint_evaluation,
             evaluation_blind: opening.blind,
         })
+    }
+}
+
+/// Borrowed-or-owned hint carrier: the prover moves its stage-0 hints in
+/// (they have no consumer after stage 8, and cloning double-held every row
+/// commitment through the batch opening) while borrowing callers — the
+/// byte_diff ratchet — keep compiling and pay the clone.
+pub trait IntoHints<H> {
+    fn into_hints(self) -> Vec<H>;
+}
+
+impl<H> IntoHints<H> for Vec<H> {
+    fn into_hints(self) -> Vec<H> {
+        self
+    }
+}
+
+impl<H: Clone> IntoHints<H> for &Vec<H> {
+    fn into_hints(self) -> Vec<H> {
+        self.clone()
+    }
+}
+
+/// A fold-once opening view for the transparent batch arm: `fold_rows`
+/// consumes the inner view (its tier-1 fold is the last read on the
+/// transparent path — the Dory reduce works on the folded vector, and
+/// `evaluate` is hiding-mode-only), so the backing allocations — one Arc
+/// each on the shared per-cycle trace columns — free the moment their fold
+/// completes rather than at stage end. The last fold out asks the allocator
+/// to return the freed pages. Allocator/lifetime-only: the folded values
+/// are untouched.
+///
+/// Fail-closed: any access to the inner view after its fold (nothing on the
+/// transparent batch path does this) panics rather than serving stale data.
+#[cfg(not(feature = "zk"))]
+struct FoldOnce<F: Field> {
+    inner: std::sync::Mutex<Option<Box<dyn MultilinearPoly<F>>>>,
+    num_vars: usize,
+    remaining: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F: Field> FoldOnce<F> {
+    fn wrap(polynomials: Vec<Box<dyn MultilinearPoly<F>>>) -> Vec<Self> {
+        let remaining = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(polynomials.len()));
+        polynomials
+            .into_iter()
+            .map(|poly| Self {
+                num_vars: poly.num_vars(),
+                inner: std::sync::Mutex::new(Some(poly)),
+                remaining: std::sync::Arc::clone(&remaining),
+            })
+            .collect()
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "post-fold access is an invariant violation; fail loudly, not with stale data"
+    )]
+    fn with_inner<R>(&self, read: impl FnOnce(&dyn MultilinearPoly<F>) -> R) -> R {
+        let guard = self.inner.lock().expect("fold-once view lock poisoned");
+        let poly = guard
+            .as_deref()
+            .expect("fold-once opening view read after its fold");
+        read(poly)
+    }
+}
+
+#[cfg(not(feature = "zk"))]
+impl<F: Field> MultilinearPoly<F> for FoldOnce<F> {
+    fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        self.with_inner(|poly| poly.evaluate(point))
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        self.with_inner(|poly| poly.for_each_row(sigma, f));
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "a second fold is an invariant violation; fail loudly, not with stale data"
+    )]
+    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        let folded = {
+            let poly = self
+                .inner
+                .lock()
+                .expect("fold-once view lock poisoned")
+                .take()
+                .expect("fold-once opening view folded twice");
+            poly.fold_rows(left, sigma)
+            // `poly` drops here: the view and (last Arc out) the shared
+            // trace columns free mid-open.
+        };
+        if self
+            .remaining
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel)
+            == 1
+        {
+            let _ = jolt_kernels::mem::release_retained_memory();
+        }
+        folded
     }
 }

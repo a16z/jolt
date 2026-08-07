@@ -27,7 +27,7 @@ impl Extract for BytecodePc {
         Ok(Self(
             env.preprocessing
                 .bytecode
-                .get_pc(&row.instruction)
+                .get_pc(&row.instruction())
                 .unwrap_or(0),
         ))
     }
@@ -39,7 +39,7 @@ impl Extract for MappedPc {
         _next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(env.preprocessing.bytecode.get_pc(&row.instruction)))
+        Ok(Self(env.preprocessing.bytecode.get_pc(&row.instruction())))
     }
 }
 
@@ -88,7 +88,7 @@ impl Extract for UnexpandedPc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.instruction.address as u64))
+        Ok(Self(row.address()))
     }
 }
 
@@ -124,6 +124,6 @@ impl Extract for NextUnexpandedPc {
         next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(next.map_or(0, |row| row.instruction.address as u64)))
+        Ok(Self(next.map_or(0, |row| row.address())))
     }
 }

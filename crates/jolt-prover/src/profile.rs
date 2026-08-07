@@ -605,9 +605,22 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     .expect("modular prove");
     let duration = now.elapsed();
 
-    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
-        .expect("serialize proof")
-        .len();
+    let proof_bytes = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+        .expect("serialize proof");
+    let proof_size = proof_bytes.len();
+    // Wire-parity fingerprint for A/B runs: clear-mode proving is
+    // deterministic, so byte-identical proofs ⇔ identical digests.
+    let proof_sha256 = {
+        use std::fmt::Write;
+        jolt_inlines_sha2::Sha256::digest(&proof_bytes).iter().fold(
+            String::with_capacity(64),
+            |mut s, byte| {
+                let _ = write!(s, "{byte:02x}");
+                s
+            },
+        )
+    };
+    drop(proof_bytes);
 
     // --- Correctness gate (unmeasured): the proof must verify.
     jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
@@ -634,6 +647,14 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             bench_name,
             scale,
             format_memory_size(peak as f64 / BYTES_PER_GIB),
+        );
+    }
+    println!("modular {bench_name} (2^{scale}, {backend_label}): proof sha256 {proof_sha256}");
+    let hash_file = run_dir.join("proof.sha256");
+    if let Err(e) = fs::write(&hash_file, format!("{proof_sha256}\n")) {
+        eprintln!(
+            "Failed to write proof hash file {}: {e}",
+            hash_file.display()
         );
     }
 
@@ -717,16 +738,18 @@ fn pad_trace(
     trace_output: TraceOutput<OwnedTrace>,
     trace_length: usize,
 ) -> TraceOutput<OwnedTrace> {
-    let source = trace_output.trace.rows();
-    let mut rows = Vec::with_capacity(trace_length.max(source.len()));
-    rows.extend_from_slice(source);
+    let TraceOutput {
+        trace,
+        device,
+        final_memory,
+        advice_tape,
+    } = trace_output;
+    // In place: the trace is single-owner here, so `into_rows` reclaims the
+    // vector without the fresh-copy transient (~2x trace bytes) a rebuild
+    // would cost.
+    let mut rows = trace.into_rows();
     rows.resize(trace_length, TraceRow::default());
-    TraceOutput::new(
-        OwnedTrace::new(rows),
-        trace_output.device,
-        trace_output.final_memory,
-        trace_output.advice_tape,
-    )
+    TraceOutput::new(OwnedTrace::new(rows), device, final_memory, advice_tape)
 }
 
 /// A word-aligned advice buffer's balanced Dory matrix variable count.

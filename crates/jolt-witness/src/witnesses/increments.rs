@@ -25,7 +25,7 @@ impl Extract for RdInc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.registers.rd {
+        Ok(Self(match row.rd_write() {
             Some(write) => write.post_value as i128 - write.pre_value as i128,
             None => 0,
         }))
@@ -44,7 +44,7 @@ impl Extract for RamInc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.ram_access {
+        Ok(Self(match row.ram_access() {
             RamAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
             RamAccess::Read(_) | RamAccess::NoOp => 0,
         }))

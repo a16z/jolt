@@ -27,12 +27,16 @@
 //! - **Split-eq flag claims**: the output lookup-table/RAF flag sums use the
 //!   `E_hi ⊗ E_lo` factorization of `eq(r_cycle, ·)` instead of a `T`-sized
 //!   eq table.
-//! - **Shared witness rows**: the collected per-cycle rows are parked in the
-//!   [`ProofSession`] (keyed by [`SharedInstructionRows`]) so the stage-6b
-//!   instruction RA virtualization kernel and the stage-6a/6b booleanity
-//!   kernels reuse them instead of re-scanning the trace — the packed row
-//!   carries the mapped PC and remapped RAM address alongside the stage-5
-//!   facts at no size cost.
+//! - **Shared lookup-index column**: the stage-6a/6b consumers (instruction
+//!   RA virtualization, booleanity) need only the per-cycle lookup index, so
+//!   the cross-stage carry is the bare 16 B/cycle column (keyed by
+//!   [`SharedLookupIndices`]) — their bytecode and RAM chunk sources live in
+//!   the shared PC rows and RAM address column already.
+//! - **Column-split staging**: the kernel's own stage-5 facts are the same
+//!   16 B/cycle index column (shared with the parked carry on re-emulating
+//!   sources) plus a 1 B/cycle packed claim byte — a wide per-cycle row
+//!   vector never exists, and the index column frees at the first cycle
+//!   bind.
 
 use std::sync::{Arc, Weak};
 
@@ -48,9 +52,7 @@ use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable,
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
-use jolt_witness::witnesses::{
-    InstructionRafFlag, LookupIndex, MappedPc, RemappedRamAddress, TableIndex,
-};
+use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -60,6 +62,7 @@ use super::support::{
     accumulate_product_grid, for_each_index_mut, map_indices, map_reduce_chunks, scan_chunk_size,
     RoundProgress,
 };
+use crate::mem::purge_staging;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -70,179 +73,184 @@ use crate::{
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
+/// Cycle binds completed before the late-tail purge that returns the
+/// halving cycle tables' freed generations (large enough to sit in the
+/// allocator's large-block cache until then).
+const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
+
 const _: () = assert!(
-    LookupTableKind::<RISCV_XLEN>::COUNT < u8::MAX as usize,
-    "InstructionCycleRow packs lookup table indices as u8"
+    LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
+    "the packed claim byte holds table_index + 1 in bits 0..=6"
 );
 
-/// One packed per-cycle row: the stage-5 facts (lookup index, lookup table,
-/// RAF flag) plus the bytecode/RAM one-hot chunk sources the stage-6a/6b
-/// consumers gather from. Sentinel packing (`0` = cold) keeps the row at 48
-/// bytes — the same as a stage-5-only bundle row — so sharing the extra
-/// columns across stages costs no memory.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct InstructionCycleRow {
-    pub(crate) lookup_index: u128,
-    pc_plus_one: u64,
-    ram_address_plus_one: u64,
-    table_index: Option<u8>,
-    pub(crate) raf_flag: bool,
+/// Packs one cycle's non-index stage-5 facts into a byte: bits 0..=6 hold
+/// `table_index + 1` (0 for none), bit 7 the RAF flag. The const guard above
+/// makes overflow impossible for genuine table indices.
+#[inline]
+pub(crate) fn pack_claim_byte(table_index: Option<usize>, raf_flag: bool) -> u8 {
+    debug_assert!(table_index.is_none_or(|index| index < 0x7f));
+    table_index.map_or(0, |index| index as u8 + 1) | (u8::from(raf_flag) << 7)
 }
 
-impl InstructionCycleRow {
-    pub(crate) fn new(
-        lookup_index: u128,
-        table_index: Option<usize>,
-        raf_flag: bool,
-        mapped_pc: Option<usize>,
-        remapped_ram_address: Option<u64>,
-    ) -> Self {
-        debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
-        Self {
-            lookup_index,
-            pc_plus_one: mapped_pc.map_or(0, |pc| pc as u64 + 1),
-            ram_address_plus_one: remapped_ram_address.map_or(0, |address| address + 1),
-            table_index: table_index.map(|index| index as u8),
-            raf_flag,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn table_index(&self) -> Option<usize> {
-        self.table_index.map(usize::from)
-    }
-
-    #[inline]
-    pub(crate) fn mapped_pc(&self) -> Option<usize> {
-        self.pc_plus_one.checked_sub(1).map(|pc| pc as usize)
-    }
-
-    #[inline]
-    pub(crate) fn remapped_ram_address(&self) -> Option<u64> {
-        self.ram_address_plus_one.checked_sub(1)
-    }
-}
-
-/// The bundle row the packing pass extracts; never materialized beyond one
-/// streaming chunk.
+/// The bundle row of the column-split packing pass; never materialized
+/// beyond one streaming chunk.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct WideInstructionRow {
     lookup_index: LookupIndex,
     table_index: TableIndex,
     raf_flag: InstructionRafFlag,
-    mapped_pc: MappedPc,
-    remapped_ram_address: RemappedRamAddress,
 }
 
-struct PackRows {
-    rows: Vec<InstructionCycleRow>,
+/// The bundle row of the claim-byte-only pass; never materialized beyond one
+/// streaming chunk.
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct ClaimByteRow {
+    table_index: TableIndex,
+    raf_flag: InstructionRafFlag,
 }
 
-impl StreamConsumer for PackRows {
+struct PackColumns {
+    indices: Vec<u128>,
+    claim_columns: Vec<u8>,
+}
+
+impl StreamConsumer for PackColumns {
     type Witness = WideInstructionRow;
 
     fn consume(&mut self, chunk: &[WideInstructionRow]) {
-        self.rows.extend(chunk.iter().map(|row| {
-            InstructionCycleRow::new(
-                row.lookup_index.0,
-                row.table_index.0,
-                row.raf_flag.0,
-                row.mapped_pc.0,
-                row.remapped_ram_address.0,
-            )
-        }));
+        self.indices
+            .extend(chunk.iter().map(|row| row.lookup_index.0));
+        self.claim_columns.extend(
+            chunk
+                .iter()
+                .map(|row| pack_claim_byte(row.table_index.0, row.raf_flag.0)),
+        );
     }
 }
 
-/// The collected stage-5 rows, parked in the [`ProofSession`] for the
+/// The stage-5 staging columns over the cycle domain: the 16 B lookup-index
+/// column plus the 1 B packed claim byte — a wide 32 B row vector never
+/// exists. Slice-backed sources pack index-parallel (two thin bundle
+/// passes); re-emulating sources pack both columns in one streaming walk.
+pub(crate) fn collect_instruction_columns<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<(Vec<u128>, Vec<u8>), KernelError<F>> {
+    if let Some(access) = RandomAccessRows::new(witness, cycles)? {
+        let indices = collect_lookup_indices(witness, cycles)?;
+        let claim_columns = super::rows::collect_par_map(&access, cycles, |row: ClaimByteRow| {
+            pack_claim_byte(row.table_index.0, row.raf_flag.0)
+        })?;
+        return Ok((indices, claim_columns));
+    }
+    let mut consumers = (PackColumns {
+        indices: Vec::with_capacity(cycles),
+        claim_columns: Vec::with_capacity(cycles),
+    },);
+    stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
+    Ok((consumers.0.indices, consumers.0.claim_columns))
+}
+
+/// The bundle row of the lookup-index-only pass; never materialized beyond
+/// one streaming chunk.
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct LookupIndexRow {
+    lookup_index: LookupIndex,
+}
+
+struct PackIndices {
+    indices: Vec<u128>,
+}
+
+impl StreamConsumer for PackIndices {
+    type Witness = LookupIndexRow;
+
+    fn consume(&mut self, chunk: &[LookupIndexRow]) {
+        self.indices
+            .extend(chunk.iter().map(|row| row.lookup_index.0));
+    }
+}
+
+/// One streaming bundle pass over the cycle domain, packed index by index.
+pub(crate) fn collect_lookup_indices<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Vec<u128>, KernelError<F>> {
+    if let Some(access) = RandomAccessRows::new(witness, cycles)? {
+        let indices = super::rows::collect_par_map(&access, cycles, |row: LookupIndexRow| {
+            row.lookup_index.0
+        })?;
+        return Ok(indices);
+    }
+    let mut consumers = (PackIndices {
+        indices: Vec::with_capacity(cycles),
+    },);
+    stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
+    Ok(consumers.0.indices)
+}
+
+/// The per-cycle lookup-index column, parked in the [`ProofSession`] for the
 /// stage-6b instruction RA virtualization kernel (its committed one-hot
 /// chunks are chunks of the same per-cycle lookup index) and the
-/// stage-6a/6b booleanity kernels (all three one-hot chunk families).
+/// stage-6a/6b booleanity kernels (whose bytecode and RAM chunk families
+/// come off the shared PC rows and RAM address column instead) — the bare
+/// 16 B/cycle column.
 ///
 /// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
-/// carry back for the later stages.
-pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
+/// carry back; the last stage-6b consumer takes without re-parking.
+pub(crate) struct SharedLookupIndices(pub(crate) Arc<Vec<u128>>);
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_allocative!(SharedInstructionRows, |rows| {
-    crate::backend::arc_vec_heap_bytes(&rows.0)
+crate::optimized::impl_allocative!(SharedLookupIndices, |indices| {
+    crate::backend::arc_vec_heap_bytes(&indices.0)
 });
 
-/// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
-/// so same-stage co-consumers share one collection but the 48 B × T rows
-/// never outlive their stage — later stages re-derive them index-parallel
-/// instead of carrying them across the prover's peak window.
-pub(crate) struct SharedInstructionRowsWeak(pub(crate) Weak<Vec<InstructionCycleRow>>);
+/// The slice-backed counterpart of [`SharedLookupIndices`]: a weak handle,
+/// so same-stage co-consumers share one collection but the column never
+/// outlives its stage — later stages re-derive it index-parallel instead of
+/// carrying it across the prover's peak window.
+pub(crate) struct SharedLookupIndicesWeak(pub(crate) Weak<Vec<u128>>);
 
 #[cfg(feature = "allocative")]
-crate::optimized::impl_allocative!(SharedInstructionRowsWeak, |_rows| { 0 });
+crate::optimized::impl_allocative!(SharedLookupIndicesWeak, |_indices| { 0 });
 
-impl InstructionCycleRow {
-    /// One streaming bundle pass over the cycle domain, packed row by row (the
-    /// wide bundle row exists only per chunk).
-    pub(crate) fn collect<F: Field>(
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
-        // Slice-backed sources pack index-parallel (the wide bundle row still
-        // never exists beyond a register); re-emulating sources stream.
-        if let Some(access) = RandomAccessRows::new(witness, cycles)? {
-            let rows = super::rows::collect_par_map(&access, cycles, |row: WideInstructionRow| {
-                InstructionCycleRow::new(
-                    row.lookup_index.0,
-                    row.table_index.0,
-                    row.raf_flag.0,
-                    row.mapped_pc.0,
-                    row.remapped_ram_address.0,
-                )
-            })?;
-            return Ok(rows);
-        }
-        let mut consumers = (PackRows {
-            rows: Vec::with_capacity(cycles),
-        },);
-        stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
-        Ok(consumers.0.rows)
-    }
-
-    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
-    /// impossible to consume) or collect them fresh, and park the carry back
-    /// for later consumers.
-    pub(crate) fn shared<F: Field>(
-        session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        cycles: usize,
-    ) -> Result<Arc<Vec<InstructionCycleRow>>, KernelError<F>> {
-        // A parked strong carry is always honored (re-emulating sources, and
-        // tests that inject rows a witness would not produce).
-        let carried = match session.take::<SharedInstructionRows>() {
-            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
-            _ => None,
+/// Reclaim the parked lookup-index column (the length guard makes a stale
+/// carry impossible to consume) or collect it fresh, and park the carry
+/// back for later consumers.
+pub(crate) fn shared_lookup_indices<F: Field>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Arc<Vec<u128>>, KernelError<F>> {
+    // A parked strong carry is always honored (re-emulating sources, and
+    // tests that inject indices a witness would not produce).
+    let carried = match session.take::<SharedLookupIndices>() {
+        Some(SharedLookupIndices(indices)) if indices.len() == cycles => Some(indices),
+        _ => None,
+    };
+    if witness.rows().is_some() {
+        // Slice-backed: consumers share within a stage through a weak
+        // handle; once the stage's kernels drop, the column frees, and later
+        // stages re-derive it index-parallel.
+        let upgraded = || {
+            session
+                .state::<SharedLookupIndicesWeak>()
+                .and_then(|weak| weak.0.upgrade())
+                .filter(|indices| indices.len() == cycles)
         };
-        if witness.rows().is_some() {
-            // Slice-backed: consumers share within a stage through a weak
-            // handle; once the stage's kernels drop, the rows free, and later
-            // stages re-derive them index-parallel.
-            let upgraded = || {
-                session
-                    .state::<SharedInstructionRowsWeak>()
-                    .and_then(|weak| weak.0.upgrade())
-                    .filter(|rows| rows.len() == cycles)
-            };
-            let rows = match carried.or_else(upgraded) {
-                Some(rows) => rows,
-                None => Arc::new(Self::collect(witness, cycles)?),
-            };
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-            return Ok(rows);
-        }
-        let rows = match carried {
-            Some(rows) => rows,
-            None => Arc::new(Self::collect(witness, cycles)?),
+        let indices = match carried.or_else(upgraded) {
+            Some(indices) => indices,
+            None => Arc::new(collect_lookup_indices(witness, cycles)?),
         };
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
-        Ok(rows)
+        session.park(SharedLookupIndicesWeak(Arc::downgrade(&indices)));
+        return Ok(indices);
     }
+    let indices = match carried {
+        Some(indices) => indices,
+        None => Arc::new(collect_lookup_indices(witness, cycles)?),
+    };
+    session.park(SharedLookupIndices(Arc::clone(&indices)));
+    Ok(indices)
 }
 
 /// Optimized [`PrepareKernel`] implementor for the `instruction_read_raf`
@@ -257,25 +265,24 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(InstructionCycleRow::collect(
-            witness,
-            1 << dimensions.log_t(),
-        )?);
-        // Slice-backed witnesses park the weak handle (like
-        // `InstructionCycleRow::shared`): the kernel drops its strong copy at the
-        // first cycle bind, and a strong session carry would keep the
-        // 48 B × T rows resident through the stage-5 staging peak — later
-        // stages re-derive index-parallel instead. Re-emulating sources keep
-        // the strong carry (re-deriving means a full re-emulation walk).
-        if witness.rows().is_some() {
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-        } else {
-            session.park(SharedInstructionRows(Arc::clone(&rows)));
+        let (indices, claim_columns) =
+            collect_instruction_columns(witness, 1 << dimensions.log_t())?;
+        let indices = Arc::new(indices);
+        // Slice-backed witnesses park nothing: the stage-6a/6b consumers
+        // re-derive the 16 B/cycle lookup-index column index-parallel, and a
+        // strong session carry would ride through the stage-5 staging peak.
+        // Re-emulating sources park the strong column carry (re-deriving
+        // means a full re-emulation walk) — a clone of the kernel's own Arc,
+        // so the column is not duplicated; the last stage-6b consumer takes
+        // it without re-parking, so it no longer survives to end of prove.
+        if witness.rows().is_none() {
+            session.park(SharedLookupIndices(Arc::clone(&indices)));
         }
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,
-            rows,
+            indices,
+            claim_columns,
             inputs.challenges.gamma,
         )?))
     }
@@ -355,8 +362,6 @@ fn extension_pair<F: Field>(evals: &[F], b: usize, half: usize) -> (F, F) {
 struct CycleState<F: Field> {
     gruen: GruenSplitEqPolynomial<F>,
     tables: CycleTables<F>,
-    /// Reused low-to-high binding buffer (swapped through every bind).
-    bind_scratch: Vec<F>,
 }
 
 #[cfg(feature = "allocative")]
@@ -369,7 +374,7 @@ impl<F: Field> CycleState<F> {
                 poly_heap_bytes(combined_val) + polys_heap_bytes(ra)
             }
         };
-        self.gruen.heap_bytes() + tables + vec_heap_bytes(&self.bind_scratch)
+        self.gruen.heap_bytes() + tables
     }
 }
 
@@ -483,7 +488,10 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
-    rows: Arc<Vec<InstructionCycleRow>>,
+    /// The per-cycle lookup-index column (16 B/cycle; freed at the first
+    /// cycle bind). Re-emulating sources share the same allocation with the
+    /// parked [`SharedLookupIndices`] carry.
+    indices: Arc<Vec<u128>>,
     /// Per-table cycle buckets (`u32` cycle indices), by
     /// `LookupTableKind::index()`.
     buckets: Vec<Vec<u32>>,
@@ -505,10 +513,9 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
-    /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
-    /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
-    /// handoff so the full 48 B rows can free — the final flag walk needs
-    /// only this byte per cycle.
+    /// Packed per-cycle output-claim facts ([`pack_claim_byte`]), built at
+    /// collection — the RAF scans, pending bases, and final flag walk read
+    /// this byte, so a wide row never exists.
     claim_columns: Vec<u8>,
     progress: RoundProgress,
 }
@@ -519,7 +526,7 @@ crate::optimized::impl_field_allocative!(OptimizedInstructionReadRafKernel, |ker
         arc_vec_heap_bytes, nested_vec_heap_bytes, polys_heap_bytes, vec_heap_bytes,
     };
     vec_heap_bytes(&kernel.r_reduction)
-        + arc_vec_heap_bytes(&kernel.rows)
+        + arc_vec_heap_bytes(&kernel.indices)
         + nested_vec_heap_bytes(&kernel.buckets)
         + vec_heap_bytes(&kernel.u_evals)
         + vec_heap_bytes(&kernel.prefix_checkpoints)
@@ -546,7 +553,8 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        rows: Arc<Vec<InstructionCycleRow>>,
+        indices: Arc<Vec<u128>>,
+        claim_columns: Vec<u8>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
@@ -570,11 +578,18 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 reason: "cycle bucket indices are u32",
             });
         }
-        if rows.len() != 1 << log_t {
+        if indices.len() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {
-                table: "stage-5 instruction rows".to_owned(),
+                table: "stage-5 instruction lookup indices".to_owned(),
                 expected: 1 << log_t,
-                got: rows.len(),
+                got: indices.len(),
+            });
+        }
+        if claim_columns.len() != indices.len() {
+            return Err(KernelError::TableSizeMismatch {
+                table: "stage-5 instruction claim bytes".to_owned(),
+                expected: indices.len(),
+                got: claim_columns.len(),
             });
         }
         if r_reduction.len() != log_t {
@@ -586,10 +601,10 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         }
 
         let mut buckets = vec![Vec::new(); LookupTableKind::<RISCV_XLEN>::COUNT];
-        for (j, row) in rows.iter().enumerate() {
-            if let Some(table_index) = row.table_index() {
+        for (j, &packed) in claim_columns.iter().enumerate() {
+            if packed & 0x7f != 0 {
                 buckets
-                    .get_mut(table_index)
+                    .get_mut(usize::from(packed & 0x7f) - 1)
                     .ok_or(KernelError::InvariantViolation {
                         reason: "stage-5 row selects an unknown lookup table",
                     })?
@@ -601,7 +616,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             dimensions,
             gamma,
             r_reduction: r_reduction.to_vec(),
-            rows,
+            indices,
             buckets,
             u_evals: eq_table(r_reduction),
             prefix_checkpoints: ALL_PREFIXES
@@ -618,7 +633,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             phase_challenges: Vec::new(),
             cycle_challenges: Vec::new(),
             cycle: None,
-            claim_columns: Vec::new(),
+            claim_columns,
             progress: RoundProgress::new(dimensions.sumcheck_rounds()),
         };
         kernel.init_phase(0);
@@ -643,10 +658,10 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         // into the per-cycle mass.
         if phase != 0 {
             let shift = self.suffix_len(phase - 1);
-            let rows = Arc::clone(&self.rows);
+            let indices = Arc::clone(&self.indices);
             let v_prev = std::mem::take(&mut self.v_tables[phase - 1]);
             for_each_index_mut(&mut self.u_evals, |j, u| {
-                *u *= v_prev[((rows[j].lookup_index >> shift) as usize) & (CHUNK_SIZE - 1)];
+                *u *= v_prev[((indices[j] >> shift) as usize) & (CHUNK_SIZE - 1)];
             });
             self.v_tables[phase - 1] = v_prev;
         }
@@ -661,25 +676,31 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
 
         // Fused RAF scan over the whole trace (deferred-reduction sums,
         // primitive-scalar multiplies).
-        let rows = self.rows.as_slice();
+        let indices = self.indices.as_slice();
+        let claim_columns = self.claim_columns.as_slice();
         let u_evals = self.u_evals.as_slice();
         let raf = map_reduce_chunks(
-            rows.len(),
-            scan_chunk_size(rows.len()),
+            indices.len(),
+            scan_chunk_size(indices.len()),
             |range| {
                 let mut scan = RafScan::<F>::new();
-                for (row, &u) in rows[range.clone()].iter().zip(&u_evals[range]) {
-                    let chunk = ((row.lookup_index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
-                    let suffix_bits = row.lookup_index & suffix_mask;
+                for ((&index, &packed), &u) in indices[range.clone()]
+                    .iter()
+                    .zip(&claim_columns[range.clone()])
+                    .zip(&u_evals[range])
+                {
+                    let raf_flag = packed & 0x80 != 0;
+                    let chunk = ((index >> suffix_len) as usize) & (CHUNK_SIZE - 1);
+                    let suffix_bits = index & suffix_mask;
                     if CANONICAL_INSTRUCTION_ADDRESS
-                        && row.raf_flag
+                        && raf_flag
                         && (upper_suffix_bits == 0
                             || (suffix_bits >> (suffix_len - upper_suffix_bits))
                                 == (1u128 << upper_suffix_bits) - 1)
                     {
                         scan.upper_all_ones[chunk].add(u);
                     }
-                    if !row.raf_flag {
+                    if !raf_flag {
                         scan.shift_half[chunk].add(u);
                         let (left, right) = LookupBits::new(suffix_bits, suffix_len).uninterleave();
                         let left = u64::from(left);
@@ -791,7 +812,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     /// classified once (`One` adds, {0,1}-valued adds conditionally, general
     /// ones use the primitive-scalar multiply).
     fn init_suffix_tables(&mut self, suffix_len: usize, suffix_mask: u128) {
-        let rows = self.rows.as_slice();
+        let indices = self.indices.as_slice();
         let u_evals = self.u_evals.as_slice();
         let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
             .filter(|table| !self.buckets[table.index()].is_empty())
@@ -814,12 +835,10 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                     let mut accumulators =
                         vec![F::Accumulator::default(); num_suffixes * CHUNK_SIZE];
                     for &j in &bucket[range] {
-                        let row = &rows[j as usize];
+                        let index = indices[j as usize];
                         let u = u_evals[j as usize];
-                        let chunk =
-                            ((row.lookup_index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
-                        let suffix_bits =
-                            LookupBits::new(row.lookup_index & suffix_mask, suffix_len);
+                        let chunk = ((index >> suffix_shift) as usize) & (CHUNK_SIZE - 1);
+                        let suffix_bits = LookupBits::new(index & suffix_mask, suffix_len);
                         for (s_index, suffix) in suffixes.iter().enumerate() {
                             let slot = &mut accumulators[s_index * CHUNK_SIZE + chunk];
                             if one_position == Some(s_index) {
@@ -1054,25 +1073,10 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
         }
 
-        // Snap the packed output-claim facts first: past this handoff the
-        // final flag walk reads one byte per cycle, not the 48 B row.
-        let rows = self.rows.as_slice();
-        const {
-            assert!(
-                LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
-                "table indices must fit the packed claim byte"
-            );
-        }
-        self.claim_columns = map_indices(rows.len(), |j| {
-            let row = &rows[j];
-            let table = row.table_index().map_or(0, |index| index as u8 + 1);
-            table | (u8::from(row.raf_flag) << 7)
-        });
-
         // The tables stay pending: the first cycle message evaluates these
         // bases per row, and the first cycle bind materializes half-domain
-        // tables directly (rows and the phase eq tables stay alive until
-        // then).
+        // tables directly (the index column and the phase eq tables stay
+        // alive until then).
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
             tables: CycleTables::Pending(PendingCycleTables {
@@ -1080,7 +1084,6 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 raf_interleaved,
                 raf_identity,
             }),
-            bind_scratch: Vec::new(),
         });
 
         // The address-phase state is dead past this point — except the
@@ -1090,6 +1093,10 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
         self.buckets = Vec::new();
+        // Return the address-phase pages before the dense cycle tables (and
+        // the tail-aligned co-members' bound tables) stack on top — this is
+        // the stage's resident high-water moment.
+        purge_staging(self.dimensions.log_t());
     }
 
     /// The pending combined-value base at cycle `j` (packed-byte lookup).
@@ -1114,7 +1121,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         let ra_count = self.dimensions.num_virtual_ra_polys();
         let phases_per_ra = self.phases() / ra_count;
         let address_bits = self.address_bits();
-        let index = self.rows[j].lookup_index;
+        let index = self.indices[j];
         let mut phase = i * phases_per_ra;
         let mut shift = address_bits - (phase + 1) * CHUNK_LEN;
         let mut product = self.v_tables[phase][((index >> shift) as usize) & (CHUNK_SIZE - 1)];
@@ -1193,10 +1200,13 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                         },
                     )),
                     CycleTables::Dense { combined_val, ra } => {
-                        combined_val
-                            .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+                        // Plain low-to-high binds (fresh half-size buffer,
+                        // old one freed): the tables' resident set decays
+                        // geometrically instead of pinning peak-size
+                        // capacity through the whole cycle phase.
+                        combined_val.bind_with_order(challenge, BindingOrder::LowToHigh);
                         for ra in ra {
-                            ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
+                            ra.bind_with_order(challenge, BindingOrder::LowToHigh);
                         }
                         None
                     }
@@ -1223,8 +1233,10 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                         }))
                     })
                     .collect();
-                // The rows' and phase eq tables' last read is behind us.
-                self.rows = Arc::new(Vec::new());
+                // The index column's and phase eq tables' last read is
+                // behind us (a parked re-emulation carry keeps the shared
+                // allocation alive for stage 6b).
+                self.indices = Arc::new(Vec::new());
                 self.v_tables = Vec::new();
                 if let Some(cycle) = self.cycle.as_mut() {
                     cycle.tables = CycleTables::Dense {
@@ -1234,6 +1246,17 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 }
             }
             self.cycle_challenges.push(challenge);
+            // The halving cycle tables' freed generations are all
+            // large-block cache entries. The first halving strands the
+            // full materialized generation (combined_val plus the ra
+            // family — the stage-5 resident high-water), so purge right
+            // there, again two rounds on, and once late-tail for the
+            // remainder (plus the index column) once the live tables are
+            // small.
+            let cycle_round = self.progress.bound() - self.address_bits();
+            if matches!(cycle_round, 1 | 3 | LATE_PURGE_CYCLE_ROUNDS) {
+                purge_staging(self.dimensions.log_t());
+            }
         }
         self.progress.advance();
         Ok(())
@@ -1350,22 +1373,19 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel};
+    use super::{pack_claim_byte, OptimizedInstructionReadRafKernel};
 
-    /// Packs reference-typed fixture rows into the optimized kernel's shared
-    /// row form (the stage-5 kernel reads no PC/RAM columns).
-    fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
+    /// Packs reference-typed fixture rows into the optimized kernel's
+    /// staging columns (the stage-5 kernel reads no PC/RAM columns).
+    fn pack(rows: &[InstructionReadRafWitness]) -> (Vec<u128>, Vec<u8>) {
         rows.iter()
             .map(|row| {
-                InstructionCycleRow::new(
+                (
                     row.lookup_index.0,
-                    row.table_index.0,
-                    row.raf_flag.0,
-                    None,
-                    None,
+                    pack_claim_byte(row.table_index.0, row.raf_flag.0),
                 )
             })
-            .collect()
+            .unzip()
     }
 
     fn fr(value: u64) -> Fr {
@@ -1465,10 +1485,12 @@ mod tests {
 
         let mut reference =
             InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
+        let (indices, claim_columns) = pack(&rows);
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(pack(&rows)),
+            Arc::new(indices),
+            claim_columns,
             gamma,
         )
         .unwrap();
@@ -1540,10 +1562,12 @@ mod tests {
 
         let mut reference =
             InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
+        let (indices, claim_columns) = pack(&rows);
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(pack(&rows)),
+            Arc::new(indices),
+            claim_columns,
             gamma,
         )
         .unwrap();

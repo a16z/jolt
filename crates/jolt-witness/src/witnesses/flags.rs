@@ -2,8 +2,7 @@ use jolt_field::Field;
 use jolt_lookup_tables::{InstructionLookupTable, LookupQuery};
 use jolt_program::execution::TraceRow;
 use jolt_riscv::{
-    CircuitFlags, Flags, InstructionFlags as InstructionFlagKind, InterleavedBitsMarker,
-    JoltInstruction,
+    CircuitFlags, InstructionFlags as InstructionFlagKind, InterleavedBitsMarker, JoltInstruction,
 };
 
 use super::{
@@ -135,7 +134,7 @@ impl Extract for ShouldBranch {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let instruction_flags = decode_instruction(row)?.instruction_flags();
+        let instruction_flags = row.instruction_flags();
         let lookup_output = LookupQuery::<RV64_XLEN>::to_lookup_output(&lookup_query(row));
         Ok(Self(
             instruction_flags[InstructionFlagKind::Branch] && lookup_output == 1,
@@ -172,7 +171,7 @@ impl ExtractIndexed<InstructionFlagKind> for InstructionFlag {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(decode_instruction(row)?.instruction_flags()[flag]))
+        Ok(Self(row.instruction_flags()[flag]))
     }
 }
 

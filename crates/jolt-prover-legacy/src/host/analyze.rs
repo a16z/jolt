@@ -23,7 +23,7 @@ impl ProgramSummary {
     pub fn analyze<F: JoltField>(&self) -> Vec<(&'static str, usize)> {
         let mut counts = HashMap::<&'static str, usize>::new();
         for row in self.trace.iter() {
-            let instruction_name = row.instruction.instruction_kind.name();
+            let instruction_name = row.instruction_kind().name();
             if let Some(count) = counts.get(instruction_name) {
                 counts.insert(instruction_name, count + 1);
             } else {
