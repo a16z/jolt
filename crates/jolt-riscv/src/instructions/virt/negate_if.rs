@@ -1,8 +1,8 @@
 use crate::jolt_instruction;
 
 jolt_instruction!(
-    /// Virtual CHANGE_DIVISOR_W: 32-bit version of change divisor.
-    VirtualChangeDivisorW,
+    /// Negates `rs2` when `rs1` is negative, otherwise returns `rs2`.
+    VirtualNegateIf,
     circuit flags: [WriteLookupOutputToRD],
     instruction flags: [LeftOperandIsRs1Value, RightOperandIsRs2Value]
 );
