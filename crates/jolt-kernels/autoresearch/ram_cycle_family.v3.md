@@ -190,6 +190,14 @@ Stricter five-pair or focused controls set the promotion budgets:
 The four hard caps sum to 79,356,487 ns, but every member must pass its own
 cap. A fast RAF result cannot excuse a CPU placeholder elsewhere.
 
+The later `5210979cb` sparse transfer installed the target selector and
+measured the exact retained topology again. At log 26, read/write moved from
+90.832168 ms on optimized CPU to 6.402416 ms on the host-sparse lane
+(14.187171x), while value check moved from 246.143121 ms to 19.003418 ms
+(12.952571x). These are one-pair diagnostics, not promotion evidence, but both
+already clear the fixed member caps. Metal cycle rounds remain disabled for
+this topology; the high-support crossover below is a separate candidate.
+
 ## One producer and one ownership DAG
 
 `ProofSession` stores one value per concrete `TypeId` for the proof lifetime.
@@ -251,17 +259,19 @@ RamIncrementRecord    24 B  parallel u64 cycle and i128 increment storage
 RamRwMergeEvent       32 B  low/high state ids, group id, absent checkpoints
 RamRwGroupEvent       16 B  low/high increment ids and cycle-pair id
 RamBlockMerge          8 B  low/high block-frontier ids
+RamBlockLeaf           8 B  access and increment record ids
+LevelRange             8 B  level offset and length
 RamValFinalNative      8 B  one little-endian u64 per RAM word
 ```
 
 Under those declared sizes, the target trace's base sparse payload is exactly
 `24A + 24D + 8K = 71,944` bytes. The read/write projection adds
 `32V + 16H = 89,376` bytes. A reusable block merge adds `8H = 5,088` bytes.
-Four 28-entry `u32` offset arrays add 448 bytes, and the final address list is
-at most `4A = 760` bytes. The planned sparse-owner payload is therefore at
-most **167,616 bytes**, before allocator alignment and receipt metadata.
+The reusable block leaves and level ranges bring the allocation-unique owner
+payload to at most **169,848 bytes**. The current physical buffer layout is at
+most **171,144 bytes** before allocator padding and receipt metadata.
 
-That 167,616-byte value is a **projection conditional on the declared ABI**,
+The 169,848-byte value is a **projection conditional on the declared ABI**,
 not a compiled allocation observation. A future ABI must replace the equation
 with its physical allocation lengths. It is nevertheless the correct scale:
 the target path does not need a 256-MiB address plane or a 1-GiB value-check
@@ -380,18 +390,18 @@ is useful dense-control evidence, but it is not the target architecture.
 
 On the target, `increment_compatible = true`, so every increment cycle is in
 the access tree and the exact union count is `G^u = 826`; the conservative
-generic bound remains `G^u <= 826 + 27D = 2,905`. The prior sparse model's
-optimistic bounds specialize to:
+generic bound remains `G^u <= 826 + 27D = 2,905`. Accounting for split-LT
+construction and rebinding, plus address-equality evaluation only at the 190
+access leaves, gives:
 
 ```text
-useful products <= 12 * 826 = 9,912
-logical bytes   <= 144*826 + 16K + 48*sqrt(T) = 643,232.
+useful products = 54,711 + 2*H_lo = 54,737..55,983
+logical bytes   = 1,679,720..1,699,656.
 ```
 
-These are **planning upper bounds**, because no production sparse value-check
-pass has established a final instruction census. Their product and copy roofs
-are 0.548 us and 1.424 us. With at most 190 live blocks in any round, the
-retained trace again cannot occupy the device; host sparse is the target lane.
+The upper compute and traffic floors are 3.09 us and 3.76 us. With at most 190
+live blocks in any round, command/wait latency still dominates by roughly two
+orders of magnitude; host sparse is the target lane.
 
 The host and Metal implementations share one algorithm and frontier ABI:
 
@@ -557,10 +567,11 @@ required for promotion.
 This is the highest-leverage slice. Publish `RamCycleFamilyOwner` and its
 receipt from the existing witness traversal, build the union DAG once, and
 replace `RamValCheck`'s round-0 shadow with an authoritative host-sparse kernel
-using the production `SumcheckKernel` seam. The retained trace has only 9,912
-planned products against a 234.7--278.1-ms CPU member, so this establishes the
-largest likely wall reduction while validating cross-stage owner lifetime,
-raw-zero increments, and the frontier ABI that a later Metal prefix will use.
+using the production `SumcheckKernel` seam. The retained trace has at most
+55,983 planned products against a 234.7--278.1-ms CPU member, so this
+establishes the largest likely wall reduction while validating cross-stage
+owner lifetime, raw-zero increments, and the frontier ABI that a later Metal
+prefix will use.
 
 Gates: no second witness scan or upload, exact clear-mode Akita/Metal lockstep,
 green CPU `host,zk` regressions, no CPU shadow in the timed arm, complete member
