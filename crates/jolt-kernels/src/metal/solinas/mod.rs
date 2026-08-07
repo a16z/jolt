@@ -56,6 +56,7 @@ mod registers;
 pub mod registers_claim_reduction;
 mod registers_read_write;
 mod registers_read_write_dense;
+mod registers_read_write_v3;
 mod registers_val;
 #[doc(hidden)]
 pub mod registers_val_claim_v2;
