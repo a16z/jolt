@@ -19,6 +19,7 @@ use super::shader_abi::{
     SplitAtom, SuffixPlan, TableDescriptor, EXPLICIT_SUFFIX_LANES, FLAG_COLUMNS, JOB_LANES,
     MAX_SUFFIXES, SEGMENTS, TABLES, TOTAL_SUFFIXES,
 };
+use super::topology::{AddressAtomTopology, AddressAtomTopologyConfig};
 use super::{
     aggregate_address_atoms, atom_address_message, DenseReadRafOracle, InstructionReadRafRow,
     InstructionReadRafV3Error, ADDRESS_BITS, ADDRESS_PHASES, FP128_BYTES, INSTRUCTION_ROW_BYTES,
@@ -159,6 +160,101 @@ fn fixture_rows() -> Vec<InstructionReadRafRow> {
     .into_iter()
     .map(|(lookup, table, raf)| InstructionReadRafRow::new(lookup, table, raf).unwrap())
     .collect()
+}
+
+fn small_topology_config() -> AddressAtomTopologyConfig {
+    AddressAtomTopologyConfig {
+        phase_zero_cycles_per_group: 64,
+        mass_job_cycles: 2,
+        atoms_per_phase_job: 2,
+    }
+}
+
+#[test]
+fn address_atom_topology_is_an_exact_key_partition() {
+    let rows = fixture_rows();
+    let topology =
+        AddressAtomTopology::from_rows_reference(&rows, small_topology_config()).unwrap();
+    let census = topology.census().unwrap();
+
+    assert_eq!(topology.rows(), rows.len());
+    assert_eq!(census.atoms, 5);
+    assert_eq!(census.rows, rows.len());
+    assert_eq!(topology.atom_cycle_offsets().first(), Some(&0));
+    assert_eq!(
+        topology.atom_cycle_offsets().last(),
+        Some(&(rows.len() as u32))
+    );
+    assert!(topology
+        .atom_cycle_offsets()
+        .windows(2)
+        .all(|pair| pair[0] < pair[1]));
+    let mut cycles = topology.cycle_indices().to_vec();
+    cycles.sort_unstable();
+    assert_eq!(cycles, (0..rows.len() as u32).collect::<Vec<_>>());
+    assert_eq!(topology.phase_jobs_census()[0], census.mass_groups as u64);
+    assert!(topology.phase_jobs_census()[1..]
+        .iter()
+        .all(|&jobs| jobs == census.later_phase_jobs as u64));
+
+    for segment in 0..SEGMENTS {
+        let group_range = topology.phase_zero_group_offsets()[segment] as usize
+            ..topology.phase_zero_group_offsets()[segment + 1] as usize;
+        for group in &topology.mass_groups()[group_range] {
+            for job in &topology.mass_jobs()[group.job_start as usize..group.job_end as usize] {
+                let atom_range = topology.segment_atom_offsets()[segment] as usize
+                    ..topology.segment_atom_offsets()[segment + 1] as usize;
+                assert!(atom_range.contains(&(job.atom as usize)));
+            }
+        }
+    }
+}
+
+#[test]
+fn address_atom_topology_parallelizes_and_finalizes_a_giant_atom() {
+    let rows = vec![InstructionReadRafRow::new(17, Some(0), true).unwrap(); 64];
+    let topology =
+        AddressAtomTopology::from_rows_reference(&rows, small_topology_config()).unwrap();
+    let census = topology.census().unwrap();
+
+    assert_eq!(census.atoms, 1);
+    assert_eq!(census.mass_jobs, 32);
+    assert_eq!(census.mass_groups, 1);
+    assert_eq!(census.split_atoms, 1);
+    assert_eq!(census.mass_partials, 32);
+    assert_eq!(
+        census.mass_jobs,
+        census.atoms - census.split_atoms + census.mass_partials
+    );
+    assert_eq!(topology.split_atoms()[0].partial_start, 0);
+    assert_eq!(topology.split_atoms()[0].partial_end, 32);
+    assert!(topology
+        .mass_jobs()
+        .iter()
+        .all(|job| { job.cycle_end - job.cycle_start == 2 && job.mass_partial_plus_one != 0 }));
+}
+
+#[test]
+fn address_atom_topology_rejects_bad_permutations_before_publication() {
+    let rows = fixture_rows();
+    let duplicate = vec![0u32; rows.len()];
+    assert!(matches!(
+        AddressAtomTopology::from_sorted_cycles(&rows, &duplicate, small_topology_config()),
+        Err(InstructionReadRafV3Error::DuplicateTopologyCycle { .. })
+    ));
+
+    let decreasing = (0..rows.len() as u32).rev().collect::<Vec<_>>();
+    assert!(matches!(
+        AddressAtomTopology::from_sorted_cycles(&rows, &decreasing, small_topology_config()),
+        Err(InstructionReadRafV3Error::NonMonotoneTopologyKey { .. })
+    ));
+
+    let mut out_of_range = (0..rows.len() as u32).collect::<Vec<_>>();
+    out_of_range[rows.len() - 1] = rows.len() as u32;
+    assert!(matches!(
+        AddressAtomTopology::from_sorted_cycles(&rows, &out_of_range, small_topology_config()),
+        Err(InstructionReadRafV3Error::TopologyCycleOutOfRange { .. })
+    ));
 }
 
 #[test]

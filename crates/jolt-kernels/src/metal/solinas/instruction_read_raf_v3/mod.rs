@@ -58,6 +58,7 @@ mod abi;
 mod model;
 mod oracle;
 mod shader_abi;
+mod topology;
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 
@@ -177,6 +178,24 @@ pub(crate) enum InstructionReadRafV3Error {
     InvalidCensus(&'static str),
     #[error("InstructionReadRaf shader ABI is invalid: {0}")]
     InvalidShaderAbi(&'static str),
+    #[error("InstructionReadRaf topology parameter {name} has invalid value {value}")]
+    InvalidTopologyConfig { name: &'static str, value: usize },
+    #[error("InstructionReadRaf sorted topology has {got} cycles, expected {expected}")]
+    TopologyCycleLength { expected: usize, got: usize },
+    #[error(
+        "InstructionReadRaf sorted topology cycle {cycle} at position {position} is outside {rows} rows"
+    )]
+    TopologyCycleOutOfRange {
+        position: usize,
+        cycle: usize,
+        rows: usize,
+    },
+    #[error("InstructionReadRaf sorted topology repeats cycle {cycle}")]
+    DuplicateTopologyCycle { cycle: usize },
+    #[error("InstructionReadRaf sorted topology key decreases at position {position}")]
+    NonMonotoneTopologyKey { position: usize },
+    #[error("InstructionReadRaf topology is invalid: {0}")]
+    InvalidTopology(&'static str),
 }
 
 #[cfg(test)]
