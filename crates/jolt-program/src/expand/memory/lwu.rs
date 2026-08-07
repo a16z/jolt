@@ -1,8 +1,6 @@
 use super::*;
 
-/// Lowers unsigned word load `LWU` by extracting from the containing doubleword.
-///
-/// The loaded 32-bit lane is shifted down and zero-extended to the RV64 result.
+/// Lowers unsigned word load `LWU` through a word-lane mask.
 pub(in crate::expand) fn expand_lwu(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -10,41 +8,29 @@ pub(in crate::expand) fn expand_lwu(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
-    // The source op still requires word alignment even though the physical
-    // proof row reads the aligned containing doubleword.
     asm.expand_address(
         SourceInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
     asm.expand_i(
-        SourceInstructionKind::ADDI,
+        SourceInstructionKind::VirtualAlignAddr(jolt_riscv::instructions::VirtualAlignAddr(())),
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    // v1 = containing doubleword address, v0 = byte offset within it.
+    asm.expand_i(SourceInstructionKind::LD, v0.operand(), v0.operand(), 0);
     asm.expand_i(
-        SourceInstructionKind::ANDI,
+        SourceInstructionKind::VirtualLaneMaskW(jolt_riscv::instructions::VirtualLaneMaskW(())),
         v1.operand(),
-        v0.operand(),
-        format_i_imm(-8),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
     asm.expand_r(
-        SourceInstructionKind::SRL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
-    asm.expand_i(
-        SourceInstructionKind::VirtualZeroExtendWord(
-            jolt_riscv::instructions::VirtualZeroExtendWord(()),
-        ),
+        SourceInstructionKind::VirtualSRL,
         reg(rd(instruction)?),
+        v0.operand(),
         v1.operand(),
-        0,
     );
     asm.release(v0);
     asm.release(v1);

@@ -34,6 +34,7 @@ impl SparseDenseSuffix for LaneExtractStraddleSuffix {
     fn suffix_mle(b: LookupBits) -> u64 {
         let (mut x, mut y) = b.uninterleave();
         if x.is_empty() {
+            // With no boundary bit, no selected run can straddle the split.
             return 0;
         }
         let first_selected = u128::from(x.pop_msb()) * u128::from(y.pop_msb());

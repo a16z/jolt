@@ -44,6 +44,7 @@ use tracer::{
         sub::SUB,
         subw::SUBW,
         virtual_advice::VirtualAdvice,
+        virtual_align_addr::VirtualAlignAddr,
         virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
         virtual_assert_lte::VirtualAssertLTE,
@@ -53,9 +54,14 @@ use tracer::{
         virtual_assert_word_alignment::VirtualAssertWordAlignment,
         virtual_change_divisor::VirtualChangeDivisor,
         virtual_change_divisor_w::VirtualChangeDivisorW,
+        virtual_lane_extract_s::VirtualLaneExtractS,
+        virtual_lane_mask_b::VirtualLaneMaskB,
+        virtual_lane_mask_h::VirtualLaneMaskH,
+        virtual_lane_mask_w::VirtualLaneMaskW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
         virtual_pow2::VirtualPow2,
+        virtual_pow2_lane::VirtualPow2Lane,
         virtual_pow2_w::VirtualPow2W,
         virtual_shift_right_bitmask::VirtualShiftRightBitmask,
         virtual_sign_extend_word::VirtualSignExtendWord,
@@ -211,6 +217,23 @@ fn trailing_zeros(bv: &BV, bitsz: u32) -> BV {
     tz_recursive(bv, bitsz, bitsz)
 }
 
+fn signed_lane_extract(data: &BV, mask: &BV, bitsz: u32) -> BV {
+    let zero = BV::from_u64(0, bitsz);
+    let one = BV::from_u64(1, bitsz);
+    let mut packed = zero.clone();
+    let mut signed_weight = zero.clone();
+    let mut previous_mask = zero;
+    for bit in (0..bitsz).rev() {
+        let x_i = data.extract(bit, bit).zero_ext(bitsz - 1);
+        let y_i = mask.extract(bit, bit).zero_ext(bitsz - 1);
+        packed = packed * (&one + &y_i) + &x_i * &y_i;
+        let top = x_i * &y_i * (&one - &previous_mask);
+        signed_weight = signed_weight * (&one + &y_i) + top;
+        previous_mask = y_i;
+    }
+    packed - signed_weight * 2
+}
+
 fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
     match instr {
         Instruction::ADD(ADD { operands, .. }) => {
@@ -310,6 +333,10 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
             cpu.asserts.push(addr.extract(1, 0).eq(0))
         }
+        Instruction::VirtualAlignAddr(VirtualAlignAddr { operands, .. }) => {
+            let address = &cpu.x[operands.rs1 as usize] + normalize_imm(operands.imm);
+            cpu.x[operands.rd as usize] = address & cpu.bv_u64(!7);
+        }
         Instruction::VirtualChangeDivisor(VirtualChangeDivisor { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
@@ -339,6 +366,26 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let sign_bit = val.extract(cpu.bv_bits - 1, cpu.bv_bits - 1);
             cpu.x[operands.rd as usize] = sign_bit.eq(1).ite(&ones, &zero);
         }
+        Instruction::VirtualLaneExtractS(VirtualLaneExtractS { operands, .. }) => {
+            let data = cpu.x[operands.rs1 as usize].clone();
+            let mask = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = signed_lane_extract(&data, &mask, cpu.bv_bits);
+        }
+        Instruction::VirtualLaneMaskB(VirtualLaneMaskB { operands, .. }) => {
+            let address = &cpu.x[operands.rs1 as usize] + normalize_imm(operands.imm);
+            let shift = (address & cpu.bv_u64(7)) * 8;
+            cpu.x[operands.rd as usize] = cpu.bv_u64(0xff).bvshl(shift);
+        }
+        Instruction::VirtualLaneMaskH(VirtualLaneMaskH { operands, .. }) => {
+            let address = &cpu.x[operands.rs1 as usize] + normalize_imm(operands.imm);
+            let shift = (address & cpu.bv_u64(6)) * 8;
+            cpu.x[operands.rd as usize] = cpu.bv_u64(0xffff).bvshl(shift);
+        }
+        Instruction::VirtualLaneMaskW(VirtualLaneMaskW { operands, .. }) => {
+            let address = &cpu.x[operands.rs1 as usize] + normalize_imm(operands.imm);
+            let shift = (address & cpu.bv_u64(4)) * 8;
+            cpu.x[operands.rd as usize] = cpu.bv_u64(0xffff_ffff).bvshl(shift);
+        }
         Instruction::VirtualAdvice(VirtualAdvice { operands, .. }) => {
             let advice_var = BV::new_const(
                 format!("{}_advice_{}", cpu.var_prefix, cpu.advice_vars.len()),
@@ -352,6 +399,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = cpu
                 .bv_u64(1)
                 .bvshl(rs1 & cpu.bv_u64((cpu.bv_bits - 1) as u64));
+        }
+        Instruction::VirtualPow2Lane(VirtualPow2Lane { operands, .. }) => {
+            let address = &cpu.x[operands.rs1 as usize] + normalize_imm(operands.imm);
+            let shift = (address & cpu.bv_u64(7)) * 8;
+            cpu.x[operands.rd as usize] = cpu.bv_u64(1).bvshl(shift);
         }
         Instruction::VirtualPow2W(VirtualPow2W { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();

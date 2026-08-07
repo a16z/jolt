@@ -98,7 +98,8 @@ impl<const XLEN: usize, const WIDTH_BYTES: usize, F: JoltField> SparseDensePrefi
             return Some(value).into();
         }
         if j == 2 * XLEN - 1 {
-            let mut value = checkpoints[prefix_kind::<WIDTH_BYTES>()].unwrap_or(F::one());
+            let mut value = F::from_u64(base::<WIDTH_BYTES>())
+                * checkpoints[prefix_kind::<WIDTH_BYTES>()].unwrap_or(F::one());
             value *= F::one() + F::from_u64(factor::<WIDTH_BYTES>(1) - 1) * r_x;
             value *= F::one() + F::from_u64(factor::<WIDTH_BYTES>(0) - 1) * r_y;
             return Some(value).into();

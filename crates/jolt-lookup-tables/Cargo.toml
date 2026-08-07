@@ -26,6 +26,7 @@ serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
+ark-bn254.workspace = true
 jolt-prover-legacy = { workspace = true, default-features = false, features = [
   "minimal",
 ] }

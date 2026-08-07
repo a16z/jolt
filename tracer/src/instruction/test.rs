@@ -2,6 +2,8 @@ use core::panic::AssertUnwindSafe;
 use std::panic;
 
 use crate::emulator::cpu::Cpu;
+#[cfg(test)]
+use crate::instruction::format::{format_load::FormatLoad, format_s::FormatS};
 use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
 #[cfg(test)]
 use jolt_riscv::RV64IMAC_JOLT;
@@ -190,5 +192,200 @@ where
     }
     if non_panic == 0 {
         panic!("All of instructions panic at the execute function");
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+fn memory_test_cpu(initial_dword: u64, rs2: u64, memory_address: u64) -> Cpu {
+    let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+    let memory_config = common::jolt_device::MemoryConfig {
+        heap_size: TEST_MEMORY_CAPACITY,
+        program_size: Some(1024),
+        ..Default::default()
+    };
+    cpu.get_mut_mmu().jolt_device = Some(common::jolt_device::JoltDevice::new(&memory_config));
+    cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
+    cpu.mmu
+        .store_doubleword(memory_address, initial_dword)
+        .unwrap();
+    cpu.write_register(1, memory_address as i64);
+    cpu.write_register(2, rs2 as i64);
+    cpu
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+fn assert_directed_memory_trace<I>(
+    instruction: I,
+    initial_dword: u64,
+    rs2: u64,
+    memory_address: u64,
+    expected_rows: usize,
+) where
+    I: RISCVInstruction + RISCVTrace + Copy,
+    Cycle: From<RISCVCycle<I>>,
+{
+    let mut original_cpu = memory_test_cpu(initial_dword, rs2, memory_address);
+    let mut virtual_cpu = memory_test_cpu(initial_dword, rs2, memory_address);
+    instruction.execute(&mut original_cpu, &mut Default::default());
+    let mut trace = Vec::new();
+    instruction.trace(&mut virtual_cpu, Some(&mut trace));
+
+    assert_eq!(trace.len(), expected_rows);
+    assert_eq!(original_cpu.pc, virtual_cpu.pc);
+    assert_eq!(
+        original_cpu.x[..RISCV_REGISTER_COUNT as usize],
+        virtual_cpu.x[..RISCV_REGISTER_COUNT as usize]
+    );
+    assert_eq!(
+        original_cpu.mmu.load_doubleword(memory_address).unwrap().0,
+        virtual_cpu.mmu.load_doubleword(memory_address).unwrap().0
+    );
+}
+
+#[cfg(test)]
+fn assert_misaligned_trace_panics<I>(instruction: I)
+where
+    I: RISCVInstruction + RISCVTrace + Copy,
+    Cycle: From<RISCVCycle<I>>,
+{
+    let mut original_cpu = memory_test_cpu(0, 0, DRAM_BASE);
+    let mut virtual_cpu = memory_test_cpu(0, 0, DRAM_BASE);
+    assert!(panic::catch_unwind(AssertUnwindSafe(|| {
+        instruction.execute(&mut original_cpu, &mut Default::default());
+    }))
+    .is_err());
+    assert!(panic::catch_unwind(AssertUnwindSafe(|| {
+        instruction.trace(&mut virtual_cpu, None);
+    }))
+    .is_err());
+}
+
+#[test]
+#[cfg(test)]
+fn subword_memory_inline_sequences_cover_lanes_and_sign_boundaries() {
+    // Trace snapshots at offsets 4..=7 include the following doubleword.
+    let memory_boundaries = [DRAM_BASE, DRAM_BASE + TEST_MEMORY_CAPACITY - 16];
+
+    macro_rules! check_load {
+        ($instruction:ident, $width:expr, $offsets:expr, $expected_rows:expr) => {
+            for memory_address in memory_boundaries {
+                for offset in $offsets {
+                    let lane_mask = ((1_u64 << $width) - 1) << (offset * 8);
+                    for payload in [
+                        0,
+                        (1_u64 << ($width - 1)) - 1,
+                        1_u64 << ($width - 1),
+                        u64::MAX,
+                    ] {
+                        let initial = (0x0123_4567_89ab_cdef & !lane_mask)
+                            | ((payload << (offset * 8)) & lane_mask);
+                        assert_directed_memory_trace(
+                            $instruction {
+                                address: DRAM_BASE,
+                                operands: FormatLoad {
+                                    rd: 3,
+                                    rs1: 1,
+                                    imm: offset,
+                                },
+                                virtual_sequence_remaining: None,
+                                is_first_in_sequence: false,
+                                is_compressed: false,
+                            },
+                            initial,
+                            0,
+                            memory_address,
+                            $expected_rows,
+                        );
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! check_store {
+        ($instruction:ident, $width:expr, $offsets:expr, $expected_rows:expr) => {
+            for memory_address in memory_boundaries {
+                for offset in $offsets {
+                    for payload in [
+                        0,
+                        (1_u64 << ($width - 1)) - 1,
+                        1_u64 << ($width - 1),
+                        u64::MAX,
+                    ] {
+                        assert_directed_memory_trace(
+                            $instruction {
+                                address: DRAM_BASE,
+                                operands: FormatS {
+                                    rs1: 1,
+                                    rs2: 2,
+                                    imm: offset,
+                                },
+                                virtual_sequence_remaining: None,
+                                is_first_in_sequence: false,
+                                is_compressed: false,
+                            },
+                            0x0123_4567_89ab_cdef,
+                            payload,
+                            memory_address,
+                            $expected_rows,
+                        );
+                    }
+                }
+            }
+        };
+    }
+
+    check_load!(LB, 8, 0_i64..8, 4);
+    check_load!(LBU, 8, 0_i64..8, 4);
+    check_store!(SB, 8, 0_i64..8, 9);
+    check_load!(LH, 16, [0_i64, 2, 4, 6], 5);
+    check_load!(LHU, 16, [0_i64, 2, 4, 6], 5);
+    check_store!(SH, 16, [0_i64, 2, 4, 6], 10);
+    check_load!(LW, 32, [0_i64, 4], 5);
+    check_load!(LWU, 32, [0_i64, 4], 5);
+    check_store!(SW, 32, [0_i64, 4], 10);
+
+    macro_rules! check_misaligned_load {
+        ($instruction:ident, $offset:expr) => {
+            assert_misaligned_trace_panics($instruction {
+                address: DRAM_BASE,
+                operands: FormatLoad {
+                    rd: 3,
+                    rs1: 1,
+                    imm: $offset,
+                },
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            });
+        };
+    }
+    macro_rules! check_misaligned_store {
+        ($instruction:ident, $offset:expr) => {
+            assert_misaligned_trace_panics($instruction {
+                address: DRAM_BASE,
+                operands: FormatS {
+                    rs1: 1,
+                    rs2: 2,
+                    imm: $offset,
+                },
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            });
+        };
+    }
+
+    for offset in [1, 3, 5, 7] {
+        check_misaligned_load!(LH, offset);
+        check_misaligned_load!(LHU, offset);
+        check_misaligned_store!(SH, offset);
+    }
+    for offset in [1, 2, 3, 5, 6, 7] {
+        check_misaligned_load!(LW, offset);
+        check_misaligned_load!(LWU, offset);
+        check_misaligned_store!(SW, offset);
     }
 }

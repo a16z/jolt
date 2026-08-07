@@ -6,12 +6,12 @@ use jolt_riscv::{
     SourceInstructionRow, RV64IMAC_JOLT,
 };
 #[cfg(feature = "serialization")]
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "serialization")]
 use sha2::{Digest, Sha256};
 
 #[cfg(feature = "serialization")]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ExpansionParityCase {
     name: String,
     input: SourceInstruction,
@@ -444,18 +444,13 @@ fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), Expansi
 #[test]
 #[cfg(feature = "serialization")]
 fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Error>> {
-    // Expected hashes generated from baseline main commit 51d81a36e. This catches
-    // recursive expansion order and virtual-register reuse regressions without
-    // checking a giant expanded-row fixture into the repository.
-    //
-    // 16 of the 360 hashes were re-baselined when `expand_address` began wrapping
-    // its offset through `format_i_imm`: exactly the `imm = -8` cases for LH/LHU/
-    // LW/LWU/SH/SW, the accesses that emit an alignment assert. Byte accesses
-    // (no assert) and non-negative offsets (wrap is the identity) are unchanged.
-    let cases: Vec<ExpansionParityCase> =
+    // Set `JOLT_UPDATE_EXPANSION_FIXTURES=1` only after auditing every changed
+    // instruction family; unchanged hashes are the regression boundary.
+    let mut cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
+    let update = std::env::var_os("JOLT_UPDATE_EXPANSION_FIXTURES").is_some();
 
-    for case in cases {
+    for case in &mut cases {
         let mut allocator = ExpansionAllocator::new();
         let expanded = rows(expand_instruction(
             &case.input,
@@ -465,7 +460,17 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
         let encoded = serde_json::to_vec(&expanded)?;
         let output_sha256 = hex::encode(Sha256::digest(encoded));
 
-        assert_eq!(output_sha256, case.output_sha256, "{}", case.name);
+        if update {
+            case.output_sha256 = output_sha256;
+        } else {
+            assert_eq!(output_sha256, case.output_sha256, "{}", case.name);
+        }
+    }
+
+    if update {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/expand/fixtures/main_expand_parity_hashes.json");
+        std::fs::write(path, serde_json::to_vec(&cases)?)?;
     }
 
     Ok(())
