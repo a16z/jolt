@@ -46,7 +46,7 @@ pub struct BytecodeReadRafAddressMetalConfig {
 impl Default for BytecodeReadRafAddressMetalConfig {
     fn default() -> Self {
         Self {
-            implementation: BytecodeReadRafAddressImplementation::CsrShadow,
+            implementation: BytecodeReadRafAddressImplementation::Cpu,
             dispatch: BytecodeReadRafConfig::default(),
             product_path: BytecodeReadRafFusedProductPath::FullWidth,
         }
@@ -636,6 +636,14 @@ mod tests {
         collect_instruction_cycle_rows, InstructionCycleRow,
     };
     use crate::ReferenceBackend;
+
+    #[test]
+    fn bytecode_address_shadow_is_opt_in() {
+        assert_eq!(
+            BytecodeReadRafAddressMetalConfig::default().implementation,
+            BytecodeReadRafAddressImplementation::Cpu
+        );
+    }
 
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {
         (0..len as u64)
