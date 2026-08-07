@@ -19,6 +19,7 @@ use super::solinas::spartan_shift::{
     SpartanShiftPrefixStrategy, SpartanShiftPrefixTables, SpartanShiftResidentRows,
 };
 use super::solinas::SolinasMetal;
+use super::spartan_dense::SpartanDenseResidentOwner;
 use crate::optimized::spartan_shift::OptimizedSpartanShift;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -53,11 +54,10 @@ impl allocative::Allocative for PreparedSpartanShiftRows {
 }
 
 impl MetalBackend {
-    /// Installs the three checked resident planes consumed by the stage-3 shift slot.
+    /// Installs the three checked resident planes used by the measurement bridge.
     ///
-    /// The stage-1 witness producer calls this before any PIOP round. The adapter
-    /// removes the owner from `session` before submitting its first command, so a
-    /// missing owner selects the optimized CPU kernel without mutating sumcheck state.
+    /// The production path carries these planes in [`SpartanDenseResidentOwner`].
+    /// This separate carry remains available for explicit projection measurements.
     #[doc(hidden)]
     pub fn install_spartan_shift_resident_rows(
         &self,
@@ -76,9 +76,9 @@ impl MetalBackend {
 
     /// Creates and installs a host-produced Phase-A resident projection.
     ///
-    /// Production wiring should call this while constructing the backend witness,
-    /// outside the PIOP timer. A later producer may instead attach device-produced
-    /// buffers and pass the resulting owner to [`Self::install_spartan_shift_resident_rows`].
+    /// This is the explicit measurement/test bridge. Production witness setup
+    /// co-produces the planes with Stage 1 and carries their checked lease in
+    /// [`SpartanDenseResidentOwner`].
     #[doc(hidden)]
     pub fn prepare_spartan_shift_resident_rows(
         &self,
@@ -120,8 +120,26 @@ impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
         }
 
         let metal_config = self.config.spartan_shift;
-        let Some(PreparedSpartanShiftRows(rows)) = session.take::<PreparedSpartanShiftRows>()
-        else {
+        let owner_lease = if let Some(mut owner) = session.take::<SpartanDenseResidentOwner>() {
+            let lease = owner.take_shift_lease();
+            session.park(owner);
+            lease
+        } else {
+            None
+        };
+        let (rows, resident_source) = if let Some(lease) = owner_lease {
+            drop(session.take::<PreparedSpartanShiftRows>());
+            (
+                lease
+                    .into_rows(cycles, self.context.device_registry_id())
+                    .map_err(metal_prepare_error)?,
+                "spartan_dense_owner",
+            )
+        } else if let Some(PreparedSpartanShiftRows(rows)) =
+            session.take::<PreparedSpartanShiftRows>()
+        {
+            (rows, "measurement_bridge")
+        } else {
             return OptimizedSpartanShift.prepare(session, witness, inputs);
         };
         if cycles < metal_config.trace_cutoff_elements
@@ -130,6 +148,13 @@ impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
         {
             return OptimizedSpartanShift.prepare(session, witness, inputs);
         }
+        let _resident_span = tracing::info_span!(
+            "MetalSpartanShift::resident_rows_consume",
+            cycles,
+            source = resident_source,
+            resident_bytes = rows.resident_bytes(),
+        )
+        .entered();
 
         let geometry = SpartanShiftGeometry::new(cycles).map_err(metal_prepare_error)?;
         let config = metal_config.dispatch;

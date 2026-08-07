@@ -33,12 +33,13 @@ use super::solinas::{
     MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
     OuterRemainderSequenceStorage, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
+use super::spartan_dense::SpartanDenseResidentOwner;
 use super::spartan_product::MetalProductUniskipEndpointCarrier;
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
 use crate::optimized::spartan_outer::{
-    prepare_metal_instruction_input_witness_rows, prepare_metal_spartan_outer_uniskip,
-    prepare_metal_spartan_outer_witness_rows, take_metal_spartan_outer_tau,
-    OptimizedOuterRemainder, OptimizedOuterUniskip,
+    prepare_metal_instruction_input_witness_rows, prepare_metal_spartan_outer_shift_witness_rows,
+    prepare_metal_spartan_outer_uniskip, prepare_metal_spartan_outer_witness_rows,
+    take_metal_spartan_outer_tau, OptimizedOuterRemainder, OptimizedOuterUniskip,
 };
 use crate::optimized::spartan_shift::prepare_metal_spartan_shift_witness_rows;
 use crate::uniskip::UniskipKernel;
@@ -190,6 +191,11 @@ fn prepare_cpu_instruction_input_now(
     !metal_prepared && !stage1_rows_resident && !cpu_prepared
 }
 
+fn spartan_shift_measurement_bridge_enabled() -> bool {
+    std::env::var_os("JOLT_METAL_SPARTAN_SHIFT_MEASUREMENT_BRIDGE")
+        .is_some_and(|value| value == std::ffi::OsStr::new("1"))
+}
+
 impl Default for SpartanOuterUniskipMetalConfig {
     fn default() -> Self {
         Self {
@@ -321,7 +327,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
     ) -> Result<(), KernelError<AkitaField>> {
         let cycles = 1usize << log_t;
         self.prepare_ram_raf_witness(session, log_t, witness)?;
-        self.prepare_product_remainder_witness(session, log_t, witness)?;
         let (stage1_eligible, instruction_input_eligible) =
             resident_row_consumers(cycles, &self.config);
         let instruction_ra_dispatch = self.config.instruction_ra_virtualization.dispatch;
@@ -424,8 +429,66 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         }
         if let Some(plan) = admitted_plan {
             if plan.stage1 {
-                let mut rows =
-                    prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?;
+                let mut rows = if cycles >= self.config.spartan_shift.trace_cutoff_elements {
+                    let span = tracing::info_span!(
+                        "MetalSpartanDense::witness_prepare",
+                        cycles,
+                        source = "stage1_single_projection",
+                        owner_generation = tracing::field::Empty,
+                        shift_row_extractions = tracing::field::Empty,
+                        shift_late_copy_dispatches = tracing::field::Empty,
+                        native_register_contract_bytes = tracing::field::Empty,
+                        shift_resident_bytes = tracing::field::Empty,
+                        admitted = tracing::field::Empty,
+                        fallback_reason = tracing::field::Empty,
+                    );
+                    let _entered = span.enter();
+                    match prepare_metal_spartan_outer_shift_witness_rows(
+                        &self.context,
+                        witness,
+                        cycles,
+                    ) {
+                        Ok((rows, shift_rows)) => {
+                            let shift_resident_bytes = shift_rows.resident_bytes();
+                            let owner =
+                                SpartanDenseResidentOwner::from_co_produced_shift(shift_rows)
+                                    .map_err(metal_prepare_error)?;
+                            let _ = span.record("owner_generation", owner.generation());
+                            let _ =
+                                span.record("shift_row_extractions", owner.shift_row_extractions());
+                            let _ = span.record(
+                                "shift_late_copy_dispatches",
+                                owner.shift_late_copy_dispatches(),
+                            );
+                            let _ = span.record(
+                                "native_register_contract_bytes",
+                                owner.register_contract().total_bytes(),
+                            );
+                            let _ = span.record("shift_resident_bytes", shift_resident_bytes);
+                            let _ = span.record("admitted", true);
+                            let _ = span.record("fallback_reason", "none");
+                            session.park(owner);
+                            rows
+                        }
+                        Err(error) if error.is_capacity_error() => {
+                            let _ = span.record("admitted", false);
+                            let _ = span.record("fallback_reason", "shift_capacity");
+                            tracing::warn!(
+                                target: "jolt::metal",
+                                error = ?error,
+                                "Spartan dense Shift co-production was not admitted; retaining Stage-1 rows only"
+                            );
+                            prepare_metal_spartan_outer_witness_rows(
+                                &self.context,
+                                witness,
+                                cycles,
+                            )?
+                        }
+                        Err(error) => return Err(error.into_kernel_error()),
+                    }
+                } else {
+                    prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?
+                };
                 let compact_rows = plan
                     .instruction_input
                     .then(|| rows.share_instruction_input_rows());
@@ -439,11 +502,15 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 session.park(rows);
             }
         }
-        if cycles >= self.config.spartan_shift.trace_cutoff_elements {
+        self.prepare_product_remainder_witness(session, log_t, witness)?;
+        if cycles >= self.config.spartan_shift.trace_cutoff_elements
+            && session.state::<SpartanDenseResidentOwner>().is_none()
+            && spartan_shift_measurement_bridge_enabled()
+        {
             let span = tracing::info_span!(
                 "MetalSpartanShift::resident_rows_prepare",
                 cycles,
-                source = "witness_projection",
+                source = "measurement_bridge",
                 resident_bytes = tracing::field::Empty,
                 admitted = tracing::field::Empty,
                 fallback_reason = tracing::field::Empty,
@@ -579,7 +646,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
     }
 }
 
-fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
+fn metal_prepare_error(error: impl ToString) -> KernelError<AkitaField> {
     SumcheckError::ComputeBackend {
         backend: "metal",
         message: error.to_string(),
@@ -1671,11 +1738,11 @@ mod tests {
     fn aggregate_instruction_input_working_set_matches_production_geometry() {
         assert_eq!(
             resident_row_working_set(1 << 26, true, true, true, true, Default::default(),).unwrap(),
-            21_482_505_104
+            21_482_508_176
         );
         assert_eq!(
             resident_row_working_set(1 << 28, true, true, true, true, Default::default(),).unwrap(),
-            85_909_832_592
+            85_909_835_664
         );
         assert_eq!(
             resident_row_working_set(1 << 26, false, true, false, false, Default::default(),)
@@ -1690,7 +1757,7 @@ mod tests {
         assert_eq!(
             resident_row_working_set(1 << 28, true, false, true, true, Default::default(),)
                 .unwrap(),
-            60_138_062_736
+            60_138_065_808
         );
     }
 

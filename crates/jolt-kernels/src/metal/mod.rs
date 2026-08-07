@@ -15,6 +15,7 @@ mod ram_val_check;
 mod registers_claim_reduction;
 mod registers_val_evaluation;
 pub mod solinas;
+mod spartan_dense;
 mod spartan_outer;
 mod spartan_product;
 mod spartan_shift;

@@ -1,0 +1,662 @@
+use std::mem::size_of;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use metal::{foreign_types::ForeignType, Buffer};
+use thiserror::Error;
+
+use super::solinas::spartan_shift::{SpartanShiftGeometry, SpartanShiftResidentRows};
+use super::solinas::{ProductRemainderRow, ProductRemainderRows};
+
+static NEXT_PRODUCER_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AllocationReceipt {
+    identity: usize,
+    bytes: usize,
+}
+
+impl AllocationReceipt {
+    fn new(identity: usize, bytes: usize) -> Result<Self, SpartanDenseOwnerError> {
+        if identity == 0 {
+            return Err(SpartanDenseOwnerError::MissingAllocationIdentity);
+        }
+        if bytes == 0 {
+            return Err(SpartanDenseOwnerError::EmptyAllocation);
+        }
+        Ok(Self { identity, bytes })
+    }
+
+    fn validate(self, identity: usize, bytes: usize) -> Result<(), SpartanDenseOwnerError> {
+        if self.identity != identity {
+            return Err(SpartanDenseOwnerError::AllocationIdentityMismatch {
+                expected: self.identity,
+                got: identity,
+            });
+        }
+        if self.bytes != bytes {
+            return Err(SpartanDenseOwnerError::AllocationLengthMismatch {
+                expected: self.bytes,
+                got: bytes,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SpartanDenseProductSource {
+    #[expect(
+        dead_code,
+        reason = "the first owner slice attaches the existing product projection"
+    )]
+    CoProduced,
+    IndependentWitnessProjection,
+}
+
+impl SpartanDenseProductSource {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::CoProduced => "co_produced",
+            Self::IndependentWitnessProjection => "independent_witness_projection",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ShiftReceipt {
+    generation: u64,
+    rows: usize,
+    device_registry_id: u64,
+    allocations: [AllocationReceipt; 3],
+    exact_current_flags: bool,
+    row_extractions: usize,
+    late_copy_dispatches: usize,
+}
+
+impl ShiftReceipt {
+    fn co_produced(
+        generation: u64,
+        rows: &SpartanShiftResidentRows,
+    ) -> Result<Self, SpartanDenseOwnerError> {
+        let geometry = SpartanShiftGeometry::new(rows.len())
+            .map_err(|_| SpartanDenseOwnerError::InvalidRows(rows.len()))?;
+        let value_bytes = geometry
+            .rows()
+            .checked_mul(size_of::<u64>())
+            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
+        let flag_bytes = geometry
+            .flag_words()
+            .checked_mul(size_of::<super::solinas::spartan_shift::SpartanShiftFlagWord>())
+            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
+        let identities = rows.allocation_identities();
+        let allocations = [
+            AllocationReceipt::new(identities[0], value_bytes)?,
+            AllocationReceipt::new(identities[1], value_bytes)?,
+            AllocationReceipt::new(identities[2], flag_bytes)?,
+        ];
+        validate_unique_allocations(&allocations)?;
+        Ok(Self {
+            generation,
+            rows: geometry.rows(),
+            device_registry_id: rows.device_registry_id(),
+            allocations,
+            exact_current_flags: true,
+            row_extractions: geometry.rows(),
+            late_copy_dispatches: 0,
+        })
+    }
+
+    fn validate(
+        self,
+        owner_generation: u64,
+        rows: &SpartanShiftResidentRows,
+        expected_rows: usize,
+        expected_device_registry_id: u64,
+    ) -> Result<(), SpartanDenseOwnerError> {
+        if self.generation == 0 || self.generation != owner_generation {
+            return Err(SpartanDenseOwnerError::GenerationMismatch {
+                expected: owner_generation,
+                got: self.generation,
+            });
+        }
+        if self.rows != expected_rows || rows.len() != expected_rows {
+            return Err(SpartanDenseOwnerError::RowCountMismatch {
+                expected: expected_rows,
+                got: rows.len(),
+            });
+        }
+        if self.device_registry_id != expected_device_registry_id
+            || rows.device_registry_id() != expected_device_registry_id
+        {
+            return Err(SpartanDenseOwnerError::DeviceMismatch {
+                expected: expected_device_registry_id,
+                got: rows.device_registry_id(),
+            });
+        }
+        if !self.exact_current_flags {
+            return Err(SpartanDenseOwnerError::UncertifiedCurrentNoop);
+        }
+        let geometry = SpartanShiftGeometry::new(expected_rows)
+            .map_err(|_| SpartanDenseOwnerError::InvalidRows(expected_rows))?;
+        let value_bytes = geometry
+            .rows()
+            .checked_mul(size_of::<u64>())
+            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
+        let flag_bytes = geometry
+            .flag_words()
+            .checked_mul(size_of::<super::solinas::spartan_shift::SpartanShiftFlagWord>())
+            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
+        for ((receipt, identity), bytes) in self
+            .allocations
+            .into_iter()
+            .zip(rows.allocation_identities())
+            .zip([value_bytes, value_bytes, flag_bytes])
+        {
+            receipt.validate(identity, bytes)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProductReceipt {
+    generation: u64,
+    rows: usize,
+    device_registry_id: u64,
+    allocation: AllocationReceipt,
+    source: SpartanDenseProductSource,
+}
+
+impl ProductReceipt {
+    fn new(
+        generation: u64,
+        rows: &ProductRemainderRows,
+        source: SpartanDenseProductSource,
+    ) -> Result<Self, SpartanDenseOwnerError> {
+        let bytes = rows
+            .len()
+            .checked_mul(size_of::<ProductRemainderRow>())
+            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
+        Ok(Self {
+            generation,
+            rows: rows.len(),
+            device_registry_id: rows.device_registry_id(),
+            allocation: AllocationReceipt::new(rows.allocation_identity(), bytes)?,
+            source,
+        })
+    }
+
+    fn validate(
+        self,
+        owner_generation: u64,
+        rows: &ProductRemainderRows,
+        expected_rows: usize,
+        expected_device_registry_id: u64,
+    ) -> Result<(), SpartanDenseOwnerError> {
+        if self.generation == 0 || self.generation != owner_generation {
+            return Err(SpartanDenseOwnerError::GenerationMismatch {
+                expected: owner_generation,
+                got: self.generation,
+            });
+        }
+        if self.rows != expected_rows || rows.len() != expected_rows {
+            return Err(SpartanDenseOwnerError::RowCountMismatch {
+                expected: expected_rows,
+                got: rows.len(),
+            });
+        }
+        if self.device_registry_id != expected_device_registry_id
+            || rows.device_registry_id() != expected_device_registry_id
+        {
+            return Err(SpartanDenseOwnerError::DeviceMismatch {
+                expected: expected_device_registry_id,
+                got: rows.device_registry_id(),
+            });
+        }
+        let bytes = expected_rows
+            .checked_mul(size_of::<ProductRemainderRow>())
+            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
+        self.allocation.validate(rows.allocation_identity(), bytes)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct SpartanDenseNativeRegisterContract {
+    generation: u64,
+    rows: usize,
+    device_registry_id: u64,
+    plane_bytes: usize,
+    total_bytes: usize,
+}
+
+impl SpartanDenseNativeRegisterContract {
+    fn new(
+        generation: u64,
+        rows: usize,
+        device_registry_id: u64,
+    ) -> Result<Self, SpartanDenseOwnerError> {
+        let plane_bytes = rows
+            .checked_mul(size_of::<u64>())
+            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
+        let total_bytes = plane_bytes
+            .checked_mul(3)
+            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
+        Ok(Self {
+            generation,
+            rows,
+            device_registry_id,
+            plane_bytes,
+            total_bytes,
+        })
+    }
+
+    pub(super) const fn total_bytes(self) -> usize {
+        self.total_bytes
+    }
+}
+
+#[derive(Clone)]
+#[expect(
+    dead_code,
+    reason = "the registers-claim consumer is wired in a separate implementation slice"
+)]
+pub(super) struct SpartanDenseNativeRegisterRows {
+    rd_write: Buffer,
+    rs1: Buffer,
+    rs2: Buffer,
+    contract: SpartanDenseNativeRegisterContract,
+    allocations: [AllocationReceipt; 3],
+}
+
+#[expect(
+    dead_code,
+    reason = "the registers-claim consumer is wired in a separate implementation slice"
+)]
+impl SpartanDenseNativeRegisterRows {
+    pub(super) fn from_buffers(
+        rd_write: Buffer,
+        rs1: Buffer,
+        rs2: Buffer,
+        contract: SpartanDenseNativeRegisterContract,
+    ) -> Result<Self, SpartanDenseOwnerError> {
+        let buffers = [&rd_write, &rs1, &rs2];
+        let mut allocations = [AllocationReceipt {
+            identity: 0,
+            bytes: 0,
+        }; 3];
+        for (index, buffer) in buffers.into_iter().enumerate() {
+            let got_device = buffer.device().registry_id();
+            if got_device != contract.device_registry_id {
+                return Err(SpartanDenseOwnerError::DeviceMismatch {
+                    expected: contract.device_registry_id,
+                    got: got_device,
+                });
+            }
+            let got_bytes = usize::try_from(buffer.length())
+                .map_err(|_| SpartanDenseOwnerError::SizeOverflow)?;
+            if got_bytes != contract.plane_bytes {
+                return Err(SpartanDenseOwnerError::AllocationLengthMismatch {
+                    expected: contract.plane_bytes,
+                    got: got_bytes,
+                });
+            }
+            allocations[index] = AllocationReceipt::new(buffer.as_ptr() as usize, got_bytes)?;
+        }
+        validate_unique_allocations(&allocations)?;
+        Ok(Self {
+            rd_write,
+            rs1,
+            rs2,
+            contract,
+            allocations,
+        })
+    }
+
+    pub(super) const fn resident_bytes(&self) -> usize {
+        self.contract.total_bytes
+    }
+}
+
+pub(super) struct SpartanDenseShiftLease {
+    rows: SpartanShiftResidentRows,
+    receipt: ShiftReceipt,
+    owner_generation: u64,
+}
+
+impl SpartanDenseShiftLease {
+    pub(super) fn into_rows(
+        self,
+        expected_rows: usize,
+        expected_device_registry_id: u64,
+    ) -> Result<SpartanShiftResidentRows, SpartanDenseOwnerError> {
+        self.receipt.validate(
+            self.owner_generation,
+            &self.rows,
+            expected_rows,
+            expected_device_registry_id,
+        )?;
+        Ok(self.rows)
+    }
+}
+
+pub(super) struct SpartanDenseProductLease {
+    rows: ProductRemainderRows,
+    receipt: ProductReceipt,
+    owner_generation: u64,
+}
+
+impl SpartanDenseProductLease {
+    pub(super) fn source(&self) -> SpartanDenseProductSource {
+        self.receipt.source
+    }
+
+    pub(super) fn into_rows(
+        self,
+        expected_rows: usize,
+        expected_device_registry_id: u64,
+    ) -> Result<ProductRemainderRows, SpartanDenseOwnerError> {
+        self.receipt.validate(
+            self.owner_generation,
+            &self.rows,
+            expected_rows,
+            expected_device_registry_id,
+        )?;
+        Ok(self.rows)
+    }
+}
+
+#[expect(
+    dead_code,
+    reason = "the registers-claim consumer is wired in a separate implementation slice"
+)]
+pub(super) struct SpartanDenseRegistersLease {
+    rows: SpartanDenseNativeRegisterRows,
+    owner_generation: u64,
+}
+
+pub(super) struct SpartanDenseResidentOwner {
+    generation: u64,
+    shift_receipt: ShiftReceipt,
+    shift_rows: Option<SpartanShiftResidentRows>,
+    product_receipt: Option<ProductReceipt>,
+    product_rows: Option<ProductRemainderRows>,
+    register_contract: SpartanDenseNativeRegisterContract,
+    register_rows: Option<SpartanDenseNativeRegisterRows>,
+}
+
+impl SpartanDenseResidentOwner {
+    pub(super) fn from_co_produced_shift(
+        rows: SpartanShiftResidentRows,
+    ) -> Result<Self, SpartanDenseOwnerError> {
+        let generation = next_generation()?;
+        let shift_receipt = ShiftReceipt::co_produced(generation, &rows)?;
+        let register_contract = SpartanDenseNativeRegisterContract::new(
+            generation,
+            rows.len(),
+            rows.device_registry_id(),
+        )?;
+        Ok(Self {
+            generation,
+            shift_receipt,
+            shift_rows: Some(rows),
+            product_receipt: None,
+            product_rows: None,
+            register_contract,
+            register_rows: None,
+        })
+    }
+
+    pub(super) const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(super) const fn shift_row_extractions(&self) -> usize {
+        self.shift_receipt.row_extractions
+    }
+
+    pub(super) const fn shift_late_copy_dispatches(&self) -> usize {
+        self.shift_receipt.late_copy_dispatches
+    }
+
+    pub(super) const fn register_contract(&self) -> SpartanDenseNativeRegisterContract {
+        self.register_contract
+    }
+
+    pub(super) fn take_shift_lease(&mut self) -> Option<SpartanDenseShiftLease> {
+        self.shift_rows.take().map(|rows| SpartanDenseShiftLease {
+            rows,
+            receipt: self.shift_receipt,
+            owner_generation: self.generation,
+        })
+    }
+
+    pub(super) fn install_product_rows(
+        &mut self,
+        rows: ProductRemainderRows,
+        source: SpartanDenseProductSource,
+    ) -> Result<(), SpartanDenseOwnerError> {
+        if self.product_rows.is_some() || self.product_receipt.is_some() {
+            return Err(SpartanDenseOwnerError::ProductAlreadyInstalled);
+        }
+        if rows.len() != self.shift_receipt.rows {
+            return Err(SpartanDenseOwnerError::RowCountMismatch {
+                expected: self.shift_receipt.rows,
+                got: rows.len(),
+            });
+        }
+        if rows.device_registry_id() != self.shift_receipt.device_registry_id {
+            return Err(SpartanDenseOwnerError::DeviceMismatch {
+                expected: self.shift_receipt.device_registry_id,
+                got: rows.device_registry_id(),
+            });
+        }
+        let product_identity = rows.allocation_identity();
+        if self
+            .shift_receipt
+            .allocations
+            .iter()
+            .any(|allocation| allocation.identity == product_identity)
+        {
+            return Err(SpartanDenseOwnerError::DuplicateAllocationIdentity(
+                product_identity,
+            ));
+        }
+        let receipt = ProductReceipt::new(self.generation, &rows, source)?;
+        self.product_receipt = Some(receipt);
+        self.product_rows = Some(rows);
+        Ok(())
+    }
+
+    pub(super) fn take_product_lease(
+        &mut self,
+    ) -> Result<SpartanDenseProductLease, SpartanDenseOwnerError> {
+        let rows = self
+            .product_rows
+            .take()
+            .ok_or(SpartanDenseOwnerError::MissingProductRows)?;
+        let receipt = self
+            .product_receipt
+            .ok_or(SpartanDenseOwnerError::MissingProductReceipt)?;
+        if receipt.generation != self.generation {
+            return Err(SpartanDenseOwnerError::GenerationMismatch {
+                expected: self.generation,
+                got: receipt.generation,
+            });
+        }
+        Ok(SpartanDenseProductLease {
+            rows,
+            receipt,
+            owner_generation: self.generation,
+        })
+    }
+
+    #[expect(
+        dead_code,
+        reason = "the registers-claim consumer is wired in a separate implementation slice"
+    )]
+    pub(super) fn install_register_rows(
+        &mut self,
+        rows: SpartanDenseNativeRegisterRows,
+    ) -> Result<(), SpartanDenseOwnerError> {
+        if rows.contract != self.register_contract {
+            return Err(SpartanDenseOwnerError::RegisterContractMismatch);
+        }
+        if self.register_rows.is_some() {
+            return Err(SpartanDenseOwnerError::RegistersAlreadyInstalled);
+        }
+        for allocation in rows.allocations {
+            let aliases_shift = self
+                .shift_receipt
+                .allocations
+                .iter()
+                .any(|shift| shift.identity == allocation.identity);
+            let aliases_product = self
+                .product_receipt
+                .is_some_and(|product| product.allocation.identity == allocation.identity);
+            if aliases_shift || aliases_product {
+                return Err(SpartanDenseOwnerError::DuplicateAllocationIdentity(
+                    allocation.identity,
+                ));
+            }
+        }
+        self.register_rows = Some(rows);
+        Ok(())
+    }
+
+    #[expect(
+        dead_code,
+        reason = "the registers-claim consumer is wired in a separate implementation slice"
+    )]
+    pub(super) fn take_registers_lease(&mut self) -> Option<SpartanDenseRegistersLease> {
+        self.register_rows
+            .take()
+            .map(|rows| SpartanDenseRegistersLease {
+                rows,
+                owner_generation: self.generation,
+            })
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for SpartanDenseResidentOwner {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(rows) = &self.shift_rows {
+            visitor.visit_simple(
+                allocative::Key::new("device_shift_rows"),
+                rows.resident_bytes(),
+            );
+        }
+        if let Some(rows) = &self.product_rows {
+            visitor.visit_field(allocative::Key::new("product_rows"), rows);
+        }
+        if let Some(rows) = &self.register_rows {
+            visitor.visit_simple(
+                allocative::Key::new("device_register_rows"),
+                rows.resident_bytes(),
+            );
+        }
+        visitor.exit();
+    }
+}
+
+fn next_generation() -> Result<u64, SpartanDenseOwnerError> {
+    NEXT_PRODUCER_GENERATION
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |generation| {
+            generation.checked_add(1)
+        })
+        .map_err(|_| SpartanDenseOwnerError::GenerationExhausted)
+}
+
+fn validate_unique_allocations(
+    allocations: &[AllocationReceipt],
+) -> Result<(), SpartanDenseOwnerError> {
+    for (index, allocation) in allocations.iter().enumerate() {
+        if allocations[..index]
+            .iter()
+            .any(|previous| previous.identity == allocation.identity)
+        {
+            return Err(SpartanDenseOwnerError::DuplicateAllocationIdentity(
+                allocation.identity,
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub(super) enum SpartanDenseOwnerError {
+    #[error("Spartan dense producer generation counter is exhausted")]
+    GenerationExhausted,
+    #[error("Spartan dense receipt generation is {got}, expected {expected}")]
+    GenerationMismatch { expected: u64, got: u64 },
+    #[error("Spartan dense producer has invalid row count {0}")]
+    InvalidRows(usize),
+    #[error("Spartan dense row count is {got}, expected {expected}")]
+    RowCountMismatch { expected: usize, got: usize },
+    #[error("Spartan dense allocation has no identity")]
+    MissingAllocationIdentity,
+    #[error("Spartan dense allocation is empty")]
+    EmptyAllocation,
+    #[error("Spartan dense allocation identity is {got}, expected {expected}")]
+    AllocationIdentityMismatch { expected: usize, got: usize },
+    #[error("Spartan dense allocation has {got} bytes, expected {expected}")]
+    AllocationLengthMismatch { expected: usize, got: usize },
+    #[error("Spartan dense allocation identity {0} is used more than once")]
+    DuplicateAllocationIdentity(usize),
+    #[error("Spartan dense rows belong to Metal device {got}, expected {expected}")]
+    DeviceMismatch { expected: u64, got: u64 },
+    #[error("Spartan dense shift receipt does not certify current noop")]
+    UncertifiedCurrentNoop,
+    #[error("Spartan dense product rows were installed twice")]
+    ProductAlreadyInstalled,
+    #[error("Spartan dense product rows are missing")]
+    MissingProductRows,
+    #[error("Spartan dense product receipt is missing")]
+    MissingProductReceipt,
+    #[error("Spartan dense native register contract does not match its owner")]
+    RegisterContractMismatch,
+    #[error("Spartan dense native register rows were installed twice")]
+    RegistersAlreadyInstalled,
+    #[error("Spartan dense size arithmetic overflowed")]
+    SizeOverflow,
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use super::*;
+    use crate::metal::solinas::spartan_shift::SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
+
+    #[test]
+    fn allocation_receipt_checks_identity_and_length() {
+        let receipt = AllocationReceipt::new(17, 64).unwrap();
+        assert_eq!(receipt.validate(17, 64), Ok(()));
+        assert!(matches!(
+            receipt.validate(18, 64),
+            Err(SpartanDenseOwnerError::AllocationIdentityMismatch { .. })
+        ));
+        assert!(matches!(
+            receipt.validate(17, 32),
+            Err(SpartanDenseOwnerError::AllocationLengthMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn native_register_contract_prices_all_three_planes() {
+        let contract = SpartanDenseNativeRegisterContract::new(7, 1 << 26, 11).unwrap();
+        assert_eq!(contract.plane_bytes, 536_870_912);
+        assert_eq!(contract.total_bytes(), 1_610_612_736);
+        assert_eq!(contract.generation, 7);
+        assert_eq!(contract.rows, 1 << 26);
+        assert_eq!(contract.device_registry_id, 11);
+    }
+
+    #[test]
+    fn producer_contract_uses_three_packed_flag_planes() {
+        let rows: usize = 1 << 26;
+        let flag_words = rows.div_ceil(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD);
+        assert_eq!(flag_words, 1 << 21);
+        assert_eq!(flag_words * 12, 25_165_824);
+    }
+}

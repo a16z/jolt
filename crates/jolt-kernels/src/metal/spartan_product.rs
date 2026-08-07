@@ -35,6 +35,9 @@ use super::solinas::{
     MetalError, PendingProductRemainderInitialMessage, ProductRemainderRow, ProductRemainderRows,
     ProductRemainderSequence, ProductRemainderSequenceConfig,
 };
+use super::spartan_dense::{
+    SpartanDenseOwnerError, SpartanDenseProductSource, SpartanDenseResidentOwner,
+};
 #[cfg(test)]
 use crate::optimized::spartan_product::SpartanProductRow;
 use crate::optimized::spartan_product::{OptimizedProductRemainder, OptimizedProductUniskip};
@@ -180,6 +183,7 @@ impl MetalBackend {
             row_bytes = cycles.saturating_mul(std::mem::size_of::<ProductRemainderRow>()),
             lookup_companion_bytes =
                 cycles.saturating_mul(std::mem::size_of::<InstructionClaimLookupOperandRow>()),
+            residual_witness_scan_rows = cycles,
             collect_wall_ns = tracing::field::Empty,
             upload_wall_ns = tracing::field::Empty,
             lookup_upload_wall_ns = tracing::field::Empty,
@@ -190,6 +194,8 @@ impl MetalBackend {
             primer_transition_wall_ns = tracing::field::Empty,
             primer_transition_gpu_active_ns = tracing::field::Empty,
             resident_rows_storage_id = tracing::field::Empty,
+            owner_generation = tracing::field::Empty,
+            row_source = tracing::field::Empty,
             admitted = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
         );
@@ -226,6 +232,32 @@ impl MetalBackend {
             Err(error) => return Err(metal_prepare_error(error)),
         };
         let _ = span.record("upload_wall_ns", duration_nanos(started.elapsed()));
+        let rows = if let Some(mut owner) = session.take::<SpartanDenseResidentOwner>() {
+            let owner_generation = owner.generation();
+            owner
+                .install_product_rows(
+                    rows,
+                    SpartanDenseProductSource::IndependentWitnessProjection,
+                )
+                .map_err(spartan_dense_prepare_error)?;
+            let lease = owner
+                .take_product_lease()
+                .map_err(spartan_dense_prepare_error)?;
+            let source = lease.source();
+            let rows = lease
+                .into_rows(cycles, self.context.device_registry_id())
+                .map_err(spartan_dense_prepare_error)?;
+            session.park(owner);
+            let _ = span.record("owner_generation", owner_generation);
+            let _ = span.record("row_source", source.as_str());
+            rows
+        } else {
+            let _ = span.record(
+                "row_source",
+                SpartanDenseProductSource::IndependentWitnessProjection.as_str(),
+            );
+            rows
+        };
         let row_storage_id = rows.allocation_identity();
         let _ = span.record("resident_rows_storage_id", row_storage_id as u64);
         drop(packed);
@@ -897,6 +929,14 @@ fn product_prepare_fallback_reason(error: &MetalError) -> Option<&'static str> {
 }
 
 fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
+    SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    }
+    .into()
+}
+
+fn spartan_dense_prepare_error(error: SpartanDenseOwnerError) -> KernelError<AkitaField> {
     SumcheckError::ComputeBackend {
         backend: "metal",
         message: error.to_string(),

@@ -10,6 +10,7 @@ use metal::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::spartan_shift::{SpartanShiftFlagWord, SpartanShiftGeometry, SpartanShiftResidentRows};
 use super::{
     buffer_from_slice, command_buffer_timestamp, Fp128, InstructionInputRow, InstructionInputRows,
     MetalError, PipelineLimits, SolinasMetal,
@@ -685,6 +686,64 @@ impl SolinasMetal {
             device_registry_id,
             accounts_instruction_input_rows: true,
         })
+    }
+
+    pub(crate) fn prepare_spartan_outer_uniskip_rows_with_shift_fill(
+        &self,
+        rows: usize,
+        fill: impl FnOnce(
+            &mut [InstructionInputRow],
+            &mut [SpartanOuterUniskipResidualRow],
+            &mut [u64],
+            &mut [u64],
+            &mut [SpartanShiftFlagWord],
+        ) -> Result<(), MetalError>,
+    ) -> Result<(SpartanOuterUniskipRows, SpartanShiftResidentRows), MetalError> {
+        self.validate_spartan_outer_uniskip_shift_rows_capacity(rows)?;
+        let mut outer_rows = None;
+        let shift_rows =
+            self.prepare_spartan_shift_rows_with_fill(rows, true, |unexpanded_pc, pc, flags| {
+                let prepared = self.prepare_spartan_outer_uniskip_rows_with_fill(
+                    rows,
+                    |instruction_input, residual| {
+                        fill(instruction_input, residual, unexpanded_pc, pc, flags)
+                    },
+                )?;
+                outer_rows = Some(prepared);
+                Ok(())
+            })?;
+        let outer_rows = outer_rows.ok_or(MetalError::InvalidSpartanShiftState(
+            "combined outer/shift fill did not produce outer rows",
+        ))?;
+        Ok((outer_rows, shift_rows))
+    }
+
+    pub(crate) fn validate_spartan_outer_uniskip_shift_rows_capacity(
+        &self,
+        rows: usize,
+    ) -> Result<(), MetalError> {
+        let geometry = SpartanShiftGeometry::new(rows)?;
+        let instruction_input_bytes = byte_length::<InstructionInputRow>(rows)?;
+        let residual_bytes = byte_length::<SpartanOuterUniskipResidualRow>(rows)?;
+        let shift_value_bytes = byte_length::<u64>(geometry.rows())?;
+        let shift_flag_bytes = byte_length::<SpartanShiftFlagWord>(geometry.flag_words())?;
+        for bytes in [
+            instruction_input_bytes,
+            residual_bytes,
+            shift_value_bytes,
+            shift_flag_bytes,
+        ] {
+            self.validate_buffer_length(bytes)?;
+        }
+        let shift_value_total_bytes = shift_value_bytes
+            .checked_mul(2)
+            .ok_or(MetalError::InputTooLong(rows))?;
+        let additional = instruction_input_bytes
+            .checked_add(residual_bytes)
+            .and_then(|bytes| bytes.checked_add(shift_value_total_bytes))
+            .and_then(|bytes| bytes.checked_add(shift_flag_bytes))
+            .ok_or(MetalError::InputTooLong(rows))?;
+        self.validate_additional_working_set(additional)
     }
 
     pub fn prepare_spartan_outer_uniskip_with_rows(
