@@ -2,6 +2,7 @@
 #![expect(clippy::expect_used, reason = "integration test")]
 
 use jolt_field::{AkitaField, FromPrimitiveInt};
+use jolt_kernels::metal::solinas::instruction_read_raf_v3::DenseTransitionTile;
 use jolt_kernels::metal::solinas::{
     dense_pushforward_oracle, product_remainder_reference, product_uniskip_reference,
     ram_raf_split_equality, ram_val_check_oracle, split_pushforward_oracle,
@@ -1491,6 +1492,58 @@ fn product5_fused_transition_matches_biguint() {
             .expect("fused transition should have bound output"),
         expected_bound
     );
+}
+
+#[test]
+fn instruction_read_raf_dense_transition_matches_biguint() {
+    let context = SolinasMetal::for_akita().expect("Metal context should compile");
+    let elements = 1 << 12;
+    let tables = values(PRODUCT5_FACTORS * elements);
+    let (e_in, _) = inputs(128);
+    let (e_out, _) = inputs(elements / 4 / e_in.len());
+    let challenge = Fp128::from_u128(0x1234_5678_9abc_def0);
+    let (expected_bound, expected_message) = product5_fused_transition(
+        &tables,
+        elements,
+        challenge,
+        &e_in,
+        &e_out,
+        AKITA_OFFSET_FFFFA7F7,
+    );
+
+    for tile in [
+        DenseTransitionTile::Pairs32,
+        DenseTransitionTile::Pairs64,
+        DenseTransitionTile::Pairs128,
+    ] {
+        let invocation = context
+            .prepare_instruction_read_raf_dense_transition(
+                &tables, elements, challenge, &e_in, &e_out, tile,
+            )
+            .expect("dense transition should prepare");
+        let observation = invocation
+            .execute_timed()
+            .expect("dense transition should execute");
+        assert_eq!(observation.tile, tile);
+        assert_eq!(
+            observation.dynamic_threadgroup_bytes,
+            10 * tile.pairs() * 16
+        );
+        assert_eq!(
+            observation.useful_products,
+            8 * elements as u64 + 5 * e_out.len() as u64
+        );
+        assert_eq!(
+            invocation
+                .read_bound_tables()
+                .expect("bound tables should read"),
+            expected_bound
+        );
+        assert_eq!(
+            invocation.read_message().expect("message should read"),
+            expected_message
+        );
+    }
 }
 
 #[test]

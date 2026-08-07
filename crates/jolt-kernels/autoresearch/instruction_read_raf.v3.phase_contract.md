@@ -185,6 +185,7 @@ Two launch shapes remain for the first screen:
 | --- | ---: | ---: | ---: |
 | tile-32 | 32 | 262,144 | 5,120 B |
 | tile-64 | 64 | 131,072 | 10,240 B |
+| tile-128 | 128 | 65,536 | 20,480 B |
 
 Each 160-thread group assigns one SIMDgroup to each factor. It reads four
 source fields per pair, writes two bound fields, and retains both endpoints in
@@ -207,9 +208,10 @@ binds, 16,777,216 for the two factor-zero endpoint weights, 167,772,160 for
 five four-product samples, and 40,960 outer weights. At 18.10 Gproduct/s the
 compute floor is 14.832952 ms. Tile-64 moves 4,048,856,400 logical large-state
 bytes, a copy-roof floor of 8.963562 ms, so this transition should be
-compute-bound. Its persistent peak, including resident source and destination,
-both equality tables, and the largest partial buffers, is 4,037,820,416 bytes
-before allocator padding; only 10,240 bytes are threadgroup-local.
+compute-bound. Tile-128 reduces logical traffic to 4,038,370,640 bytes. Its
+persistent peak, including resident source and destination, both equality
+tables, and the partial buffers, is 4,032,577,536 bytes before allocator
+padding; 20,480 bytes are threadgroup-local.
 
 The first implementation is a probe, not a production registration. It must
 match the independent dense transition oracle, the Akita/BigUint Product5
@@ -218,8 +220,25 @@ message fields. Prepare once, allocate and upload nothing in the timed region,
 and measure the complete five-dispatch command. Promote the better fixed tile
 only if median GPU-active time is at most 18.6 ms, there are no spills, and a
 capture records registers, resident SIMDgroups, external bytes, and achieved
-products per second. If both shapes miss 18.6 ms, kill this factor-then-sample
+products per second. If all three shapes miss 18.6 ms, kill this factor-then-sample
 candidate before implementing cache-writing successors.
+
+The first target-size quick screen on the M4 Max used the exact `2^25 -> 2^24`
+shape, `|e_in|=1,024`, `|e_out|=8,192`, one prepared invocation per candidate,
+and no allocation or upload in the timed region:
+
+| kernel | wall interval | active interval | useful throughput at median |
+| --- | ---: | ---: | ---: |
+| retained Product5 | 11.327--11.335 ms | 11.095--11.097 ms | 24.19 Gproduct/s |
+| tile-32 | 10.479--10.538 ms | 10.270--10.296 ms | 26.09 Gproduct/s |
+| tile-64 | 10.154--10.209 ms | 9.911--10.001 ms | 27.04 Gproduct/s |
+| tile-128 | **9.860--9.889 ms** | **9.671--9.672 ms** | **27.21 Gproduct/s** |
+
+Tile-128 reduced median wall by 12.9% versus the retained transition and by
+2.9% versus tile-64. Exact BigUint parity passed for all three shapes. This is
+a screening result, not production promotion: it still needs a full Criterion
+run, compiled register/private-memory evidence, an adjacent-size holdout, and
+complete-member attribution.
 
 ## 5. Falsification and promotion
 

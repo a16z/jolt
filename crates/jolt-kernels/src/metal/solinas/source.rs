@@ -10,6 +10,9 @@ const REGISTERS_CLAIM_BCSR_SOURCE: &str = super::registers_claim_reduction::BCSR
 const RAM_RA_CLAIM_REDUCTION_SOURCE: &str = super::ram_ra_claim_reduction::SOURCE;
 const DEFERRED_SUM_SOURCE: &str = include_str!("deferred_sum.metal");
 const INSTRUCTION_READ_RAF_V3_SOURCE: &str = super::instruction_read_raf_v3::SOURCE;
+#[cfg(feature = "test-utils")]
+const INSTRUCTION_READ_RAF_DENSE_TRANSITION_SOURCE: &str =
+    super::instruction_read_raf_v3::DENSE_TRANSITION_SOURCE;
 const SPARTAN_OUTER_COMMON_SOURCE: &str = include_str!("spartan_outer_common.metal");
 const BOOLEANITY_COMMON_SOURCE: &str = include_str!("booleanity_common.metal");
 const INSTRUCTION_RA_COMMON_SOURCE: &str = include_str!("instruction_ra_common.metal");
@@ -96,6 +99,11 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("ram_ra_claim_reduction", RAM_RA_CLAIM_REDUCTION_SOURCE),
     SourceFragment::new("deferred_sum", DEFERRED_SUM_SOURCE),
     SourceFragment::new("instruction_read_raf_v3", INSTRUCTION_READ_RAF_V3_SOURCE),
+    #[cfg(feature = "test-utils")]
+    SourceFragment::new(
+        "instruction_read_raf_dense_transition",
+        INSTRUCTION_READ_RAF_DENSE_TRANSITION_SOURCE,
+    ),
     SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
     SourceFragment::new("booleanity_common", BOOLEANITY_COMMON_SOURCE),
     SourceFragment::new("instruction_ra_common", INSTRUCTION_RA_COMMON_SOURCE),

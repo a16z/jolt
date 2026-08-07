@@ -45,6 +45,10 @@ mod instruction_ra;
 mod instruction_ra_sequence;
 
 #[cfg(target_os = "macos")]
+#[path = "metal_solinas/instruction_read_raf_dense_transition.rs"]
+mod instruction_read_raf_dense_transition;
+
+#[cfg(target_os = "macos")]
 #[path = "metal_solinas/instruction_input.rs"]
 mod instruction_input;
 
@@ -127,8 +131,9 @@ mod macos {
     use super::{
         address_raf, address_suffix, booleanity, booleanity_address, bytecode_cycle, cpu, cycle,
         half_width_probe, instruction_claim_reduction, instruction_input, instruction_ra,
-        instruction_ra_sequence, product5, product_remainder, product_uniskip, ram_output_check,
-        ram_ra_claim_reduction, ram_raf_evaluation, ram_val_check,
+        instruction_ra_sequence, instruction_read_raf_dense_transition, product5,
+        product_remainder, product_uniskip, ram_output_check, ram_ra_claim_reduction,
+        ram_raf_evaluation, ram_val_check,
         reference::{expected_field_for_offset, expected_u32_mad, inputs},
         registers_claim_reduction, registers_read_write, registers_read_write_dense, registers_val,
         spartan_outer_uniskip, spartan_shift,
@@ -180,6 +185,9 @@ mod macos {
                 "ram-ra-claim-complete" => ram_ra_claim_reduction::bench_complete(c, &context),
                 "ram-output-check" => ram_output_check::bench(c, &context),
                 "instruction-read-raf-cycle" => cycle::bench(c, &context),
+                "instruction-read-raf-dense-transition" => {
+                    instruction_read_raf_dense_transition::bench(c, &context);
+                }
                 "instruction-ra-first-message" => instruction_ra::bench(c, &context),
                 "instruction-ra-sequence" => instruction_ra_sequence::bench(c, &context),
                 "registers-read-write-first-message" => {
