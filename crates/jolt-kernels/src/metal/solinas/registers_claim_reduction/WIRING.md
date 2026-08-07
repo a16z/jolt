@@ -68,7 +68,8 @@ block     = x_hi * 32 + low_block.
 
 `solinas_registers_claim_bcsr_components` dispatches 8,192 threadgroups of
 256 threads: one group for each `(partial, low_block)`, with 256 partials and
-32 low blocks. A group loops over 32 `x_hi` values. Its first 128 threads own
+32 low blocks in the default log-26 configuration. A group loops over 32
+`x_hi` values. Its first 128 threads own
 register columns and replay that block from `start_values`, merging the sorted
 rs1, rs2, and rd position runs. Reads at a cycle emit the pre-write current
 value; an rd emits its post value and updates current only after both reads.
@@ -78,13 +79,22 @@ After barriers, the 256 position threads accumulate
 eq(tau_hi)[x_hi] * (rd, rs1, rs2)
 ```
 
-for their `x_lo`. Each accumulator has at most 32 field-by-u64 terms, so seven
-32-bit limbs provide the required 197-bit bound. The group writes
-`partials[component][partial][x_lo]`. It uses 6,144 bytes of threadgroup
-memory for the three 256-entry cycle arrays. A position thread issues the
-field-by-u64 accumulate only for a nonzero emitted value; zero is the additive
-identity. If an implementation instead executes all absent zero terms, its
-roof model must charge `3T`, not the event census used here.
+for their `x_lo`. The selected kernel uses canonical half-width
+multiplication and addition per nonzero term. This matches the retained
+33.168-billion-term/s control and keeps three four-limb accumulators live,
+rather than the register-heavy deferred 224-bit state. The group writes
+`partials[component][partial][x_lo]`. Its one dynamic workspace is 6,160
+bytes: three 256-entry `u64` cycle arrays plus one shared 16-byte equality
+coefficient, loaded once per BCSR block. If an implementation instead loads
+the coefficient per position thread or executes all absent zero terms, its
+roof model must charge that extra traffic or `3T` arithmetic rather than the
+event census used here.
+
+The runtime admits power-of-two partial counts that divide `H`. Log-26
+screens must compare 32, 64, 128, and 256 partials: reducing the count cuts
+the partial write/read traffic while increasing each group's lifetime. The
+256-partial layout remains the analytical baseline until target-scale active
+and resident-wall captures select a winner.
 
 `solinas_registers_claim_bcsr_reduce_components` dispatches 96 groups of 256
 threads and reduces the 256 partials to three canonical `Fp128[P]` tables:

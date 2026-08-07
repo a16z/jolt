@@ -3,6 +3,10 @@ use core::mem::{align_of, size_of};
 use jolt_field::AkitaField;
 
 use super::*;
+use super::super::registers_read_write_v3::{
+    RegisterBcsr256, RegisterRead, RegisterRow, RegisterWrite, REGISTER_CSR_COLUMNS,
+};
+use super::bcsr_runtime::RegistersClaimBcsrRuntimeError;
 
 fn field(value: u64) -> AkitaField {
     AkitaField::from_u64(value)
@@ -35,6 +39,65 @@ fn native_plane(rows: usize, seed: u64) -> Vec<u64> {
         .collect()
 }
 
+fn bcsr_fixture(cycles: usize) -> (RegisterBcsr256, Vec<RegisterRow>) {
+    let mut initial_values = core::array::from_fn(|register| register as u64 * 1_003 + 17);
+    initial_values[0] = u64::MAX;
+    let mut state = initial_values;
+    let mut rows = Vec::with_capacity(cycles);
+    for cycle in 0..cycles {
+        let local = cycle % 256;
+        let rs1_register = if local == 7 {
+            0
+        } else if local == 0 && cycle != 0 {
+            1
+        } else {
+            ((3 * cycle + 7) % REGISTER_CSR_COLUMNS) as u8
+        };
+        let rs2_register = ((5 * cycle + 11) % REGISTER_CSR_COLUMNS) as u8;
+        let rs1 = (cycle.is_multiple_of(2) || local == 0 || local == 7)
+            .then(|| RegisterRead::new(rs1_register, state[usize::from(rs1_register)]));
+        let rs2 = (cycle.is_multiple_of(3) || local == 7)
+            .then(|| RegisterRead::new(rs2_register, state[usize::from(rs2_register)]));
+        let rd_register = if local == 7 {
+            0
+        } else if local == 255 {
+            1
+        } else {
+            ((7 * cycle + 13) % REGISTER_CSR_COLUMNS) as u8
+        };
+        let rd = (cycle.is_multiple_of(5) || local == 7 || local == 255).then(|| {
+            let register = usize::from(rd_register);
+            let pre_value = state[register];
+            let post_value = if local == 7 {
+                pre_value
+            } else {
+                pre_value.wrapping_add((cycle % 23 + 1) as u64)
+            };
+            state[register] = post_value;
+            RegisterWrite::new(rd_register, pre_value, post_value)
+        });
+        rows.push(RegisterRow::new(rs1, rs2, rd));
+    }
+    let (bcsr, _) = RegisterBcsr256::from_rows(&rows, &initial_values).unwrap();
+    (bcsr, rows)
+}
+
+fn dense_planes_from_rows(rows: &[RegisterRow]) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    let rd = rows
+        .iter()
+        .map(|row| row.rd().map_or(0, RegisterWrite::post_value))
+        .collect();
+    let rs1 = rows
+        .iter()
+        .map(|row| row.rs1().map_or(0, RegisterRead::value))
+        .collect();
+    let rs2 = rows
+        .iter()
+        .map(|row| row.rs2().map_or(0, RegisterRead::value))
+        .collect();
+    (rd, rs1, rs2)
+}
+
 fn challenge_point(log_t: usize) -> Vec<AkitaField> {
     let minus_one = -field(1);
     (0..log_t)
@@ -45,6 +108,12 @@ fn challenge_point(log_t: usize) -> Vec<AkitaField> {
             3 => field(2),
             _ => field(splitmix64(index as u64)),
         })
+        .collect()
+}
+
+fn bcsr_challenge_point(log_t: usize) -> Vec<AkitaField> {
+    (0..log_t)
+        .map(|index| field(splitmix64(index as u64 + 0x7a11_ce55)))
         .collect()
 }
 
@@ -74,7 +143,8 @@ fn resident_bcsr_log26_contract_is_exact() {
     assert_eq!(size_of::<RegistersClaimBcsrComponentParams>(), 32);
     assert_eq!(size_of::<RegistersClaimBcsrReduceParams>(), 16);
     assert_eq!(size_of::<RegistersClaimBcsrMidpointParams>(), 32);
-    assert_eq!(BCSR_COMPONENT_THREADGROUP_BYTES, 6_144);
+    assert_eq!(BCSR_COMPONENT_REPLAY_BYTES, 6_144);
+    assert_eq!(BCSR_COMPONENT_THREADGROUP_BYTES, 6_160);
     assert_eq!(BCSR_COMPONENT_THREADGROUPS, 8_192);
     assert_eq!(BCSR_COMPONENT_REDUCE_THREADGROUPS, 96);
     assert_eq!(BCSR_MIDPOINT_THREADGROUPS, 8_192);
@@ -124,6 +194,9 @@ fn linear_q_abi_and_slots_are_fixed() {
     assert!(SOURCE.contains("kernel void solinas_registers_claim_build_linear_q"));
     assert!(SOURCE.contains("kernel void solinas_registers_claim_build_linear_q_canonical"));
     assert!(SOURCE.contains("kernel void solinas_registers_claim_fold_direct"));
+    assert!(BCSR_SOURCE.contains("kernel void solinas_registers_claim_bcsr_components"));
+    assert!(BCSR_SOURCE.contains("kernel void solinas_registers_claim_bcsr_reduce_components"));
+    assert!(BCSR_SOURCE.contains("RegistersClaimBcsrWorkspace"));
 }
 
 #[test]
@@ -314,4 +387,42 @@ fn metal_linear_q_matches_the_unfactored_oracle() {
     assert_eq!(observation.outputs, expected);
     assert_eq!(observation.useful_half_width_terms, 3 * rows as u64);
     assert_eq!(observation.threadgroups, geometry.suffix_elements());
+}
+
+#[test]
+fn metal_bcsr_components_match_dense_factorization() {
+    let context = match super::super::SolinasMetal::for_akita() {
+        Ok(context) => context,
+        Err(super::super::MetalError::DeviceUnavailable) => return,
+        Err(error) => panic!("Akita Metal library failed to compile: {error:?}"),
+    };
+    let cycles = 1usize << 16;
+    let geometry = RegistersClaimGeometry::new(cycles).unwrap();
+    let (bcsr, rows) = bcsr_fixture(cycles);
+    let (rd, rs1, rs2) = dense_planes_from_rows(&rows);
+    let planes = RegisterValuePlanes::new(geometry, &rd, &rs1, &rs2).unwrap();
+    let tau = bcsr_challenge_point(geometry.log_t());
+    let expected = build_linear_components(geometry, planes, &tau).unwrap();
+
+    assert!(matches!(
+        context.prepare_registers_claim_bcsr_components(
+            &bcsr,
+            &tau,
+            RegistersClaimBcsrKernelConfig { partial_blocks: 3 },
+        ),
+        Err(RegistersClaimBcsrRuntimeError::InvalidState(_))
+    ));
+
+    for partial_blocks in [8, 32, 64, 128, 256] {
+        let invocation = context
+            .prepare_registers_claim_bcsr_components(
+                &bcsr,
+                &tau,
+                RegistersClaimBcsrKernelConfig { partial_blocks },
+            )
+            .unwrap();
+        let observation = invocation.execute_timed().unwrap();
+        assert_eq!(observation.components, expected);
+        assert_eq!(observation.dispatches, 2);
+    }
 }
