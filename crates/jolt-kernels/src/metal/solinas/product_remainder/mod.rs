@@ -7,7 +7,7 @@ use std::{
 use jolt_field::{AkitaField, Field};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 use thiserror::Error;
 
@@ -603,23 +603,28 @@ pub struct ProductRemainderSequence {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ProductRemainderStorageInitializationStats {
-    bytes: usize,
-    wall: Duration,
-    gpu_active: Duration,
+pub(crate) struct ProductRemainderPrimerStats {
+    materialize_wall: Duration,
+    materialize_gpu_active: Duration,
+    transition_wall: Duration,
+    transition_gpu_active: Duration,
 }
 
-impl ProductRemainderStorageInitializationStats {
-    pub(crate) const fn bytes(self) -> usize {
-        self.bytes
+impl ProductRemainderPrimerStats {
+    pub(crate) const fn materialize_wall(self) -> Duration {
+        self.materialize_wall
     }
 
-    pub(crate) const fn wall(self) -> Duration {
-        self.wall
+    pub(crate) const fn materialize_gpu_active(self) -> Duration {
+        self.materialize_gpu_active
     }
 
-    pub(crate) const fn gpu_active(self) -> Duration {
-        self.gpu_active
+    pub(crate) const fn transition_wall(self) -> Duration {
+        self.transition_wall
+    }
+
+    pub(crate) const fn transition_gpu_active(self) -> Duration {
+        self.transition_gpu_active
     }
 }
 
@@ -781,49 +786,45 @@ impl SolinasMetal {
 }
 
 impl ProductRemainderSequence {
-    pub(crate) fn initialize_storage(
-        &self,
-    ) -> Result<ProductRemainderStorageInitializationStats, MetalError> {
+    pub(crate) fn prime(&mut self) -> Result<ProductRemainderPrimerStats, MetalError> {
         if self.phase != ProductRemainderPhase::Raw
             || self.current_elements != self.layout.rows()
             || !self.source_in_a
         {
             return Err(MetalError::InvalidProductRemainderState(
-                "storage initialization requires a fresh sequence",
+                "pipeline priming requires a fresh sequence",
             ));
         }
-        let buffers = [
-            &self.buffers.lagrange,
-            &self.buffers.state_a,
-            &self.buffers.state_b,
-            &self.buffers.e_in,
-            &self.buffers.e_out,
-            &self.buffers.partial_a,
-            &self.buffers.partial_b,
-        ];
+
+        let (materialize_e_in_len, materialize_e_out_len) =
+            balanced_weight_shape(self.layout.rows() / 2);
+        let materialize_e_in = vec![AkitaField::zero(); materialize_e_in_len];
+        let materialize_e_out = vec![AkitaField::zero(); materialize_e_out_len];
         let started = Instant::now();
-        let command_buffer = self.context.queue.new_command_buffer();
-        autoreleasepool(|| {
-            let encoder = command_buffer.new_blit_command_encoder();
-            for buffer in buffers {
-                encoder.fill_buffer(buffer, NSRange::new(0, buffer.length()), 0);
-            }
-            encoder.end_encoding();
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-        });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        Ok(ProductRemainderStorageInitializationStats {
-            bytes: self.layout.workspace_bytes(),
-            wall: started.elapsed(),
-            gpu_active: Duration::from_secs_f64(end - start),
+        let (_, materialize_gpu_active) =
+            self.execute_materialize_message(&materialize_e_in, &materialize_e_out)?;
+        let materialize_wall = started.elapsed();
+        self.phase = ProductRemainderPhase::Materialized;
+
+        let (transition_e_in_len, transition_e_out_len) =
+            balanced_weight_shape(self.layout.rows() / 4);
+        let transition_e_in = vec![AkitaField::zero(); transition_e_in_len];
+        let transition_e_out = vec![AkitaField::zero(); transition_e_out_len];
+        let started = Instant::now();
+        let (_, transition_gpu_active) = self.execute_current_bind_and_message(
+            AkitaField::zero(),
+            &transition_e_in,
+            &transition_e_out,
+        )?;
+        let transition_wall = started.elapsed();
+        self.current_elements /= 2;
+        self.source_in_a = false;
+
+        Ok(ProductRemainderPrimerStats {
+            materialize_wall,
+            materialize_gpu_active,
+            transition_wall,
+            transition_gpu_active,
         })
     }
 
@@ -831,11 +832,6 @@ impl ProductRemainderSequence {
         &mut self,
         weights: [AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS + 1],
     ) -> Result<(), MetalError> {
-        if self.phase != ProductRemainderPhase::Raw {
-            return Err(MetalError::InvalidProductRemainderState(
-                "Lagrange weights must be installed before materialization",
-            ));
-        }
         write_product_remainder_fields(
             &self.buffers.lagrange,
             PRODUCT_REMAINDER_MESSAGE_COLUMNS + 1,
@@ -1241,6 +1237,12 @@ impl ProductRemainderSequence {
 
 fn product_remainder_threadgroup_bytes(columns: usize, threads: usize) -> usize {
     columns * (threads / PRODUCT_REMAINDER_SIMD_WIDTH) * size_of::<Fp128>()
+}
+
+fn balanced_weight_shape(elements: usize) -> (usize, usize) {
+    debug_assert!(elements.is_power_of_two());
+    let e_in = 1usize << (elements.ilog2() as usize / 2);
+    (e_in, elements / e_in)
 }
 
 fn dispatch_product_remainder_blocks(

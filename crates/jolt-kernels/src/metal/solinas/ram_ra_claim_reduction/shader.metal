@@ -350,6 +350,70 @@ kernel void solinas_ram_ra_claim_reduce_q(
     }
 }
 
+kernel void solinas_ram_ra_claim_gather_h_compact(
+    device const uint* compact_entries [[buffer(0)]],
+    device const uint* compact_offsets [[buffer(1)]],
+    device const SolinasFp128* eq_address [[buffer(2)]],
+    device const SolinasFp128* eq_prefix [[buffer(3)]],
+    device SolinasFp128* h_prime [[buffer(4)]],
+    device atomic_uint* counters [[buffer(5)]],
+    constant RamRaClaimParams& params [[buffer(6)]],
+    uint3 group [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    ushort lane [[thread_index_in_simdgroup]],
+    uint3 threads_per_group [[threads_per_threadgroup]])
+{
+    if (!ram_ra_claim_supported(params, threads_per_group)) {
+        if (group.x == 0u && lane == 0u) {
+            atomic_fetch_add_explicit(
+                &counters[RAM_RA_CLAIM_UNSUPPORTED],
+                1u,
+                memory_order_relaxed);
+        }
+        return;
+    }
+    uint hi = group.x;
+    if (hi >= params.suffix_length) {
+        return;
+    }
+
+    uint begin = compact_offsets[hi];
+    uint end = compact_offsets[hi + 1u];
+    SolinasFp128 sum = solinas_zero();
+    uint lane_invalid = 0u;
+    for (uint index = begin + tid; index < end; index += RAM_RA_CLAIM_THREADS) {
+        uint entry = compact_entries[index];
+        uint address = entry & (RAM_RA_CLAIM_ADDRESS_DOMAIN - 1u);
+        uint lo = entry >> 13u;
+        if (lo >= params.prefix_length) {
+            lane_invalid += 1u;
+            continue;
+        }
+        sum = solinas_add(
+            sum,
+            solinas_mul_wide(eq_address[address], eq_prefix[lo]));
+    }
+
+    sum = solinas_simd_sum_32(sum);
+    uint group_invalid = ram_ra_claim_simd_sum_u32(lane_invalid);
+    if (lane == 0u) {
+        h_prime[hi] = sum;
+        uint accessed = end - begin;
+        if (accessed != 0u) {
+            atomic_fetch_add_explicit(
+                &counters[RAM_RA_CLAIM_Q_ACCESSED],
+                accessed,
+                memory_order_relaxed);
+        }
+        if (group_invalid != 0u) {
+            atomic_fetch_add_explicit(
+                &counters[RAM_RA_CLAIM_GATHER_INVALID],
+                group_invalid,
+                memory_order_relaxed);
+        }
+    }
+}
+
 kernel void solinas_ram_ra_claim_gather_h(
     device const uint* cycle_addresses [[buffer(0)]],
     device const SolinasFp128* eq_address [[buffer(1)]],

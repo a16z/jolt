@@ -75,8 +75,10 @@ impl MetalBackend {
             upload_wall_ns = tracing::field::Empty,
             sequence_prepare_wall_ns = tracing::field::Empty,
             workspace_bytes = tracing::field::Empty,
-            storage_initialization_wall_ns = tracing::field::Empty,
-            storage_initialization_gpu_active_ns = tracing::field::Empty,
+            primer_materialize_wall_ns = tracing::field::Empty,
+            primer_materialize_gpu_active_ns = tracing::field::Empty,
+            primer_transition_wall_ns = tracing::field::Empty,
+            primer_transition_gpu_active_ns = tracing::field::Empty,
             resident_rows_storage_id = tracing::field::Empty,
             admitted = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
@@ -126,7 +128,7 @@ impl MetalBackend {
             "sequence_prepare_wall_ns",
             duration_nanos(started.elapsed()),
         );
-        let sequence = match sequence {
+        let mut sequence = match sequence {
             Ok(sequence) => sequence,
             Err(error) if error.is_capacity_error() => {
                 let _ = span.record("admitted", false);
@@ -144,33 +146,41 @@ impl MetalBackend {
             "workspace_bytes",
             sequence.storage_layout().workspace_bytes(),
         );
-        let initialization = match sequence.initialize_storage() {
-            Ok(initialization) => initialization,
+        let primer = match sequence.prime() {
+            Ok(primer) => primer,
             Err(error) if product_prepare_fallback_reason(&error).is_some() => {
                 let _ = span.record("admitted", false);
-                let _ = span.record("fallback_reason", "storage_initialization");
+                let _ = span.record("fallback_reason", "pipeline_primer");
                 tracing::warn!(
                     target: "jolt::metal",
                     error = %error,
-                    "product-remainder workspace initialization failed; using optimized CPU"
+                    "product-remainder pipeline primer failed; using optimized CPU"
                 );
                 return Ok(());
             }
             Err(error) => return Err(metal_prepare_error(error)),
         };
         let _ = span.record(
-            "storage_initialization_wall_ns",
-            duration_nanos(initialization.wall()),
+            "primer_materialize_wall_ns",
+            duration_nanos(primer.materialize_wall()),
         );
         let _ = span.record(
-            "storage_initialization_gpu_active_ns",
-            duration_nanos(initialization.gpu_active()),
+            "primer_materialize_gpu_active_ns",
+            duration_nanos(primer.materialize_gpu_active()),
         );
-        if initialization.bytes() != sequence.storage_layout().workspace_bytes()
+        let _ = span.record(
+            "primer_transition_wall_ns",
+            duration_nanos(primer.transition_wall()),
+        );
+        let _ = span.record(
+            "primer_transition_gpu_active_ns",
+            duration_nanos(primer.transition_gpu_active()),
+        );
+        if sequence.current_elements() != cycles / 2
             || sequence.row_allocation_identity() != row_storage_id
         {
             return Err(KernelError::InvariantViolation {
-                reason: "product-remainder workspace initialization changed its layout",
+                reason: "product-remainder pipeline primer ended in the wrong state",
             });
         }
         let _ = span.record("admitted", true);
@@ -236,7 +246,7 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             resident_rows_storage_id = row_storage_id as u64,
             row_upload_bytes = 0u64,
             round_device_buffer_allocations = 0u64,
-            preinitialized_device_bytes = sequence.storage_layout().workspace_bytes(),
+            primed_device_bytes = sequence.storage_layout().workspace_bytes(),
             sequence_prepare_wall_ns = 0u64,
             materialize_wall_ns = tracing::field::Empty,
             materialize_gpu_active_ns = tracing::field::Empty,
@@ -246,7 +256,7 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             .set_lagrange_weights(host.lagrange_weights)
             .map_err(metal_prepare_error)?;
         let started = Instant::now();
-        let first_message = sequence.message_timed(e_in, e_out);
+        let first_message = sequence.restart_message_timed(e_in, e_out);
         let materialize_wall = started.elapsed();
         let (first_message, materialize_gpu_active) = match first_message {
             Ok(result) => result,

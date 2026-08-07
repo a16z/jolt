@@ -124,10 +124,23 @@ fn q_abi_slots_and_entry_points_are_fixed() {
         ],
         [0, 1, 2, 3]
     );
+    assert_eq!(
+        [
+            H_COMPACT_ENTRIES_SLOT,
+            H_COMPACT_OFFSETS_SLOT,
+            H_COMPACT_EQ_ADDRESS_SLOT,
+            H_COMPACT_EQ_PREFIX_SLOT,
+            H_COMPACT_OUTPUT_SLOT,
+            H_COMPACT_COUNTERS_SLOT,
+            H_COMPACT_PARAMS_SLOT,
+        ],
+        [0, 1, 2, 3, 4, 5, 6]
+    );
     assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_build_q_partials"));
     assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_build_q_partials_explicit"));
     assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_build_q_partials_compact"));
     assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_reduce_q"));
+    assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_gather_h_compact"));
     assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_gather_h"));
 }
 
@@ -452,4 +465,36 @@ fn metal_q_matches_the_independent_direct_oracle() {
         assert_eq!(observation.producer_threadgroups, 16);
         assert_eq!(observation.reducer_threadgroups, 2);
     }
+
+    let r_prefix = point(shape.prefix_bits(), 0xc0de_1001);
+    let eq_prefix = EqPolynomial::<AkitaField>::evals(&r_prefix, None);
+    let expected_h = oracle::gather_h(
+        &addresses,
+        &eq_address,
+        &eq_prefix,
+        shape.prefix_bits(),
+        shape.suffix_bits(),
+    )
+    .unwrap();
+    let gather = context
+        .prepare_ram_ra_claim_gather(&resident, &r_address, &r_prefix, config)
+        .unwrap();
+    assert_eq!(gather.execute_device_buffer_allocations(), 0);
+    assert_eq!(
+        gather.source_allocation_identity(),
+        resident.allocation_identity()
+    );
+    assert_ne!(
+        gather.source_allocation_identity(),
+        gather.output_allocation_identity()
+    );
+    let observation = gather.execute_timed().unwrap();
+    assert_eq!(observation.h_prime, expected_h);
+    assert_eq!(observation.checksum, ram_ra_claim_h_checksum(&expected_h));
+    assert_eq!(observation.counters.q_accessed_rows as usize, accessed_rows);
+    assert_eq!(observation.counters.q_invalid_rows, 0);
+    assert_eq!(observation.counters.gather_invalid_rows, 0);
+    assert_eq!(observation.counters.unsupported_dispatches, 0);
+    assert_eq!(observation.useful_full_products, accessed_rows as u64);
+    assert_eq!(observation.threadgroups, shape.suffix_length());
 }

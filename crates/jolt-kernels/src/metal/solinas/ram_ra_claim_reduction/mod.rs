@@ -43,6 +43,7 @@ pub const BUILD_Q_PARTIALS_EXPLICIT_PIPELINE: &str =
 pub const BUILD_Q_PARTIALS_COMPACT_PIPELINE: &str = "solinas_ram_ra_claim_build_q_partials_compact";
 pub const REDUCE_Q_PIPELINE: &str = "solinas_ram_ra_claim_reduce_q";
 pub const GATHER_H_PIPELINE: &str = "solinas_ram_ra_claim_gather_h";
+pub const GATHER_H_COMPACT_PIPELINE: &str = "solinas_ram_ra_claim_gather_h_compact";
 
 pub const Q_BUILD_ADDRESSES_SLOT: u64 = 0;
 pub const Q_BUILD_EQ_ADDRESS_SLOT: u64 = 1;
@@ -61,6 +62,13 @@ pub const Q_REDUCE_PARTIALS_SLOT: u64 = 0;
 pub const Q_REDUCE_OUTPUT_SLOT: u64 = 1;
 pub const Q_REDUCE_COUNTERS_SLOT: u64 = 2;
 pub const Q_REDUCE_PARAMS_SLOT: u64 = 3;
+pub const H_COMPACT_ENTRIES_SLOT: u64 = 0;
+pub const H_COMPACT_OFFSETS_SLOT: u64 = 1;
+pub const H_COMPACT_EQ_ADDRESS_SLOT: u64 = 2;
+pub const H_COMPACT_EQ_PREFIX_SLOT: u64 = 3;
+pub const H_COMPACT_OUTPUT_SLOT: u64 = 4;
+pub const H_COMPACT_COUNTERS_SLOT: u64 = 5;
+pub const H_COMPACT_PARAMS_SLOT: u64 = 6;
 
 const FIELD_BYTES: usize = 16;
 const NANOSECONDS_PER_SECOND: u128 = 1_000_000_000;

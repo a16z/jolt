@@ -17,13 +17,15 @@ use super::super::{
 };
 use super::{
     RamRaClaimAddress, RamRaClaimConfig, RamRaClaimCounters, RamRaClaimError, RamRaClaimExecution,
-    RamRaClaimFallback, RamRaClaimProjection, RamRaClaimQAccumulator, RamRaClaimQPlan,
-    RamRaClaimShape, ValidatedRamRaClaimAddressPlane, Q_BUILD_ADDRESSES_SLOT,
-    Q_BUILD_COUNTERS_SLOT, Q_BUILD_EQ_ADDRESS_SLOT, Q_BUILD_EQ_HI_SLOT, Q_BUILD_PARAMS_SLOT,
-    Q_BUILD_PARTIALS_SLOT, Q_COMPACT_BUILD_COUNTERS_SLOT, Q_COMPACT_BUILD_ENTRIES_SLOT,
-    Q_COMPACT_BUILD_EQ_ADDRESS_SLOT, Q_COMPACT_BUILD_EQ_HI_SLOT, Q_COMPACT_BUILD_OFFSETS_SLOT,
-    Q_COMPACT_BUILD_PARAMS_SLOT, Q_COMPACT_BUILD_PARTIALS_SLOT, Q_REDUCE_COUNTERS_SLOT,
-    Q_REDUCE_OUTPUT_SLOT, Q_REDUCE_PARAMS_SLOT, Q_REDUCE_PARTIALS_SLOT,
+    RamRaClaimFallback, RamRaClaimPlan, RamRaClaimProjection, RamRaClaimQAccumulator,
+    RamRaClaimQPlan, RamRaClaimShape, ValidatedRamRaClaimAddressPlane, GATHER_H_COMPACT_PIPELINE,
+    H_COMPACT_COUNTERS_SLOT, H_COMPACT_ENTRIES_SLOT, H_COMPACT_EQ_ADDRESS_SLOT,
+    H_COMPACT_EQ_PREFIX_SLOT, H_COMPACT_OFFSETS_SLOT, H_COMPACT_OUTPUT_SLOT, H_COMPACT_PARAMS_SLOT,
+    Q_BUILD_ADDRESSES_SLOT, Q_BUILD_COUNTERS_SLOT, Q_BUILD_EQ_ADDRESS_SLOT, Q_BUILD_EQ_HI_SLOT,
+    Q_BUILD_PARAMS_SLOT, Q_BUILD_PARTIALS_SLOT, Q_COMPACT_BUILD_COUNTERS_SLOT,
+    Q_COMPACT_BUILD_ENTRIES_SLOT, Q_COMPACT_BUILD_EQ_ADDRESS_SLOT, Q_COMPACT_BUILD_EQ_HI_SLOT,
+    Q_COMPACT_BUILD_OFFSETS_SLOT, Q_COMPACT_BUILD_PARAMS_SLOT, Q_COMPACT_BUILD_PARTIALS_SLOT,
+    Q_REDUCE_COUNTERS_SLOT, Q_REDUCE_OUTPUT_SLOT, Q_REDUCE_PARAMS_SLOT, Q_REDUCE_PARTIALS_SLOT,
     RAM_RA_CLAIM_ADDRESS_DOMAIN, RAM_RA_CLAIM_AKITA_OFFSET, RAM_RA_CLAIM_SIMD_WIDTH,
     RAM_RA_CLAIM_TERMS, REDUCE_Q_PIPELINE,
 };
@@ -75,9 +77,15 @@ pub struct RamRaClaimResidentAddresses {
 
 #[derive(Clone)]
 struct RamRaClaimCompactAddresses {
+    low: RamRaClaimCompactView,
+    high: RamRaClaimCompactView,
+    entry_count: usize,
+}
+
+#[derive(Clone)]
+struct RamRaClaimCompactView {
     entries: Buffer,
     offsets: Buffer,
-    entry_count: usize,
     entries_bytes: usize,
     offsets_bytes: usize,
     entry_identity: usize,
@@ -110,9 +118,12 @@ impl RamRaClaimResidentAddresses {
     }
 
     pub fn compact_resident_bytes(&self) -> usize {
-        self.compact
-            .as_ref()
-            .map_or(0, |compact| compact.entries_bytes + compact.offsets_bytes)
+        self.compact.as_ref().map_or(0, |compact| {
+            compact.low.entries_bytes
+                + compact.low.offsets_bytes
+                + compact.high.entries_bytes
+                + compact.high.offsets_bytes
+        })
     }
 
     fn validate_for(
@@ -141,20 +152,33 @@ impl RamRaClaimResidentAddresses {
             self.metadata.storage_id(),
         )?;
         if let Some(compact) = &self.compact {
-            validate_buffer_binding(
-                &compact.entries,
-                "compact RAM entries",
-                to_u64(compact.entries_bytes)?,
-                expected_device,
-                compact.entry_identity,
-            )?;
-            validate_buffer_binding(
-                &compact.offsets,
-                "compact RAM offsets",
-                to_u64(compact.offsets_bytes)?,
-                expected_device,
-                compact.offset_identity,
-            )?;
+            for (entries_name, offsets_name, view) in [
+                (
+                    "compact low-major RAM entries",
+                    "compact low-major RAM offsets",
+                    &compact.low,
+                ),
+                (
+                    "compact high-major RAM entries",
+                    "compact high-major RAM offsets",
+                    &compact.high,
+                ),
+            ] {
+                validate_buffer_binding(
+                    &view.entries,
+                    entries_name,
+                    to_u64(view.entries_bytes)?,
+                    expected_device,
+                    view.entry_identity,
+                )?;
+                validate_buffer_binding(
+                    &view.offsets,
+                    offsets_name,
+                    to_u64(view.offsets_bytes)?,
+                    expected_device,
+                    view.offset_identity,
+                )?;
+            }
             if compact.entry_count != self.metadata.accessed_rows() {
                 return Err(RamRaClaimQRuntimeError::InvalidState(
                     "compact entry count differs from validated access count",
@@ -201,6 +225,36 @@ pub struct RamRaClaimQObservation {
     pub resident_wall: Duration,
 }
 
+struct RamRaClaimGatherBuffers {
+    eq_address: Buffer,
+    eq_prefix: Buffer,
+    h_prime: Buffer,
+    counters: Buffer,
+}
+
+pub struct RamRaClaimGatherInvocation {
+    context: SolinasMetal,
+    addresses: RamRaClaimResidentAddresses,
+    pipeline: ComputePipelineState,
+    limits: PipelineLimits,
+    buffers: RamRaClaimGatherBuffers,
+    buffer_identities: [usize; 4],
+    config: RamRaClaimConfig,
+    plan: RamRaClaimPlan,
+    projection: RamRaClaimProjection,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RamRaClaimGatherObservation {
+    pub h_prime: Vec<AkitaField>,
+    pub counters: RamRaClaimCounters,
+    pub checksum: u64,
+    pub useful_full_products: u64,
+    pub threadgroups: usize,
+    pub gpu_active: Duration,
+    pub resident_wall: Duration,
+}
+
 impl SolinasMetal {
     pub fn prepare_ram_ra_claim_addresses(
         &self,
@@ -213,7 +267,8 @@ impl SolinasMetal {
                 accessed_rows += 1;
             }
         }
-        let (compact_entries, compact_offsets) = compact_addresses_by_low(addresses, shape)?;
+        let (low_entries, low_offsets) = compact_addresses_by_low(addresses, shape)?;
+        let (high_entries, high_offsets) = compact_addresses_by_high(addresses, shape)?;
         let byte_length =
             shape
                 .rows()
@@ -222,11 +277,42 @@ impl SolinasMetal {
                     label: "resident address bytes",
                 })?;
         let bytes = to_u64(byte_length)?;
+        let compact_bytes = [
+            low_entries.len(),
+            low_offsets.len(),
+            high_entries.len(),
+            high_offsets.len(),
+        ]
+        .into_iter()
+        .try_fold(0usize, |sum, elements| {
+            elements
+                .checked_mul(size_of::<u32>())
+                .and_then(|bytes| sum.checked_add(bytes))
+                .ok_or(RamRaClaimError::SizeOverflow {
+                    label: "compact RAM resident bytes",
+                })
+        })?;
         self.validate_buffer_length(bytes)?;
-        self.validate_additional_working_set(bytes)?;
+        for elements in [
+            low_entries.len(),
+            low_offsets.len(),
+            high_entries.len(),
+            high_offsets.len(),
+        ] {
+            self.validate_buffer_length(to_u64(elements * size_of::<u32>())?)?;
+        }
+        self.validate_additional_working_set(to_u64(
+            byte_length
+                .checked_add(compact_bytes)
+                .ok_or(RamRaClaimError::SizeOverflow {
+                    label: "RAM resident working set",
+                })?,
+        )?)?;
         let buffer = buffer_from_slice(&self.device, addresses);
-        let compact_entry_buffer = buffer_from_slice(&self.device, &compact_entries);
-        let compact_offset_buffer = buffer_from_slice(&self.device, &compact_offsets);
+        let low_entry_buffer = buffer_from_slice(&self.device, &low_entries);
+        let low_offset_buffer = buffer_from_slice(&self.device, &low_offsets);
+        let high_entry_buffer = buffer_from_slice(&self.device, &high_entries);
+        let high_offset_buffer = buffer_from_slice(&self.device, &high_offsets);
         let metadata = ValidatedRamRaClaimAddressPlane::new_after_content_validation(
             shape,
             byte_length,
@@ -237,13 +323,23 @@ impl SolinasMetal {
         Ok(RamRaClaimResidentAddresses {
             buffer,
             compact: Some(RamRaClaimCompactAddresses {
-                entry_identity: compact_entry_buffer.as_ptr() as usize,
-                offset_identity: compact_offset_buffer.as_ptr() as usize,
-                entries_bytes: compact_entries.len() * size_of::<u32>(),
-                offsets_bytes: compact_offsets.len() * size_of::<u32>(),
                 entry_count: accessed_rows,
-                entries: compact_entry_buffer,
-                offsets: compact_offset_buffer,
+                low: RamRaClaimCompactView {
+                    entry_identity: low_entry_buffer.as_ptr() as usize,
+                    offset_identity: low_offset_buffer.as_ptr() as usize,
+                    entries_bytes: low_entries.len() * size_of::<u32>(),
+                    offsets_bytes: low_offsets.len() * size_of::<u32>(),
+                    entries: low_entry_buffer,
+                    offsets: low_offset_buffer,
+                },
+                high: RamRaClaimCompactView {
+                    entry_identity: high_entry_buffer.as_ptr() as usize,
+                    offset_identity: high_offset_buffer.as_ptr() as usize,
+                    entries_bytes: high_entries.len() * size_of::<u32>(),
+                    offsets_bytes: high_offsets.len() * size_of::<u32>(),
+                    entries: high_entry_buffer,
+                    offsets: high_offset_buffer,
+                },
             }),
             shape,
             metadata,
@@ -383,7 +479,7 @@ impl SolinasMetal {
             buffers.q.as_ptr() as usize,
             buffers.counters.as_ptr() as usize,
         ];
-        validate_aliases(addresses, buffer_identities)?;
+        validate_aliases(addresses, &buffer_identities)?;
         let projection = RamRaClaimProjection::new(plan.shape.rows(), addresses.accessed_rows())?;
 
         Ok(RamRaClaimQInvocation {
@@ -395,6 +491,103 @@ impl SolinasMetal {
             reducer_limits,
             buffers,
             buffer_identities,
+            plan,
+            projection,
+        })
+    }
+
+    pub fn prepare_ram_ra_claim_gather(
+        &self,
+        addresses: &RamRaClaimResidentAddresses,
+        r_address: &[AkitaField],
+        r_prefix: &[AkitaField],
+        config: RamRaClaimConfig,
+    ) -> Result<RamRaClaimGatherInvocation, RamRaClaimQRuntimeError> {
+        if self.offset != RAM_RA_CLAIM_AKITA_OFFSET {
+            return Err(RamRaClaimQRuntimeError::UnsupportedOffset {
+                expected: RAM_RA_CLAIM_AKITA_OFFSET,
+                got: self.offset,
+            });
+        }
+        let plan = RamRaClaimPlan::new(config, addresses.shape)?;
+        addresses.validate_for(self, plan.shape)?;
+        if addresses.compact.is_none() {
+            return Err(RamRaClaimQRuntimeError::MissingCompactLayout);
+        }
+        match config.execution_for_validated_plane(
+            plan.shape,
+            addresses.metadata,
+            addresses.resident_bytes(),
+            addresses.device_registry_id(),
+            addresses.allocation_identity(),
+        )? {
+            RamRaClaimExecution::MetalHybrid => {}
+            RamRaClaimExecution::OptimizedCpu(reason) => {
+                return Err(RamRaClaimQRuntimeError::ExecutionRejected(reason));
+            }
+        }
+        let address_bits = RAM_RA_CLAIM_ADDRESS_DOMAIN.ilog2() as usize;
+        if r_address.len() != address_bits {
+            return Err(RamRaClaimError::PointLength {
+                point: "address point",
+                expected: address_bits,
+                got: r_address.len(),
+            }
+            .into());
+        }
+        if r_prefix.len() != plan.shape.prefix_bits() {
+            return Err(RamRaClaimError::PointLength {
+                point: "prefix point",
+                expected: plan.shape.prefix_bits(),
+                got: r_prefix.len(),
+            }
+            .into());
+        }
+
+        let eq_address = encode_fields(&EqPolynomial::<AkitaField>::evals(r_address, None));
+        let eq_prefix = encode_fields(&EqPolynomial::<AkitaField>::evals(r_prefix, None));
+        self.validate_inputs("RAM RA gather eq_address", &eq_address)?;
+        self.validate_inputs("RAM RA gather eq_prefix", &eq_prefix)?;
+        validate_gather_allocations(self, plan)?;
+
+        let pipeline = self.compile_named_pipeline(GATHER_H_COMPACT_PIPELINE)?;
+        let limits = Self::limits(&pipeline);
+        validate_pipeline(GATHER_H_COMPACT_PIPELINE, limits)?;
+        let threads = Self::resolve_threadgroup_width(Some(RAM_RA_CLAIM_SIMD_WIDTH), limits)?;
+        if threads != plan.gather_dispatch.threads_per_threadgroup {
+            return Err(RamRaClaimQRuntimeError::InvalidState(
+                "resolved gather width differs from the checked dispatch plan",
+            ));
+        }
+
+        let buffers = RamRaClaimGatherBuffers {
+            eq_address: buffer_from_slice(&self.device, &eq_address),
+            eq_prefix: buffer_from_slice(&self.device, &eq_prefix),
+            h_prime: self.device.new_buffer(
+                to_u64(plan.storage.h_bytes)?,
+                MTLResourceOptions::StorageModeShared,
+            ),
+            counters: self.device.new_buffer(
+                to_u64(size_of::<RamRaClaimCounters>())?,
+                MTLResourceOptions::StorageModeShared,
+            ),
+        };
+        let buffer_identities = [
+            buffers.eq_address.as_ptr() as usize,
+            buffers.eq_prefix.as_ptr() as usize,
+            buffers.h_prime.as_ptr() as usize,
+            buffers.counters.as_ptr() as usize,
+        ];
+        validate_aliases(addresses, &buffer_identities)?;
+        let projection = RamRaClaimProjection::new(plan.shape.rows(), addresses.accessed_rows())?;
+        Ok(RamRaClaimGatherInvocation {
+            context: self.clone(),
+            addresses: addresses.clone(),
+            pipeline,
+            limits,
+            buffers,
+            buffer_identities,
+            config,
             plan,
             projection,
         })
@@ -435,8 +628,8 @@ impl RamRaClaimQInvocation {
                     .compact
                     .as_ref()
                     .ok_or(RamRaClaimQRuntimeError::MissingCompactLayout)?;
-                encoder.set_buffer(Q_COMPACT_BUILD_ENTRIES_SLOT, Some(&compact.entries), 0);
-                encoder.set_buffer(Q_COMPACT_BUILD_OFFSETS_SLOT, Some(&compact.offsets), 0);
+                encoder.set_buffer(Q_COMPACT_BUILD_ENTRIES_SLOT, Some(&compact.low.entries), 0);
+                encoder.set_buffer(Q_COMPACT_BUILD_OFFSETS_SLOT, Some(&compact.low.offsets), 0);
                 encoder.set_buffer(
                     Q_COMPACT_BUILD_EQ_ADDRESS_SLOT,
                     Some(&self.buffers.eq_address),
@@ -607,7 +800,7 @@ impl RamRaClaimQInvocation {
                 expected_identity,
             )?;
         }
-        validate_aliases(&self.addresses, self.buffer_identities)
+        validate_aliases(&self.addresses, &self.buffer_identities)
     }
 
     fn read_counters(&self) -> RamRaClaimCounters {
@@ -639,6 +832,194 @@ impl RamRaClaimQInvocation {
     }
 }
 
+impl RamRaClaimGatherInvocation {
+    pub fn execute(&self) -> Result<Vec<AkitaField>, RamRaClaimQRuntimeError> {
+        self.execute_timed().map(|observation| observation.h_prime)
+    }
+
+    pub fn execute_timed(&self) -> Result<RamRaClaimGatherObservation, RamRaClaimQRuntimeError> {
+        let wall_started = Instant::now();
+        self.validate_state()?;
+        autoreleasepool(|| {
+            let compact = self
+                .addresses
+                .compact
+                .as_ref()
+                .ok_or(RamRaClaimQRuntimeError::MissingCompactLayout)?;
+            let command_buffer = self.context.queue.new_command_buffer();
+            let blit = command_buffer.new_blit_command_encoder();
+            blit.fill_buffer(
+                &self.buffers.counters,
+                NSRange::new(0, self.buffers.counters.length()),
+                0,
+            );
+            blit.end_encoding();
+
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.pipeline);
+            encoder.set_buffer(H_COMPACT_ENTRIES_SLOT, Some(&compact.high.entries), 0);
+            encoder.set_buffer(H_COMPACT_OFFSETS_SLOT, Some(&compact.high.offsets), 0);
+            encoder.set_buffer(H_COMPACT_EQ_ADDRESS_SLOT, Some(&self.buffers.eq_address), 0);
+            encoder.set_buffer(H_COMPACT_EQ_PREFIX_SLOT, Some(&self.buffers.eq_prefix), 0);
+            encoder.set_buffer(H_COMPACT_OUTPUT_SLOT, Some(&self.buffers.h_prime), 0);
+            encoder.set_buffer(H_COMPACT_COUNTERS_SLOT, Some(&self.buffers.counters), 0);
+            set_inline_bytes(
+                encoder,
+                H_COMPACT_PARAMS_SLOT,
+                &self.plan.shape.params(self.config)?,
+            );
+            dispatch(encoder, self.plan.gather_dispatch);
+            encoder.end_encoding();
+
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            if command_buffer.status() != MTLCommandBufferStatus::Completed {
+                return Err(MetalError::CommandFailed(command_buffer.status()).into());
+            }
+            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+                return Err(MetalError::InvalidGpuTimestamps { start, end }.into());
+            }
+            let counters = self.read_counters();
+            self.addresses
+                .metadata
+                .validate_completed_dispatches(counters)?;
+            let h_prime = self.read_h_prime()?;
+            Ok(RamRaClaimGatherObservation {
+                checksum: ram_ra_claim_h_checksum(&h_prime),
+                h_prime,
+                counters,
+                useful_full_products: self.projection.gather_full_width_products,
+                threadgroups: self.plan.gather_dispatch.threadgroups,
+                gpu_active: Duration::from_secs_f64(end - start),
+                resident_wall: wall_started.elapsed(),
+            })
+        })
+    }
+
+    pub const fn plan(&self) -> RamRaClaimPlan {
+        self.plan
+    }
+
+    pub const fn projection(&self) -> RamRaClaimProjection {
+        self.projection
+    }
+
+    pub const fn pipeline_limits(&self) -> PipelineLimits {
+        self.limits
+    }
+
+    pub const fn execute_device_buffer_allocations(&self) -> usize {
+        0
+    }
+
+    pub fn compact_resident_bytes(&self) -> usize {
+        self.addresses.compact_resident_bytes()
+    }
+
+    pub fn source_allocation_identity(&self) -> usize {
+        self.addresses.allocation_identity()
+    }
+
+    pub fn output_allocation_identity(&self) -> usize {
+        self.buffers.h_prime.as_ptr() as usize
+    }
+
+    fn validate_state(&self) -> Result<(), RamRaClaimQRuntimeError> {
+        if self.context.offset != RAM_RA_CLAIM_AKITA_OFFSET {
+            return Err(RamRaClaimQRuntimeError::UnsupportedOffset {
+                expected: RAM_RA_CLAIM_AKITA_OFFSET,
+                got: self.context.offset,
+            });
+        }
+        self.addresses
+            .validate_for(&self.context, self.plan.shape)?;
+        if self.addresses.compact.is_none() {
+            return Err(RamRaClaimQRuntimeError::MissingCompactLayout);
+        }
+        if self.plan != RamRaClaimPlan::new(self.config, self.plan.shape)? {
+            return Err(RamRaClaimQRuntimeError::InvalidState(
+                "gather plan differs from checked geometry",
+            ));
+        }
+        if self.config.execution_for_validated_plane(
+            self.plan.shape,
+            self.addresses.metadata,
+            self.addresses.resident_bytes(),
+            self.addresses.device_registry_id(),
+            self.addresses.allocation_identity(),
+        )? != RamRaClaimExecution::MetalHybrid
+        {
+            return Err(RamRaClaimQRuntimeError::InvalidState(
+                "resident plane no longer satisfies the checked execution policy",
+            ));
+        }
+        validate_pipeline(GATHER_H_COMPACT_PIPELINE, self.limits)?;
+        let expected_device = self.context.device_registry_id();
+        for (name, buffer, expected_bytes, expected_identity) in [
+            (
+                "gather eq_address",
+                &self.buffers.eq_address,
+                self.plan.storage.eq_address_bytes,
+                self.buffer_identities[0],
+            ),
+            (
+                "gather eq_prefix",
+                &self.buffers.eq_prefix,
+                self.plan.storage.eq_prefix_bytes,
+                self.buffer_identities[1],
+            ),
+            (
+                "H-prime output",
+                &self.buffers.h_prime,
+                self.plan.storage.h_bytes,
+                self.buffer_identities[2],
+            ),
+            (
+                "gather counters",
+                &self.buffers.counters,
+                size_of::<RamRaClaimCounters>(),
+                self.buffer_identities[3],
+            ),
+        ] {
+            validate_buffer_binding(
+                buffer,
+                name,
+                to_u64(expected_bytes)?,
+                expected_device,
+                expected_identity,
+            )?;
+        }
+        validate_aliases(&self.addresses, &self.buffer_identities)
+    }
+
+    fn read_counters(&self) -> RamRaClaimCounters {
+        // SAFETY: command completion precedes this fixed-size shared-buffer read.
+        unsafe {
+            *self
+                .buffers
+                .counters
+                .contents()
+                .cast::<RamRaClaimCounters>()
+        }
+    }
+
+    fn read_h_prime(&self) -> Result<Vec<AkitaField>, RamRaClaimQRuntimeError> {
+        let elements = self.plan.shape.suffix_length();
+        // SAFETY: command completion precedes this read of the exact output length.
+        let fields = unsafe {
+            slice::from_raw_parts(self.buffers.h_prime.contents().cast::<Fp128>(), elements)
+        };
+        self.context
+            .validate_inputs("RAM RA H-prime output", fields)?;
+        Ok(fields
+            .iter()
+            .map(|&value| value.into_jolt_field())
+            .collect())
+    }
+}
+
 pub fn ram_ra_claim_q_checksum(q: &[Vec<AkitaField>; RAM_RA_CLAIM_TERMS]) -> u64 {
     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -654,6 +1035,19 @@ pub fn ram_ra_claim_q_checksum(q: &[Vec<AkitaField>; RAM_RA_CLAIM_TERMS]) -> u64
         })
 }
 
+pub fn ram_ra_claim_h_checksum(h_prime: &[AkitaField]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    h_prime.iter().fold(OFFSET_BASIS, |mut checksum, value| {
+        for byte in Fp128::from_jolt_field(value).to_u128().to_le_bytes() {
+            checksum ^= u64::from(byte);
+            checksum = checksum.wrapping_mul(PRIME);
+        }
+        checksum
+    })
+}
+
 fn validate_q_allocations(
     context: &SolinasMetal,
     plan: RamRaClaimQPlan,
@@ -665,6 +1059,32 @@ fn validate_q_allocations(
         plan.storage.q_partial_bytes,
         plan.storage.q_bytes,
         plan.storage.counter_bytes,
+    ] {
+        context.validate_buffer_length(to_u64(bytes)?)?;
+    }
+    Ok(())
+}
+
+fn validate_gather_allocations(
+    context: &SolinasMetal,
+    plan: RamRaClaimPlan,
+) -> Result<(), RamRaClaimQRuntimeError> {
+    let counter_bytes = size_of::<RamRaClaimCounters>();
+    let owned_bytes = plan
+        .storage
+        .eq_address_bytes
+        .checked_add(plan.storage.eq_prefix_bytes)
+        .and_then(|bytes| bytes.checked_add(plan.storage.h_bytes))
+        .and_then(|bytes| bytes.checked_add(counter_bytes))
+        .ok_or(RamRaClaimError::SizeOverflow {
+            label: "gather sequence-owned bytes",
+        })?;
+    context.validate_additional_working_set(to_u64(owned_bytes)?)?;
+    for bytes in [
+        plan.storage.eq_address_bytes,
+        plan.storage.eq_prefix_bytes,
+        plan.storage.h_bytes,
+        counter_bytes,
     ] {
         context.validate_buffer_length(to_u64(bytes)?)?;
     }
@@ -692,15 +1112,17 @@ fn validate_pipeline(
 
 fn validate_aliases(
     addresses: &RamRaClaimResidentAddresses,
-    buffer_identities: [usize; 5],
+    buffer_identities: &[usize],
 ) -> Result<(), RamRaClaimQRuntimeError> {
-    let mut identities = Vec::with_capacity(8);
+    let mut identities = Vec::with_capacity(5 + buffer_identities.len());
     identities.push(addresses.allocation_identity());
     if let Some(compact) = &addresses.compact {
-        identities.push(compact.entry_identity);
-        identities.push(compact.offset_identity);
+        identities.push(compact.low.entry_identity);
+        identities.push(compact.low.offset_identity);
+        identities.push(compact.high.entry_identity);
+        identities.push(compact.high.offset_identity);
     }
-    identities.extend_from_slice(&buffer_identities);
+    identities.extend_from_slice(buffer_identities);
     for left in 0..identities.len() {
         for right in left + 1..identities.len() {
             if identities[left] == identities[right] {
@@ -722,22 +1144,7 @@ fn compact_addresses_by_low(
             counts[row & (prefix_length - 1)] += 1;
         }
     }
-    let mut offsets = Vec::with_capacity(prefix_length + 1);
-    offsets.push(0u32);
-    for count in counts {
-        let next = offsets
-            .last()
-            .copied()
-            .map(|offset| offset as usize + count)
-            .ok_or(RamRaClaimError::SizeOverflow {
-                label: "compact RAM offsets",
-            })?;
-        offsets.push(
-            u32::try_from(next).map_err(|_| RamRaClaimError::SizeOverflow {
-                label: "compact RAM offsets",
-            })?,
-        );
-    }
+    let offsets = compact_offsets(counts)?;
     let entry_count = offsets.last().copied().unwrap_or(0) as usize;
     let physical_count = entry_count.max(1);
     let mut entries = vec![0u32; physical_count];
@@ -751,17 +1158,69 @@ fn compact_addresses_by_low(
         }
         let lo = row & (prefix_length - 1);
         let hi = row >> shape.prefix_bits();
-        let packed = u32::try_from(hi)
-            .ok()
-            .and_then(|hi| hi.checked_shl(RAM_RA_CLAIM_ADDRESS_DOMAIN.ilog2()))
-            .and_then(|hi| hi.checked_add(address))
-            .ok_or(RamRaClaimError::SizeOverflow {
-                label: "compact RAM entry",
-            })?;
+        let packed = pack_compact_entry(hi, address)?;
         entries[cursors[lo]] = packed;
         cursors[lo] += 1;
     }
     Ok((entries, offsets))
+}
+
+fn compact_addresses_by_high(
+    addresses: &[u32],
+    shape: RamRaClaimShape,
+) -> Result<(Vec<u32>, Vec<u32>), RamRaClaimQRuntimeError> {
+    let prefix_length = shape.prefix_length();
+    let suffix_length = shape.suffix_length();
+    let mut counts = vec![0usize; suffix_length];
+    for (row, &address) in addresses.iter().enumerate() {
+        if RamRaClaimAddress::try_from(address)?.is_access() {
+            counts[row >> shape.prefix_bits()] += 1;
+        }
+    }
+    let offsets = compact_offsets(counts)?;
+    let entry_count = offsets.last().copied().unwrap_or(0) as usize;
+    let mut entries = vec![0u32; entry_count.max(1)];
+    let mut cursors: Vec<usize> = offsets[..suffix_length]
+        .iter()
+        .map(|&offset| offset as usize)
+        .collect();
+    for (row, &address) in addresses.iter().enumerate() {
+        if address == super::RAM_RA_CLAIM_NO_ACCESS {
+            continue;
+        }
+        let hi = row >> shape.prefix_bits();
+        let lo = row & (prefix_length - 1);
+        entries[cursors[hi]] = pack_compact_entry(lo, address)?;
+        cursors[hi] += 1;
+    }
+    Ok((entries, offsets))
+}
+
+fn compact_offsets(counts: Vec<usize>) -> Result<Vec<u32>, RamRaClaimQRuntimeError> {
+    let mut offsets = Vec::with_capacity(counts.len() + 1);
+    offsets.push(0u32);
+    for count in counts {
+        let next = offsets.last().copied().unwrap_or(0) as usize + count;
+        offsets.push(
+            u32::try_from(next).map_err(|_| RamRaClaimError::SizeOverflow {
+                label: "compact RAM offsets",
+            })?,
+        );
+    }
+    Ok(offsets)
+}
+
+fn pack_compact_entry(index: usize, address: u32) -> Result<u32, RamRaClaimQRuntimeError> {
+    u32::try_from(index)
+        .ok()
+        .and_then(|index| index.checked_shl(RAM_RA_CLAIM_ADDRESS_DOMAIN.ilog2()))
+        .and_then(|index| index.checked_add(address))
+        .ok_or_else(|| {
+            RamRaClaimError::SizeOverflow {
+                label: "compact RAM entry",
+            }
+            .into()
+        })
 }
 
 fn validate_buffer_binding(
