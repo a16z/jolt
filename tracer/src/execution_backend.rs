@@ -71,24 +71,21 @@ impl ExecutionBackend for TracerBackend {
 }
 
 /// A resume point for the chunked-execution contract, built on the two-pass
-/// parallel machinery (PR #1717): a shared tick-boundary checkpoint (CPU
-/// state + full-size memory image) plus this chunk's row window relative to
-/// that boundary.
+/// parallel machinery (PR #1717): a tick-boundary checkpoint and memory
+/// image — captured together at the same boundary and shared, via `Arc`,
+/// by every chunk that resumes there — plus this chunk's row window
+/// relative to that boundary.
 pub struct TracerChunkCheckpoint {
-    inner: Arc<InnerCheckpoint>,
+    /// Boundary CPU/MMU/device state.
+    boundary: Arc<ChunkCheckpoint>,
+    /// Full-size flat-memory image at the same boundary (SnapshotPool
+    /// layout).
+    image: Arc<Vec<u64>>,
     seed: Arc<WorkerSeed>,
-    /// Rows to discard after resuming at the inner boundary.
+    /// Rows to discard after resuming at the boundary.
     skip_rows: usize,
     /// Rows this chunk emits.
     take_rows: usize,
-}
-
-struct InnerCheckpoint {
-    checkpoint: ChunkCheckpoint,
-    /// Full-size flat-memory image at the boundary (SnapshotPool layout).
-    image: Vec<u64>,
-    /// Trace rows produced before this boundary.
-    rows: usize,
 }
 
 /// Static per-program worker seed, shared by every checkpoint.
@@ -97,24 +94,24 @@ struct WorkerSeed {
     decode: DecodeCache,
 }
 
-/// Inner checkpoints are captured at chunk-mark crossings, but at most one
-/// per this many rows: each carries a full-size memory image, so denser
+/// Boundary checkpoints are captured at chunk-mark crossings, but at most
+/// one per this many rows: each carries a full-size memory image, so denser
 /// capture (e.g. a small chunk size over a long trace) would blow up
 /// memory. `skip_rows` absorbs the gap; per-chunk replay cost stays bounded
 /// by spacing + chunk_size + one tick's rows.
-const MIN_INNER_SPACING_ROWS: usize = 1 << 16;
+const MIN_BOUNDARY_SPACING_ROWS: usize = 1 << 16;
 
 impl TracerBackend {
-    /// [`ChunkedExecutionBackend::execute`] with an explicit inner-checkpoint
-    /// spacing floor. The trait method passes [`MIN_INNER_SPACING_ROWS`];
-    /// tests pass a tighter floor to exercise multi-inner selection on guests
-    /// whose whole trace is shorter than the production floor.
+    /// [`ChunkedExecutionBackend::execute`] with an explicit boundary
+    /// spacing floor. The trait method passes [`MIN_BOUNDARY_SPACING_ROWS`];
+    /// tests pass a tighter floor to exercise multi-boundary selection on
+    /// guests whose whole trace is shorter than the production floor.
     fn execute_chunked(
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
         chunk_size: usize,
-        min_inner_spacing: usize,
+        min_boundary_spacing: usize,
     ) -> Result<ExecutionSummary<TracerChunkCheckpoint>, TraceError> {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
@@ -141,26 +138,33 @@ impl TracerBackend {
                 .snapshot_with_empty_entries(),
         });
 
+        // Construction-only bookkeeping: a captured boundary plus the row
+        // count pass-1 had produced there (used below to pick each mark's
+        // resume boundary; not needed at replay time).
+        struct Boundary {
+            checkpoint: Arc<ChunkCheckpoint>,
+            image: Arc<Vec<u64>>,
+            rows: usize,
+        }
+
         let mut pool = SnapshotPool::new();
         let mut pass = PassOne::new(emulator);
-        let capture = |pass: &PassOne, pool: &mut SnapshotPool| {
-            Arc::new(InnerCheckpoint {
-                checkpoint: pass.checkpoint(),
-                image: pool.capture(&pass.emulator().get_cpu().mmu.memory.memory),
-                rows: pass.rows(),
-            })
+        let capture = |pass: &PassOne, pool: &mut SnapshotPool| Boundary {
+            checkpoint: Arc::new(pass.checkpoint()),
+            image: Arc::new(pool.capture(&pass.emulator().get_cpu().mmu.memory.memory)),
+            rows: pass.rows(),
         };
 
         // The fast pass: execute mode, no rows; capture a boundary checkpoint
         // whenever a chunk mark is crossed (subject to the spacing floor).
-        let mut inners = vec![capture(&pass, &mut pool)];
+        let mut boundaries = vec![capture(&pass, &mut pool)];
         let mut next_mark = chunk_size;
         while pass.step() {
             if pass.rows() >= next_mark {
                 #[expect(clippy::expect_used)]
-                let last_rows = inners.last().expect("initial checkpoint present").rows;
-                if pass.rows() - last_rows >= min_inner_spacing {
-                    inners.push(capture(&pass, &mut pool));
+                let last_rows = boundaries.last().expect("initial checkpoint present").rows;
+                if pass.rows() - last_rows >= min_boundary_spacing {
+                    boundaries.push(capture(&pass, &mut pool));
                 }
                 next_mark = (pass.rows() / chunk_size + 1) * chunk_size;
             }
@@ -168,19 +172,22 @@ impl TracerBackend {
         let trace_len = pass.rows();
 
         // One contract checkpoint per exact chunk mark, resuming from the
-        // latest inner boundary at or before the mark.
+        // latest boundary at or before the mark.
         let mut checkpoints = Vec::with_capacity(trace_len.div_ceil(chunk_size));
-        let mut inner_index = 0;
+        let mut boundary_index = 0;
         for chunk in 0..trace_len.div_ceil(chunk_size) {
             let mark = chunk * chunk_size;
-            while inner_index + 1 < inners.len() && inners[inner_index + 1].rows <= mark {
-                inner_index += 1;
+            while boundary_index + 1 < boundaries.len()
+                && boundaries[boundary_index + 1].rows <= mark
+            {
+                boundary_index += 1;
             }
-            let inner = &inners[inner_index];
+            let boundary = &boundaries[boundary_index];
             checkpoints.push(TracerChunkCheckpoint {
-                inner: Arc::clone(inner),
+                boundary: Arc::clone(&boundary.checkpoint),
+                image: Arc::clone(&boundary.image),
                 seed: Arc::clone(&seed),
-                skip_rows: mark - inner.rows,
+                skip_rows: mark - boundary.rows,
                 take_rows: chunk_size.min(trace_len - mark),
             });
         }
@@ -208,7 +215,7 @@ impl ChunkedExecutionBackend for TracerBackend {
         inputs: TraceInputs,
         chunk_size: usize,
     ) -> Result<ExecutionSummary<Self::Checkpoint>, TraceError> {
-        self.execute_chunked(program, inputs, chunk_size, MIN_INNER_SPACING_ROWS)
+        self.execute_chunked(program, inputs, chunk_size, MIN_BOUNDARY_SPACING_ROWS)
     }
 
     fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError> {
@@ -217,7 +224,7 @@ impl ChunkedExecutionBackend for TracerBackend {
             checkpoint.seed.decode.clone(),
         );
         let _previous =
-            worker.install_chunk(&checkpoint.inner.checkpoint, checkpoint.inner.image.clone());
+            worker.install_chunk(&checkpoint.boundary, checkpoint.image.as_ref().clone());
 
         let needed = checkpoint.skip_rows + checkpoint.take_rows;
         let mut cycles: Vec<Cycle> = Vec::with_capacity(needed + 64);
@@ -337,8 +344,8 @@ mod chunked_tests {
         assert!(!eager_rows.is_empty());
 
         // Chunk size 1 forces checkpoint marks inside multi-row expansions.
-        // Spacing = chunk_size keeps inner checkpoints dense enough to
-        // exercise multi-inner selection on a trace shorter than the
+        // Spacing = chunk_size keeps boundary checkpoints dense enough to
+        // exercise multi-boundary selection on a trace shorter than the
         // production floor (the floor itself is covered below).
         for chunk_size in [1usize, 100, 1 << 18, eager_rows.len() + 1] {
             let mut backend = TracerBackend::new();
@@ -392,7 +399,7 @@ mod chunked_tests {
     }
 
     /// The public trait method applies the production spacing floor: the
-    /// muldiv trace is shorter than [`MIN_INNER_SPACING_ROWS`], so every
+    /// muldiv trace is shorter than [`MIN_BOUNDARY_SPACING_ROWS`], so every
     /// chunk resumes from the single initial checkpoint and `skip_rows`
     /// grows to nearly the whole trace for the last chunk.
     #[test]
@@ -407,8 +414,8 @@ mod chunked_tests {
         const CHUNK_SIZE: usize = 100;
         assert!(eager_rows.len() > CHUNK_SIZE);
         assert!(
-            eager_rows.len() < MIN_INNER_SPACING_ROWS,
-            "muldiv trace grew past the floor; this test no longer exercises single-inner skips"
+            eager_rows.len() < MIN_BOUNDARY_SPACING_ROWS,
+            "muldiv trace grew past the floor; this test no longer exercises single-boundary skips"
         );
 
         let summary = backend
