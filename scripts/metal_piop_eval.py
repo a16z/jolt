@@ -25,7 +25,7 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
@@ -97,10 +97,15 @@ OUTER_REMAINDER_METAL_PHASES = (
     "cpu_tail",
     "output_claims",
     "row_release",
+    "product_uniskip_carrier_park",
 )
 OUTER_REMAINDER_MIN_SPEEDUP = 5.0
+PRODUCT_UNISKIP_KERNEL = "SpartanProductUniskip"
+METAL_PRODUCT_UNISKIP_STANDALONE = "MetalProductUniskip::prepare"
+METAL_PRODUCT_UNISKIP_CARRIER = "MetalProductUniskip::outer_opening_carrier"
 PRODUCT_REMAINDER_KERNEL = "ProductRemainder"
 PRODUCT_REMAINDER_MIN_SPEEDUP = 5.0
+OUTER_PRODUCT_FAMILY_MIN_SPEEDUP = 5.0
 INSTRUCTION_CLAIM_KERNEL = "InstructionClaimReduction"
 INSTRUCTION_CLAIM_MIN_SPEEDUP = 5.0
 OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE = (
@@ -267,7 +272,8 @@ OUTER_REMAINDER_METAL_CONFIG_RE = re.compile(
     r"output_threads=(?P<output_threads>\d+) "
     r"max_threadgroups=(?P<max_threadgroups>\d+) "
     r"binding_plan=(?P<binding_plan>\S+) "
-    r"storage_initialization=(?P<storage_initialization>\S+)$"
+    r"storage_initialization=(?P<storage_initialization>\S+) "
+    r"product_uniskip_carrier=(?P<product_uniskip_carrier>true|false)$"
 )
 PIOP_EXECUTION_CONFIG_RE = re.compile(
     r"^PIOP_EXECUTION_CONFIG rayon_threads=(?P<rayon_threads>\d+)$"
@@ -684,6 +690,7 @@ def validate_outer_remainder_stdout(
     cutoff_log2: int = 16,
     trace_cutoff_log2: int = 18,
     binding_plan: str = "b_only_v1",
+    product_uniskip_carrier: bool = False,
 ) -> Optional[dict[str, Any]]:
     configs = [
         match
@@ -711,6 +718,7 @@ def validate_outer_remainder_stdout(
         },
         "storage_initialization": raw["storage_initialization"],
         "binding_plan": raw["binding_plan"],
+        "product_uniskip_carrier": raw["product_uniskip_carrier"] == "true",
     }
     expected = {
         "trace_cutoff": 1 << trace_cutoff_log2,
@@ -721,6 +729,7 @@ def validate_outer_remainder_stdout(
         "max_threadgroups": 8192,
         "storage_initialization": "full",
         "binding_plan": binding_plan,
+        "product_uniskip_carrier": product_uniskip_carrier,
     }
     if config != expected:
         raise ValueError(f"unexpected OuterRemainder Metal config: {config}")
@@ -1280,10 +1289,13 @@ def instruction_claim_observation(
     }
 
 
-def outer_remainder_storage_geometry(log_n: int) -> dict[str, Any]:
+def outer_remainder_storage_geometry(
+    log_n: int, product_uniskip_carrier: bool = False
+) -> dict[str, Any]:
     rows = 1 << log_n
     weight_capacity = 1 << ((log_n + 1) // 2)
     threadgroups = min(8192, weight_capacity)
+    opening_outputs = 37 if product_uniskip_carrier else 35
     elements = [
         2 * rows,
         2 * rows,
@@ -1292,8 +1304,8 @@ def outer_remainder_storage_geometry(log_n: int) -> dict[str, Any]:
         10,
         2 * threadgroups,
         2,
-        35 * threadgroups,
-        35,
+        opening_outputs * threadgroups,
+        opening_outputs,
     ]
     return {
         "element_counts": elements,
@@ -1308,6 +1320,7 @@ def outer_remainder_member_breakdown(
     log_n: int,
     cutoff_log2: int = 16,
     trace_cutoff_log2: int = 18,
+    product_uniskip_carrier: bool = False,
 ) -> dict[str, Any]:
     if backend not in {"optimized", "metal"}:
         raise ValueError(f"unsupported OuterRemainder backend {backend!r}")
@@ -1379,6 +1392,7 @@ def outer_remainder_member_breakdown(
             raise ValueError("optimized trace unexpectedly contains OuterRemainder Metal spans")
         resource_observation = None
         row_lifecycle = None
+        product_uniskip_carrier_observation = None
     else:
         expected_counts = {
             "storage_prepare": 1,
@@ -1395,6 +1409,7 @@ def outer_remainder_member_breakdown(
             "cpu_tail": cutoff_log2,
             "output_claims": 1,
             "row_release": 1,
+            "product_uniskip_carrier_park": int(product_uniskip_carrier),
         }
         if metal_counts != expected_counts:
             raise ValueError(
@@ -1411,7 +1426,7 @@ def outer_remainder_member_breakdown(
                     require_contained(interval, member, f"OuterRemainder {phase}")
 
         rows = 1 << log_n
-        geometry = outer_remainder_storage_geometry(log_n)
+        geometry = outer_remainder_storage_geometry(log_n, product_uniskip_carrier)
         storage_fields = {
             "cycles",
             "planned_device_bytes",
@@ -1647,11 +1662,36 @@ def outer_remainder_member_breakdown(
             output["dispatch_wall_ns"] <= 0
             or output["gpu_active_ns"] <= 0
             or output["readbacks"] != 1
-            or output["output_elements"] != 35
-            or output["readback_bytes"] != 35 * 16
+            or output["output_elements"]
+            != (37 if product_uniskip_carrier else 35)
+            or output["readback_bytes"]
+            != (37 if product_uniskip_carrier else 35) * 16
             or output["row_upload_bytes"] != 0
         ):
             raise ValueError("OuterRemainder readback accounting is inconsistent")
+
+        product_uniskip_carrier_observation = None
+        if product_uniskip_carrier:
+            carrier_fields = {
+                "rows",
+                "source_rows_storage_id",
+                "endpoint_elements",
+            }
+            carrier_raw = exact_span_args(
+                events,
+                "MetalOuterRemainder::product_uniskip_carrier_park",
+                carrier_fields,
+            )
+            product_uniskip_carrier_observation = {
+                field: nonnegative_trace_integer(carrier_raw[field], field)
+                for field in carrier_fields
+            }
+            if product_uniskip_carrier_observation != {
+                "rows": rows,
+                "source_rows_storage_id": handoff["compact_rows_storage_id"],
+                "endpoint_elements": 2,
+            }:
+                raise ValueError("OuterRemainder Product uni-skip carrier is inconsistent")
 
         release_fields = handoff_fields | {
             "residual_row_bytes",
@@ -1700,6 +1740,143 @@ def outer_remainder_member_breakdown(
         "metal_counts": metal_counts,
         "resource_observation": resource_observation,
         "row_lifecycle": row_lifecycle,
+        "product_uniskip_carrier": product_uniskip_carrier_observation,
+    }
+
+
+def product_uniskip_observation(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    product_uniskip_carrier: bool,
+) -> dict[str, Any]:
+    if backend not in {"optimized", "metal"}:
+        raise ValueError(f"unsupported Product uni-skip backend {backend!r}")
+    names = {
+        PIOP_SPAN,
+        f"{PRODUCT_UNISKIP_KERNEL}::prepare",
+        f"{PRODUCT_UNISKIP_KERNEL}::first_round_poly",
+        METAL_PRODUCT_UNISKIP_STANDALONE,
+        METAL_PRODUCT_UNISKIP_CARRIER,
+    }
+    unknown = {
+        name
+        for event in events
+        if isinstance((name := event.get("name")), str)
+        and name.startswith("MetalProductUniskip::")
+        and name not in names
+    }
+    if unknown:
+        raise ValueError(
+            f"Product uni-skip trace contains unknown Metal phases: {sorted(unknown)}"
+        )
+    intervals = strict_named_intervals(events, names)
+    if len(intervals[PIOP_SPAN]) != 1:
+        raise ValueError("trace must contain one PIOP span for Product uni-skip")
+    piop = intervals[PIOP_SPAN][0]
+    prepare = intervals[f"{PRODUCT_UNISKIP_KERNEL}::prepare"]
+    first_round = intervals[f"{PRODUCT_UNISKIP_KERNEL}::first_round_poly"]
+    expected_seams = 2 if backend == "optimized" else 1
+    if len(prepare) != expected_seams or len(first_round) != expected_seams:
+        raise ValueError("Product uni-skip seam topology is incomplete")
+    for interval in [*prepare, *first_round]:
+        require_contained(interval, piop, "Product uni-skip seam")
+    if max(interval[1] for interval in prepare) > min(
+        interval[0] for interval in first_round
+    ):
+        raise ValueError("Product uni-skip seams overlap or appear out of order")
+
+    standalone = intervals[METAL_PRODUCT_UNISKIP_STANDALONE]
+    carrier = intervals[METAL_PRODUCT_UNISKIP_CARRIER]
+    expected_paths = (0, 0) if backend == "optimized" else (
+        (0, 1) if product_uniskip_carrier else (1, 0)
+    )
+    if (len(standalone), len(carrier)) != expected_paths:
+        raise ValueError("Product uni-skip Metal execution path is inconsistent")
+    for interval in [*standalone, *carrier]:
+        if not any(
+            parent[0] <= interval[0] and interval[1] <= parent[1]
+            for parent in prepare
+        ):
+            raise ValueError("Product uni-skip Metal execution lies outside prepare")
+
+    rows = 1 << log_n
+    resource_observation = None
+    if standalone:
+        fields = {
+            "cycles",
+            "resident_rows_storage_id",
+            "row_upload_bytes",
+            "round_device_buffer_allocations",
+            "dispatch_wall_ns",
+            "gpu_active_ns",
+        }
+        raw = exact_span_args(events, METAL_PRODUCT_UNISKIP_STANDALONE, fields)
+        observation = {
+            field: nonnegative_trace_integer(raw[field], field) for field in fields
+        }
+        if (
+            observation["cycles"] != rows
+            or observation["resident_rows_storage_id"] <= 0
+            or observation["row_upload_bytes"] != 0
+            or observation["round_device_buffer_allocations"] != 0
+            or observation["dispatch_wall_ns"] <= 0
+            or observation["gpu_active_ns"] <= 0
+            or observation["gpu_active_ns"] > observation["dispatch_wall_ns"]
+        ):
+            raise ValueError("standalone Product uni-skip accounting is inconsistent")
+        resource_observation = {
+            "path": "standalone",
+            "dispatches": 1,
+            "command_buffers": 1,
+            "readback_bytes": 2 * 16,
+            **observation,
+        }
+    elif carrier:
+        fields = {
+            "cycles",
+            "source_rows_storage_id",
+            "product_rows_storage_id",
+            "row_upload_bytes",
+            "dispatches",
+            "command_buffers",
+            "readback_bytes",
+        }
+        raw = exact_span_args(events, METAL_PRODUCT_UNISKIP_CARRIER, fields)
+        observation = {
+            field: nonnegative_trace_integer(raw[field], field) for field in fields
+        }
+        if (
+            observation["cycles"] != rows
+            or observation["source_rows_storage_id"] <= 0
+            or observation["product_rows_storage_id"] <= 0
+            or any(
+                observation[field] != 0
+                for field in (
+                    "row_upload_bytes",
+                    "dispatches",
+                    "command_buffers",
+                    "readback_bytes",
+                )
+            )
+        ):
+            raise ValueError("carried Product uni-skip accounting is inconsistent")
+        resource_observation = {"path": "outer_opening_carrier", **observation}
+
+    member_us = union_duration_us([*prepare, *first_round])
+    if not math.isfinite(member_us) or member_us <= 0.0:
+        raise ValueError("Product uni-skip member duration is invalid")
+    return {
+        "components": {"member_us": member_us},
+        "seam_counts": {
+            "prepare": len(prepare),
+            "first_round_poly": len(first_round),
+        },
+        "metal_counts": {
+            "standalone": len(standalone),
+            "carrier": len(carrier),
+        },
+        "resource_observation": resource_observation,
     }
 
 
@@ -3922,6 +4099,24 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         float(pair.get("metal_outer_remainder_us", pair["metal_hamming_weight_us"]))
         for pair in pairs
     ]
+    cpu_product_uniskip = [
+        float(
+            pair.get(
+                "cpu_product_uniskip_us",
+                pair.get("cpu_outer_remainder_us", pair["cpu_hamming_weight_us"]),
+            )
+        )
+        for pair in pairs
+    ]
+    metal_product_uniskip = [
+        float(
+            pair.get(
+                "metal_product_uniskip_us",
+                pair.get("metal_outer_remainder_us", pair["metal_hamming_weight_us"]),
+            )
+        )
+        for pair in pairs
+    ]
     cpu_product_remainder = [
         float(
             pair.get(
@@ -3939,6 +4134,22 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             )
         )
         for pair in pairs
+    ]
+    cpu_outer_product_family = [
+        outer + uniskip + product
+        for outer, uniskip, product in zip(
+            cpu_outer_remainder,
+            cpu_product_uniskip,
+            cpu_product_remainder,
+        )
+    ]
+    metal_outer_product_family = [
+        outer + uniskip + product
+        for outer, uniskip, product in zip(
+            metal_outer_remainder,
+            metal_product_uniskip,
+            metal_product_remainder,
+        )
     ]
     cpu_instruction_claim = [
         float(pair.get("cpu_instruction_claim_us", pair["cpu_hamming_weight_us"]))
@@ -3991,8 +4202,12 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_hamming_weight_service
         + cpu_outer_remainder
         + metal_outer_remainder
+        + cpu_product_uniskip
+        + metal_product_uniskip
         + cpu_product_remainder
         + metal_product_remainder
+        + cpu_outer_product_family
+        + metal_outer_product_family
         + cpu_instruction_claim
         + metal_instruction_claim
         + metal_instruction_claim_isolated_service
@@ -4092,6 +4307,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         PRODUCT_REMAINDER_MIN_SPEEDUP,
     )
     (
+        outer_product_family_speedups,
+        outer_product_family_improvements,
+        outer_product_family_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_outer_product_family,
+        metal_outer_product_family,
+        OUTER_PRODUCT_FAMILY_MIN_SPEEDUP,
+    )
+    (
         instruction_claim_speedups,
         instruction_claim_improvements,
         instruction_claim_decision,
@@ -4186,7 +4411,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             booleanity_hamming_speedups
         ),
         "outer_remainder_speedup": statistics.median(outer_remainder_speedups),
+        "product_uniskip_speedup": statistics.median(
+            cpu_us / metal_us
+            for cpu_us, metal_us in zip(
+                cpu_product_uniskip, metal_product_uniskip
+            )
+        ),
         "product_remainder_speedup": statistics.median(product_remainder_speedups),
+        "outer_product_family_speedup": statistics.median(
+            outer_product_family_speedups
+        ),
         "instruction_claim_reduction_critical_path_speedup": statistics.median(
             instruction_claim_speedups
         ),
@@ -4219,8 +4453,18 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "paired_outer_remainder_speedups": outer_remainder_speedups,
         "paired_outer_remainder_fractional_improvements": outer_remainder_improvements,
+        "paired_product_uniskip_speedups": [
+            cpu_us / metal_us
+            for cpu_us, metal_us in zip(
+                cpu_product_uniskip, metal_product_uniskip
+            )
+        ],
         "paired_product_remainder_speedups": product_remainder_speedups,
         "paired_product_remainder_fractional_improvements": product_remainder_improvements,
+        "paired_outer_product_family_speedups": outer_product_family_speedups,
+        "paired_outer_product_family_fractional_improvements": (
+            outer_product_family_improvements
+        ),
         "paired_instruction_claim_reduction_critical_path_speedups": instruction_claim_speedups,
         "paired_instruction_claim_reduction_critical_path_fractional_improvements": (
             instruction_claim_improvements
@@ -4285,11 +4529,23 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_outer_remainder_ms_samples": [
             value / 1000.0 for value in metal_outer_remainder
         ],
+        "cpu_product_uniskip_ms_samples": [
+            value / 1000.0 for value in cpu_product_uniskip
+        ],
+        "metal_product_uniskip_ms_samples": [
+            value / 1000.0 for value in metal_product_uniskip
+        ],
         "cpu_product_remainder_ms_samples": [
             value / 1000.0 for value in cpu_product_remainder
         ],
         "metal_product_remainder_ms_samples": [
             value / 1000.0 for value in metal_product_remainder
+        ],
+        "cpu_outer_product_family_ms_samples": [
+            value / 1000.0 for value in cpu_outer_product_family
+        ],
+        "metal_outer_product_family_ms_samples": [
+            value / 1000.0 for value in metal_outer_product_family
         ],
         "cpu_instruction_claim_reduction_critical_path_ms_samples": [
             value / 1000.0 for value in cpu_instruction_claim
@@ -4312,6 +4568,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "booleanity_hamming_family_decision": booleanity_hamming_decision,
         "outer_remainder_decision": outer_remainder_decision,
         "product_remainder_decision": product_remainder_decision,
+        "outer_product_family_decision": outer_product_family_decision,
         "instruction_claim_reduction_critical_path_decision": instruction_claim_decision,
         "product_instruction_claim_family_decision": product_instruction_claim_decision,
         "bytecode_read_raf_cycle_decision": {
@@ -4485,6 +4742,7 @@ def run_backend(
     outer_remainder_cutoff_log2: int,
     outer_remainder_trace_cutoff_log2: int,
     outer_remainder_binding_plan: str,
+    product_uniskip_outer_carrier: bool,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -4557,6 +4815,8 @@ def run_backend(
         "--outer-remainder-metal-binding-plan",
         outer_remainder_binding_plan,
     ]
+    if product_uniskip_outer_carrier:
+        benchmark_command.append("--product-uniskip-outer-carrier")
     if backend == "metal":
         benchmark_command.extend(
             [
@@ -4633,6 +4893,7 @@ def run_backend(
         outer_remainder_cutoff_log2,
         outer_remainder_trace_cutoff_log2,
         outer_remainder_binding_plan,
+        product_uniskip_outer_carrier,
     )
     source = trace_path(root, workload, log_n, backend)
     if not source.is_file() or source.stat().st_mtime_ns <= started_ns:
@@ -4689,8 +4950,29 @@ def run_backend(
         log_n,
         outer_remainder_cutoff_log2,
         outer_remainder_trace_cutoff_log2,
+        product_uniskip_outer_carrier,
+    )
+    product_uniskip = product_uniskip_observation(
+        events,
+        backend,
+        log_n,
+        product_uniskip_outer_carrier,
     )
     instruction_claim = instruction_claim_observation(events, backend, log_n)
+    if backend == "metal" and product_uniskip_outer_carrier:
+        carrier = product_uniskip["resource_observation"]
+        outer_carrier = outer_remainder_member["product_uniskip_carrier"]
+        producer = instruction_claim["resource_observation"]
+        if (
+            carrier is None
+            or outer_carrier is None
+            or producer is None
+            or carrier["source_rows_storage_id"]
+            != outer_carrier["source_rows_storage_id"]
+            or carrier["product_rows_storage_id"]
+            != producer["producer_rows_storage_id"]
+        ):
+            raise ValueError("Product uni-skip carrier provenance is inconsistent")
     attribution = trace_attribution(events)
     for name, member in (
         (BYTECODE_KERNEL, bytecode_member),
@@ -4731,6 +5013,7 @@ def run_backend(
         "hamming_weight_member": hamming_weight_member,
         "outer_remainder_config": outer_remainder_config,
         "outer_remainder_member": outer_remainder_member,
+        "product_uniskip": product_uniskip,
         "instruction_claim": instruction_claim,
         "execution_config": execution_config,
         "command": command,
@@ -5044,6 +5327,7 @@ def parser() -> argparse.ArgumentParser:
         choices=["b_only_v1", "b_only_padded_56_v1"],
         default="b_only_v1",
     )
+    result.add_argument("--product-uniskip-outer-carrier", action="store_true")
     result.add_argument("--trace", type=Path)
     return result
 
@@ -5189,6 +5473,7 @@ def main() -> int:
                     args.outer_remainder_metal_cutoff_log2,
                     args.outer_remainder_metal_trace_cutoff_log2,
                     args.outer_remainder_metal_binding_plan,
+                    args.product_uniskip_outer_carrier,
                     index + 1,
                     args.timeout_seconds,
                 )
@@ -5288,6 +5573,16 @@ def main() -> int:
                         outer_remainder_records["metal"]["member_ns"]
                     )
                     / 1000.0,
+                    "cpu_product_uniskip_us": float(
+                        results["optimized"]["product_uniskip"]["components"][
+                            "member_us"
+                        ]
+                    ),
+                    "metal_product_uniskip_us": float(
+                        results["metal"]["product_uniskip"]["components"][
+                            "member_us"
+                        ]
+                    ),
                     "cpu_product_remainder_us": kernel_wall_us(
                         results["optimized"]["attribution"], PRODUCT_REMAINDER_KERNEL
                     ),
@@ -5353,6 +5648,10 @@ def main() -> int:
                         ],
                         "metal_member": results["metal"]["outer_remainder_member"],
                     },
+                    "product_uniskip": {
+                        "optimized": results["optimized"]["product_uniskip"],
+                        "metal": results["metal"]["product_uniskip"],
+                    },
                     "instruction_claim": {
                         "optimized": results["optimized"]["instruction_claim"],
                         "metal": results["metal"]["instruction_claim"],
@@ -5402,6 +5701,12 @@ def main() -> int:
                             "outer_remainder_row_lifecycle": results[backend][
                                 "outer_remainder_member"
                             ]["row_lifecycle"],
+                            "product_uniskip": results[backend]["product_uniskip"],
+                            "product_uniskip_ns": microseconds_to_nanoseconds(
+                                results[backend]["product_uniskip"]["components"][
+                                    "member_us"
+                                ]
+                            ),
                             "instruction_claim": results[backend][
                                 "instruction_claim"
                             ],
@@ -6071,6 +6376,53 @@ def main() -> int:
                 "product_remainder_local_gate": metrics[
                     "product_remainder_decision"
                 ]["clears"],
+                "product_uniskip_cpu_control": all(
+                    sample["product_uniskip"]["optimized"]["seam_counts"]
+                    == {"prepare": 2, "first_round_poly": 2}
+                    and sample["product_uniskip"]["optimized"]["metal_counts"]
+                    == {"standalone": 0, "carrier": 0}
+                    and sample["product_uniskip"]["optimized"][
+                        "resource_observation"
+                    ]
+                    is None
+                    for sample in attributions
+                ),
+                "product_uniskip_execution_path_exact": all(
+                    sample["product_uniskip"]["metal"]["seam_counts"]
+                    == {"prepare": 1, "first_round_poly": 1}
+                    and sample["product_uniskip"]["metal"]["metal_counts"]
+                    == (
+                        {"standalone": 0, "carrier": 1}
+                        if args.product_uniskip_outer_carrier
+                        else {"standalone": 1, "carrier": 0}
+                    )
+                    for sample in attributions
+                ),
+                "product_uniskip_carrier_provenance_exact": all(
+                    (
+                        sample["product_uniskip"]["metal"][
+                            "resource_observation"
+                        ]["source_rows_storage_id"]
+                        == sample["outer_remainder"]["metal_member"][
+                            "product_uniskip_carrier"
+                        ]["source_rows_storage_id"]
+                        and sample["product_uniskip"]["metal"][
+                            "resource_observation"
+                        ]["product_rows_storage_id"]
+                        == sample["instruction_claim"]["metal"][
+                            "resource_observation"
+                        ]["producer_rows_storage_id"]
+                        if args.product_uniskip_outer_carrier
+                        else sample["product_uniskip"]["metal"][
+                            "resource_observation"
+                        ]["path"]
+                        == "standalone"
+                    )
+                    for sample in attributions
+                ),
+                "outer_product_family_local_gate": metrics[
+                    "outer_product_family_decision"
+                ]["clears"],
                 "instruction_claim_cpu_control": all(
                     sample["instruction_claim"]["optimized"][
                         "resource_observation"
@@ -6190,6 +6542,25 @@ def main() -> int:
                     }
                     for sample in attributions
                 ),
+                "outer_remainder_opening_output_exact": all(
+                    sample["outer_remainder"]["metal_member"][
+                        "resource_observation"
+                    ]["output"]["readbacks"]
+                    == 1
+                    and sample["outer_remainder"]["metal_member"][
+                        "resource_observation"
+                    ]["output"]["output_elements"]
+                    == (37 if args.product_uniskip_outer_carrier else 35)
+                    and sample["outer_remainder"]["metal_member"][
+                        "resource_observation"
+                    ]["output"]["readback_bytes"]
+                    == (37 if args.product_uniskip_outer_carrier else 35) * 16
+                    and sample["outer_remainder"]["metal_member"][
+                        "resource_observation"
+                    ]["output"]["row_upload_bytes"]
+                    == 0
+                    for sample in attributions
+                ),
                 "outer_remainder_zero_member_allocations": all(
                     sample["outer_remainder"]["metal_member"][
                         "resource_observation"
@@ -6273,6 +6644,7 @@ def main() -> int:
                 "outer_remainder_metal_trace_cutoff_elements": 1
                 << args.outer_remainder_metal_trace_cutoff_log2,
                 "outer_remainder_metal_binding_plan": args.outer_remainder_metal_binding_plan,
+                "product_uniskip_outer_carrier": args.product_uniskip_outer_carrier,
                 "span": PIOP_SPAN,
                 "orders": orders,
             },

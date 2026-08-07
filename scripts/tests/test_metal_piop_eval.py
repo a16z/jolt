@@ -943,7 +943,10 @@ def complete_retained_hamming_trace(log_n: int) -> list[dict[str, object]]:
 
 
 def complete_outer_remainder_trace(
-    log_n: int, backend: str, cutoff_log2: int = 16
+    log_n: int,
+    backend: str,
+    cutoff_log2: int = 16,
+    product_uniskip_carrier: bool = False,
 ) -> list[dict[str, object]]:
     def event(
         name: str,
@@ -975,7 +978,9 @@ def complete_outer_remainder_trace(
         return events
 
     rows = 1 << log_n
-    geometry = metal_piop_eval.outer_remainder_storage_geometry(log_n)
+    geometry = metal_piop_eval.outer_remainder_storage_geometry(
+        log_n, product_uniskip_carrier
+    )
     ids = list(range(1_001, 1_010))
     storage_args: dict[str, object] = {
         "cycles": rows,
@@ -1085,12 +1090,13 @@ def complete_outer_remainder_trace(
     )
     terminal = round_starts[-1] + 250.0
     events.append(event("MetalOuterRemainder::cpu_tail", terminal, 20.0))
+    output_elements = 37 if product_uniskip_carrier else 35
     output_args = {
         "dispatch_wall_ns": 100,
         "gpu_active_ns": 80,
         "readbacks": 1,
-        "output_elements": 35,
-        "readback_bytes": 560,
+        "output_elements": output_elements,
+        "readback_bytes": output_elements * 16,
         "row_upload_bytes": 0,
     }
     release = {
@@ -1105,6 +1111,89 @@ def complete_outer_remainder_trace(
     }
     events.append(event("MetalOuterRemainder::output_claims", terminal + 30.0, 80.0, output_args))
     events.append(event("MetalOuterRemainder::row_release", terminal + 40.0, 20.0, release))
+    if product_uniskip_carrier:
+        events.append(
+            event(
+                "MetalOuterRemainder::product_uniskip_carrier_park",
+                terminal + 65.0,
+                5.0,
+                {
+                    "rows": rows,
+                    "source_rows_storage_id": handoff["compact_rows_storage_id"],
+                    "endpoint_elements": 2,
+                },
+            )
+        )
+    return events
+
+
+def complete_product_uniskip_trace(
+    log_n: int, backend: str, product_uniskip_carrier: bool
+) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    events = [
+        event("jolt_prover::piop", 0.0, 1_000.0),
+        event("SpartanProductUniskip::prepare", 100.0, 80.0),
+        event("SpartanProductUniskip::first_round_poly", 200.0, 20.0),
+    ]
+    if backend == "optimized":
+        events.extend(
+            [
+                event("SpartanProductUniskip::prepare", 105.0, 70.0),
+                event("SpartanProductUniskip::first_round_poly", 205.0, 10.0),
+            ]
+        )
+        return events
+    if product_uniskip_carrier:
+        events.append(
+            event(
+                "MetalProductUniskip::outer_opening_carrier",
+                110.0,
+                10.0,
+                {
+                    "cycles": 1 << log_n,
+                    "source_rows_storage_id": 201,
+                    "product_rows_storage_id": 401,
+                    "row_upload_bytes": 0,
+                    "dispatches": 0,
+                    "command_buffers": 0,
+                    "readback_bytes": 0,
+                },
+            )
+        )
+    else:
+        events.append(
+            event(
+                "MetalProductUniskip::prepare",
+                110.0,
+                50.0,
+                {
+                    "cycles": 1 << log_n,
+                    "resident_rows_storage_id": 401,
+                    "row_upload_bytes": 0,
+                    "round_device_buffer_allocations": 0,
+                    "dispatch_wall_ns": 40_000,
+                    "gpu_active_ns": 30_000,
+                },
+            )
+        )
     return events
 
 
@@ -1276,6 +1365,64 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(metal["metal_counts"]["cpu_tail"], 16)
         self.assertEqual(metal["outer_counts"]["host_fiat_shamir"], 27)
 
+        carrier = metal_piop_eval.outer_remainder_member_breakdown(
+            complete_outer_remainder_trace(
+                26, "metal", product_uniskip_carrier=True
+            ),
+            "metal",
+            26,
+            product_uniskip_carrier=True,
+        )
+        self.assertEqual(
+            carrier["resource_observation"]["output"]["output_elements"], 37
+        )
+        self.assertEqual(
+            carrier["product_uniskip_carrier"],
+            {
+                "rows": 1 << 26,
+                "source_rows_storage_id": 201,
+                "endpoint_elements": 2,
+            },
+        )
+
+    def test_product_uniskip_requires_exactly_one_execution_path(self) -> None:
+        optimized = metal_piop_eval.product_uniskip_observation(
+            complete_product_uniskip_trace(26, "optimized", False),
+            "optimized",
+            26,
+            False,
+        )
+        self.assertEqual(optimized["metal_counts"], {"standalone": 0, "carrier": 0})
+
+        standalone = metal_piop_eval.product_uniskip_observation(
+            complete_product_uniskip_trace(26, "metal", False),
+            "metal",
+            26,
+            False,
+        )
+        self.assertEqual(standalone["metal_counts"], {"standalone": 1, "carrier": 0})
+        self.assertEqual(standalone["resource_observation"]["dispatches"], 1)
+
+        carrier = metal_piop_eval.product_uniskip_observation(
+            complete_product_uniskip_trace(26, "metal", True),
+            "metal",
+            26,
+            True,
+        )
+        self.assertEqual(carrier["metal_counts"], {"standalone": 0, "carrier": 1})
+        self.assertEqual(carrier["resource_observation"]["dispatches"], 0)
+
+        events = complete_product_uniskip_trace(26, "metal", True)
+        events.extend(
+            event
+            for event in complete_product_uniskip_trace(26, "metal", False)
+            if event["name"] == "MetalProductUniskip::prepare"
+        )
+        with self.assertRaisesRegex(ValueError, "execution path"):
+            metal_piop_eval.product_uniskip_observation(
+                events, "metal", 26, True
+            )
+
     def test_outer_remainder_rejects_storage_identity_drift(self) -> None:
         events = complete_outer_remainder_trace(26, "metal")
         sequence = next(
@@ -1294,13 +1441,14 @@ class MetalPiopEvalTests(unittest.TestCase):
             "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff=262144 "
             "cutoff=65536 materialize_threads=256 transition_threads=128 "
             "output_threads=256 max_threadgroups=8192 binding_plan=b_only_v1 "
-            "storage_initialization=full"
+            "storage_initialization=full product_uniskip_carrier=false"
         )
         config = metal_piop_eval.validate_outer_remainder_stdout(
             stdout, "metal"
         )
         self.assertEqual(config["cutoff"], 1 << 16)
         self.assertEqual(config["binding_plan"], "b_only_v1")
+        self.assertFalse(config["product_uniskip_carrier"])
         self.assertIsNone(
             metal_piop_eval.validate_outer_remainder_stdout("", "optimized")
         )
@@ -1463,6 +1611,10 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_hamming_weight_us": 180.0,
             "cpu_hamming_weight_service_us": 990.0,
             "metal_hamming_weight_service_us": 180.0,
+            "cpu_outer_remainder_us": 600.0,
+            "metal_outer_remainder_us": 120.0,
+            "cpu_product_uniskip_us": 200.0,
+            "metal_product_uniskip_us": 10.0,
             "cpu_product_remainder_us": 400.0,
             "metal_product_remainder_us": 40.0,
             "cpu_instruction_claim_us": 300.0,
@@ -1486,12 +1638,16 @@ class MetalPiopEvalTests(unittest.TestCase):
             metrics["instruction_claim_reduction_isolated_service_speedup"], 3.75
         )
         self.assertEqual(metrics["product_instruction_claim_family_speedup"], 10.0)
+        self.assertAlmostEqual(
+            metrics["outer_product_family_speedup"], 1200.0 / 170.0
+        )
         self.assertTrue(
             metrics["instruction_claim_reduction_critical_path_decision"]["clears"]
         )
         self.assertTrue(
             metrics["product_instruction_claim_family_decision"]["clears"]
         )
+        self.assertTrue(metrics["outer_product_family_decision"]["clears"])
 
     def test_validates_target_bytecode_records(self) -> None:
         optimized = "\n".join(
