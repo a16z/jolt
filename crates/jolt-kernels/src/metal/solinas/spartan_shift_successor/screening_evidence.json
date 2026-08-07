@@ -1,0 +1,83 @@
+{
+  "schema": "spartan_shift_successor_screening_v1",
+  "schema_version": 1,
+  "evidence_stage": "analytical_design",
+  "target": {
+    "workload": "fibonacci",
+    "log_t": 26,
+    "rows": 67108864,
+    "device": "Apple M4 Max",
+    "protocol_change": false,
+    "fiat_shamir": "host"
+  },
+  "cpu_control": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260806-133709-697013/result.json",
+    "artifact_sha256": "587e00a65bde003a7c3481f58b1ea047ed2c908b0e3d9808bbc7eec6f894b2df",
+    "git_revision": "5f520c21e338632aa0bf5936ceb02be6c22fa40f",
+    "samples_ns": [131051624, 131584500, 129304918, 130343291, 134289502],
+    "median_ns": 131051624,
+    "five_x_cap_ns": 26210324,
+    "eight_x_cap_ns": 16381453
+  },
+  "rejected_predecessor": {
+    "first_use_resident_wall_median_ns": 79592083,
+    "gpu_active_median_ns": 20319875,
+    "reason": "Two fresh full-domain scans and first-consumption service cannot clear the fair member boundary."
+  },
+  "retained_roofs": {
+    "copy_bytes_per_second": 451701710520,
+    "matched_half_terms_per_second": 33168000000,
+    "half_width_promotion_floor_per_second": 26272000000,
+    "register_pressured_full_products_per_second": 18100000000
+  },
+  "selected_primary": {
+    "name": "upstream_partial_carriers_with_midpoint_upc_alias",
+    "prefix_elements": 8192,
+    "suffix_elements": 8192,
+    "gross_half_width_terms": 335527936,
+    "incremental_half_width_terms": 201326592,
+    "full_products": 352213,
+    "logical_device_bytes": 2763915264,
+    "compact_projection_write_bytes": 1098907648,
+    "host_handoff_bytes": 1179648,
+    "matched_compute_floor_ns": 10116014,
+    "logical_traffic_floor_ns": 6118895,
+    "projection_write_floor_ns": 2432818,
+    "nonoverlapped_projection_plus_compute_floor_ns": 12548832
+  },
+  "rejected_source_plans": {
+    "fresh_fused_outer": {
+      "compulsory_bytes": 11873943552,
+      "copy_floor_ns": 26287135,
+      "clears_five_x_before_host_work": false
+    },
+    "fresh_split_outer": {
+      "compulsory_bytes": 15095169024,
+      "copy_floor_ns": 33418446,
+      "clears_five_x_before_host_work": false
+    }
+  },
+  "phase_bars": {
+    "upstream_projection_wall_delta_ns": 1000000,
+    "outer_carrier_active_ns": 10200000,
+    "product_carrier_incremental_wall_ns": 500000,
+    "midpoint_active_ns": 2600000,
+    "host_work_ns": 2500000,
+    "complete_five_x_ns": 26210324,
+    "complete_eight_x_ns": 16381453
+  },
+  "verdict": {
+    "status": "admit_only_with_upstream_co_materialization",
+    "five_x_credible": true,
+    "eight_x_credible": true,
+    "reason": "A fresh source scan is analytically impossible at 5x. Co-materialized compact carriers reduce the stage-owned work to one residual PC/flag fold; 8x remains credible only near the matched arithmetic rate with a small upstream projection regression and an exact InstructionInput UPC midpoint alias.",
+    "promotion_blockers": [
+      "stage-1 and stage-2 carrier production",
+      "certified noop projection",
+      "InstructionInput midpoint UPC table handoff",
+      "generated stage-3 midpoint hook",
+      "compiled occupancy and spill evidence",
+      "fresh alternating complete-member and PIOP measurements"
+    ]
+  }
+}
