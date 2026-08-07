@@ -17,6 +17,7 @@ mod change_divisor_w;
 mod div_by_zero;
 mod eq;
 mod gt;
+mod lane_mask;
 mod left_is_zero;
 mod left_shift;
 mod left_shift_w;
@@ -42,6 +43,7 @@ mod right_shift_w_helper;
 mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
+mod three_lsb;
 mod two_lsb;
 mod upper_word;
 mod xor;
@@ -55,6 +57,7 @@ use change_divisor_w::ChangeDivisorWSuffix;
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;
+use lane_mask::LaneMaskSuffix;
 use left_is_zero::LeftOperandIsZeroSuffix;
 use left_shift::LeftShiftSuffix;
 use left_shift_w::LeftShiftWSuffix;
@@ -80,6 +83,7 @@ use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use three_lsb::ThreeLsbSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
@@ -148,6 +152,11 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    ThreeLsb,
+    LaneMaskB,
+    LaneMaskH,
+    LaneMaskW,
+    Pow2Lane,
 }
 
 /// Total number of suffix variants.
@@ -223,6 +232,11 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::ThreeLsb => ThreeLsbSuffix::suffix_mle(b),
+            Suffixes::LaneMaskB => LaneMaskSuffix::<1>::suffix_mle(b),
+            Suffixes::LaneMaskH => LaneMaskSuffix::<2>::suffix_mle(b),
+            Suffixes::LaneMaskW => LaneMaskSuffix::<4>::suffix_mle(b),
+            Suffixes::Pow2Lane => LaneMaskSuffix::<0>::suffix_mle(b),
         }
     }
 

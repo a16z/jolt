@@ -156,6 +156,11 @@ macro_rules! for_each_instruction_kind {
                 VirtualXORROTW12 => VirtualXorRotW12 => "jolt.virtual.xorrotw12",
                 VirtualXORROTW8 => VirtualXorRotW8 => "jolt.virtual.xorrotw8",
                 VirtualXORROTW7 => VirtualXorRotW7 => "jolt.virtual.xorrotw7",
+                VirtualAlignAddr => VirtualAlignAddr => "jolt.virtual.align_addr",
+                VirtualLaneMaskB => VirtualLaneMaskB => "jolt.virtual.lane_mask_b",
+                VirtualLaneMaskH => VirtualLaneMaskH => "jolt.virtual.lane_mask_h",
+                VirtualLaneMaskW => VirtualLaneMaskW => "jolt.virtual.lane_mask_w",
+                VirtualPow2Lane => VirtualPow2Lane => "jolt.virtual.pow2_lane",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -249,6 +254,11 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualXORROTW12 => VirtualXorRotW12 => (0x0086, "jolt.virtual.xorrotw12"),
                 VirtualXORROTW8 => VirtualXorRotW8 => (0x0087, "jolt.virtual.xorrotw8"),
                 VirtualXORROTW7 => VirtualXorRotW7 => (0x0088, "jolt.virtual.xorrotw7"),
+                VirtualAlignAddr => VirtualAlignAddr => (0x0089, "jolt.virtual.align_addr"),
+                VirtualLaneMaskB => VirtualLaneMaskB => (0x008a, "jolt.virtual.lane_mask_b"),
+                VirtualLaneMaskH => VirtualLaneMaskH => (0x008b, "jolt.virtual.lane_mask_h"),
+                VirtualLaneMaskW => VirtualLaneMaskW => (0x008c, "jolt.virtual.lane_mask_w"),
+                VirtualPow2Lane => VirtualPow2Lane => (0x008d, "jolt.virtual.pow2_lane"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

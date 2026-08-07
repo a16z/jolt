@@ -29,6 +29,7 @@ use change_divisor::ChangeDivisorPrefix;
 use change_divisor_w::ChangeDivisorWPrefix;
 use div_by_zero::DivByZeroPrefix;
 use eq::EqPrefix;
+use lane_mask::LaneMaskPrefix;
 use left_is_zero::LeftOperandIsZeroPrefix;
 use left_msb::LeftMsbPrefix;
 use left_shift::LeftShiftPrefix;
@@ -45,6 +46,7 @@ use right_is_zero::RightOperandIsZeroPrefix;
 use right_msb::RightMsbPrefix;
 use right_operand::RightOperandPrefix;
 use right_operand_w::RightOperandWPrefix;
+use three_lsb::ThreeLsbPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
 use xor::XorPrefix;
@@ -57,6 +59,7 @@ pub mod change_divisor;
 pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
+pub mod lane_mask;
 pub mod left_is_zero;
 pub mod left_msb;
 pub mod left_shift;
@@ -86,6 +89,7 @@ pub mod right_shift_w;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod three_lsb;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
@@ -185,6 +189,11 @@ pub enum Prefixes {
     XorRotW8,
     XorRotW12,
     XorRotW16,
+    ThreeLsb,
+    LaneMaskB,
+    LaneMaskH,
+    LaneMaskW,
+    Pow2Lane,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -332,6 +341,11 @@ impl Prefixes {
             Prefixes::OverflowBitsZero => {
                 OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
+            Prefixes::ThreeLsb => ThreeLsbPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::LaneMaskB => LaneMaskPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::LaneMaskH => LaneMaskPrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::LaneMaskW => LaneMaskPrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2Lane => LaneMaskPrefix::<XLEN, 0>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -657,6 +671,41 @@ impl Prefixes {
                 suffix_len,
             ),
             Prefixes::OverflowBitsZero => OverflowBitsZeroPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ThreeLsb => ThreeLsbPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::LaneMaskB => LaneMaskPrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::LaneMaskH => LaneMaskPrefix::<XLEN, 2>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::LaneMaskW => LaneMaskPrefix::<XLEN, 4>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::Pow2Lane => LaneMaskPrefix::<XLEN, 0>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
                 r_y,

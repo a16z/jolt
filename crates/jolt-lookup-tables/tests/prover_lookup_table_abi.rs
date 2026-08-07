@@ -213,6 +213,26 @@ fn modular_lookup_table_indices_match_prover_abi() {
                 Default::default(),
             )),
         ),
+        (
+            LookupTableKind::<XLEN>::AlignAddr(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::AlignAddr(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::LaneMaskB(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::LaneMaskB(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::LaneMaskH(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::LaneMaskH(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::LaneMaskW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::LaneMaskW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::Pow2Lane(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::Pow2Lane(Default::default())),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());

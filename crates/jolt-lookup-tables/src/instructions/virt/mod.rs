@@ -13,6 +13,7 @@ pub mod assert_word_alignment;
 pub mod change_divisor;
 pub mod change_divisor_w;
 pub mod host_io;
+pub mod lane;
 pub mod movsign;
 pub mod muli;
 pub mod pow2;

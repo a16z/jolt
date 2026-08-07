@@ -115,9 +115,14 @@ pub use virt::Pow2W;
 pub use virt::VirtualAdvice;
 pub use virt::VirtualAdviceLen;
 pub use virt::VirtualAdviceLoad;
+pub use virt::VirtualAlignAddr;
 pub use virt::VirtualChangeDivisor;
 pub use virt::VirtualChangeDivisorW;
 pub use virt::VirtualHostIO;
+pub use virt::VirtualLaneMaskB;
+pub use virt::VirtualLaneMaskH;
+pub use virt::VirtualLaneMaskW;
+pub use virt::VirtualPow2Lane;
 pub use virt::VirtualRev8W;
 pub use virt::VirtualRotri;
 pub use virt::VirtualRotriw;
@@ -402,6 +407,11 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
+    VirtualAlignAddr(VirtualAlignAddr<T>),
+    VirtualLaneMaskB(VirtualLaneMaskB<T>),
+    VirtualLaneMaskH(VirtualLaneMaskH<T>),
+    VirtualLaneMaskW(VirtualLaneMaskW<T>),
+    VirtualPow2Lane(VirtualPow2Lane<T>),
     #[cfg(feature = "field-inline")]
     FieldAdd(FieldAdd<T>),
     #[cfg(feature = "field-inline")]
@@ -604,6 +614,11 @@ impl_jolt_instructions_flags! {
     VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,
     VirtualHostIO => VirtualHostIO,
+    VirtualAlignAddr => VirtualAlignAddr,
+    VirtualLaneMaskB => VirtualLaneMaskB,
+    VirtualLaneMaskH => VirtualLaneMaskH,
+    VirtualLaneMaskW => VirtualLaneMaskW,
+    VirtualPow2Lane => VirtualPow2Lane,
     #[cfg(feature = "field-inline")]
     FieldAdd => FIELD_ADD,
     #[cfg(feature = "field-inline")]

@@ -10,6 +10,7 @@ use crate::{field::JoltField, utils::lookup_bits::LookupBits};
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;
+use lane_mask::LaneMaskSuffix;
 use left_is_zero::LeftOperandIsZeroSuffix;
 use lsb::LsbSuffix;
 use lt::LessThanSuffix;
@@ -34,6 +35,7 @@ use lower_word::LowerWordSuffix;
 use notand::NotAndSuffix;
 use one::OneSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
+use three_lsb::ThreeLsbSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 use xor::XorSuffix;
@@ -46,6 +48,7 @@ pub mod change_divisor_w;
 pub mod div_by_zero;
 pub mod eq;
 pub mod gt;
+pub mod lane_mask;
 pub mod left_is_zero;
 pub mod left_shift;
 pub mod left_shift_w;
@@ -72,6 +75,7 @@ pub mod right_shift_w_helper;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
+pub mod three_lsb;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod xor;
@@ -131,6 +135,11 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    ThreeLsb,
+    LaneMaskB,
+    LaneMaskH,
+    LaneMaskW,
+    Pow2Lane,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -208,6 +217,11 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::ThreeLsb => ThreeLsbSuffix::suffix_mle(b),
+            Suffixes::LaneMaskB => LaneMaskSuffix::<1>::suffix_mle(b),
+            Suffixes::LaneMaskH => LaneMaskSuffix::<2>::suffix_mle(b),
+            Suffixes::LaneMaskW => LaneMaskSuffix::<4>::suffix_mle(b),
+            Suffixes::Pow2Lane => LaneMaskSuffix::<0>::suffix_mle(b),
         }
     }
 }
