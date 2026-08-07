@@ -381,6 +381,13 @@ impl RamBlockTopology {
         self.levels.len()
     }
 
+    pub(crate) fn owned_heap_bytes(&self) -> usize {
+        std::mem::size_of_val(self.leaf_cycles.as_ref())
+            + std::mem::size_of_val(self.merges.as_ref())
+            + std::mem::size_of_val(self.levels.as_ref())
+            + std::mem::size_of_val(self.census.as_ref())
+    }
+
     pub(crate) fn build(
         log_t: usize,
         records: &[RamAccessRecord],

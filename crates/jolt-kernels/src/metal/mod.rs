@@ -11,6 +11,7 @@ mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
 mod ram_cycle_family;
+mod ram_hamming_booleanity;
 mod ram_ra_claim_reduction;
 mod ram_ra_virtualization;
 mod ram_raf_evaluation;
@@ -41,8 +42,9 @@ pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
 pub use instruction_read_raf::{
     InstructionReadRafAddressImplementation, InstructionReadRafMetalConfig,
 };
-pub use ram_raf_evaluation::RamRafEvaluationMetalConfig;
+pub use ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
 pub use ram_ra_virtualization::RamRaVirtualizationMetalConfig;
+pub use ram_raf_evaluation::RamRafEvaluationMetalConfig;
 pub use ram_val_check::RamValCheckMetalConfig;
 pub use registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,

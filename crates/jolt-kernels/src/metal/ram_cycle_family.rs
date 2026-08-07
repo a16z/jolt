@@ -50,7 +50,7 @@ pub(super) fn shared_ram_cycle_family_owner(
             .ok_or(KernelError::InvariantViolation {
                 reason: "RAM access collection did not publish its retained tape",
             })?;
-        if tape.validate(log_t, address_domain).is_err() {
+        if tape.validate(log_t, address_domain).is_err() || !tape.hamming_exact() {
             return Ok(None);
         }
         let Some(records) = tape.records() else {

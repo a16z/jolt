@@ -79,6 +79,7 @@ struct CollectRamAccessColumns {
     access_records: Option<Vec<RamAccessRecord>>,
     increment_compatible: bool,
     ram_ra_compatible: bool,
+    hamming_exact: bool,
     address_error: Option<AddressEncodingError>,
 }
 
@@ -103,6 +104,7 @@ impl StreamConsumer for CollectRamAccessColumns {
             self.increment_compatible &=
                 bundle.ram_inc.0 == delta && (address != NO_ACCESS || bundle.ram_inc.0 == 0);
             self.ram_ra_compatible &= !(bundle.ram_hamming_weight.0 && address == NO_ACCESS);
+            self.hamming_exact &= bundle.ram_hamming_weight.0 == (address != NO_ACCESS);
             if address != NO_ACCESS {
                 self.access_count += 1;
                 if self
@@ -143,6 +145,7 @@ struct SparseChunk {
     activity_records: Vec<(u64, i128)>,
     increment_compatible: bool,
     ram_ra_compatible: bool,
+    hamming_exact: bool,
 }
 
 /// Column-major per-cycle RAM access data over the full padded cycle domain.
@@ -267,6 +270,7 @@ impl RamAccessColumns {
             access_records: Some(Vec::new()),
             increment_compatible: true,
             ram_ra_compatible: true,
+            hamming_exact: true,
             address_error: None,
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
@@ -292,6 +296,7 @@ impl RamAccessColumns {
                 collected.access_records,
                 collected.increment_compatible,
                 collected.ram_ra_compatible,
+                collected.hamming_exact,
             ),
         ))
     }
@@ -326,6 +331,7 @@ impl RamAccessColumns {
                 let mut access_records = Vec::new();
                 let mut increment_compatible = true;
                 let mut ram_ra_compatible = true;
+                let mut hamming_exact = true;
                 for offset in 0..addresses.len() {
                     let bundle = match access.window::<RamAccessBundle>(base + offset) {
                         Ok(bundle) => bundle,
@@ -356,6 +362,7 @@ impl RamAccessColumns {
                     increment_compatible &= bundle.ram_inc.0 == delta
                         && (address != NO_ACCESS || bundle.ram_inc.0 == 0);
                     ram_ra_compatible &= !(bundle.ram_hamming_weight.0 && address == NO_ACCESS);
+                    hamming_exact &= bundle.ram_hamming_weight.0 == (address != NO_ACCESS);
                     if address != NO_ACCESS {
                         let cycle = if let Ok(cycle) = u32::try_from(cycle) {
                             cycle
@@ -388,6 +395,7 @@ impl RamAccessColumns {
                     activity_records: activity,
                     increment_compatible,
                     ram_ra_compatible,
+                    hamming_exact,
                 });
             });
         #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
@@ -410,6 +418,7 @@ impl RamAccessColumns {
         let mut activity_records = Vec::new();
         let mut increment_compatible = true;
         let mut ram_ra_compatible = true;
+        let mut hamming_exact = true;
         for chunk in sparse_chunks.drain(..) {
             let Some(chunk) = chunk.into_inner() else {
                 return Err(KernelError::InvariantViolation {
@@ -418,6 +427,7 @@ impl RamAccessColumns {
             };
             increment_compatible &= chunk.increment_compatible;
             ram_ra_compatible &= chunk.ram_ra_compatible;
+            hamming_exact &= chunk.hamming_exact;
             activity_records.extend(chunk.activity_records);
             if let Some(records) = &mut retained_records {
                 records.extend(chunk.access_records);
@@ -437,6 +447,7 @@ impl RamAccessColumns {
                 retained_records,
                 increment_compatible,
                 ram_ra_compatible,
+                hamming_exact,
             ),
         ))
     }
@@ -578,6 +589,7 @@ mod tests {
             access_records: Some(Vec::new()),
             increment_compatible: true,
             ram_ra_compatible: true,
+            hamming_exact: true,
             address_error: None,
         }
     }
@@ -614,6 +626,7 @@ mod tests {
         let mut raw_zero = collector();
         raw_zero.consume(&[bundle(None, 2, 9, 7, false)]);
         assert!(raw_zero.ram_ra_compatible);
+        assert!(raw_zero.hamming_exact);
         assert!(!raw_zero.increment_compatible);
         assert_eq!(raw_zero.access_count, 0);
         assert_eq!(raw_zero.ram_increment_cycles, vec![0]);
@@ -622,13 +635,20 @@ mod tests {
         let mut failed_remap = collector();
         failed_remap.consume(&[bundle(None, 4, 4, 0, true)]);
         assert!(!failed_remap.ram_ra_compatible);
+        assert!(!failed_remap.hamming_exact);
         assert!(failed_remap.increment_compatible);
 
         let mut mapped_zero = collector();
         mapped_zero.consume(&[bundle(Some(0), 5, 5, 0, true)]);
         assert!(mapped_zero.ram_ra_compatible);
+        assert!(mapped_zero.hamming_exact);
         assert!(mapped_zero.increment_compatible);
         assert_eq!(mapped_zero.access_records.unwrap()[0].address, 0);
+
+        let mut missing_hamming = collector();
+        missing_hamming.consume(&[bundle(Some(0), 5, 5, 0, false)]);
+        assert!(missing_hamming.ram_ra_compatible);
+        assert!(!missing_hamming.hamming_exact);
     }
 
     #[test]

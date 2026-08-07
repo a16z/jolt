@@ -22,6 +22,7 @@ pub(crate) struct RamAccessTape {
     records: Option<Vec<RamAccessRecord>>,
     increment_compatible: bool,
     ram_ra_compatible: bool,
+    hamming_exact: bool,
 }
 
 impl RamAccessTape {
@@ -31,6 +32,7 @@ impl RamAccessTape {
         records: Option<Vec<RamAccessRecord>>,
         increment_compatible: bool,
         ram_ra_compatible: bool,
+        hamming_exact: bool,
     ) -> Self {
         Self {
             log_t,
@@ -38,6 +40,7 @@ impl RamAccessTape {
             records,
             increment_compatible,
             ram_ra_compatible,
+            hamming_exact,
         }
     }
 
@@ -55,6 +58,10 @@ impl RamAccessTape {
 
     pub(crate) const fn ram_ra_compatible(&self) -> bool {
         self.ram_ra_compatible
+    }
+
+    pub(crate) const fn hamming_exact(&self) -> bool {
+        self.hamming_exact
     }
 
     pub(crate) fn validate(
@@ -348,7 +355,8 @@ mod tests {
             vec![record(3, 0), record(4, 7)],
         ];
         for records in fixtures {
-            let tape = RamAccessTape::new(3, records.len(), Some(records.clone()), true, true);
+            let tape =
+                RamAccessTape::new(3, records.len(), Some(records.clone()), true, true, true);
             for width in [1, 2, 3, 32] {
                 assert_eq!(
                     tape.census(3, 8, width).unwrap().unwrap(),
@@ -366,44 +374,57 @@ mod tests {
             Some(vec![record(u32::MAX, u32::MAX - 1)]),
             true,
             true,
+            true,
         );
         assert!(max.validate(32, u32::MAX as usize).is_ok());
 
-        let unordered =
-            RamAccessTape::new(3, 2, Some(vec![record(2, 0), record(1, 0)]), true, true);
+        let unordered = RamAccessTape::new(
+            3,
+            2,
+            Some(vec![record(2, 0), record(1, 0)]),
+            true,
+            true,
+            true,
+        );
         assert_eq!(
             unordered.validate(3, 1),
             Err(RamAccessTapeError::RecordsOutOfOrder)
         );
-        let duplicate =
-            RamAccessTape::new(3, 2, Some(vec![record(1, 0), record(1, 1)]), true, true);
+        let duplicate = RamAccessTape::new(
+            3,
+            2,
+            Some(vec![record(1, 0), record(1, 1)]),
+            true,
+            true,
+            true,
+        );
         assert_eq!(
             duplicate.validate(3, 2),
             Err(RamAccessTapeError::RecordsOutOfOrder)
         );
-        let bad_cycle = RamAccessTape::new(2, 1, Some(vec![record(4, 0)]), true, true);
+        let bad_cycle = RamAccessTape::new(2, 1, Some(vec![record(4, 0)]), true, true, true);
         assert_eq!(
             bad_cycle.validate(2, 1),
             Err(RamAccessTapeError::CycleOutOfRange)
         );
-        let bad_address = RamAccessTape::new(2, 1, Some(vec![record(0, 2)]), true, true);
+        let bad_address = RamAccessTape::new(2, 1, Some(vec![record(0, 2)]), true, true, true);
         assert_eq!(
             bad_address.validate(2, 2),
             Err(RamAccessTapeError::AddressOutOfRange)
         );
-        let sentinel = RamAccessTape::new(2, 1, Some(vec![record(0, u32::MAX)]), true, true);
+        let sentinel = RamAccessTape::new(2, 1, Some(vec![record(0, u32::MAX)]), true, true, true);
         assert_eq!(
             sentinel.validate(2, 1usize << 32),
             Err(RamAccessTapeError::ReservedAddress)
         );
-        let dense = RamAccessTape::new(26, 1 << 20, None, false, true);
+        let dense = RamAccessTape::new(26, 1 << 20, None, false, true, true);
         assert_eq!(dense.census(26, 1 << 13, 256).unwrap(), None);
         assert_eq!(
             dense.census(26, 1 << 13, 0),
             Err(RamAccessTapeError::ZeroThreadgroupWidth)
         );
 
-        let invalid_remap = RamAccessTape::new(3, 0, Some(vec![]), true, false);
+        let invalid_remap = RamAccessTape::new(3, 0, Some(vec![]), true, false, true);
         assert_eq!(
             invalid_remap.validate(3, 8),
             Err(RamAccessTapeError::UnremappableAccess)
