@@ -5,6 +5,11 @@ mod bcsr_runtime;
 mod resident_bcsr;
 mod runtime;
 
+#[cfg(feature = "test-utils")]
+pub use bcsr_runtime::{
+    RegistersClaimBcsrBenchmarkError, RegistersClaimBcsrBenchmarkInvocation,
+    RegistersClaimBcsrBenchmarkObservation,
+};
 pub use resident_bcsr::*;
 pub use runtime::*;
 

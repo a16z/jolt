@@ -2,11 +2,11 @@ use core::mem::{align_of, size_of};
 
 use jolt_field::AkitaField;
 
-use super::*;
 use super::super::registers_read_write_v3::{
     RegisterBcsr256, RegisterRead, RegisterRow, RegisterWrite, REGISTER_CSR_COLUMNS,
 };
 use super::bcsr_runtime::RegistersClaimBcsrRuntimeError;
+use super::*;
 
 fn field(value: u64) -> AkitaField {
     AkitaField::from_u64(value)
@@ -98,6 +98,18 @@ fn dense_planes_from_rows(rows: &[RegisterRow]) -> (Vec<u64>, Vec<u64>, Vec<u64>
     (rd, rs1, rs2)
 }
 
+fn read_index_planes_from_rows(rows: &[RegisterRow]) -> (Vec<u8>, Vec<u8>) {
+    let rs1 = rows
+        .iter()
+        .map(|row| row.rs1().map_or(u8::MAX, |read| read.register()))
+        .collect();
+    let rs2 = rows
+        .iter()
+        .map(|row| row.rs2().map_or(u8::MAX, |read| read.register()))
+        .collect();
+    (rs1, rs2)
+}
+
 fn challenge_point(log_t: usize) -> Vec<AkitaField> {
     let minus_one = -field(1);
     (0..log_t)
@@ -145,6 +157,8 @@ fn resident_bcsr_log26_contract_is_exact() {
     assert_eq!(size_of::<RegistersClaimBcsrMidpointParams>(), 32);
     assert_eq!(BCSR_COMPONENT_REPLAY_BYTES, 6_144);
     assert_eq!(BCSR_COMPONENT_THREADGROUP_BYTES, 6_160);
+    assert_eq!(BCSR_INDEXED_EVENT_BYTES, 512);
+    assert_eq!(BCSR_INDEXED_THREADGROUP_BYTES, 528);
     assert_eq!(BCSR_COMPONENT_THREADGROUPS, 8_192);
     assert_eq!(BCSR_COMPONENT_REDUCE_THREADGROUPS, 96);
     assert_eq!(BCSR_MIDPOINT_THREADGROUPS, 8_192);
@@ -195,8 +209,10 @@ fn linear_q_abi_and_slots_are_fixed() {
     assert!(SOURCE.contains("kernel void solinas_registers_claim_build_linear_q_canonical"));
     assert!(SOURCE.contains("kernel void solinas_registers_claim_fold_direct"));
     assert!(BCSR_SOURCE.contains("kernel void solinas_registers_claim_bcsr_components"));
+    assert!(BCSR_SOURCE.contains("kernel void solinas_registers_claim_bcsr_indexed_components"));
     assert!(BCSR_SOURCE.contains("kernel void solinas_registers_claim_bcsr_reduce_components"));
     assert!(BCSR_SOURCE.contains("RegistersClaimBcsrWorkspace"));
+    assert!(BCSR_SOURCE.contains("RegistersClaimBcsrIndexedWorkspace"));
 }
 
 #[test]
@@ -408,21 +424,82 @@ fn metal_bcsr_components_match_dense_factorization() {
         context.prepare_registers_claim_bcsr_components(
             &bcsr,
             &tau,
-            RegistersClaimBcsrKernelConfig { partial_blocks: 3 },
+            RegistersClaimBcsrKernelConfig {
+                partial_blocks: 3,
+                ..RegistersClaimBcsrKernelConfig::default()
+            },
         ),
         Err(RegistersClaimBcsrRuntimeError::InvalidState(_))
     ));
 
-    for partial_blocks in [8, 32, 64, 128, 256] {
+    let (rs1_index, rs2_index) = read_index_planes_from_rows(&rows);
+    for replay in [
+        RegistersClaimBcsrReplayStrategy::ColumnReplay,
+        RegistersClaimBcsrReplayStrategy::IndexedPredecessor,
+    ] {
+        for partial_blocks in [8, 32, 64, 128, 256] {
+            let config = RegistersClaimBcsrKernelConfig {
+                partial_blocks,
+                replay,
+            };
+            let invocation = match replay {
+                RegistersClaimBcsrReplayStrategy::ColumnReplay => context
+                    .prepare_registers_claim_bcsr_components(&bcsr, &tau, config)
+                    .unwrap(),
+                RegistersClaimBcsrReplayStrategy::IndexedPredecessor => context
+                    .prepare_registers_claim_bcsr_indexed_components(
+                        &bcsr, &rs1_index, &rs2_index, &tau, config,
+                    )
+                    .unwrap(),
+            };
+            let observation = invocation.execute_timed().unwrap();
+            assert_eq!(observation.components, expected);
+            assert_eq!(observation.dispatches, 2);
+        }
+    }
+}
+
+#[test]
+fn synthetic_bcsr_benchmark_preserves_the_checked_boundary() {
+    let context = match super::super::SolinasMetal::for_akita() {
+        Ok(context) => context,
+        Err(super::super::MetalError::DeviceUnavailable) => return,
+        Err(error) => panic!("Akita Metal library failed to compile: {error:?}"),
+    };
+    let cycles = 1usize << 16;
+    let tau = bcsr_challenge_point(cycles.trailing_zeros() as usize);
+    let mut expected_checksum = None;
+    for (replay, source_bytes) in [
+        (RegistersClaimBcsrReplayStrategy::ColumnReplay, 1_181_184),
+        (
+            RegistersClaimBcsrReplayStrategy::IndexedPredecessor,
+            1_049_088,
+        ),
+    ] {
         let invocation = context
-            .prepare_registers_claim_bcsr_components(
-                &bcsr,
+            .prepare_registers_claim_bcsr_benchmark(
+                cycles,
                 &tau,
-                RegistersClaimBcsrKernelConfig { partial_blocks },
+                RegistersClaimBcsrKernelConfig {
+                    partial_blocks: 8,
+                    replay,
+                },
             )
             .unwrap();
-        let observation = invocation.execute_timed().unwrap();
-        assert_eq!(observation.components, expected);
-        assert_eq!(observation.dispatches, 2);
+        let cold = invocation.execute_timed().unwrap();
+        let warm = invocation.execute_timed().unwrap();
+        assert_eq!(cold.checksum, warm.checksum);
+        if let Some(expected_checksum) = expected_checksum {
+            assert_eq!(warm.checksum, expected_checksum);
+        } else {
+            expected_checksum = Some(warm.checksum);
+        }
+        assert_eq!(warm.event_counts, [58_368, 54_528, 49_152]);
+        assert_eq!(warm.dispatches, 2);
+        assert_eq!(warm.partial_blocks, 8);
+        assert_eq!(warm.replay, replay);
+        assert_eq!(warm.component_threadgroups, 8);
+        assert_eq!(warm.source_bytes, source_bytes);
+        assert_eq!(warm.partial_bytes, 98_304);
     }
 }

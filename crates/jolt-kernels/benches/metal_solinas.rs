@@ -188,6 +188,9 @@ mod macos {
                 "registers-claim-linear-q" => {
                     registers_claim_reduction::bench(c, &context);
                 }
+                "registers-claim-bcsr-components" => {
+                    registers_claim_reduction::bench_bcsr(c, &context);
+                }
                 "registers-read-write-dense-round" => {
                     registers_read_write_dense::bench(c, &context);
                 }

@@ -4,13 +4,106 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use jolt_field::AkitaField;
 use jolt_kernels::metal::solinas::{
     registers_claim_reduction::{
-        RegistersClaimAccumulator, RegistersClaimKernelConfig, RegistersClaimLinearQInvocation,
-        RegistersClaimRoofRates, REGISTERS_CLAIM_FIVE_X_GATE_NS,
+        RegistersClaimAccumulator, RegistersClaimBcsrKernelConfig,
+        RegistersClaimBcsrReplayStrategy, RegistersClaimKernelConfig,
+        RegistersClaimLinearQInvocation, RegistersClaimRoofRates, REGISTERS_CLAIM_FIVE_X_GATE_NS,
     },
     SolinasMetal,
 };
 
 const DEFAULT_TRACE_ELEMENTS: usize = 1 << 26;
+
+pub fn bench_bcsr(c: &mut Criterion, context: &SolinasMetal) {
+    let elements = trace_elements();
+    assert!(
+        elements >= 1 << 16,
+        "registers claim BCSR benchmark requires at least 2^16 rows"
+    );
+    let partial_blocks = setting("JOLT_METAL_REGISTERS_CLAIM_BCSR_PARTIALS", 128) as usize;
+    let replay = bcsr_replay();
+    let tau = (0..elements.trailing_zeros() as usize)
+        .map(|index| AkitaField::from_u64(0x1_0000_01b3_u64.wrapping_mul(index as u64 + 1)))
+        .collect::<Vec<_>>();
+    let invocation = context
+        .prepare_registers_claim_bcsr_benchmark(
+            elements,
+            &tau,
+            RegistersClaimBcsrKernelConfig {
+                partial_blocks,
+                replay,
+            },
+        )
+        .expect("registers claim synthetic BCSR invocation should prepare");
+    let cold = invocation
+        .execute_timed()
+        .expect("registers claim BCSR cold execution should complete");
+    let warm = invocation
+        .execute_timed()
+        .expect("registers claim BCSR warm execution should complete");
+    assert_eq!(cold.checksum, warm.checksum);
+    assert_eq!(warm.dispatches, 2);
+    let useful_events = warm.event_counts.into_iter().sum::<u64>();
+    eprintln!(
+        "registers-claim-bcsr-components n={elements} replay={} partials={} groups={} source-bytes={} \
+         partial-bytes={} events={:?} setup-ms={:.3} cold-active-ms={:.3} \
+         warm-active-ms={:.3} warm-wall-ms={:.3} five-x-member-gate-ms={:.3}",
+        warm.replay.name(),
+        warm.partial_blocks,
+        warm.component_threadgroups,
+        warm.source_bytes,
+        warm.partial_bytes,
+        warm.event_counts,
+        warm.setup_wall.as_secs_f64() * 1e3,
+        cold.gpu_active.as_secs_f64() * 1e3,
+        warm.gpu_active.as_secs_f64() * 1e3,
+        warm.resident_wall.as_secs_f64() * 1e3,
+        REGISTERS_CLAIM_FIVE_X_GATE_NS as f64 / 1e6,
+    );
+
+    let suffix = format!(
+        "n{elements}_{}_partials{partial_blocks}",
+        warm.replay.name()
+    );
+    let mut group = c.benchmark_group("metal_sumcheck/registers_claim_bcsr_components");
+    let _ = group
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(setting(
+            "JOLT_METAL_REGISTERS_CLAIM_WARMUP_MS",
+            200,
+        )))
+        .measurement_time(Duration::from_millis(setting(
+            "JOLT_METAL_REGISTERS_CLAIM_MEASUREMENT_MS",
+            1_000,
+        )))
+        .throughput(Throughput::Elements(useful_events));
+    let _ = group.bench_function(BenchmarkId::new("resident_active", &suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut active = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = invocation
+                    .execute_timed()
+                    .expect("timed registers claim BCSR execution should complete");
+                let _ = black_box(observation.checksum);
+                active += observation.gpu_active;
+            }
+            active
+        });
+    });
+    let _ = group.bench_function(BenchmarkId::new("resident_wall", &suffix), |bench| {
+        bench.iter_custom(|iterations| {
+            let mut wall = Duration::ZERO;
+            for _ in 0..iterations {
+                let observation = invocation
+                    .execute_timed()
+                    .expect("timed registers claim BCSR execution should complete");
+                let _ = black_box(observation.checksum);
+                wall += observation.resident_wall;
+            }
+            wall
+        });
+    });
+    group.finish();
+}
 
 pub fn bench(c: &mut Criterion, context: &SolinasMetal) {
     let elements = trace_elements();
@@ -263,6 +356,16 @@ fn accumulator() -> RegistersClaimAccumulator {
         Ok("canonical128") | Err(_) => RegistersClaimAccumulator::Canonical128,
         Ok(value) => panic!(
             "JOLT_METAL_REGISTERS_CLAIM_ACCUMULATOR must be `deferred224` or `canonical128`, got `{value}`"
+        ),
+    }
+}
+
+fn bcsr_replay() -> RegistersClaimBcsrReplayStrategy {
+    match env::var("JOLT_METAL_REGISTERS_CLAIM_BCSR_REPLAY").as_deref() {
+        Ok("column") => RegistersClaimBcsrReplayStrategy::ColumnReplay,
+        Ok("indexed") | Err(_) => RegistersClaimBcsrReplayStrategy::IndexedPredecessor,
+        Ok(value) => panic!(
+            "JOLT_METAL_REGISTERS_CLAIM_BCSR_REPLAY must be `column` or `indexed`, got `{value}`"
         ),
     }
 }

@@ -22,6 +22,7 @@ pub const REGISTERS_CLAIM_BCSR_HALF_WIDTH_TERMS_PER_SECOND: u64 = 33_168_000_000
 pub const REGISTERS_CLAIM_BCSR_TRAFFIC_BYTES_PER_SECOND: u64 = 451_701_710_520;
 
 pub const BCSR_COMPONENT_PIPELINE: &str = "solinas_registers_claim_bcsr_components";
+pub const BCSR_INDEXED_COMPONENT_PIPELINE: &str = "solinas_registers_claim_bcsr_indexed_components";
 pub const BCSR_COMPONENT_REDUCE_PIPELINE: &str = "solinas_registers_claim_bcsr_reduce_components";
 pub const BCSR_MIDPOINT_PIPELINE: &str = "solinas_registers_claim_bcsr_fold_rd_midpoint";
 
@@ -31,20 +32,54 @@ pub const BCSR_COMPONENT_REPLAY_BYTES: u64 = 3 * 256 * size_of::<u64>() as u64;
 pub const BCSR_COMPONENT_WEIGHT_THREADGROUP_BYTES: u64 = 16;
 pub const BCSR_COMPONENT_THREADGROUP_BYTES: u64 =
     BCSR_COMPONENT_REPLAY_BYTES + BCSR_COMPONENT_WEIGHT_THREADGROUP_BYTES;
+pub const BCSR_INDEXED_EVENT_BYTES: u64 = 256 * size_of::<u16>() as u64;
+pub const BCSR_INDEXED_THREADGROUP_BYTES: u64 =
+    BCSR_INDEXED_EVENT_BYTES + BCSR_COMPONENT_WEIGHT_THREADGROUP_BYTES;
 pub const BCSR_COMPONENT_REDUCE_THREADGROUPS: u64 = 96;
 pub const BCSR_COMPONENT_REDUCE_THREADS_PER_THREADGROUP: u64 = 256;
 pub const BCSR_MIDPOINT_THREADGROUPS: u64 = 8_192;
 pub const BCSR_MIDPOINT_THREADS_PER_THREADGROUP: u64 = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegistersClaimBcsrReplayStrategy {
+    ColumnReplay,
+    IndexedPredecessor,
+}
+
+impl RegistersClaimBcsrReplayStrategy {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ColumnReplay => "column-replay",
+            Self::IndexedPredecessor => "indexed-predecessor",
+        }
+    }
+
+    pub(crate) const fn component_pipeline(self) -> &'static str {
+        match self {
+            Self::ColumnReplay => BCSR_COMPONENT_PIPELINE,
+            Self::IndexedPredecessor => BCSR_INDEXED_COMPONENT_PIPELINE,
+        }
+    }
+
+    pub(crate) const fn threadgroup_bytes(self) -> u64 {
+        match self {
+            Self::ColumnReplay => BCSR_COMPONENT_THREADGROUP_BYTES,
+            Self::IndexedPredecessor => BCSR_INDEXED_THREADGROUP_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegistersClaimBcsrKernelConfig {
     pub partial_blocks: usize,
+    pub replay: RegistersClaimBcsrReplayStrategy,
 }
 
 impl Default for RegistersClaimBcsrKernelConfig {
     fn default() -> Self {
         Self {
             partial_blocks: REGISTERS_CLAIM_BCSR_PARTIAL_BLOCKS as usize,
+            replay: RegistersClaimBcsrReplayStrategy::ColumnReplay,
         }
     }
 }
@@ -61,6 +96,16 @@ pub const BCSR_COMPONENT_EQ_SUFFIX_SLOT: u64 = 8;
 pub const BCSR_COMPONENT_PARTIALS_SLOT: u64 = 9;
 pub const BCSR_COMPONENT_PARAMS_SLOT: u64 = 10;
 pub const BCSR_COMPONENT_THREADGROUP_SLOT: u64 = 0;
+
+pub const BCSR_INDEXED_START_VALUES_SLOT: u64 = 0;
+pub const BCSR_INDEXED_RD_OFFSETS_SLOT: u64 = 1;
+pub const BCSR_INDEXED_RD_POSITIONS_SLOT: u64 = 2;
+pub const BCSR_INDEXED_RD_POST_VALUES_SLOT: u64 = 3;
+pub const BCSR_INDEXED_RS1_INDEX_SLOT: u64 = 4;
+pub const BCSR_INDEXED_RS2_INDEX_SLOT: u64 = 5;
+pub const BCSR_INDEXED_EQ_SUFFIX_SLOT: u64 = 6;
+pub const BCSR_INDEXED_PARTIALS_SLOT: u64 = 7;
+pub const BCSR_INDEXED_PARAMS_SLOT: u64 = 8;
 
 pub const BCSR_COMPONENT_REDUCE_INPUT_SLOT: u64 = 0;
 pub const BCSR_COMPONENT_REDUCE_OUTPUT_SLOT: u64 = 1;

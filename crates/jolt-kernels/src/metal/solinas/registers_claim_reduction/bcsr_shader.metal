@@ -23,6 +23,44 @@ struct RegistersClaimBcsrWorkspace {
     SolinasFp128 weight;
 };
 
+struct RegistersClaimBcsrIndexedWorkspace {
+    ushort rd_event[256];
+    SolinasFp128 weight;
+};
+
+inline ulong registers_claim_bcsr_value_before(
+    device const ulong* start_values,
+    device const ushort* rd_offsets,
+    device const uchar* rd_positions,
+    device const ulong* rd_post_values,
+    uint block,
+    uint position,
+    uint reg,
+    uint columns)
+{
+    if (reg >= columns) {
+        return 0ul;
+    }
+
+    uint offset_base = block * (columns + 1u);
+    uint position_base = block * 256u;
+    uint begin = (uint)rd_offsets[offset_base + reg];
+    uint low = begin;
+    uint high = (uint)rd_offsets[offset_base + reg + 1u];
+    while (low < high) {
+        uint midpoint = low + (high - low) / 2u;
+        if ((uint)rd_positions[position_base + midpoint] < position) {
+            low = midpoint + 1u;
+        } else {
+            high = midpoint;
+        }
+    }
+    if (low == begin) {
+        return start_values[block * columns + reg];
+    }
+    return rd_post_values[position_base + low - 1u];
+}
+
 kernel void solinas_registers_claim_bcsr_components(
     device const ulong* start_values [[buffer(0)]],
     device const ushort* rs1_offsets [[buffer(1)]],
@@ -108,6 +146,99 @@ kernel void solinas_registers_claim_bcsr_components(
         ulong rd_value = workspace->rd_values[tid];
         ulong rs1_value = workspace->rs1_values[tid];
         ulong rs2_value = workspace->rs2_values[tid];
+        if (rd_value != 0ul) {
+            rd_sum = solinas_add(rd_sum, solinas_half_width_mul_u64(weight, rd_value));
+        }
+        if (rs1_value != 0ul) {
+            rs1_sum = solinas_add(rs1_sum, solinas_half_width_mul_u64(weight, rs1_value));
+        }
+        if (rs2_value != 0ul) {
+            rs2_sum = solinas_add(rs2_sum, solinas_half_width_mul_u64(weight, rs2_value));
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    uint x_lo = low_block * 256u + tid;
+    uint partial_stride = params.partial_blocks * params.prefix_elements;
+    uint partial_index = partial * params.prefix_elements + x_lo;
+    partials[partial_index] = rd_sum;
+    partials[partial_stride + partial_index] = rs1_sum;
+    partials[2u * partial_stride + partial_index] = rs2_sum;
+}
+
+kernel void solinas_registers_claim_bcsr_indexed_components(
+    device const ulong* start_values [[buffer(0)]],
+    device const ushort* rd_offsets [[buffer(1)]],
+    device const uchar* rd_positions [[buffer(2)]],
+    device const ulong* rd_post_values [[buffer(3)]],
+    device const uchar* rs1_index [[buffer(4)]],
+    device const uchar* rs2_index [[buffer(5)]],
+    device const SolinasFp128* eq_suffix [[buffer(6)]],
+    device SolinasFp128* partials [[buffer(7)]],
+    constant RegistersClaimBcsrComponentParams& params [[buffer(8)]],
+    threadgroup RegistersClaimBcsrIndexedWorkspace* workspace [[threadgroup(0)]],
+    uint group [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]])
+{
+    uint low_block = group % params.low_blocks;
+    uint partial = group / params.low_blocks;
+    if (partial >= params.partial_blocks || tid >= 256u) {
+        return;
+    }
+
+    SolinasFp128 rs1_sum = solinas_zero();
+    SolinasFp128 rs2_sum = solinas_zero();
+    SolinasFp128 rd_sum = solinas_zero();
+    uint suffix_start = partial * params.suffixes_per_partial;
+    uint suffix_end = suffix_start + params.suffixes_per_partial;
+
+    for (uint x_hi = suffix_start; x_hi < suffix_end; x_hi++) {
+        workspace->rd_event[tid] = 0xffffu;
+        if (tid == 0u) {
+            workspace->weight = eq_suffix[x_hi];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        uint block = x_hi * params.low_blocks + low_block;
+        uint position_base = block * 256u;
+        if (tid < params.columns && block < params.blocks) {
+            uint offset_base = block * (params.columns + 1u);
+            uint cursor = (uint)rd_offsets[offset_base + tid];
+            uint end = (uint)rd_offsets[offset_base + tid + 1u];
+            while (cursor < end) {
+                uint position = (uint)rd_positions[position_base + cursor];
+                workspace->rd_event[position] = (ushort)cursor;
+                cursor++;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        uint cycle = position_base + tid;
+        uchar rs1_reg = rs1_index[cycle];
+        uchar rs2_reg = rs2_index[cycle];
+        ulong rs1_value = registers_claim_bcsr_value_before(
+            start_values,
+            rd_offsets,
+            rd_positions,
+            rd_post_values,
+            block,
+            tid,
+            (uint)rs1_reg,
+            params.columns);
+        ulong rs2_value = registers_claim_bcsr_value_before(
+            start_values,
+            rd_offsets,
+            rd_positions,
+            rd_post_values,
+            block,
+            tid,
+            (uint)rs2_reg,
+            params.columns);
+        ushort rd_event = workspace->rd_event[tid];
+        ulong rd_value = rd_event == 0xffffu
+            ? 0ul
+            : rd_post_values[position_base + (uint)rd_event];
+        SolinasFp128 weight = workspace->weight;
         if (rd_value != 0ul) {
             rd_sum = solinas_add(rd_sum, solinas_half_width_mul_u64(weight, rd_value));
         }

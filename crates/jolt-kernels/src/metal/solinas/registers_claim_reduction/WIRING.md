@@ -16,9 +16,10 @@ models unless explicitly labeled as observed.
 This section is the current implementation contract. It supersedes the older
 dense-SoA producer choice, roof table, blockers, and integration order later
 in this file. The durable denominator below remains authoritative. The older
-sections remain as evidence for
-the already-executed standalone kernel and the alternatives that were rejected.
-No shader or production adapter is claimed by this amendment.
+sections remain as evidence for the already-executed standalone kernel and the
+alternatives that were rejected. The component/reducer shaders and checked
+standalone runtime are executable; the production resident adapter and
+midpoint remain unwired.
 
 The authoritative five-pair exact-log-26 optimized-CPU denominator remains
 `99.905582 ms`. The hard 5x gate is `19.981116 ms`, the working 7x target is
@@ -40,9 +41,12 @@ planes. At the measured log-26 event census, the alternatives are:
 |---|---:|---:|---:|---:|---:|
 | three dense value planes | 1,610,612,736 | 1,610,612,736 | 1,610,612,736 | 536,870,912 | 3,758,096,384 |
 | sparse event-value planes | 924,611,008 | 924,611,008 | 1,494,745,080 | 453,509,120 | 2,872,865,208 |
-| resident BCSR state flow | 0 | 0 | 1,039,896,120 | 520,617,984 | 1,560,514,104 |
+| resident BCSR state flow, column replay | 0 | 0 | 1,039,896,120 | 520,617,984 | 1,560,514,104 |
+| resident BCSR plus dense read indices | 134,217,728 | 134,217,728 | 1,074,266,112 | 520,617,984 | 1,729,101,824 |
 
-The selected row counts are `59,652,323` rs1 events, `55,924,053` rs2
+The selected indexed candidate adds one `u8[T]` map for each read operand. The
+producer must emit them during its existing row traversal; a second host scan
+is not part of the production contract. The measured row counts are `59,652,323` rs1 events, `55,924,053` rs2
 events, and `50,331,648` rd events. The existing BCSR allocation is
 2,350,383,104 bytes and its initialized producer writes 2,180,746,808 bytes.
 Those shared costs are charged exactly once in a paired resident-PIOP
@@ -66,38 +70,42 @@ low_block = x_lo / 256
 block     = x_hi * 32 + low_block.
 ```
 
-`solinas_registers_claim_bcsr_components` dispatches 8,192 threadgroups of
-256 threads: one group for each `(partial, low_block)`, with 256 partials and
-32 low blocks in the default log-26 configuration. A group loops over 32
-`x_hi` values. Its first 128 threads own
-register columns and replay that block from `start_values`, merging the sorted
-rs1, rs2, and rd position runs. Reads at a cycle emit the pre-write current
-value; an rd emits its post value and updates current only after both reads.
-After barriers, the 256 position threads accumulate
+The retained control, `solinas_registers_claim_bcsr_components`, assigns its
+first 128 threads to register columns and replays each column's merged rs1,
+rs2, and rd runs. Target-scale measurement falsified that architecture: a hot
+register serializes one thread and the curve flattens near 42 ms even as the
+partial count rises.
+
+The selected candidate,
+`solinas_registers_claim_bcsr_indexed_components`, keeps only the rd state-flow
+topology plus dense `u8[T]` rs1/rs2 register-index maps. Its first 128 threads
+scatter the block's rd event numbers into a 256-entry threadgroup array. Each
+cycle thread then finds the last rd position strictly before its cycle by a
+binary predecessor lookup within that register's short rd run. No predecessor
+means the block start value. The strict comparison preserves reads-before-write
+at a same-cycle read/write; the rd component uses the same-cycle post value.
+The 256 position threads accumulate
 
 ```text
 eq(tau_hi)[x_hi] * (rd, rs1, rs2)
 ```
 
-for their `x_lo`. The selected kernel uses canonical half-width
+for their `x_lo`. The candidate uses canonical half-width
 multiplication and addition per nonzero term. This matches the retained
 33.168-billion-term/s control and keeps three four-limb accumulators live,
 rather than the register-heavy deferred 224-bit state. The group writes
-`partials[component][partial][x_lo]`. Its one dynamic workspace is 6,160
-bytes: three 256-entry `u64` cycle arrays plus one shared 16-byte equality
-coefficient, loaded once per BCSR block. If an implementation instead loads
-the coefficient per position thread or executes all absent zero terms, its
-roof model must charge that extra traffic or `3T` arithmetic rather than the
-event census used here.
+`partials[component][partial][x_lo]`. Its dynamic workspace is 528 bytes: 256
+`u16` rd-event numbers and one shared 16-byte equality coefficient. The
+control's three dense threadgroup value arrays require 6,160 bytes.
 
 The runtime admits power-of-two partial counts that divide `H`. Log-26
-screens must compare 32, 64, 128, and 256 partials: reducing the count cuts
+screens compare 32, 64, 128, and 256 partials: reducing the count cuts
 the partial write/read traffic while increasing each group's lifetime. The
-256-partial layout remains the analytical baseline until target-scale active
-and resident-wall captures select a winner.
+observed winner is 128 partials; it dispatches 4,096 component groups and
+allocates 50,331,648 partial bytes.
 
 `solinas_registers_claim_bcsr_reduce_components` dispatches 96 groups of 256
-threads and reduces the 256 partials to three canonical `Fp128[P]` tables:
+threads and reduces the configured partials to three canonical `Fp128[P]` tables:
 `Q_rd`, `Q_rs1`, and `Q_rs2`. The host reconstructs the three omitted stage-1
 openings by dotting each with `eq(tau_lo)` (`3P` full products). Once stage 3
 draws `gamma`, the host forms
@@ -137,14 +145,15 @@ log-26 roof census are in `resident_bcsr.rs`. The component pair is encoded in
 the existing stage-1 command buffer and adds no command buffer or wait. The
 midpoint adds one dispatch, one command buffer, and one wait.
 
-### Charged ceiling
+### Falsified column-replay ceiling and observed indexed result
 
 | phase | useful half-width terms | cache-unique bytes | shader-requested bytes | compute floor | traffic floor/envelope |
 |---|---:|---:|---:|---:|---:|
 | BCSR components + reduction | 165,908,024 | 1,241,747,000 | 1,245,810,232 | 5.002051 ms | 2.749043 / 2.758038 ms |
 | rd midpoint | 50,331,648 | 520,880,128 | 1,326,055,424 | 1.517477 ms | 1.153151 / 2.935689 ms |
 
-The arithmetic rate is the measured canonical half-width rate of 33.168
+The table is the pre-measurement column-replay model and is retained to record
+the failed assumption. The arithmetic rate is the measured canonical half-width rate of 33.168
 Gterm/s; traffic uses 451.702 GB/s. The optimistic combined floor is
 6.519528 ms and its 80%-roof cap is 8.149410 ms. Charging every midpoint
 equality load as a memory request gives a conservative 7.937740-ms floor and
@@ -155,20 +164,28 @@ publication, command/wait latency, and adapter overhead.
 Host work remains explicit: `3P` stage-1 opening products, `2P` q-combination
 products, and `4P + 8H - 12` prefix/dense products, or 139,252 full products
 total. Excluding equality-table generation, their logical traffic is exactly
-4,980,272 bytes. The 9.922175-ms envelope is analytical only: it is neither an
-end-to-end performance claim nor promotion evidence.
+4,980,272 bytes. The envelope was not predictive because it treated event
+replay as parallel useful work and omitted the hot-column critical path. At log
+26 the column control flattened near `42.323 ms` GPU-active. The
+indexed-predecessor candidate with 128 partials measured a Criterion interval
+of `7.8876..7.9926 ms` GPU-active and `8.4411..8.6812 ms` resident wall. Its
+warm diagnostic was `7.895 ms` active and `8.387 ms` wall. The candidate
+consumes 1,074,266,112 source bytes, including the two dense index maps, and
+improves the observed component mechanism by about `5.3x`. This is exact
+component evidence, not complete-member promotion evidence.
 
-### Algebraic obligations still open
+### Algebraic obligations
 
-The protocol algebra itself is unchanged, but implementation parity still has
-three explicit proof obligations. A scalar BCSR replay must show, including a
-same-cycle read/write, that every component is exactly
+The protocol algebra is unchanged. Both component strategies pass the same
+scalar parity fixture at log 16 across partial counts 8, 32, 64, 128, and 256.
+The fixture includes a same-cycle read/write and shows that every component is
+exactly
 
 ```text
 Q_v[x_lo] = sum_x_hi eq(tau_hi)[x_hi] * v(x_hi || x_lo).
 ```
 
-The midpoint oracle must show that sparse rd-post replay equals the dense
+The remaining midpoint oracle must show that sparse rd-post replay equals the dense
 partial bind at `reverse(r_prefix)`. Finally, InstructionInput must establish
 that tables 1 and 5 are the same rs1/rs2 polynomials at that exact ordered
 point, not merely buffers of the right length. Maximal-value fixtures must
@@ -180,12 +197,12 @@ bound before the one canonical reduction.
 1. The sibling BCSR receipt currently proves provenance and layout, but the
    runtime needs a borrow-only device-buffer view; it must not allocate or
    copy a replacement carrier.
-2. The three entry points above need shader bodies, scalar-oracle parity, and
-   a runtime that validates every slot and receipt field before encoding.
+2. The indexed rs1/rs2 maps need typed producer ownership and allocation
+   identities; benchmark-local allocation is not admissible in production.
 3. InstructionInput's two midpoint buffers need a typed same-point resident
    handoff. CPU reconstruction is not an admissible performance fallback.
-4. A Metal capture must confirm seven-limb register allocation, no spills,
-   6-KiB threadgroup usage, active SIMD residency, and whether midpoint
+4. A Metal capture must confirm register allocation, no spills, active SIMD
+   residency, and whether midpoint
    equality reads achieve the cache-unique or requested-byte envelope.
 5. Logs 27 and 28 need explicit partial tiling and max-buffer admission; the
    log-26 constants must not silently generalize.
@@ -193,10 +210,10 @@ bound before the one canonical reduction.
    include all host FS and waits, and compare five alternating complete-member
    samples against the durable five-pair CPU denominator.
 
-The smallest next integration slice stays in this package: implement the
-component/reducer shaders plus their checked runtime, validate them against a
-small BCSR scalar replay, and publish the three-component receipt. The rd
-midpoint and InstructionInput alias receipt are the second slice. Global
+The smallest next integration slice stays in this package: publish the
+three-component receipt from the checked indexed runtime without copying its
+resident BCSR/index inputs. The rd midpoint and InstructionInput alias receipt
+are the second slice. Global
 prover selection waits until both slices pass parity and the complete fair
 boundary clears 5x; optimization continues toward 7x and then 8x while the
 measured ceilings leave credible headroom.
