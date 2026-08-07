@@ -1,0 +1,60 @@
+{
+  "schema": "jolt_metal_ram_read_write_successor_screening_v1",
+  "schema_version": 1,
+  "status": "design_only_requires_real_census",
+  "control": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260806-133709-697013/result.json",
+    "artifact_sha256": "587e00a65bde003a7c3481f58b1ea047ed2c908b0e3d9808bbc7eec6f894b2df",
+    "git_revision": "5f520c21e338632aa0bf5936ceb02be6c22fa40f",
+    "workload": "fibonacci",
+    "log_t": 26,
+    "log_k": 13,
+    "rayon_threads": 16,
+    "member_ns_samples": [158786294, 154710378, 148525711, 152095581, 160704373],
+    "median_member_ns": 154710378,
+    "representative_components_ns": {
+      "prepare": 110985042,
+      "cycle_rounds": 41641794,
+      "address_rounds": 2082250,
+      "note": "Components are from the same median complete-member sample; the five-sample address median is 1793751 ns."
+    },
+    "five_x_gate_ns": 30942075,
+    "eight_x_stretch_ns": 19338797
+  },
+  "retained_roofs": {
+    "copy_bytes_per_second": 451701710520,
+    "field_products_per_second": 18100000000,
+    "round_wait_upper_ns": 141000,
+    "host_fiat_shamir_per_round_ns": 2000
+  },
+  "decision": {
+    "verdict": "implement_after_census",
+    "mechanism": "shared pre-PIOP topology owner plus per-level flat-or-grouped cycle schedule and CPU address tail",
+    "why_not_predecessor_unchanged": [
+      "It does not charge or locate the 110.99 ms preparation owner precisely.",
+      "Its one-event flat message always spends two weight products per address entry after building the group weight.",
+      "A grouped-only replacement would create one partial tile per hot group and can lose badly when E_b equals G_b."
+    ],
+    "required_next_observation": "Publish E_b, G_b, grouped tile count D_b, producer wall, upload bytes, and source allocation identities for the exact log-26 Fibonacci trace."
+  },
+  "pre_registered_bars_ns": {
+    "census_optimistic_primary_max": 27847867,
+    "census_conservative_stretch_max": 17404917,
+    "piop_owner_join_max": 500000,
+    "added_backend_witness_prepare_max": 125000000,
+    "complete_member_screening_max": 27847867,
+    "complete_member_promotion_max": 30942075,
+    "complete_member_stretch_max": 19338797
+  },
+  "verification": {
+    "cargo_or_gpu_run": false,
+    "isolated_rustc_tests_passed": 6,
+    "reason": "The delegated packet is isolated and the root serializes compiler and GPU work.",
+    "included_checks": [
+      "aggregate census invariants and overflow checks",
+      "per-level flat/grouped analytical selector",
+      "group-factor algebra oracle",
+      "opening-point orientation fixture"
+    ]
+  }
+}
