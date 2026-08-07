@@ -98,6 +98,8 @@ OUTER_REMAINDER_METAL_PHASES = (
     "row_release",
 )
 OUTER_REMAINDER_MIN_SPEEDUP = 5.0
+PRODUCT_REMAINDER_KERNEL = "ProductRemainder"
+PRODUCT_REMAINDER_MIN_SPEEDUP = 5.0
 OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE = (
     "OptimizedHammingWeightClaimReduction::row_source"
 )
@@ -161,6 +163,12 @@ LOCAL_KERNELS = {
         "metric": "hamming_weight_claim_reduction_speedup",
         "paired_metric": "paired_hamming_weight_claim_reduction_speedups",
         "backend_prefix": "MetalHammingWeightClaimReduction::",
+    },
+    "ProductRemainder": {
+        "name": PRODUCT_REMAINDER_KERNEL,
+        "metric": "product_remainder_speedup",
+        "paired_metric": "paired_product_remainder_speedups",
+        "backend_prefix": "MetalProductRemainder::",
     },
 }
 
@@ -2965,6 +2973,24 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         float(pair.get("metal_outer_remainder_us", pair["metal_hamming_weight_us"]))
         for pair in pairs
     ]
+    cpu_product_remainder = [
+        float(
+            pair.get(
+                "cpu_product_remainder_us",
+                pair.get("cpu_outer_remainder_us", pair["cpu_hamming_weight_us"]),
+            )
+        )
+        for pair in pairs
+    ]
+    metal_product_remainder = [
+        float(
+            pair.get(
+                "metal_product_remainder_us",
+                pair.get("metal_outer_remainder_us", pair["metal_hamming_weight_us"]),
+            )
+        )
+        for pair in pairs
+    ]
     if any(not math.isfinite(value) or value <= 0.0 for value in cpu + metal):
         raise ValueError("PIOP durations must be finite and positive")
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
@@ -2987,6 +3013,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_hamming_weight_service
         + cpu_outer_remainder
         + metal_outer_remainder
+        + cpu_product_remainder
+        + metal_product_remainder
     ):
         raise ValueError("kernel durations must be finite and positive")
     paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
@@ -3047,6 +3075,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         cpu_outer_remainder,
         metal_outer_remainder,
         OUTER_REMAINDER_MIN_SPEEDUP,
+    )
+    (
+        product_remainder_speedups,
+        product_remainder_improvements,
+        product_remainder_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_product_remainder,
+        metal_product_remainder,
+        PRODUCT_REMAINDER_MIN_SPEEDUP,
     )
     paired_with_prepare = [
         (cpu_us + cpu_prepare_us) / (metal_us + metal_prepare_us)
@@ -3114,6 +3152,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             hamming_weight_service_speedups
         ),
         "outer_remainder_speedup": statistics.median(outer_remainder_speedups),
+        "product_remainder_speedup": statistics.median(product_remainder_speedups),
         "piop_plus_backend_witness_prepare_speedup": statistics.median(paired_with_prepare),
         "cpu_piop_ms": statistics.median(cpu) / 1000.0,
         "metal_piop_ms": statistics.median(metal) / 1000.0,
@@ -3133,6 +3172,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_hamming_weight_claim_reduction_service_speedups": hamming_weight_service_speedups,
         "paired_outer_remainder_speedups": outer_remainder_speedups,
         "paired_outer_remainder_fractional_improvements": outer_remainder_improvements,
+        "paired_product_remainder_speedups": product_remainder_speedups,
+        "paired_product_remainder_fractional_improvements": product_remainder_improvements,
         "paired_speedups_with_backend_witness_prepare": paired_with_prepare,
         "cpu_piop_ms_samples": [value / 1000.0 for value in cpu],
         "metal_piop_ms_samples": [value / 1000.0 for value in metal],
@@ -3180,10 +3221,17 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_outer_remainder_ms_samples": [
             value / 1000.0 for value in metal_outer_remainder
         ],
+        "cpu_product_remainder_ms_samples": [
+            value / 1000.0 for value in cpu_product_remainder
+        ],
+        "metal_product_remainder_ms_samples": [
+            value / 1000.0 for value in metal_product_remainder
+        ],
         "instruction_input_kernel_service_decision": instruction_input_decision,
         "booleanity_address_phase_decision": booleanity_address_decision,
         "hamming_weight_claim_reduction_decision": hamming_weight_decision,
         "outer_remainder_decision": outer_remainder_decision,
+        "product_remainder_decision": product_remainder_decision,
         "bytecode_read_raf_cycle_decision": {
             "minimum_speedup": BYTECODE_MIN_SPEEDUP,
             "minimum_pairs": PRODUCTION_PAIRS,
@@ -3301,6 +3349,8 @@ def local_kernel_primary_us(result: dict[str, Any], kernel: str) -> float:
         ] / 1000.0
     elif kernel == OUTER_REMAINDER_KERNEL:
         value = result["outer_remainder_member"]["components"]["member_us"]
+    elif kernel == PRODUCT_REMAINDER_KERNEL:
+        value = kernel_wall_us(result["attribution"], kernel)
     else:
         raise ValueError(f"unsupported local kernel {kernel}")
     value = float(value)
@@ -4102,6 +4152,12 @@ def main() -> int:
                         outer_remainder_records["metal"]["member_ns"]
                     )
                     / 1000.0,
+                    "cpu_product_remainder_us": kernel_wall_us(
+                        results["optimized"]["attribution"], PRODUCT_REMAINDER_KERNEL
+                    ),
+                    "metal_product_remainder_us": kernel_wall_us(
+                        results["metal"]["attribution"], PRODUCT_REMAINDER_KERNEL
+                    ),
                 }
             )
             attributions.append(
@@ -4744,6 +4800,9 @@ def main() -> int:
                 ),
                 "hamming_weight_local_gate": metrics[
                     "hamming_weight_claim_reduction_decision"
+                ]["clears"],
+                "product_remainder_local_gate": metrics[
+                    "product_remainder_decision"
                 ]["clears"],
                 "outer_remainder_cpu_control": all(
                     sample["outer_remainder"]["optimized_config"] is None
