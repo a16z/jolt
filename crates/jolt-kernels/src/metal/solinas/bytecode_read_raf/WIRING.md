@@ -6,11 +6,12 @@ kernel. Nothing here is registered yet.
 
 ## Evidence status
 
-The optimized-CPU denominator is durable production evidence. The long-worker
-slice is compiled and run only by the test-utils evaluator; it is not
-registered with the production backend. `screening_evidence.json` records its
-first exact log-26 screen. The CSR and complete-member numbers below remain
-analytical until the production topology path is executable.
+The optimized-CPU denominator is durable production evidence. The test-utils
+evaluator now executes both a prebuilt long-worker slice and the complete
+CSR-to-indirect-worker device path; neither is registered with the production
+backend. `screening_evidence.json` records exact log-26 screens for one and 26
+active addresses per outer block. The host-shell and complete-member numbers
+remain unmeasured until the precomputed pushforwards enter the real relation.
 
 The log-26 CPU evidence is
 `benchmark-runs/metal-piop-eval/20260806-133709-697013`, revision
@@ -31,6 +32,18 @@ and transfer, the six value tables, `Int`, entry tables, shell construction,
 command latency, readback, and status validation. There is no measured
 complete-host-shell value to add to a device roof. Component medians are not
 additive evidence, so the complete member remains the acceptance gate.
+
+The executable CSR path is exact at log 15 against the independent direct
+oracle with 26 active addresses. At log 26, its exact one-address fixture has
+11.4365 ms CSR-only, 20.283833 ms GPU-active, and 20.941375 ms complete-slice
+medians. The 26-address fixture has 53,248 long runs, a maximum run of 1,261,
+11.419042 ms CSR-only, 28.561625 ms GPU-active, and 29.109917 ms
+complete-slice medians. It leaves 9.073274 ms under the 5x cap but already
+exceeds the 8x cap by 5.245423 ms before host work. Adding the retained
+7.918251-ms `prove_round` component would leave 1.155023 ms under 5x, but that
+sum is only a scheduling screen for the reasons above and is not a speedup
+claim. The next architecture change is to reuse producer-side address counts,
+removing one full 2.68-GB row scan from CSR construction.
 
 The existing cycle member has a 1,004.692916-ms CPU median and a
 160.876418-ms Metal median. Their ratio is 6.245x; this is not the median of
@@ -488,15 +501,15 @@ upstream CSR reuse is the first design that can change that conclusion.
 
 ## Integration work left to root
 
-- Register the module and seven shader pipelines.
-- After exact-u64 promotion, move that primitive into a shared Solinas source
-  fragment and keep this packet's arithmetic fixture as its regression oracle.
+- Register the seven entry points in the production backend instead of the
+  test-utils source constructor.
 - Add bytecode address config and stage-5 resident-row admission.
+- Carry producer-side address counts into this successor and remove the first
+  CSR row scan; retain the two-pass builder as the exact fallback/control.
 - Expose a narrow optimized host-shell constructor that accepts precomputed
   pushforwards without duplicating relation logic.
-- Encode the command sequence and fail-closed status checks.
-- Add Criterion microbenchmarks, paired evaluator rows, GPU parity tests, and
-  proof-level integration tests.
+- Add the all-short topology control, Criterion microbenchmarks, paired
+  complete-member evaluator rows, GPU parity tests, and proof integration.
 
-No shared source, Cargo file, backend selection, or evaluator was changed by
-this static packet.
+The current runtime remains test-utils-only and does not change backend
+selection or the protocol.

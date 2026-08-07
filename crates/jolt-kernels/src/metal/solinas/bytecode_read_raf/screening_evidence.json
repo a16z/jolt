@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "evidence_stage": "long_worker_screening_only",
+  "evidence_stage": "csr_screening_only",
   "kernel": "bytecode_read_raf_address",
   "machine": "Apple M4 Max, 40-core GPU",
   "cpu_complete_member_ms_median": 190.915958,
@@ -11,8 +11,12 @@
   "correctness": {
     "log_15_full_matches_direct_oracle": true,
     "log_15_u64_matches_direct_oracle": true,
+    "log_15_csr_support_26_matches_direct_oracle": true,
     "log_26_full_matches_exact_uniform_run_oracle": true,
     "log_26_u64_matches_exact_uniform_run_oracle": true,
+    "log_26_csr_support_1_matches_exact_uniform_run_oracle": true,
+    "log_26_csr_support_26_matches_exact_uniform_run_oracle": true,
+    "log_26_csr_telemetry_matches_fixture": true,
     "resident_stage5_rows_reused": true,
     "static_buffers_stable": true
   },
@@ -46,6 +50,43 @@
     "useful_products": 268453888,
     "useful_gproducts_per_second": 28.664127702738774
   },
+  "log_26_csr_support_1": {
+    "active_addresses_per_outer": 1,
+    "csr_only_gpu_active_ms_median": 11.4365,
+    "gpu_active_ms_median": 20.283833,
+    "complete_slice_ms_median": 20.941375,
+    "long_runs": 2048,
+    "long_occurrences": 67108864,
+    "maximum_run": 32768
+  },
+  "log_26_csr_support_26": {
+    "active_addresses_per_outer": 26,
+    "samples": 5,
+    "csr_only_gpu_active_ms": [
+      11.243625,
+      11.405667,
+      11.419042,
+      11.436167,
+      11.774458
+    ],
+    "csr_only_gpu_active_ms_median": 11.419042,
+    "gpu_active_ms": [
+      28.49025,
+      28.520042,
+      28.561625,
+      28.618417,
+      28.752583
+    ],
+    "gpu_active_ms_median": 28.561625,
+    "complete_slice_ms_median": 29.109917,
+    "useful_products": 268453888,
+    "useful_gproducts_per_second": 9.399111150013347,
+    "long_runs": 53248,
+    "long_occurrences": 67108864,
+    "maximum_run": 1261,
+    "owned_bytes": 544538768,
+    "borrowed_row_bytes": 2684354560
+  },
   "screen": {
     "promote_active_ms": 12.85,
     "hard_kill_active_ms": 30.124,
@@ -53,12 +94,17 @@
     "exact_u64_clears": true,
     "selected_path": "full_width",
     "full_width_active_improvement_over_u64": 0.021457263360205002,
-    "remaining_5x_complete_budget_ms": 28.450816,
-    "remaining_8x_complete_budget_ms": 14.132119
+    "csr_support_1_clears_hard_5x_cap_before_host_rounds": true,
+    "csr_support_26_clears_hard_5x_cap_before_host_rounds": true,
+    "csr_support_26_clears_8x_cap_before_host_rounds": false,
+    "csr_support_26_remaining_5x_complete_budget_ms": 9.073274,
+    "csr_support_26_remaining_8x_complete_budget_ms": -5.245423,
+    "retained_prove_round_proxy_ms": 7.918251,
+    "remaining_5x_budget_after_non_additive_prove_round_proxy_ms": 1.155023
   },
   "decision": {
-    "status": "promote_long_worker_to_csr_integration",
+    "status": "promote_csr_to_host_shell_integration_and_fuse_upstream_counts",
     "speedup_claim": null,
-    "reason": "The worker slice excludes CSR construction and all host address rounds, so its CPU/member ratio is not a speedup. Its exact complete slice fits both the 5x and 8x residual budgets; integrate and measure CSR next. The full-width field path is retained because it is faster than the specialized u64 path."
+    "reason": "The exact CSR-to-indirect-worker slice fits the 5x complete-member cap before host rounds at both measured topologies, but the 26-address fixture misses the 8x cap before host work. The retained prove-round component is not additive evidence, so no speedup is claimed until the precomputed-pushforward host shell is integrated. Reusing producer-side address counts can remove one 2.68 GB row scan and is the next path toward 8x. The full-width field path remains selected because it beat exact-u64 in the isolated worker control."
   }
 }
