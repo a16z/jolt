@@ -38,6 +38,12 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
+        // WARNING: wrapping performs no on-curve or subgroup validation — the
+        // caller must supply a valid prime-order-subgroup point (relevant for
+        // G2, whose cofactor is non-trivial). This is a plumbing conversion
+        // for internally-constructed arkworks values; untrusted bytes must
+        // enter through serde `Deserialize` below, which validates via
+        // arkworks (`Validate::Yes`: on-curve + subgroup check).
         impl From<$projective> for $wrapper {
             #[inline(always)]
             fn from(inner: $projective) -> Self {
@@ -165,7 +171,13 @@ macro_rules! impl_jolt_group_wrapper {
             fn msm<F: ::jolt_field::Field>(bases: &[Self], scalars: &[F]) -> Self {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
-                debug_assert_eq!(bases.len(), scalars.len());
+                // Arkworks' msm_bigint silently truncates to the shorter slice,
+                // producing a wrong group element instead of failing.
+                assert_eq!(
+                    bases.len(),
+                    scalars.len(),
+                    "msm: bases/scalars length mismatch"
+                );
                 let affines: Vec<$affine> = bases.iter().map(|b| b.0.into_affine()).collect();
                 let fr_scalars: Vec<::ark_bn254::Fr> =
                     scalars.iter().map(super::field_to_fr).collect();
@@ -253,6 +265,15 @@ impl PairingGroup for Bn254 {
 /// This is the bridge between jolt-field's backend-agnostic `Field` trait and
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
+///
+/// WARNING: in release builds, values `>= Fr::MODULUS` are silently reduced
+/// mod r (`from_le_bytes_mod_order`). Callers must pass scalars from a field
+/// with modulus <= BN254 Fr — in practice jolt-field's `Fr` itself. Notably
+/// `jolt_field::Fq` (BN254 base field, larger modulus) implements `Field` and
+/// must NOT be used as a scalar here. A release-mode range check is
+/// deliberately omitted: this function sits in per-element MSM/GLV hot loops,
+/// and the scalar type is fixed at compile time by internal callers, not by
+/// untrusted input.
 ///
 /// In debug builds, asserts that the source value fits in the BN254 Fr modulus —
 /// catches silent modular reduction when `F` has a larger modulus than BN254 Fr.

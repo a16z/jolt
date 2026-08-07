@@ -239,8 +239,14 @@ where
     }))
 }
 
-/// The wire-shape checks over the cycle-phase output claims that the generated
-/// drivers cannot express: the bytecode RA claim count and the bytecode reduction's
+/// The wire-shape checks over the cycle-phase output claims. Stage 6b opts out
+/// of the generated shape validator (`no_output_shape`), so every wire claim
+/// vector is pinned to its formula-dimension length here. Under-length already
+/// fails closed in `expected_final_claim` (the dimension-generated output
+/// expression resolves a missing opening to `MissingOpeningClaim`), but
+/// over-length trailing entries are never algebraically consumed and would
+/// otherwise reach the Fiat-Shamir absorb, letting a malicious prover pass off
+/// padded, non-canonical proofs. Also checks the bytecode reduction's
 /// intermediate-vs-chunks shape. Member presence is enforced separately by the
 /// hand-listed `validate_member_presence` calls; a missing advice inner opening is caught by
 /// `expected_final_claim` (the advice cycle phase's `expected_output`).
@@ -252,16 +258,32 @@ fn validate_cycle_phase_claim_shape<F: Field>(
 ) -> Result<(), VerifierError> {
     let bytecode_output_openings =
         bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
-    if claims.bytecode_read_raf.bytecode_ra.len() != bytecode_output_openings.bytecode_ra.len() {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::BytecodeReadRaf,
-            reason: format!(
-                "bytecode RA claim count mismatch: expected {}, got {}",
-                bytecode_output_openings.bytecode_ra.len(),
-                claims.bytecode_read_raf.bytecode_ra.len()
-            ),
-        });
-    }
+    require_claim_count(
+        JoltRelationId::BytecodeReadRaf,
+        "bytecode RA",
+        bytecode_output_openings.bytecode_ra.len(),
+        claims.bytecode_read_raf.bytecode_ra.len(),
+    )?;
+
+    let ra_layout = formula_dimensions.ra_layout;
+    require_claim_count(
+        JoltRelationId::Booleanity,
+        "booleanity instruction RA",
+        ra_layout.instruction(),
+        claims.booleanity.instruction_ra.len(),
+    )?;
+    require_claim_count(
+        JoltRelationId::Booleanity,
+        "booleanity bytecode RA",
+        ra_layout.bytecode(),
+        claims.booleanity.bytecode_ra.len(),
+    )?;
+    require_claim_count(
+        JoltRelationId::Booleanity,
+        "booleanity RAM RA",
+        ra_layout.ram(),
+        claims.booleanity.ram_ra.len(),
+    )?;
 
     // The packed unsigned-inc chunk claims: one per chunk of the shared
     // one-hot chunking.
@@ -276,16 +298,33 @@ fn validate_cycle_phase_claim_shape<F: Field>(
                 reason: error.to_string(),
             })?
             .chunk_count();
-        if claims.booleanity.unsigned_inc_chunks.len() != expected_chunks {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::Booleanity,
-                reason: format!(
-                    "unsigned-inc chunk claim count mismatch: expected {expected_chunks}, got {}",
-                    claims.booleanity.unsigned_inc_chunks.len()
-                ),
-            });
-        }
+        require_claim_count(
+            JoltRelationId::Booleanity,
+            "unsigned-inc chunk",
+            expected_chunks,
+            claims.booleanity.unsigned_inc_chunks.len(),
+        )?;
     }
+
+    require_claim_count(
+        JoltRelationId::RamRaVirtualization,
+        "committed RAM RA",
+        formula_dimensions
+            .ram_ra_virtualization
+            .num_committed_ra_polys(),
+        claims.ram_ra_virtualization.ram_ra.len(),
+    )?;
+    require_claim_count(
+        JoltRelationId::InstructionRaVirtualization,
+        "committed instruction RA",
+        formula_dimensions
+            .instruction_ra_virtualization
+            .num_committed_ra_polys(),
+        claims
+            .instruction_ra_virtualization
+            .committed_instruction_ra
+            .len(),
+    )?;
 
     if let (Some(layout), Some(output_claims)) = (
         bytecode_reduction_layout,
@@ -314,6 +353,22 @@ fn validate_cycle_phase_claim_shape<F: Field>(
         }
     }
 
+    Ok(())
+}
+
+/// Reject a wire claim vector whose length disagrees with its formula-dimension count.
+fn require_claim_count(
+    stage: JoltRelationId,
+    label: &str,
+    expected: usize,
+    got: usize,
+) -> Result<(), VerifierError> {
+    if got != expected {
+        return Err(VerifierError::StageClaimPublicInputFailed {
+            stage,
+            reason: format!("{label} claim count mismatch: expected {expected}, got {got}"),
+        });
+    }
     Ok(())
 }
 
@@ -513,6 +568,7 @@ fn append_opening_claims<F, T>(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     #[cfg(not(feature = "akita"))]
     use super::super::booleanity::BooleanityOutputClaims;
@@ -594,6 +650,174 @@ mod tests {
             },
             last,
         )
+    }
+
+    const TEST_COMMITTED_CHUNK_BITS: usize = 8;
+
+    fn shape_formula_dimensions() -> JoltFormulaDimensions {
+        JoltFormulaDimensions::try_from(
+            jolt_claims::protocols::jolt::geometry::dimensions::JoltOneHotDimensions {
+                log_t: 8,
+                instruction_address_bits: 128,
+                bytecode_k: 1024,
+                ram_k: 4096,
+                committed_chunk_bits: TEST_COMMITTED_CHUNK_BITS,
+                lookup_virtual_chunk_bits: 32,
+            },
+        )
+        .unwrap()
+    }
+
+    /// Claims whose every wire vector length matches `formula_dimensions` exactly.
+    fn shape_matched_claims(formula_dimensions: &JoltFormulaDimensions) -> Stage6bOutputClaims<Fr> {
+        let bytecode_ra_len =
+            bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf)
+                .bytecode_ra
+                .len();
+        let ra_layout = formula_dimensions.ra_layout;
+        #[cfg(not(feature = "akita"))]
+        let bytecode_read_raf = BytecodeReadRafOutputClaims {
+            bytecode_ra: vec![fr(1); bytecode_ra_len],
+        };
+        #[cfg(feature = "akita")]
+        let bytecode_read_raf = LatticeBytecodeReadRafOutputClaims {
+            bytecode_ra: vec![fr(1); bytecode_ra_len],
+            fused_inc: fr(2),
+        };
+        #[cfg(not(feature = "akita"))]
+        let booleanity = BooleanityOutputClaims {
+            instruction_ra: vec![fr(3); ra_layout.instruction()],
+            bytecode_ra: vec![fr(4); ra_layout.bytecode()],
+            ram_ra: vec![fr(5); ra_layout.ram()],
+        };
+        #[cfg(feature = "akita")]
+        let booleanity =
+            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
+                instruction_ra: vec![fr(3); ra_layout.instruction()],
+                bytecode_ra: vec![fr(4); ra_layout.bytecode()],
+                ram_ra: vec![fr(5); ra_layout.ram()],
+                unsigned_inc_chunks: vec![
+                    fr(6);
+                    jolt_claims::protocols::jolt::lattice::geometry::UnsignedIncChunking::new(
+                        TEST_COMMITTED_CHUNK_BITS
+                    )
+                    .unwrap()
+                    .chunk_count()
+                ],
+                unsigned_inc_msb: fr(7),
+            };
+        Stage6bOutputClaims {
+            bytecode_read_raf,
+            booleanity,
+            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                ram_hamming_weight: fr(8),
+            },
+            ram_ra_virtualization: RamRaVirtualizationOutputClaims {
+                ram_ra: vec![
+                    fr(9);
+                    formula_dimensions
+                        .ram_ra_virtualization
+                        .num_committed_ra_polys()
+                ],
+            },
+            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+                committed_instruction_ra: vec![
+                    fr(10);
+                    formula_dimensions
+                        .instruction_ra_virtualization
+                        .num_committed_ra_polys()
+                ],
+            },
+            #[cfg(not(feature = "akita"))]
+            inc_claim_reduction: IncClaimReductionOutputClaims {
+                ram_inc: fr(11),
+                rd_inc: fr(12),
+            },
+            trusted_advice: None,
+            untrusted_advice: None,
+            bytecode_reduction: None,
+            program_image_reduction: None,
+        }
+    }
+
+    fn validate_shape(
+        formula_dimensions: &JoltFormulaDimensions,
+        claims: &Stage6bOutputClaims<Fr>,
+    ) -> Result<(), VerifierError> {
+        #[cfg(not(feature = "akita"))]
+        let result = validate_cycle_phase_claim_shape(formula_dimensions, claims, None);
+        #[cfg(feature = "akita")]
+        let result = validate_cycle_phase_claim_shape(
+            formula_dimensions,
+            claims,
+            None,
+            TEST_COMMITTED_CHUNK_BITS,
+        );
+        result
+    }
+
+    fn tamper_vec(vec: &mut Vec<Fr>, pad: bool) {
+        if pad {
+            vec.push(fr(99));
+        } else {
+            let _ = vec.pop();
+        }
+    }
+
+    /// Every stage-6b wire claim vector is exact-length-pinned: padding or
+    /// truncating any of them must be rejected before the claims reach the
+    /// Fiat-Shamir absorb (v12 #116402 — trailing entries were absorbed,
+    /// admitting non-canonical padded proofs).
+    #[test]
+    fn cycle_phase_claim_shape_pins_every_wire_vector_length() {
+        let formula_dimensions = shape_formula_dimensions();
+        let claims = shape_matched_claims(&formula_dimensions);
+        validate_shape(&formula_dimensions, &claims).expect("shape-matched claims validate");
+
+        type Tamper = fn(&mut Stage6bOutputClaims<Fr>, bool);
+        #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
+        let mut tampers: Vec<(&str, Tamper)> = vec![
+            ("bytecode_read_raf.bytecode_ra", |c, pad| {
+                tamper_vec(&mut c.bytecode_read_raf.bytecode_ra, pad);
+            }),
+            ("booleanity.instruction_ra", |c, pad| {
+                tamper_vec(&mut c.booleanity.instruction_ra, pad);
+            }),
+            ("booleanity.bytecode_ra", |c, pad| {
+                tamper_vec(&mut c.booleanity.bytecode_ra, pad);
+            }),
+            ("booleanity.ram_ra", |c, pad| {
+                tamper_vec(&mut c.booleanity.ram_ra, pad);
+            }),
+            ("ram_ra_virtualization.ram_ra", |c, pad| {
+                tamper_vec(&mut c.ram_ra_virtualization.ram_ra, pad);
+            }),
+            (
+                "instruction_ra_virtualization.committed_instruction_ra",
+                |c, pad| {
+                    tamper_vec(
+                        &mut c.instruction_ra_virtualization.committed_instruction_ra,
+                        pad,
+                    );
+                },
+            ),
+        ];
+        #[cfg(feature = "akita")]
+        tampers.push(("booleanity.unsigned_inc_chunks", |c, pad| {
+            tamper_vec(&mut c.booleanity.unsigned_inc_chunks, pad);
+        }));
+
+        for (label, tamper) in tampers {
+            for pad in [true, false] {
+                let mut tampered = claims.clone();
+                tamper(&mut tampered, pad);
+                let verb = if pad { "padded" } else { "truncated" };
+                assert!(
+                    validate_shape(&formula_dimensions, &tampered).is_err(),
+                    "{verb} {label} must be rejected"
+                );
+            }
+        }
     }
 
     /// Locks the stage-6b cycle-phase Fiat-Shamir append order against silent drift.
