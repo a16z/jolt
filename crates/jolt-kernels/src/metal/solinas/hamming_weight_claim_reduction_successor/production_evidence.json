@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "candidate": {
+    "booleanity_address_implementation": "packed-hot",
+    "hamming_weight_implementation": "retained-hot"
+  },
+  "revision": "b4ccdaea680c2c2c141f2d8ee635bd615ebc4301",
+  "binary_sha256": "33e834bbe5e93868ab80efd84ec83b1a9fa4236f99deabbd4e4ce2d4c2c7786c",
+  "machine": "Apple M4 Max, 40-core GPU",
+  "rayon_threads": 16,
+  "log_26_production": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260807-045938-114226/result.json",
+    "artifact_sha256": "bcf1ca8085452bbe2d8ccbb47529bdcff4af8b0e435a24d29ddf014b2108a0e6",
+    "pairs": 5,
+    "orders": "alternating",
+    "proofs_verified": true,
+    "resource_contract_verified": true,
+    "piop_speedup": 3.7533036846171695,
+    "booleanity_address_speedup": 6.754062475278124,
+    "hamming_weight_speedup": 8.401502833216682,
+    "combined_family_speedup": 7.385539307149991,
+    "paired_booleanity_address_speedups": [
+      6.2074589328382554,
+      6.994073194289253,
+      6.754062475278124,
+      6.42924052769353,
+      6.942441692308745
+    ],
+    "paired_hamming_weight_speedups": [
+      8.401502833216682,
+      8.222674376303456,
+      8.90593558322271,
+      14.116223578438404,
+      7.8633155435939805
+    ],
+    "paired_combined_family_speedups": [
+      6.91006256840329,
+      7.385539307149991,
+      7.434296236867239,
+      8.741651709796242,
+      7.231627975252207
+    ]
+  },
+  "log_27_holdout": {
+    "artifact": "benchmark-runs/metal-piop-eval/20260807-050952-518088/result.json",
+    "artifact_sha256": "96e68ff3d116e1f9b1abb24cab42f72a962e664fd3e07ad6a3cac3122c198e36",
+    "pairs": 1,
+    "orders": "optimized-then-metal",
+    "run_class": "diagnostic",
+    "proofs_verified": true,
+    "resource_contract_verified": true,
+    "piop_speedup": 3.297654144960207,
+    "booleanity_address_speedup": 4.969700993163844,
+    "hamming_weight_speedup": 7.218278371724266,
+    "combined_family_speedup": 5.653284953942061
+  },
+  "decision": {
+    "hamming_weight_clears_log_26_fixed_gate": true,
+    "combined_family_clears_log_26_fixed_gate": true,
+    "log_27_transfer_is_exact": true,
+    "promote_defaults": false,
+    "reason": "The single-pair log-27 Booleanity-address diagnostic is 4.9697x, below the fixed per-kernel 5x gate. Keep the paired implementation explicit until a sealed alternating log-27 campaign clears that gate."
+  }
+}

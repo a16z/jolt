@@ -1,10 +1,10 @@
 # Hamming-weight retained-projection successor
 
-Status: the default-off backend candidate, fixed ABI, analytical model, scalar
-oracle, MSL assembly, and exact low-scale producer/consumer parity pass. A
-single log-26 diagnostic clears the 8x Hamming member gate. Promotion still
-requires the fixed alternating evaluator, log-27 transfer, and occupancy
-evidence.
+Status: the default-off backend candidate has exact low-scale parity, a sealed
+five-pair log-26 production result, and an exact log-27 diagnostic holdout.
+Hamming clears 8x at log 26 and 7x at log 27; the fused family clears 5x at
+both scales. Defaults remain unchanged because the one-pair log-27
+Booleanity-address member measured 4.9697x, just below its fixed 5x gate.
 
 ## Decision
 
@@ -229,8 +229,34 @@ without another geometry iteration.
    active time, and release in the fixed production evaluator. Do not change
    the CPU denominator or host-Fiat--Shamir boundary.
 
+## Production and holdout evidence
+
+Revision `b4ccdaea680c2c2c141f2d8ee635bd615ebc4301` and release binary
+`33e834bbe5e93868ab80efd84ec83b1a9fa4236f99deabbd4e4ce2d4c2c7786c`
+were built from a clean worktree. The full records and hashes are frozen in
+`production_evidence.json`.
+
+The log-26 production evaluator ran five alternating pairs. CPU and Metal
+proofs verified in every arm, and the trace proved exact dispatch/readback
+counts, zero row upload, source-allocation reuse, working-set admission, and
+terminal retained-buffer release.
+
+| log 26 scope | paired median | paired samples |
+|---|---:|---|
+| Booleanity address | 6.7541x | 6.2075, 6.9941, 6.7541, 6.4292, 6.9424 |
+| Hamming weight | 8.4015x | 8.4015, 8.2227, 8.9059, 14.1162, 7.8633 |
+| fused family | 7.3855x | 6.9101, 7.3855, 7.4343, 8.7417, 7.2316 |
+| full PIOP | 3.7533x | 3.8640, 3.7533, 3.7062, 3.8818, 3.4922 |
+
+The exact one-pair log-27 diagnostic measured 4.9697x Booleanity address,
+7.2183x Hamming, 5.6533x fused family, and 3.2977x full PIOP. All correctness
+and lifecycle guards passed. This establishes scale and memory transfer for
+the retained Hamming topology but is not sufficient to waive the fixed
+Booleanity-address gate or the alternating-pair requirement.
+
 ## Still unverified
 
 Register allocation, occupancy, cache-line behavior, target-size atomic issue
-rate, alternating-order stability, paired PIOP improvement, and log-27
-transfer remain unverified.
+rate, and alternating-order stability at log 27 remain unverified. Promotion
+also needs a sealed log-27 campaign in which Booleanity address clears 5x in
+both order strata.
