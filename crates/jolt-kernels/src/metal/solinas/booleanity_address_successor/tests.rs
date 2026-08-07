@@ -217,30 +217,12 @@ fn five_x_is_a_floor_and_incumbent_makes_ten_x_credible() {
 }
 
 #[test]
-fn bounded_split_geometry_accepts_only_registered_candidates() {
-    for (inner_log2, expected_e_out) in [(15, 1 << 11), (16, 1 << 10), (17, 1 << 9)] {
-        let geometry = BooleanityAddressSuccessorGeometry::new(
-            1 << 26,
-            BooleanityAddressSuccessorConfig {
-                inner_log2,
-                ..BooleanityAddressSuccessorConfig::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(geometry.e_in_length(), 1 << inner_log2);
-        assert_eq!(geometry.e_out_length(), expected_e_out);
-    }
-    for inner_log2 in [14, 18] {
-        assert!(BooleanityAddressSuccessorGeometry::new(
-            1 << 26,
-            BooleanityAddressSuccessorConfig {
-                inner_log2,
-                ..BooleanityAddressSuccessorConfig::default()
-            },
-        )
-        .is_err());
-    }
+fn fixed_geometry_rejects_silent_retuning() {
     for config in [
+        BooleanityAddressSuccessorConfig {
+            inner_log2: 14,
+            ..BooleanityAddressSuccessorConfig::default()
+        },
         BooleanityAddressSuccessorConfig {
             accumulator_threads_per_threadgroup: 256,
             ..BooleanityAddressSuccessorConfig::default()
@@ -273,7 +255,7 @@ fn shader_fragment_exposes_only_the_three_frozen_dispatches() {
 
 #[test]
 fn metal_runtime_matches_unfactored_oracle_and_exposes_completed_lease() {
-    let row_count = 1usize << BOOLEANITY_ADDRESS_SUCCESSOR_MAX_INNER_LOG2;
+    let row_count = 1usize << BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LOG2;
     let rows = (0..row_count)
         .map(|index| {
             let lookup = (index as u128).wrapping_mul(0x9e37_79b9_7f4a_7c15);
@@ -287,7 +269,7 @@ fn metal_runtime_matches_unfactored_oracle_and_exposes_completed_lease() {
             BooleanityRow::new(lookup, pc, ram, inc).unwrap()
         })
         .collect::<Vec<_>>();
-    let point = (0..BOOLEANITY_ADDRESS_SUCCESSOR_MAX_INNER_LOG2)
+    let point = (0..BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LOG2)
         .map(|index| AkitaField::from_u64((index + 2) as u64))
         .collect::<Vec<_>>();
     let e_in = EqPolynomial::evals(&point, None);
@@ -297,45 +279,38 @@ fn metal_runtime_matches_unfactored_oracle_and_exposes_completed_lease() {
     let resident = context.prepare_booleanity_rows(&rows).unwrap();
     let source_rows_storage_id = resident.allocation_identity();
     let device_registry_id = resident.device_registry_id();
-    for inner_log2 in
-        BOOLEANITY_ADDRESS_SUCCESSOR_MIN_INNER_LOG2..=BOOLEANITY_ADDRESS_SUCCESSOR_MAX_INNER_LOG2
-    {
-        let invocation = context
-            .prepare_booleanity_address_successor(
-                resident.clone(),
-                &point,
-                BooleanityAddressSuccessorConfig {
-                    inner_log2,
-                    ..BooleanityAddressSuccessorConfig::default()
-                },
-            )
-            .unwrap();
-        assert_eq!(invocation.source_rows_storage_id(), source_rows_storage_id);
-        assert_eq!(
-            invocation.pack_pipeline_limits().thread_execution_width,
-            BOOLEANITY_ADDRESS_SUCCESSOR_SIMD_WIDTH
-        );
-        assert_eq!(
-            invocation.packed_pipeline_limits().thread_execution_width,
-            BOOLEANITY_ADDRESS_SUCCESSOR_SIMD_WIDTH
-        );
-        assert_eq!(
-            invocation.finalize_pipeline_limits().thread_execution_width,
-            BOOLEANITY_ADDRESS_SUCCESSOR_SIMD_WIDTH
-        );
-        assert!(invocation.completed_hot_rows().is_err());
-        let gpu_active = invocation.execute_timed().unwrap();
-        assert!(!gpu_active.is_zero());
-        assert_eq!(invocation.read_masses().unwrap(), expected);
-        let hot_rows = invocation.completed_hot_rows().unwrap();
-        assert_eq!(hot_rows.len(), row_count);
-        assert_eq!(hot_rows.source_rows_storage_id(), source_rows_storage_id);
-        assert_eq!(hot_rows.device_registry_id(), device_registry_id);
-        assert_eq!(
-            hot_rows.allocation_identity(),
-            invocation.hot_rows_storage_id()
-        );
-    }
+    let invocation = context
+        .prepare_booleanity_address_successor(
+            resident,
+            &point,
+            BooleanityAddressSuccessorConfig::default(),
+        )
+        .unwrap();
+    assert_eq!(invocation.source_rows_storage_id(), source_rows_storage_id);
+    assert_eq!(
+        invocation.pack_pipeline_limits().thread_execution_width,
+        BOOLEANITY_ADDRESS_SUCCESSOR_SIMD_WIDTH
+    );
+    assert_eq!(
+        invocation.packed_pipeline_limits().thread_execution_width,
+        BOOLEANITY_ADDRESS_SUCCESSOR_SIMD_WIDTH
+    );
+    assert_eq!(
+        invocation.finalize_pipeline_limits().thread_execution_width,
+        BOOLEANITY_ADDRESS_SUCCESSOR_SIMD_WIDTH
+    );
+    assert!(invocation.completed_hot_rows().is_err());
+    let gpu_active = invocation.execute_timed().unwrap();
+    assert!(!gpu_active.is_zero());
+    assert_eq!(invocation.read_masses().unwrap(), expected);
+    let hot_rows = invocation.completed_hot_rows().unwrap();
+    assert_eq!(hot_rows.len(), row_count);
+    assert_eq!(hot_rows.source_rows_storage_id(), source_rows_storage_id);
+    assert_eq!(hot_rows.device_registry_id(), device_registry_id);
+    assert_eq!(
+        hot_rows.allocation_identity(),
+        invocation.hot_rows_storage_id()
+    );
 }
 
 fn log_26_geometry() -> BooleanityAddressSuccessorGeometry {

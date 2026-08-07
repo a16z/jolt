@@ -15,8 +15,6 @@ pub const BOOLEANITY_ADDRESS_SUCCESSOR_REMAINING_TILES: usize = 4;
 pub const BOOLEANITY_ADDRESS_SUCCESSOR_DEFERRED_WORDS: usize = 5;
 pub const BOOLEANITY_ADDRESS_SUCCESSOR_SIMD_WIDTH: usize = 32;
 pub const BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LOG2: usize = 15;
-pub const BOOLEANITY_ADDRESS_SUCCESSOR_MIN_INNER_LOG2: usize = 15;
-pub const BOOLEANITY_ADDRESS_SUCCESSOR_MAX_INNER_LOG2: usize = 17;
 pub const BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LENGTH: usize =
     1 << BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LOG2;
 pub const BOOLEANITY_ADDRESS_SUCCESSOR_ACCUMULATOR_THREADS: usize = 512;
@@ -111,20 +109,14 @@ impl BooleanityAddressSuccessorGeometry {
         rows: usize,
         config: BooleanityAddressSuccessorConfig,
     ) -> Result<Self, BooleanityAddressSuccessorError> {
-        if rows == 0 || !rows.is_power_of_two() {
+        if rows == 0 || !rows.is_power_of_two() || rows < BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LENGTH
+        {
             return Err(BooleanityAddressSuccessorError::InvalidRows(rows));
         }
-        if !(BOOLEANITY_ADDRESS_SUCCESSOR_MIN_INNER_LOG2
-            ..=BOOLEANITY_ADDRESS_SUCCESSOR_MAX_INNER_LOG2)
-            .contains(&config.inner_log2)
-        {
+        if config.inner_log2 != BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LOG2 {
             return Err(BooleanityAddressSuccessorError::InvalidInnerLog2(
                 config.inner_log2,
             ));
-        }
-        let e_in_length = 1usize << config.inner_log2;
-        if rows < e_in_length {
-            return Err(BooleanityAddressSuccessorError::InvalidRows(rows));
         }
         validate_threads(
             "accumulator",
@@ -137,11 +129,11 @@ impl BooleanityAddressSuccessorGeometry {
             BOOLEANITY_ADDRESS_SUCCESSOR_FINALIZE_THREADS,
         )?;
         let _ = shader_u32("rows", rows)?;
-        let e_out_length = rows / e_in_length;
+        let e_out_length = rows / BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LENGTH;
         let _ = shader_u32("e_out length", e_out_length)?;
         Ok(Self {
             rows,
-            e_in_length,
+            e_in_length: BOOLEANITY_ADDRESS_SUCCESSOR_INNER_LENGTH,
             e_out_length,
             accumulator_threads_per_threadgroup: config.accumulator_threads_per_threadgroup,
             finalize_threads_per_threadgroup: config.finalize_threads_per_threadgroup,
