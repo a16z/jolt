@@ -53,6 +53,8 @@ pub mod registers_claim_reduction;
 mod registers_read_write;
 mod registers_read_write_dense;
 mod registers_val;
+#[doc(hidden)]
+pub mod registers_val_claim_v2;
 pub mod registers_val_evaluation_backend;
 mod runtime;
 mod source;
