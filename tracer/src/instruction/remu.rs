@@ -2,10 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{
-    fill_virtual_advice, format::format_r::FormatR, Cycle, Instruction, RISCVInstruction,
-    RISCVTrace,
-};
+use super::{format::format_r::FormatR, Cycle, Instruction, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = REMU,
@@ -31,18 +28,17 @@ impl REMU {
 
 impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let mut inline_sequence = Instruction::from(*self).inline_sequence(&cpu.vr_allocator);
         let quotient = if cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) == 0 {
             u64::MAX
         } else {
             cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
                 / cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
         };
-        fill_virtual_advice(&mut inline_sequence, &[quotient]);
-
-        let mut trace = trace;
-        for instr in inline_sequence {
-            instr.trace(cpu, trace.as_deref_mut());
-        }
+        super::trace_inline_sequence_with_advice(
+            &Instruction::from(*self),
+            cpu,
+            &[quotient],
+            trace,
+        );
     }
 }

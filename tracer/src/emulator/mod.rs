@@ -21,6 +21,7 @@ use alloc::{
 };
 
 pub mod cpu;
+pub mod decode_cache;
 pub mod default_terminal;
 pub mod elf_analyzer;
 pub mod memory;
@@ -293,6 +294,27 @@ impl Emulator {
                         .setup_bytecode(sh_addr + j as u64, analyzer.read_byte(sh_offset + j));
                 }
             }
+        }
+
+        // Cover the executable sections with the pre-decoded instruction
+        // cache. (Initialized after the section copy so the setup stores don't
+        // walk the invalidation path.)
+        const SHF_EXECINSTR: u64 = 0x4;
+        let mut text_base = u64::MAX;
+        let mut text_end = 0;
+        for header in &program_data_section_headers {
+            if header.sh_flags & SHF_EXECINSTR != 0
+                && header.sh_addr >= RAM_START_ADDRESS
+                && header.sh_size > 0
+            {
+                text_base = text_base.min(header.sh_addr);
+                text_end = text_end.max(header.sh_addr + header.sh_size);
+            }
+        }
+        if text_base < text_end {
+            self.cpu
+                .get_mut_mmu()
+                .init_decode_cache(text_base, text_end);
         }
 
         self.cpu.update_pc(header.e_entry);
