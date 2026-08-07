@@ -1,5 +1,7 @@
 use std::{
+    ffi::c_void,
     mem::size_of,
+    ops::Deref,
     slice,
     time::{Duration, Instant},
 };
@@ -430,17 +432,70 @@ struct SuccessorPipelines {
     dense_message_threads: usize,
 }
 
+struct BufferRegion {
+    buffer: Buffer,
+    offset_bytes: u64,
+    length_bytes: u64,
+}
+
+impl BufferRegion {
+    fn whole(buffer: Buffer) -> Self {
+        let length_bytes = buffer.length();
+        Self {
+            buffer,
+            offset_bytes: 0,
+            length_bytes,
+        }
+    }
+
+    const fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    const fn offset_bytes(&self) -> u64 {
+        self.offset_bytes
+    }
+
+    const fn length(&self) -> u64 {
+        self.length_bytes
+    }
+
+    fn contents(&self) -> *mut c_void {
+        self.buffer
+            .contents()
+            .cast::<u8>()
+            .wrapping_add(self.offset_bytes as usize)
+            .cast()
+    }
+
+    fn allocation_identity(&self) -> usize {
+        self.buffer.as_ptr() as usize
+    }
+
+    fn bind(&self, encoder: &metal::ComputeCommandEncoderRef, index: u64) {
+        encoder.set_buffer(index, Some(&self.buffer), self.offset_bytes);
+    }
+}
+
+impl Deref for BufferRegion {
+    type Target = Buffer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
 struct Buffers {
-    dense_a: Buffer,
-    dense_b: Buffer,
-    e_in: Buffer,
-    e_out: Buffer,
-    partial_a: Buffer,
-    partial_b: Buffer,
+    dense_a: BufferRegion,
+    dense_b: BufferRegion,
+    e_in: BufferRegion,
+    e_out: BufferRegion,
+    partial_a: BufferRegion,
+    partial_b: BufferRegion,
 }
 
 impl Buffers {
-    fn all(&self) -> [&Buffer; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
+    fn all(&self) -> [&BufferRegion; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
         [
             &self.dense_a,
             &self.dense_b,
@@ -452,7 +507,7 @@ impl Buffers {
     }
 
     fn identities(&self) -> [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
-        self.all().map(|buffer| buffer.as_ptr() as usize)
+        self.all().map(BufferRegion::allocation_identity)
     }
 }
 
@@ -879,9 +934,9 @@ impl InstructionInputSequenceStorage {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipelines.native_message);
             encoder.set_buffer(0, Some(resident_rows.buffer()), 0);
-            encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
-            encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
-            encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+            self.buffers.e_in.bind(encoder, 1);
+            self.buffers.e_out.bind(encoder, 2);
+            self.buffers.partial_a.bind(encoder, 3);
             set_inline_bytes(encoder, 4, &gamma);
             set_inline_bytes(encoder, 5, &params);
             encoder.set_threadgroup_memory_length(
@@ -903,8 +958,8 @@ impl InstructionInputSequenceStorage {
                 },
             );
             encoder.set_compute_pipeline_state(&self.pipelines.reduction);
-            encoder.set_buffer(0, Some(&self.buffers.partial_a), 0);
-            encoder.set_buffer(1, Some(&self.buffers.partial_b), 0);
+            self.buffers.partial_a.bind(encoder, 0);
+            self.buffers.partial_b.bind(encoder, 1);
             set_inline_bytes(encoder, 2, &reduction_params);
             encoder.dispatch_thread_groups(
                 MTLSize {
@@ -921,7 +976,7 @@ impl InstructionInputSequenceStorage {
             if let Some((successor, successor_shape, _, _)) = successor_primer {
                 encoder.set_compute_pipeline_state(&successor.materialize);
                 encoder.set_buffer(0, Some(resident_rows.buffer()), 0);
-                encoder.set_buffer(1, Some(&self.buffers.dense_a), 0);
+                self.buffers.dense_a.bind(encoder, 1);
                 set_inline_bytes(encoder, 2, &gamma);
                 set_inline_bytes(encoder, 3, &successor_shape.params());
                 encoder.set_threadgroup_memory_length(0, 0);
@@ -947,10 +1002,10 @@ impl InstructionInputSequenceStorage {
             {
                 let encoder = command_buffer.new_compute_command_encoder();
                 encoder.set_compute_pipeline_state(&successor.dense_message);
-                encoder.set_buffer(0, Some(&self.buffers.dense_a), 0);
-                encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
-                encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
-                encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+                self.buffers.dense_a.bind(encoder, 0);
+                self.buffers.e_in.bind(encoder, 1);
+                self.buffers.e_out.bind(encoder, 2);
+                self.buffers.partial_a.bind(encoder, 3);
                 set_inline_bytes(encoder, 4, &gamma);
                 set_inline_bytes(encoder, 5, &successor_dense_shape.params());
                 encoder.set_threadgroup_memory_length(
@@ -970,8 +1025,8 @@ impl InstructionInputSequenceStorage {
                     },
                 );
                 encoder.set_compute_pipeline_state(&self.pipelines.reduction);
-                encoder.set_buffer(0, Some(&self.buffers.partial_a), 0);
-                encoder.set_buffer(1, Some(&self.buffers.partial_b), 0);
+                self.buffers.partial_a.bind(encoder, 0);
+                self.buffers.partial_b.bind(encoder, 1);
                 set_inline_bytes(encoder, 2, &successor_reduction_params);
                 encoder.dispatch_thread_groups(
                     MTLSize {
@@ -1261,7 +1316,7 @@ impl InstructionInputSequence {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&successor.materialize);
             encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-            encoder.set_buffer(1, Some(&self.storage.buffers.dense_a), 0);
+            self.storage.buffers.dense_a.bind(encoder, 1);
             set_inline_bytes(encoder, 2, &challenge);
             set_inline_bytes(encoder, 3, &shape.params());
             encoder.dispatch_thread_groups(
@@ -1299,7 +1354,7 @@ impl InstructionInputSequence {
             wall: started.elapsed(),
             gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
             resident_row_identity: self.resident_rows.allocation_identity(),
-            dense_buffer_identity: self.storage.buffers.dense_a.as_ptr() as usize,
+            dense_buffer_identity: self.storage.buffers.dense_a.allocation_identity(),
             pipeline_limits,
         })
     }
@@ -1401,10 +1456,10 @@ impl InstructionInputSequence {
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&successor.dense_message);
-            encoder.set_buffer(0, Some(&self.storage.buffers.dense_a), 0);
-            encoder.set_buffer(1, Some(&self.storage.buffers.e_in), 0);
-            encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
-            encoder.set_buffer(3, Some(&self.storage.buffers.partial_a), 0);
+            self.storage.buffers.dense_a.bind(encoder, 0);
+            self.storage.buffers.e_in.bind(encoder, 1);
+            self.storage.buffers.e_out.bind(encoder, 2);
+            self.storage.buffers.partial_a.bind(encoder, 3);
             set_inline_bytes(encoder, 4, &gamma);
             set_inline_bytes(encoder, 5, &shape.params());
             encoder.set_threadgroup_memory_length(0, shape.threadgroup_bytes() as u64);
@@ -1458,7 +1513,7 @@ impl InstructionInputSequence {
                 e_out_elements: e_out.len(),
                 wall: started.elapsed(),
                 gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
-                dense_buffer_identity: self.storage.buffers.dense_a.as_ptr() as usize,
+                dense_buffer_identity: self.storage.buffers.dense_a.allocation_identity(),
                 dynamic_threadgroup_memory_length: shape.threadgroup_bytes(),
                 pipeline_limits,
             },
@@ -1537,7 +1592,7 @@ impl InstructionInputSequence {
             let materialize = command_buffer.new_compute_command_encoder();
             materialize.set_compute_pipeline_state(&successor.materialize);
             materialize.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-            materialize.set_buffer(1, Some(&self.storage.buffers.dense_a), 0);
+            self.storage.buffers.dense_a.bind(materialize, 1);
             set_inline_bytes(materialize, 2, &challenge);
             set_inline_bytes(materialize, 3, &materialize_shape.params());
             materialize.dispatch_thread_groups(
@@ -1558,10 +1613,10 @@ impl InstructionInputSequence {
 
             let message = command_buffer.new_compute_command_encoder();
             message.set_compute_pipeline_state(&successor.dense_message);
-            message.set_buffer(0, Some(&self.storage.buffers.dense_a), 0);
-            message.set_buffer(1, Some(&self.storage.buffers.e_in), 0);
-            message.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
-            message.set_buffer(3, Some(&self.storage.buffers.partial_a), 0);
+            self.storage.buffers.dense_a.bind(message, 0);
+            self.storage.buffers.e_in.bind(message, 1);
+            self.storage.buffers.e_out.bind(message, 2);
+            self.storage.buffers.partial_a.bind(message, 3);
             set_inline_bytes(message, 4, &gamma);
             set_inline_bytes(message, 5, &dense_shape.params());
             message.set_threadgroup_memory_length(0, dense_shape.threadgroup_bytes() as u64);
@@ -1623,7 +1678,7 @@ impl InstructionInputSequence {
                 wall: started.elapsed(),
                 gpu_active,
                 resident_row_identity: self.resident_rows.allocation_identity(),
-                dense_buffer_identity: self.storage.buffers.dense_a.as_ptr() as usize,
+                dense_buffer_identity: self.storage.buffers.dense_a.allocation_identity(),
                 dynamic_threadgroup_memory_length: dense_shape.threadgroup_bytes(),
                 materialize_pipeline_limits,
                 dense_message_pipeline_limits,
@@ -1786,18 +1841,18 @@ impl InstructionInputSequence {
             match kind {
                 DispatchKind::NativeMessage => {
                     encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-                    encoder.set_buffer(1, Some(&self.storage.buffers.e_in), 0);
-                    encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
-                    encoder.set_buffer(3, Some(&self.storage.buffers.partial_a), 0);
+                    self.storage.buffers.e_in.bind(encoder, 1);
+                    self.storage.buffers.e_out.bind(encoder, 2);
+                    self.storage.buffers.partial_a.bind(encoder, 3);
                     set_inline_bytes(encoder, 4, &gamma);
                     set_inline_bytes(encoder, 5, &params);
                 }
                 DispatchKind::NativeTransition => {
                     encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-                    encoder.set_buffer(1, Some(&self.storage.buffers.dense_a), 0);
-                    encoder.set_buffer(2, Some(&self.storage.buffers.e_in), 0);
-                    encoder.set_buffer(3, Some(&self.storage.buffers.e_out), 0);
-                    encoder.set_buffer(4, Some(&self.storage.buffers.partial_a), 0);
+                    self.storage.buffers.dense_a.bind(encoder, 1);
+                    self.storage.buffers.e_in.bind(encoder, 2);
+                    self.storage.buffers.e_out.bind(encoder, 3);
+                    self.storage.buffers.partial_a.bind(encoder, 4);
                     set_inline_bytes(
                         encoder,
                         5,
@@ -1811,11 +1866,11 @@ impl InstructionInputSequence {
                     set_inline_bytes(encoder, 7, &params);
                 }
                 DispatchKind::DenseTransition => {
-                    encoder.set_buffer(0, Some(self.dense_source_buffer()), 0);
-                    encoder.set_buffer(1, Some(self.dense_destination_buffer()), 0);
-                    encoder.set_buffer(2, Some(&self.storage.buffers.e_in), 0);
-                    encoder.set_buffer(3, Some(&self.storage.buffers.e_out), 0);
-                    encoder.set_buffer(4, Some(&self.storage.buffers.partial_a), 0);
+                    self.dense_source_buffer().bind(encoder, 0);
+                    self.dense_destination_buffer().bind(encoder, 1);
+                    self.storage.buffers.e_in.bind(encoder, 2);
+                    self.storage.buffers.e_out.bind(encoder, 3);
+                    self.storage.buffers.partial_a.bind(encoder, 4);
                     set_inline_bytes(
                         encoder,
                         5,
@@ -1912,8 +1967,8 @@ impl InstructionInputSequence {
                     &self.storage.buffers.partial_a,
                 )
             };
-            encoder.set_buffer(0, Some(input), 0);
-            encoder.set_buffer(1, Some(output), 0);
+            input.bind(encoder, 0);
+            output.bind(encoder, 1);
             set_inline_bytes(encoder, 2, &params);
             encoder.dispatch_thread_groups(
                 MTLSize {
@@ -1932,7 +1987,7 @@ impl InstructionInputSequence {
         }
     }
 
-    fn final_partial_buffer(&self, mut count: usize) -> &Buffer {
+    fn final_partial_buffer(&self, mut count: usize) -> &BufferRegion {
         let mut input_a = true;
         while count > 1 {
             count = count.div_ceil(SIMD_WIDTH);
@@ -1945,7 +2000,7 @@ impl InstructionInputSequence {
         }
     }
 
-    fn dense_source_buffer(&self) -> &Buffer {
+    fn dense_source_buffer(&self) -> &BufferRegion {
         if self.dense_in_a {
             &self.storage.buffers.dense_a
         } else {
@@ -1953,7 +2008,7 @@ impl InstructionInputSequence {
         }
     }
 
-    fn dense_destination_buffer(&self) -> &Buffer {
+    fn dense_destination_buffer(&self) -> &BufferRegion {
         if self.dense_in_a {
             &self.storage.buffers.dense_b
         } else {
@@ -2004,7 +2059,11 @@ fn initialize_storage(
         autoreleasepool(|| {
             let encoder = command_buffer.new_blit_command_encoder();
             for (buffer, length) in buffers.all().into_iter().zip(fill_lengths) {
-                encoder.fill_buffer(buffer, NSRange::new(0, length), 0);
+                encoder.fill_buffer(
+                    buffer.buffer(),
+                    NSRange::new(buffer.offset_bytes(), length),
+                    0,
+                );
             }
             encoder.end_encoding();
             command_buffer.commit();
@@ -2040,7 +2099,11 @@ fn initialize_storage(
     })
 }
 
-fn write_fields(buffer: &Buffer, capacity: usize, values: &[AkitaField]) -> Result<(), MetalError> {
+fn write_fields(
+    buffer: &BufferRegion,
+    capacity: usize,
+    values: &[AkitaField],
+) -> Result<(), MetalError> {
     if values.len() > capacity {
         return Err(MetalError::InstructionInputStorageLength {
             expected: capacity,
@@ -2056,12 +2119,14 @@ fn write_fields(buffer: &Buffer, capacity: usize, values: &[AkitaField]) -> Resu
     Ok(())
 }
 
-fn new_buffer(context: &SolinasMetal, elements: usize) -> Result<Buffer, MetalError> {
+fn new_buffer(context: &SolinasMetal, elements: usize) -> Result<BufferRegion, MetalError> {
     let bytes = byte_length::<Fp128>(elements)?;
     context.validate_buffer_length(bytes)?;
-    Ok(context
-        .device
-        .new_buffer(bytes, MTLResourceOptions::StorageModeShared))
+    Ok(BufferRegion::whole(
+        context
+            .device
+            .new_buffer(bytes, MTLResourceOptions::StorageModeShared),
+    ))
 }
 
 fn validate_u32_element_count(elements: usize) -> Result<(), MetalError> {
