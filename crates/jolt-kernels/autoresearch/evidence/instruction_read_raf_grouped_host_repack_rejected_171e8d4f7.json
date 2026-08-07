@@ -1,0 +1,53 @@
+{
+  "schema": "metal_instruction_read_raf_grouped_observation_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-07",
+  "status": "rejected",
+  "candidate": {
+    "git_revision": "171e8d4f7973a5d620c19cd3677c77e00c370b63",
+    "binary_path": "target/release/deps/metal_solinas-9c8279d8148405e7",
+    "binary_sha256": "d41e5da51baca892c1f269a9f8eb51600a0c66c0477b7c7e8e483a916b01e24a",
+    "production_default": false
+  },
+  "contract": {
+    "device": "Apple M4 Max",
+    "macos": "26.6",
+    "field_offset": 4294944759,
+    "elements": 33554432,
+    "address_phases": 16,
+    "rows_per_threadgroup": 65536,
+    "threads_per_threadgroup": 1024,
+    "segments": 82,
+    "job_field_outputs": 1536,
+    "dynamic_threadgroup_bytes": 30720,
+    "host_fiat_shamir_between_phases": true,
+    "retained_command": "JOLT_SOLINAS_BENCH_FAMILY=instruction-read-raf-address-resident-eval JOLT_SOLINAS_BENCH_ELEMENTS=33554432 JOLT_METAL_ADDRESS_ROWS_PER_THREADGROUP=65536 JOLT_METAL_ADDRESS_THREADS=1024 cargo bench -p jolt-kernels --bench metal_solinas --features metal,test-utils -- --noplot"
+  },
+  "observation": {
+    "prepare_ms": 547.014,
+    "single_phase_wall_ms": 23.741,
+    "single_phase_gpu_active_ms": 12.716,
+    "extrapolated_16_phase_wall_ms": 379.856,
+    "extrapolated_16_phase_gpu_active_ms": 203.456,
+    "required_16_phase_wall_ms": 90.0,
+    "required_single_phase_wall_ms": 5.625
+  },
+  "five_x_gate": {
+    "cpu_complete_member_ms": 1822.922,
+    "cpu_evidence_path": "benchmark-runs/metal-piop-eval/20260807-145956-716336/result.json",
+    "cpu_evidence_sha256": "ff05ceeb59b586a744b99e31a1796f410de2ee8ccf12056387866934895224c8",
+    "maximum_complete_member_ms": 364.5844,
+    "phase_wall_alone_exceeds_complete_member_cap": true
+  },
+  "guards": {
+    "grouped_phase_matches_independent_raf_and_suffix_oracles": true,
+    "optimized_metal_address_and_cycle_matches_optimized_cpu": true,
+    "empty_segment_validation_regression_fixed": true,
+    "clippy_metal_test_utils_lib_passed": true,
+    "cargo_fmt_check_passed": true
+  },
+  "verdict": {
+    "reason": "Six-lane deferred threadgroup atomics consume 30 KiB per group and leave the exact phase wall 4.22x above its budget. Sixteen mandatory host-Fiat-Shamir phase boundaries extrapolate to 379.856 ms, already above the entire 364.584 ms complete-member 5x cap before cycle rounds, messages, handoff, or readback.",
+    "disposition": "Keep the exact implementation as an opt-in probe only. Do not integrate the host repack. The next candidate must use a producer-owned layout and a phase algorithm with materially lower threadgroup-memory and atomic pressure; layout ownership alone cannot rescue this shader geometry."
+  }
+}
