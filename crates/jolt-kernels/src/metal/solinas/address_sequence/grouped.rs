@@ -141,22 +141,10 @@ impl GroupedAddressPhase {
             buffers: GroupedPhaseBuffers {
                 jobs: buffer_from_slice(&context.device, &jobs),
                 job_offsets: buffer_from_slice(&context.device, &job_offsets),
-                suffix_kinds: buffer_from_slice(
-                    &context.device,
-                    suffix_plan.explicit_kinds(),
-                ),
-                suffix_counts: buffer_from_slice(
-                    &context.device,
-                    suffix_plan.explicit_counts(),
-                ),
-                suffix_descriptors: buffer_from_slice(
-                    &context.device,
-                    suffix_plan.descriptors(),
-                ),
-                suffix_output_lanes: buffer_from_slice(
-                    &context.device,
-                    suffix_plan.output_lanes(),
-                ),
+                suffix_kinds: buffer_from_slice(&context.device, suffix_plan.explicit_kinds()),
+                suffix_counts: buffer_from_slice(&context.device, suffix_plan.explicit_counts()),
+                suffix_descriptors: buffer_from_slice(&context.device, suffix_plan.descriptors()),
+                suffix_output_lanes: buffer_from_slice(&context.device, suffix_plan.output_lanes()),
                 partials: context.device.new_buffer(
                     byte_length::<Fp128>(partial_elements)?,
                     MTLResourceOptions::StorageModeShared,
@@ -295,10 +283,7 @@ impl GroupedAddressPhase {
     }
 }
 
-fn validate_ranges(
-    rows: usize,
-    ranges: &[Range<usize>; SEGMENTS],
-) -> Result<(), MetalError> {
+fn validate_ranges(rows: usize, ranges: &[Range<usize>; SEGMENTS]) -> Result<(), MetalError> {
     if ranges
         .iter()
         .any(|range| range.end < range.start || range.end > rows)

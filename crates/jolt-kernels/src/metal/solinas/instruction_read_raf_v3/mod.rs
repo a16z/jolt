@@ -68,8 +68,8 @@ pub(crate) use runtime::{
     AddressAtomPhaseOutput, AddressAtomRuntimeConfig, AddressAtomRuntimeError, AddressAtomSequence,
 };
 pub(crate) use shader_abi::{
-    AddressJob, AtomPhaseParams, SuffixPlan, JOB_FIELDS, PHASE_THREADGROUP_BYTES,
-    SEGMENTS, SEGMENT_OFFSETS, SIMD_WIDTH, TABLES, TOTAL_SUFFIXES,
+    AddressJob, AtomPhaseParams, SuffixPlan, JOB_FIELDS, PHASE_THREADGROUP_BYTES, SEGMENTS,
+    SEGMENT_OFFSETS, SIMD_WIDTH, TABLES, TOTAL_SUFFIXES,
 };
 pub(crate) use topology::{AddressAtomTopology, AddressAtomTopologyConfig};
 

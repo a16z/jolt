@@ -19,8 +19,7 @@ pub(crate) const JOB_FIELDS: usize = JOB_LANES * ADDRESS_BINS;
 pub(super) const FLAG_COLUMNS: usize = TABLES + 1;
 pub(super) const DEFERRED_WORDS: usize = 5;
 pub(crate) const SIMD_WIDTH: usize = 32;
-pub(crate) const PHASE_THREADGROUP_BYTES: usize =
-    JOB_FIELDS * DEFERRED_WORDS * size_of::<u32>();
+pub(crate) const PHASE_THREADGROUP_BYTES: usize = JOB_FIELDS * DEFERRED_WORDS * size_of::<u32>();
 pub(super) const FLAG_THREADGROUP_BYTES: usize = FLAG_COLUMNS * DEFERRED_WORDS * size_of::<u32>();
 
 const _: () = assert!(TABLES == 40);
