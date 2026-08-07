@@ -1,7 +1,4 @@
-use crate::{
-    instructions::riscv::sign_extend_half_word,
-    traits::{impl_lookup_table, LookupQuery},
-};
+use crate::traits::{impl_lookup_table, LookupQuery};
 use jolt_riscv::{instructions::MulIW, JoltCycle};
 
 impl_lookup_table!(MulIW, Some(SignExtendHalfWord));
@@ -29,7 +26,7 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for MulIW<C> {
 
     fn to_lookup_output(&self) -> u64 {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        sign_extend_half_word::<XLEN>(x.wrapping_mul(y as u64))
+        x.wrapping_mul(y as u64) as u32 as i32 as i64 as u64
     }
 }
 

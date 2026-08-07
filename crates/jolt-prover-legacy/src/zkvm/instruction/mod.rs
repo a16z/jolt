@@ -578,15 +578,3 @@ pub mod xori;
 
 #[cfg(test)]
 pub mod test;
-
-#[inline]
-fn sign_extend_half_word<const XLEN: usize>(value: u64) -> u64 {
-    let half_word_size = XLEN / 2;
-    let lower_mask = (1u128 << half_word_size).wrapping_sub(1) as u64;
-    let lower_half = value & lower_mask;
-    if lower_half & (1 << (half_word_size - 1)) == 0 {
-        lower_half
-    } else {
-        lower_half | (lower_mask << half_word_size)
-    }
-}
