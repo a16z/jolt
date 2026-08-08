@@ -25,7 +25,7 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
@@ -174,8 +174,38 @@ RAM_READ_WRITE_KERNEL = "RamReadWriteChecking"
 RAM_READ_WRITE_MIN_SPEEDUP = 5.0
 RAM_HAMMING_KERNEL = "RamHammingBooleanity"
 RAM_HAMMING_MIN_SPEEDUP = 5.0
+RAM_CYCLE_FAMILY_KERNEL = "RamCycleFamily"
+RAM_RAF_EVALUATION_KERNEL = "RamRafEvaluation"
+RAM_VAL_CHECK_KERNEL = "RamValCheck"
+RAM_RA_CLAIM_REDUCTION_KERNEL = "RamRaClaimReduction"
+RAM_RA_VIRTUALIZATION_KERNEL = "RamRaVirtualization"
+RAM_CYCLE_FAMILY_MIN_SPEEDUP = 5.0
+RAM_CYCLE_FAMILY_LOG_K = 13
+RAM_CYCLE_FAMILY_CHARGE_MODEL = "six_raw_members_plus_witness_prepare_once_v1"
+RAM_CYCLE_FAMILY_MEMBERS = (
+    ("raf_evaluation", RAM_RAF_EVALUATION_KERNEL),
+    ("read_write", RAM_READ_WRITE_KERNEL),
+    ("val_check", RAM_VAL_CHECK_KERNEL),
+    ("ra_claim_reduction", RAM_RA_CLAIM_REDUCTION_KERNEL),
+    ("hamming_booleanity", RAM_HAMMING_KERNEL),
+    ("ra_virtualization", RAM_RA_VIRTUALIZATION_KERNEL),
+)
+RAM_CYCLE_FAMILY_PAIR_MEMBERS = (
+    ("raf_evaluation", "ram_raf_evaluation"),
+    ("read_write", "ram_read_write"),
+    ("val_check", "ram_val_check"),
+    ("ra_claim_reduction", "ram_ra_claim_reduction"),
+    ("hamming_booleanity", "ram_hamming"),
+    ("ra_virtualization", "ram_ra_virtualization"),
+)
+METAL_RAM_CYCLE_FAMILY_WITNESS_PREPARE = (
+    "MetalRamCycleFamily::witness_prepare"
+)
 METAL_RAM_CYCLE_FAMILY_OWNER = "MetalRamCycleFamily::owner_prepare"
 METAL_RAM_CYCLE_FAMILY_TERMINAL_TAKE = "MetalRamCycleFamily::terminal_take"
+METAL_RAM_VAL_CHECK_ROUTE = "MetalRamValCheck::route"
+METAL_RAM_RA_CLAIM_REDUCTION_ROUTE = "MetalRamRaClaimReduction::route"
+METAL_RAM_RA_VIRTUALIZATION_ROUTE = "MetalRamRaVirtualization::route"
 RAM_CYCLE_FAMILY_SCHEMA_VERSION = 3
 RAM_HAMMING_PRODUCT_CAP = 1_000_000
 OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE = (
@@ -276,17 +306,11 @@ LOCAL_KERNELS = {
         "paired_metric": "paired_registers_claim_reduction_member_speedups",
         "backend_prefix": "MetalRegistersClaimReduction::",
     },
-    "RamReadWriteChecking": {
-        "name": RAM_READ_WRITE_KERNEL,
-        "metric": "ram_read_write_standalone_charged_speedup",
-        "paired_metric": "paired_ram_read_write_standalone_charged_speedups",
-        "backend_prefix": "MetalRamReadWrite::",
-    },
-    "RamHammingBooleanity": {
-        "name": RAM_HAMMING_KERNEL,
-        "metric": "ram_hamming_booleanity_standalone_charged_speedup",
-        "paired_metric": "paired_ram_hamming_booleanity_standalone_charged_speedups",
-        "backend_prefix": "MetalRamHammingBooleanity::",
+    "RamCycleFamily": {
+        "name": RAM_CYCLE_FAMILY_KERNEL,
+        "metric": "ram_cycle_family_speedup",
+        "paired_metric": "paired_ram_cycle_family_speedups",
+        "backend_prefix": "MetalRamCycleFamily::",
     },
 }
 
@@ -2667,8 +2691,11 @@ def ram_sparse_member_components(
         "intervals": {
             "piop": piop,
             "prepare": prepare,
+            "prove_rounds": prove_rounds,
             "finish": finish,
             "output_claims": output,
+            "canonical": ordered,
+            "host_fiat_shamir": fiat_shamir_intervals,
         },
     }
 
@@ -2797,6 +2824,121 @@ def ram_cycle_family_owner_observation(
     return observation
 
 
+def ram_cycle_family_witness_observation(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    owner: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    if backend not in {"optimized", "metal"}:
+        raise ValueError(f"unsupported RAM cycle-family backend {backend!r}")
+    count = positive_span_count(events, METAL_RAM_CYCLE_FAMILY_WITNESS_PREPARE)
+    if backend == "optimized":
+        if count != 0 or owner is not None:
+            raise ValueError("optimized RAM route unexpectedly prepared Metal witness state")
+        return None
+    if owner is None or count != 1:
+        raise ValueError("Metal RAM route requires exactly one full witness preparation")
+
+    fields = {
+        "schema_version",
+        "requested",
+        "selected",
+        "fallback_reason",
+        "log_t",
+        "log_k",
+        "cycles",
+        "address_domain",
+        "source_generation",
+        "source_fingerprint",
+        "source_collection_performed",
+        "witness_source_scans",
+        "additional_witness_source_scans",
+        "address_validation_passes",
+        "address_rows",
+        "address_plane_storage_id",
+        "address_plane_device_registry_id",
+        "address_plane_bytes",
+        "address_plane_upload_bytes",
+        "address_plane_allocations",
+        "owner_published",
+        "address_plane_published",
+        "complete_publication",
+    }
+    raw = exact_span_args(events, METAL_RAM_CYCLE_FAMILY_WITNESS_PREPARE, fields)
+    string_fields = {"requested", "selected", "fallback_reason"}
+    boolean_fields = {
+        "source_collection_performed",
+        "owner_published",
+        "address_plane_published",
+        "complete_publication",
+    }
+    observation = {
+        **{
+            field: trace_string(raw[field], field)
+            for field in string_fields
+        },
+        **{
+            field: trace_boolean(raw[field])
+            for field in boolean_fields
+        },
+        **{
+            field: nonnegative_trace_integer(raw[field], f"RAM witness {field}")
+            for field in fields - string_fields - boolean_fields
+        },
+    }
+    cycles = 1 << log_n
+    address_bytes = 4 * cycles
+    if (
+        observation["schema_version"] != RAM_CYCLE_FAMILY_SCHEMA_VERSION
+        or observation["requested"] != "host_sparse_v1"
+        or observation["selected"] != "host_sparse_v1"
+        or observation["fallback_reason"] != "none"
+        or observation["log_t"] != log_n
+        or observation["log_k"] != RAM_CYCLE_FAMILY_LOG_K
+        or observation["cycles"] != cycles
+        or observation["address_domain"] != 1 << RAM_CYCLE_FAMILY_LOG_K
+        or observation["source_generation"] != owner["source_generation"]
+        or observation["source_fingerprint"] != owner["source_fingerprint"]
+        or observation["source_collection_performed"] is not True
+        or observation["source_collection_performed"]
+        != owner["source_collection_performed"]
+        or observation["witness_source_scans"] != 1
+        or observation["witness_source_scans"]
+        != owner["shared_source_row_scans"]
+        or observation["additional_witness_source_scans"] != 0
+        or observation["address_validation_passes"] != 3
+        or observation["address_rows"] != cycles
+        or observation["address_plane_storage_id"] <= 0
+        or observation["address_plane_device_registry_id"] <= 0
+        or observation["address_plane_bytes"] != address_bytes
+        or observation["address_plane_upload_bytes"] != address_bytes
+        or observation["address_plane_allocations"] != 1
+        or observation["owner_published"] is not True
+        or observation["address_plane_published"] is not True
+        or observation["complete_publication"] is not True
+    ):
+        raise ValueError("RAM cycle-family witness receipt is inconsistent")
+
+    observation["wall_us"] = unique_named_span_duration_us(
+        events, METAL_RAM_CYCLE_FAMILY_WITNESS_PREPARE
+    )
+    observation["interval"] = span_intervals_us(
+        events, METAL_RAM_CYCLE_FAMILY_WITNESS_PREPARE
+    )[0][1:]
+    require_contained(
+        owner["interval"], observation["interval"], "RAM cycle-family owner"
+    )
+    require_contained(
+        observation["interval"],
+        owner["backend_witness_prepare_interval"],
+        "RAM cycle-family witness preparation",
+    )
+    if observation["interval"][1] > owner["piop_interval"][0]:
+        raise ValueError("RAM witness preparation must complete before PIOP")
+    return observation
+
+
 def ram_cycle_family_terminal_take_observation(
     events: list[dict[str, Any]],
     backend: str,
@@ -2888,6 +3030,7 @@ def ram_read_write_member_breakdown(
             "outer_counts": base["outer_counts"],
             "metal_counts": counts,
             "resource_observation": None,
+            "intervals": base["intervals"],
         }
     if backend != "metal" or owner is None or any(count != 1 for count in counts.values()):
         raise ValueError("Metal RAM read-write sparse route is incomplete")
@@ -3043,6 +3186,7 @@ def ram_read_write_member_breakdown(
             "complete": complete,
             "derived": derived_observation,
         },
+        "intervals": base["intervals"],
     }
 
 
@@ -3079,6 +3223,7 @@ def ram_hamming_member_breakdown(
             "outer_counts": base["outer_counts"],
             "metal_counts": counts,
             "resource_observation": None,
+            "intervals": base["intervals"],
         }
     if backend != "metal" or owner is None or any(count != 1 for count in counts.values()):
         raise ValueError("Metal RAM Hamming sparse route is incomplete")
@@ -3279,6 +3424,291 @@ def ram_hamming_member_breakdown(
             "derived": derived_observation,
             "terminal_take": terminal_take,
         },
+        "intervals": base["intervals"],
+    }
+
+
+def ram_host_sparse_route_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    owner: Optional[dict[str, Any]],
+    *,
+    kernel: str,
+    route_span: str,
+    product_capped: bool,
+) -> dict[str, Any]:
+    base = ram_sparse_member_components(events, kernel, log_n)
+    route_prefix = route_span.rsplit("::", 1)[0] + "::"
+    unknown = {
+        name
+        for name, _, _ in span_intervals_us(events)
+        if name.startswith(route_prefix) and name != route_span
+    }
+    if unknown:
+        raise ValueError(f"{kernel} trace contains unknown Metal phases: {sorted(unknown)}")
+    route_count = positive_span_count(events, route_span)
+    if backend == "optimized":
+        if route_count != 0 or owner is not None:
+            raise ValueError(f"optimized {kernel} unexpectedly exercised Metal sparse work")
+        return {
+            "components": base["components"],
+            "outer_counts": base["outer_counts"],
+            "metal_counts": {"route": 0},
+            "resource_observation": None,
+            "intervals": base["intervals"],
+        }
+    if backend != "metal" or owner is None or route_count != 1:
+        raise ValueError(f"Metal {kernel} sparse route is incomplete")
+
+    fields = {
+        "cycles",
+        "log_t",
+        "log_k",
+        "requested",
+        "selected",
+        "fallback_reason",
+        "source_generation",
+        "source_fingerprint",
+        "access_records",
+        "increment_records",
+        "additional_source_row_scans",
+        "member_upload_bytes",
+        "complete_sequence",
+    }
+    if product_capped:
+        fields |= {"estimated_products", "product_cap"}
+    raw = exact_span_args(events, route_span, fields)
+    string_fields = {"requested", "selected", "fallback_reason"}
+    observation = {
+        **{field: trace_string(raw[field], field) for field in string_fields},
+        "complete_sequence": trace_boolean(raw["complete_sequence"]),
+        **{
+            field: nonnegative_trace_integer(raw[field], f"{kernel} {field}")
+            for field in fields - string_fields - {"complete_sequence"}
+        },
+    }
+    if (
+        observation["cycles"] != 1 << log_n
+        or observation["log_t"] != log_n
+        or observation["log_k"] != owner["log_k"]
+        or observation["requested"] != "host_sparse_v1"
+        or observation["selected"] != "host_sparse_v1"
+        or observation["fallback_reason"] != "none"
+        or observation["source_generation"] != owner["source_generation"]
+        or observation["source_fingerprint"] != owner["source_fingerprint"]
+        or observation["access_records"] != owner["access_records"]
+        or observation["increment_records"] != owner["increment_records"]
+        or observation["additional_source_row_scans"] != 0
+        or observation["member_upload_bytes"] != 0
+        or observation["complete_sequence"] is not True
+        or (
+            product_capped
+            and (
+                observation["estimated_products"] <= 0
+                or observation["estimated_products"] > RAM_HAMMING_PRODUCT_CAP
+                or observation["product_cap"] != RAM_HAMMING_PRODUCT_CAP
+            )
+        )
+    ):
+        raise ValueError(f"{kernel} sparse route receipt is inconsistent")
+    route_interval = span_intervals_us(events, route_span)[0][1:]
+    require_contained(route_interval, base["intervals"]["prepare"], f"{kernel} route")
+    if owner["interval"][1] > base["intervals"]["prepare"][0]:
+        raise ValueError(f"{kernel} starts before its shared owner is published")
+    return {
+        "components": base["components"],
+        "outer_counts": base["outer_counts"],
+        "metal_counts": {"route": 1},
+        "resource_observation": {"route": observation},
+        "intervals": base["intervals"],
+    }
+
+
+def ram_raf_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    witness: Optional[dict[str, Any]],
+    read_write_prepare: tuple[float, float],
+) -> dict[str, Any]:
+    base = ram_sparse_member_components(
+        events, RAM_RAF_EVALUATION_KERNEL, RAM_CYCLE_FAMILY_LOG_K
+    )
+    phases = ("submit", "join")
+    names = {f"MetalRamRafEvaluation::{phase}" for phase in phases}
+    unknown = {
+        name
+        for name, _, _ in span_intervals_us(events)
+        if name.startswith("MetalRamRafEvaluation::") and name not in names
+    }
+    if unknown:
+        raise ValueError(f"RAM RAF trace contains unknown Metal phases: {sorted(unknown)}")
+    counts = {
+        phase: positive_span_count(events, f"MetalRamRafEvaluation::{phase}")
+        for phase in phases
+    }
+    if backend == "optimized":
+        if any(counts.values()) or witness is not None:
+            raise ValueError("optimized RAM RAF unexpectedly exercised Metal work")
+        return {
+            "components": base["components"],
+            "outer_counts": base["outer_counts"],
+            "metal_counts": counts,
+            "resource_observation": None,
+            "intervals": base["intervals"],
+        }
+    if backend != "metal" or witness is None or any(count != 1 for count in counts.values()):
+        raise ValueError("Metal RAM RAF route is incomplete")
+
+    submit_fields = {"cycles", "resident_address_bytes", "address_storage_id"}
+    submit_raw = exact_span_args(
+        events, "MetalRamRafEvaluation::submit", submit_fields
+    )
+    submit = {
+        field: nonnegative_trace_integer(submit_raw[field], f"RAM RAF {field}")
+        for field in submit_fields
+    }
+    if submit != {
+        "cycles": 1 << log_n,
+        "resident_address_bytes": 4 * (1 << log_n),
+        "address_storage_id": witness["address_plane_storage_id"],
+    }:
+        raise ValueError("RAM RAF submit receipt is inconsistent")
+    submit_interval = span_intervals_us(events, "MetalRamRafEvaluation::submit")[0][1:]
+    join_interval = span_intervals_us(events, "MetalRamRafEvaluation::join")[0][1:]
+    require_contained(submit_interval, read_write_prepare, "RAM RAF submit")
+    containing_rounds = [
+        interval
+        for interval in base["intervals"]["prove_rounds"]
+        if interval[0] <= join_interval[0] and join_interval[1] <= interval[1]
+    ]
+    if len(containing_rounds) != 1:
+        raise ValueError("RAM RAF join lacks one enclosing RAF round")
+    if witness["interval"][1] > submit_interval[0]:
+        raise ValueError("RAM RAF submit precedes address-plane publication")
+    return {
+        "components": base["components"],
+        "outer_counts": base["outer_counts"],
+        "metal_counts": counts,
+        "resource_observation": {
+            "submit": submit,
+            "submit_interval": submit_interval,
+            "join_interval": join_interval,
+        },
+        "intervals": base["intervals"],
+    }
+
+
+def ram_cycle_family_breakdown(
+    events: list[dict[str, Any]], backend: str, log_n: int
+) -> dict[str, Any]:
+    owner = ram_cycle_family_owner_observation(events, backend, log_n)
+    witness = ram_cycle_family_witness_observation(
+        events, backend, log_n, owner
+    )
+    read_write = ram_read_write_member_breakdown(
+        events, backend, log_n, owner
+    )
+    raf = ram_raf_member_breakdown(
+        events,
+        backend,
+        log_n,
+        witness,
+        read_write["intervals"]["prepare"],
+    )
+    val_check = ram_host_sparse_route_member_breakdown(
+        events,
+        backend,
+        log_n,
+        owner,
+        kernel=RAM_VAL_CHECK_KERNEL,
+        route_span=METAL_RAM_VAL_CHECK_ROUTE,
+        product_capped=False,
+    )
+    ra_claim = ram_host_sparse_route_member_breakdown(
+        events,
+        backend,
+        log_n,
+        owner,
+        kernel=RAM_RA_CLAIM_REDUCTION_KERNEL,
+        route_span=METAL_RAM_RA_CLAIM_REDUCTION_ROUTE,
+        product_capped=True,
+    )
+    hamming = ram_hamming_member_breakdown(events, backend, log_n, owner)
+    ra_virtualization = ram_host_sparse_route_member_breakdown(
+        events,
+        backend,
+        log_n,
+        owner,
+        kernel=RAM_RA_VIRTUALIZATION_KERNEL,
+        route_span=METAL_RAM_RA_VIRTUALIZATION_ROUTE,
+        product_capped=True,
+    )
+    members = {
+        "raf_evaluation": raf,
+        "read_write": read_write,
+        "val_check": val_check,
+        "ra_claim_reduction": ra_claim,
+        "hamming_booleanity": hamming,
+        "ra_virtualization": ra_virtualization,
+    }
+    canonical_intervals = sorted(
+        (
+            interval[0],
+            interval[1],
+            member_name,
+        )
+        for member_name, member in members.items()
+        for interval in member["intervals"]["canonical"]
+    )
+    for left, right in zip(canonical_intervals, canonical_intervals[1:]):
+        if left[1] > right[0]:
+            raise ValueError(
+                f"RAM family canonical spans overlap between {left[2]} and {right[2]}"
+            )
+    if witness is not None and any(
+        witness["interval"][1] > interval[0]
+        for interval in canonical_intervals
+    ):
+        raise ValueError("RAM family member work starts before witness publication")
+
+    terminal = (
+        hamming["resource_observation"]["terminal_take"]
+        if hamming["resource_observation"] is not None
+        else None
+    )
+    if backend == "metal":
+        if terminal is None:
+            raise ValueError("Metal RAM family lacks terminal ownership receipt")
+        route_interval = span_intervals_us(
+            events, METAL_RAM_RA_VIRTUALIZATION_ROUTE
+        )[0][1:]
+        require_contained(
+            terminal["interval"], route_interval, "RAM cycle-family terminal take"
+        )
+
+    raw_member_us = sum(
+        float(member["components"]["member_us"])
+        for member in members.values()
+    )
+    witness_prepare_us = float(witness["wall_us"]) if witness is not None else 0.0
+    for member in members.values():
+        member.pop("intervals")
+    return {
+        "components": {
+            "raw_member_us": raw_member_us,
+            "witness_prepare_us": witness_prepare_us,
+            "owner_prepare_us": float(owner["wall_us"]) if owner is not None else 0.0,
+            "charged_member_us": raw_member_us + witness_prepare_us,
+            "producer_charge_count": 1 if witness is not None else 0,
+        },
+        "members": members,
+        "witness_prepare": witness,
+        "owner": owner,
+        "terminal_take": terminal,
+        "canonical_span_count": len(canonical_intervals),
+        "canonical_nonoverlap": True,
     }
 
 
@@ -7717,14 +8147,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     metal_hamming_weight_service = [
         float(pair["metal_hamming_weight_service_us"]) for pair in pairs
     ]
-    ram_fields = {
-        "cpu_ram_read_write_us",
-        "metal_ram_read_write_us",
+    ram_member_fields = {
+        f"{backend}_{pair_prefix}_us"
+        for _, pair_prefix in RAM_CYCLE_FAMILY_PAIR_MEMBERS
+        for backend in ("cpu", "metal")
+    }
+    ram_fields = ram_member_fields | {
         "metal_ram_read_write_charged_us",
-        "cpu_ram_hamming_us",
-        "metal_ram_hamming_us",
         "metal_ram_hamming_charged_us",
         "metal_ram_cycle_family_owner_us",
+        "metal_ram_cycle_family_witness_prepare_us",
     }
     ram_presence = []
     for index, pair in enumerate(pairs, 1):
@@ -7735,37 +8167,57 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         }
         if observed_ram_fields and observed_ram_fields != ram_fields:
             raise ValueError(
-                f"pair {index} must contain the exact full RAM sparse-family key set"
+                f"pair {index} must contain the exact full RAM cycle-family key set"
             )
         ram_presence.append(observed_ram_fields == ram_fields)
     if any(ram_presence) and not all(ram_presence):
-        raise ValueError("RAM sparse-family timing records must cover every pair")
-    has_ram_sparse_family = all(ram_presence)
-    if has_ram_sparse_family:
-        cpu_ram_read_write = [float(pair["cpu_ram_read_write_us"]) for pair in pairs]
-        metal_ram_read_write = [
-            float(pair["metal_ram_read_write_us"]) for pair in pairs
-        ]
+        raise ValueError("RAM cycle-family timing records must cover every pair")
+    has_ram_cycle_family = all(ram_presence)
+    if has_ram_cycle_family:
+        ram_member_samples = {
+            member_name: {
+                backend: [
+                    float(pair[f"{backend}_{pair_prefix}_us"])
+                    for pair in pairs
+                ]
+                for backend in ("cpu", "metal")
+            }
+            for member_name, pair_prefix in RAM_CYCLE_FAMILY_PAIR_MEMBERS
+        }
+        cpu_ram_read_write = ram_member_samples["read_write"]["cpu"]
+        metal_ram_read_write = ram_member_samples["read_write"]["metal"]
         metal_ram_read_write_charged = [
             float(pair["metal_ram_read_write_charged_us"]) for pair in pairs
         ]
-        cpu_ram_hamming = [float(pair["cpu_ram_hamming_us"]) for pair in pairs]
-        metal_ram_hamming = [float(pair["metal_ram_hamming_us"]) for pair in pairs]
+        cpu_ram_hamming = ram_member_samples["hamming_booleanity"]["cpu"]
+        metal_ram_hamming = ram_member_samples["hamming_booleanity"]["metal"]
         metal_ram_hamming_charged = [
             float(pair["metal_ram_hamming_charged_us"]) for pair in pairs
         ]
         metal_ram_cycle_family_owner = [
             float(pair["metal_ram_cycle_family_owner_us"]) for pair in pairs
         ]
-        for raw_read_write, charged_read_write, raw_hamming, charged_hamming, owner in zip(
+        metal_ram_cycle_family_witness_prepare = [
+            float(pair["metal_ram_cycle_family_witness_prepare_us"])
+            for pair in pairs
+        ]
+        for (
+            raw_read_write,
+            charged_read_write,
+            raw_hamming,
+            charged_hamming,
+            owner,
+            witness_prepare,
+        ) in zip(
             metal_ram_read_write,
             metal_ram_read_write_charged,
             metal_ram_hamming,
             metal_ram_hamming_charged,
             metal_ram_cycle_family_owner,
+            metal_ram_cycle_family_witness_prepare,
         ):
-            if owner <= 0.0:
-                raise ValueError("RAM cycle-family owner duration must be positive")
+            if owner <= 0.0 or witness_prepare <= 0.0 or owner > witness_prepare:
+                raise ValueError("RAM cycle-family producer durations are inconsistent")
             if not math.isclose(
                 charged_read_write,
                 raw_read_write + owner,
@@ -7780,19 +8232,26 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
                 abs_tol=1e-9,
             ):
                 raise ValueError("RAM Hamming charged timing must include the owner once")
-        cpu_ram_sparse_family = [
-            read_write + hamming
-            for read_write, hamming in zip(cpu_ram_read_write, cpu_ram_hamming)
+        cpu_ram_cycle_family = [
+            sum(ram_member_samples[name]["cpu"][index] for name, _ in RAM_CYCLE_FAMILY_PAIR_MEMBERS)
+            for index in range(len(pairs))
         ]
-        metal_ram_sparse_family = [
-            read_write + hamming + owner
-            for read_write, hamming, owner in zip(
-                metal_ram_read_write,
-                metal_ram_hamming,
-                metal_ram_cycle_family_owner,
+        metal_ram_cycle_family_raw = [
+            sum(ram_member_samples[name]["metal"][index] for name, _ in RAM_CYCLE_FAMILY_PAIR_MEMBERS)
+            for index in range(len(pairs))
+        ]
+        metal_ram_cycle_family = [
+            raw + witness_prepare
+            for raw, witness_prepare in zip(
+                metal_ram_cycle_family_raw,
+                metal_ram_cycle_family_witness_prepare,
             )
         ]
     else:
+        ram_member_samples = {
+            member_name: {"cpu": [], "metal": []}
+            for member_name, _ in RAM_CYCLE_FAMILY_PAIR_MEMBERS
+        }
         cpu_ram_read_write = []
         metal_ram_read_write = []
         metal_ram_read_write_charged = []
@@ -7800,8 +8259,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         metal_ram_hamming = []
         metal_ram_hamming_charged = []
         metal_ram_cycle_family_owner = []
-        cpu_ram_sparse_family = []
-        metal_ram_sparse_family = []
+        metal_ram_cycle_family_witness_prepare = []
+        cpu_ram_cycle_family = []
+        metal_ram_cycle_family_raw = []
+        metal_ram_cycle_family = []
+    ram_member_duration_samples = [
+        value
+        for member_name, _ in RAM_CYCLE_FAMILY_PAIR_MEMBERS
+        for backend in ("cpu", "metal")
+        for value in ram_member_samples[member_name][backend]
+    ]
     cpu_outer_remainder = [
         float(pair.get("cpu_outer_remainder_us", pair["cpu_hamming_weight_us"]))
         for pair in pairs
@@ -7943,14 +8410,14 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_hamming_weight
         + cpu_hamming_weight_service
         + metal_hamming_weight_service
-        + cpu_ram_read_write
-        + metal_ram_read_write
+        + ram_member_duration_samples
         + metal_ram_read_write_charged
-        + cpu_ram_hamming
-        + metal_ram_hamming
         + metal_ram_hamming_charged
-        + cpu_ram_sparse_family
-        + metal_ram_sparse_family
+        + metal_ram_cycle_family_owner
+        + metal_ram_cycle_family_witness_prepare
+        + cpu_ram_cycle_family
+        + metal_ram_cycle_family_raw
+        + metal_ram_cycle_family
         + cpu_outer_remainder
         + metal_outer_remainder
         + cpu_product_uniskip
@@ -8131,17 +8598,21 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             cpu_hamming_weight_service, metal_hamming_weight_service
         )
     ]
-    if has_ram_sparse_family:
+    if has_ram_cycle_family:
+        ram_member_decisions = {
+            member_name: local_member_decision(
+                pairs,
+                samples["cpu"],
+                samples["metal"],
+                RAM_CYCLE_FAMILY_MIN_SPEEDUP,
+            )
+            for member_name, samples in ram_member_samples.items()
+        }
         (
             ram_read_write_speedups,
             ram_read_write_improvements,
             ram_read_write_decision,
-        ) = local_member_decision(
-            pairs,
-            cpu_ram_read_write,
-            metal_ram_read_write,
-            RAM_READ_WRITE_MIN_SPEEDUP,
-        )
+        ) = ram_member_decisions["read_write"]
         (
             ram_read_write_charged_speedups,
             ram_read_write_charged_improvements,
@@ -8156,12 +8627,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             ram_hamming_speedups,
             ram_hamming_improvements,
             ram_hamming_decision,
-        ) = local_member_decision(
-            pairs,
-            cpu_ram_hamming,
-            metal_ram_hamming,
-            RAM_HAMMING_MIN_SPEEDUP,
-        )
+        ) = ram_member_decisions["hamming_booleanity"]
         (
             ram_hamming_charged_speedups,
             ram_hamming_charged_improvements,
@@ -8173,16 +8639,20 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             RAM_HAMMING_MIN_SPEEDUP,
         )
         (
-            ram_sparse_family_speedups,
-            ram_sparse_family_improvements,
-            ram_sparse_family_decision,
+            ram_cycle_family_speedups,
+            ram_cycle_family_improvements,
+            ram_cycle_family_decision,
         ) = local_member_decision(
             pairs,
-            cpu_ram_sparse_family,
-            metal_ram_sparse_family,
-            RAM_READ_WRITE_MIN_SPEEDUP,
+            cpu_ram_cycle_family,
+            metal_ram_cycle_family,
+            RAM_CYCLE_FAMILY_MIN_SPEEDUP,
         )
     else:
+        ram_member_decisions = {
+            member_name: ([], [], None)
+            for member_name, _ in RAM_CYCLE_FAMILY_PAIR_MEMBERS
+        }
         ram_read_write_speedups = []
         ram_read_write_improvements = []
         ram_read_write_decision = None
@@ -8195,9 +8665,9 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         ram_hamming_charged_speedups = []
         ram_hamming_charged_improvements = []
         ram_hamming_charged_decision = None
-        ram_sparse_family_speedups = []
-        ram_sparse_family_improvements = []
-        ram_sparse_family_decision = None
+        ram_cycle_family_speedups = []
+        ram_cycle_family_improvements = []
+        ram_cycle_family_decision = None
     cpu_booleanity_hamming = [
         booleanity + hamming
         for booleanity, hamming in zip(
@@ -8365,37 +8835,57 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "ram_read_write_speedup": (
             statistics.median(ram_read_write_speedups)
-            if has_ram_sparse_family
+            if has_ram_cycle_family
             else None
         ),
         "ram_read_write_charged_speedup": (
             statistics.median(ram_read_write_charged_speedups)
-            if has_ram_sparse_family
+            if has_ram_cycle_family
             else None
         ),
         "ram_read_write_standalone_charged_speedup": (
             statistics.median(ram_read_write_charged_speedups)
-            if has_ram_sparse_family
+            if has_ram_cycle_family
             else None
         ),
         "ram_hamming_booleanity_speedup": (
             statistics.median(ram_hamming_speedups)
-            if has_ram_sparse_family
+            if has_ram_cycle_family
             else None
         ),
         "ram_hamming_booleanity_charged_speedup": (
             statistics.median(ram_hamming_charged_speedups)
-            if has_ram_sparse_family
+            if has_ram_cycle_family
             else None
         ),
         "ram_hamming_booleanity_standalone_charged_speedup": (
             statistics.median(ram_hamming_charged_speedups)
-            if has_ram_sparse_family
+            if has_ram_cycle_family
             else None
         ),
-        "ram_sparse_family_speedup": (
-            statistics.median(ram_sparse_family_speedups)
-            if has_ram_sparse_family
+        "ram_raf_evaluation_speedup": (
+            statistics.median(ram_member_decisions["raf_evaluation"][0])
+            if has_ram_cycle_family
+            else None
+        ),
+        "ram_val_check_speedup": (
+            statistics.median(ram_member_decisions["val_check"][0])
+            if has_ram_cycle_family
+            else None
+        ),
+        "ram_ra_claim_reduction_speedup": (
+            statistics.median(ram_member_decisions["ra_claim_reduction"][0])
+            if has_ram_cycle_family
+            else None
+        ),
+        "ram_ra_virtualization_speedup": (
+            statistics.median(ram_member_decisions["ra_virtualization"][0])
+            if has_ram_cycle_family
+            else None
+        ),
+        "ram_cycle_family_speedup": (
+            statistics.median(ram_cycle_family_speedups)
+            if has_ram_cycle_family
             else None
         ),
         "ram_standalone_charged_metrics_additive": False,
@@ -8466,9 +8956,31 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_ram_hamming_booleanity_charged_fractional_improvements": (
             ram_hamming_charged_improvements
         ),
-        "paired_ram_sparse_family_speedups": ram_sparse_family_speedups,
-        "paired_ram_sparse_family_fractional_improvements": (
-            ram_sparse_family_improvements
+        "paired_ram_raf_evaluation_speedups": ram_member_decisions[
+            "raf_evaluation"
+        ][0],
+        "paired_ram_raf_evaluation_fractional_improvements": ram_member_decisions[
+            "raf_evaluation"
+        ][1],
+        "paired_ram_val_check_speedups": ram_member_decisions["val_check"][0],
+        "paired_ram_val_check_fractional_improvements": ram_member_decisions[
+            "val_check"
+        ][1],
+        "paired_ram_ra_claim_reduction_speedups": ram_member_decisions[
+            "ra_claim_reduction"
+        ][0],
+        "paired_ram_ra_claim_reduction_fractional_improvements": ram_member_decisions[
+            "ra_claim_reduction"
+        ][1],
+        "paired_ram_ra_virtualization_speedups": ram_member_decisions[
+            "ra_virtualization"
+        ][0],
+        "paired_ram_ra_virtualization_fractional_improvements": ram_member_decisions[
+            "ra_virtualization"
+        ][1],
+        "paired_ram_cycle_family_speedups": ram_cycle_family_speedups,
+        "paired_ram_cycle_family_fractional_improvements": (
+            ram_cycle_family_improvements
         ),
         "paired_booleanity_hamming_family_speedups": booleanity_hamming_speedups,
         "paired_booleanity_hamming_family_fractional_improvements": (
@@ -8574,6 +9086,31 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_ram_cycle_family_owner_ms_samples": [
             value / 1000.0 for value in metal_ram_cycle_family_owner
         ],
+        "metal_ram_cycle_family_witness_prepare_ms_samples": [
+            value / 1000.0 for value in metal_ram_cycle_family_witness_prepare
+        ],
+        "cpu_ram_raf_evaluation_ms_samples": [
+            value / 1000.0
+            for value in ram_member_samples["raf_evaluation"]["cpu"]
+        ],
+        "metal_ram_raf_evaluation_ms_samples": [
+            value / 1000.0
+            for value in ram_member_samples["raf_evaluation"]["metal"]
+        ],
+        "cpu_ram_val_check_ms_samples": [
+            value / 1000.0 for value in ram_member_samples["val_check"]["cpu"]
+        ],
+        "metal_ram_val_check_ms_samples": [
+            value / 1000.0 for value in ram_member_samples["val_check"]["metal"]
+        ],
+        "cpu_ram_ra_claim_reduction_ms_samples": [
+            value / 1000.0
+            for value in ram_member_samples["ra_claim_reduction"]["cpu"]
+        ],
+        "metal_ram_ra_claim_reduction_ms_samples": [
+            value / 1000.0
+            for value in ram_member_samples["ra_claim_reduction"]["metal"]
+        ],
         "cpu_ram_hamming_booleanity_ms_samples": [
             value / 1000.0 for value in cpu_ram_hamming
         ],
@@ -8586,11 +9123,22 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_ram_hamming_booleanity_standalone_charged_ms_samples": [
             value / 1000.0 for value in metal_ram_hamming_charged
         ],
-        "cpu_ram_sparse_family_ms_samples": [
-            value / 1000.0 for value in cpu_ram_sparse_family
+        "cpu_ram_ra_virtualization_ms_samples": [
+            value / 1000.0
+            for value in ram_member_samples["ra_virtualization"]["cpu"]
         ],
-        "metal_ram_sparse_family_ms_samples": [
-            value / 1000.0 for value in metal_ram_sparse_family
+        "metal_ram_ra_virtualization_ms_samples": [
+            value / 1000.0
+            for value in ram_member_samples["ra_virtualization"]["metal"]
+        ],
+        "cpu_ram_cycle_family_ms_samples": [
+            value / 1000.0 for value in cpu_ram_cycle_family
+        ],
+        "metal_ram_cycle_family_raw_ms_samples": [
+            value / 1000.0 for value in metal_ram_cycle_family_raw
+        ],
+        "metal_ram_cycle_family_ms_samples": [
+            value / 1000.0 for value in metal_ram_cycle_family
         ],
         "cpu_booleanity_hamming_family_ms_samples": [
             value / 1000.0 for value in cpu_booleanity_hamming
@@ -8660,7 +9208,15 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "ram_hamming_booleanity_standalone_charged_decision": (
             ram_hamming_charged_decision
         ),
-        "ram_sparse_family_decision": ram_sparse_family_decision,
+        "ram_raf_evaluation_decision": ram_member_decisions["raf_evaluation"][2],
+        "ram_val_check_decision": ram_member_decisions["val_check"][2],
+        "ram_ra_claim_reduction_decision": ram_member_decisions[
+            "ra_claim_reduction"
+        ][2],
+        "ram_ra_virtualization_decision": ram_member_decisions[
+            "ra_virtualization"
+        ][2],
+        "ram_cycle_family_decision": ram_cycle_family_decision,
         "booleanity_hamming_family_decision": booleanity_hamming_decision,
         "outer_remainder_decision": outer_remainder_decision,
         "product_remainder_decision": product_remainder_decision,
@@ -8889,10 +9445,8 @@ def local_kernel_primary_us(result: dict[str, Any], kernel: str) -> float:
         value = result["registers_claim_member"]["components"]["member_us"]
     elif kernel == INSTRUCTION_READ_RAF_KERNEL:
         value = result["instruction_read_raf_member"]["components"]["member_us"]
-    elif kernel == RAM_READ_WRITE_KERNEL:
-        value = result["ram_read_write_member"]["components"]["charged_member_us"]
-    elif kernel == RAM_HAMMING_KERNEL:
-        value = result["ram_hamming_member"]["components"]["charged_member_us"]
+    elif kernel == RAM_CYCLE_FAMILY_KERNEL:
+        value = result["ram_cycle_family"]["components"]["charged_member_us"]
     else:
         raise ValueError(f"unsupported local kernel {kernel}")
     value = float(value)
@@ -9249,15 +9803,10 @@ def run_backend(
         product_uniskip_outer_carrier,
     )
     instruction_claim = instruction_claim_observation(events, backend, log_n)
-    ram_cycle_family_owner = ram_cycle_family_owner_observation(
-        events, backend, log_n
-    )
-    ram_read_write_member = ram_read_write_member_breakdown(
-        events, backend, log_n, ram_cycle_family_owner
-    )
-    ram_hamming_member = ram_hamming_member_breakdown(
-        events, backend, log_n, ram_cycle_family_owner
-    )
+    ram_cycle_family = ram_cycle_family_breakdown(events, backend, log_n)
+    ram_members = ram_cycle_family["members"]
+    ram_read_write_member = ram_members["read_write"]
+    ram_hamming_member = ram_members["hamming_booleanity"]
     if backend == "metal" and product_uniskip_outer_carrier:
         carrier = product_uniskip["resource_observation"]
         outer_carrier = outer_remainder_member["product_uniskip_carrier"]
@@ -9281,8 +9830,10 @@ def run_backend(
         (BOOLEANITY_ADDRESS_KERNEL, booleanity_address_member),
         (HAMMING_WEIGHT_KERNEL, hamming_weight_member),
         (REGISTERS_CLAIM_KERNEL, registers_claim_member),
-        (RAM_READ_WRITE_KERNEL, ram_read_write_member),
-        (RAM_HAMMING_KERNEL, ram_hamming_member),
+        *(
+            (kernel, ram_members[member_name])
+            for member_name, kernel in RAM_CYCLE_FAMILY_MEMBERS
+        ),
     ):
         attributed_us = kernel_wall_us(attribution, name)
         if name in {BOOLEANITY_ADDRESS_KERNEL, HAMMING_WEIGHT_KERNEL}:
@@ -9329,9 +9880,14 @@ def run_backend(
         "registers_claim_member": registers_claim_member,
         "product_uniskip": product_uniskip,
         "instruction_claim": instruction_claim,
-        "ram_cycle_family_owner": ram_cycle_family_owner,
+        "ram_cycle_family": ram_cycle_family,
+        "ram_cycle_family_owner": ram_cycle_family["owner"],
+        "ram_raf_evaluation_member": ram_members["raf_evaluation"],
         "ram_read_write_member": ram_read_write_member,
+        "ram_val_check_member": ram_members["val_check"],
+        "ram_ra_claim_reduction_member": ram_members["ra_claim_reduction"],
         "ram_hamming_member": ram_hamming_member,
+        "ram_ra_virtualization_member": ram_members["ra_virtualization"],
         "execution_config": execution_config,
         "command": command,
         "max_rss_bytes": max_rss,
@@ -10176,6 +10732,16 @@ def main() -> int:
                         + float(metal_instruction_claim_resources["overlap_wall_ns"])
                         / 1000.0
                     ),
+                    "cpu_ram_raf_evaluation_us": float(
+                        results["optimized"]["ram_raf_evaluation_member"][
+                            "components"
+                        ]["member_us"]
+                    ),
+                    "metal_ram_raf_evaluation_us": float(
+                        results["metal"]["ram_raf_evaluation_member"]["components"][
+                            "member_us"
+                        ]
+                    ),
                     "cpu_ram_read_write_us": float(
                         results["optimized"]["ram_read_write_member"]["components"][
                             "member_us"
@@ -10190,6 +10756,25 @@ def main() -> int:
                         results["metal"]["ram_read_write_member"]["components"][
                             "charged_member_us"
                         ]
+                    ),
+                    "cpu_ram_val_check_us": float(
+                        results["optimized"]["ram_val_check_member"]["components"][
+                            "member_us"
+                        ]
+                    ),
+                    "metal_ram_val_check_us": float(
+                        results["metal"]["ram_val_check_member"]["components"][
+                            "member_us"
+                        ]
+                    ),
+                    "cpu_ram_ra_claim_reduction_us": float(
+                        results["optimized"]["ram_ra_claim_reduction_member"]
+                        ["components"]["member_us"]
+                    ),
+                    "metal_ram_ra_claim_reduction_us": float(
+                        results["metal"]["ram_ra_claim_reduction_member"][
+                            "components"
+                        ]["member_us"]
                     ),
                     "cpu_ram_hamming_us": float(
                         results["optimized"]["ram_hamming_member"]["components"][
@@ -10206,8 +10791,21 @@ def main() -> int:
                             "charged_member_us"
                         ]
                     ),
+                    "cpu_ram_ra_virtualization_us": float(
+                        results["optimized"]["ram_ra_virtualization_member"]
+                        ["components"]["member_us"]
+                    ),
+                    "metal_ram_ra_virtualization_us": float(
+                        results["metal"]["ram_ra_virtualization_member"][
+                            "components"
+                        ]["member_us"]
+                    ),
                     "metal_ram_cycle_family_owner_us": float(
                         results["metal"]["ram_cycle_family_owner"]["wall_us"]
+                    ),
+                    "metal_ram_cycle_family_witness_prepare_us": float(
+                        results["metal"]["ram_cycle_family"]["components"]
+                        ["witness_prepare_us"]
                     ),
                 }
             )
@@ -10350,20 +10948,8 @@ def main() -> int:
                         "metal": results["metal"]["instruction_claim"],
                     },
                     "ram_cycle_family": {
-                        "optimized_owner": results["optimized"][
-                            "ram_cycle_family_owner"
-                        ],
-                        "metal_owner": results["metal"]["ram_cycle_family_owner"],
-                        "optimized_read_write": results["optimized"][
-                            "ram_read_write_member"
-                        ],
-                        "metal_read_write": results["metal"][
-                            "ram_read_write_member"
-                        ],
-                        "optimized_hamming": results["optimized"][
-                            "ram_hamming_member"
-                        ],
-                        "metal_hamming": results["metal"]["ram_hamming_member"],
+                        "optimized": results["optimized"]["ram_cycle_family"],
+                        "metal": results["metal"]["ram_cycle_family"],
                     },
                     "execution": {
                         "optimized": results["optimized"]["execution_config"],
@@ -10429,6 +11015,37 @@ def main() -> int:
                         "charged_metal_address_ns": microseconds_to_nanoseconds(
                             charged_metal_address_us
                         ),
+                    },
+                    "ram_cycle_family_charge": {
+                        "model": RAM_CYCLE_FAMILY_CHARGE_MODEL,
+                        "cpu_raw_members_ns": microseconds_to_nanoseconds(
+                            results["optimized"]["ram_cycle_family"]["components"][
+                                "raw_member_us"
+                            ]
+                        ),
+                        "metal_raw_members_ns": microseconds_to_nanoseconds(
+                            results["metal"]["ram_cycle_family"]["components"][
+                                "raw_member_us"
+                            ]
+                        ),
+                        "witness_prepare_ns": microseconds_to_nanoseconds(
+                            results["metal"]["ram_cycle_family"]["components"][
+                                "witness_prepare_us"
+                            ]
+                        ),
+                        "owner_prepare_ns": microseconds_to_nanoseconds(
+                            results["metal"]["ram_cycle_family"]["components"][
+                                "owner_prepare_us"
+                            ]
+                        ),
+                        "charged_metal_ns": microseconds_to_nanoseconds(
+                            results["metal"]["ram_cycle_family"]["components"][
+                                "charged_member_us"
+                            ]
+                        ),
+                        "producer_charge_count": results["metal"][
+                            "ram_cycle_family"
+                        ]["components"]["producer_charge_count"],
                     },
                     "arms": {
                         **{
@@ -10500,13 +11117,9 @@ def main() -> int:
                             "instruction_claim": results[backend][
                                 "instruction_claim"
                             ],
-                            "ram_cycle_family_owner": results[backend][
-                                "ram_cycle_family_owner"
+                            "ram_cycle_family": results[backend][
+                                "ram_cycle_family"
                             ],
-                            "ram_read_write": results[backend][
-                                "ram_read_write_member"
-                            ],
-                            "ram_hamming": results[backend]["ram_hamming_member"],
                             "product_remainder_ns": microseconds_to_nanoseconds(
                                 kernel_wall_us(
                                     results[backend]["attribution"],
@@ -10951,11 +11564,19 @@ def main() -> int:
                 "local_kernel_attributed": all(
                     all(
                         (
-                            sample["outer_remainder"][f"{backend}_member"][
-                                "components"
-                            ]["member_us"]
-                            > 0.0
-                            if local_kernel["name"] == OUTER_REMAINDER_KERNEL
+                            (
+                                sample["ram_cycle_family"][backend]["components"][
+                                    "charged_member_us"
+                                ]
+                                > 0.0
+                                if local_kernel["name"] == RAM_CYCLE_FAMILY_KERNEL
+                                else sample["outer_remainder"][f"{backend}_member"][
+                                    "components"
+                                ]["member_us"]
+                                > 0.0
+                            )
+                            if local_kernel["name"]
+                            in {OUTER_REMAINDER_KERNEL, RAM_CYCLE_FAMILY_KERNEL}
                             else any(
                                 kernel["kernel"] == local_kernel["name"]
                                 for kernel in sample[backend]["kernels"]
@@ -10972,93 +11593,90 @@ def main() -> int:
                     )
                     for sample in attributions
                 ),
+                "ram_cycle_family_witness_prepare_exact": all(
+                    sample["ram_cycle_family"]["optimized"]["witness_prepare"]
+                    is None
+                    and sample["ram_cycle_family"]["metal"]["witness_prepare"]
+                    is not None
+                    and sample["ram_cycle_family"]["metal"]["witness_prepare"][
+                        "address_plane_bytes"
+                    ]
+                    == 4 * (1 << args.log_n)
+                    and sample["ram_cycle_family"]["metal"]["witness_prepare"][
+                        "address_plane_upload_bytes"
+                    ]
+                    == 4 * (1 << args.log_n)
+                    and sample["ram_cycle_family"]["metal"]["components"][
+                        "producer_charge_count"
+                    ]
+                    == 1
+                    for sample in attributions
+                ),
                 "ram_cycle_family_owner_exact": all(
-                    sample["ram_cycle_family"]["optimized_owner"] is None
-                    and sample["ram_cycle_family"]["metal_owner"] is not None
-                    and sample["ram_cycle_family"]["metal_owner"][
+                    sample["ram_cycle_family"]["optimized"]["owner"] is None
+                    and sample["ram_cycle_family"]["metal"]["owner"] is not None
+                    and sample["ram_cycle_family"]["metal"]["owner"][
                         "complete_publication"
                     ]
                     is True
-                    and sample["ram_cycle_family"]["metal_owner"][
+                    and sample["ram_cycle_family"]["metal"]["owner"][
                         "source_collection_performed"
                     ]
                     is True
-                    and sample["ram_cycle_family"]["metal_owner"][
+                    and sample["ram_cycle_family"]["metal"]["owner"][
                         "additional_source_row_scans"
                     ]
                     == 0
-                    and sample["ram_cycle_family"]["metal_owner"][
+                    and sample["ram_cycle_family"]["metal"]["owner"][
                         "member_upload_bytes"
                     ]
                     == 0
                     for sample in attributions
                 ),
                 "ram_cycle_family_terminal_take_exact": all(
-                    sample["ram_cycle_family"]["optimized_hamming"][
-                        "resource_observation"
+                    sample["ram_cycle_family"]["optimized"]["terminal_take"] is None
+                    and sample["ram_cycle_family"]["metal"]["terminal_take"][
+                        "session_owner_removed"
                     ]
-                    is None
-                    and sample["ram_cycle_family"]["metal_hamming"][
-                        "resource_observation"
-                    ]["terminal_take"]
-                    is not None
-                    and sample["ram_cycle_family"]["metal_hamming"][
-                        "resource_observation"
-                    ]["terminal_take"]["session_owner_removed"]
                     is True
-                    and sample["ram_cycle_family"]["metal_hamming"][
-                        "resource_observation"
-                    ]["terminal_take"]["columns_removed"]
+                    and sample["ram_cycle_family"]["metal"]["terminal_take"][
+                        "columns_removed"
+                    ]
                     is True
                     for sample in attributions
                 ),
-                "ram_read_write_host_sparse_exact": all(
-                    sample["ram_cycle_family"]["optimized_read_write"][
-                        "resource_observation"
+                "ram_cycle_family_routes_exact": all(
+                    all(
+                        member["resource_observation"] is None
+                        for member in sample["ram_cycle_family"]["optimized"][
+                            "members"
+                        ].values()
+                    )
+                    and all(
+                        member["resource_observation"] is not None
+                        for member in sample["ram_cycle_family"]["metal"][
+                            "members"
+                        ].values()
+                    )
+                    and sample["ram_cycle_family"]["metal"][
+                        "canonical_nonoverlap"
                     ]
-                    is None
-                    and sample["ram_cycle_family"]["metal_read_write"][
-                        "resource_observation"
-                    ]
-                    is not None
-                    and sample["ram_cycle_family"]["metal_read_write"][
-                        "metal_counts"
-                    ]
-                    == {
-                        "route": 1,
-                        "sparse_prepare": 1,
-                        "sparse_complete": 1,
-                        "sparse_derived_validate": 1,
-                    }
+                    is True
                     for sample in attributions
                 ),
-                "ram_hamming_host_sparse_exact": all(
-                    sample["ram_cycle_family"]["optimized_hamming"][
-                        "resource_observation"
-                    ]
-                    is None
-                    and sample["ram_cycle_family"]["metal_hamming"][
-                        "resource_observation"
-                    ]
-                    is not None
-                    and sample["ram_cycle_family"]["metal_hamming"][
-                        "resource_observation"
-                    ]["prepare"]["estimated_products"]
-                    <= RAM_HAMMING_PRODUCT_CAP
-                    and sample["ram_cycle_family"]["metal_hamming"][
-                        "resource_observation"
-                    ]["prepare"]["topology_builds"]
-                    == 1
-                    for sample in attributions
+                "ram_cycle_family_raw_members_gate": all(
+                    metrics[name]["clears"]
+                    for name in (
+                        "ram_raf_evaluation_decision",
+                        "ram_read_write_decision",
+                        "ram_val_check_decision",
+                        "ram_ra_claim_reduction_decision",
+                        "ram_hamming_booleanity_decision",
+                        "ram_ra_virtualization_decision",
+                    )
                 ),
-                "ram_read_write_standalone_charged_local_gate": metrics[
-                    "ram_read_write_standalone_charged_decision"
-                ]["clears"],
-                "ram_hamming_standalone_charged_local_gate": metrics[
-                    "ram_hamming_booleanity_standalone_charged_decision"
-                ]["clears"],
-                "ram_sparse_family_gate": metrics[
-                    "ram_sparse_family_decision"
+                "ram_cycle_family_gate": metrics[
+                    "ram_cycle_family_decision"
                 ]["clears"],
                 "stable_source": True,
                 "stable_binary": True,
@@ -12276,7 +12894,10 @@ def main() -> int:
                 "ram_hamming_sparse_product_cap": RAM_HAMMING_PRODUCT_CAP,
                 "ram_hamming_charge_model": "raw_member_plus_owner_prepare_v1",
                 "ram_read_write_charge_model": "raw_member_plus_owner_prepare_v1",
-                "ram_sparse_family_charge_model": "raw_members_plus_owner_once_v1",
+                "ram_cycle_family_charge_model": RAM_CYCLE_FAMILY_CHARGE_MODEL,
+                "ram_cycle_family_members": [
+                    kernel for _, kernel in RAM_CYCLE_FAMILY_MEMBERS
+                ],
                 "ram_standalone_charged_metrics_additive": False,
                 "registers_claim_carrier_owned_bytes": (
                     outer_remainder_storage_geometry(

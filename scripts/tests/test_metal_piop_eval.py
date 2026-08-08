@@ -2351,8 +2351,18 @@ def complete_ram_sparse_trace(log_n: int, backend: str) -> list[dict[str, object
 
     rw_start = 200.0
     rw_end, rw_tail = member("RamReadWriteChecking", log_n + 13, rw_start)
-    hamming_start = rw_end + 100.0
-    _, hamming_tail = member("RamHammingBooleanity", log_n, hamming_start)
+    raf_start = rw_end + 40.0
+    raf_end, _ = member("RamRafEvaluation", 13, raf_start)
+    val_start = raf_end + 40.0
+    val_end, _ = member("RamValCheck", log_n, val_start)
+    ra_claim_start = val_end + 40.0
+    ra_claim_end, _ = member("RamRaClaimReduction", log_n, ra_claim_start)
+    hamming_start = ra_claim_end + 40.0
+    hamming_end, hamming_tail = member(
+        "RamHammingBooleanity", log_n, hamming_start
+    )
+    ra_virtualization_start = hamming_end + 40.0
+    member("RamRaVirtualization", log_n, ra_virtualization_start)
     if backend == "optimized":
         return events
 
@@ -2393,9 +2403,56 @@ def complete_ram_sparse_trace(log_n: int, backend: str) -> list[dict[str, object
         "member_upload_bytes": "0",
         "complete_publication": "true",
     }
+    address_plane_bytes = 4 * (1 << log_n)
+    witness_prepare = {
+        "schema_version": "3",
+        "requested": "host_sparse_v1",
+        "selected": "host_sparse_v1",
+        "fallback_reason": "none",
+        "log_t": str(log_n),
+        "log_k": "13",
+        "cycles": str(1 << log_n),
+        "address_domain": str(address_domain),
+        "source_generation": str(generation),
+        "source_fingerprint": str(fingerprint),
+        "source_collection_performed": "true",
+        "witness_source_scans": "1",
+        "additional_witness_source_scans": "0",
+        "address_validation_passes": "3",
+        "address_rows": str(1 << log_n),
+        "address_plane_storage_id": "101",
+        "address_plane_device_registry_id": "202",
+        "address_plane_bytes": str(address_plane_bytes),
+        "address_plane_upload_bytes": str(address_plane_bytes),
+        "address_plane_allocations": "1",
+        "owner_published": "true",
+        "address_plane_published": "true",
+        "complete_publication": "true",
+    }
     events.extend(
         [
+            event(
+                "MetalRamCycleFamily::witness_prepare",
+                10.0,
+                60.0,
+                witness_prepare,
+            ),
             event("MetalRamCycleFamily::owner_prepare", 20.0, 20.0, owner),
+            event(
+                "MetalRamRafEvaluation::submit",
+                rw_start + 10.0,
+                4.0,
+                {
+                    "cycles": str(1 << log_n),
+                    "resident_address_bytes": str(address_plane_bytes),
+                    "address_storage_id": "101",
+                },
+            ),
+            event(
+                "MetalRamRafEvaluation::join",
+                raf_start + 105.0,
+                1.0,
+            ),
             event(
                 "MetalRamReadWrite::sparse_prepare",
                 rw_start + 5.0,
@@ -2454,6 +2511,48 @@ def complete_ram_sparse_trace(log_n: int, backend: str) -> list[dict[str, object
                     "source_fingerprint": str(fingerprint),
                     "output_claims_valid": "true",
                 },
+            ),
+        ]
+    )
+    common_route = {
+        "cycles": str(1 << log_n),
+        "log_t": str(log_n),
+        "log_k": "13",
+        "requested": "host_sparse_v1",
+        "selected": "host_sparse_v1",
+        "fallback_reason": "none",
+        "source_generation": str(generation),
+        "source_fingerprint": str(fingerprint),
+        "access_records": str(access_records),
+        "increment_records": str(increment_records),
+        "additional_source_row_scans": "0",
+        "member_upload_bytes": "0",
+        "complete_sequence": "true",
+    }
+    product_route = {
+        **common_route,
+        "estimated_products": "100",
+        "product_cap": "1000000",
+    }
+    events.extend(
+        [
+            event(
+                "MetalRamValCheck::route",
+                val_start + 10.0,
+                10.0,
+                dict(common_route),
+            ),
+            event(
+                "MetalRamRaClaimReduction::route",
+                ra_claim_start + 10.0,
+                10.0,
+                dict(product_route),
+            ),
+            event(
+                "MetalRamRaVirtualization::route",
+                ra_virtualization_start + 10.0,
+                40.0,
+                dict(product_route),
             ),
         ]
     )
@@ -2527,13 +2626,8 @@ def complete_ram_sparse_trace(log_n: int, backend: str) -> list[dict[str, object
                 },
             ),
             event(
-                "RamRaVirtualization::prepare",
-                hamming_start + 85.0,
-                10.0,
-            ),
-            event(
                 "MetalRamCycleFamily::terminal_take",
-                hamming_start + 87.0,
+                ra_virtualization_start + 20.0,
                 2.0,
                 {
                     "source_generation": str(generation),
@@ -2566,9 +2660,23 @@ def complete_ram_sparse_trace(log_n: int, backend: str) -> list[dict[str, object
 
 
 class MetalPiopEvalTests(unittest.TestCase):
+    def test_ram_cycle_family_is_the_primary_local_kernel(self) -> None:
+        self.assertEqual(metal_piop_eval.SCHEMA_VERSION, 17)
+        self.assertEqual(
+            metal_piop_eval.RAM_CYCLE_FAMILY_CHARGE_MODEL,
+            "six_raw_members_plus_witness_prepare_once_v1",
+        )
+        self.assertEqual(
+            metal_piop_eval.LOCAL_KERNELS["RamCycleFamily"]["metric"],
+            "ram_cycle_family_speedup",
+        )
+
     def test_ram_sparse_owner_lifecycle_and_standalone_charges_are_exact(self) -> None:
         log_n = 4
         optimized_events = complete_ram_sparse_trace(log_n, "optimized")
+        optimized_family = metal_piop_eval.ram_cycle_family_breakdown(
+            optimized_events, "optimized", log_n
+        )
         optimized_owner = metal_piop_eval.ram_cycle_family_owner_observation(
             optimized_events, "optimized", log_n
         )
@@ -2579,6 +2687,11 @@ class MetalPiopEvalTests(unittest.TestCase):
             optimized_events, "optimized", log_n, optimized_owner
         )
         self.assertIsNone(optimized_owner)
+        self.assertEqual(optimized_family["components"]["producer_charge_count"], 0)
+        self.assertEqual(
+            optimized_family["components"]["charged_member_us"],
+            optimized_family["components"]["raw_member_us"],
+        )
         self.assertEqual(
             optimized_read_write["components"]["charged_member_us"],
             optimized_read_write["components"]["member_us"],
@@ -2589,6 +2702,9 @@ class MetalPiopEvalTests(unittest.TestCase):
         )
 
         metal_events = complete_ram_sparse_trace(log_n, "metal")
+        family = metal_piop_eval.ram_cycle_family_breakdown(
+            metal_events, "metal", log_n
+        )
         owner = metal_piop_eval.ram_cycle_family_owner_observation(
             metal_events, "metal", log_n
         )
@@ -2603,6 +2719,20 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(owner["backend_witness_prepare_interval"], (0.0, 80.0))
         self.assertEqual(owner["piop_interval"], (100.0, 10_100.0))
         self.assertTrue(owner["source_collection_performed"])
+        self.assertEqual(family["components"]["witness_prepare_us"], 60.0)
+        self.assertEqual(family["components"]["producer_charge_count"], 1)
+        self.assertEqual(
+            family["components"]["charged_member_us"],
+            family["components"]["raw_member_us"] + 60.0,
+        )
+        self.assertTrue(family["canonical_nonoverlap"])
+        self.assertEqual(family["canonical_span_count"], 64)
+        self.assertEqual(
+            family["members"]["raf_evaluation"]["resource_observation"][
+                "submit"
+            ]["address_storage_id"],
+            family["witness_prepare"]["address_plane_storage_id"],
+        )
         self.assertEqual(read_write["components"]["member_us"], 195.0)
         self.assertEqual(read_write["components"]["host_fiat_shamir_total_us"], 34.0)
         self.assertEqual(read_write["components"]["charged_member_us"], 215.0)
@@ -2743,31 +2873,125 @@ class MetalPiopEvalTests(unittest.TestCase):
                 duplicate_take, "metal", log_n, duplicate_owner
             )
 
-    def test_ram_local_kernel_primary_uses_non_additive_standalone_charges(self) -> None:
+    def test_ram_cycle_family_rejects_witness_route_and_raf_mutations(self) -> None:
+        log_n = 4
+        mutations = (
+            (
+                "MetalRamCycleFamily::witness_prepare",
+                "address_plane_allocations",
+                "0",
+                "witness receipt",
+            ),
+            (
+                "MetalRamCycleFamily::witness_prepare",
+                "address_plane_upload_bytes",
+                "63",
+                "witness receipt",
+            ),
+            (
+                "MetalRamCycleFamily::witness_prepare",
+                "address_validation_passes",
+                "0",
+                "witness receipt",
+            ),
+            (
+                "MetalRamValCheck::route",
+                "selected",
+                "optimized_cpu",
+                "RamValCheck sparse route receipt",
+            ),
+            (
+                "MetalRamRaClaimReduction::route",
+                "source_generation",
+                "8",
+                "RamRaClaimReduction sparse route receipt",
+            ),
+            (
+                "MetalRamRaVirtualization::route",
+                "product_cap",
+                "999999",
+                "RamRaVirtualization sparse route receipt",
+            ),
+            (
+                "MetalRamRafEvaluation::submit",
+                "address_storage_id",
+                "102",
+                "RAF submit receipt",
+            ),
+        )
+        for span, field, value, error in mutations:
+            with self.subTest(span=span, field=field):
+                events = complete_ram_sparse_trace(log_n, "metal")
+                next(event for event in events if event["name"] == span)["args"][
+                    field
+                ] = value
+                with self.assertRaisesRegex(ValueError, error):
+                    metal_piop_eval.ram_cycle_family_breakdown(
+                        events, "metal", log_n
+                    )
+
+        missing_join = complete_ram_sparse_trace(log_n, "metal")
+        missing_join.remove(
+            next(
+                event
+                for event in missing_join
+                if event["name"] == "MetalRamRafEvaluation::join"
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "RAF route is incomplete"):
+            metal_piop_eval.ram_cycle_family_breakdown(
+                missing_join, "metal", log_n
+            )
+
+        shadow_fallback = complete_ram_sparse_trace(log_n, "metal")
+        shadow_fallback.append(
+            {
+                "name": "MetalRamValCheck::shadow_submit",
+                "ph": "X",
+                "pid": 1,
+                "tid": 0,
+                "ts": 1_000.0,
+                "dur": 1.0,
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "unknown Metal phases"):
+            metal_piop_eval.ram_cycle_family_breakdown(
+                shadow_fallback, "metal", log_n
+            )
+
+        overlapping = complete_ram_sparse_trace(log_n, "metal")
+        raf_prepare = next(
+            event
+            for event in overlapping
+            if event["name"] == "RamRafEvaluation::prepare"
+        )
+        next(
+            event
+            for event in overlapping
+            if event["name"] == "RamValCheck::prepare"
+        )["ts"] = raf_prepare["ts"]
+        next(
+            event
+            for event in overlapping
+            if event["name"] == "MetalRamValCheck::route"
+        )["ts"] = raf_prepare["ts"] + 10.0
+        with self.assertRaisesRegex(ValueError, "canonical spans overlap"):
+            metal_piop_eval.ram_cycle_family_breakdown(
+                overlapping, "metal", log_n
+            )
+
+    def test_ram_local_kernel_primary_uses_the_full_charged_family(self) -> None:
         result = {
-            "ram_read_write_member": {
-                "components": {"member_us": 80.0, "charged_member_us": 120.0}
-            },
-            "ram_hamming_member": {
-                "components": {"member_us": 70.0, "charged_member_us": 110.0}
+            "ram_cycle_family": {
+                "components": {"raw_member_us": 200.0, "charged_member_us": 260.0}
             },
         }
         self.assertEqual(
-            metal_piop_eval.local_kernel_primary_us(result, "RamReadWriteChecking"),
-            120.0,
+            metal_piop_eval.local_kernel_primary_us(result, "RamCycleFamily"),
+            260.0,
         )
-        self.assertEqual(
-            metal_piop_eval.local_kernel_primary_us(result, "RamHammingBooleanity"),
-            110.0,
-        )
-        self.assertEqual(
-            metal_piop_eval.LOCAL_KERNELS["RamReadWriteChecking"]["metric"],
-            "ram_read_write_standalone_charged_speedup",
-        )
-        self.assertEqual(
-            metal_piop_eval.LOCAL_KERNELS["RamHammingBooleanity"]["metric"],
-            "ram_hamming_booleanity_standalone_charged_speedup",
-        )
+        self.assertNotIn("RamReadWriteChecking", metal_piop_eval.LOCAL_KERNELS)
+        self.assertNotIn("RamHammingBooleanity", metal_piop_eval.LOCAL_KERNELS)
 
     def test_ram_sparse_summary_charges_owner_once_and_rejects_partial_records(
         self,
@@ -2796,10 +3020,19 @@ class MetalPiopEvalTests(unittest.TestCase):
             "cpu_ram_read_write_us": 600.0,
             "metal_ram_read_write_us": 80.0,
             "metal_ram_read_write_charged_us": 120.0,
+            "cpu_ram_raf_evaluation_us": 600.0,
+            "metal_ram_raf_evaluation_us": 80.0,
+            "cpu_ram_val_check_us": 600.0,
+            "metal_ram_val_check_us": 80.0,
+            "cpu_ram_ra_claim_reduction_us": 600.0,
+            "metal_ram_ra_claim_reduction_us": 80.0,
             "cpu_ram_hamming_us": 600.0,
             "metal_ram_hamming_us": 80.0,
             "metal_ram_hamming_charged_us": 120.0,
+            "cpu_ram_ra_virtualization_us": 600.0,
+            "metal_ram_ra_virtualization_us": 80.0,
             "metal_ram_cycle_family_owner_us": 40.0,
+            "metal_ram_cycle_family_witness_prepare_us": 120.0,
         }
         pairs = [
             {
@@ -2818,18 +3051,32 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(
             metrics["ram_hamming_booleanity_standalone_charged_speedup"], 5.0
         )
-        self.assertEqual(metrics["ram_sparse_family_speedup"], 6.0)
-        self.assertEqual(metrics["metal_ram_sparse_family_ms_samples"], [0.2] * 5)
+        self.assertEqual(metrics["ram_cycle_family_speedup"], 6.0)
+        self.assertEqual(metrics["metal_ram_cycle_family_raw_ms_samples"], [0.48] * 5)
+        self.assertEqual(metrics["metal_ram_cycle_family_ms_samples"], [0.6] * 5)
         self.assertEqual(
             metrics["metal_ram_cycle_family_owner_ms_samples"], [0.04] * 5
         )
+        self.assertEqual(
+            metrics["metal_ram_cycle_family_witness_prepare_ms_samples"],
+            [0.12] * 5,
+        )
         self.assertFalse(metrics["ram_standalone_charged_metrics_additive"])
         self.assertTrue(metrics["ram_read_write_standalone_charged_decision"]["clears"])
-        self.assertTrue(metrics["ram_sparse_family_decision"]["clears"])
+        self.assertTrue(metrics["ram_cycle_family_decision"]["clears"])
+        for decision in (
+            "ram_raf_evaluation_decision",
+            "ram_read_write_decision",
+            "ram_val_check_decision",
+            "ram_ra_claim_reduction_decision",
+            "ram_hamming_booleanity_decision",
+            "ram_ra_virtualization_decision",
+        ):
+            self.assertTrue(metrics[decision]["clears"])
 
         partial = [dict(pair) for pair in pairs]
         for pair in partial:
-            pair.pop("metal_ram_cycle_family_owner_us")
+            pair.pop("metal_ram_cycle_family_witness_prepare_us")
         with self.assertRaisesRegex(ValueError, "exact full RAM"):
             metal_piop_eval.summarize_pairs(partial)
 
@@ -2848,7 +3095,7 @@ class MetalPiopEvalTests(unittest.TestCase):
         ]
         no_ram_metrics = metal_piop_eval.summarize_pairs(without_ram)
         self.assertIsNone(no_ram_metrics["ram_read_write_speedup"])
-        self.assertIsNone(no_ram_metrics["ram_sparse_family_speedup"])
+        self.assertIsNone(no_ram_metrics["ram_cycle_family_speedup"])
         self.assertEqual(no_ram_metrics["paired_ram_read_write_speedups"], [])
 
     def test_outer_registers_carrier_is_complete_overwrite_storage(self) -> None:
