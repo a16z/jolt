@@ -25,6 +25,109 @@ pub struct RamHammingTerminal<F> {
     eq_cycle: F,
 }
 
+pub struct RamHammingSparsePlan {
+    topology: RamBlockTopology,
+    source_generation: u64,
+    source_fingerprint: u64,
+    log_t: usize,
+    access_leaves: usize,
+    parent_nodes: usize,
+    middle_nodes: usize,
+    estimated_products: u128,
+    topology_bytes: usize,
+}
+
+impl RamHammingSparsePlan {
+    pub fn new(owner: &RamCycleFamilyOwner) -> Result<Self, RamHammingError> {
+        owner.verify_integrity()?;
+        Self::new_from_verified_owner(owner)
+    }
+
+    pub(crate) fn new_from_verified_owner(
+        owner: &RamCycleFamilyOwner,
+    ) -> Result<Self, RamHammingError> {
+        let receipt = owner.receipt();
+        let topology = RamBlockTopology::build(
+            receipt.log_t(),
+            owner.access_records(),
+            &[],
+            receipt.threadgroup_width(),
+        )?;
+        let access_leaves = topology.leaf_cycles().len();
+        let parent_nodes = topology
+            .census()
+            .iter()
+            .skip(1)
+            .try_fold(0usize, |sum, level| {
+                sum.checked_add(
+                    usize::try_from(level.entries()).map_err(|_| RamHammingError::Overflow)?,
+                )
+                .ok_or(RamHammingError::Overflow)
+            })?;
+        let middle_nodes = topology
+            .census()
+            .iter()
+            .skip(1)
+            .take(receipt.log_t().saturating_sub(1))
+            .try_fold(0usize, |sum, level| {
+                sum.checked_add(
+                    usize::try_from(level.entries()).map_err(|_| RamHammingError::Overflow)?,
+                )
+                .ok_or(RamHammingError::Overflow)
+            })?;
+        let rounds = receipt.log_t() as u128;
+        let estimated_products = (parent_nodes as u128)
+            .checked_mul(7)
+            .and_then(|value| value.checked_add(middle_nodes as u128))
+            .and_then(|value| value.checked_add(rounds.checked_mul(10)?))
+            .ok_or(RamHammingError::Overflow)?;
+        let topology_bytes = topology.owned_heap_bytes();
+        Ok(Self {
+            topology,
+            source_generation: receipt.source_generation(),
+            source_fingerprint: receipt.fingerprint(),
+            log_t: receipt.log_t(),
+            access_leaves,
+            parent_nodes,
+            middle_nodes,
+            estimated_products,
+            topology_bytes,
+        })
+    }
+
+    pub const fn source_generation(&self) -> u64 {
+        self.source_generation
+    }
+
+    pub const fn source_fingerprint(&self) -> u64 {
+        self.source_fingerprint
+    }
+
+    pub const fn log_t(&self) -> usize {
+        self.log_t
+    }
+
+    pub const fn access_leaves(&self) -> usize {
+        self.access_leaves
+    }
+
+    pub const fn parent_nodes(&self) -> usize {
+        self.parent_nodes
+    }
+
+    pub const fn middle_nodes(&self) -> usize {
+        self.middle_nodes
+    }
+
+    pub const fn estimated_products(&self) -> u128 {
+        self.estimated_products
+    }
+
+    pub const fn topology_bytes(&self) -> usize {
+        self.topology_bytes
+    }
+}
+
 impl<F: Copy> RamHammingTerminal<F> {
     pub const fn ram_hamming_weight(self) -> F {
         self.ram_hamming_weight
@@ -66,6 +169,15 @@ impl<F: Field> HostSparseRamHammingBooleanity<F> {
         owner: Arc<RamCycleFamilyOwner>,
         stage1_cycle_binding: &[F],
     ) -> Result<Self, RamHammingError> {
+        let plan = RamHammingSparsePlan::new_from_verified_owner(&owner)?;
+        Self::new_from_plan(owner, stage1_cycle_binding, plan)
+    }
+
+    pub(crate) fn new_from_plan(
+        owner: Arc<RamCycleFamilyOwner>,
+        stage1_cycle_binding: &[F],
+        plan: RamHammingSparsePlan,
+    ) -> Result<Self, RamHammingError> {
         let receipt = owner.receipt();
         if stage1_cycle_binding.len() != receipt.log_t() {
             return Err(RamHammingError::CyclePointLength {
@@ -73,12 +185,14 @@ impl<F: Field> HostSparseRamHammingBooleanity<F> {
                 got: stage1_cycle_binding.len(),
             });
         }
-        let topology = RamBlockTopology::build(
-            receipt.log_t(),
-            owner.access_records(),
-            &[],
-            receipt.threadgroup_width(),
-        )?;
+        if plan.source_generation != receipt.source_generation()
+            || plan.source_fingerprint != receipt.fingerprint()
+            || plan.log_t != receipt.log_t()
+            || plan.access_leaves != owner.access_records().len()
+        {
+            return Err(RamHammingError::PlanReceiptMismatch);
+        }
+        let topology = plan.topology;
         let frontier_blocks = topology
             .leaf_cycles()
             .iter()
@@ -269,36 +383,7 @@ impl<F: Field> HostSparseRamHammingBooleanity<F> {
 pub fn estimated_ram_hamming_products(
     owner: &RamCycleFamilyOwner,
 ) -> Result<u128, RamHammingError> {
-    let receipt = owner.receipt();
-    let topology = RamBlockTopology::build(
-        receipt.log_t(),
-        owner.access_records(),
-        &[],
-        receipt.threadgroup_width(),
-    )?;
-    let parent_nodes = topology
-        .census()
-        .iter()
-        .skip(1)
-        .try_fold(0u128, |sum, level| {
-            sum.checked_add(u128::from(level.entries()))
-        });
-    let parent_nodes = parent_nodes.ok_or(RamHammingError::Overflow)?;
-    let middle_nodes = topology
-        .census()
-        .iter()
-        .skip(1)
-        .take(receipt.log_t().saturating_sub(1))
-        .try_fold(0u128, |sum, level| {
-            sum.checked_add(u128::from(level.entries()))
-        })
-        .ok_or(RamHammingError::Overflow)?;
-    let rounds = u128::try_from(receipt.log_t()).map_err(|_| RamHammingError::Overflow)?;
-    parent_nodes
-        .checked_mul(7)
-        .and_then(|value| value.checked_add(middle_nodes))
-        .and_then(|value| value.checked_add(rounds.checked_mul(10)?))
-        .ok_or(RamHammingError::Overflow)
+    Ok(RamHammingSparsePlan::new(owner)?.estimated_products())
 }
 
 fn build_parent_weights<F: Field>(
@@ -472,6 +557,8 @@ pub enum RamHammingError {
     NotFullyBound { remaining: usize },
     #[error("RAM Hamming terminal frontier is invalid")]
     InvalidTerminalFrontier,
+    #[error("RAM Hamming sparse plan does not match its owner receipt")]
+    PlanReceiptMismatch,
     #[error("RAM Hamming arithmetic overflowed")]
     Overflow,
 }
@@ -580,6 +667,28 @@ mod tests {
         let terminal = sparse.terminal().unwrap();
         assert_eq!(terminal.ram_hamming_weight(), hamming[0]);
         assert_eq!(terminal.eq_cycle(), eq[0]);
+    }
+
+    #[test]
+    fn sparse_plan_freezes_one_topology_and_owner_receipt() {
+        let owner = Arc::new(fixture_owner());
+        let plan = RamHammingSparsePlan::new(&owner).unwrap();
+        assert_eq!(plan.source_generation(), 47);
+        assert_eq!(plan.source_fingerprint(), owner.receipt().fingerprint());
+        assert_eq!(plan.log_t(), 3);
+        assert_eq!(plan.access_leaves(), 4);
+        assert_eq!(plan.parent_nodes(), 7);
+        assert_eq!(plan.middle_nodes(), 6);
+        assert_eq!(plan.estimated_products(), 85);
+        assert_eq!(plan.topology_bytes(), 192);
+
+        let sequence = HostSparseRamHammingBooleanity::new_from_plan(
+            owner,
+            &[field(7), field(11), field(13)],
+            plan,
+        )
+        .unwrap();
+        assert_eq!(sequence.num_rounds(), 3);
     }
 
     #[test]

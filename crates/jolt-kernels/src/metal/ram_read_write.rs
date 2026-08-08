@@ -123,6 +123,8 @@ struct HostSparseRamReadWriteKernel {
     gamma: AkitaField,
     log_t: usize,
     log_k: usize,
+    source_generation: u64,
+    source_fingerprint: u64,
 }
 
 #[cfg(feature = "allocative")]
@@ -283,11 +285,20 @@ impl SumcheckKernel<AkitaField> for HostSparseRamReadWriteKernel {
                 remaining: self.num_rounds(),
             });
         };
-        Ok(RamReadWriteOutputClaims {
+        let claims = RamReadWriteOutputClaims {
             val: *final_val,
             ra: *final_ra,
             inc: self.inc.final_value()?,
-        })
+        };
+        let _span = tracing::info_span!(
+            "MetalRamReadWrite::sparse_complete",
+            selected = "host_sparse_v1",
+            source_generation = self.source_generation,
+            source_fingerprint = self.source_fingerprint,
+            output_claims_valid = true,
+        )
+        .entered();
+        Ok(claims)
     }
 
     fn validate_derived_tables(
@@ -313,6 +324,13 @@ impl SumcheckKernel<AkitaField> for HostSparseRamReadWriteKernel {
         if got != expected {
             return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
         }
+        let _span = tracing::info_span!(
+            "MetalRamReadWrite::sparse_derived_validate",
+            source_generation = self.source_generation,
+            source_fingerprint = self.source_fingerprint,
+            derived_claim_valid = true,
+        )
+        .entered();
         Ok(())
     }
 }
@@ -334,6 +352,7 @@ impl PrepareKernel<AkitaField, RamReadWriteChecking<AkitaField>> for MetalBacken
         let log_k = relation.ram_log_k();
         let tau_low = relation.product_tau_low();
         if dimensions.phase1_num_rounds() != log_t {
+            record_route(log_t, log_k, "optimized_cpu", "unsupported_phase", 0, 0);
             return OptimizedBackend.prepare(session, witness, inputs);
         }
         if log_t == 0 || dimensions.log_k() != log_k || tau_low.len() != log_t {
@@ -342,8 +361,31 @@ impl PrepareKernel<AkitaField, RamReadWriteChecking<AkitaField>> for MetalBacken
             });
         }
         let Some(owner) = shared_ram_cycle_family_owner(session, witness, log_t, log_k)? else {
+            record_route(log_t, log_k, "optimized_cpu", "missing_owner", 0, 0);
             return OptimizedBackend.prepare(session, witness, inputs);
         };
+        let source_generation = owner.receipt().source_generation();
+        let source_fingerprint = owner.receipt().fingerprint();
+        let sparse_prepare = tracing::info_span!(
+            "MetalRamReadWrite::sparse_prepare",
+            selected = "host_sparse_v1",
+            source_generation,
+            source_fingerprint,
+            log_t,
+            log_k,
+            rounds = log_t + log_k,
+            access_records = owner.receipt().access_count(),
+            increment_records = owner.receipt().increment_count(),
+            owner_bytes = owner.owned_heap_bytes(),
+            cycle_cutoff = 0,
+            additional_source_row_scans = 0,
+            member_upload_bytes = 0,
+            gpu_dispatches = 0,
+            command_buffers = 0,
+            waits = 0,
+            readbacks = 0,
+        );
+        let _sparse_prepare_guard = sparse_prepare.enter();
         let _ = session
             .take::<RamAccessValues>()
             .ok_or(KernelError::InvariantViolation {
@@ -394,6 +436,14 @@ impl PrepareKernel<AkitaField, RamReadWriteChecking<AkitaField>> for MetalBacken
             increments = increments.len(),
             "prepared sparse RAM read-write sequence"
         );
+        record_route(
+            log_t,
+            log_k,
+            "host_sparse_v1",
+            "none",
+            source_generation,
+            source_fingerprint,
+        );
         Ok(Box::new(HostSparseRamReadWriteKernel {
             phase: Some(Phase::Cycle {
                 matrix: CycleMajorMatrix { entries },
@@ -408,8 +458,35 @@ impl PrepareKernel<AkitaField, RamReadWriteChecking<AkitaField>> for MetalBacken
             gamma: inputs.challenges.gamma,
             log_t,
             log_k,
+            source_generation,
+            source_fingerprint,
         }))
     }
+}
+
+fn record_route(
+    log_t: usize,
+    log_k: usize,
+    selected: &'static str,
+    fallback_reason: &'static str,
+    source_generation: u64,
+    source_fingerprint: u64,
+) {
+    let cycles = 1usize
+        .checked_shl(u32::try_from(log_t).unwrap_or(u32::MAX))
+        .unwrap_or(0);
+    let _span = tracing::info_span!(
+        "MetalRamReadWrite::route",
+        cycles,
+        log_t,
+        log_k,
+        requested = "host_sparse_v1",
+        selected,
+        fallback_reason,
+        source_generation,
+        source_fingerprint,
+    )
+    .entered();
 }
 
 fn phase_error() -> SumcheckError<AkitaField> {

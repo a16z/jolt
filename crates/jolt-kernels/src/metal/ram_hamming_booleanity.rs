@@ -16,7 +16,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
 use super::solinas::ram_cycle_family_v3::{
-    estimated_ram_hamming_products, HostSparseRamHammingBooleanity, RamCycleFamilyOwner,
+    HostSparseRamHammingBooleanity, RamCycleFamilyOwner, RamHammingSparsePlan,
 };
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
 use crate::{
@@ -41,6 +41,14 @@ impl Default for RamHammingBooleanityMetalConfig {
 struct HostSparseRamHammingKernel {
     sequence: HostSparseRamHammingBooleanity<AkitaField>,
     next_round: usize,
+    source_generation: u64,
+    source_fingerprint: u64,
+    access_leaves: usize,
+    parent_nodes: usize,
+    middle_nodes: usize,
+    estimated_products: u64,
+    topology_bytes: usize,
+    heap_bytes: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -114,6 +122,20 @@ impl SumcheckKernel<AkitaField> for HostSparseRamHammingKernel {
         _inputs: &SumcheckInputClaims<AkitaField, Self::Relation>,
     ) -> Result<RamHammingBooleanityOutputClaims<AkitaField>, SumcheckKernelError<AkitaField>> {
         let terminal = self.sequence.terminal().map_err(kernel_error)?;
+        let _span = tracing::info_span!(
+            "MetalRamHammingBooleanity::sparse_complete",
+            selected = "host_sparse_v1",
+            source_generation = self.source_generation,
+            source_fingerprint = self.source_fingerprint,
+            access_leaves = self.access_leaves,
+            parent_nodes = self.parent_nodes,
+            middle_nodes = self.middle_nodes,
+            estimated_products = self.estimated_products,
+            topology_bytes = self.topology_bytes,
+            heap_bytes = self.heap_bytes,
+            output_claim_valid = true,
+        )
+        .entered();
         Ok(RamHammingBooleanityOutputClaims {
             ram_hamming_weight: terminal.ram_hamming_weight(),
         })
@@ -138,6 +160,13 @@ impl SumcheckKernel<AkitaField> for HostSparseRamHammingKernel {
         if got != expected {
             return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
         }
+        let _span = tracing::info_span!(
+            "MetalRamHammingBooleanity::sparse_derived_validate",
+            source_generation = self.source_generation,
+            source_fingerprint = self.source_fingerprint,
+            derived_claim_valid = true,
+        )
+        .entered();
         Ok(())
     }
 }
@@ -162,6 +191,7 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
                 reason: "RAM Hamming cycle domain is too large",
             })?;
         if cycles < self.config.ram_hamming_booleanity.trace_cutoff_elements {
+            record_route(cycles, "optimized_cpu", "below_cutoff", 0, 0);
             return OptimizedRamHammingBooleanity.prepare(session, witness, inputs);
         }
         let stage1_cycle_binding = relation.stage1_cycle_binding();
@@ -172,6 +202,7 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
         }
 
         let Some(owner) = session.state::<Arc<RamCycleFamilyOwner>>().cloned() else {
+            record_route(cycles, "optimized_cpu", "missing_owner", 0, 0);
             return OptimizedRamHammingBooleanity.prepare(session, witness, inputs);
         };
         if owner.receipt().log_t() != log_t {
@@ -182,14 +213,73 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
         owner
             .verify_integrity()
             .map_err(|error| prepare_error(error.to_string()))?;
-        let predicted = estimated_ram_hamming_products(&owner)
+        let prepare_span = tracing::info_span!(
+            "MetalRamHammingBooleanity::sparse_prepare",
+            selected = "host_sparse_v1",
+            source_generation = owner.receipt().source_generation(),
+            source_fingerprint = owner.receipt().fingerprint(),
+            log_t,
+            access_leaves = tracing::field::Empty,
+            parent_nodes = tracing::field::Empty,
+            middle_nodes = tracing::field::Empty,
+            rounds = log_t,
+            estimated_products = tracing::field::Empty,
+            product_cap = tracing::field::Empty,
+            topology_builds = 1,
+            topology_bytes = tracing::field::Empty,
+            heap_bytes = tracing::field::Empty,
+            additional_source_row_scans = 0,
+            dense_h_elements = 0,
+            member_upload_bytes = 0,
+            gpu_dispatches = 0,
+            command_buffers = 0,
+            waits = 0,
+            readbacks = 0,
+            complete_overwrite = true,
+        );
+        let _prepare_guard = prepare_span.enter();
+        let plan = RamHammingSparsePlan::new_from_verified_owner(&owner)
             .map_err(|error| prepare_error(error.to_string()))?;
+        let predicted = plan.estimated_products();
         if predicted > self.config.ram_hamming_booleanity.max_sparse_products {
+            record_route(
+                cycles,
+                "optimized_cpu",
+                "product_cap",
+                owner.receipt().source_generation(),
+                owner.receipt().fingerprint(),
+            );
             return OptimizedRamHammingBooleanity.prepare(session, witness, inputs);
         }
+        let access_leaves = plan.access_leaves();
+        let parent_nodes = plan.parent_nodes();
+        let middle_nodes = plan.middle_nodes();
+        let topology_bytes = plan.topology_bytes();
+        let estimated_products = u64::try_from(predicted).map_err(|_| {
+            prepare_error("RAM Hamming sparse product estimate does not fit telemetry")
+        })?;
+        let product_cap = u64::try_from(self.config.ram_hamming_booleanity.max_sparse_products)
+            .map_err(|_| prepare_error("RAM Hamming sparse product cap does not fit telemetry"))?;
+        let source_generation = owner.receipt().source_generation();
+        let source_fingerprint = owner.receipt().fingerprint();
         let sequence =
-            HostSparseRamHammingBooleanity::new_from_verified_owner(owner, stage1_cycle_binding)
+            HostSparseRamHammingBooleanity::new_from_plan(owner, stage1_cycle_binding, plan)
                 .map_err(|error| prepare_error(error.to_string()))?;
+        let heap_bytes = sequence.owned_heap_bytes();
+        let _ = prepare_span.record("access_leaves", access_leaves);
+        let _ = prepare_span.record("parent_nodes", parent_nodes);
+        let _ = prepare_span.record("middle_nodes", middle_nodes);
+        let _ = prepare_span.record("estimated_products", estimated_products);
+        let _ = prepare_span.record("product_cap", product_cap);
+        let _ = prepare_span.record("topology_bytes", topology_bytes);
+        let _ = prepare_span.record("heap_bytes", heap_bytes);
+        record_route(
+            cycles,
+            "host_sparse_v1",
+            "none",
+            source_generation,
+            source_fingerprint,
+        );
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
             .ram_hamming_sparse_sequences
@@ -202,8 +292,35 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
         Ok(Box::new(HostSparseRamHammingKernel {
             sequence,
             next_round: 0,
+            source_generation,
+            source_fingerprint,
+            access_leaves,
+            parent_nodes,
+            middle_nodes,
+            estimated_products,
+            topology_bytes,
+            heap_bytes,
         }))
     }
+}
+
+fn record_route(
+    cycles: usize,
+    selected: &'static str,
+    fallback_reason: &'static str,
+    source_generation: u64,
+    source_fingerprint: u64,
+) {
+    let _span = tracing::info_span!(
+        "MetalRamHammingBooleanity::route",
+        cycles,
+        requested = "host_sparse_v1",
+        selected,
+        fallback_reason,
+        source_generation,
+        source_fingerprint,
+    )
+    .entered();
 }
 
 fn sparse_error(message: impl Into<String>) -> SumcheckError<AkitaField> {

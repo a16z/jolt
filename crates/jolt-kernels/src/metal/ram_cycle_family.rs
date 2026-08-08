@@ -42,6 +42,13 @@ pub(super) fn shared_ram_cycle_family_owner(
         .ok_or(KernelError::Unsupported {
             reason: "RAM cycle-family address domain is too large",
         })?;
+    let cycles = 1usize
+        .checked_shl(u32::try_from(log_t).map_err(|_| KernelError::Unsupported {
+            reason: "RAM cycle-family cycle domain is too large",
+        })?)
+        .ok_or(KernelError::Unsupported {
+            reason: "RAM cycle-family cycle domain is too large",
+        })?;
     let columns = RamAccessColumns::shared(session, witness, log_t)?;
     columns.validate_addresses(address_domain)?;
     let records = {
@@ -68,6 +75,35 @@ pub(super) fn shared_ram_cycle_family_owner(
             })
             .collect::<Vec<_>>()
     };
+    let owner_span = tracing::info_span!(
+        "MetalRamCycleFamily::owner_prepare",
+        enabled = true,
+        schema_version = super::solinas::ram_cycle_family_v3::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+        source_kind = "ram_access_tape_v1",
+        source_generation = tracing::field::Empty,
+        source_fingerprint = tracing::field::Empty,
+        log_t,
+        log_k,
+        cycles,
+        address_domain,
+        access_records = records.len(),
+        increment_records = tracing::field::Empty,
+        hamming_exact = true,
+        retained_records = records.len(),
+        final_memory_elements = address_domain,
+        record_bytes = tracing::field::Empty,
+        final_memory_bytes = tracing::field::Empty,
+        read_write_topology_nodes = tracing::field::Empty,
+        block_topology_nodes = tracing::field::Empty,
+        topology_bytes = tracing::field::Empty,
+        owner_bytes = tracing::field::Empty,
+        source_rows = cycles,
+        shared_source_row_scans = 1,
+        additional_source_row_scans = 0,
+        member_upload_bytes = 0,
+        complete_publication = tracing::field::Empty,
+    );
+    let _owner_guard = owner_span.enter();
     let increments = session
         .state::<RamIncrementActivity>()
         .ok_or(KernelError::InvariantViolation {
@@ -118,6 +154,48 @@ pub(super) fn shared_ram_cycle_family_owner(
         RamCycleFamilyOwner::from_sparse_records(config, records, increments, final_memory)
             .map_err(|error| owner_error(error.to_string()))?,
     );
+    let receipt = owner.receipt();
+    let read_write_topology_nodes = receipt
+        .read_write_census()
+        .iter()
+        .map(|level| level.entries())
+        .sum::<u64>();
+    let block_topology_nodes = receipt
+        .block_census()
+        .iter()
+        .map(|level| level.entries())
+        .sum::<u64>();
+    let record_bytes = std::mem::size_of::<RamAccessRecord>()
+        .checked_mul(receipt.access_count())
+        .and_then(|bytes| {
+            (std::mem::size_of::<u64>() + std::mem::size_of::<i128>())
+                .checked_mul(receipt.increment_count())
+                .and_then(|increment_bytes| bytes.checked_add(increment_bytes))
+        })
+        .ok_or(KernelError::InvariantViolation {
+            reason: "RAM cycle-family owner byte ledger overflowed",
+        })?;
+    let final_memory_bytes = std::mem::size_of::<u64>()
+        .checked_mul(receipt.address_domain())
+        .ok_or(KernelError::InvariantViolation {
+            reason: "RAM cycle-family final-memory byte ledger overflowed",
+        })?;
+    let owner_bytes = owner.owned_heap_bytes();
+    let topology_bytes = owner_bytes
+        .checked_sub(record_bytes)
+        .and_then(|bytes| bytes.checked_sub(final_memory_bytes))
+        .ok_or(KernelError::InvariantViolation {
+            reason: "RAM cycle-family topology byte ledger underflowed",
+        })?;
+    let _ = owner_span.record("source_generation", receipt.source_generation());
+    let _ = owner_span.record("source_fingerprint", receipt.fingerprint());
+    let _ = owner_span.record("increment_records", receipt.increment_count());
+    let _ = owner_span.record("record_bytes", record_bytes);
+    let _ = owner_span.record("final_memory_bytes", final_memory_bytes);
+    let _ = owner_span.record("read_write_topology_nodes", read_write_topology_nodes);
+    let _ = owner_span.record("block_topology_nodes", block_topology_nodes);
+    let _ = owner_span.record("topology_bytes", topology_bytes);
+    let _ = owner_span.record("owner_bytes", owner_bytes);
     tracing::info!(
         target: "jolt::metal",
         generation,
@@ -133,6 +211,7 @@ pub(super) fn shared_ram_cycle_family_owner(
         "prepared shared RAM cycle-family owner"
     );
     session.park(Arc::clone(&owner));
+    let _ = owner_span.record("complete_publication", true);
     Ok(Some(owner))
 }
 

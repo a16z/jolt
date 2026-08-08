@@ -462,6 +462,15 @@ impl allocative::Allocative for RamCycleFamilyOwner {
             allocative::Key::new("final_memory"),
             std::mem::size_of_val(self.final_memory.as_ref()),
         );
+        visitor.visit_simple(
+            allocative::Key::new("topology"),
+            self.rw_topology.owned_heap_bytes() + self.block_topology.owned_heap_bytes(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("receipt_census"),
+            std::mem::size_of_val(self.receipt.rw_census.as_ref())
+                + std::mem::size_of_val(self.receipt.block_census.as_ref()),
+        );
         visitor.exit();
     }
 }
@@ -605,6 +614,17 @@ impl RamCycleFamilyOwner {
 
     pub fn block_topology(&self) -> &RamBlockTopology {
         &self.block_topology
+    }
+
+    pub fn owned_heap_bytes(&self) -> usize {
+        std::mem::size_of_val(self.records.as_ref())
+            + std::mem::size_of_val(self.increment_cycles.as_ref())
+            + std::mem::size_of_val(self.increments.as_ref())
+            + std::mem::size_of_val(self.final_memory.as_ref())
+            + self.rw_topology.owned_heap_bytes()
+            + self.block_topology.owned_heap_bytes()
+            + std::mem::size_of_val(self.receipt.rw_census.as_ref())
+            + std::mem::size_of_val(self.receipt.block_census.as_ref())
     }
 
     pub fn verify_integrity(&self) -> Result<(), OwnerError> {

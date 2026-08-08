@@ -1,8 +1,7 @@
 //! Shared sparse RAM-cycle state for the Metal hybrid backend.
 //!
-//! This module is not registered in the production backend yet. It provides
-//! the checked owner, topology, host value-check sequence, dense oracle, and
-//! analytical selector needed before a Metal shader is admitted.
+//! It provides the checked owner and sparse host sequences shared by the RAM
+//! family, plus dense oracles and analytical selectors for successor kernels.
 
 mod model;
 mod oracle;
@@ -25,7 +24,7 @@ pub use owner::{
 };
 pub use ram_hamming_booleanity::{
     estimated_ram_hamming_products, HostSparseRamHammingBooleanity, RamHammingError,
-    RamHammingMessage, RamHammingTerminal,
+    RamHammingMessage, RamHammingSparsePlan, RamHammingTerminal,
 };
 pub use ram_ra_claim_reduction::{
     estimated_ram_ra_claim_products, HostSparseRamRaClaimReduction, RamRaClaimError,
