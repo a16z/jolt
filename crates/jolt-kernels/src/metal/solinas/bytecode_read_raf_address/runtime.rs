@@ -444,6 +444,10 @@ impl BytecodeAddressMajorResidentCarrier {
         self.receipt
     }
 
+    pub(crate) const fn source_receipt(&self) -> InstructionReadRafStage1Receipt {
+        self.source_receipt
+    }
+
     fn into_parts(
         self,
     ) -> (

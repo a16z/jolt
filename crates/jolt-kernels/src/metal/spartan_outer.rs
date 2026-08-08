@@ -680,6 +680,50 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                     session.park(owner);
                 }
                 if let Some(carrier) = bytecode_carrier {
+                    let receipt = carrier.receipt();
+                    let source_receipt = carrier.source_receipt();
+                    let carrier_resident_bytes =
+                        cycles
+                            .checked_mul(13)
+                            .ok_or(KernelError::InvariantViolation {
+                                reason: "bytecode address-major carrier size overflow",
+                            })?;
+                    let producer_logical_movement_bytes =
+                        cycles
+                            .checked_mul(33)
+                            .ok_or(KernelError::InvariantViolation {
+                                reason: "bytecode address-major producer traffic overflow",
+                            })?;
+                    {
+                        let _span = tracing::info_span!(
+                            "MetalBytecodeReadRafAddress::carrier_publish",
+                            cycles,
+                            source_generation = source_receipt.source_generation(),
+                            source_completion_serial = source_receipt.completion_serial(),
+                            source_rows_storage_id = source_receipt.row_allocation_identity(),
+                            source_claim_storage_id = source_receipt.claim_allocation_identity(),
+                            source_device_registry_id = source_receipt.device_registry_id(),
+                            source_windows = source_receipt.source_windows(),
+                            carrier_cells_storage_id = receipt.cells().allocation_identity(),
+                            carrier_cells_bytes = receipt.cells().bytes(),
+                            carrier_inner_sign_storage_id =
+                                receipt.inner_sign().allocation_identity(),
+                            carrier_inner_sign_bytes = receipt.inner_sign().bytes(),
+                            carrier_magnitude_storage_id =
+                                receipt.magnitude().allocation_identity(),
+                            carrier_magnitude_bytes = receipt.magnitude().bytes(),
+                            carrier_resident_bytes,
+                            carrier_allocations = 3usize,
+                            producer_persistent_write_bytes = carrier_resident_bytes,
+                            producer_logical_movement_bytes,
+                            producer_topology_read_bytes = 0usize,
+                            shared_source_row_scans = 1usize,
+                            additional_source_row_scans = 0usize,
+                            member_source_upload_bytes = 0usize,
+                            complete_overwrite = true,
+                        )
+                        .entered();
+                    }
                     session.park(carrier);
                 }
                 let compact_rows = plan

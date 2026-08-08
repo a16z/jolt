@@ -43,6 +43,17 @@ pub enum BytecodeReadRafAddressImplementation {
     AddressMajor,
 }
 
+impl BytecodeReadRafAddressImplementation {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::CsrShadow => "csr_shadow",
+            Self::AddressMajorShadow => "address_major_shadow",
+            Self::AddressMajor => "address_major",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BytecodeReadRafAddressMetalConfig {
     pub implementation: BytecodeReadRafAddressImplementation,
@@ -246,15 +257,34 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             prepare_bytecode_read_raf_address(session, witness, cpu_inputs())
         };
         let config = self.config.bytecode_read_raf_address;
+        let dimensions = relation.dimensions();
+        let trace_elements = 1usize << dimensions.log_t();
+        let route_span = tracing::info_span!(
+            "MetalBytecodeReadRafAddress::route",
+            cycles = trace_elements,
+            requested = config.implementation.as_str(),
+            realized_route = tracing::field::Empty,
+            fallback_reason = tracing::field::Empty,
+        );
+        let _route_guard = route_span.enter();
         if config.implementation == BytecodeReadRafAddressImplementation::Cpu {
+            let _ = route_span.record("realized_route", "cpu");
+            let _ = route_span.record("fallback_reason", "configured_cpu");
             return Ok(Box::new(cpu(session)?));
         }
 
-        let dimensions = relation.dimensions();
-        let trace_elements = 1usize << dimensions.log_t();
         let address_elements = 1usize << dimensions.log_k();
         if trace_elements < config.dispatch.trace_cutoff {
+            let _ = route_span.record("realized_route", "cpu");
+            let _ = route_span.record("fallback_reason", "trace_cutoff");
             return Ok(Box::new(cpu(session)?));
+        }
+        if config.implementation == BytecodeReadRafAddressImplementation::AddressMajor {
+            let _ = route_span.record("realized_route", "address_major");
+            let _ = route_span.record("fallback_reason", "none");
+        } else {
+            let _ = route_span.record("realized_route", "cpu");
+            let _ = route_span.record("fallback_reason", "shadow_only");
         }
         let stage_points = relation
             .stage_cycle_points()
@@ -299,6 +329,7 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                     reason: "bytecode address-major carrier is missing",
                 })?;
             let receipt = carrier.receipt();
+            let source_receipt = carrier.source_receipt();
             let storage = self
                 .context
                 .prepare_bytecode_address_major_resident_carrier(
@@ -358,6 +389,59 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                 pushforwards,
                 receipt.first_push_pc(),
             )?;
+            let producer_logical_movement_bytes =
+                trace_elements
+                    .checked_mul(33)
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "bytecode address-major producer traffic overflow",
+                    })?;
+            {
+                let _complete_span = tracing::info_span!(
+                    "MetalBytecodeReadRafAddress::address_major_complete",
+                    cycles = trace_elements,
+                    addresses = address_elements,
+                    stages = stage_points.len(),
+                    requested = "address_major",
+                    realized_route = "address_major",
+                    fallback_reason = "none",
+                    source_generation = producer.generation(),
+                    source_completion_serial = source_receipt.completion_serial(),
+                    source_rows_storage_id = producer.source_allocation_identity(),
+                    source_rows_bytes = producer.source_allocation_bytes(),
+                    source_device_registry_id = producer.device_registry_id(),
+                    carrier_cells_storage_id = receipt.cells().allocation_identity(),
+                    carrier_cells_bytes = receipt.cells().bytes(),
+                    carrier_inner_sign_storage_id = receipt.inner_sign().allocation_identity(),
+                    carrier_inner_sign_bytes = receipt.inner_sign().bytes(),
+                    carrier_magnitude_storage_id = receipt.magnitude().allocation_identity(),
+                    carrier_magnitude_bytes = receipt.magnitude().bytes(),
+                    carrier_resident_bytes = storage_stats.carrier_bytes,
+                    producer_persistent_write_bytes = storage_stats.carrier_bytes,
+                    producer_logical_movement_bytes,
+                    producer_topology_read_bytes = 0usize,
+                    member_carrier_owned_bytes = 0usize,
+                    member_source_scans = 0usize,
+                    member_source_upload_bytes = 0usize,
+                    equality_bytes = storage_stats.equality_bytes,
+                    partial_bytes = storage_stats.partial_bytes,
+                    output_readback_bytes = storage_stats.output_bytes,
+                    member_owned_bytes = storage_stats.owned_bytes,
+                    command_buffers = 1usize,
+                    waits = 1usize,
+                    worker_dispatches = 1usize,
+                    reducer_dispatches = 1usize,
+                    output_fields = expected_fields,
+                    submit_ns = observation.submit_wall.as_nanos() as u64,
+                    overlap_ns = observation.overlap_wall.as_nanos() as u64,
+                    join_ns = observation.join_wall.as_nanos() as u64,
+                    resident_wall_ns = observation.total_wall.as_nanos() as u64,
+                    gpu_active_ns = observation.gpu_active.as_nanos() as u64,
+                    completed_before_join = observation.completed_before_join,
+                    complete_overwrite = true,
+                    carrier_released = true,
+                )
+                .entered();
+            }
             tracing::info!(
                 target: "jolt::metal",
                 submit_ns = observation.submit_wall.as_nanos() as u64,
