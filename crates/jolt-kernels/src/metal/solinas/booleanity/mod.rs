@@ -19,6 +19,8 @@ const DENSE_PIPELINE: &str = "solinas_booleanity_dense_transition";
 const REDUCE_PIPELINE: &str = "solinas_booleanity_reduce";
 
 const PACKED_PC_MASK: u64 = (1 << 56) - 1;
+const PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT: u32 = 56;
+const PACKED_BYTECODE_CHUNK_RANK_LOW_MASK: u64 = 0x7f << PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT;
 const PACKED_INC_SIGN_SHIFT: u32 = 63;
 const BYTECODE_ADDRESS_COUNT: usize = 1 << 13;
 const BYTECODE_ADDRESS_INNER_LENGTH: usize = 1 << 15;
@@ -157,12 +159,6 @@ impl BooleanityRows {
 
     pub fn allocation_identity(&self) -> usize {
         self.0.buffer.as_ptr() as usize
-    }
-
-    pub(crate) fn first_mapped_pc(&self) -> Option<usize> {
-        // SAFETY: every BooleanityRows constructor publishes a fully initialized
-        // shared allocation and `len` is nonzero.
-        unsafe { self.0.buffer.contents().cast::<BooleanityRow>().read() }.mapped_pc()
     }
 
     pub(crate) fn bytecode_outer_support(&self) -> Option<(&[u32], &[u32], usize)> {
@@ -328,6 +324,19 @@ impl BooleanityRow {
         } else {
             Some((plus_one - 1) as usize)
         }
+    }
+
+    pub(crate) const fn with_bytecode_chunk_rank_low7(mut self, rank: u8) -> Self {
+        self.packed_pc_and_flags = (self.packed_pc_and_flags
+            & !PACKED_BYTECODE_CHUNK_RANK_LOW_MASK)
+            | (((rank & 0x7f) as u64) << PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn bytecode_chunk_rank_low7(self) -> u8 {
+        ((self.packed_pc_and_flags & PACKED_BYTECODE_CHUNK_RANK_LOW_MASK)
+            >> PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT) as u8
     }
 }
 
@@ -1322,5 +1331,21 @@ mod tests {
                 got: error_got,
             }) if error_expected == expected && error_got == got
         ));
+    }
+
+    #[test]
+    fn bytecode_chunk_rank_preserves_pc_and_increment_sign() {
+        let positive = BooleanityRow::new(7, Some((1u64 << 55) + 9), Some(3), 17).unwrap();
+        let negative = BooleanityRow::new(7, Some(41), Some(3), -17).unwrap();
+
+        for (row, rank) in [(positive, 127), (negative, 95)] {
+            let encoded = row.with_bytecode_chunk_rank_low7(rank);
+            assert_eq!(encoded.mapped_pc(), row.mapped_pc());
+            assert_eq!(encoded.bytecode_chunk_rank_low7(), rank);
+            assert_eq!(
+                encoded.words()[4] >> PACKED_INC_SIGN_SHIFT,
+                row.words()[4] >> 63
+            );
+        }
     }
 }

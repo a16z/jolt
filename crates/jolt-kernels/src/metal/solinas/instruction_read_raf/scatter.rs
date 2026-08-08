@@ -17,7 +17,12 @@ use super::{
     INSTRUCTION_READ_RAF_TABLES,
 };
 use crate::metal::solinas::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, SolinasMetal,
+    buffer_from_slice,
+    bytecode_read_raf_address::{
+        BytecodeAddressFusedScatterRequest, BytecodeAddressSparseStage1Carrier,
+        BytecodeAddressStage1TopologyReceipt,
+    },
+    command_buffer_timestamp, Fp128, MetalError, SolinasMetal,
 };
 
 const PIPELINE: &str = "solinas_instruction_read_raf_compatibility_scatter";
@@ -27,6 +32,13 @@ const LOOKUP_BYTES_PER_ROW: u64 = 2 * size_of::<u64>() as u64;
 const PACKED_BYTES_PER_ROW: u64 = size_of::<u8>() as u64;
 const INVERSE_BYTES_PER_ROW: u64 = size_of::<u32>() as u64;
 const WEIGHT_BYTES_PER_ROW: u64 = size_of::<Fp128>() as u64;
+const BYTECODE_DESCRIPTOR_BYTES: usize = 8;
+const BYTECODE_PIVOT_BYTES: usize = size_of::<u16>();
+const BYTECODE_OCCURRENCE_BYTES_PER_ROW: u64 = size_of::<u16>() as u64;
+const BYTECODE_MAGNITUDE_BYTES_PER_ROW: u64 = size_of::<u64>() as u64;
+const BYTECODE_INNER_LOG2: u32 = 15;
+const BYTECODE_MAX_DESCRIPTORS_PER_CHUNK: usize = 32;
+const BYTECODE_MAX_PIVOTS_PER_CHUNK: usize = 15;
 
 type ScatterLayout = (
     Vec<u32>,
@@ -86,6 +98,40 @@ pub(crate) struct InstructionReadRafDenseGroupedReceipt {
     source_copy_bytes: u64,
     full_plane_readback_bytes: u64,
     complete_overwrite: bool,
+    bytecode: Option<InstructionReadRafFusedBytecodeReceipt>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InstructionReadRafFusedBytecodeReceipt {
+    physical_rows: usize,
+    work_items: usize,
+    descriptor_elements: usize,
+    descriptor_bytes: usize,
+    descriptor_identity: usize,
+    pivot_elements: usize,
+    pivot_bytes: usize,
+    pivot_identity: usize,
+    chunk_offset_elements: usize,
+    chunk_offset_bytes: usize,
+    chunk_offset_identity: usize,
+    work_item_bytes: usize,
+    work_item_identity: usize,
+    address_offset_elements: usize,
+    address_offset_bytes: usize,
+    address_offset_identity: usize,
+    occurrence_bytes: usize,
+    occurrence_identity: usize,
+    magnitude_bytes: usize,
+    magnitude_identity: usize,
+    max_descriptors_per_chunk: usize,
+    max_pivots_per_chunk: usize,
+    dynamic_threadgroup_bytes: u64,
+    max_admitted_descriptors_per_chunk: usize,
+    max_admitted_pivots_per_chunk: usize,
+    threadgroup_memory_limit_bytes: u64,
+    shared_source_row_scans: usize,
+    additional_source_row_scans: usize,
+    member_upload_bytes: usize,
 }
 
 impl InstructionReadRafDenseGroupedReceipt {
@@ -189,6 +235,128 @@ impl InstructionReadRafDenseGroupedReceipt {
     pub(crate) const fn complete_overwrite(&self) -> bool {
         self.complete_overwrite
     }
+
+    pub(crate) const fn bytecode(&self) -> Option<InstructionReadRafFusedBytecodeReceipt> {
+        self.bytecode
+    }
+}
+
+impl InstructionReadRafFusedBytecodeReceipt {
+    pub(crate) const fn physical_rows(self) -> usize {
+        self.physical_rows
+    }
+
+    pub(crate) const fn work_items(self) -> usize {
+        self.work_items
+    }
+
+    pub(crate) const fn descriptor_elements(self) -> usize {
+        self.descriptor_elements
+    }
+
+    pub(crate) const fn descriptor_bytes(self) -> usize {
+        self.descriptor_bytes
+    }
+
+    pub(crate) const fn descriptor_identity(self) -> usize {
+        self.descriptor_identity
+    }
+
+    pub(crate) const fn pivot_elements(self) -> usize {
+        self.pivot_elements
+    }
+
+    pub(crate) const fn pivot_bytes(self) -> usize {
+        self.pivot_bytes
+    }
+
+    pub(crate) const fn pivot_identity(self) -> usize {
+        self.pivot_identity
+    }
+
+    pub(crate) const fn chunk_offset_elements(self) -> usize {
+        self.chunk_offset_elements
+    }
+
+    pub(crate) const fn chunk_offset_bytes(self) -> usize {
+        self.chunk_offset_bytes
+    }
+
+    pub(crate) const fn chunk_offset_identity(self) -> usize {
+        self.chunk_offset_identity
+    }
+
+    pub(crate) const fn work_item_bytes(self) -> usize {
+        self.work_item_bytes
+    }
+
+    pub(crate) const fn work_item_identity(self) -> usize {
+        self.work_item_identity
+    }
+
+    pub(crate) const fn address_offset_elements(self) -> usize {
+        self.address_offset_elements
+    }
+
+    pub(crate) const fn address_offset_bytes(self) -> usize {
+        self.address_offset_bytes
+    }
+
+    pub(crate) const fn address_offset_identity(self) -> usize {
+        self.address_offset_identity
+    }
+
+    pub(crate) const fn occurrence_bytes(self) -> usize {
+        self.occurrence_bytes
+    }
+
+    pub(crate) const fn occurrence_identity(self) -> usize {
+        self.occurrence_identity
+    }
+
+    pub(crate) const fn magnitude_bytes(self) -> usize {
+        self.magnitude_bytes
+    }
+
+    pub(crate) const fn magnitude_identity(self) -> usize {
+        self.magnitude_identity
+    }
+
+    pub(crate) const fn max_descriptors_per_chunk(self) -> usize {
+        self.max_descriptors_per_chunk
+    }
+
+    pub(crate) const fn max_pivots_per_chunk(self) -> usize {
+        self.max_pivots_per_chunk
+    }
+
+    pub(crate) const fn dynamic_threadgroup_bytes(self) -> u64 {
+        self.dynamic_threadgroup_bytes
+    }
+
+    pub(crate) const fn max_admitted_descriptors_per_chunk(self) -> usize {
+        self.max_admitted_descriptors_per_chunk
+    }
+
+    pub(crate) const fn max_admitted_pivots_per_chunk(self) -> usize {
+        self.max_admitted_pivots_per_chunk
+    }
+
+    pub(crate) const fn threadgroup_memory_limit_bytes(self) -> u64 {
+        self.threadgroup_memory_limit_bytes
+    }
+
+    pub(crate) const fn shared_source_row_scans(self) -> usize {
+        self.shared_source_row_scans
+    }
+
+    pub(crate) const fn additional_source_row_scans(self) -> usize {
+        self.additional_source_row_scans
+    }
+
+    pub(crate) const fn member_upload_bytes(self) -> usize {
+        self.member_upload_bytes
+    }
 }
 
 pub(crate) struct InstructionReadRafDenseGroupedPlanes {
@@ -198,6 +366,7 @@ pub(crate) struct InstructionReadRafDenseGroupedPlanes {
     weights: Buffer,
     receipt: InstructionReadRafDenseGroupedReceipt,
     execution: InstructionReadRafProducerExecution,
+    bytecode_carrier: Option<BytecodeAddressSparseStage1Carrier>,
 }
 
 pub(crate) struct InstructionReadRafDenseGroupedParts {
@@ -235,6 +404,10 @@ impl InstructionReadRafDenseGroupedPlanes {
             receipt: self.receipt,
         }
     }
+
+    pub(crate) fn take_bytecode_carrier(&mut self) -> Option<BytecodeAddressSparseStage1Carrier> {
+        self.bytecode_carrier.take()
+    }
 }
 
 #[repr(C)]
@@ -252,9 +425,19 @@ struct ScatterParams {
     weight_elements: u32,
     status_elements: u32,
     e_in_log2: u32,
+    bytecode_enabled: u32,
+    bytecode_physical_rows: u32,
+    bytecode_descriptor_elements: u32,
+    bytecode_pivot_elements: u32,
+    bytecode_chunk_offset_elements: u32,
+    bytecode_occurrence_elements: u32,
+    bytecode_magnitude_elements: u32,
+    bytecode_inner_log2: u32,
+    bytecode_max_descriptors_per_chunk: u32,
+    bytecode_max_pivots_per_chunk: u32,
 }
 
-const _: () = assert!(size_of::<ScatterParams>() == 48);
+const _: () = assert!(size_of::<ScatterParams>() == 88);
 const _: () = assert!(size_of::<Fp128>() == 16);
 
 impl SolinasMetal {
@@ -263,6 +446,7 @@ impl SolinasMetal {
         source: InstructionReadRafStage1Lease,
         r_reduction: &[AkitaField],
         config: InstructionReadRafCompatibilityScatterConfig,
+        bytecode: Option<BytecodeAddressFusedScatterRequest>,
     ) -> Result<InstructionReadRafDenseGroupedPlanes, MetalError> {
         let preparation_start = Instant::now();
         let source_receipt = source.receipt();
@@ -289,6 +473,9 @@ impl SolinasMetal {
                 "Stage-1 source belongs to another Metal device",
             ));
         }
+        if let Some(request) = bytecode.as_ref() {
+            validate_bytecode_request(request, source_receipt, rows, self.device.registry_id())?;
+        }
 
         let pipeline = self.compile_named_pipeline(PIPELINE)?;
         let limits = Self::limits(&pipeline);
@@ -306,7 +493,16 @@ impl SolinasMetal {
                 "compatibility scatter requires at least 128 threads",
             ));
         }
-        let threadgroup_bytes = (INSTRUCTION_READ_RAF_SEGMENTS * size_of::<u32>()) as u64;
+        let count_threadgroup_bytes = (INSTRUCTION_READ_RAF_SEGMENTS * size_of::<u32>()) as u64;
+        let (descriptor_threadgroup_bytes, pivot_threadgroup_bytes) = bytecode
+            .as_ref()
+            .map(|request| bytecode_threadgroup_bytes(&request.receipt()))
+            .transpose()?
+            .unwrap_or((0, 0));
+        let threadgroup_bytes = count_threadgroup_bytes
+            .checked_add(descriptor_threadgroup_bytes)
+            .and_then(|bytes| bytes.checked_add(pivot_threadgroup_bytes))
+            .ok_or(MetalError::InputTooLong(rows))?;
         let total_threadgroup_bytes = threadgroup_bytes
             .checked_add(limits.static_threadgroup_memory_length)
             .ok_or(MetalError::InputTooLong(INSTRUCTION_READ_RAF_SEGMENTS))?;
@@ -337,6 +533,17 @@ impl SolinasMetal {
         let lookups_bytes = checked_row_bytes(rows, LOOKUP_BYTES_PER_ROW)?;
         let inverse_bytes = checked_row_bytes(rows, INVERSE_BYTES_PER_ROW)?;
         let weights_bytes = checked_row_bytes(rows, WEIGHT_BYTES_PER_ROW)?;
+        let (bytecode_occurrence_bytes, bytecode_magnitude_bytes) = bytecode
+            .as_ref()
+            .map(|request| {
+                let physical_rows = request.receipt().physical_rows();
+                Ok::<_, MetalError>((
+                    checked_row_bytes(physical_rows, BYTECODE_OCCURRENCE_BYTES_PER_ROW)?,
+                    checked_row_bytes(physical_rows, BYTECODE_MAGNITUDE_BYTES_PER_ROW)?,
+                ))
+            })
+            .transpose()?
+            .unwrap_or((0, 0));
         let buffer_lengths = [
             packed_rows_bytes,
             lookups_bytes,
@@ -348,9 +555,13 @@ impl SolinasMetal {
             checked_buffer_bytes::<Fp128>(e_out_length, rows)?,
             STATUS_BYTES,
             size_of::<ScatterParams>() as u64,
+            bytecode_occurrence_bytes,
+            bytecode_magnitude_bytes,
         ];
-        for requested in buffer_lengths {
-            self.validate_buffer_length(requested)?;
+        for &requested in &buffer_lengths {
+            if requested != 0 {
+                self.validate_buffer_length(requested)?;
+            }
         }
         let additional = buffer_lengths
             .iter()
@@ -370,12 +581,27 @@ impl SolinasMetal {
         let weights = self
             .device
             .new_buffer(weights_bytes, MTLResourceOptions::StorageModeShared);
+        let bytecode_output_buffers = bytecode.as_ref().map(|_| {
+            (
+                self.device.new_buffer(
+                    bytecode_occurrence_bytes,
+                    MTLResourceOptions::StorageModePrivate,
+                ),
+                self.device.new_buffer(
+                    bytecode_magnitude_bytes,
+                    MTLResourceOptions::StorageModePrivate,
+                ),
+            )
+        });
         let chunk_bases = buffer_from_slice(&self.device, &chunk_bases);
         let segment_offsets = buffer_from_slice(&self.device, &segment_offsets);
         let e_in = buffer_from_slice(&self.device, &e_in);
         let e_out = buffer_from_slice(&self.device, &e_out);
         let status = buffer_from_slice(&self.device, &[0u32]);
         let rows_u32 = u32::try_from(rows).map_err(|_| MetalError::InputTooLong(rows))?;
+        let bytecode_receipt = bytecode
+            .as_ref()
+            .map(BytecodeAddressFusedScatterRequest::receipt);
         let params = ScatterParams {
             rows: rows_u32,
             chunks: u32::try_from(chunks).map_err(|_| MetalError::InputTooLong(chunks))?,
@@ -390,6 +616,40 @@ impl SolinasMetal {
             weight_elements: rows_u32,
             status_elements: 1,
             e_in_log2: e_in_length.ilog2(),
+            bytecode_enabled: u32::from(bytecode_receipt.is_some()),
+            bytecode_physical_rows: optional_shader_count(
+                bytecode_receipt.map(|receipt| receipt.physical_rows()),
+                rows,
+            )?,
+            bytecode_descriptor_elements: optional_shader_count(
+                bytecode_receipt.map(|receipt| receipt.descriptor_elements()),
+                rows,
+            )?,
+            bytecode_pivot_elements: optional_shader_count(
+                bytecode_receipt.map(|receipt| receipt.pivot_elements()),
+                rows,
+            )?,
+            bytecode_chunk_offset_elements: optional_shader_count(
+                bytecode_receipt.map(|receipt| receipt.chunk_offset_elements()),
+                rows,
+            )?,
+            bytecode_occurrence_elements: optional_shader_count(
+                bytecode_receipt.map(|receipt| receipt.physical_rows()),
+                rows,
+            )?,
+            bytecode_magnitude_elements: optional_shader_count(
+                bytecode_receipt.map(|receipt| receipt.physical_rows()),
+                rows,
+            )?,
+            bytecode_inner_log2: bytecode_receipt.map_or(0, |_| BYTECODE_INNER_LOG2),
+            bytecode_max_descriptors_per_chunk: optional_shader_count(
+                bytecode_receipt.map(|receipt| receipt.max_descriptors_per_chunk()),
+                rows,
+            )?,
+            bytecode_max_pivots_per_chunk: optional_shader_count(
+                bytecode_receipt.map(|receipt| receipt.max_pivots_per_chunk()),
+                rows,
+            )?,
         };
         let params = buffer_from_slice(&self.device, std::slice::from_ref(&params));
         let preparation_wall = preparation_start.elapsed();
@@ -411,7 +671,28 @@ impl SolinasMetal {
             encoder.set_buffer(9, Some(&weights), 0);
             encoder.set_buffer(10, Some(&status), 0);
             encoder.set_buffer(11, Some(&params), 0);
-            encoder.set_threadgroup_memory_length(0, threadgroup_bytes);
+            if let (Some(request), Some((occurrences, magnitudes))) =
+                (bytecode.as_ref(), bytecode_output_buffers.as_ref())
+            {
+                encoder.set_buffer(12, Some(request.descriptors_buffer()), 0);
+                encoder.set_buffer(13, Some(request.pivots_buffer()), 0);
+                encoder.set_buffer(14, Some(request.chunk_offsets_buffer()), 0);
+                encoder.set_buffer(15, Some(occurrences), 0);
+                encoder.set_buffer(16, Some(magnitudes), 0);
+            } else {
+                encoder.set_buffer(12, Some(source.row_buffer()), 0);
+                encoder.set_buffer(13, Some(source.row_buffer()), 0);
+                encoder.set_buffer(14, Some(source.row_buffer()), 0);
+                encoder.set_buffer(15, Some(source.row_buffer()), 0);
+                encoder.set_buffer(16, Some(source.row_buffer()), 0);
+            }
+            encoder.set_threadgroup_memory_length(0, count_threadgroup_bytes);
+            if descriptor_threadgroup_bytes != 0 {
+                encoder.set_threadgroup_memory_length(1, descriptor_threadgroup_bytes);
+            }
+            if pivot_threadgroup_bytes != 0 {
+                encoder.set_threadgroup_memory_length(2, pivot_threadgroup_bytes);
+            }
             encoder.dispatch_thread_groups(
                 MTLSize {
                     width: chunks as u64,
@@ -462,6 +743,53 @@ impl SolinasMetal {
         {
             return Err(invalid_scatter("compatibility output allocations alias"));
         }
+        let (bytecode_receipt, bytecode_carrier) = match (bytecode, bytecode_output_buffers) {
+            (Some(request), Some((occurrences, magnitudes))) => {
+                let topology = request.receipt();
+                let fused = InstructionReadRafFusedBytecodeReceipt {
+                    physical_rows: topology.physical_rows(),
+                    work_items: topology.work_items(),
+                    descriptor_elements: topology.descriptor_elements(),
+                    descriptor_bytes: topology.descriptor_bytes(),
+                    descriptor_identity: topology.descriptor_allocation_identity(),
+                    pivot_elements: topology.pivot_elements(),
+                    pivot_bytes: topology.pivot_bytes(),
+                    pivot_identity: topology.pivot_allocation_identity(),
+                    chunk_offset_elements: topology.chunk_offset_elements(),
+                    chunk_offset_bytes: topology.chunk_offset_bytes(),
+                    chunk_offset_identity: topology.chunk_offset_allocation_identity(),
+                    work_item_bytes: topology.work_item_bytes(),
+                    work_item_identity: topology.work_item_allocation_identity(),
+                    address_offset_elements: topology.address_offset_elements(),
+                    address_offset_bytes: topology.address_offset_bytes(),
+                    address_offset_identity: topology.address_offset_allocation_identity(),
+                    occurrence_bytes: usize::try_from(bytecode_occurrence_bytes)
+                        .map_err(|_| MetalError::InputTooLong(topology.physical_rows()))?,
+                    occurrence_identity: occurrences.as_ptr() as usize,
+                    magnitude_bytes: usize::try_from(bytecode_magnitude_bytes)
+                        .map_err(|_| MetalError::InputTooLong(topology.physical_rows()))?,
+                    magnitude_identity: magnitudes.as_ptr() as usize,
+                    max_descriptors_per_chunk: topology.max_descriptors_per_chunk(),
+                    max_pivots_per_chunk: topology.max_pivots_per_chunk(),
+                    dynamic_threadgroup_bytes: threadgroup_bytes,
+                    max_admitted_descriptors_per_chunk: BYTECODE_MAX_DESCRIPTORS_PER_CHUNK,
+                    max_admitted_pivots_per_chunk: BYTECODE_MAX_PIVOTS_PER_CHUNK,
+                    threadgroup_memory_limit_bytes: maximum_threadgroup_bytes
+                        .saturating_sub(limits.static_threadgroup_memory_length),
+                    shared_source_row_scans: topology.shared_source_row_scans(),
+                    additional_source_row_scans: topology.additional_source_row_scans(),
+                    member_upload_bytes: topology.member_upload_bytes(),
+                };
+                let carrier = request.publish(source_receipt, occurrences, magnitudes)?;
+                (Some(fused), Some(carrier))
+            }
+            (None, None) => (None, None),
+            _ => {
+                return Err(invalid_scatter(
+                    "fused bytecode request lost its output allocations",
+                ));
+            }
+        };
         let completion_serial = next_completion_serial()?;
         let receipt = InstructionReadRafDenseGroupedReceipt {
             source: source_receipt,
@@ -491,6 +819,7 @@ impl SolinasMetal {
             source_copy_bytes: 0,
             full_plane_readback_bytes: 0,
             complete_overwrite: true,
+            bytecode: bytecode_receipt,
         };
         Ok(InstructionReadRafDenseGroupedPlanes {
             packed_rows,
@@ -504,6 +833,7 @@ impl SolinasMetal {
                 gpu_active,
                 status_readback_bytes: STATUS_BYTES,
             },
+            bytecode_carrier,
         })
     }
 }
@@ -563,6 +893,115 @@ fn scatter_layout(
         offsets[physical] as usize..offsets[physical + 1] as usize
     });
     Ok((chunk_bases, offsets, ranges))
+}
+
+fn validate_bytecode_request(
+    request: &BytecodeAddressFusedScatterRequest,
+    source: InstructionReadRafStage1Receipt,
+    padded_rows: usize,
+    device_registry_id: u64,
+) -> Result<(), MetalError> {
+    let receipt = request.receipt();
+    let physical_rows = receipt.physical_rows();
+    let chunks = physical_rows.div_ceil(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS);
+    let expected_address_offsets = (1usize << 13) + 1;
+    let source_matches = request.source_receipt() == source
+        && receipt.source_receipt() == source
+        && receipt.source_generation() == source.source_generation()
+        && receipt.source_completion_serial() == source.completion_serial()
+        && receipt.source_rows_storage_id() == source.row_allocation_identity()
+        && receipt.source_claim_storage_id() == source.claim_allocation_identity()
+        && receipt.source_windows() == source.source_windows();
+    let topology_shape = receipt.padded_rows() == padded_rows
+        && receipt.shape().rows().is_ok_and(|rows| rows == padded_rows)
+        && physical_rows != 0
+        && physical_rows <= padded_rows
+        && receipt.chunks() == chunks
+        && receipt.descriptors() != 0
+        && receipt.descriptor_elements() == receipt.descriptors() + chunks
+        && receipt.pivot_elements() == receipt.pivots() + 1
+        && receipt.chunk_offset_elements() == 2 * chunks
+        && receipt.work_items() != 0
+        && receipt.address_offset_elements() == expected_address_offsets
+        && receipt.max_descriptors_per_chunk() != 0
+        && receipt.max_descriptors_per_chunk() <= BYTECODE_MAX_DESCRIPTORS_PER_CHUNK
+        && receipt.max_pivots_per_chunk() <= BYTECODE_MAX_PIVOTS_PER_CHUNK;
+    let buffers = [
+        (
+            request.descriptors_buffer(),
+            receipt.descriptor_bytes(),
+            receipt.descriptor_allocation_identity(),
+        ),
+        (
+            request.pivots_buffer(),
+            receipt.pivot_bytes(),
+            receipt.pivot_allocation_identity(),
+        ),
+        (
+            request.chunk_offsets_buffer(),
+            receipt.chunk_offset_bytes(),
+            receipt.chunk_offset_allocation_identity(),
+        ),
+        (
+            request.work_items_buffer(),
+            receipt.work_item_bytes(),
+            receipt.work_item_allocation_identity(),
+        ),
+        (
+            request.address_offsets_buffer(),
+            receipt.address_offset_bytes(),
+            receipt.address_offset_allocation_identity(),
+        ),
+    ];
+    let buffers_match = buffers.iter().all(|(buffer, bytes, identity)| {
+        *identity != 0
+            && buffer.as_ptr() as usize == *identity
+            && buffer.length() == *bytes as u64
+            && buffer.device().registry_id() == device_registry_id
+    });
+    let byte_ledgers = receipt.descriptor_bytes()
+        == receipt.descriptor_elements() * BYTECODE_DESCRIPTOR_BYTES
+        && receipt.pivot_bytes() == receipt.pivot_elements() * BYTECODE_PIVOT_BYTES
+        && receipt.chunk_offset_bytes() == receipt.chunk_offset_elements() * size_of::<u32>()
+        && receipt.work_item_bytes() == receipt.work_items() * 8
+        && receipt.address_offset_bytes() == receipt.address_offset_elements() * size_of::<u32>();
+    let publication = receipt.device_registry_id() == device_registry_id
+        && receipt.completion_serial() != 0
+        && receipt.complete_overwrite()
+        && receipt.covered_rows() == physical_rows
+        && receipt.shared_source_row_scans() == 1
+        && receipt.additional_source_row_scans() == 0
+        && receipt.member_upload_bytes() == 0;
+    if !source_matches || !topology_shape || !buffers_match || !byte_ledgers || !publication {
+        return Err(invalid_scatter(
+            "fused bytecode topology does not match the Stage-1 source",
+        ));
+    }
+    Ok(())
+}
+
+fn bytecode_threadgroup_bytes(
+    receipt: &BytecodeAddressStage1TopologyReceipt,
+) -> Result<(u64, u64), MetalError> {
+    let descriptor_bytes = receipt
+        .max_descriptors_per_chunk()
+        .checked_add(1)
+        .and_then(|elements| elements.checked_mul(BYTECODE_DESCRIPTOR_BYTES))
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or(MetalError::InputTooLong(receipt.physical_rows()))?;
+    let pivot_bytes = receipt
+        .max_pivots_per_chunk()
+        .max(1)
+        .checked_mul(BYTECODE_PIVOT_BYTES)
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or(MetalError::InputTooLong(receipt.physical_rows()))?;
+    Ok((descriptor_bytes, pivot_bytes))
+}
+
+fn optional_shader_count(value: Option<usize>, rows: usize) -> Result<u32, MetalError> {
+    value.map_or(Ok(0), |value| {
+        u32::try_from(value).map_err(|_| MetalError::InputTooLong(rows))
+    })
 }
 
 fn checked_row_bytes(rows: usize, bytes_per_row: u64) -> Result<u64, MetalError> {

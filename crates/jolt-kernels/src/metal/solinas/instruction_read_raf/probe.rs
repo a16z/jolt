@@ -77,6 +77,7 @@ pub fn run_instruction_read_raf_stage1_probe(
         InstructionReadRafCompatibilityScatterConfig {
             threads_per_threadgroup,
         },
+        None,
     )?;
     let execution = planes.execution();
     validate_probe_planes(&planes, &weights)?;

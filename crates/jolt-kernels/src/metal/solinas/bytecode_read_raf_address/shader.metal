@@ -6,6 +6,7 @@
 #define BYTECODE_ADDRESS_WORKER_BASE_STAGES 5u
 #define BYTECODE_ADDRESS_WORKER_SIMD_WIDTH 32u
 #define BYTECODE_ADDRESS_WORKER_SIMDGROUPS 8u
+#define BYTECODE_ADDRESS_PACKED_ITEMS_PER_GROUP 4u
 #define BYTECODE_ADDRESS_PRODUCER_THREADS 1024u
 #define BYTECODE_ADDRESS_PRODUCER_BINS_PER_THREAD 8u
 #define BYTECODE_ADDRESS_PRODUCER_INNER_LENGTH 32768u
@@ -435,22 +436,15 @@ kernel void solinas_bytecode_address_major_build_compact_support(
     }
 }
 
-inline SolinasFp128 bytecode_address_major_from_u64(ulong value) {
-    SolinasFp128 result = solinas_zero();
-    result.limb.x = (uint)value;
-    result.limb.y = (uint)(value >> 32u);
-    return result;
-}
-
 inline SolinasFp128 bytecode_address_major_signed_product(
     SolinasFp128 coefficient,
     ulong magnitude,
     bool negative)
 {
-    SolinasFp128 product = solinas_mul_wide(
+    return solinas_half_width_mul_signed_u64(
         coefficient,
-        bytecode_address_major_from_u64(magnitude));
-    return negative ? solinas_sub(solinas_zero(), product) : product;
+        magnitude,
+        negative);
 }
 
 inline SolinasFp128 bytecode_address_major_broadcast_zero(
@@ -743,6 +737,84 @@ kernel void solinas_bytecode_address_sparse_worker_5_4(
         partials[stage * params.work_items + item_index] = solinas_mul_wide(
             total,
             e_hi[stage * params.outer_length + outer]);
+    }
+}
+
+kernel void solinas_bytecode_address_sparse_worker_packed_4_5_4(
+    device const ushort* occurrences [[buffer(0)]],
+    device const ulong* magnitudes [[buffer(1)]],
+    device const BytecodeAddressSparseWorkItem* work_items [[buffer(2)]],
+    device const SolinasFp128* e_lo [[buffer(3)]],
+    device const SolinasFp128* e_hi [[buffer(4)]],
+    device SolinasFp128* partials [[buffer(5)]],
+    constant BytecodeAddressSparseParams& params [[buffer(6)]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint group [[threadgroup_position_in_grid]])
+{
+    uint item_index = group * BYTECODE_ADDRESS_PACKED_ITEMS_PER_GROUP + simdgroup;
+    if (item_index >= params.work_items) {
+        return;
+    }
+    BytecodeAddressSparseWorkItem item = work_items[item_index];
+    uint outer = item.outer;
+    uint stream_base = outer * params.inner_length + item.start;
+
+    SolinasFp128 base[BYTECODE_ADDRESS_WORKER_BASE_STAGES];
+    for (uint stage = 0u; stage < BYTECODE_ADDRESS_WORKER_BASE_STAGES; stage++) {
+        base[stage] = solinas_zero();
+    }
+    for (uint offset = lane; offset < item.count; offset += BYTECODE_ADDRESS_WORKER_SIMD_WIDTH) {
+        uint inner = occurrences[stream_base + offset] & 0x7fffu;
+        for (uint stage = 0u; stage < BYTECODE_ADDRESS_WORKER_BASE_STAGES; stage++) {
+            base[stage] = solinas_add(
+                base[stage],
+                e_lo[stage * params.inner_length + inner]);
+        }
+    }
+    for (uint stage = 0u; stage < BYTECODE_ADDRESS_WORKER_BASE_STAGES; stage++) {
+        SolinasFp128 sum = solinas_simd_sum_32(base[stage]);
+        if (lane == 0u) {
+            partials[stage * params.work_items + item_index] = solinas_mul_wide(
+                sum,
+                e_hi[stage * params.outer_length + outer]);
+        }
+    }
+
+    SolinasFp128 fused[
+        BYTECODE_ADDRESS_WORKER_STAGES - BYTECODE_ADDRESS_WORKER_BASE_STAGES];
+    for (uint local_stage = 0u;
+         local_stage < BYTECODE_ADDRESS_WORKER_STAGES - BYTECODE_ADDRESS_WORKER_BASE_STAGES;
+         local_stage++) {
+        fused[local_stage] = solinas_zero();
+    }
+    for (uint offset = lane; offset < item.count; offset += BYTECODE_ADDRESS_WORKER_SIMD_WIDTH) {
+        ushort occurrence = occurrences[stream_base + offset];
+        uint inner = occurrence & 0x7fffu;
+        bool negative = (occurrence >> 15u) != 0u;
+        ulong magnitude = magnitudes[stream_base + offset];
+        for (uint local_stage = 0u;
+             local_stage < BYTECODE_ADDRESS_WORKER_STAGES - BYTECODE_ADDRESS_WORKER_BASE_STAGES;
+             local_stage++) {
+            uint stage = BYTECODE_ADDRESS_WORKER_BASE_STAGES + local_stage;
+            fused[local_stage] = solinas_add(
+                fused[local_stage],
+                bytecode_address_major_signed_product(
+                    e_lo[stage * params.inner_length + inner],
+                    magnitude,
+                    negative));
+        }
+    }
+    for (uint local_stage = 0u;
+         local_stage < BYTECODE_ADDRESS_WORKER_STAGES - BYTECODE_ADDRESS_WORKER_BASE_STAGES;
+         local_stage++) {
+        SolinasFp128 sum = solinas_simd_sum_32(fused[local_stage]);
+        if (lane == 0u) {
+            uint stage = BYTECODE_ADDRESS_WORKER_BASE_STAGES + local_stage;
+            partials[stage * params.work_items + item_index] = solinas_mul_wide(
+                sum,
+                e_hi[stage * params.outer_length + outer]);
+        }
     }
 }
 

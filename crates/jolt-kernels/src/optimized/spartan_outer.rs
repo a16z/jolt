@@ -89,7 +89,7 @@ use super::instruction_input::prepare_instruction_input_rows;
 use super::support::collect_rows;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::bytecode_read_raf_address::{
-    BytecodeAddressMajorResidentCarrier, BytecodeAddressMajorSourceRow,
+    BytecodeAddressStage1TopologyChunkWriter, BytecodeAddressStage1TopologyOwner,
 };
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::spartan_shift::{
@@ -113,9 +113,6 @@ const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
-#[cfg(all(feature = "metal", target_os = "macos"))]
-const BYTECODE_ADDRESS_OUTER_ROWS: usize = 1 << 15;
-
 /// One cycle's integer values of the 19 eq-conditional rows, split into the
 /// two uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as
 /// `S192` — wide enough for the `RightLookupOperand`-bearing rows, whose
@@ -753,6 +750,152 @@ fn stage1_owner_rows_span(cycles: usize, explicit_rows: usize) -> tracing::Span 
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
+fn bytecode_stage1_topology_span(enabled: bool, physical_rows: usize) -> tracing::Span {
+    tracing::info_span!(
+        "MetalBytecodeReadRafAddress::fused_topology_prepare",
+        enabled,
+        physical_rows,
+        chunk_rows = INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+        chunks = tracing::field::Empty,
+        descriptors = tracing::field::Empty,
+        descriptor_elements = tracing::field::Empty,
+        descriptor_bytes = tracing::field::Empty,
+        descriptor_storage_id = tracing::field::Empty,
+        pivots = tracing::field::Empty,
+        pivot_elements = tracing::field::Empty,
+        pivot_bytes = tracing::field::Empty,
+        pivot_storage_id = tracing::field::Empty,
+        chunk_offset_elements = tracing::field::Empty,
+        chunk_offset_bytes = tracing::field::Empty,
+        chunk_offset_storage_id = tracing::field::Empty,
+        work_items = tracing::field::Empty,
+        work_item_elements = tracing::field::Empty,
+        work_item_bytes = tracing::field::Empty,
+        work_item_storage_id = tracing::field::Empty,
+        address_offset_elements = tracing::field::Empty,
+        address_offset_bytes = tracing::field::Empty,
+        address_offset_storage_id = tracing::field::Empty,
+        max_descriptors_per_chunk = tracing::field::Empty,
+        max_pivots_per_chunk = tracing::field::Empty,
+        first_push_pc = tracing::field::Empty,
+        source_generation = tracing::field::Empty,
+        source_completion_serial = tracing::field::Empty,
+        source_rows_storage_id = tracing::field::Empty,
+        source_claim_storage_id = tracing::field::Empty,
+        topology_completion_serial = tracing::field::Empty,
+        shared_source_row_scans = tracing::field::Empty,
+        additional_source_row_scans = tracing::field::Empty,
+        extra_source_scans = tracing::field::Empty,
+        source_windows = tracing::field::Empty,
+        member_upload_bytes = tracing::field::Empty,
+        complete_overwrite = tracing::field::Empty,
+        covered_rows = tracing::field::Empty,
+    )
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn record_bytecode_stage1_topology_span(
+    span: &tracing::Span,
+    source: &InstructionReadRafStage1Owner,
+    topology: Option<&BytecodeAddressStage1TopologyOwner>,
+) {
+    let source = source.receipt();
+    let _ = span.record("source_generation", source.source_generation());
+    let _ = span.record("source_completion_serial", source.completion_serial());
+    let _ = span.record("source_rows_storage_id", source.row_allocation_identity());
+    let _ = span.record(
+        "source_claim_storage_id",
+        source.claim_allocation_identity(),
+    );
+    let _ = span.record("source_windows", source.source_windows());
+    let _ = span.record("shared_source_row_scans", 1usize);
+    let _ = span.record("additional_source_row_scans", 0usize);
+    let _ = span.record("extra_source_scans", 0usize);
+    let _ = span.record("member_upload_bytes", 0usize);
+    let Some(topology) = topology else {
+        for field in [
+            "chunks",
+            "descriptors",
+            "descriptor_elements",
+            "descriptor_bytes",
+            "descriptor_storage_id",
+            "pivots",
+            "pivot_elements",
+            "pivot_bytes",
+            "pivot_storage_id",
+            "chunk_offset_elements",
+            "chunk_offset_bytes",
+            "chunk_offset_storage_id",
+            "work_items",
+            "work_item_elements",
+            "work_item_bytes",
+            "work_item_storage_id",
+            "address_offset_elements",
+            "address_offset_bytes",
+            "address_offset_storage_id",
+            "max_descriptors_per_chunk",
+            "max_pivots_per_chunk",
+            "first_push_pc",
+            "topology_completion_serial",
+            "covered_rows",
+        ] {
+            let _ = span.record(field, 0usize);
+        }
+        let _ = span.record("complete_overwrite", false);
+        return;
+    };
+    let receipt = topology.receipt();
+    let values = [
+        ("chunks", receipt.chunks()),
+        ("descriptors", receipt.descriptors()),
+        ("descriptor_elements", receipt.descriptor_elements()),
+        ("descriptor_bytes", receipt.descriptor_bytes()),
+        (
+            "descriptor_storage_id",
+            receipt.descriptor_allocation_identity(),
+        ),
+        ("pivots", receipt.pivots()),
+        ("pivot_elements", receipt.pivot_elements()),
+        ("pivot_bytes", receipt.pivot_bytes()),
+        ("pivot_storage_id", receipt.pivot_allocation_identity()),
+        ("chunk_offset_elements", receipt.chunk_offset_elements()),
+        ("chunk_offset_bytes", receipt.chunk_offset_bytes()),
+        (
+            "chunk_offset_storage_id",
+            receipt.chunk_offset_allocation_identity(),
+        ),
+        ("work_items", receipt.work_items()),
+        ("work_item_elements", receipt.work_items()),
+        ("work_item_bytes", receipt.work_item_bytes()),
+        (
+            "work_item_storage_id",
+            receipt.work_item_allocation_identity(),
+        ),
+        ("address_offset_elements", receipt.address_offset_elements()),
+        ("address_offset_bytes", receipt.address_offset_bytes()),
+        (
+            "address_offset_storage_id",
+            receipt.address_offset_allocation_identity(),
+        ),
+        (
+            "max_descriptors_per_chunk",
+            receipt.max_descriptors_per_chunk(),
+        ),
+        ("max_pivots_per_chunk", receipt.max_pivots_per_chunk()),
+        ("first_push_pc", receipt.first_push_pc()),
+        (
+            "topology_completion_serial",
+            receipt.completion_serial() as usize,
+        ),
+        ("covered_rows", receipt.covered_rows()),
+    ];
+    for (field, value) in values {
+        let _ = span.record(field, value);
+    }
+    let _ = span.record("complete_overwrite", receipt.complete_overwrite());
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
     context: &SolinasMetal,
     witness: &dyn JoltWitnessPlane<AkitaField>,
@@ -762,7 +905,7 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
     (
         SpartanOuterUniskipRows,
         InstructionReadRafStage1Owner,
-        Option<BytecodeAddressMajorResidentCarrier>,
+        Option<BytecodeAddressStage1TopologyOwner>,
     ),
     MetalSpartanDenseRowsError,
 > {
@@ -778,108 +921,90 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
     let access = owned.view();
     let span = stage1_owner_rows_span(cycles, explicit_rows);
     let _entered = span.enter();
+    let topology_span = bytecode_stage1_topology_span(prepare_bytecode_carrier, explicit_rows);
+    let _topology_entered = topology_span.enter();
     let mut source = context
         .prepare_instruction_read_raf_stage1_storage(cycles)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
-    let mut bytecode_carrier = prepare_bytecode_carrier
-        .then(|| context.prepare_bytecode_address_major_resident_storage(cycles))
+    let mut bytecode_topology = prepare_bytecode_carrier
+        .then(|| context.prepare_bytecode_address_stage1_topology_storage(cycles, explicit_rows))
         .transpose()
-        .map_err(|error| {
-            MetalSpartanDenseRowsError::Metal(MetalError::InvalidInstructionReadRafGrouped(
-                error.to_string(),
-            ))
-        })?;
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
     let outer_rows = context
         .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |instruction_input, residual| {
-            if let Some(carrier) = bytecode_carrier.as_mut() {
+            if let Some(topology) = bytecode_topology.as_mut() {
                 return source.with_chunk_writers(|source_chunks| {
-                    carrier.with_outer_writers(|carrier_writers| {
-                        let fill_outer = |outer: usize,
-                                          instruction_input: &mut [InstructionInputRow],
-                                          residual: &mut [SpartanOuterUniskipResidualRow],
-                                          source_chunks: &mut [InstructionReadRafStage1ChunkWriter<'_>],
-                                          carrier: &mut crate::metal::solinas::bytecode_read_raf_address::BytecodeAddressMajorOuterWriter<'_>|
-                         -> Result<(), MetalError> {
-                            if instruction_input.len() != BYTECODE_ADDRESS_OUTER_ROWS
-                                || residual.len() != instruction_input.len()
-                                || source_chunks.iter().map(|chunk| chunk.len()).sum::<usize>()
-                                    != instruction_input.len()
-                            {
-                                return Err(MetalError::InvalidInstructionReadRafGrouped(
-                                    "Stage-1 bytecode carrier outer geometry changed".to_owned(),
-                                ));
-                            }
-                            let mut selectors = Vec::with_capacity(instruction_input.len());
-                            let mut magnitudes = Vec::with_capacity(instruction_input.len());
-                            for offset in 0..instruction_input.len() {
-                                let row_index = outer * BYTECODE_ADDRESS_OUTER_ROWS + offset;
-                                let projected: Stage1ProjectionRow = access.window(row_index).map_err(
-                                    |error| MetalError::SpartanOuterRowExtraction {
-                                        row: row_index,
-                                        message: error.to_string(),
-                                    },
-                                )?;
-                                (instruction_input[offset], residual[offset]) =
-                                    SpartanOuterUniskipRow::from_spartan_outer(&projected.outer)
-                                        .split();
-                                let (row, table_plus_one, raf) =
-                                    pack_stage1_instruction_source(projected.instruction)?;
-                                let source_chunk = offset / INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
-                                source_chunks[source_chunk].push(row, table_plus_one, raf)?;
-                                selectors.push(
-                                    BytecodeAddressMajorSourceRow {
-                                        mapped_pc: projected.instruction.mapped_pc.0,
-                                        fused_inc_negative: projected.instruction.fused_inc.0 < 0,
-                                    }
-                                    .selector()
-                                    .map_err(|error| {
-                                        MetalError::InvalidInstructionReadRafGrouped(
-                                            error.to_string(),
+                    topology.with_chunk_writers(|topology_chunks| {
+                        let fill_chunk =
+                            |chunk: usize,
+                             instruction_input: &mut [InstructionInputRow],
+                             residual: &mut [SpartanOuterUniskipResidualRow],
+                             source: &mut InstructionReadRafStage1ChunkWriter<'_>,
+                             topology: &mut BytecodeAddressStage1TopologyChunkWriter<'_>|
+                             -> Result<(), MetalError> {
+                                if instruction_input.len() != source.len()
+                                    || residual.len() != source.len()
+                                {
+                                    return Err(MetalError::InvalidInstructionReadRafGrouped(
+                                        "Stage-1 bytecode topology chunks disagree on row count"
+                                            .to_owned(),
+                                    ));
+                                }
+                                for offset in 0..instruction_input.len() {
+                                    let row_index =
+                                        chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS + offset;
+                                    let projected: Stage1ProjectionRow =
+                                        access.window(row_index).map_err(|error| {
+                                            MetalError::SpartanOuterRowExtraction {
+                                                row: row_index,
+                                                message: error.to_string(),
+                                            }
+                                        })?;
+                                    (instruction_input[offset], residual[offset]) =
+                                        SpartanOuterUniskipRow::from_spartan_outer(
+                                            &projected.outer,
                                         )
-                                    })?,
-                                );
-                                magnitudes.push(
-                                    projected.instruction.fused_inc.0.unsigned_abs() as u64,
-                                );
-                            }
-                            carrier.publish(&selectors, &magnitudes).map_err(|error| {
-                                MetalError::InvalidInstructionReadRafGrouped(error.to_string())
-                            })
-                        };
+                                        .split();
+                                    let (row, table_plus_one, raf) =
+                                        pack_stage1_instruction_source(projected.instruction)?;
+                                    let rank = if row_index < explicit_rows {
+                                        topology.record(
+                                            projected.instruction.mapped_pc.0.unwrap_or(0),
+                                        )?
+                                    } else {
+                                        0
+                                    };
+                                    source.push_with_bytecode_chunk_rank(
+                                        row,
+                                        table_plus_one,
+                                        raf,
+                                        rank,
+                                    )?;
+                                }
+                                topology.finish()
+                            };
                         #[cfg(feature = "parallel")]
                         instruction_input
-                            .par_chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS)
-                            .zip(residual.par_chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS))
-                            .zip(source_chunks.par_chunks_mut(
-                                BYTECODE_ADDRESS_OUTER_ROWS
-                                    / INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
-                            ))
-                            .zip(carrier_writers.par_iter_mut())
+                            .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                            .zip(residual.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                            .zip(source_chunks.par_iter_mut())
+                            .zip(topology_chunks.par_iter_mut())
                             .enumerate()
                             .try_for_each(
-                                |(outer, (((instruction_input, residual), source), carrier))| {
-                                    fill_outer(
-                                        outer,
-                                        instruction_input,
-                                        residual,
-                                        source,
-                                        carrier,
-                                    )
+                                |(chunk, (((instruction_input, residual), source), topology))| {
+                                    fill_chunk(chunk, instruction_input, residual, source, topology)
                                 },
                             )?;
                         #[cfg(not(feature = "parallel"))]
-                        for (outer, (((instruction_input, residual), source), carrier)) in
+                        for (chunk, (((instruction_input, residual), source), topology)) in
                             instruction_input
-                                .chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS)
-                                .zip(residual.chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS))
-                                .zip(source_chunks.chunks_mut(
-                                    BYTECODE_ADDRESS_OUTER_ROWS
-                                        / INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
-                                ))
-                                .zip(carrier_writers.iter_mut())
+                                .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                                .zip(residual.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(source_chunks.iter_mut())
+                                .zip(topology_chunks.iter_mut())
                                 .enumerate()
                         {
-                            fill_outer(outer, instruction_input, residual, source, carrier)?;
+                            fill_chunk(chunk, instruction_input, residual, source, topology)?;
                         }
                         Ok(())
                     })
@@ -952,20 +1077,17 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
         .with_explicit_rows(explicit_rows)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let owner = source.seal().map_err(MetalSpartanDenseRowsError::Metal)?;
-    let bytecode_carrier = bytecode_carrier
-        .map(|carrier| carrier.seal(&owner))
+    let bytecode_topology = bytecode_topology
+        .map(|topology| topology.seal(&owner))
         .transpose()
-        .map_err(|error| {
-            MetalSpartanDenseRowsError::Metal(MetalError::InvalidInstructionReadRafGrouped(
-                error.to_string(),
-            ))
-        })?;
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    record_bytecode_stage1_topology_span(&topology_span, &owner, bytecode_topology.as_ref());
     let _ = span.record(
         "compact_rows_storage_id",
         outer_rows.instruction_input_allocation_identity(),
     );
     let _ = span.record("residual_rows_storage_id", outer_rows.allocation_identity());
-    Ok((outer_rows, owner, bytecode_carrier))
+    Ok((outer_rows, owner, bytecode_topology))
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -1096,7 +1218,7 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
         SpartanOuterUniskipRows,
         SpartanShiftResidentRows,
         InstructionReadRafStage1Owner,
-        Option<BytecodeAddressMajorResidentCarrier>,
+        Option<BytecodeAddressStage1TopologyOwner>,
     ),
     MetalSpartanDenseRowsError,
 > {
@@ -1115,178 +1237,171 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
     let access = owned.view();
     let span = stage1_owner_rows_span(cycles, explicit_rows);
     let _entered = span.enter();
+    let topology_span = bytecode_stage1_topology_span(prepare_bytecode_carrier, explicit_rows);
+    let _topology_entered = topology_span.enter();
     let mut source = context
         .prepare_instruction_read_raf_stage1_storage(cycles)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
-    let mut bytecode_carrier = prepare_bytecode_carrier
-        .then(|| context.prepare_bytecode_address_major_resident_storage(cycles))
+    let mut bytecode_topology = prepare_bytecode_carrier
+        .then(|| context.prepare_bytecode_address_stage1_topology_storage(cycles, explicit_rows))
         .transpose()
-        .map_err(|error| {
-            MetalSpartanDenseRowsError::Metal(MetalError::InvalidInstructionReadRafGrouped(
-                error.to_string(),
-            ))
-        })?;
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
     let (outer_rows, shift_rows) = context
         .prepare_spartan_outer_uniskip_rows_with_shift_fill(
             cycles,
             |instruction_input, residual, unexpanded_pc, pc, flags| {
-                if let Some(carrier) = bytecode_carrier.as_mut() {
+                if let Some(topology) = bytecode_topology.as_mut() {
                     return source.with_chunk_writers(|source_chunks| {
-                        carrier.with_outer_writers(|carrier_writers| {
-                            let fill_outer = |outer: usize,
-                                              instruction_input: &mut [InstructionInputRow],
-                                              residual: &mut [SpartanOuterUniskipResidualRow],
-                                              unexpanded_pc: &mut [u64],
-                                              pc: &mut [u64],
-                                              flags: &mut [SpartanShiftFlagWord],
-                                              source_chunks: &mut [InstructionReadRafStage1ChunkWriter<'_>],
-                                              carrier: &mut crate::metal::solinas::bytecode_read_raf_address::BytecodeAddressMajorOuterWriter<'_>|
-                             -> Result<(), MetalError> {
-                                if instruction_input.len() != BYTECODE_ADDRESS_OUTER_ROWS
-                                    || residual.len() != instruction_input.len()
-                                    || unexpanded_pc.len() != instruction_input.len()
-                                    || pc.len() != instruction_input.len()
-                                    || flags.len()
-                                        != instruction_input.len()
-                                            / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD
-                                    || source_chunks.iter().map(|chunk| chunk.len()).sum::<usize>()
-                                        != instruction_input.len()
-                                {
-                                    return Err(MetalError::InvalidInstructionReadRafGrouped(
-                                        "Stage-1 bytecode/Shift outer geometry changed".to_owned(),
-                                    ));
-                                }
-                                flags.fill(SpartanShiftFlagWord::default());
-                                let mut selectors = Vec::with_capacity(instruction_input.len());
-                                let mut magnitudes = Vec::with_capacity(instruction_input.len());
-                                for offset in 0..instruction_input.len() {
-                                    let row_index = outer * BYTECODE_ADDRESS_OUTER_ROWS + offset;
-                                    let projected: Stage1ProjectionRow = access
-                                        .window(row_index)
-                                        .map_err(|error| MetalError::SpartanOuterRowExtraction {
-                                            row: row_index,
-                                            message: error.to_string(),
-                                        })?;
-                                    (instruction_input[offset], residual[offset]) =
-                                        SpartanOuterUniskipRow::from_spartan_outer(
-                                            &projected.outer,
-                                        )
-                                        .split();
-                                    write_metal_spartan_shift_row(
-                                        &projected.outer,
-                                        offset % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
-                                        &mut unexpanded_pc[offset],
-                                        &mut pc[offset],
-                                        &mut flags
-                                            [offset / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD],
-                                    );
-                                    let (row, table_plus_one, raf) =
-                                        pack_stage1_instruction_source(projected.instruction)?;
-                                    let source_chunk =
-                                        offset / INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
-                                    source_chunks[source_chunk].push(row, table_plus_one, raf)?;
-                                    selectors.push(
-                                        BytecodeAddressMajorSourceRow {
-                                            mapped_pc: projected.instruction.mapped_pc.0,
-                                            fused_inc_negative: projected.instruction.fused_inc.0
-                                                < 0,
-                                        }
-                                        .selector()
-                                        .map_err(|error| {
-                                            MetalError::InvalidInstructionReadRafGrouped(
-                                                error.to_string(),
+                        topology.with_chunk_writers(|topology_chunks| {
+                            let fill_chunk =
+                                |chunk: usize,
+                                 instruction_input: &mut [InstructionInputRow],
+                                 residual: &mut [SpartanOuterUniskipResidualRow],
+                                 unexpanded_pc: &mut [u64],
+                                 pc: &mut [u64],
+                                 flags: &mut [SpartanShiftFlagWord],
+                                 source: &mut InstructionReadRafStage1ChunkWriter<'_>,
+                                 topology: &mut BytecodeAddressStage1TopologyChunkWriter<'_>|
+                                 -> Result<(), MetalError> {
+                                    if instruction_input.len() != source.len()
+                                        || residual.len() != source.len()
+                                        || unexpanded_pc.len() != source.len()
+                                        || pc.len() != source.len()
+                                        || flags.len()
+                                            != source.len() / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD
+                                    {
+                                        return Err(MetalError::InvalidInstructionReadRafGrouped(
+                                            "Stage-1 bytecode/Shift chunks disagree on row count"
+                                                .to_owned(),
+                                        ));
+                                    }
+                                    flags.fill(SpartanShiftFlagWord::default());
+                                    for offset in 0..instruction_input.len() {
+                                        let row_index = chunk
+                                            * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS
+                                            + offset;
+                                        let projected: Stage1ProjectionRow =
+                                            access.window(row_index).map_err(|error| {
+                                                MetalError::SpartanOuterRowExtraction {
+                                                    row: row_index,
+                                                    message: error.to_string(),
+                                                }
+                                            })?;
+                                        (instruction_input[offset], residual[offset]) =
+                                            SpartanOuterUniskipRow::from_spartan_outer(
+                                                &projected.outer,
                                             )
-                                        })?,
-                                    );
-                                    magnitudes.push(
-                                        projected.instruction.fused_inc.0.unsigned_abs() as u64,
-                                    );
-                                }
-                                carrier.publish(&selectors, &magnitudes).map_err(|error| {
-                                    MetalError::InvalidInstructionReadRafGrouped(error.to_string())
-                                })
-                            };
-                            let source_chunks_per_outer = BYTECODE_ADDRESS_OUTER_ROWS
-                                / INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
-                            let flags_per_outer = BYTECODE_ADDRESS_OUTER_ROWS
+                                            .split();
+                                        write_metal_spartan_shift_row(
+                                            &projected.outer,
+                                            offset % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
+                                            &mut unexpanded_pc[offset],
+                                            &mut pc[offset],
+                                            &mut flags[offset / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD],
+                                        );
+                                        let (row, table_plus_one, raf) =
+                                            pack_stage1_instruction_source(projected.instruction)?;
+                                        let rank = if row_index < explicit_rows {
+                                            topology.record(
+                                                projected.instruction.mapped_pc.0.unwrap_or(0),
+                                            )?
+                                        } else {
+                                            0
+                                        };
+                                        source.push_with_bytecode_chunk_rank(
+                                            row,
+                                            table_plus_one,
+                                            raf,
+                                            rank,
+                                        )?;
+                                    }
+                                    topology.finish()
+                                };
+                            let flags_per_chunk = INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS
                                 / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
                             #[cfg(feature = "parallel")]
                             instruction_input
-                                .par_chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS)
-                                .zip(residual.par_chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS))
+                                .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                                .zip(
+                                    residual
+                                        .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
+                                )
                                 .zip(
                                     unexpanded_pc
-                                        .par_chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS),
+                                        .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
                                 )
-                                .zip(pc.par_chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS))
-                                .zip(flags.par_chunks_mut(flags_per_outer))
-                                .zip(source_chunks.par_chunks_mut(source_chunks_per_outer))
-                                .zip(carrier_writers.par_iter_mut())
+                                .zip(pc.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(flags.par_chunks_mut(flags_per_chunk))
+                                .zip(source_chunks.par_iter_mut())
+                                .zip(topology_chunks.par_iter_mut())
                                 .enumerate()
                                 .try_for_each(
                                     |(
-                                        outer,
+                                        chunk,
                                         (
                                             (
                                                 (
                                                     (
-                                                        ((instruction_input, residual), unexpanded_pc),
+                                                        (
+                                                            (instruction_input, residual),
+                                                            unexpanded_pc,
+                                                        ),
                                                         pc,
                                                     ),
                                                     flags,
                                                 ),
                                                 source,
                                             ),
-                                            carrier,
+                                            topology,
                                         ),
                                     )| {
-                                        fill_outer(
-                                            outer,
+                                        fill_chunk(
+                                            chunk,
                                             instruction_input,
                                             residual,
                                             unexpanded_pc,
                                             pc,
                                             flags,
                                             source,
-                                            carrier,
+                                            topology,
                                         )
                                     },
                                 )?;
                             #[cfg(not(feature = "parallel"))]
                             for (
-                                outer,
+                                chunk,
                                 (
                                     (
                                         (
-                                            (
-                                                ((instruction_input, residual), unexpanded_pc),
-                                                pc,
-                                            ),
+                                            (((instruction_input, residual), unexpanded_pc), pc),
                                             flags,
                                         ),
                                         source,
                                     ),
-                                    carrier,
+                                    topology,
                                 ),
                             ) in instruction_input
-                                .chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS)
-                                .zip(residual.chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS))
-                                .zip(unexpanded_pc.chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS))
-                                .zip(pc.chunks_mut(BYTECODE_ADDRESS_OUTER_ROWS))
-                                .zip(flags.chunks_mut(flags_per_outer))
-                                .zip(source_chunks.chunks_mut(source_chunks_per_outer))
-                                .zip(carrier_writers.iter_mut())
+                                .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                                .zip(residual.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(
+                                    unexpanded_pc
+                                        .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
+                                )
+                                .zip(pc.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                                .zip(flags.chunks_mut(flags_per_chunk))
+                                .zip(source_chunks.iter_mut())
+                                .zip(topology_chunks.iter_mut())
                                 .enumerate()
                             {
-                                fill_outer(
-                                    outer,
+                                fill_chunk(
+                                    chunk,
                                     instruction_input,
                                     residual,
                                     unexpanded_pc,
                                     pc,
                                     flags,
                                     source,
-                                    carrier,
+                                    topology,
                                 )?;
                             }
                             Ok(())
@@ -1401,20 +1516,17 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
         .with_explicit_rows(explicit_rows)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let owner = source.seal().map_err(MetalSpartanDenseRowsError::Metal)?;
-    let bytecode_carrier = bytecode_carrier
-        .map(|carrier| carrier.seal(&owner))
+    let bytecode_topology = bytecode_topology
+        .map(|topology| topology.seal(&owner))
         .transpose()
-        .map_err(|error| {
-            MetalSpartanDenseRowsError::Metal(MetalError::InvalidInstructionReadRafGrouped(
-                error.to_string(),
-            ))
-        })?;
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    record_bytecode_stage1_topology_span(&topology_span, &owner, bytecode_topology.as_ref());
     let _ = span.record(
         "compact_rows_storage_id",
         outer_rows.instruction_input_allocation_identity(),
     );
     let _ = span.record("residual_rows_storage_id", outer_rows.allocation_identity());
-    Ok((outer_rows, shift_rows, owner, bytecode_carrier))
+    Ok((outer_rows, shift_rows, owner, bytecode_topology))
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]

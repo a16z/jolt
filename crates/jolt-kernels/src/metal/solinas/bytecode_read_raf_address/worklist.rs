@@ -38,7 +38,7 @@ impl SparseAddressRow {
         let address = u16::try_from(address).map_err(|_| {
             BytecodeAddressWorklistError::UnsupportedAddresses(address.saturating_add(1))
         })?;
-        if address & INNER_SIGN_BIT != 0 {
+        if usize::from(address) >= 1usize << super::carrier::ADDRESS_LOG2 {
             return Err(BytecodeAddressWorklistError::UnsupportedAddresses(
                 usize::from(address) + 1,
             ));
@@ -92,11 +92,6 @@ impl PackedBytecodeAddressOccurrence {
     pub(crate) const fn negative(self) -> bool {
         self.0 & INNER_SIGN_BIT != 0
     }
-
-    #[cfg(test)]
-    pub(crate) const fn word(self) -> u16 {
-        self.0
-    }
 }
 
 #[repr(C)]
@@ -111,7 +106,7 @@ pub(crate) struct BytecodeAddressWorkItem {
 const _: [(); 8] = [(); size_of::<BytecodeAddressWorkItem>()];
 
 impl BytecodeAddressWorkItem {
-    fn new(
+    pub(crate) fn new(
         address: usize,
         outer: usize,
         start: usize,
@@ -161,18 +156,22 @@ impl BytecodeAddressWorklistLedger {
         self.work_items
     }
 
+    #[cfg(test)]
     pub(crate) const fn occurrence_bytes(self) -> usize {
         self.occurrence_bytes
     }
 
+    #[cfg(test)]
     pub(crate) const fn magnitude_bytes(self) -> usize {
         self.magnitude_bytes
     }
 
+    #[cfg(test)]
     pub(crate) const fn work_item_bytes(self) -> usize {
         self.work_item_bytes
     }
 
+    #[cfg(test)]
     pub(crate) const fn descriptor_offset_bytes(self) -> usize {
         self.descriptor_offset_bytes
     }
@@ -399,6 +398,7 @@ impl BytecodeAddressSparseWorklist {
         self.ledger.persistent_bytes
     }
 
+    #[cfg(test)]
     pub(crate) const fn ledger(&self) -> BytecodeAddressWorklistLedger {
         self.ledger
     }
@@ -717,7 +717,7 @@ mod tests {
             worklist
                 .occurrences()
                 .iter()
-                .map(|occurrence| occurrence.word())
+                .map(|occurrence| occurrence.0)
                 .collect::<Vec<_>>(),
             vec![
                 3,
@@ -835,9 +835,23 @@ mod tests {
     }
 
     #[test]
+    fn row_rejects_an_address_outside_the_bytecode_domain() {
+        assert_eq!(
+            SparseAddressRow::with_magnitude(
+                Some(1 << super::super::carrier::ADDRESS_LOG2),
+                0,
+                false
+            ),
+            Err(BytecodeAddressWorklistError::UnsupportedAddresses(
+                (1 << super::super::carrier::ADDRESS_LOG2) + 1,
+            ))
+        );
+    }
+
+    #[test]
     fn padding_suffix_is_not_read() {
         let shape = AddressMajorShape::new(2, 1, 1).unwrap();
-        let rows = vec![
+        let rows = [
             row(Some(1), true),
             row(Some(7), false),
             row(Some(7), false),

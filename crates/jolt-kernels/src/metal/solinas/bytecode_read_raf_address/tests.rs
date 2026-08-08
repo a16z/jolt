@@ -6,32 +6,14 @@ use super::{
     carrier::AddressMajorShape,
     oracle::{HostAddressMajorCarrier, Row},
     worklist::{SparseAddressRow, SparseAddressWorklist},
-    BytecodeAddressMajorConfig, BytecodeAddressMajorSourceRow, BYTECODE_ADDRESS_MAJOR_BASE_STAGES,
-    BYTECODE_ADDRESS_MAJOR_SIMD_WIDTH, BYTECODE_ADDRESS_MAJOR_STAGES,
+    BytecodeAddressFusedScatterRequest, BytecodeAddressMajorConfig,
+    BYTECODE_ADDRESS_MAJOR_BASE_STAGES, BYTECODE_ADDRESS_MAJOR_SIMD_WIDTH,
+    BYTECODE_ADDRESS_MAJOR_STAGES,
 };
-use crate::metal::solinas::{BooleanityRow, MetalError, SolinasMetal};
-
-fn stage1_owner(
-    context: &SolinasMetal,
-    rows: &[BooleanityRow],
-) -> crate::metal::solinas::InstructionReadRafStage1Owner {
-    let mut storage = context
-        .prepare_instruction_read_raf_stage1_storage(rows.len())
-        .unwrap();
-    storage
-        .with_chunk_writers(|chunks| {
-            for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
-                let start =
-                    chunk_index * crate::metal::solinas::INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
-                for row in &rows[start..start + chunk.len()] {
-                    chunk.push(*row, 0, false)?;
-                }
-            }
-            Ok(())
-        })
-        .unwrap();
-    storage.seal().unwrap()
-}
+use crate::metal::solinas::{
+    BooleanityRow, InstructionReadRafCompatibilityScatterConfig, SolinasMetal,
+    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+};
 
 fn fixture() -> (AddressMajorShape, Vec<Row>) {
     let shape = AddressMajorShape::new(12, 5, 8).unwrap();
@@ -281,116 +263,6 @@ fn resident_producer_matches_the_independent_row_oracle() {
 
 #[test]
 #[cfg(target_os = "macos")]
-fn stage1_resident_carrier_matches_the_independent_row_oracle() {
-    let context = SolinasMetal::for_akita().unwrap();
-    let shape = AddressMajorShape::production(16).unwrap();
-    let rows = (0..shape.rows().unwrap())
-        .map(|index| {
-            let outer = index >> 15;
-            let inner = index & ((1 << 15) - 1);
-            Row {
-                mapped_pc: if index == 0 {
-                    Some(7)
-                } else if inner.is_multiple_of(257) {
-                    None
-                } else {
-                    Some(if outer == 0 {
-                        (17 * inner + inner / 31) % 23
-                    } else {
-                        97 + (11 * inner + inner / 19) % 29
-                    })
-                },
-                fused_inc_magnitude: if inner.is_multiple_of(509) {
-                    u64::MAX
-                } else {
-                    (13 * inner + 7 * outer + 7) as u64
-                },
-                fused_inc_negative: (inner + outer).is_multiple_of(5),
-            }
-        })
-        .collect::<Vec<_>>();
-    let resident_words = rows
-        .iter()
-        .map(|row| {
-            let magnitude = i128::from(row.fused_inc_magnitude);
-            BooleanityRow::new(
-                0,
-                row.mapped_pc.map(|pc| pc as u64),
-                None,
-                if row.fused_inc_negative {
-                    -magnitude
-                } else {
-                    magnitude
-                },
-            )
-            .unwrap()
-        })
-        .collect::<Vec<_>>();
-    let owner = stage1_owner(&context, &resident_words);
-    let resident = owner.booleanity_rows();
-    let mut storage = context
-        .prepare_bytecode_address_major_resident_storage(rows.len())
-        .unwrap();
-    storage
-        .with_outer_writers(|writers| {
-            for (outer, writer) in writers.iter_mut().enumerate() {
-                let outer_rows = &rows[outer * (1 << 15)..(outer + 1) * (1 << 15)];
-                let selectors = outer_rows
-                    .iter()
-                    .map(|row| {
-                        BytecodeAddressMajorSourceRow {
-                            mapped_pc: row.mapped_pc,
-                            fused_inc_negative: row.fused_inc_negative,
-                        }
-                        .selector()
-                        .unwrap()
-                    })
-                    .collect::<Vec<_>>();
-                let magnitudes = outer_rows
-                    .iter()
-                    .map(|row| row.fused_inc_magnitude)
-                    .collect::<Vec<_>>();
-                writer.publish(&selectors, &magnitudes).map_err(|error| {
-                    MetalError::InvalidInstructionReadRafGrouped(error.to_string())
-                })?;
-            }
-            Ok(())
-        })
-        .unwrap();
-    let source_id = resident.allocation_identity();
-    let source_device = resident.device_registry_id();
-    let carrier = storage.seal(&owner).unwrap();
-    let receipt = carrier.receipt();
-    let host_carrier = HostAddressMajorCarrier::build(&rows, shape).unwrap();
-    assert_eq!(receipt.first_push_pc(), 7);
-    assert_eq!(receipt.topology(), host_carrier.topology());
-    assert_eq!(receipt.producer().source_allocation_identity(), source_id);
-    assert_eq!(receipt.producer().device_registry_id(), source_device);
-
-    let (e_lo, e_hi) = tables(shape);
-    let expected = direct_oracle(shape, &rows, &e_lo, &e_hi);
-    let pending = context
-        .prepare_bytecode_address_major_resident_carrier(
-            carrier,
-            &e_lo,
-            &e_hi,
-            BytecodeAddressMajorConfig { outer_tiles: 1 },
-        )
-        .unwrap()
-        .submit()
-        .unwrap();
-    let (_, observation) = pending.join().unwrap();
-    assert_eq!(observation.producer_status, None);
-    assert_eq!(observation.source_rows_storage_id, Some(source_id));
-    assert_eq!(
-        observation.source_rows_device_registry_id,
-        Some(source_device)
-    );
-    assert_eq!(observation.output, expected);
-}
-
-#[test]
-#[cfg(target_os = "macos")]
 fn sparse_worklist_worker_matches_the_padded_domain_oracle() {
     let context = SolinasMetal::for_akita().unwrap();
     let shape = AddressMajorShape::production(16).unwrap();
@@ -455,6 +327,7 @@ fn sparse_worklist_worker_matches_the_padded_domain_oracle() {
     .unwrap();
     let (e_lo, e_hi) = tables(shape);
     let expected = direct_oracle(shape, &rows, &e_lo, &e_hi);
+
     let invocation = context
         .prepare_bytecode_address_sparse_probe(resident, &worklist, &e_lo, &e_hi)
         .unwrap();
@@ -464,10 +337,166 @@ fn sparse_worklist_worker_matches_the_padded_domain_oracle() {
         invocation.worker_pipeline_limits().thread_execution_width,
         32
     );
-    assert_eq!(invocation.threadgroup_memory_bytes(), 640);
+    assert_eq!(invocation.threadgroup_memory_bytes(), 0);
     assert_eq!(storage.occurrence_bytes, 2 * physical_rows);
     assert_eq!(storage.magnitude_bytes, 8 * physical_rows);
     assert_eq!(storage.work_item_bytes, 8 * worklist.work_items());
     assert!(worklist.work_items() > 2);
+    let observation = invocation.execute_timed().unwrap();
+    assert_eq!(observation.output, expected);
+    assert_eq!(observation.worker_variant, "packed4_halfwidth_v1");
+    assert_eq!(observation.worker_simd_width, 32);
+    assert_eq!(observation.worker_threads, 128);
+    assert_eq!(observation.worker_items_per_threadgroup, 4);
+    assert_eq!(
+        observation.worker_threadgroups,
+        worklist.work_items().div_ceil(4)
+    );
+    assert_eq!(
+        observation.worker_tail_slots,
+        (4 - worklist.work_items() % 4) % 4
+    );
+    assert_eq!(observation.worker_dynamic_threadgroup_bytes, 0);
+    assert_eq!(observation.worker_static_threadgroup_bytes, 0);
+    assert_eq!(observation.worker_threadgroup_bytes, 0);
+    assert_eq!(observation.reducer_threads, 256);
+    assert_eq!(observation.reducer_threadgroups, 288);
+    assert_eq!(observation.reducer_static_threadgroup_bytes, 0);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
+    let context = SolinasMetal::for_akita().unwrap();
+    let shape = AddressMajorShape::production(16).unwrap();
+    let physical_rows = 50_123;
+    let rows = (0..shape.rows().unwrap())
+        .map(|index| {
+            if index >= physical_rows {
+                return Row {
+                    mapped_pc: None,
+                    fused_inc_magnitude: 0,
+                    fused_inc_negative: false,
+                };
+            }
+            let mapped_pc = if index < INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS {
+                Some(7)
+            } else {
+                match index % 5 {
+                    0 => None,
+                    1 => Some(1),
+                    2 => Some(7),
+                    3 => Some(8191),
+                    _ => Some(31),
+                }
+            };
+            Row {
+                mapped_pc,
+                fused_inc_magnitude: if [255, 256, 4095, 4096, physical_rows - 1].contains(&index) {
+                    u64::MAX
+                } else {
+                    (17 * index + 11) as u64
+                },
+                fused_inc_negative: index.is_multiple_of(3),
+            }
+        })
+        .collect::<Vec<_>>();
+    let resident_rows = rows
+        .iter()
+        .map(|row| {
+            let magnitude = i128::from(row.fused_inc_magnitude);
+            BooleanityRow::new(
+                0,
+                row.mapped_pc.map(|pc| pc as u64),
+                None,
+                if row.fused_inc_negative {
+                    -magnitude
+                } else {
+                    magnitude
+                },
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut source = context
+        .prepare_instruction_read_raf_stage1_storage(shape.rows().unwrap())
+        .unwrap();
+    let mut topology = context
+        .prepare_bytecode_address_stage1_topology_storage(shape.rows().unwrap(), physical_rows)
+        .unwrap();
+    topology
+        .with_chunk_writers(|topology_chunks| {
+            source.with_chunk_writers(|source_chunks| {
+                for (chunk, (source, topology)) in source_chunks
+                    .iter_mut()
+                    .zip(topology_chunks.iter_mut())
+                    .enumerate()
+                {
+                    let start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+                    for offset in 0..source.len() {
+                        let row = start + offset;
+                        let rank = if row < physical_rows {
+                            topology.record(rows[row].mapped_pc.unwrap_or(0))?
+                        } else {
+                            0
+                        };
+                        source.push_with_bytecode_chunk_rank(resident_rows[row], 0, false, rank)?;
+                    }
+                    topology.finish()?;
+                }
+                Ok(())
+            })
+        })
+        .unwrap();
+    let owner = source.seal().unwrap();
+    let source_receipt = owner.receipt();
+    let topology_owner = topology.seal(&owner).unwrap();
+    let topology_receipt = topology_owner.receipt();
+    assert_eq!(topology_receipt.max_pivots_per_chunk(), 15);
+    assert!(topology_receipt.max_descriptors_per_chunk() <= 32);
+
+    let scatter_source = owner
+        .lease(shape.rows().unwrap(), context.device_registry_id())
+        .unwrap();
+    let topology_source = owner
+        .lease(shape.rows().unwrap(), context.device_registry_id())
+        .unwrap();
+    let request =
+        BytecodeAddressFusedScatterRequest::new(topology_owner.lease(topology_source).unwrap())
+            .unwrap();
+    let mut planes = context
+        .prepare_instruction_read_raf_compatibility_scatter(
+            scatter_source,
+            &vec![AkitaField::zero(); shape.log_rows() as usize],
+            InstructionReadRafCompatibilityScatterConfig {
+                threads_per_threadgroup: 256,
+            },
+            Some(request),
+        )
+        .unwrap();
+    let fused = planes.receipt().bytecode().unwrap();
+    assert_eq!(fused.physical_rows(), physical_rows);
+    assert_eq!(fused.max_pivots_per_chunk(), 15);
+    assert_eq!(fused.max_admitted_descriptors_per_chunk(), 32);
+    assert_eq!(fused.max_admitted_pivots_per_chunk(), 15);
+    assert_eq!(fused.additional_source_row_scans(), 0);
+    assert_eq!(fused.member_upload_bytes(), 0);
+    let carrier = planes.take_bytecode_carrier().unwrap();
+    let carrier_receipt = carrier.receipt();
+    assert_eq!(carrier_receipt.covered_rows(), physical_rows);
+    assert_eq!(
+        carrier_receipt.source_generation(),
+        source_receipt.source_generation()
+    );
+    assert_eq!(
+        carrier_receipt.source_completion_serial(),
+        source_receipt.completion_serial()
+    );
+
+    let (e_lo, e_hi) = tables(shape);
+    let expected = direct_oracle(shape, &rows, &e_lo, &e_hi);
+    let invocation = context
+        .prepare_bytecode_address_sparse_resident(carrier, &e_lo, &e_hi)
+        .unwrap();
     assert_eq!(invocation.execute_timed().unwrap().output, expected);
 }

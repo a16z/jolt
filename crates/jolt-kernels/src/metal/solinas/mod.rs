@@ -151,7 +151,8 @@ pub(crate) use instruction_read_raf::{
     instruction_read_raf_claim_and_count_rank, instruction_read_raf_stage1_claim_bytes,
     instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafCountOrder,
-    InstructionReadRafDenseGroupedPlanes, InstructionReadRafStage1ChunkWriter,
+    InstructionReadRafDenseGroupedPlanes, InstructionReadRafDenseGroupedReceipt,
+    InstructionReadRafFusedBytecodeReceipt, InstructionReadRafStage1ChunkWriter,
     InstructionReadRafStage1Lease, InstructionReadRafStage1Owner, InstructionReadRafStage1Receipt,
     INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, INSTRUCTION_READ_RAF_SEGMENTS,
 };

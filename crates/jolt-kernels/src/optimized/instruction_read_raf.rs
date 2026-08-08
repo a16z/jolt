@@ -122,8 +122,17 @@ const PACKED_TABLE_SHIFT: u32 = PACKED_PC_BITS;
 const PACKED_RAF_SHIFT: u32 = PACKED_TABLE_SHIFT + PACKED_TABLE_BITS;
 #[cfg(feature = "akita")]
 const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
+const INSTRUCTION_READ_RAF_TOPOLOGY_RANK_HIGH_BIT: u8 = 1 << 6;
 
-const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
+const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < PACKED_TABLE_MASK as usize);
+
+pub(crate) const fn canonical_instruction_read_raf_claim(claim: u8) -> u8 {
+    claim & !INSTRUCTION_READ_RAF_TOPOLOGY_RANK_HIGH_BIT
+}
+
+pub(crate) const fn instruction_read_raf_claim_table_plus_one(claim: u8) -> u8 {
+    canonical_instruction_read_raf_claim(claim) & PACKED_TABLE_MASK as u8
+}
 
 impl InstructionCycleRow {
     pub(crate) fn new(
@@ -1691,7 +1700,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         // final flag walk reads one byte per cycle, not the 40 B row.
         const {
             assert!(
-                LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
+                LookupTableKind::<RISCV_XLEN>::COUNT < 0x3f,
                 "table indices must fit the packed claim byte"
             );
         }
@@ -1742,8 +1751,8 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     /// The pending combined-value base at cycle `j` (packed-byte lookup).
     #[inline]
     fn pending_combined_base(pending: &PendingCycleTables<F>, claim_columns: &[u8], j: usize) -> F {
-        let packed = claim_columns[j];
-        let table_value = match packed & 0x7f {
+        let packed = canonical_instruction_read_raf_claim(claim_columns[j]);
+        let table_value = match instruction_read_raf_claim_table_plus_one(packed) {
             0 => F::zero(),
             table => pending.table_values[usize::from(table) - 1],
         };
@@ -2589,9 +2598,10 @@ impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         let (lookup_table_flags, instruction_raf_flag) = eq_cycle.par_fold_out_in(
             || vec![F::Accumulator::default(); num_tables + 1],
             |accumulators, row_index, _x_in, e_in| {
-                let packed = claim_columns[row_index];
-                if packed & 0x7f != 0 {
-                    accumulators[usize::from(packed & 0x7f) - 1].add(e_in);
+                let packed = canonical_instruction_read_raf_claim(claim_columns[row_index]);
+                let table_plus_one = instruction_read_raf_claim_table_plus_one(packed);
+                if table_plus_one != 0 {
+                    accumulators[usize::from(table_plus_one) - 1].add(e_in);
                 }
                 if packed & 0x80 != 0 {
                     accumulators[num_tables].add(e_in);

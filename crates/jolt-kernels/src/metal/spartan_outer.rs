@@ -29,6 +29,10 @@ use super::instruction_read_raf::InstructionReadRafAddressImplementation;
 use super::registers_claim_reduction::{
     MetalRegistersClaimOuterSource, MetalRegistersClaimStage1Carry,
 };
+use super::solinas::bytecode_read_raf_address::{
+    bytecode_address_stage1_topology_max_bytes, bytecode_address_stage1_topology_max_plane_bytes,
+};
+use super::solinas::spartan_shift::{SpartanShiftFlagWord, SPARTAN_SHIFT_FLAG_ROWS_PER_WORD};
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
     instruction_input_sequence_storage_bytes, instruction_ra_weight_capacities,
@@ -114,6 +118,7 @@ fn resident_row_working_set(
     instruction_input: bool,
     instruction_read_raf_owner: bool,
     borrow_outer_residual: bool,
+    spartan_shift: bool,
     metal_uniskip: bool,
     metal_remainder: bool,
     remainder_dispatch: OuterRemainderSequenceConfig,
@@ -152,11 +157,26 @@ fn resident_row_working_set(
     } else {
         0
     };
+    let shift_bytes = if spartan_shift {
+        let rows = u64::try_from(cycles).map_err(|_| MetalError::InputTooLong(cycles))?;
+        let flag_words = u64::try_from(cycles.div_ceil(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD))
+            .map_err(|_| MetalError::InputTooLong(cycles))?;
+        rows.checked_mul((2 * size_of::<u64>()) as u64)
+            .and_then(|bytes| {
+                flag_words
+                    .checked_mul(size_of::<SpartanShiftFlagWord>() as u64)
+                    .and_then(|flags| bytes.checked_add(flags))
+            })
+            .ok_or(MetalError::InputTooLong(cycles))?
+    } else {
+        0
+    };
     row_bytes
         .checked_add(instruction_input_bytes)
         .and_then(|bytes| bytes.checked_add(uniskip_bytes))
         .and_then(|bytes| bytes.checked_add(remainder_bytes))
         .and_then(|bytes| bytes.checked_add(instruction_read_raf_bytes))
+        .and_then(|bytes| bytes.checked_add(shift_bytes))
         .ok_or(MetalError::InputTooLong(cycles))
 }
 
@@ -168,28 +188,6 @@ fn validate_resident_row_buffer(row_bytes: u64, maximum: u64) -> Result<(), Meta
         });
     }
     Ok(())
-}
-
-fn bytecode_address_major_plane_bytes(cycles: usize) -> Result<[u64; 3], MetalError> {
-    use super::solinas::bytecode_read_raf_address::carrier::{ADDRESS_LOG2, INNER_LOG2};
-
-    if cycles < 1usize << INNER_LOG2 || !cycles.is_power_of_two() {
-        return Err(MetalError::InputTooLong(cycles));
-    }
-    let rows = u64::try_from(cycles).map_err(|_| MetalError::InputTooLong(cycles))?;
-    let outer = rows >> INNER_LOG2;
-    let addresses = 1u64 << ADDRESS_LOG2;
-    let cells = outer
-        .checked_mul(addresses)
-        .and_then(|elements| elements.checked_mul(4))
-        .ok_or(MetalError::InputTooLong(cycles))?;
-    let inner_sign = rows
-        .checked_mul(4)
-        .ok_or(MetalError::InputTooLong(cycles))?;
-    let magnitude = rows
-        .checked_mul(8)
-        .ok_or(MetalError::InputTooLong(cycles))?;
-    Ok([cells, inner_sign, magnitude])
 }
 
 fn use_metal_stage1(cycles: usize, config: &MetalConfig, resident_rows: bool) -> bool {
@@ -397,6 +395,18 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 reason: "bytecode address-major requires the random-access Stage-1 owner",
             });
         }
+        let bytecode_carrier_physical_rows = if prepare_bytecode_carrier {
+            Some(
+                witness
+                    .owned_rows()
+                    .map(|rows| rows.physical_rows().min(cycles))
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "bytecode address-major requires random-access witness rows",
+                    })?,
+            )
+        } else {
+            None
+        };
         stage1_eligible |= instruction_read_raf_owner_requested;
         let instruction_ra_dispatch = self.config.instruction_ra_virtualization.dispatch;
         if cycles
@@ -467,7 +477,14 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 )?;
                             }
                             if prepare_bytecode_carrier && candidate.stage1 {
-                                for bytes in bytecode_address_major_plane_bytes(cycles)? {
+                                let physical_rows = bytecode_carrier_physical_rows.ok_or(
+                                    MetalError::InvalidInstructionReadRafGrouped(
+                                        "bytecode carrier physical rows are unavailable".to_owned(),
+                                    ),
+                                )?;
+                                for bytes in
+                                    bytecode_address_stage1_topology_max_plane_bytes(physical_rows)?
+                                {
                                     validate_resident_row_buffer(bytes, device.max_buffer_length)?;
                                 }
                             }
@@ -493,6 +510,8 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 instruction_read_raf_owner_requested && candidate.stage1,
                                 borrow_outer_residual && candidate.instruction_input,
                                 candidate.stage1
+                                    && cycles >= self.config.spartan_shift.trace_cutoff_elements,
+                                candidate.stage1
                                     && cycles
                                         >= self.config.spartan_outer_uniskip.trace_cutoff_elements,
                                 candidate.stage1
@@ -504,12 +523,16 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 self.config.spartan_outer_remainder.dispatch,
                             )?;
                             if prepare_bytecode_carrier && candidate.stage1 {
-                                bytecode_address_major_plane_bytes(cycles)?
-                                    .into_iter()
-                                    .try_fold(bytes, |sum, plane| {
-                                        sum.checked_add(plane)
-                                            .ok_or(MetalError::InputTooLong(cycles))
-                                    })
+                                let physical_rows = bytecode_carrier_physical_rows.ok_or(
+                                    MetalError::InvalidInstructionReadRafGrouped(
+                                        "bytecode carrier physical rows are unavailable".to_owned(),
+                                    ),
+                                )?;
+                                bytes
+                                    .checked_add(bytecode_address_stage1_topology_max_bytes(
+                                        physical_rows,
+                                    )?)
+                                    .ok_or(MetalError::InputTooLong(cycles))
                             } else {
                                 Ok(bytes)
                             }
@@ -546,7 +569,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         }
         if let Some(plan) = admitted_plan {
             if plan.stage1 {
-                let (mut rows, instruction_read_raf_owner, bytecode_carrier) = if cycles
+                let (mut rows, instruction_read_raf_owner, bytecode_topology) = if cycles
                     >= self.config.spartan_shift.trace_cutoff_elements
                 {
                     let span = tracing::info_span!(
@@ -569,8 +592,8 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             cycles,
                             prepare_bytecode_carrier,
                         )
-                        .map(|(rows, shift_rows, owner, carrier)| {
-                            (rows, shift_rows, Some(owner), carrier)
+                        .map(|(rows, shift_rows, owner, topology)| {
+                            (rows, shift_rows, Some(owner), topology)
                         })
                     } else {
                         prepare_metal_spartan_outer_shift_witness_rows(
@@ -581,7 +604,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         .map(|(rows, shift_rows)| (rows, shift_rows, None, None))
                     };
                     match prepared {
-                        Ok((rows, shift_rows, instruction_read_raf_owner, bytecode_carrier)) => {
+                        Ok((rows, shift_rows, instruction_read_raf_owner, bytecode_topology)) => {
                             let shift_resident_bytes = shift_rows.resident_bytes();
                             let owner =
                                 SpartanDenseResidentOwner::from_co_produced_shift(shift_rows)
@@ -601,9 +624,9 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             let _ = span.record("admitted", true);
                             let _ = span.record("fallback_reason", "none");
                             session.park(owner);
-                            (rows, instruction_read_raf_owner, bytecode_carrier)
+                            (rows, instruction_read_raf_owner, bytecode_topology)
                         }
-                        Err(error) if error.is_capacity_error() => {
+                        Err(error) if error.is_capacity_error() && !prepare_bytecode_carrier => {
                             let _ = span.record("admitted", false);
                             let _ = span.record("fallback_reason", "shift_capacity");
                             tracing::warn!(
@@ -618,7 +641,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                     cycles,
                                     prepare_bytecode_carrier,
                                 )
-                                .map(|(rows, owner, carrier)| (rows, Some(owner), carrier))
+                                .map(|(rows, owner, topology)| (rows, Some(owner), topology))
                                 .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
                             } else {
                                 (
@@ -641,7 +664,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         cycles,
                         prepare_bytecode_carrier,
                     )
-                    .map(|(rows, owner, carrier)| (rows, Some(owner), carrier))
+                    .map(|(rows, owner, topology)| (rows, Some(owner), topology))
                     .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
                 } else {
                     (
@@ -679,52 +702,8 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                     .entered();
                     session.park(owner);
                 }
-                if let Some(carrier) = bytecode_carrier {
-                    let receipt = carrier.receipt();
-                    let source_receipt = carrier.source_receipt();
-                    let carrier_resident_bytes =
-                        cycles
-                            .checked_mul(13)
-                            .ok_or(KernelError::InvariantViolation {
-                                reason: "bytecode address-major carrier size overflow",
-                            })?;
-                    let producer_logical_movement_bytes =
-                        cycles
-                            .checked_mul(33)
-                            .ok_or(KernelError::InvariantViolation {
-                                reason: "bytecode address-major producer traffic overflow",
-                            })?;
-                    {
-                        let _span = tracing::info_span!(
-                            "MetalBytecodeReadRafAddress::carrier_publish",
-                            cycles,
-                            source_generation = source_receipt.source_generation(),
-                            source_completion_serial = source_receipt.completion_serial(),
-                            source_rows_storage_id = source_receipt.row_allocation_identity(),
-                            source_claim_storage_id = source_receipt.claim_allocation_identity(),
-                            source_device_registry_id = source_receipt.device_registry_id(),
-                            source_windows = source_receipt.source_windows(),
-                            carrier_cells_storage_id = receipt.cells().allocation_identity(),
-                            carrier_cells_bytes = receipt.cells().bytes(),
-                            carrier_inner_sign_storage_id =
-                                receipt.inner_sign().allocation_identity(),
-                            carrier_inner_sign_bytes = receipt.inner_sign().bytes(),
-                            carrier_magnitude_storage_id =
-                                receipt.magnitude().allocation_identity(),
-                            carrier_magnitude_bytes = receipt.magnitude().bytes(),
-                            carrier_resident_bytes,
-                            carrier_allocations = 3usize,
-                            producer_persistent_write_bytes = carrier_resident_bytes,
-                            producer_logical_movement_bytes,
-                            producer_topology_read_bytes = 0usize,
-                            shared_source_row_scans = 1usize,
-                            additional_source_row_scans = 0usize,
-                            member_source_upload_bytes = 0usize,
-                            complete_overwrite = true,
-                        )
-                        .entered();
-                    }
-                    session.park(carrier);
+                if let Some(topology) = bytecode_topology {
+                    session.park(topology);
                 }
                 let compact_rows = plan
                     .instruction_input
@@ -2061,10 +2040,11 @@ mod tests {
                 false,
                 true,
                 true,
+                true,
                 Default::default(),
             )
             .unwrap(),
-            21_482_508_176
+            22_581_415_824
         );
         assert_eq!(
             resident_row_working_set(
@@ -2075,10 +2055,11 @@ mod tests {
                 false,
                 true,
                 true,
+                true,
                 Default::default(),
             )
             .unwrap(),
-            85_909_835_664
+            90_305_466_256
         );
         assert_eq!(
             resident_row_working_set(
@@ -2089,10 +2070,11 @@ mod tests {
                 true,
                 true,
                 true,
+                true,
                 Default::default(),
             )
             .unwrap(),
-            15_040_057_232
+            16_138_964_880
         );
         assert_eq!(
             resident_row_working_set(
@@ -2103,10 +2085,11 @@ mod tests {
                 true,
                 true,
                 true,
+                true,
                 Default::default(),
             )
             .unwrap(),
-            60_140_031_888
+            64_535_662_480
         );
         assert_eq!(
             resident_row_working_set(
@@ -2117,10 +2100,11 @@ mod tests {
                 true,
                 true,
                 true,
+                true,
                 Default::default(),
             )
             .unwrap(),
-            17_791_520_656
+            18_890_428_304
         );
         assert_eq!(
             resident_row_working_set(
@@ -2131,16 +2115,18 @@ mod tests {
                 true,
                 true,
                 true,
+                true,
                 Default::default(),
             )
             .unwrap(),
-            35_577_008_016
+            37_774_823_312
         );
         assert_eq!(
             resident_row_working_set(
                 1 << 26,
                 false,
                 true,
+                false,
                 false,
                 false,
                 false,
@@ -2159,6 +2145,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 Default::default(),
             )
             .unwrap(),
@@ -2173,10 +2160,11 @@ mod tests {
                 false,
                 true,
                 true,
+                true,
                 Default::default(),
             )
             .unwrap(),
-            60_138_065_808
+            64_533_696_400
         );
     }
 

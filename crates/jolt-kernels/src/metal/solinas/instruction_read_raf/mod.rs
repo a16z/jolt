@@ -16,6 +16,7 @@ pub(super) const SOURCE: &str = include_str!("shader.metal");
 pub use probe::{run_instruction_read_raf_stage1_probe, InstructionReadRafStage1ProbeResult};
 pub(crate) use scatter::{
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
+    InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
 };
 
 pub(crate) const INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS: usize = 1 << 12;
@@ -330,6 +331,16 @@ impl InstructionReadRafStage1ChunkWriter<'_> {
         table_plus_one: u8,
         raf: bool,
     ) -> Result<(), MetalError> {
+        self.push_with_bytecode_chunk_rank(row, table_plus_one, raf, 0)
+    }
+
+    pub(crate) fn push_with_bytecode_chunk_rank(
+        &mut self,
+        row: BooleanityRow,
+        table_plus_one: u8,
+        raf: bool,
+        rank: u8,
+    ) -> Result<(), MetalError> {
         if self.written == self.rows.len() {
             return Err(invalid_source(
                 "Stage-1 source chunk received too many rows",
@@ -337,12 +348,19 @@ impl InstructionReadRafStage1ChunkWriter<'_> {
         }
         let (claim, count_rank) = instruction_read_raf_claim_and_count_rank(table_plus_one, raf)
             .ok_or_else(|| invalid_source("Stage-1 source selector exceeds the table domain"))?;
+        let row = row.with_bytecode_chunk_rank_low7(rank);
+        let claim = claim | ((rank & 0x80) >> 1);
         let _ = self.rows[self.written].write(row);
         let _ = self.claims[self.written].write(claim);
         self.counts[count_rank] += 1;
         self.written += 1;
         Ok(())
     }
+}
+
+#[cfg(test)]
+pub(crate) const fn instruction_read_raf_bytecode_chunk_rank(row: BooleanityRow, claim: u8) -> u8 {
+    row.bytecode_chunk_rank_low7() | ((claim & 0x40) << 1)
 }
 
 impl InstructionReadRafStage1Owner {

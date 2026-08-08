@@ -8,12 +8,17 @@ use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::{JoltWitnessPlane, PolynomialEncoding};
 
 use super::backend::MetalBackend;
+use super::solinas::bytecode_read_raf_address::{
+    BytecodeAddressFusedScatterRequest, BytecodeAddressSparseStage1Carrier,
+    BytecodeAddressStage1TopologyOwner,
+};
 use super::solinas::instruction_read_raf_v3::{AddressAtomSequence, ADDRESS_PHASE_BITS};
 use super::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows,
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
-    InstructionReadRafStage1Owner, Product5Sequence, Product5SequenceConfig,
-    ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
+    InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
+    InstructionReadRafStage1Owner, InstructionReadRafStage1Receipt, Product5Sequence,
+    Product5SequenceConfig, ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::optimized::instruction_read_raf::{
     prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
@@ -79,6 +84,9 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let collect_bytecode_support = self.config.bytecode_read_raf_address.implementation
             == crate::metal::BytecodeReadRafAddressImplementation::AddressMajorShadow
             && trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
+        let fuse_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
+            == crate::metal::BytecodeReadRafAddressImplementation::AddressMajor
+            && trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
         let retain_lookup_plane = trace_elements
             >= self
                 .config
@@ -91,6 +99,12 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             && !collect_bytecode_support)
             .then(|| session.take::<InstructionReadRafStage1Owner>())
             .flatten();
+        if fuse_bytecode_carrier && stage1_owner.is_none() {
+            return Err(KernelError::InvariantViolation {
+                reason:
+                    "fused bytecode address carrier requires the InstructionReadRAF Stage-1 owner",
+            });
+        }
         let (cpu, resident_grouped_planes) = if let Some(owner) = stage1_owner.as_ref() {
             let device_registry_id = self.context.device_registry_id();
             let scatter_source = owner
@@ -99,13 +113,32 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             let retained_claims = owner
                 .lease(trace_elements, device_registry_id)
                 .map_err(metal_prepare_error)?;
+            let bytecode_request = if fuse_bytecode_carrier {
+                let topology_owner = session.take::<BytecodeAddressStage1TopologyOwner>().ok_or(
+                    KernelError::InvariantViolation {
+                        reason: "fused bytecode address carrier topology is missing",
+                    },
+                )?;
+                let topology_source = owner
+                    .lease(trace_elements, device_registry_id)
+                    .map_err(metal_prepare_error)?;
+                let topology = topology_owner
+                    .lease(topology_source)
+                    .map_err(metal_prepare_error)?;
+                Some(
+                    BytecodeAddressFusedScatterRequest::new(topology)
+                        .map_err(metal_prepare_error)?,
+                )
+            } else {
+                None
+            };
             let cpu = OptimizedInstructionReadRafKernel::new_metal_resident(
                 dimensions,
                 &inputs.points.lookup_output,
                 retained_claims,
                 inputs.challenges.gamma,
             )?;
-            let planes = self
+            let mut planes = self
                 .context
                 .prepare_instruction_read_raf_compatibility_scatter(
                     scatter_source,
@@ -116,52 +149,48 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                             .instruction_read_raf
                             .stage1_scatter_threads_per_threadgroup,
                     },
+                    bytecode_request,
                 )
                 .map_err(metal_prepare_error)?;
-            let receipt = planes.receipt();
+            let receipt = planes.receipt().clone();
             let execution = planes.execution();
-            let identities = receipt.allocation_identities();
-            let _span = tracing::info_span!(
-                "MetalInstructionReadRaf::stage1_grouped_scatter",
-                rows = receipt.rows(),
-                preparation_wall_ns = duration_ns(execution.preparation_wall),
-                command_wall_ns = duration_ns(execution.command_wall),
-                gpu_active_ns = duration_ns(execution.gpu_active),
-                status_readback_bytes = execution.status_readback_bytes,
-                packed_rows_bytes = receipt.packed_rows_bytes(),
-                lookups_bytes = receipt.lookups_bytes(),
-                inverse_bytes = receipt.inverse_bytes(),
-                weights_bytes = receipt.weights_bytes(),
-                packed_rows_identity = identities[0],
-                lookups_identity = identities[1],
-                inverse_identity = identities[2],
-                weights_identity = identities[3],
-                source_generation = receipt.source().source_generation(),
-                source_completion_serial = receipt.source().completion_serial(),
-                source_row_allocation_identity = receipt.source().row_allocation_identity(),
-                source_claim_allocation_identity = receipt.source().claim_allocation_identity(),
-                source_count_allocation_identity = receipt.source().count_allocation_identity(),
-                source_count_chunks = receipt.source().count_chunks(),
-                source_count_bytes = receipt.source().count_bytes(),
-                source_device_registry_id = receipt.source().device_registry_id(),
-                source_count_order = "table_major_then_none_v1",
-                scatter_completion_serial = receipt.completion_serial(),
-                e_in_length = receipt.e_in_length(),
-                e_out_length = receipt.e_out_length(),
-                additional_allocation_bytes = receipt.additional_allocation_bytes(),
-                command_buffers = receipt.command_buffers(),
-                waits = receipt.waits(),
-                encoders = receipt.encoders(),
-                threadgroups = receipt.threadgroups(),
-                threads_per_threadgroup = receipt.threads_per_threadgroup(),
-                dynamic_threadgroup_bytes = receipt.dynamic_threadgroup_bytes(),
-                static_threadgroup_bytes = receipt.static_threadgroup_bytes(),
-                dispatches = receipt.dispatches(),
-                source_copy_bytes = receipt.source_copy_bytes(),
-                full_plane_readback_bytes = receipt.full_plane_readback_bytes(),
-                complete_overwrite = receipt.complete_overwrite(),
-            )
-            .entered();
+            let fused = receipt.bytecode();
+            trace_instruction_read_raf_scatter(
+                &receipt,
+                fused,
+                duration_ns(execution.preparation_wall),
+                duration_ns(execution.command_wall),
+                duration_ns(execution.gpu_active),
+                execution.status_readback_bytes,
+            );
+            let bytecode_carrier = planes.take_bytecode_carrier();
+            match (fuse_bytecode_carrier, fused, bytecode_carrier) {
+                (true, Some(fused), Some(carrier)) => {
+                    validate_fused_bytecode_carrier(receipt.source(), fused, &carrier)?;
+                    if session
+                        .state::<BytecodeAddressSparseStage1Carrier>()
+                        .is_some()
+                    {
+                        return Err(KernelError::InvariantViolation {
+                            reason:
+                                "fused bytecode address carrier would replace an existing carrier",
+                        });
+                    }
+                    publish_fused_bytecode_carrier_span(trace_elements, &receipt, &carrier)?;
+                    session.park(carrier);
+                }
+                (true, _, _) => {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "fused bytecode address scatter did not publish its carrier",
+                    });
+                }
+                (false, None, None) => {}
+                (false, _, _) => {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "non-fused InstructionReadRAF scatter published bytecode state",
+                    });
+                }
+            }
             (cpu, Some(planes))
         } else {
             (
@@ -672,6 +701,304 @@ impl SumcheckKernel<AkitaField> for MetalInstructionReadRafKernel {
             session.park(plane);
         }
     }
+}
+
+fn trace_instruction_read_raf_scatter(
+    receipt: &InstructionReadRafDenseGroupedReceipt,
+    fused: Option<InstructionReadRafFusedBytecodeReceipt>,
+    preparation_wall_ns: u64,
+    command_wall_ns: u64,
+    gpu_active_ns: u64,
+    status_readback_bytes: u64,
+) {
+    let identities = receipt.allocation_identities();
+    if let Some(fused) = fused {
+        let _span = tracing::info_span!(
+            "MetalInstructionReadRaf::stage1_grouped_scatter",
+            rows = receipt.rows(),
+            preparation_wall_ns,
+            command_wall_ns,
+            gpu_active_ns,
+            status_readback_bytes,
+            packed_rows_bytes = receipt.packed_rows_bytes(),
+            lookups_bytes = receipt.lookups_bytes(),
+            inverse_bytes = receipt.inverse_bytes(),
+            weights_bytes = receipt.weights_bytes(),
+            packed_rows_identity = identities[0],
+            lookups_identity = identities[1],
+            inverse_identity = identities[2],
+            weights_identity = identities[3],
+            source_generation = receipt.source().source_generation(),
+            source_completion_serial = receipt.source().completion_serial(),
+            source_row_allocation_identity = receipt.source().row_allocation_identity(),
+            source_claim_allocation_identity = receipt.source().claim_allocation_identity(),
+            source_count_allocation_identity = receipt.source().count_allocation_identity(),
+            source_count_chunks = receipt.source().count_chunks(),
+            source_count_bytes = receipt.source().count_bytes(),
+            source_device_registry_id = receipt.source().device_registry_id(),
+            source_count_order = "table_major_then_none_v1",
+            scatter_completion_serial = receipt.completion_serial(),
+            e_in_length = receipt.e_in_length(),
+            e_out_length = receipt.e_out_length(),
+            additional_allocation_bytes = receipt.additional_allocation_bytes(),
+            command_buffers = receipt.command_buffers(),
+            waits = receipt.waits(),
+            encoders = receipt.encoders(),
+            threadgroups = receipt.threadgroups(),
+            threads_per_threadgroup = receipt.threads_per_threadgroup(),
+            dynamic_threadgroup_bytes = receipt.dynamic_threadgroup_bytes(),
+            static_threadgroup_bytes = receipt.static_threadgroup_bytes(),
+            dispatches = receipt.dispatches(),
+            source_copy_bytes = receipt.source_copy_bytes(),
+            full_plane_readback_bytes = receipt.full_plane_readback_bytes(),
+            complete_overwrite = receipt.complete_overwrite(),
+            bytecode_fused = true,
+            bytecode_physical_rows = fused.physical_rows(),
+            bytecode_descriptor_elements = fused.descriptor_elements(),
+            bytecode_descriptor_bytes = fused.descriptor_bytes(),
+            bytecode_descriptor_storage_id = fused.descriptor_identity(),
+            bytecode_pivot_elements = fused.pivot_elements(),
+            bytecode_pivot_bytes = fused.pivot_bytes(),
+            bytecode_pivot_storage_id = fused.pivot_identity(),
+            bytecode_chunk_offset_elements = fused.chunk_offset_elements(),
+            bytecode_chunk_offset_bytes = fused.chunk_offset_bytes(),
+            bytecode_chunk_offset_storage_id = fused.chunk_offset_identity(),
+            bytecode_work_items = fused.work_items(),
+            bytecode_work_item_bytes = fused.work_item_bytes(),
+            bytecode_work_item_storage_id = fused.work_item_identity(),
+            bytecode_address_offset_elements = fused.address_offset_elements(),
+            bytecode_address_offset_bytes = fused.address_offset_bytes(),
+            bytecode_address_offset_storage_id = fused.address_offset_identity(),
+            bytecode_occurrence_bytes = fused.occurrence_bytes(),
+            bytecode_occurrence_storage_id = fused.occurrence_identity(),
+            bytecode_magnitude_bytes = fused.magnitude_bytes(),
+            bytecode_magnitude_storage_id = fused.magnitude_identity(),
+            bytecode_max_descriptors_per_chunk = fused.max_descriptors_per_chunk(),
+            bytecode_max_pivots_per_chunk = fused.max_pivots_per_chunk(),
+            bytecode_max_admitted_descriptors_per_chunk =
+                fused.max_admitted_descriptors_per_chunk(),
+            bytecode_max_admitted_pivots_per_chunk = fused.max_admitted_pivots_per_chunk(),
+            bytecode_dynamic_threadgroup_bytes = fused.dynamic_threadgroup_bytes(),
+            bytecode_threadgroup_memory_limit_bytes = fused.threadgroup_memory_limit_bytes(),
+            shared_source_row_scans = fused.shared_source_row_scans(),
+            additional_source_row_scans = fused.additional_source_row_scans(),
+            member_upload_bytes = fused.member_upload_bytes(),
+        )
+        .entered();
+    } else {
+        let _span = tracing::info_span!(
+            "MetalInstructionReadRaf::stage1_grouped_scatter",
+            rows = receipt.rows(),
+            preparation_wall_ns,
+            command_wall_ns,
+            gpu_active_ns,
+            status_readback_bytes,
+            packed_rows_bytes = receipt.packed_rows_bytes(),
+            lookups_bytes = receipt.lookups_bytes(),
+            inverse_bytes = receipt.inverse_bytes(),
+            weights_bytes = receipt.weights_bytes(),
+            packed_rows_identity = identities[0],
+            lookups_identity = identities[1],
+            inverse_identity = identities[2],
+            weights_identity = identities[3],
+            source_generation = receipt.source().source_generation(),
+            source_completion_serial = receipt.source().completion_serial(),
+            source_row_allocation_identity = receipt.source().row_allocation_identity(),
+            source_claim_allocation_identity = receipt.source().claim_allocation_identity(),
+            source_count_allocation_identity = receipt.source().count_allocation_identity(),
+            source_count_chunks = receipt.source().count_chunks(),
+            source_count_bytes = receipt.source().count_bytes(),
+            source_device_registry_id = receipt.source().device_registry_id(),
+            source_count_order = "table_major_then_none_v1",
+            scatter_completion_serial = receipt.completion_serial(),
+            e_in_length = receipt.e_in_length(),
+            e_out_length = receipt.e_out_length(),
+            additional_allocation_bytes = receipt.additional_allocation_bytes(),
+            command_buffers = receipt.command_buffers(),
+            waits = receipt.waits(),
+            encoders = receipt.encoders(),
+            threadgroups = receipt.threadgroups(),
+            threads_per_threadgroup = receipt.threads_per_threadgroup(),
+            dynamic_threadgroup_bytes = receipt.dynamic_threadgroup_bytes(),
+            static_threadgroup_bytes = receipt.static_threadgroup_bytes(),
+            dispatches = receipt.dispatches(),
+            source_copy_bytes = receipt.source_copy_bytes(),
+            full_plane_readback_bytes = receipt.full_plane_readback_bytes(),
+            complete_overwrite = receipt.complete_overwrite(),
+        )
+        .entered();
+    }
+}
+
+fn validate_fused_bytecode_carrier(
+    source: InstructionReadRafStage1Receipt,
+    fused: InstructionReadRafFusedBytecodeReceipt,
+    carrier: &BytecodeAddressSparseStage1Carrier,
+) -> Result<(), KernelError<AkitaField>> {
+    let receipt = carrier.receipt();
+    let topology = carrier
+        .fused_topology_receipt()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "fused bytecode address carrier lost its topology receipt",
+        })?;
+    let topology_ids = [
+        topology.descriptor_allocation_identity(),
+        topology.pivot_allocation_identity(),
+        topology.chunk_offset_allocation_identity(),
+    ];
+    let carrier_ids = [
+        receipt.occurrence_storage_id(),
+        receipt.magnitude_storage_id(),
+        receipt.work_item_storage_id(),
+        receipt.address_offset_storage_id(),
+    ];
+    if topology.source_receipt() != source
+        || topology.source_generation() != source.source_generation()
+        || topology.source_completion_serial() != source.completion_serial()
+        || topology.source_rows_storage_id() != source.row_allocation_identity()
+        || topology.source_claim_storage_id() != source.claim_allocation_identity()
+        || topology.source_windows() != source.source_windows()
+        || topology.physical_rows() != fused.physical_rows()
+        || topology.work_items() != fused.work_items()
+        || topology.descriptor_elements() != fused.descriptor_elements()
+        || topology.descriptor_bytes() != fused.descriptor_bytes()
+        || topology.descriptor_allocation_identity() != fused.descriptor_identity()
+        || topology.pivot_elements() != fused.pivot_elements()
+        || topology.pivot_bytes() != fused.pivot_bytes()
+        || topology.pivot_allocation_identity() != fused.pivot_identity()
+        || topology.chunk_offset_elements() != fused.chunk_offset_elements()
+        || topology.chunk_offset_bytes() != fused.chunk_offset_bytes()
+        || topology.chunk_offset_allocation_identity() != fused.chunk_offset_identity()
+        || topology.work_item_bytes() != fused.work_item_bytes()
+        || topology.work_item_allocation_identity() != fused.work_item_identity()
+        || topology.address_offset_elements() != fused.address_offset_elements()
+        || topology.address_offset_bytes() != fused.address_offset_bytes()
+        || topology.address_offset_allocation_identity() != fused.address_offset_identity()
+        || topology.max_descriptors_per_chunk() != fused.max_descriptors_per_chunk()
+        || topology.max_pivots_per_chunk() != fused.max_pivots_per_chunk()
+        || topology.max_descriptors_per_chunk() > fused.max_admitted_descriptors_per_chunk()
+        || topology.max_pivots_per_chunk() > fused.max_admitted_pivots_per_chunk()
+        || fused.dynamic_threadgroup_bytes() > fused.threadgroup_memory_limit_bytes()
+        || fused.shared_source_row_scans() != 1
+        || fused.additional_source_row_scans() != 0
+        || fused.member_upload_bytes() != 0
+        || receipt.physical_rows() != topology.physical_rows()
+        || receipt.work_items() != topology.work_items()
+        || receipt.source_generation() != source.source_generation()
+        || receipt.source_completion_serial() != source.completion_serial()
+        || receipt.source_rows_storage_id() != source.row_allocation_identity()
+        || receipt.source_claim_storage_id() != source.claim_allocation_identity()
+        || receipt.source_windows() != source.source_windows()
+        || receipt.device_registry_id() != source.device_registry_id()
+        || receipt.occurrence_storage_id() != fused.occurrence_identity()
+        || receipt.occurrence_bytes() != fused.occurrence_bytes()
+        || receipt.magnitude_storage_id() != fused.magnitude_identity()
+        || receipt.magnitude_bytes() != fused.magnitude_bytes()
+        || receipt.work_item_storage_id() != fused.work_item_identity()
+        || receipt.work_item_bytes() != fused.work_item_bytes()
+        || receipt.address_offset_storage_id() != fused.address_offset_identity()
+        || receipt.address_offset_bytes() != fused.address_offset_bytes()
+        || !receipt.complete_overwrite()
+        || receipt.covered_rows() != receipt.physical_rows()
+        || receipt.additional_source_scans() != 0
+        || receipt.member_upload_bytes() != 0
+        || !topology.complete_overwrite()
+        || topology.covered_rows() != topology.physical_rows()
+        || topology.shared_source_row_scans() != 1
+        || topology.additional_source_row_scans() != 0
+        || topology.member_upload_bytes() != 0
+        || topology_ids.contains(&0)
+        || carrier_ids.contains(&0)
+        || carrier_ids
+            .iter()
+            .enumerate()
+            .any(|(index, identity)| carrier_ids[..index].contains(identity))
+        || carrier_ids
+            .iter()
+            .any(|identity| topology_ids.contains(identity))
+    {
+        return Err(KernelError::InvariantViolation {
+            reason: "fused bytecode address carrier provenance is malformed",
+        });
+    }
+    Ok(())
+}
+
+fn publish_fused_bytecode_carrier_span(
+    cycles: usize,
+    scatter: &InstructionReadRafDenseGroupedReceipt,
+    carrier: &BytecodeAddressSparseStage1Carrier,
+) -> Result<(), KernelError<AkitaField>> {
+    let receipt = carrier.receipt();
+    let topology = carrier
+        .fused_topology_receipt()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "fused bytecode address carrier lost its topology receipt",
+        })?;
+    let producer_persistent_write_bytes = receipt
+        .occurrence_bytes()
+        .checked_add(receipt.magnitude_bytes())
+        .ok_or(KernelError::InvariantViolation {
+            reason: "fused bytecode address carrier byte accounting overflowed",
+        })?;
+    let producer_topology_read_bytes = topology
+        .descriptor_bytes()
+        .checked_add(topology.pivot_bytes())
+        .and_then(|bytes| bytes.checked_add(topology.chunk_offset_bytes()))
+        .ok_or(KernelError::InvariantViolation {
+            reason: "fused bytecode address topology byte accounting overflowed",
+        })?;
+    let producer_logical_movement_bytes = producer_persistent_write_bytes
+        .checked_add(producer_topology_read_bytes)
+        .ok_or(KernelError::InvariantViolation {
+            reason: "fused bytecode address movement accounting overflowed",
+        })?;
+    let _span = tracing::info_span!(
+        "MetalBytecodeReadRafAddress::fused_carrier_publish",
+        route = "address_major_fused_stage1_grouped_v1",
+        cycles,
+        physical_rows = receipt.physical_rows(),
+        work_items = receipt.work_items(),
+        source_generation = receipt.source_generation(),
+        source_completion_serial = receipt.source_completion_serial(),
+        source_rows_storage_id = receipt.source_rows_storage_id(),
+        source_claim_storage_id = receipt.source_claim_storage_id(),
+        source_device_registry_id = receipt.device_registry_id(),
+        source_windows = receipt.source_windows(),
+        carrier_completion_serial = receipt.completion_serial(),
+        carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
+        carrier_occurrence_bytes = receipt.occurrence_bytes(),
+        carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
+        carrier_magnitude_bytes = receipt.magnitude_bytes(),
+        carrier_work_item_storage_id = receipt.work_item_storage_id(),
+        carrier_work_item_bytes = receipt.work_item_bytes(),
+        carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
+        carrier_address_offset_bytes = receipt.address_offset_bytes(),
+        bytecode_descriptor_storage_id = topology.descriptor_allocation_identity(),
+        bytecode_descriptor_bytes = topology.descriptor_bytes(),
+        bytecode_pivot_storage_id = topology.pivot_allocation_identity(),
+        bytecode_pivot_bytes = topology.pivot_bytes(),
+        bytecode_chunk_offset_storage_id = topology.chunk_offset_allocation_identity(),
+        bytecode_chunk_offset_bytes = topology.chunk_offset_bytes(),
+        carrier_resident_bytes = receipt.persistent_bytes(),
+        carrier_buffers = 4usize,
+        scatter_output_allocations = 2usize,
+        producer_persistent_write_bytes,
+        producer_logical_movement_bytes,
+        producer_topology_read_bytes,
+        complete_overwrite = receipt.complete_overwrite(),
+        covered_rows = receipt.covered_rows(),
+        shared_source_row_scans = topology.shared_source_row_scans(),
+        additional_source_row_scans = topology.additional_source_row_scans(),
+        member_upload_bytes = topology.member_upload_bytes(),
+        command_buffers = scatter.command_buffers(),
+        waits = scatter.waits(),
+        encoders = scatter.encoders(),
+        dispatches = scatter.dispatches(),
+        released = false,
+    )
+    .entered();
+    Ok(())
 }
 
 fn backend_error(message: impl Into<String>) -> SumcheckError<AkitaField> {

@@ -456,6 +456,7 @@ pub(crate) fn prepare_bytecode_read_raf_address_from_pushforwards<F: Field>(
         int_table,
         entry_trace: one_hot(entry_trace_index),
         entry_expected: one_hot(entry_bytecode_index),
+        bind_scratch: Vec::new(),
         rounds_bound: 0,
     })
 }
@@ -481,6 +482,7 @@ pub(crate) struct AddressKernel<F: Field> {
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
+    bind_scratch: Vec<F>,
     rounds_bound: usize,
 }
 
@@ -498,6 +500,7 @@ impl<F: Field> allocative::Allocative for AddressKernel<F> {
             ("int_table", poly_heap_bytes(&self.int_table)),
             ("entry_trace", poly_heap_bytes(&self.entry_trace)),
             ("entry_expected", poly_heap_bytes(&self.entry_expected)),
+            ("bind_scratch", vec_heap_bytes(&self.bind_scratch)),
         ] {
             visitor.visit_simple(allocative::Key::new(key), bytes);
         }
@@ -529,17 +532,18 @@ impl<F: Field> AddressKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        bind_all(
-            self.pushforwards
-                .iter_mut()
-                .chain(self.values.iter_mut())
-                .chain([
-                    &mut self.int_table,
-                    &mut self.entry_trace,
-                    &mut self.entry_expected,
-                ]),
-            challenge,
-        );
+        for table in self
+            .pushforwards
+            .iter_mut()
+            .chain(self.values.iter_mut())
+            .chain([
+                &mut self.int_table,
+                &mut self.entry_trace,
+                &mut self.entry_expected,
+            ])
+        {
+            table.bind_low_to_high_reusing_scratch(challenge, &mut self.bind_scratch);
+        }
         self.rounds_bound += 1;
     }
 

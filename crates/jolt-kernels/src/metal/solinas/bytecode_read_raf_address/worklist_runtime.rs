@@ -18,18 +18,21 @@ use super::{
         SparseAddressRow, SparseAddressWorklist, SparseAddressWorklistError,
         BYTECODE_ADDRESS_BASE_STAGES, BYTECODE_ADDRESS_PUSHFORWARD_STAGES,
     },
+    worklist_owner::{BytecodeAddressSparseStage1Carrier, BytecodeAddressSparseStage1Receipt},
 };
 use crate::metal::solinas::{
     buffer_from_slice, command_buffer_timestamp, BooleanityRow, BooleanityRows, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
 
-const WORKER_PIPELINE: &str = "solinas_bytecode_address_sparse_worker_5_4";
+const WORKER_PIPELINE: &str = "solinas_bytecode_address_sparse_worker_packed_4_5_4";
 const REDUCE_PIPELINE: &str = "solinas_bytecode_address_sparse_reduce";
-const THREADS: usize = 256;
+const WORKER_VARIANT: &str = "packed4_halfwidth_v1";
+const WORKER_THREADS: usize = 128;
+const WORKER_ITEMS_PER_THREADGROUP: usize = 4;
+const REDUCE_THREADS: usize = 256;
 const SIMD_WIDTH: usize = 32;
-const SIMDGROUPS: usize = THREADS / SIMD_WIDTH;
-const THREADGROUP_BYTES: usize = SIMDGROUPS * BYTECODE_ADDRESS_BASE_STAGES * size_of::<Fp128>();
+const THREADGROUP_BYTES: usize = 0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,6 +63,8 @@ pub(crate) struct BytecodeAddressSparseStorage {
     pub(crate) padding_bytes: usize,
     pub(crate) partial_bytes: usize,
     pub(crate) output_bytes: usize,
+    pub(crate) carrier_bytes: usize,
+    pub(crate) member_owned_bytes: usize,
     pub(crate) owned_bytes: usize,
 }
 
@@ -70,13 +75,27 @@ pub(crate) struct BytecodeAddressSparseObservation {
     pub(crate) resident_wall: Duration,
     pub(crate) source_rows_storage_id: usize,
     pub(crate) source_device_registry_id: u64,
+    pub(crate) source_generation: u64,
+    pub(crate) source_completion_serial: u64,
     pub(crate) physical_rows: usize,
     pub(crate) work_items: usize,
+    pub(crate) worker_variant: &'static str,
+    pub(crate) worker_simd_width: usize,
+    pub(crate) worker_threads: usize,
+    pub(crate) worker_items_per_threadgroup: usize,
+    pub(crate) worker_threadgroups: usize,
+    pub(crate) worker_tail_slots: usize,
+    pub(crate) worker_dynamic_threadgroup_bytes: usize,
+    pub(crate) worker_static_threadgroup_bytes: u64,
+    pub(crate) worker_threadgroup_bytes: u64,
+    pub(crate) reducer_threads: usize,
+    pub(crate) reducer_threadgroups: usize,
+    pub(crate) reducer_static_threadgroup_bytes: u64,
     pub(crate) static_buffer_identities: [usize; 8],
 }
 
 struct BytecodeAddressSparseBuffers {
-    source_rows: BooleanityRows,
+    source_rows: Option<BooleanityRows>,
     occurrences: Buffer,
     magnitudes: Buffer,
     work_items: Buffer,
@@ -86,6 +105,20 @@ struct BytecodeAddressSparseBuffers {
     padding: Buffer,
     partials: Buffer,
     output: Buffer,
+}
+
+struct BytecodeAddressSparseResidentInput {
+    source_rows: Option<BooleanityRows>,
+    stage1_receipt: Option<BytecodeAddressSparseStage1Receipt>,
+    shape: AddressMajorShape,
+    physical_rows: usize,
+    work_items: usize,
+    occurrences: Buffer,
+    magnitudes: Buffer,
+    items: Buffer,
+    address_offsets: Buffer,
+    worker_pipeline: &'static str,
+    worker_variant: &'static str,
 }
 
 pub(crate) struct BytecodeAddressSparseInvocation {
@@ -100,6 +133,10 @@ pub(crate) struct BytecodeAddressSparseInvocation {
     threadgroup_memory_bytes: usize,
     source_rows_storage_id: usize,
     source_device_registry_id: u64,
+    source_generation: u64,
+    source_completion_serial: u64,
+    worker_variant: &'static str,
+    stage1_receipt: Option<BytecodeAddressSparseStage1Receipt>,
     completed: Cell<bool>,
 }
 
@@ -150,8 +187,6 @@ impl SolinasMetal {
         let shape = worklist.shape();
         let padded_rows = shape.rows()?;
         let addresses = shape.addresses()?;
-        let inner_length = shape.inner_length()?;
-        let outer_length = shape.outer_length()?;
         if source_rows.len() != padded_rows
             || worklist.padded_rows() != padded_rows
             || worklist.physical_rows() > padded_rows
@@ -163,25 +198,99 @@ impl SolinasMetal {
                 padded: padded_rows,
             });
         }
+        self.prepare_bytecode_address_sparse_buffers(
+            BytecodeAddressSparseResidentInput {
+                source_rows: Some(source_rows),
+                stage1_receipt: None,
+                shape,
+                physical_rows: worklist.physical_rows(),
+                work_items: worklist.work_items(),
+                occurrences: buffer_from_slice(&self.device, worklist.occurrences()),
+                magnitudes: buffer_from_slice(&self.device, worklist.magnitudes()),
+                items: buffer_from_slice(&self.device, worklist.items()),
+                address_offsets: buffer_from_slice(&self.device, worklist.address_offsets()),
+                worker_pipeline: WORKER_PIPELINE,
+                worker_variant: WORKER_VARIANT,
+            },
+            e_lo,
+            e_hi,
+        )
+    }
+
+    pub(crate) fn prepare_bytecode_address_sparse_resident(
+        &self,
+        carrier: BytecodeAddressSparseStage1Carrier,
+        e_lo: &[Vec<AkitaField>],
+        e_hi: &[Vec<AkitaField>],
+    ) -> Result<BytecodeAddressSparseInvocation, BytecodeAddressSparseRuntimeError> {
+        let parts = carrier.into_parts();
+        let receipt = parts.receipt;
+        self.prepare_bytecode_address_sparse_buffers(
+            BytecodeAddressSparseResidentInput {
+                source_rows: None,
+                stage1_receipt: Some(receipt),
+                shape: receipt.shape(),
+                physical_rows: receipt.physical_rows(),
+                work_items: receipt.work_items(),
+                occurrences: parts.occurrences,
+                magnitudes: parts.magnitudes,
+                items: parts.work_items,
+                address_offsets: parts.address_offsets,
+                worker_pipeline: WORKER_PIPELINE,
+                worker_variant: WORKER_VARIANT,
+            },
+            e_lo,
+            e_hi,
+        )
+    }
+
+    fn prepare_bytecode_address_sparse_buffers(
+        &self,
+        input: BytecodeAddressSparseResidentInput,
+        e_lo: &[Vec<AkitaField>],
+        e_hi: &[Vec<AkitaField>],
+    ) -> Result<BytecodeAddressSparseInvocation, BytecodeAddressSparseRuntimeError> {
+        let padded_rows = input.shape.rows()?;
+        let addresses = input.shape.addresses()?;
+        let inner_length = input.shape.inner_length()?;
+        let outer_length = input.shape.outer_length()?;
+        if input.physical_rows == 0
+            || input.physical_rows > padded_rows
+            || input.work_items == 0
+            || input.source_rows.is_some() == input.stage1_receipt.is_some()
+        {
+            return Err(BytecodeAddressSparseRuntimeError::InvalidRows {
+                physical: input.physical_rows,
+                padded: padded_rows,
+            });
+        }
         validate_table_shape("E_lo", e_lo, inner_length)?;
         validate_table_shape("E_hi", e_hi, outer_length)?;
         let flat_e_lo = flatten_tables(e_lo);
         let flat_e_hi = flatten_tables(e_hi);
-        let padding = padding_base_terms(worklist.physical_rows(), e_lo, e_hi)?;
+        let padding = padding_base_terms(input.physical_rows, e_lo, e_hi)?;
         self.validate_inputs("bytecode sparse E_lo", &flat_e_lo)?;
         self.validate_inputs("bytecode sparse E_hi", &flat_e_hi)?;
         self.validate_inputs("bytecode sparse padding", &padding)?;
 
-        let occurrence_bytes = worklist.ledger().occurrence_bytes();
-        let magnitude_bytes = worklist.ledger().magnitude_bytes();
-        let work_item_bytes = worklist.ledger().work_item_bytes();
-        let address_offset_bytes = worklist.ledger().descriptor_offset_bytes();
+        let occurrence_bytes = input.physical_rows.checked_mul(size_of::<u16>()).ok_or(
+            BytecodeAddressSparseRuntimeError::SizeOverflow("occurrence bytes"),
+        )?;
+        let magnitude_bytes = input.physical_rows.checked_mul(size_of::<u64>()).ok_or(
+            BytecodeAddressSparseRuntimeError::SizeOverflow("magnitude bytes"),
+        )?;
+        let work_item_bytes = input.work_items.checked_mul(8).ok_or(
+            BytecodeAddressSparseRuntimeError::SizeOverflow("work item bytes"),
+        )?;
+        let address_offset_bytes = (addresses + 1).checked_mul(size_of::<u32>()).ok_or(
+            BytecodeAddressSparseRuntimeError::SizeOverflow("address offset bytes"),
+        )?;
         let equality_bytes = field_bytes(flat_e_lo.len().checked_add(flat_e_hi.len()).ok_or(
             BytecodeAddressSparseRuntimeError::SizeOverflow("equality fields"),
         )?)?;
         let padding_bytes = field_bytes(padding.len())?;
         let partial_fields = BYTECODE_ADDRESS_PUSHFORWARD_STAGES
-            .checked_mul(worklist.work_items())
+            .checked_mul(input.work_items)
             .ok_or(BytecodeAddressSparseRuntimeError::SizeOverflow(
                 "partial fields",
             ))?;
@@ -192,25 +301,40 @@ impl SolinasMetal {
             ))?;
         let partial_bytes = field_bytes(partial_fields)?;
         let output_bytes = field_bytes(output_fields)?;
-        let owned_bytes = [
+        let carrier_bytes = [
             occurrence_bytes,
             magnitude_bytes,
             work_item_bytes,
             address_offset_bytes,
-            equality_bytes,
-            padding_bytes,
-            partial_bytes,
-            output_bytes,
         ]
         .into_iter()
         .try_fold(0usize, |total, bytes| {
             total
                 .checked_add(bytes)
                 .ok_or(BytecodeAddressSparseRuntimeError::SizeOverflow(
-                    "owned bytes",
+                    "carrier bytes",
                 ))
         })?;
-        self.validate_additional_working_set(to_u64("working set", owned_bytes)?)?;
+        let member_owned_bytes = [equality_bytes, padding_bytes, partial_bytes, output_bytes]
+            .into_iter()
+            .try_fold(0usize, |total, bytes| {
+                total
+                    .checked_add(bytes)
+                    .ok_or(BytecodeAddressSparseRuntimeError::SizeOverflow(
+                        "member owned bytes",
+                    ))
+            })?;
+        let owned_bytes = carrier_bytes.checked_add(member_owned_bytes).ok_or(
+            BytecodeAddressSparseRuntimeError::SizeOverflow("owned bytes"),
+        )?;
+        self.validate_additional_working_set(to_u64(
+            "working set",
+            if input.stage1_receipt.is_some() {
+                member_owned_bytes
+            } else {
+                owned_bytes
+            },
+        )?)?;
         for bytes in [
             occurrence_bytes,
             magnitude_bytes,
@@ -224,12 +348,12 @@ impl SolinasMetal {
             self.validate_buffer_length(to_u64("buffer", bytes)?)?;
         }
 
-        let worker_pipeline = self.compile_named_pipeline(WORKER_PIPELINE)?;
+        let worker_pipeline = self.compile_named_pipeline(input.worker_pipeline)?;
         let reduce_pipeline = self.compile_named_pipeline(REDUCE_PIPELINE)?;
         let worker_limits = Self::limits(&worker_pipeline);
         let reduce_limits = Self::limits(&reduce_pipeline);
-        validate_pipeline(WORKER_PIPELINE, worker_limits)?;
-        validate_pipeline(REDUCE_PIPELINE, reduce_limits)?;
+        validate_pipeline(input.worker_pipeline, worker_limits, WORKER_THREADS)?;
+        validate_pipeline(REDUCE_PIPELINE, reduce_limits, REDUCE_THREADS)?;
         let maximum_threadgroup_bytes = self.device_info().max_threadgroup_memory_length;
         let requested_threadgroup_bytes = worker_limits
             .static_threadgroup_memory_length
@@ -245,17 +369,33 @@ impl SolinasMetal {
         }
 
         let params = BytecodeAddressSparseParams {
-            physical_rows: shader_count("physical rows", worklist.physical_rows())?,
+            physical_rows: shader_count("physical rows", input.physical_rows)?,
             addresses: shader_count("addresses", addresses)?,
             inner_length: shader_count("inner length", inner_length)?,
             outer_length: shader_count("outer length", outer_length)?,
-            work_items: shader_count("work items", worklist.work_items())?,
+            work_items: shader_count("work items", input.work_items)?,
             stages: BYTECODE_ADDRESS_PUSHFORWARD_STAGES as u32,
             base_stages: BYTECODE_ADDRESS_BASE_STAGES as u32,
             reserved: 0,
         };
-        let source_rows_storage_id = source_rows.allocation_identity();
-        let source_device_registry_id = source_rows.device_registry_id();
+        let (
+            source_rows_storage_id,
+            source_device_registry_id,
+            source_generation,
+            source_completion_serial,
+        ) = if let Some(rows) = input.source_rows.as_ref() {
+            (rows.allocation_identity(), rows.device_registry_id(), 0, 0)
+        } else {
+            let receipt = input
+                .stage1_receipt
+                .ok_or(BytecodeAddressSparseRuntimeError::InvalidState)?;
+            (
+                receipt.source_rows_storage_id(),
+                receipt.device_registry_id(),
+                receipt.source_generation(),
+                receipt.source_completion_serial(),
+            )
+        };
         Ok(BytecodeAddressSparseInvocation {
             context: self.clone(),
             worker_pipeline,
@@ -263,11 +403,11 @@ impl SolinasMetal {
             worker_limits,
             reduce_limits,
             buffers: BytecodeAddressSparseBuffers {
-                source_rows,
-                occurrences: buffer_from_slice(&self.device, worklist.occurrences()),
-                magnitudes: buffer_from_slice(&self.device, worklist.magnitudes()),
-                work_items: buffer_from_slice(&self.device, worklist.items()),
-                address_offsets: buffer_from_slice(&self.device, worklist.address_offsets()),
+                source_rows: input.source_rows,
+                occurrences: input.occurrences,
+                magnitudes: input.magnitudes,
+                work_items: input.items,
+                address_offsets: input.address_offsets,
                 e_lo: buffer_from_slice(&self.device, &flat_e_lo),
                 e_hi: buffer_from_slice(&self.device, &flat_e_hi),
                 padding: buffer_from_slice(&self.device, &padding),
@@ -288,11 +428,17 @@ impl SolinasMetal {
                 padding_bytes,
                 partial_bytes,
                 output_bytes,
+                carrier_bytes,
+                member_owned_bytes,
                 owned_bytes,
             },
             threadgroup_memory_bytes: THREADGROUP_BYTES,
             source_rows_storage_id,
             source_device_registry_id,
+            source_generation,
+            source_completion_serial,
+            worker_variant: input.worker_variant,
+            stage1_receipt: input.stage1_receipt,
             completed: Cell::new(false),
         })
     }
@@ -319,8 +465,33 @@ impl BytecodeAddressSparseInvocation {
                 resident_wall: resident_started.elapsed(),
                 source_rows_storage_id: self.source_rows_storage_id,
                 source_device_registry_id: self.source_device_registry_id,
+                source_generation: self.source_generation,
+                source_completion_serial: self.source_completion_serial,
                 physical_rows: self.params.physical_rows as usize,
                 work_items: self.params.work_items as usize,
+                worker_variant: self.worker_variant,
+                worker_simd_width: self.worker_limits.thread_execution_width,
+                worker_threads: WORKER_THREADS,
+                worker_items_per_threadgroup: WORKER_ITEMS_PER_THREADGROUP,
+                worker_threadgroups: (self.params.work_items as usize)
+                    .div_ceil(WORKER_ITEMS_PER_THREADGROUP),
+                worker_tail_slots: (self.params.work_items as usize)
+                    .div_ceil(WORKER_ITEMS_PER_THREADGROUP)
+                    * WORKER_ITEMS_PER_THREADGROUP
+                    - self.params.work_items as usize,
+                worker_dynamic_threadgroup_bytes: self.threadgroup_memory_bytes,
+                worker_static_threadgroup_bytes: self
+                    .worker_limits
+                    .static_threadgroup_memory_length,
+                worker_threadgroup_bytes: self.worker_limits.static_threadgroup_memory_length
+                    + self.threadgroup_memory_bytes as u64,
+                reducer_threads: REDUCE_THREADS,
+                reducer_threadgroups: (self.params.stages as usize
+                    * self.params.addresses as usize)
+                    .div_ceil(REDUCE_THREADS),
+                reducer_static_threadgroup_bytes: self
+                    .reduce_limits
+                    .static_threadgroup_memory_length,
                 static_buffer_identities: self.static_buffer_identities(),
             })
         })
@@ -336,15 +507,15 @@ impl BytecodeAddressSparseInvocation {
         worker.set_buffer(4, Some(&self.buffers.e_hi), 0);
         worker.set_buffer(5, Some(&self.buffers.partials), 0);
         set_inline_bytes(worker, 6, &self.params);
-        worker.set_threadgroup_memory_length(0, THREADGROUP_BYTES as u64);
         worker.dispatch_thread_groups(
             MTLSize {
-                width: u64::from(self.params.work_items),
+                width: u64::from(self.params.work_items)
+                    .div_ceil(WORKER_ITEMS_PER_THREADGROUP as u64),
                 height: 1,
                 depth: 1,
             },
             MTLSize {
-                width: THREADS as u64,
+                width: WORKER_THREADS as u64,
                 height: 1,
                 depth: 1,
             },
@@ -361,12 +532,12 @@ impl BytecodeAddressSparseInvocation {
         let output_fields = u64::from(self.params.stages) * u64::from(self.params.addresses);
         reduce.dispatch_thread_groups(
             MTLSize {
-                width: output_fields.div_ceil(THREADS as u64),
+                width: output_fields.div_ceil(REDUCE_THREADS as u64),
                 height: 1,
                 depth: 1,
             },
             MTLSize {
-                width: THREADS as u64,
+                width: REDUCE_THREADS as u64,
                 height: 1,
                 depth: 1,
             },
@@ -375,14 +546,41 @@ impl BytecodeAddressSparseInvocation {
     }
 
     fn validate_source(&self) -> Result<(), BytecodeAddressSparseRuntimeError> {
-        self.context
-            .validate_booleanity_rows(&self.buffers.source_rows)?;
-        if self.buffers.source_rows.len()
-            != self.params.inner_length as usize * self.params.outer_length as usize
-            || self.buffers.source_rows.allocation_identity() != self.source_rows_storage_id
-            || self.buffers.source_rows.device_registry_id() != self.source_device_registry_id
-        {
-            return Err(BytecodeAddressSparseRuntimeError::InvalidState);
+        if let Some(rows) = self.buffers.source_rows.as_ref() {
+            self.context.validate_booleanity_rows(rows)?;
+            if rows.len() != self.params.inner_length as usize * self.params.outer_length as usize
+                || rows.allocation_identity() != self.source_rows_storage_id
+                || rows.device_registry_id() != self.source_device_registry_id
+                || self.source_generation != 0
+                || self.source_completion_serial != 0
+            {
+                return Err(BytecodeAddressSparseRuntimeError::InvalidState);
+            }
+        } else {
+            let receipt = self
+                .stage1_receipt
+                .ok_or(BytecodeAddressSparseRuntimeError::InvalidState)?;
+            if receipt.device_registry_id() != self.context.device_registry_id()
+                || receipt.device_registry_id() != self.source_device_registry_id
+                || receipt.source_rows_storage_id() != self.source_rows_storage_id
+                || receipt.source_generation() != self.source_generation
+                || receipt.source_completion_serial() != self.source_completion_serial
+                || receipt.completion_serial() == 0
+                || !receipt.complete_overwrite()
+                || receipt.covered_rows() != self.params.physical_rows as usize
+                || receipt.work_items() != self.params.work_items as usize
+                || receipt.occurrence_storage_id() != self.buffers.occurrences.as_ptr() as usize
+                || receipt.magnitude_storage_id() != self.buffers.magnitudes.as_ptr() as usize
+                || receipt.work_item_storage_id() != self.buffers.work_items.as_ptr() as usize
+                || receipt.address_offset_storage_id()
+                    != self.buffers.address_offsets.as_ptr() as usize
+                || receipt.occurrence_bytes() as u64 != self.buffers.occurrences.length()
+                || receipt.magnitude_bytes() as u64 != self.buffers.magnitudes.length()
+                || receipt.work_item_bytes() as u64 != self.buffers.work_items.length()
+                || receipt.address_offset_bytes() as u64 != self.buffers.address_offsets.length()
+            {
+                return Err(BytecodeAddressSparseRuntimeError::InvalidState);
+            }
         }
         Ok(())
     }
@@ -461,10 +659,11 @@ pub(crate) enum BytecodeAddressSparseRuntimeError {
     #[error("bytecode sparse address {0} size overflow")]
     SizeOverflow(&'static str),
     #[error(
-        "bytecode sparse address pipeline `{pipeline}` has SIMD width {got_width} and thread limit {got_threads}; expected width 32 and at least 256 threads"
+        "bytecode sparse address pipeline `{pipeline}` has SIMD width {got_width} and thread limit {got_threads}; expected width 32 and at least {expected_threads} threads"
     )]
     UnsupportedPipeline {
         pipeline: &'static str,
+        expected_threads: usize,
         got_width: usize,
         got_threads: usize,
     },
@@ -562,12 +761,14 @@ fn padding_base_terms(
 fn validate_pipeline(
     pipeline: &'static str,
     limits: PipelineLimits,
+    expected_threads: usize,
 ) -> Result<(), BytecodeAddressSparseRuntimeError> {
     if limits.thread_execution_width != SIMD_WIDTH
-        || limits.max_total_threads_per_threadgroup < THREADS
+        || limits.max_total_threads_per_threadgroup < expected_threads
     {
         return Err(BytecodeAddressSparseRuntimeError::UnsupportedPipeline {
             pipeline,
+            expected_threads,
             got_width: limits.thread_execution_width,
             got_threads: limits.max_total_threads_per_threadgroup,
         });

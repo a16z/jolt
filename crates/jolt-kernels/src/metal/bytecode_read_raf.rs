@@ -21,7 +21,7 @@ use super::solinas::bytecode_read_raf::{
     BytecodeReadRafShape,
 };
 use super::solinas::bytecode_read_raf_address::{
-    BytecodeAddressMajorConfig, BytecodeAddressMajorResidentCarrier,
+    BytecodeAddressMajorConfig, BytecodeAddressSparseStage1Carrier,
 };
 use super::solinas::{
     BooleanityRows, BytecodeCycleRowInputs, BytecodeCycleRowSequence, BytecodeCycleSequenceConfig,
@@ -282,7 +282,7 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             return Ok(Box::new(cpu(session)?));
         }
         if config.implementation == BytecodeReadRafAddressImplementation::AddressMajor {
-            let _ = route_span.record("realized_route", "address_major");
+            let _ = route_span.record("realized_route", "address_major_fused_stage1_grouped_v1");
             let _ = route_span.record("fallback_reason", "none");
         } else {
             let _ = route_span.record("realized_route", "cpu");
@@ -325,49 +325,55 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             )))
         })?;
         if config.implementation == BytecodeReadRafAddressImplementation::AddressMajor {
-            let carrier = session
-                .take::<BytecodeAddressMajorResidentCarrier>()
-                .ok_or(KernelError::InvariantViolation {
+            let carrier = session.take::<BytecodeAddressSparseStage1Carrier>().ok_or(
+                KernelError::InvariantViolation {
                     reason: "bytecode address-major carrier is missing",
-                })?;
+                },
+            )?;
             let receipt = carrier.receipt();
-            let source_receipt = carrier.source_receipt();
-            let storage = self
+            let topology =
+                carrier
+                    .fused_topology_receipt()
+                    .ok_or(KernelError::InvariantViolation {
+                        reason: "bytecode address-major carrier lacks fused Stage-1 topology",
+                    })?;
+            let invocation = self
                 .context
-                .prepare_bytecode_address_major_resident_carrier(
-                    carrier,
-                    &tables.e_lo,
-                    &tables.e_hi,
-                    config.address_major,
-                )
+                .prepare_bytecode_address_sparse_resident(carrier, &tables.e_lo, &tables.e_hi)
                 .map_err(|error| {
                     KernelError::Sumcheck(metal_error(format!(
                         "bytecode address-major carrier preparation failed: {error}"
                     )))
                 })?;
-            let storage_stats = storage.storage();
-            let pending = storage.submit().map_err(|error| {
-                KernelError::Sumcheck(metal_error(format!(
-                    "bytecode address-major submission failed: {error}"
-                )))
-            })?;
+            let storage = invocation.storage();
             drop(prepare_span);
 
             let _join_span =
                 tracing::info_span!("MetalBytecodeReadRafAddress::address_major_join").entered();
-            let (_, observation) = pending.join().map_err(|error| {
+            let observation = invocation.execute_timed().map_err(|error| {
                 KernelError::Sumcheck(metal_error(format!(
                     "bytecode address-major completion failed: {error}"
                 )))
             })?;
-            let producer = receipt.producer();
-            if observation.source_rows_storage_id != Some(producer.source_allocation_identity())
-                || observation.source_rows_device_registry_id != Some(producer.device_registry_id())
+            let source_buffers = [
+                receipt.occurrence_storage_id(),
+                receipt.magnitude_storage_id(),
+                receipt.work_item_storage_id(),
+                receipt.address_offset_storage_id(),
+            ];
+            if observation.source_rows_storage_id != receipt.source_rows_storage_id()
+                || observation.source_device_registry_id != receipt.device_registry_id()
+                || observation.source_generation != receipt.source_generation()
+                || observation.source_completion_serial != receipt.source_completion_serial()
+                || observation.physical_rows != receipt.physical_rows()
+                || observation.work_items != receipt.work_items()
+                || observation.static_buffer_identities[..4] != source_buffers
             {
                 return Err(KernelError::InvariantViolation {
                     reason: "bytecode address-major source identity changed",
                 });
             }
+            drop(invocation);
             let expected_fields = stage_points.len().checked_mul(address_elements).ok_or(
                 KernelError::InvariantViolation {
                     reason: "bytecode address-major output size overflow",
@@ -391,12 +397,36 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                 pushforwards,
                 receipt.first_push_pc(),
             )?;
-            let producer_logical_movement_bytes =
+            let source_rows_bytes =
                 trace_elements
-                    .checked_mul(33)
+                    .checked_mul(40)
                     .ok_or(KernelError::InvariantViolation {
-                        reason: "bytecode address-major producer traffic overflow",
+                        reason: "bytecode address-major source byte count overflow",
                     })?;
+            let producer_persistent_write_bytes = receipt
+                .occurrence_bytes()
+                .checked_add(receipt.magnitude_bytes())
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "bytecode address-major producer traffic overflow",
+                })?;
+            let producer_topology_read_bytes = topology
+                .descriptor_bytes()
+                .checked_add(topology.pivot_bytes())
+                .and_then(|bytes| bytes.checked_add(topology.chunk_offset_bytes()))
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "bytecode address-major topology traffic overflow",
+                })?;
+            let producer_logical_movement_bytes = producer_persistent_write_bytes
+                .checked_add(producer_topology_read_bytes)
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "bytecode address-major producer movement overflow",
+                })?;
+            let topology_publication_bytes = producer_topology_read_bytes
+                .checked_add(topology.work_item_bytes())
+                .and_then(|bytes| bytes.checked_add(topology.address_offset_bytes()))
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "bytecode address-major topology publication overflow",
+                })?;
             {
                 let _complete_span = tracing::info_span!(
                     "MetalBytecodeReadRafAddress::address_major_complete",
@@ -404,61 +434,88 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                     addresses = address_elements,
                     stages = stage_points.len(),
                     requested = "address_major",
-                    realized_route = "address_major",
+                    realized_route = "address_major_fused_stage1_grouped_v1",
                     fallback_reason = "none",
-                    source_generation = producer.generation(),
-                    source_completion_serial = source_receipt.completion_serial(),
-                    source_rows_storage_id = producer.source_allocation_identity(),
-                    source_rows_bytes = producer.source_allocation_bytes(),
-                    source_device_registry_id = producer.device_registry_id(),
-                    carrier_cells_storage_id = receipt.cells().allocation_identity(),
-                    carrier_cells_bytes = receipt.cells().bytes(),
-                    carrier_inner_sign_storage_id = receipt.inner_sign().allocation_identity(),
-                    carrier_inner_sign_bytes = receipt.inner_sign().bytes(),
-                    carrier_magnitude_storage_id = receipt.magnitude().allocation_identity(),
-                    carrier_magnitude_bytes = receipt.magnitude().bytes(),
-                    carrier_resident_bytes = storage_stats.carrier_bytes,
-                    producer_persistent_write_bytes = storage_stats.carrier_bytes,
+                    physical_rows = receipt.physical_rows(),
+                    work_items = receipt.work_items(),
+                    source_generation = receipt.source_generation(),
+                    source_completion_serial = receipt.source_completion_serial(),
+                    source_rows_storage_id = receipt.source_rows_storage_id(),
+                    source_rows_bytes,
+                    source_claim_storage_id = receipt.source_claim_storage_id(),
+                    source_device_registry_id = receipt.device_registry_id(),
+                    carrier_completion_serial = receipt.completion_serial(),
+                    carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
+                    carrier_occurrence_bytes = receipt.occurrence_bytes(),
+                    carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
+                    carrier_magnitude_bytes = receipt.magnitude_bytes(),
+                    carrier_work_item_storage_id = receipt.work_item_storage_id(),
+                    carrier_work_item_bytes = receipt.work_item_bytes(),
+                    carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
+                    carrier_address_offset_bytes = receipt.address_offset_bytes(),
+                    carrier_resident_bytes = receipt.persistent_bytes(),
+                    bytecode_descriptor_storage_id = topology.descriptor_allocation_identity(),
+                    bytecode_descriptor_bytes = topology.descriptor_bytes(),
+                    bytecode_pivot_storage_id = topology.pivot_allocation_identity(),
+                    bytecode_pivot_bytes = topology.pivot_bytes(),
+                    bytecode_chunk_offset_storage_id = topology.chunk_offset_allocation_identity(),
+                    bytecode_chunk_offset_bytes = topology.chunk_offset_bytes(),
+                    topology_publication_bytes,
+                    producer_persistent_write_bytes,
                     producer_logical_movement_bytes,
-                    producer_topology_read_bytes = 0usize,
+                    producer_topology_read_bytes,
                     member_carrier_owned_bytes = 0usize,
                     member_source_scans = 0usize,
                     member_source_upload_bytes = 0usize,
-                    equality_bytes = storage_stats.equality_bytes,
-                    partial_bytes = storage_stats.partial_bytes,
-                    output_readback_bytes = storage_stats.output_bytes,
-                    member_owned_bytes = storage_stats.owned_bytes,
+                    equality_bytes = storage.equality_bytes,
+                    padding_bytes = storage.padding_bytes,
+                    partial_bytes = storage.partial_bytes,
+                    output_readback_bytes = storage.output_bytes,
+                    member_owned_bytes = storage.member_owned_bytes,
                     command_buffers = 1usize,
                     waits = 1usize,
                     worker_dispatches = 1usize,
+                    worker_variant = observation.worker_variant,
+                    worker_simd_width = observation.worker_simd_width,
+                    worker_threads = observation.worker_threads,
+                    worker_items_per_threadgroup = observation.worker_items_per_threadgroup,
+                    worker_threadgroups = observation.worker_threadgroups,
+                    worker_tail_slots = observation.worker_tail_slots,
+                    worker_dynamic_threadgroup_bytes = observation.worker_dynamic_threadgroup_bytes,
+                    worker_static_threadgroup_bytes = observation.worker_static_threadgroup_bytes,
+                    worker_threadgroup_bytes = observation.worker_threadgroup_bytes,
                     reducer_dispatches = 1usize,
+                    reducer_threads = observation.reducer_threads,
+                    reducer_threadgroups = observation.reducer_threadgroups,
+                    reducer_static_threadgroup_bytes = observation.reducer_static_threadgroup_bytes,
                     output_fields = expected_fields,
-                    submit_ns = observation.submit_wall.as_nanos() as u64,
-                    overlap_ns = observation.overlap_wall.as_nanos() as u64,
-                    join_ns = observation.join_wall.as_nanos() as u64,
-                    resident_wall_ns = observation.total_wall.as_nanos() as u64,
+                    submit_ns = 0u64,
+                    overlap_ns = 0u64,
+                    join_ns = observation.resident_wall.as_nanos() as u64,
+                    resident_wall_ns = observation.resident_wall.as_nanos() as u64,
                     gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-                    completed_before_join = observation.completed_before_join,
-                    complete_overwrite = true,
+                    completed_before_join = false,
+                    complete_overwrite = receipt.complete_overwrite(),
                     carrier_released = true,
                 )
                 .entered();
             }
             tracing::info!(
                 target: "jolt::metal",
-                submit_ns = observation.submit_wall.as_nanos() as u64,
-                overlap_ns = observation.overlap_wall.as_nanos() as u64,
-                join_ns = observation.join_wall.as_nanos() as u64,
-                total_ns = observation.total_wall.as_nanos() as u64,
+                submit_ns = 0u64,
+                overlap_ns = 0u64,
+                join_ns = observation.resident_wall.as_nanos() as u64,
+                total_ns = observation.resident_wall.as_nanos() as u64,
                 gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-                completed_before_join = observation.completed_before_join,
-                source_generation = producer.generation(),
-                source_rows_storage_id = producer.source_allocation_identity(),
-                source_device_registry_id = producer.device_registry_id(),
-                carrier_cells_storage_id = receipt.cells().allocation_identity(),
-                carrier_inner_sign_storage_id = receipt.inner_sign().allocation_identity(),
-                carrier_magnitude_storage_id = receipt.magnitude().allocation_identity(),
-                carrier_bytes = storage_stats.carrier_bytes as u64,
+                completed_before_join = false,
+                source_generation = receipt.source_generation(),
+                source_rows_storage_id = receipt.source_rows_storage_id(),
+                source_device_registry_id = receipt.device_registry_id(),
+                carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
+                carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
+                carrier_work_item_storage_id = receipt.work_item_storage_id(),
+                carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
+                carrier_bytes = storage.carrier_bytes as u64,
                 member_carrier_owned_bytes = 0u64,
                 member_source_scans = 0u64,
                 member_source_upload_bytes = 0u64,
@@ -577,6 +634,7 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                 row_allocations = 0u64,
                 row_upload_bytes = 0u64,
                 diagnostic_worklist_upload_bytes = worklist.persistent_bytes() as u64,
+                worker_variant = observation.worker_variant,
                 "Metal bytecode sparse-address probe matched the optimized CPU tables"
             );
             return Ok(Box::new(prepared_cpu));
@@ -941,11 +999,19 @@ fn bytecode_prepare_can_fallback(error: &MetalError) -> bool {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal bytecode parity setup")]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
+    use jolt_claims::protocols::jolt::relations::instruction::{
+        InstructionReadRafChallenges, InstructionReadRafInputClaims,
+    };
+    use jolt_lookup_tables::XLEN as RISCV_XLEN;
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+    use jolt_verifier::stages::stage5::InstructionReadRaf;
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCyclePhaseCommittedChallenges,
@@ -956,6 +1022,7 @@ mod tests {
     use jolt_witness::ProgramSource;
 
     use super::*;
+    use crate::metal::solinas::bytecode_read_raf_address::BytecodeAddressStage1TopologyOwner;
     use crate::optimized::harness::{probe_input_claim, run_lockstep};
     use crate::optimized::instruction_read_raf::{
         collect_instruction_cycle_rows, InstructionCycleRow,
@@ -1132,8 +1199,46 @@ mod tests {
             )
             .unwrap();
             assert!(session
-                .state::<BytecodeAddressMajorResidentCarrier>()
+                .state::<BytecodeAddressStage1TopologyOwner>()
                 .is_some());
+            assert!(session
+                .state::<BytecodeAddressSparseStage1Carrier>()
+                .is_none());
+            let instruction_dimensions = InstructionReadRafDimensions::new(
+                log_t,
+                2 * RISCV_XLEN,
+                NonZeroUsize::new(4).unwrap(),
+            );
+            let instruction_relation = InstructionReadRaf::new(instruction_dimensions);
+            let instruction_claims = InstructionReadRafInputClaims::<AkitaField>::default();
+            let instruction_points = InstructionReadRafInputClaims {
+                lookup_output: point(log_t, 151),
+                left_lookup_operand: point(log_t, 157),
+                right_lookup_operand: point(log_t, 163),
+            };
+            let instruction_challenges = InstructionReadRafChallenges {
+                gamma: AkitaField::from_u64(167),
+            };
+            let instruction_inputs = ProverInputs {
+                relation: &instruction_relation,
+                claims: &instruction_claims,
+                points: &instruction_points,
+                challenges: &instruction_challenges,
+            };
+            let instruction_kernel = <MetalBackend as PrepareKernel<
+                AkitaField,
+                InstructionReadRaf<AkitaField>,
+            >>::prepare(
+                &production, &mut session, witness, instruction_inputs
+            )
+            .unwrap();
+            assert!(session
+                .state::<BytecodeAddressStage1TopologyOwner>()
+                .is_none());
+            assert!(session
+                .state::<BytecodeAddressSparseStage1Carrier>()
+                .is_some());
+            drop(instruction_kernel);
             let mut production_actual =
                 <MetalBackend as PrepareKernel<
                     AkitaField,
@@ -1141,7 +1246,7 @@ mod tests {
                 >>::prepare(&production, &mut session, witness, inputs())
                 .unwrap();
             assert!(session
-                .state::<BytecodeAddressMajorResidentCarrier>()
+                .state::<BytecodeAddressSparseStage1Carrier>()
                 .is_none());
             let mut production_expected =
                 prepare_bytecode_read_raf_address(&mut ProofSession::default(), witness, inputs())
