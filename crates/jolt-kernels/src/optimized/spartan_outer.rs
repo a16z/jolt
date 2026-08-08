@@ -68,6 +68,10 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_verifier::VerifierError;
 use jolt_witness::witnesses::SpartanOuterRow;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_witness::witnesses::{
+    FusedInc, InstructionRafFlag, LookupIndex, MappedPc, RemappedRamAddress, TableIndex, WitnessEnv,
+};
 #[cfg(test)]
 use jolt_witness::witnesses::{
     Imm, InstructionFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput,
@@ -75,6 +79,8 @@ use jolt_witness::witnesses::{
     Product, RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc,
 };
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_witness::WitnessBundle;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -87,8 +93,10 @@ use crate::metal::solinas::spartan_shift::{
 };
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
-    InstructionInputRow, InstructionInputRows, MetalError, SolinasMetal, SpartanOuterUniskipConfig,
-    SpartanOuterUniskipRow, SpartanOuterUniskipRows,
+    instruction_read_raf_claim_and_count_rank, BooleanityRow, InstructionInputRow,
+    InstructionInputRows, InstructionReadRafStage1Owner, MetalError, SolinasMetal,
+    SpartanOuterUniskipConfig, SpartanOuterUniskipRow, SpartanOuterUniskipRows,
+    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -419,6 +427,69 @@ impl RowsAccess<'_> {
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct Stage1InstructionFacts {
+    lookup_index: LookupIndex,
+    table_index: TableIndex,
+    raf_flag: InstructionRafFlag,
+    mapped_pc: MappedPc,
+    remapped_ram_address: RemappedRamAddress,
+    fused_inc: FusedInc,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone, Copy, Debug)]
+struct Stage1ProjectionRow {
+    outer: SpartanOuterRow,
+    instruction: Stage1InstructionFacts,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl WitnessBundle for Stage1ProjectionRow {
+    fn from_row(
+        row: &jolt_riscv::JoltTraceRow,
+        next: Option<&jolt_riscv::JoltTraceRow>,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self {
+            outer: SpartanOuterRow::from_row(row, next, env)?,
+            instruction: Stage1InstructionFacts::from_row(row, next, env)?,
+        })
+    }
+
+    fn annotated_ids() -> Vec<jolt_claims::protocols::jolt::JoltPolynomialId> {
+        SpartanOuterRow::annotated_ids()
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn pack_stage1_instruction_source(
+    facts: Stage1InstructionFacts,
+) -> Result<(BooleanityRow, u8, bool), MetalError> {
+    let mapped_pc = facts.mapped_pc.0.map(|pc| pc as u64);
+    let row = BooleanityRow::new(
+        facts.lookup_index.0,
+        mapped_pc,
+        facts.remapped_ram_address.0,
+        facts.fused_inc.0,
+    )?;
+    let table_plus_one = facts
+        .table_index
+        .0
+        .map_or(Some(0), |table| table.checked_add(1))
+        .and_then(|table| u8::try_from(table).ok())
+        .ok_or(MetalError::InvalidInstructionReadRafGrouped(
+            "lookup table index cannot be encoded by the Stage-1 owner".to_owned(),
+        ))?;
+    let _ = instruction_read_raf_claim_and_count_rank(table_plus_one, facts.raf_flag.0).ok_or(
+        MetalError::InvalidInstructionReadRafGrouped(
+            "lookup table index exceeds the InstructionReadRAF table domain".to_owned(),
+        ),
+    )?;
+    Ok((row, table_plus_one, facts.raf_flag.0))
+}
+
 /// Extended-node evaluations of
 /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
 /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
@@ -653,6 +724,127 @@ impl MetalSpartanDenseRowsError {
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
+fn stage1_owner_rows_span(cycles: usize, explicit_rows: usize) -> tracing::Span {
+    tracing::info_span!(
+        "MetalInstructionInput::compact_rows_prepare",
+        source_kind = "owned_random_access",
+        witness_row_extractions = cycles,
+        residual_rows_written = cycles,
+        compact_rows_written = cycles,
+        compact_row_bytes = 48,
+        residual_row_bytes = 112,
+        compact_allocations = 1,
+        residual_allocations = 1,
+        full_row_allocations = 0,
+        full_domain_copy_bytes = 0,
+        full_domain_copy_dispatches = 0,
+        host_repack_rows = 0,
+        compact_rows_storage_id = tracing::field::Empty,
+        residual_rows_storage_id = tracing::field::Empty,
+        resident_rows = cycles,
+        explicit_rows,
+    )
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<(SpartanOuterUniskipRows, InstructionReadRafStage1Owner), MetalSpartanDenseRowsError> {
+    let owned = witness
+        .owned_rows()
+        .filter(|rows| cycles <= rows.cycles())
+        .ok_or(MetalSpartanDenseRowsError::Kernel(
+            KernelError::InvariantViolation {
+                reason: "InstructionReadRAF Stage-1 ownership requires a random-access witness",
+            },
+        ))?;
+    let explicit_rows = owned.physical_rows().min(cycles);
+    let access = owned.view();
+    let span = stage1_owner_rows_span(cycles, explicit_rows);
+    let _entered = span.enter();
+    let mut source = context
+        .prepare_instruction_read_raf_stage1_storage(cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let outer_rows = context
+        .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |instruction_input, residual| {
+            source.with_chunk_writers(|source_chunks| {
+                #[cfg(feature = "parallel")]
+                {
+                    instruction_input
+                        .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                        .zip(residual.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                        .zip(source_chunks.par_iter_mut())
+                        .enumerate()
+                        .try_for_each(
+                            |(chunk, ((instruction_input, residual), source))|
+                             -> Result<(), MetalError> {
+                                if instruction_input.len() != source.len()
+                                    || residual.len() != source.len()
+                                {
+                                    return Err(MetalError::InvalidInstructionReadRafGrouped(
+                                        "Stage-1 source chunks disagree on row count".to_owned(),
+                                    ));
+                                }
+                                for offset in 0..source.len() {
+                                    let row_index =
+                                        chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS + offset;
+                                    let projected: Stage1ProjectionRow = access
+                                        .window(row_index)
+                                        .map_err(|error| MetalError::SpartanOuterRowExtraction {
+                                            row: row_index,
+                                            message: error.to_string(),
+                                        })?;
+                                    (instruction_input[offset], residual[offset]) =
+                                        SpartanOuterUniskipRow::from_spartan_outer(&projected.outer)
+                                            .split();
+                                    let (row, table_plus_one, raf) =
+                                        pack_stage1_instruction_source(projected.instruction)?;
+                                    source.push(row, table_plus_one, raf)?;
+                                }
+                                Ok(())
+                            },
+                        )?;
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    for (chunk, source) in source_chunks.iter_mut().enumerate() {
+                        let start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+                        for offset in 0..source.len() {
+                            let row_index = start + offset;
+                            let projected: Stage1ProjectionRow =
+                                access.window(row_index).map_err(|error| {
+                                    MetalError::SpartanOuterRowExtraction {
+                                        row: row_index,
+                                        message: error.to_string(),
+                                    }
+                                })?;
+                            (instruction_input[row_index], residual[row_index]) =
+                                SpartanOuterUniskipRow::from_spartan_outer(&projected.outer)
+                                    .split();
+                            let (row, table_plus_one, raf) =
+                                pack_stage1_instruction_source(projected.instruction)?;
+                            source.push(row, table_plus_one, raf)?;
+                        }
+                    }
+                }
+                Ok(())
+            })
+        })
+        .map_err(MetalSpartanDenseRowsError::Metal)?
+        .with_explicit_rows(explicit_rows)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let owner = source.seal().map_err(MetalSpartanDenseRowsError::Metal)?;
+    let _ = span.record(
+        "compact_rows_storage_id",
+        outer_rows.instruction_input_allocation_identity(),
+    );
+    let _ = span.record("residual_rows_storage_id", outer_rows.allocation_identity());
+    Ok((outer_rows, owner))
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
     context: &SolinasMetal,
     witness: &dyn JoltWitnessPlane<AkitaField>,
@@ -767,6 +959,157 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
     );
     let _ = span.record("residual_rows_storage_id", prepared.0.allocation_identity());
     Ok(prepared)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<
+    (
+        SpartanOuterUniskipRows,
+        SpartanShiftResidentRows,
+        InstructionReadRafStage1Owner,
+    ),
+    MetalSpartanDenseRowsError,
+> {
+    context
+        .validate_spartan_outer_uniskip_shift_rows_capacity(cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let owned = witness
+        .owned_rows()
+        .filter(|rows| cycles <= rows.cycles())
+        .ok_or(MetalSpartanDenseRowsError::Kernel(
+            KernelError::InvariantViolation {
+                reason: "InstructionReadRAF Stage-1 ownership requires a random-access witness",
+            },
+        ))?;
+    let explicit_rows = owned.physical_rows().min(cycles);
+    let access = owned.view();
+    let span = stage1_owner_rows_span(cycles, explicit_rows);
+    let _entered = span.enter();
+    let mut source = context
+        .prepare_instruction_read_raf_stage1_storage(cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let (outer_rows, shift_rows) = context
+        .prepare_spartan_outer_uniskip_rows_with_shift_fill(
+            cycles,
+            |instruction_input, residual, unexpanded_pc, pc, flags| {
+                source.with_chunk_writers(|source_chunks| {
+                    #[cfg(feature = "parallel")]
+                    {
+                        let flags_per_chunk = INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS
+                            / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
+                        instruction_input
+                            .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+                            .zip(residual.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                            .zip(
+                                unexpanded_pc
+                                    .par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS),
+                            )
+                            .zip(pc.par_chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+                            .zip(flags.par_chunks_mut(flags_per_chunk))
+                            .zip(source_chunks.par_iter_mut())
+                            .enumerate()
+                            .try_for_each(
+                                |(
+                                    chunk,
+                                    (
+                                        (
+                                            (((instruction_input, residual), unexpanded_pc), pc),
+                                            flags,
+                                        ),
+                                        source,
+                                    ),
+                                )|
+                                 -> Result<(), MetalError> {
+                                    if instruction_input.len() != source.len()
+                                        || residual.len() != source.len()
+                                        || unexpanded_pc.len() != source.len()
+                                        || pc.len() != source.len()
+                                    {
+                                        return Err(MetalError::InvalidInstructionReadRafGrouped(
+                                            "Stage-1 source chunks disagree on row count"
+                                                .to_owned(),
+                                        ));
+                                    }
+                                    flags.fill(SpartanShiftFlagWord::default());
+                                    for offset in 0..source.len() {
+                                        let row_index = chunk
+                                            * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS
+                                            + offset;
+                                        let projected: Stage1ProjectionRow =
+                                            access.window(row_index).map_err(|error| {
+                                                MetalError::SpartanOuterRowExtraction {
+                                                    row: row_index,
+                                                    message: error.to_string(),
+                                                }
+                                            })?;
+                                        (instruction_input[offset], residual[offset]) =
+                                            SpartanOuterUniskipRow::from_spartan_outer(
+                                                &projected.outer,
+                                            )
+                                            .split();
+                                        write_metal_spartan_shift_row(
+                                            &projected.outer,
+                                            offset % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
+                                            &mut unexpanded_pc[offset],
+                                            &mut pc[offset],
+                                            &mut flags[offset / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD],
+                                        );
+                                        let (row, table_plus_one, raf) =
+                                            pack_stage1_instruction_source(projected.instruction)?;
+                                        source.push(row, table_plus_one, raf)?;
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+                    }
+                    #[cfg(not(feature = "parallel"))]
+                    {
+                        flags.fill(SpartanShiftFlagWord::default());
+                        for (chunk, source) in source_chunks.iter_mut().enumerate() {
+                            let start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+                            for offset in 0..source.len() {
+                                let row_index = start + offset;
+                                let projected: Stage1ProjectionRow = access
+                                    .window(row_index)
+                                    .map_err(|error| MetalError::SpartanOuterRowExtraction {
+                                        row: row_index,
+                                        message: error.to_string(),
+                                    })?;
+                                (instruction_input[row_index], residual[row_index]) =
+                                    SpartanOuterUniskipRow::from_spartan_outer(&projected.outer)
+                                        .split();
+                                write_metal_spartan_shift_row(
+                                    &projected.outer,
+                                    row_index % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD,
+                                    &mut unexpanded_pc[row_index],
+                                    &mut pc[row_index],
+                                    &mut flags[row_index / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD],
+                                );
+                                let (row, table_plus_one, raf) =
+                                    pack_stage1_instruction_source(projected.instruction)?;
+                                source.push(row, table_plus_one, raf)?;
+                            }
+                        }
+                    }
+                    Ok(())
+                })
+            },
+        )
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let outer_rows = outer_rows
+        .with_explicit_rows(explicit_rows)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let owner = source.seal().map_err(MetalSpartanDenseRowsError::Metal)?;
+    let _ = span.record(
+        "compact_rows_storage_id",
+        outer_rows.instruction_input_allocation_identity(),
+    );
+    let _ = span.record("residual_rows_storage_id", outer_rows.allocation_identity());
+    Ok((outer_rows, shift_rows, owner))
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]

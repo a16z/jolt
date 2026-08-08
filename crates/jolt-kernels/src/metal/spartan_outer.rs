@@ -25,10 +25,12 @@ use rayon::prelude::*;
 
 use super::backend::{MetalBackend, MetalConfig};
 use super::instruction_input::{InstructionInputDenseStorageMode, PreparedInstructionInput};
+use super::instruction_read_raf::InstructionReadRafAddressImplementation;
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
     instruction_input_sequence_storage_bytes, instruction_ra_weight_capacities,
-    outer_remainder_sequence_max_buffer_bytes_with_config,
+    instruction_read_raf_stage1_claim_bytes, instruction_read_raf_stage1_device_bytes,
+    instruction_read_raf_stage1_row_bytes, outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, spartan_outer_uniskip_invocation_bytes,
     spartan_outer_uniskip_row_bytes, InstructionInputRows, InstructionRaSequenceStorage,
     MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
@@ -38,9 +40,12 @@ use super::spartan_dense::SpartanDenseResidentOwner;
 use super::spartan_product::MetalProductUniskipEndpointCarrier;
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
 use crate::optimized::spartan_outer::{
-    prepare_metal_instruction_input_witness_rows, prepare_metal_spartan_outer_shift_witness_rows,
-    prepare_metal_spartan_outer_uniskip, prepare_metal_spartan_outer_witness_rows,
-    take_metal_spartan_outer_tau, OptimizedOuterRemainder, OptimizedOuterUniskip,
+    prepare_metal_instruction_input_witness_rows,
+    prepare_metal_spartan_outer_shift_stage1_owner_witness_rows,
+    prepare_metal_spartan_outer_shift_witness_rows,
+    prepare_metal_spartan_outer_stage1_owner_witness_rows, prepare_metal_spartan_outer_uniskip,
+    prepare_metal_spartan_outer_witness_rows, take_metal_spartan_outer_tau,
+    MetalSpartanDenseRowsError, OptimizedOuterRemainder, OptimizedOuterUniskip,
 };
 use crate::optimized::spartan_shift::prepare_metal_spartan_shift_witness_rows;
 use crate::uniskip::UniskipKernel;
@@ -96,10 +101,15 @@ fn resident_row_consumers(cycles: usize, config: &MetalConfig) -> (bool, bool) {
     (stage1, instruction_input)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "capacity tests exercise the resident consumers independently"
+)]
 fn resident_row_working_set(
     cycles: usize,
     stage1: bool,
     instruction_input: bool,
+    instruction_read_raf_owner: bool,
     borrow_outer_residual: bool,
     metal_uniskip: bool,
     metal_remainder: bool,
@@ -134,10 +144,16 @@ fn resident_row_working_set(
     } else {
         0
     };
+    let instruction_read_raf_bytes = if instruction_read_raf_owner {
+        instruction_read_raf_stage1_device_bytes(cycles)?
+    } else {
+        0
+    };
     row_bytes
         .checked_add(instruction_input_bytes)
         .and_then(|bytes| bytes.checked_add(uniskip_bytes))
         .and_then(|bytes| bytes.checked_add(remainder_bytes))
+        .and_then(|bytes| bytes.checked_add(instruction_read_raf_bytes))
         .ok_or(MetalError::InputTooLong(cycles))
 }
 
@@ -336,8 +352,19 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
     ) -> Result<(), KernelError<AkitaField>> {
         let cycles = 1usize << log_t;
         self.prepare_ram_raf_witness(session, log_t, witness)?;
-        let (stage1_eligible, instruction_input_eligible) =
+        let (mut stage1_eligible, instruction_input_eligible) =
             resident_row_consumers(cycles, &self.config);
+        let instruction_read_raf_owner_requested =
+            self.config.instruction_read_raf.address_implementation
+                == InstructionReadRafAddressImplementation::Stage1Grouped
+            && cycles >= self.config.instruction_read_raf.address_cutoff_elements
+            && !(self.config.bytecode_read_raf_address.implementation
+                == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajorShadow
+                && cycles >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff)
+            && witness
+                    .owned_rows()
+                    .is_some_and(|rows| cycles <= rows.cycles());
+        stage1_eligible |= instruction_read_raf_owner_requested;
         let instruction_ra_dispatch = self.config.instruction_ra_virtualization.dispatch;
         if cycles
             >= self
@@ -392,6 +419,19 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             validate_resident_row_buffer(residual_bytes, device.max_buffer_length)
                         })
                         .and_then(|()| {
+                            if instruction_read_raf_owner_requested && candidate.stage1 {
+                                validate_resident_row_buffer(
+                                    instruction_read_raf_stage1_row_bytes(cycles)?,
+                                    device.max_buffer_length,
+                                )?;
+                                validate_resident_row_buffer(
+                                    instruction_read_raf_stage1_claim_bytes(cycles)?,
+                                    device.max_buffer_length,
+                                )?;
+                            }
+                            Ok(())
+                        })
+                        .and_then(|()| {
                             if candidate.stage1
                                 && cycles
                                     >= self.config.spartan_outer_remainder.trace_cutoff_elements
@@ -408,6 +448,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 cycles,
                                 candidate.stage1,
                                 candidate.instruction_input,
+                                instruction_read_raf_owner_requested && candidate.stage1,
                                 borrow_outer_residual && candidate.instruction_input,
                                 candidate.stage1
                                     && cycles
@@ -444,7 +485,9 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         }
         if let Some(plan) = admitted_plan {
             if plan.stage1 {
-                let mut rows = if cycles >= self.config.spartan_shift.trace_cutoff_elements {
+                let (mut rows, instruction_read_raf_owner) = if cycles
+                    >= self.config.spartan_shift.trace_cutoff_elements
+                {
                     let span = tracing::info_span!(
                         "MetalSpartanDense::witness_prepare",
                         cycles,
@@ -458,12 +501,23 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         fallback_reason = tracing::field::Empty,
                     );
                     let _entered = span.enter();
-                    match prepare_metal_spartan_outer_shift_witness_rows(
-                        &self.context,
-                        witness,
-                        cycles,
-                    ) {
-                        Ok((rows, shift_rows)) => {
+                    let prepared = if instruction_read_raf_owner_requested {
+                        prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
+                            &self.context,
+                            witness,
+                            cycles,
+                        )
+                        .map(|(rows, shift_rows, owner)| (rows, shift_rows, Some(owner)))
+                    } else {
+                        prepare_metal_spartan_outer_shift_witness_rows(
+                            &self.context,
+                            witness,
+                            cycles,
+                        )
+                        .map(|(rows, shift_rows)| (rows, shift_rows, None))
+                    };
+                    match prepared {
+                        Ok((rows, shift_rows, instruction_read_raf_owner)) => {
                             let shift_resident_bytes = shift_rows.resident_bytes();
                             let owner =
                                 SpartanDenseResidentOwner::from_co_produced_shift(shift_rows)
@@ -483,7 +537,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             let _ = span.record("admitted", true);
                             let _ = span.record("fallback_reason", "none");
                             session.park(owner);
-                            rows
+                            (rows, instruction_read_raf_owner)
                         }
                         Err(error) if error.is_capacity_error() => {
                             let _ = span.record("admitted", false);
@@ -493,17 +547,70 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 error = ?error,
                                 "Spartan dense Shift co-production was not admitted; retaining Stage-1 rows only"
                             );
-                            prepare_metal_spartan_outer_witness_rows(
-                                &self.context,
-                                witness,
-                                cycles,
-                            )?
+                            if instruction_read_raf_owner_requested {
+                                prepare_metal_spartan_outer_stage1_owner_witness_rows(
+                                    &self.context,
+                                    witness,
+                                    cycles,
+                                )
+                                .map(|(rows, owner)| (rows, Some(owner)))
+                                .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
+                            } else {
+                                (
+                                    prepare_metal_spartan_outer_witness_rows(
+                                        &self.context,
+                                        witness,
+                                        cycles,
+                                    )?,
+                                    None,
+                                )
+                            }
                         }
                         Err(error) => return Err(error.into_kernel_error()),
                     }
+                } else if instruction_read_raf_owner_requested {
+                    prepare_metal_spartan_outer_stage1_owner_witness_rows(
+                        &self.context,
+                        witness,
+                        cycles,
+                    )
+                    .map(|(rows, owner)| (rows, Some(owner)))
+                    .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
                 } else {
-                    prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?
+                    (
+                        prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?,
+                        None,
+                    )
                 };
+                if let Some(owner) = instruction_read_raf_owner {
+                    let receipt = owner.receipt();
+                    let _span = tracing::info_span!(
+                        "MetalInstructionReadRaf::stage1_source_publish",
+                        rows = receipt.rows(),
+                        row_bytes = receipt.row_bytes(),
+                        claim_bytes = receipt.claim_bytes(),
+                        resident_device_bytes = receipt.resident_device_bytes(),
+                        host_row_write_bytes = receipt.host_row_write_bytes(),
+                        host_claim_write_bytes = receipt.host_claim_write_bytes(),
+                        host_count_update_bytes = receipt.host_count_update_bytes(),
+                        count_chunks = receipt.count_chunks(),
+                        count_bytes = receipt.count_bytes(),
+                        row_allocation_identity = receipt.row_allocation_identity(),
+                        claim_allocation_identity = receipt.claim_allocation_identity(),
+                        count_allocation_identity = receipt.count_allocation_identity(),
+                        device_registry_id = receipt.device_registry_id(),
+                        source_generation = receipt.source_generation(),
+                        completion_serial = receipt.completion_serial(),
+                        count_order = "table_major_then_none_v1",
+                        publication_kind = "host_fill_v1",
+                        complete_overwrite = receipt.complete_overwrite(),
+                        source_windows = receipt.source_windows(),
+                        member_upload_bytes = receipt.member_upload_bytes(),
+                        projection_dispatches = receipt.projection_dispatches(),
+                    )
+                    .entered();
+                    session.park(owner);
+                }
                 let compact_rows = plan
                     .instruction_input
                     .then(|| rows.share_instruction_input_rows());
@@ -1752,30 +1859,95 @@ mod tests {
     #[test]
     fn aggregate_instruction_input_working_set_matches_production_geometry() {
         assert_eq!(
-            resident_row_working_set(1 << 26, true, true, false, true, true, Default::default(),)
-                .unwrap(),
+            resident_row_working_set(
+                1 << 26,
+                true,
+                true,
+                false,
+                false,
+                true,
+                true,
+                Default::default(),
+            )
+            .unwrap(),
             21_482_508_176
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, true, true, false, true, true, Default::default(),)
-                .unwrap(),
+            resident_row_working_set(
+                1 << 28,
+                true,
+                true,
+                false,
+                false,
+                true,
+                true,
+                Default::default(),
+            )
+            .unwrap(),
             85_909_835_664
         );
         assert_eq!(
-            resident_row_working_set(1 << 26, true, true, true, true, true, Default::default(),)
-                .unwrap(),
+            resident_row_working_set(
+                1 << 26,
+                true,
+                true,
+                false,
+                true,
+                true,
+                true,
+                Default::default(),
+            )
+            .unwrap(),
             15_040_057_232
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, true, true, true, true, true, Default::default(),)
-                .unwrap(),
+            resident_row_working_set(
+                1 << 28,
+                true,
+                true,
+                false,
+                true,
+                true,
+                true,
+                Default::default(),
+            )
+            .unwrap(),
             60_140_031_888
+        );
+        assert_eq!(
+            resident_row_working_set(
+                1 << 26,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                Default::default(),
+            )
+            .unwrap(),
+            17_791_520_656
+        );
+        assert_eq!(
+            resident_row_working_set(
+                1 << 27,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                Default::default(),
+            )
+            .unwrap(),
+            35_577_008_016
         );
         assert_eq!(
             resident_row_working_set(
                 1 << 26,
                 false,
                 true,
+                false,
                 false,
                 false,
                 false,
@@ -1792,14 +1964,24 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 Default::default(),
             )
             .unwrap(),
             38_656_671_744
         );
         assert_eq!(
-            resident_row_working_set(1 << 28, true, false, false, true, true, Default::default(),)
-                .unwrap(),
+            resident_row_working_set(
+                1 << 28,
+                true,
+                false,
+                false,
+                false,
+                true,
+                true,
+                Default::default(),
+            )
+            .unwrap(),
             60_138_065_808
         );
     }

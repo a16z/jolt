@@ -128,3 +128,7 @@ required-features = ["metal", "parallel", "test-utils"]
 [[example]]
 name = "metal-hamming-weight-successor-eval"
 required-features = ["metal", "parallel", "test-utils"]
+
+[[example]]
+name = "metal-instruction-read-raf-stage1-eval"
+required-features = ["metal", "parallel", "test-utils"]

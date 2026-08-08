@@ -62,6 +62,37 @@ struct HammingHotRowsInner {
 pub struct HammingHotRows(Arc<HammingHotRowsInner>);
 
 impl BooleanityRows {
+    pub(super) fn from_initialized_buffer(
+        buffer: Buffer,
+        len: usize,
+        expected_device_registry_id: u64,
+    ) -> Result<Self, MetalError> {
+        if len == 0 {
+            return Err(MetalError::EmptyInput);
+        }
+        let expected_bytes = byte_length::<BooleanityRow>(len)?;
+        if buffer.length() != expected_bytes {
+            return Err(MetalError::BooleanityStorageLength {
+                name: "resident rows",
+                expected: expected_bytes as usize,
+                got: buffer.length() as usize,
+            });
+        }
+        let got = buffer.device().registry_id();
+        if got != expected_device_registry_id {
+            return Err(MetalError::BooleanityRowsDevice {
+                expected: expected_device_registry_id,
+                got,
+            });
+        }
+        Ok(Self(Arc::new(BooleanityRowsInner {
+            buffer,
+            len,
+            device_registry_id: expected_device_registry_id,
+            bytecode_outer_support: None,
+        })))
+    }
+
     pub(crate) fn buffer(&self) -> &Buffer {
         &self.0.buffer
     }

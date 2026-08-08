@@ -676,6 +676,7 @@ mod akita_benchmark {
         backend: Backend,
         instruction_ra_materialize_width: InstructionRaMaterializeWidth,
         instruction_ra_reuse_inverse: bool,
+        instruction_read_raf_metal_scatter_threads: usize,
         bytecode_cycle_algebra: BytecodeCycleAlgebra,
         bytecode_metal: BytecodeMetalTuning,
         bytecode_address_metal: BytecodeAddressMetalTuning,
@@ -707,6 +708,9 @@ mod akita_benchmark {
 
         #[clap(long)]
         instruction_ra_reuse_inverse: bool,
+
+        #[clap(long, default_value_t = 256)]
+        instruction_read_raf_metal_scatter_threads: usize,
 
         #[clap(long, value_enum, default_value = "q10")]
         bytecode_cycle_algebra: BytecodeCycleAlgebra,
@@ -847,6 +851,8 @@ mod akita_benchmark {
             backend: cli.backend,
             instruction_ra_materialize_width: cli.instruction_ra_materialize_width,
             instruction_ra_reuse_inverse: cli.instruction_ra_reuse_inverse,
+            instruction_read_raf_metal_scatter_threads: cli
+                .instruction_read_raf_metal_scatter_threads,
             bytecode_cycle_algebra: cli.bytecode_cycle_algebra,
             bytecode_metal: BytecodeMetalTuning {
                 message_threads: cli.bytecode_metal_message_threads,
@@ -907,6 +913,7 @@ mod akita_benchmark {
             backend: backend_choice,
             instruction_ra_materialize_width,
             instruction_ra_reuse_inverse,
+            instruction_read_raf_metal_scatter_threads,
             bytecode_cycle_algebra,
             bytecode_metal:
                 BytecodeMetalTuning {
@@ -1081,6 +1088,7 @@ mod akita_benchmark {
         let _ = (
             instruction_ra_materialize_width,
             instruction_ra_reuse_inverse,
+            instruction_read_raf_metal_scatter_threads,
             bytecode_metal_message_threads,
             bytecode_metal_transition_threads,
             bytecode_metal_max_threadgroups,
@@ -1155,6 +1163,10 @@ mod akita_benchmark {
                     .instruction_ra_virtualization
                     .dispatch
                     .reuse_inverse_for_dense = instruction_ra_reuse_inverse;
+                config
+                    .instruction_read_raf
+                    .stage1_scatter_threads_per_threadgroup =
+                    instruction_read_raf_metal_scatter_threads;
                 config.bytecode_read_raf_cycle.cpu_tail_algebra = optimized_bytecode_algebra;
                 config
                     .bytecode_read_raf_cycle
@@ -1354,6 +1366,12 @@ mod akita_benchmark {
                         .storage_initialization
                         .as_str(),
                     config.instruction_input.dense_storage_mode,
+                );
+                println!(
+                    "INSTRUCTION_READ_RAF_METAL_CONFIG backend=metal address_cutoff={} cutoff={} stage1_scatter_threads={}",
+                    config.instruction_read_raf.address_cutoff_elements,
+                    config.instruction_read_raf.cutoff_elements,
+                    instruction_read_raf_metal_scatter_threads,
                 );
                 println!(
                     "BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal trace_cutoff={} inner_log2={} selectors_per_tile={} tile_threads={} finalize_threads={}",

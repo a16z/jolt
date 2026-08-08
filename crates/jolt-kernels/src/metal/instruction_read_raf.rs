@@ -10,8 +10,10 @@ use jolt_witness::{JoltWitnessPlane, PolynomialEncoding};
 use super::backend::MetalBackend;
 use super::solinas::instruction_read_raf_v3::{AddressAtomSequence, ADDRESS_PHASE_BITS};
 use super::solinas::{
-    AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows, Product5Sequence,
-    Product5SequenceConfig, ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
+    AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows,
+    InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
+    InstructionReadRafStage1Owner, Product5Sequence, Product5SequenceConfig,
+    ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::optimized::instruction_read_raf::{
     prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
@@ -29,6 +31,8 @@ pub struct InstructionReadRafMetalConfig {
     pub address_implementation: InstructionReadRafAddressImplementation,
     /// Maximum exact-key atom count admitted by the compressed address path.
     pub address_atom_max_unique: usize,
+    /// Threadgroup width for the Stage-1 compatibility scatter.
+    pub stage1_scatter_threads_per_threadgroup: usize,
     /// Dispatch geometry for the resident address sequence.
     pub address_dispatch: AddressPhaseSequenceConfig,
     /// First table length whose next round runs on the CPU.
@@ -40,9 +44,10 @@ pub struct InstructionReadRafMetalConfig {
 impl Default for InstructionReadRafMetalConfig {
     fn default() -> Self {
         Self {
-            address_cutoff_elements: 1 << 18,
-            address_implementation: InstructionReadRafAddressImplementation::AtomV3,
+            address_cutoff_elements: 1 << 25,
+            address_implementation: InstructionReadRafAddressImplementation::Stage1Grouped,
             address_atom_max_unique: 1 << 16,
+            stage1_scatter_threads_per_threadgroup: 256,
             address_dispatch: AddressPhaseSequenceConfig::default(),
             cutoff_elements: 1 << 16,
             dispatch: Product5SequenceConfig::default(),
@@ -54,6 +59,7 @@ impl Default for InstructionReadRafMetalConfig {
 pub enum InstructionReadRafAddressImplementation {
     GroupedRows,
     AtomV3,
+    Stage1Grouped,
 }
 
 impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend {
@@ -78,13 +84,101 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 .config
                 .instruction_ra_virtualization
                 .trace_cutoff_elements;
-        let cpu = prepare_metal_instruction_read_raf(
-            session,
-            witness,
-            inputs,
-            use_metal_address,
-            collect_bytecode_support,
-        )?;
+        let stage1_owner = (use_metal_address
+            && self.config.instruction_read_raf.address_implementation
+                == InstructionReadRafAddressImplementation::Stage1Grouped
+            && dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
+            && !collect_bytecode_support)
+            .then(|| session.take::<InstructionReadRafStage1Owner>())
+            .flatten();
+        let (cpu, resident_grouped_planes) = if let Some(owner) = stage1_owner.as_ref() {
+            let device_registry_id = self.context.device_registry_id();
+            let scatter_source = owner
+                .lease(trace_elements, device_registry_id)
+                .map_err(metal_prepare_error)?;
+            let retained_claims = owner
+                .lease(trace_elements, device_registry_id)
+                .map_err(metal_prepare_error)?;
+            let cpu = OptimizedInstructionReadRafKernel::new_metal_resident(
+                dimensions,
+                &inputs.points.lookup_output,
+                retained_claims,
+                inputs.challenges.gamma,
+            )?;
+            let planes = self
+                .context
+                .prepare_instruction_read_raf_compatibility_scatter(
+                    scatter_source,
+                    &inputs.points.lookup_output,
+                    InstructionReadRafCompatibilityScatterConfig {
+                        threads_per_threadgroup: self
+                            .config
+                            .instruction_read_raf
+                            .stage1_scatter_threads_per_threadgroup,
+                    },
+                )
+                .map_err(metal_prepare_error)?;
+            let receipt = planes.receipt();
+            let execution = planes.execution();
+            let identities = receipt.allocation_identities();
+            let _span = tracing::info_span!(
+                "MetalInstructionReadRaf::stage1_grouped_scatter",
+                rows = receipt.rows(),
+                preparation_wall_ns = duration_ns(execution.preparation_wall),
+                command_wall_ns = duration_ns(execution.command_wall),
+                gpu_active_ns = duration_ns(execution.gpu_active),
+                status_readback_bytes = execution.status_readback_bytes,
+                packed_rows_bytes = receipt.packed_rows_bytes(),
+                lookups_bytes = receipt.lookups_bytes(),
+                inverse_bytes = receipt.inverse_bytes(),
+                weights_bytes = receipt.weights_bytes(),
+                packed_rows_identity = identities[0],
+                lookups_identity = identities[1],
+                inverse_identity = identities[2],
+                weights_identity = identities[3],
+                source_generation = receipt.source().source_generation(),
+                source_completion_serial = receipt.source().completion_serial(),
+                source_row_allocation_identity = receipt.source().row_allocation_identity(),
+                source_claim_allocation_identity = receipt.source().claim_allocation_identity(),
+                source_count_allocation_identity = receipt.source().count_allocation_identity(),
+                source_count_chunks = receipt.source().count_chunks(),
+                source_count_bytes = receipt.source().count_bytes(),
+                source_device_registry_id = receipt.source().device_registry_id(),
+                source_count_order = "table_major_then_none_v1",
+                scatter_completion_serial = receipt.completion_serial(),
+                e_in_length = receipt.e_in_length(),
+                e_out_length = receipt.e_out_length(),
+                additional_allocation_bytes = receipt.additional_allocation_bytes(),
+                command_buffers = receipt.command_buffers(),
+                waits = receipt.waits(),
+                encoders = receipt.encoders(),
+                threadgroups = receipt.threadgroups(),
+                threads_per_threadgroup = receipt.threads_per_threadgroup(),
+                dynamic_threadgroup_bytes = receipt.dynamic_threadgroup_bytes(),
+                static_threadgroup_bytes = receipt.static_threadgroup_bytes(),
+                dispatches = receipt.dispatches(),
+                source_copy_bytes = receipt.source_copy_bytes(),
+                full_plane_readback_bytes = receipt.full_plane_readback_bytes(),
+                legacy_row_collection_rows = 0u64,
+                legacy_bucket_scan_rows = 0u64,
+                legacy_host_repack_bytes = 0u64,
+                legacy_booleanity_upload_bytes = 0u64,
+                complete_overwrite = receipt.complete_overwrite(),
+            )
+            .entered();
+            (cpu, Some(planes))
+        } else {
+            (
+                prepare_metal_instruction_read_raf(
+                    session,
+                    witness,
+                    inputs,
+                    use_metal_address,
+                    collect_bytecode_support,
+                )?,
+                None,
+            )
+        };
         let hamming_log_k_chunk = committed_hamming_log_k_chunk(witness, dimensions.log_t());
         let hamming_rows_requested = hamming_log_k_chunk.is_some_and(|log_k_chunk| {
             self.config.hamming_weight_claim_reduction.admits(
@@ -100,17 +194,47 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             || trace_elements >= self.config.bytecode_read_raf_cycle.trace_cutoff_elements
             || hamming_rows_requested;
         if resident_rows_requested && session.state::<BooleanityRows>().is_none() {
-            match cpu.metal_prepare_booleanity_rows(&self.context) {
-                Ok(rows) => {
+            let prepared_rows = if let Some(owner) = stage1_owner.as_ref() {
+                let receipt = owner.receipt();
+                Ok((
+                    owner.booleanity_rows(),
+                    0u64,
+                    0u64,
+                    "stage1_owner_v1",
+                    receipt.source_generation(),
+                    receipt.completion_serial(),
+                    receipt.claim_allocation_identity(),
+                ))
+            } else {
+                cpu.metal_prepare_booleanity_rows(&self.context)
+                    .map(|rows| {
+                        let upload_bytes =
+                            (rows.len() * size_of::<super::solinas::BooleanityRow>()) as u64;
+                        (rows, upload_bytes, 1, "member_upload_v1", 0, 0, 0)
+                    })
+            };
+            match prepared_rows {
+                Ok((
+                    rows,
+                    row_upload_bytes,
+                    row_allocations,
+                    source_kind,
+                    source_generation,
+                    source_completion_serial,
+                    source_claim_allocation_identity,
+                )) => {
                     let lifecycle_span = tracing::info_span!(
                         "MetalBooleanityRows::stage5_prepare",
                         resident_rows_storage_id = rows.allocation_identity(),
                         resident_rows = rows.len(),
                         resident_row_bytes = size_of::<super::solinas::BooleanityRow>(),
                         device_registry_id = rows.device_registry_id(),
-                        row_allocations = 1u64,
-                        row_upload_bytes =
-                            (rows.len() * size_of::<super::solinas::BooleanityRow>()) as u64,
+                        row_allocations,
+                        row_upload_bytes,
+                        source_kind,
+                        source_generation,
+                        source_completion_serial,
+                        source_claim_allocation_identity,
                     )
                     .entered();
                     drop(lifecycle_span);
@@ -132,6 +256,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             self.config.instruction_read_raf,
             use_metal_address,
             retain_lookup_plane,
+            resident_grouped_planes,
         )?))
     }
 }
@@ -172,6 +297,7 @@ impl MetalInstructionReadRafKernel {
         config: InstructionReadRafMetalConfig,
         use_metal_address: bool,
         retain_lookup_plane: bool,
+        resident_grouped_planes: Option<InstructionReadRafDenseGroupedPlanes>,
     ) -> Result<Self, SumcheckError<AkitaField>> {
         let mut kernel = Self {
             cpu,
@@ -188,6 +314,40 @@ impl MetalInstructionReadRafKernel {
             metal_address_phases: 0,
         };
         if use_metal_address {
+            if let Some(planes) = resident_grouped_planes {
+                if config.address_implementation
+                    != InstructionReadRafAddressImplementation::Stage1Grouped
+                {
+                    return Err(backend_error(
+                        "Stage-1 grouped planes reached another address implementation",
+                    ));
+                }
+                let mut sequence = {
+                    let _span = tracing::info_span!(
+                        "MetalInstructionReadRaf::stage1_grouped_sequence_prepare"
+                    )
+                    .entered();
+                    kernel
+                        .context
+                        .prepare_address_phase_sequence_from_resident_grouped(
+                            planes,
+                            config.address_dispatch,
+                        )
+                        .map_err(|error| backend_error(error.to_string()))?
+                };
+                if retain_lookup_plane {
+                    kernel.resident_lookup_plane = Some(sequence.resident_lookup_index_plane());
+                }
+                let (suffix_len, previous) = kernel.cpu.metal_address_phase_request()?;
+                let sums = sequence
+                    .phase(suffix_len, previous.as_ref())
+                    .map_err(|error| backend_error(error.to_string()))?;
+                kernel.cpu.metal_install_address_phase(sums)?;
+                kernel.metal_address_phases = 1;
+                kernel.address_sequence =
+                    Some(ResidentAddressSequence::Grouped(Box::new(sequence)));
+                return Ok(kernel);
+            }
             let atom = if config.address_implementation
                 == InstructionReadRafAddressImplementation::AtomV3
             {
@@ -523,6 +683,14 @@ fn backend_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
         backend: "metal",
         message: message.into(),
     }
+}
+
+fn metal_prepare_error(error: super::solinas::MetalError) -> KernelError<AkitaField> {
+    backend_error(error.to_string()).into()
+}
+
+fn duration_ns(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

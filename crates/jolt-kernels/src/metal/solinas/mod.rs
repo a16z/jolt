@@ -45,6 +45,7 @@ mod instruction_input;
 pub mod instruction_input_successor;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
+mod instruction_read_raf;
 #[doc(hidden)]
 pub mod instruction_read_raf_producer;
 #[doc(hidden)]
@@ -145,6 +146,18 @@ pub use instruction_ra_sequence::{
 };
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
+};
+pub(crate) use instruction_read_raf::{
+    instruction_read_raf_claim_and_count_rank, instruction_read_raf_stage1_claim_bytes,
+    instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
+    InstructionReadRafCompatibilityScatterConfig, InstructionReadRafCountOrder,
+    InstructionReadRafDenseGroupedPlanes, InstructionReadRafStage1Lease,
+    InstructionReadRafStage1Owner, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+    INSTRUCTION_READ_RAF_SEGMENTS,
+};
+#[cfg(feature = "test-utils")]
+pub use instruction_read_raf::{
+    run_instruction_read_raf_stage1_probe, InstructionReadRafStage1ProbeResult,
 };
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,

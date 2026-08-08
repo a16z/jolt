@@ -3,8 +3,8 @@ use std::{mem::size_of, slice, time::Duration};
 use jolt_field::AkitaField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -16,9 +16,10 @@ use grouped::GroupedAddressPhase;
 use super::{
     address_raf::{AddressRafScanRow, AddressRafSums},
     address_suffix_full::AddressSuffixFullSums,
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits,
-    Product5Sequence, Product5SequenceConfig, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
-    ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES, PRODUCT5_FACTORS,
+    buffer_from_slice, command_buffer_timestamp, Fp128, InstructionReadRafCountOrder,
+    InstructionReadRafDenseGroupedPlanes, MetalError, PipelineLimits, Product5Sequence,
+    Product5SequenceConfig, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES, ADDRESS_SUFFIX_BINS,
+    ADDRESS_SUFFIX_TABLES, INSTRUCTION_READ_RAF_SEGMENTS, PRODUCT5_FACTORS,
 };
 
 const RAF_KEYS: usize = 2 * ADDRESS_RAF_BINS;
@@ -199,6 +200,15 @@ struct AddressPhaseBuffers {
     cycle_partial_b: Buffer,
 }
 
+struct PreparedAddressPhasePlanes {
+    packed_rows: Buffer,
+    lookups: Buffer,
+    cycle_to_table_major: Buffer,
+    weights: Buffer,
+    segment_ranges: [std::ops::Range<usize>; INSTRUCTION_READ_RAF_SEGMENTS],
+    rows: usize,
+}
+
 pub struct AddressPhaseSequence {
     context: SolinasMetal,
     raf_tile_pipeline: ComputePipelineState,
@@ -299,6 +309,36 @@ impl SolinasMetal {
         raf_flag: impl Fn(usize) -> bool + Sync,
         source: impl Fn(usize) -> (AddressRafScanRow, Fp128) + Sync,
     ) -> Result<AddressPhaseSequence, MetalError> {
+        self.prepare_address_phase_sequence_inner(rows, buckets, config, None, raf_flag, source)
+    }
+
+    pub(crate) fn prepare_address_phase_sequence_from_resident_grouped(
+        &self,
+        planes: InstructionReadRafDenseGroupedPlanes,
+        config: AddressPhaseSequenceConfig,
+    ) -> Result<AddressPhaseSequence, MetalError> {
+        let prepared = validate_resident_grouped_planes(self, planes)?;
+        let rows = prepared.rows;
+        let empty_buckets = vec![Vec::new(); ADDRESS_SUFFIX_TABLES];
+        self.prepare_address_phase_sequence_inner(
+            rows,
+            &empty_buckets,
+            config,
+            Some(prepared),
+            |_| unreachable!("resident grouped preparation does not inspect host RAF flags"),
+            |_| unreachable!("resident grouped preparation does not inspect host rows"),
+        )
+    }
+
+    fn prepare_address_phase_sequence_inner(
+        &self,
+        rows: usize,
+        buckets: &[Vec<u32>],
+        config: AddressPhaseSequenceConfig,
+        prepared: Option<PreparedAddressPhasePlanes>,
+        raf_flag: impl Fn(usize) -> bool + Sync,
+        source: impl Fn(usize) -> (AddressRafScanRow, Fp128) + Sync,
+    ) -> Result<AddressPhaseSequence, MetalError> {
         if rows == 0 {
             return Err(MetalError::EmptyInput);
         }
@@ -336,223 +376,264 @@ impl SolinasMetal {
             table_offsets.push(table_offsets.last().copied().unwrap_or(0) + suffixes.len());
         }
 
-        let inverse_bytes = byte_length::<u32>(rows)?;
-        let maximum = self.device.max_buffer_length();
-        if inverse_bytes > maximum {
-            return Err(MetalError::BufferTooLong {
-                requested: inverse_bytes,
-                maximum,
-            });
-        }
-        let cycle_to_table_major_buffer = self
-            .device
-            .new_buffer(inverse_bytes, MTLResourceOptions::StorageModeShared);
-        // SAFETY: this fresh shared buffer has exactly `rows` u32 slots and
-        // remains CPU-exclusive until preparation returns.
-        let cycle_to_table_major = unsafe {
-            slice::from_raw_parts_mut(cycle_to_table_major_buffer.contents().cast::<u32>(), rows)
-        };
-        let mut table_selected = vec![false; rows];
-        let mut table_major_len = 0usize;
-        let mut suffix_jobs = Vec::new();
-        let mut suffix_tables = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
-        let mut table_row_ranges = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
-        let mut segment_ranges: [std::ops::Range<usize>;
-            crate::metal::solinas::instruction_read_raf_v3::SEGMENTS] =
-            std::array::from_fn(|_| 0..0);
-        for (table, bucket) in buckets.iter().enumerate() {
-            let job_start = u32::try_from(suffix_jobs.len())
-                .map_err(|_| MetalError::InputTooLong(suffix_jobs.len()))?;
-            let bucket_start = table_major_len;
-            for &row in bucket {
-                let row = row as usize;
-                if row >= rows {
-                    return Err(MetalError::InputTooLong(row));
+        let (
+            packed_rows_buffer,
+            lookups_buffer,
+            cycle_to_table_major_buffer,
+            weights_buffer,
+            segment_ranges,
+            suffix_jobs,
+            suffix_tables,
+        ) = if let Some(prepared) = prepared {
+            let (suffix_jobs, suffix_tables) = resident_suffix_schedule(
+                rows,
+                &prepared.segment_ranges,
+                config.rows_per_threadgroup,
+                &suffix_counts,
+                &table_offsets,
+            )?;
+            (
+                prepared.packed_rows,
+                prepared.lookups,
+                prepared.cycle_to_table_major,
+                prepared.weights,
+                prepared.segment_ranges,
+                suffix_jobs,
+                suffix_tables,
+            )
+        } else {
+            let inverse_bytes = byte_length::<u32>(rows)?;
+            let maximum = self.device.max_buffer_length();
+            if inverse_bytes > maximum {
+                return Err(MetalError::BufferTooLong {
+                    requested: inverse_bytes,
+                    maximum,
+                });
+            }
+            let cycle_to_table_major_buffer = self
+                .device
+                .new_buffer(inverse_bytes, MTLResourceOptions::StorageModeShared);
+            // SAFETY: this fresh shared buffer has exactly `rows` u32 slots and
+            // remains CPU-exclusive until preparation returns.
+            let cycle_to_table_major = unsafe {
+                slice::from_raw_parts_mut(
+                    cycle_to_table_major_buffer.contents().cast::<u32>(),
+                    rows,
+                )
+            };
+            let mut table_selected = vec![false; rows];
+            let mut table_major_len = 0usize;
+            let mut suffix_jobs = Vec::new();
+            let mut suffix_tables = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
+            let mut table_row_ranges = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
+            let mut segment_ranges: [std::ops::Range<usize>;
+                crate::metal::solinas::instruction_read_raf_v3::SEGMENTS] =
+                std::array::from_fn(|_| 0..0);
+            for (table, bucket) in buckets.iter().enumerate() {
+                let job_start = u32::try_from(suffix_jobs.len())
+                    .map_err(|_| MetalError::InputTooLong(suffix_jobs.len()))?;
+                let bucket_start = table_major_len;
+                for &row in bucket {
+                    let row = row as usize;
+                    if row >= rows {
+                        return Err(MetalError::InputTooLong(row));
+                    }
+                    if table_selected[row] {
+                        return Err(MetalError::AddressPhaseLayoutLength {
+                            expected: rows,
+                            got: table_major_len,
+                        });
+                    }
+                    table_selected[row] = true;
                 }
-                if table_selected[row] {
-                    return Err(MetalError::AddressPhaseLayoutLength {
-                        expected: rows,
-                        got: table_major_len,
+                if config.fused_grouped_phase {
+                    for flag in [false, true] {
+                        let segment_start = table_major_len;
+                        for &row in bucket {
+                            let row = row as usize;
+                            if raf_flag(row) == flag {
+                                cycle_to_table_major[row] = u32::try_from(table_major_len)
+                                    .map_err(|_| MetalError::InputTooLong(table_major_len))?;
+                                table_major_len += 1;
+                            }
+                        }
+                        let segment = 2 * (table + 1) + usize::from(flag);
+                        segment_ranges[segment] = segment_start..table_major_len;
+                    }
+                } else {
+                    for &row in bucket {
+                        let row = row as usize;
+                        cycle_to_table_major[row] = u32::try_from(table_major_len)
+                            .map_err(|_| MetalError::InputTooLong(table_major_len))?;
+                        table_major_len += 1;
+                    }
+                }
+                for local_start in (0..bucket.len()).step_by(config.rows_per_threadgroup) {
+                    let local_end = (local_start + config.rows_per_threadgroup).min(bucket.len());
+                    suffix_jobs.push(SuffixJob {
+                        start: u32::try_from(bucket_start + local_start)
+                            .map_err(|_| MetalError::InputTooLong(bucket_start + local_start))?,
+                        end: u32::try_from(bucket_start + local_end)
+                            .map_err(|_| MetalError::InputTooLong(bucket_start + local_end))?,
+                        table: table as u32,
+                        reserved: 0,
                     });
                 }
-                table_selected[row] = true;
+                suffix_tables.push(SuffixTable {
+                    job_start,
+                    job_end: u32::try_from(suffix_jobs.len())
+                        .map_err(|_| MetalError::InputTooLong(suffix_jobs.len()))?,
+                    output_start: u32::try_from(table_offsets[table])
+                        .map_err(|_| MetalError::InputTooLong(table_offsets[table]))?,
+                    suffix_count: u32::from(suffix_counts[table]),
+                });
+                table_row_ranges.push(bucket_start..table_major_len);
             }
+            if suffix_jobs.is_empty() {
+                return Err(MetalError::EmptyAddressSuffixBuckets);
+            }
+            let no_table_start = table_major_len;
             if config.fused_grouped_phase {
                 for flag in [false, true] {
                     let segment_start = table_major_len;
-                    for &row in bucket {
-                        let row = row as usize;
-                        if raf_flag(row) == flag {
-                            cycle_to_table_major[row] = u32::try_from(table_major_len)
+                    for (cycle, &selected) in table_selected.iter().enumerate() {
+                        if !selected && raf_flag(cycle) == flag {
+                            cycle_to_table_major[cycle] = u32::try_from(table_major_len)
                                 .map_err(|_| MetalError::InputTooLong(table_major_len))?;
                             table_major_len += 1;
                         }
                     }
-                    let segment = 2 * (table + 1) + usize::from(flag);
-                    segment_ranges[segment] = segment_start..table_major_len;
+                    segment_ranges[usize::from(flag)] = segment_start..table_major_len;
                 }
             } else {
-                for &row in bucket {
-                    let row = row as usize;
-                    cycle_to_table_major[row] = u32::try_from(table_major_len)
-                        .map_err(|_| MetalError::InputTooLong(table_major_len))?;
-                    table_major_len += 1;
-                }
-            }
-            for local_start in (0..bucket.len()).step_by(config.rows_per_threadgroup) {
-                let local_end = (local_start + config.rows_per_threadgroup).min(bucket.len());
-                suffix_jobs.push(SuffixJob {
-                    start: u32::try_from(bucket_start + local_start)
-                        .map_err(|_| MetalError::InputTooLong(bucket_start + local_start))?,
-                    end: u32::try_from(bucket_start + local_end)
-                        .map_err(|_| MetalError::InputTooLong(bucket_start + local_end))?,
-                    table: table as u32,
-                    reserved: 0,
-                });
-            }
-            suffix_tables.push(SuffixTable {
-                job_start,
-                job_end: u32::try_from(suffix_jobs.len())
-                    .map_err(|_| MetalError::InputTooLong(suffix_jobs.len()))?,
-                output_start: u32::try_from(table_offsets[table])
-                    .map_err(|_| MetalError::InputTooLong(table_offsets[table]))?,
-                suffix_count: u32::from(suffix_counts[table]),
-            });
-            table_row_ranges.push(bucket_start..table_major_len);
-        }
-        if suffix_jobs.is_empty() {
-            return Err(MetalError::EmptyAddressSuffixBuckets);
-        }
-        let no_table_start = table_major_len;
-        if config.fused_grouped_phase {
-            for flag in [false, true] {
-                let segment_start = table_major_len;
                 for (cycle, &selected) in table_selected.iter().enumerate() {
-                    if !selected && raf_flag(cycle) == flag {
+                    if !selected {
                         cycle_to_table_major[cycle] = u32::try_from(table_major_len)
                             .map_err(|_| MetalError::InputTooLong(table_major_len))?;
                         table_major_len += 1;
                     }
                 }
-                segment_ranges[usize::from(flag)] = segment_start..table_major_len;
             }
-        } else {
-            for (cycle, &selected) in table_selected.iter().enumerate() {
-                if !selected {
-                    cycle_to_table_major[cycle] = u32::try_from(table_major_len)
-                        .map_err(|_| MetalError::InputTooLong(table_major_len))?;
-                    table_major_len += 1;
+            drop(table_selected);
+            if table_major_len != rows {
+                return Err(MetalError::AddressPhaseLayoutLength {
+                    expected: rows,
+                    got: table_major_len,
+                });
+            }
+
+            let row_buffer_lengths = [
+                byte_length::<u8>(rows)?,
+                byte_length::<AddressLookup>(rows)?,
+                byte_length::<Fp128>(rows)?,
+            ];
+            for requested in row_buffer_lengths {
+                let maximum = self.device.max_buffer_length();
+                if requested > maximum {
+                    return Err(MetalError::BufferTooLong { requested, maximum });
                 }
             }
-        }
-        drop(table_selected);
-        if table_major_len != rows {
-            return Err(MetalError::AddressPhaseLayoutLength {
-                expected: rows,
-                got: table_major_len,
-            });
-        }
-
-        let row_buffer_lengths = [
-            byte_length::<u8>(rows)?,
-            byte_length::<AddressLookup>(rows)?,
-            byte_length::<Fp128>(rows)?,
-        ];
-        for requested in row_buffer_lengths {
-            let maximum = self.device.max_buffer_length();
-            if requested > maximum {
-                return Err(MetalError::BufferTooLong { requested, maximum });
-            }
-        }
-        let packed_rows_buffer = self.device.new_buffer(
-            byte_length::<u8>(rows)?,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let lookups_buffer = self.device.new_buffer(
-            byte_length::<AddressLookup>(rows)?,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let weights_buffer = self.device.new_buffer(
-            byte_length::<Fp128>(rows)?,
-            MTLResourceOptions::StorageModeShared,
-        );
-        // SAFETY: the three shared buffers have exactly `rows` elements, are
-        // distinct allocations, and are not visible to a command buffer yet.
-        let lookups = unsafe {
-            slice::from_raw_parts_mut(lookups_buffer.contents().cast::<AddressLookup>(), rows)
-        };
-        // SAFETY: see the allocation and exclusivity argument above.
-        let packed_rows =
-            unsafe { slice::from_raw_parts_mut(packed_rows_buffer.contents().cast::<u8>(), rows) };
-        // SAFETY: see the allocation and exclusivity argument above.
-        let table_major_weights =
-            unsafe { slice::from_raw_parts_mut(weights_buffer.contents().cast::<Fp128>(), rows) };
-        #[cfg(feature = "parallel")]
-        {
-            let lookups_address = lookups.as_mut_ptr() as usize;
-            let packed_address = packed_rows.as_mut_ptr() as usize;
-            let weights_address = table_major_weights.as_mut_ptr() as usize;
-            cycle_to_table_major
-                .par_iter()
-                .enumerate()
-                .for_each(|(cycle, &table_major)| {
-                    let (lookup, packed, weight) = packed_source(source(cycle));
-                    let table_major = table_major as usize;
-                    // SAFETY: the validated inverse is a permutation, so
-                    // parallel iterations write disjoint initialized slots.
-                    unsafe {
-                        (lookups_address as *mut AddressLookup)
-                            .add(table_major)
-                            .write(lookup);
-                        (packed_address as *mut u8).add(table_major).write(packed);
-                        (weights_address as *mut Fp128)
-                            .add(table_major)
-                            .write(weight);
-                    }
-                });
-        }
-        #[cfg(not(feature = "parallel"))]
-        for (cycle, &table_major) in cycle_to_table_major.iter().enumerate() {
-            let table_major = table_major as usize;
-            (
-                lookups[table_major],
-                packed_rows[table_major],
-                table_major_weights[table_major],
-            ) = packed_source(source(cycle));
-        }
-        let original_cycle = |table_major: usize| {
-            cycle_to_table_major
-                .iter()
-                .position(|&mapped| mapped as usize == table_major)
-                .unwrap_or(rows)
-        };
-        for (table, range) in table_row_ranges.iter().enumerate() {
-            if let Some(position) = packed_rows[range.clone()]
-                .iter()
-                .position(|packed| usize::from(*packed & 0x7f) != table + 1)
+            let packed_rows_buffer = self.device.new_buffer(
+                byte_length::<u8>(rows)?,
+                MTLResourceOptions::StorageModeShared,
+            );
+            let lookups_buffer = self.device.new_buffer(
+                byte_length::<AddressLookup>(rows)?,
+                MTLResourceOptions::StorageModeShared,
+            );
+            let weights_buffer = self.device.new_buffer(
+                byte_length::<Fp128>(rows)?,
+                MTLResourceOptions::StorageModeShared,
+            );
+            // SAFETY: the three shared buffers have exactly `rows` elements, are
+            // distinct allocations, and are not visible to a command buffer yet.
+            let lookups = unsafe {
+                slice::from_raw_parts_mut(lookups_buffer.contents().cast::<AddressLookup>(), rows)
+            };
+            // SAFETY: see the allocation and exclusivity argument above.
+            let packed_rows = unsafe {
+                slice::from_raw_parts_mut(packed_rows_buffer.contents().cast::<u8>(), rows)
+            };
+            // SAFETY: see the allocation and exclusivity argument above.
+            let table_major_weights = unsafe {
+                slice::from_raw_parts_mut(weights_buffer.contents().cast::<Fp128>(), rows)
+            };
+            #[cfg(feature = "parallel")]
             {
-                let table_major = range.start + position;
+                let lookups_address = lookups.as_mut_ptr() as usize;
+                let packed_address = packed_rows.as_mut_ptr() as usize;
+                let weights_address = table_major_weights.as_mut_ptr() as usize;
+                cycle_to_table_major
+                    .par_iter()
+                    .enumerate()
+                    .for_each(|(cycle, &table_major)| {
+                        let (lookup, packed, weight) = packed_source(source(cycle));
+                        let table_major = table_major as usize;
+                        // SAFETY: the validated inverse is a permutation, so
+                        // parallel iterations write disjoint initialized slots.
+                        unsafe {
+                            (lookups_address as *mut AddressLookup)
+                                .add(table_major)
+                                .write(lookup);
+                            (packed_address as *mut u8).add(table_major).write(packed);
+                            (weights_address as *mut Fp128)
+                                .add(table_major)
+                                .write(weight);
+                        }
+                    });
+            }
+            #[cfg(not(feature = "parallel"))]
+            for (cycle, &table_major) in cycle_to_table_major.iter().enumerate() {
+                let table_major = table_major as usize;
+                (
+                    lookups[table_major],
+                    packed_rows[table_major],
+                    table_major_weights[table_major],
+                ) = packed_source(source(cycle));
+            }
+            let original_cycle = |table_major: usize| {
+                cycle_to_table_major
+                    .iter()
+                    .position(|&mapped| mapped as usize == table_major)
+                    .unwrap_or(rows)
+            };
+            for (table, range) in table_row_ranges.iter().enumerate() {
+                if let Some(position) = packed_rows[range.clone()]
+                    .iter()
+                    .position(|packed| usize::from(*packed & 0x7f) != table + 1)
+                {
+                    let table_major = range.start + position;
+                    let packed = packed_rows[table_major];
+                    return Err(MetalError::InvalidAddressPhaseBucket {
+                        bucket: table,
+                        row: original_cycle(table_major),
+                        actual: packed_table(packed),
+                    });
+                }
+            }
+            if let Some(position) = packed_rows[no_table_start..]
+                .iter()
+                .position(|packed| packed & 0x7f != 0)
+            {
+                let table_major = no_table_start + position;
                 let packed = packed_rows[table_major];
                 return Err(MetalError::InvalidAddressPhaseBucket {
-                    bucket: table,
+                    bucket: ADDRESS_SUFFIX_TABLES,
                     row: original_cycle(table_major),
                     actual: packed_table(packed),
                 });
             }
-        }
-        if let Some(position) = packed_rows[no_table_start..]
-            .iter()
-            .position(|packed| packed & 0x7f != 0)
-        {
-            let table_major = no_table_start + position;
-            let packed = packed_rows[table_major];
-            return Err(MetalError::InvalidAddressPhaseBucket {
-                bucket: ADDRESS_SUFFIX_TABLES,
-                row: original_cycle(table_major),
-                actual: packed_table(packed),
-            });
-        }
-        self.validate_inputs("resident address weights", table_major_weights)?;
+            self.validate_inputs("resident address weights", table_major_weights)?;
+            (
+                packed_rows_buffer,
+                lookups_buffer,
+                cycle_to_table_major_buffer,
+                weights_buffer,
+                segment_ranges,
+                suffix_jobs,
+                suffix_tables,
+            )
+        };
 
         let grouped_phase = config
             .fused_grouped_phase
@@ -1372,6 +1453,183 @@ impl AddressPhaseSequence {
     pub const fn phase_device_buffer_allocations(&self) -> usize {
         0
     }
+}
+
+fn validate_resident_grouped_planes(
+    context: &SolinasMetal,
+    planes: InstructionReadRafDenseGroupedPlanes,
+) -> Result<PreparedAddressPhasePlanes, MetalError> {
+    let parts = planes.into_parts();
+    let receipt = &parts.receipt;
+    let rows = receipt.rows();
+    if rows == 0 || !rows.is_power_of_two() {
+        return Err(resident_grouped_error(
+            "resident grouped row domain is not a nonzero power of two",
+        ));
+    }
+    if receipt.device_registry_id() != context.device.registry_id()
+        || receipt.source().device_registry_id() != context.device.registry_id()
+    {
+        return Err(resident_grouped_error(
+            "resident grouped planes belong to another Metal device",
+        ));
+    }
+    if receipt.source().count_order() != InstructionReadRafCountOrder::TableMajorThenNoneV1
+        || receipt.source().source_generation() == 0
+        || receipt.source().completion_serial() == 0
+        || receipt.completion_serial() == 0
+    {
+        return Err(resident_grouped_error(
+            "resident grouped provenance receipt is incomplete",
+        ));
+    }
+    if !receipt.complete_overwrite()
+        || receipt.dispatches() != 1
+        || receipt.source_copy_bytes() != 0
+        || receipt.full_plane_readback_bytes() != 0
+    {
+        return Err(resident_grouped_error(
+            "resident grouped scatter did not publish a complete zero-copy result",
+        ));
+    }
+    if receipt.e_in_length().checked_mul(receipt.e_out_length()) != Some(rows)
+        || !receipt.e_in_length().is_power_of_two()
+        || !receipt.e_out_length().is_power_of_two()
+    {
+        return Err(resident_grouped_error(
+            "resident grouped equality split disagrees with the row domain",
+        ));
+    }
+
+    let expected_bytes = [
+        byte_length::<u8>(rows)?,
+        byte_length::<AddressLookup>(rows)?,
+        byte_length::<u32>(rows)?,
+        byte_length::<Fp128>(rows)?,
+    ];
+    let actual_bytes = [
+        parts.packed_rows.length(),
+        parts.lookups.length(),
+        parts.inverse.length(),
+        parts.weights.length(),
+    ];
+    let receipt_bytes = [
+        receipt.packed_rows_bytes(),
+        receipt.lookups_bytes(),
+        receipt.inverse_bytes(),
+        receipt.weights_bytes(),
+    ];
+    if actual_bytes != expected_bytes || receipt_bytes != expected_bytes {
+        return Err(resident_grouped_error(
+            "resident grouped plane lengths disagree with the typed layout",
+        ));
+    }
+    let actual_identities = [
+        parts.packed_rows.as_ptr() as usize,
+        parts.lookups.as_ptr() as usize,
+        parts.inverse.as_ptr() as usize,
+        parts.weights.as_ptr() as usize,
+    ];
+    if actual_identities != receipt.allocation_identities()
+        || actual_identities.contains(&0)
+        || actual_identities
+            .iter()
+            .enumerate()
+            .any(|(index, identity)| actual_identities[..index].contains(identity))
+    {
+        return Err(resident_grouped_error(
+            "resident grouped output allocations are stale or alias",
+        ));
+    }
+    let segment_ranges = receipt.segment_ranges().clone();
+    validate_resident_segment_ranges(rows, &segment_ranges)?;
+
+    Ok(PreparedAddressPhasePlanes {
+        packed_rows: parts.packed_rows,
+        lookups: parts.lookups,
+        cycle_to_table_major: parts.inverse,
+        weights: parts.weights,
+        segment_ranges,
+        rows,
+    })
+}
+
+fn validate_resident_segment_ranges(
+    rows: usize,
+    ranges: &[std::ops::Range<usize>; INSTRUCTION_READ_RAF_SEGMENTS],
+) -> Result<(), MetalError> {
+    let mut cursor = 0usize;
+    for physical in 0..INSTRUCTION_READ_RAF_SEGMENTS {
+        let logical = if physical < 2 * ADDRESS_SUFFIX_TABLES {
+            physical + 2
+        } else {
+            physical - 2 * ADDRESS_SUFFIX_TABLES
+        };
+        let range = &ranges[logical];
+        if range.start != cursor || range.end < range.start || range.end > rows {
+            return Err(resident_grouped_error(
+                "resident grouped segment ranges are not the canonical physical partition",
+            ));
+        }
+        cursor = range.end;
+    }
+    if cursor != rows {
+        return Err(resident_grouped_error(
+            "resident grouped segment ranges do not cover the row domain",
+        ));
+    }
+    Ok(())
+}
+
+fn resident_suffix_schedule(
+    rows: usize,
+    ranges: &[std::ops::Range<usize>; INSTRUCTION_READ_RAF_SEGMENTS],
+    rows_per_threadgroup: usize,
+    suffix_counts: &[u8],
+    table_offsets: &[usize],
+) -> Result<(Vec<SuffixJob>, Vec<SuffixTable>), MetalError> {
+    let mut jobs = Vec::new();
+    let mut tables = Vec::with_capacity(ADDRESS_SUFFIX_TABLES);
+    for table in 0..ADDRESS_SUFFIX_TABLES {
+        let false_range = &ranges[2 * (table + 1)];
+        let true_range = &ranges[2 * (table + 1) + 1];
+        if false_range.end != true_range.start {
+            return Err(resident_grouped_error(
+                "resident grouped table flag ranges are not adjacent",
+            ));
+        }
+        let job_start =
+            u32::try_from(jobs.len()).map_err(|_| MetalError::InputTooLong(jobs.len()))?;
+        for start in (false_range.start..true_range.end).step_by(rows_per_threadgroup) {
+            let end = (start + rows_per_threadgroup).min(true_range.end);
+            jobs.push(SuffixJob {
+                start: u32::try_from(start).map_err(|_| MetalError::InputTooLong(start))?,
+                end: u32::try_from(end).map_err(|_| MetalError::InputTooLong(end))?,
+                table: table as u32,
+                reserved: 0,
+            });
+        }
+        tables.push(SuffixTable {
+            job_start,
+            job_end: u32::try_from(jobs.len()).map_err(|_| MetalError::InputTooLong(jobs.len()))?,
+            output_start: u32::try_from(table_offsets[table])
+                .map_err(|_| MetalError::InputTooLong(table_offsets[table]))?,
+            suffix_count: u32::from(suffix_counts[table]),
+        });
+    }
+    if jobs.is_empty() {
+        return Err(MetalError::EmptyAddressSuffixBuckets);
+    }
+    if ranges.iter().any(|range| range.end > rows) {
+        return Err(resident_grouped_error(
+            "resident grouped suffix schedule exceeds the row domain",
+        ));
+    }
+    Ok((jobs, tables))
+}
+
+fn resident_grouped_error(message: &'static str) -> MetalError {
+    MetalError::InvalidInstructionReadRafGrouped(message.to_owned())
 }
 
 fn packed_source(row_and_weight: (AddressRafScanRow, Fp128)) -> (AddressLookup, u8, Fp128) {
