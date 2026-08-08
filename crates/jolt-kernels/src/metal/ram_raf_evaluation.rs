@@ -120,7 +120,7 @@ impl MetalBackend {
             let _ = witness_span.record("address_plane_bytes", plane.resident_bytes());
             let _ = witness_span.record("address_plane_upload_bytes", 0);
             let _ = witness_span.record("address_plane_allocations", 0);
-            let _ = witness_span.record("address_validation_passes", 1);
+            let _ = witness_span.record("address_validation_passes", 0);
             let _ = witness_span.record("address_plane_published", true);
             let _ = witness_span.record("complete_publication", owner.is_some());
             return Ok(());
