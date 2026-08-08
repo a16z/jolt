@@ -14,6 +14,8 @@ mod scatter;
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 #[cfg(feature = "test-utils")]
 pub use probe::{run_instruction_read_raf_stage1_probe, InstructionReadRafStage1ProbeResult};
+#[cfg(test)]
+pub(crate) use scatter::validate_bytecode_topology_admission;
 pub(crate) use scatter::{
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
     InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,

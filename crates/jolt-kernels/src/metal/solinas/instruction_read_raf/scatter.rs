@@ -37,7 +37,7 @@ const BYTECODE_PIVOT_BYTES: usize = size_of::<u16>();
 const BYTECODE_OCCURRENCE_BYTES_PER_ROW: u64 = size_of::<u16>() as u64;
 const BYTECODE_MAGNITUDE_BYTES_PER_ROW: u64 = size_of::<u64>() as u64;
 const BYTECODE_INNER_LOG2: u32 = 15;
-const BYTECODE_MAX_DESCRIPTORS_PER_CHUNK: usize = 32;
+const BYTECODE_MAX_DESCRIPTORS_PER_CHUNK: usize = 512;
 const BYTECODE_MAX_PIVOTS_PER_CHUNK: usize = 15;
 
 type ScatterLayout = (
@@ -895,6 +895,23 @@ fn scatter_layout(
     Ok((chunk_bases, offsets, ranges))
 }
 
+pub(crate) fn validate_bytecode_topology_admission(
+    max_descriptors_per_chunk: usize,
+    max_pivots_per_chunk: usize,
+) -> Result<(), MetalError> {
+    if !(1..=BYTECODE_MAX_DESCRIPTORS_PER_CHUNK).contains(&max_descriptors_per_chunk) {
+        return Err(invalid_scatter(format!(
+            "fused bytecode topology admission failed: clause=max_descriptors_per_chunk observed={max_descriptors_per_chunk} allowed=1..={BYTECODE_MAX_DESCRIPTORS_PER_CHUNK}"
+        )));
+    }
+    if max_pivots_per_chunk > BYTECODE_MAX_PIVOTS_PER_CHUNK {
+        return Err(invalid_scatter(format!(
+            "fused bytecode topology admission failed: clause=max_pivots_per_chunk observed={max_pivots_per_chunk} allowed=0..={BYTECODE_MAX_PIVOTS_PER_CHUNK}"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_bytecode_request(
     request: &BytecodeAddressFusedScatterRequest,
     source: InstructionReadRafStage1Receipt,
@@ -922,10 +939,7 @@ fn validate_bytecode_request(
         && receipt.pivot_elements() == receipt.pivots() + 1
         && receipt.chunk_offset_elements() == 2 * chunks
         && receipt.work_items() != 0
-        && receipt.address_offset_elements() == expected_address_offsets
-        && receipt.max_descriptors_per_chunk() != 0
-        && receipt.max_descriptors_per_chunk() <= BYTECODE_MAX_DESCRIPTORS_PER_CHUNK
-        && receipt.max_pivots_per_chunk() <= BYTECODE_MAX_PIVOTS_PER_CHUNK;
+        && receipt.address_offset_elements() == expected_address_offsets;
     let buffers = [
         (
             request.descriptors_buffer(),
@@ -972,9 +986,40 @@ fn validate_bytecode_request(
         && receipt.shared_source_row_scans() == 1
         && receipt.additional_source_row_scans() == 0
         && receipt.member_upload_bytes() == 0;
-    if !source_matches || !topology_shape || !buffers_match || !byte_ledgers || !publication {
+    if !source_matches {
         return Err(invalid_scatter(
-            "fused bytecode topology does not match the Stage-1 source",
+            "fused bytecode topology source receipt does not match Stage-1",
+        ));
+    }
+    if !topology_shape {
+        return Err(invalid_scatter(format!(
+            "fused bytecode topology shape is invalid: padded_rows={} physical_rows={} chunks={}/{} descriptors={} max_descriptors={} max_pivots={}",
+            receipt.padded_rows(),
+            physical_rows,
+            receipt.chunks(),
+            chunks,
+            receipt.descriptors(),
+            receipt.max_descriptors_per_chunk(),
+            receipt.max_pivots_per_chunk(),
+        )));
+    }
+    validate_bytecode_topology_admission(
+        receipt.max_descriptors_per_chunk(),
+        receipt.max_pivots_per_chunk(),
+    )?;
+    if !buffers_match {
+        return Err(invalid_scatter(
+            "fused bytecode topology buffer provenance does not match its receipt",
+        ));
+    }
+    if !byte_ledgers {
+        return Err(invalid_scatter(
+            "fused bytecode topology byte ledgers do not match their element counts",
+        ));
+    }
+    if !publication {
+        return Err(invalid_scatter(
+            "fused bytecode topology publication receipt is incomplete",
         ));
     }
     Ok(())
@@ -1032,6 +1077,6 @@ fn next_completion_serial() -> Result<u64, MetalError> {
         .map_err(|_| invalid_scatter("scatter completion counter is exhausted"))
 }
 
-fn invalid_scatter(message: &'static str) -> MetalError {
-    MetalError::InvalidInstructionReadRafGrouped(message.to_owned())
+fn invalid_scatter(message: impl Into<String>) -> MetalError {
+    MetalError::InvalidInstructionReadRafGrouped(message.into())
 }

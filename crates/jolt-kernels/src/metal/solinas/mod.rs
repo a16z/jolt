@@ -147,6 +147,8 @@ pub use instruction_ra_sequence::{
 pub use instruction_ra_virtualization::{
     InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
 };
+#[cfg(test)]
+pub(crate) use instruction_read_raf::validate_bytecode_topology_admission;
 pub(crate) use instruction_read_raf::{
     instruction_read_raf_claim_and_count_rank, instruction_read_raf_stage1_claim_bytes,
     instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,

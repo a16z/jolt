@@ -1179,6 +1179,7 @@ fn invalid(message: impl Into<String>) -> MetalError {
 #[expect(clippy::unwrap_used, reason = "compact topology fixtures are exact")]
 mod tests {
     use super::*;
+    use crate::metal::solinas::validate_bytecode_topology_admission;
 
     fn build_data(
         padded_rows: usize,
@@ -1286,6 +1287,44 @@ mod tests {
         assert_eq!(data.work_items[0].count, 4096);
         assert_eq!(data.work_items[1].start, 4096);
         assert_eq!(data.work_items[1].count, 1);
+    }
+
+    #[test]
+    fn production_census_descriptor_shape_passes_scatter_admission() {
+        const HOT_ROWS: usize = 2_817;
+        const TAIL_ADDRESSES: usize = 503;
+        let (data, _) = build_data(1 << 15, 4096, |row| {
+            if row < HOT_ROWS {
+                0
+            } else {
+                1 + (row - HOT_ROWS) % TAIL_ADDRESSES
+            }
+        });
+
+        assert_eq!(data.max_descriptors_per_chunk, 504);
+        assert_eq!(data.max_pivots_per_chunk, 11);
+        validate_bytecode_topology_admission(
+            data.max_descriptors_per_chunk,
+            data.max_pivots_per_chunk,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn descriptor_cap_plus_one_reports_the_admission_clause() {
+        let (data, _) = build_data(1 << 15, 4096, |row| row % 513);
+        assert_eq!(data.max_descriptors_per_chunk, 513);
+        assert_eq!(data.max_pivots_per_chunk, 0);
+
+        let error = validate_bytecode_topology_admission(
+            data.max_descriptors_per_chunk,
+            data.max_pivots_per_chunk,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid grouped InstructionReadRaf state: fused bytecode topology admission failed: clause=max_descriptors_per_chunk observed=513 allowed=1..=512"
+        );
     }
 
     #[test]

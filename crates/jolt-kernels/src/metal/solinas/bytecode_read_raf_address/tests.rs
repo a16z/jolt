@@ -453,7 +453,7 @@ fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
     let topology_owner = topology.seal(&owner).unwrap();
     let topology_receipt = topology_owner.receipt();
     assert_eq!(topology_receipt.max_pivots_per_chunk(), 15);
-    assert!(topology_receipt.max_descriptors_per_chunk() <= 32);
+    assert_eq!(topology_receipt.max_descriptors_per_chunk(), 5);
 
     let scatter_source = owner
         .lease(shape.rows().unwrap(), context.device_registry_id())
@@ -477,7 +477,7 @@ fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
     let fused = planes.receipt().bytecode().unwrap();
     assert_eq!(fused.physical_rows(), physical_rows);
     assert_eq!(fused.max_pivots_per_chunk(), 15);
-    assert_eq!(fused.max_admitted_descriptors_per_chunk(), 32);
+    assert_eq!(fused.max_admitted_descriptors_per_chunk(), 512);
     assert_eq!(fused.max_admitted_pivots_per_chunk(), 15);
     assert_eq!(fused.additional_source_row_scans(), 0);
     assert_eq!(fused.member_upload_bytes(), 0);
