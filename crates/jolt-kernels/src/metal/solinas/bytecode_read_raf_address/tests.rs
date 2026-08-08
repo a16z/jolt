@@ -5,6 +5,7 @@ use jolt_field::AkitaField;
 use super::{
     carrier::AddressMajorShape,
     oracle::{HostAddressMajorCarrier, Row},
+    worklist::{SparseAddressRow, SparseAddressWorklist},
     BytecodeAddressMajorConfig, BytecodeAddressMajorSourceRow, BYTECODE_ADDRESS_MAJOR_BASE_STAGES,
     BYTECODE_ADDRESS_MAJOR_SIMD_WIDTH, BYTECODE_ADDRESS_MAJOR_STAGES,
 };
@@ -386,4 +387,87 @@ fn stage1_resident_carrier_matches_the_independent_row_oracle() {
         Some(source_device)
     );
     assert_eq!(observation.output, expected);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn sparse_worklist_worker_matches_the_padded_domain_oracle() {
+    let context = SolinasMetal::for_akita().unwrap();
+    let shape = AddressMajorShape::production(16).unwrap();
+    let physical_rows = 50_123;
+    let mut rows = (0..shape.rows().unwrap())
+        .map(|index| {
+            if index >= physical_rows {
+                return Row {
+                    mapped_pc: None,
+                    fused_inc_magnitude: 0,
+                    fused_inc_negative: false,
+                };
+            }
+            Row {
+                mapped_pc: if index < 10_000 {
+                    Some(0)
+                } else if index.is_multiple_of(257) {
+                    None
+                } else {
+                    Some(1 + (17 * index + index / 31) % 37)
+                },
+                fused_inc_magnitude: if index.is_multiple_of(509) {
+                    u64::MAX
+                } else {
+                    (13 * index + 7) as u64
+                },
+                fused_inc_negative: index.is_multiple_of(5),
+            }
+        })
+        .collect::<Vec<_>>();
+    rows[physical_rows - 1] = Row {
+        mapped_pc: Some(8191),
+        fused_inc_magnitude: u64::MAX,
+        fused_inc_negative: true,
+    };
+    let resident_words = rows
+        .iter()
+        .map(|row| {
+            let magnitude = i128::from(row.fused_inc_magnitude);
+            BooleanityRow::new(
+                0,
+                row.mapped_pc.map(|pc| pc as u64),
+                None,
+                if row.fused_inc_negative {
+                    -magnitude
+                } else {
+                    magnitude
+                },
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let resident = context.prepare_booleanity_rows(&resident_words).unwrap();
+    let worklist = SparseAddressWorklist::build_with(physical_rows, shape, |index| {
+        SparseAddressRow::with_magnitude(
+            rows[index].mapped_pc,
+            rows[index].fused_inc_magnitude,
+            rows[index].fused_inc_negative,
+        )
+        .unwrap()
+    })
+    .unwrap();
+    let (e_lo, e_hi) = tables(shape);
+    let expected = direct_oracle(shape, &rows, &e_lo, &e_hi);
+    let invocation = context
+        .prepare_bytecode_address_sparse_probe(resident, &worklist, &e_lo, &e_hi)
+        .unwrap();
+    let storage = invocation.storage();
+
+    assert_eq!(
+        invocation.worker_pipeline_limits().thread_execution_width,
+        32
+    );
+    assert_eq!(invocation.threadgroup_memory_bytes(), 640);
+    assert_eq!(storage.occurrence_bytes, 2 * physical_rows);
+    assert_eq!(storage.magnitude_bytes, 8 * physical_rows);
+    assert_eq!(storage.work_item_bytes, 8 * worklist.work_items());
+    assert!(worklist.work_items() > 2);
+    assert_eq!(invocation.execute_timed().unwrap().output, expected);
 }

@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -472,87 +474,110 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             return Ok(Box::new(cpu(session)?));
         }
         if config.implementation == BytecodeReadRafAddressImplementation::AddressMajorShadow {
-            let invocation = match self.context.prepare_bytecode_address_major_resident_shadow(
+            let Some(owned_rows) = witness.owned_rows() else {
+                tracing::warn!(
+                    "bytecode sparse address probe requires random-access witness rows; using the optimized CPU kernel"
+                );
+                return Ok(Box::new(cpu(session)?));
+            };
+            let physical_rows = owned_rows.physical_rows().min(trace_elements);
+            let worklist_started = Instant::now();
+            let worklist = match self
+                .context
+                .build_bytecode_address_sparse_worklist(&rows, physical_rows)
+            {
+                Ok(worklist) => worklist,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "bytecode sparse address worklist unavailable; using the optimized CPU kernel"
+                    );
+                    return Ok(Box::new(cpu(session)?));
+                }
+            };
+            let worklist_wall = worklist_started.elapsed();
+            let invocation = match self.context.prepare_bytecode_address_sparse_probe(
                 rows.clone(),
+                &worklist,
                 &tables.e_lo,
                 &tables.e_hi,
-                config.address_major,
             ) {
                 Ok(invocation) => invocation,
                 Err(error) => {
                     tracing::warn!(
                         error = %error,
-                        "bytecode address-major preparation unavailable; using the optimized CPU kernel"
+                        "bytecode sparse address preparation unavailable; using the optimized CPU kernel"
                     );
                     return Ok(Box::new(cpu(session)?));
                 }
             };
-            let producer_support_bytes = invocation.storage().producer_support_bytes;
+            let storage = invocation.storage();
             let resident_rows_storage_id = rows.allocation_identity();
             let resident_rows_device_registry_id = rows.device_registry_id();
-            let pending = match invocation.submit() {
-                Ok(pending) => pending,
+            drop(prepare_span);
+
+            let observation = match invocation.execute_timed() {
+                Ok(observation) => observation,
                 Err(error) => {
                     tracing::warn!(
                         error = %error,
-                        "bytecode address-major submission unavailable; using the optimized CPU kernel"
+                        "bytecode sparse address execution unavailable; using the optimized CPU kernel"
                     );
                     return Ok(Box::new(cpu(session)?));
                 }
             };
-            drop(prepare_span);
-
             let prepared_cpu = cpu(session)?;
-            let _join_span =
-                tracing::info_span!("MetalBytecodeReadRafAddress::address_major_join").entered();
-            let (_, observation) = match pending.join() {
-                Ok(completed) => completed,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "bytecode address-major completion failed; retaining optimized CPU output"
-                    );
-                    return Ok(Box::new(prepared_cpu));
-                }
-            };
-            if observation.source_rows_storage_id != Some(resident_rows_storage_id)
-                || observation.source_rows_device_registry_id
-                    != Some(resident_rows_device_registry_id)
+            if observation.source_rows_storage_id != resident_rows_storage_id
+                || observation.source_device_registry_id != resident_rows_device_registry_id
             {
                 return Err(KernelError::InvariantViolation {
-                    reason: "bytecode address-major source identity changed",
+                    reason: "bytecode sparse address source identity changed",
                 });
             }
             validate_bytecode_address_pushforwards(
                 &prepared_cpu,
                 address_elements,
                 &observation.output,
-                "bytecode address-major",
+                "bytecode sparse address",
             )?;
-            let producer_status =
-                observation
-                    .producer_status
-                    .ok_or(KernelError::InvariantViolation {
-                        reason: "bytecode address-major producer status is missing",
-                    })?;
             tracing::info!(
                 target: "jolt::metal",
-                submit_ns = observation.submit_wall.as_nanos() as u64,
-                overlap_ns = observation.overlap_wall.as_nanos() as u64,
-                join_ns = observation.join_wall.as_nanos() as u64,
-                total_ns = observation.total_wall.as_nanos() as u64,
+                worklist_host_build_ns = worklist_wall.as_nanos() as u64,
+                resident_wall_ns = observation.resident_wall.as_nanos() as u64,
                 gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-                completed_before_join = observation.completed_before_join,
-                completed_outer_blocks = producer_status.completed_outer_blocks,
-                emitted_rows = producer_status.emitted_rows,
-                max_active_addresses = observation.max_active_addresses.unwrap_or(0) as u64,
-                producer_threadgroup_bytes =
-                    observation.producer_threadgroup_bytes.unwrap_or(0) as u64,
+                physical_rows = observation.physical_rows as u64,
+                padded_rows = trace_elements as u64,
+                work_items = observation.work_items as u64,
+                persistent_worklist_bytes = worklist.persistent_bytes() as u64,
+                occurrence_bytes = storage.occurrence_bytes as u64,
+                magnitude_bytes = storage.magnitude_bytes as u64,
+                work_item_bytes = storage.work_item_bytes as u64,
+                address_offset_bytes = storage.address_offset_bytes as u64,
+                equality_bytes = storage.equality_bytes as u64,
+                padding_bytes = storage.padding_bytes as u64,
+                partial_bytes = storage.partial_bytes as u64,
+                output_bytes = storage.output_bytes as u64,
+                owned_bytes = storage.owned_bytes as u64,
+                threadgroup_bytes = invocation.threadgroup_memory_bytes() as u64,
+                worker_static_threadgroup_bytes = invocation
+                    .worker_pipeline_limits()
+                    .static_threadgroup_memory_length,
+                reduce_static_threadgroup_bytes = invocation
+                    .reduce_pipeline_limits()
+                    .static_threadgroup_memory_length,
+                buffer_0 = observation.static_buffer_identities[0],
+                buffer_1 = observation.static_buffer_identities[1],
+                buffer_2 = observation.static_buffer_identities[2],
+                buffer_3 = observation.static_buffer_identities[3],
+                buffer_4 = observation.static_buffer_identities[4],
+                buffer_5 = observation.static_buffer_identities[5],
+                buffer_6 = observation.static_buffer_identities[6],
+                buffer_7 = observation.static_buffer_identities[7],
                 resident_rows_storage_id,
                 row_allocations = 0u64,
                 row_upload_bytes = 0u64,
-                carrier_upload_bytes = producer_support_bytes as u64,
-                "Metal bytecode address-major resident shadow matched the optimized CPU tables"
+                diagnostic_worklist_upload_bytes = worklist.persistent_bytes() as u64,
+                "Metal bytecode sparse-address probe matched the optimized CPU tables"
             );
             return Ok(Box::new(prepared_cpu));
         }

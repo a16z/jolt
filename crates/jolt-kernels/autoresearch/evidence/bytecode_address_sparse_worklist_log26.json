@@ -1,0 +1,90 @@
+{
+  "schema": "metal_bytecode_address_sparse_worklist_screen_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-08",
+  "evidence_stage": "diagnostic_worker_promoted_to_stage1_integration",
+  "candidate": {
+    "base_revision": "d1afcd9e376d66b95ab3205f90aa44b362c52d3f",
+    "source_snapshot_sha256": "67702d54682f25438718739f2d9fa3c836f7514d2306e8f2cab88386670ed498",
+    "binary_sha256": "935473e66302efa0c3f77e6847613380a38d20709324af435ff9bfa512a597de",
+    "worker": "solinas_bytecode_address_sparse_worker_5_4",
+    "reducer": "solinas_bytecode_address_sparse_reduce",
+    "protocol_authority": "optimized_cpu",
+    "production_default_changed": false
+  },
+  "contract": {
+    "workload": "fibonacci",
+    "log_t": 26,
+    "padded_rows": 67108864,
+    "physical_rows": 55366032,
+    "addresses": 8192,
+    "inner_length": 32768,
+    "work_items": 19649,
+    "maximum_rows_per_item": 4096,
+    "threads_per_group": 256,
+    "simdgroups_per_group": 8,
+    "dynamic_threadgroup_bytes": 640,
+    "commands": 1,
+    "waits": 1,
+    "host_fiat_shamir": true
+  },
+  "correctness": {
+    "proof_verified": true,
+    "all_output_fields_equal": 73728,
+    "independent_padded_domain_oracle": "passed",
+    "padding_computed_analytically": true,
+    "fused_padding_zero": true
+  },
+  "storage": {
+    "occurrence_bytes": 110732064,
+    "magnitude_bytes": 442928256,
+    "work_item_bytes": 157192,
+    "address_offset_bytes": 32772,
+    "persistent_worklist_bytes": 553850284,
+    "equality_bytes": 5013504,
+    "partial_bytes": 2829456,
+    "output_bytes": 1179648,
+    "diagnostic_owned_bytes": 562872972
+  },
+  "measurements": {
+    "row40_serial": {
+      "gpu_active_ns": 22117500,
+      "resident_wall_ns": 53641666
+    },
+    "row40_split_4_4_rejected": {
+      "gpu_active_ns": 27456042,
+      "resident_wall_ns": 63218208,
+      "active_regression_fraction": 0.2413717374923442
+    },
+    "compact_magnitude_serial": {
+      "trace": "benchmark-runs/perfetto_traces/akita_fibonacci_26_metal.json",
+      "gpu_active_ns": 13078542,
+      "resident_wall_ns": 26683000,
+      "worklist_host_build_ns": 208994834,
+      "active_improvement_fraction_vs_row40": 0.40867933884028394,
+      "active_speedup_vs_row40": 1.6911283448221847
+    }
+  },
+  "gate": {
+    "promotion_active_ns": 15000000,
+    "stretch_active_ns": 12000000,
+    "kill_active_ns": 18000000,
+    "passes_worker_promotion": true,
+    "passes_stretch": false,
+    "frozen_cpu_address_member_ns": 213083000,
+    "five_x_cap_ns": 42616600,
+    "fixed_host_rounds_ns": 11612000,
+    "fixed_shell_ns": 3215000,
+    "producer_plus_command_budget_ns": 27789600
+  },
+  "decision": {
+    "status": "promote_compact_sparse_worker_to_stage1_owner_integration",
+    "production_eligible": false,
+    "reason": "The compact magnitude plane removes the random Row40 gather and clears the pre-registered worker gate with exact parity. The diagnostic host worklist build and uploads remain disqualifying.",
+    "rejected_variants": [
+      "random Row40 magnitude gather",
+      "static 4-base/4-fused SIMDgroup split"
+    ],
+    "next_experiment": "Co-produce occurrences, magnitudes, work items, and address offsets in the existing Stage1 witness traversal with zero additional source scan or member upload, then require the charged producer marginal plus production command resident time to fit 27.7896 ms."
+  }
+}
