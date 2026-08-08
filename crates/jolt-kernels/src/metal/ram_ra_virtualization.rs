@@ -196,6 +196,25 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
             terminal_take_ram_cycle_family(session, &owner, "optimized_cpu", "product_cap", false)?;
             return Ok(fallback);
         }
+        let route = tracing::info_span!(
+            "MetalRamRaVirtualization::route",
+            cycles,
+            log_t,
+            log_k,
+            requested = "host_sparse_v1",
+            selected = "host_sparse_v1",
+            fallback_reason = "none",
+            source_generation = owner.receipt().source_generation(),
+            source_fingerprint = owner.receipt().fingerprint(),
+            access_records = owner.receipt().access_count(),
+            increment_records = owner.receipt().increment_count(),
+            estimated_products = predicted,
+            product_cap = MAX_SPARSE_PRODUCTS,
+            additional_source_row_scans = 0,
+            member_upload_bytes = 0,
+            complete_sequence = true,
+        );
+        let _route_guard = route.enter();
         let sequence = HostSparseRamRaVirtualization::new_from_verified_owner(
             Arc::clone(&owner),
             r_address,

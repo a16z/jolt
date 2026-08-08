@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{mem::size_of, sync::Arc};
 
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamRafEvaluationPublic,
@@ -74,13 +74,54 @@ impl MetalBackend {
         if ram_ra_shape.log_rows != log_t + RAM_RAF_ADDRESS_DOMAIN.ilog2() as usize {
             return Ok(());
         }
-        let _ = shared_ram_cycle_family_owner(
-            session,
-            witness,
+        let log_k = RAM_RAF_ADDRESS_DOMAIN.ilog2() as usize;
+        let source_collection_performed = session.state::<Arc<RamAccessColumns>>().is_none();
+        let witness_span = tracing::info_span!(
+            "MetalRamCycleFamily::witness_prepare",
+            schema_version = super::solinas::ram_cycle_family_v3::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+            requested = "host_sparse_v1",
+            selected = tracing::field::Empty,
+            fallback_reason = tracing::field::Empty,
             log_t,
-            RAM_RAF_ADDRESS_DOMAIN.ilog2() as usize,
-        )?;
-        if session.state::<RamRafAddressPlane>().is_some() {
+            log_k,
+            cycles,
+            address_domain = RAM_RAF_ADDRESS_DOMAIN,
+            source_generation = tracing::field::Empty,
+            source_fingerprint = tracing::field::Empty,
+            source_collection_performed,
+            witness_source_scans = usize::from(source_collection_performed),
+            additional_witness_source_scans = 0,
+            address_validation_passes = 3,
+            address_rows = cycles,
+            address_plane_storage_id = tracing::field::Empty,
+            address_plane_device_registry_id = tracing::field::Empty,
+            address_plane_bytes = tracing::field::Empty,
+            address_plane_upload_bytes = tracing::field::Empty,
+            address_plane_allocations = tracing::field::Empty,
+            owner_published = tracing::field::Empty,
+            address_plane_published = tracing::field::Empty,
+            complete_publication = tracing::field::Empty,
+        );
+        let _witness_guard = witness_span.enter();
+        let owner = shared_ram_cycle_family_owner(session, witness, log_t, log_k)?;
+        if let Some(owner) = &owner {
+            let _ = witness_span.record("source_generation", owner.receipt().source_generation());
+            let _ = witness_span.record("source_fingerprint", owner.receipt().fingerprint());
+            let _ = witness_span.record("owner_published", true);
+        }
+        if let Some(plane) = session.state::<RamRafAddressPlane>() {
+            let _ = witness_span.record("selected", "host_sparse_v1");
+            let _ = witness_span.record("fallback_reason", "none");
+            let _ = witness_span.record("address_plane_storage_id", plane.storage_id());
+            let _ = witness_span.record(
+                "address_plane_device_registry_id",
+                plane.device_registry_id(),
+            );
+            let _ = witness_span.record("address_plane_bytes", plane.resident_bytes());
+            let _ = witness_span.record("address_plane_upload_bytes", 0);
+            let _ = witness_span.record("address_plane_allocations", 0);
+            let _ = witness_span.record("address_plane_published", true);
+            let _ = witness_span.record("complete_publication", owner.is_some());
             return Ok(());
         }
         let columns = RamAccessColumns::shared(session, witness, log_t)?;
@@ -120,6 +161,18 @@ impl MetalBackend {
             }
             Err(error) => return Err(metal_prepare_error(error)),
         };
+        let _ = witness_span.record("selected", "host_sparse_v1");
+        let _ = witness_span.record("fallback_reason", "none");
+        let _ = witness_span.record("address_plane_storage_id", plane.storage_id());
+        let _ = witness_span.record(
+            "address_plane_device_registry_id",
+            plane.device_registry_id(),
+        );
+        let _ = witness_span.record("address_plane_bytes", plane.resident_bytes());
+        let _ = witness_span.record("address_plane_upload_bytes", plane.resident_bytes());
+        let _ = witness_span.record("address_plane_allocations", 1);
+        let _ = witness_span.record("address_plane_published", true);
+        let _ = witness_span.record("complete_publication", owner.is_some());
         session.park(plane);
         Ok(())
     }

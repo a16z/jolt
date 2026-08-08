@@ -278,6 +278,23 @@ fn prepare_host_sparse_ram_val_check(
     let Some(owner) = shared_ram_cycle_family_owner(session, witness, log_t, log_k)? else {
         return Ok(None);
     };
+    let route = tracing::info_span!(
+        "MetalRamValCheck::route",
+        cycles = 1usize << log_t,
+        log_t,
+        log_k,
+        requested = "host_sparse_v1",
+        selected = "host_sparse_v1",
+        fallback_reason = "none",
+        source_generation = owner.receipt().source_generation(),
+        source_fingerprint = owner.receipt().fingerprint(),
+        access_records = owner.receipt().access_count(),
+        increment_records = owner.receipt().increment_count(),
+        additional_source_row_scans = 0,
+        member_upload_bytes = 0,
+        complete_sequence = true,
+    );
+    let _route_guard = route.enter();
     let (r_address, r_cycle) = ram_val_point.split_at(log_k);
     let sequence = HostSparseRamValCheck::new(owner, r_address, r_cycle, gamma)
         .map_err(|error| host_sparse_prepare_error(error.to_string()))?;

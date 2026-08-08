@@ -43,6 +43,10 @@ impl RamRafAddressPlane {
         self.metadata.storage_id()
     }
 
+    pub const fn device_registry_id(&self) -> u64 {
+        self.metadata.device_registry_id()
+    }
+
     pub(crate) fn buffer(&self) -> &Buffer {
         &self.buffer
     }
