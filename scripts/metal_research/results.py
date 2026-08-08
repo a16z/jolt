@@ -78,7 +78,7 @@ def _envelope(
             "name": (
                 "piop_speedup"
                 if tier["evaluator"]["result_adapter"]
-                in {"metal_piop_v7", "metal_piop_v10"}
+                in {"metal_piop_v7", "metal_piop_v10", "metal_piop_v11"}
                 else (
                     "successor_speedup"
                     if tier["evaluator"]["result_adapter"]
@@ -704,6 +704,10 @@ def adapt_result(
     if adapter == "metal_piop_v10":
         return _adapt_piop(
             tier, output, kernel, adapter="metal_piop_v10", schema_version=10
+        )
+    if adapter == "metal_piop_v11":
+        return _adapt_piop(
+            tier, output, kernel, adapter="metal_piop_v11", schema_version=11
         )
     raise ValueError(f"unsupported evaluator result adapter: {adapter}")
 

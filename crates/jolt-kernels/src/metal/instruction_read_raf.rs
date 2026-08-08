@@ -159,10 +159,6 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 dispatches = receipt.dispatches(),
                 source_copy_bytes = receipt.source_copy_bytes(),
                 full_plane_readback_bytes = receipt.full_plane_readback_bytes(),
-                legacy_row_collection_rows = 0u64,
-                legacy_bucket_scan_rows = 0u64,
-                legacy_host_repack_bytes = 0u64,
-                legacy_booleanity_upload_bytes = 0u64,
                 complete_overwrite = receipt.complete_overwrite(),
             )
             .entered();

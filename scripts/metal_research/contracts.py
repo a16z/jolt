@@ -32,6 +32,7 @@ _RESULT_ADAPTERS = {
     "outer_remainder_v3",
     "metal_piop_v7",
     "metal_piop_v10",
+    "metal_piop_v11",
 } | runtime_artifact_result_adapters()
 PHASE_CHECKPOINT_FIELDS = {
     "materialize_gpu_active_ms": "materialize",

@@ -25,7 +25,7 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
@@ -64,6 +64,28 @@ INSTRUCTION_INPUT_METAL_PHASES = (
 INSTRUCTION_INPUT_MIN_SPEEDUP = 5.0
 INSTRUCTION_READ_RAF_KERNEL = "InstructionReadRaf"
 INSTRUCTION_READ_RAF_MIN_SPEEDUP = 5.0
+INSTRUCTION_READ_RAF_COMPONENTS = (
+    "prepare",
+    "prove_round",
+    "finish_rounds",
+    "output_claims",
+)
+INSTRUCTION_READ_RAF_STAGE1_SOURCE = (
+    "MetalInstructionReadRaf::stage1_source_publish"
+)
+INSTRUCTION_READ_RAF_STAGE1_SCATTER = (
+    "MetalInstructionReadRaf::stage1_grouped_scatter"
+)
+INSTRUCTION_READ_RAF_STAGE1_SEQUENCE = (
+    "MetalInstructionReadRaf::stage1_grouped_sequence_prepare"
+)
+INSTRUCTION_READ_RAF_METAL_PHASES = (
+    "address_round",
+    "resident_first_message",
+    "resident_handoff",
+    "resident_round",
+    "readback",
+)
 BOOLEANITY_ADDRESS_KERNEL = "BooleanityAddressPhase"
 BOOLEANITY_ADDRESS_COMPONENTS = (
     "prepare",
@@ -258,6 +280,11 @@ INSTRUCTION_INPUT_METAL_CONFIG_RE = re.compile(
     r"storage_initialization=(?P<storage_initialization>\S+) "
     r"dense_storage_mode=(?P<dense_storage_mode>\S+) "
     r"native_primer=(?P<native_primer>\S+)$"
+)
+INSTRUCTION_READ_RAF_METAL_CONFIG_RE = re.compile(
+    r"^INSTRUCTION_READ_RAF_METAL_CONFIG backend=metal "
+    r"address_cutoff=(?P<address_cutoff>\d+) cutoff=(?P<cutoff>\d+) "
+    r"stage1_scatter_threads=(?P<stage1_scatter_threads>\d+)$"
 )
 BOOLEANITY_ADDRESS_METAL_CONFIG_RE = re.compile(
     r"^BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal "
@@ -609,6 +636,40 @@ def validate_instruction_input_stdout(
     }
     if config != expected:
         raise ValueError(f"unexpected InstructionInput Metal config: {config}")
+    return config
+
+
+def validate_instruction_read_raf_stdout(
+    stdout: str,
+    backend: str,
+    scatter_threads: int,
+    address_cutoff_log2: int = 25,
+    cutoff_log2: int = 16,
+) -> Optional[dict[str, int]]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := INSTRUCTION_READ_RAF_METAL_CONFIG_RE.fullmatch(line))
+        is not None
+    ]
+    if backend == "optimized":
+        if configs:
+            raise ValueError(
+                "optimized evaluator emitted an InstructionReadRaf Metal config"
+            )
+        return None
+    if len(configs) != 1:
+        raise ValueError(
+            "Metal evaluator must emit exactly one InstructionReadRaf Metal config"
+        )
+    config = {name: int(value) for name, value in configs[0].groupdict().items()}
+    expected = {
+        "address_cutoff": 1 << address_cutoff_log2,
+        "cutoff": 1 << cutoff_log2,
+        "stage1_scatter_threads": scatter_threads,
+    }
+    if config != expected:
+        raise ValueError(f"unexpected InstructionReadRaf Metal config: {config}")
     return config
 
 
@@ -1925,6 +1986,534 @@ def product_uniskip_observation(
     }
 
 
+def instruction_read_raf_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    cutoff_log2: int = 16,
+    scatter_threads: int = 256,
+) -> dict[str, Any]:
+    if backend not in {"optimized", "metal"}:
+        raise ValueError(f"unsupported InstructionReadRaf backend {backend!r}")
+    if log_n < 1 or not 0 < cutoff_log2 < log_n:
+        raise ValueError("invalid InstructionReadRaf evaluator geometry")
+    if backend == "metal" and log_n < 25:
+        raise ValueError("Stage1Grouped InstructionReadRaf requires log-n at least 25")
+    if scatter_threads not in {128, 256, 512, 1024}:
+        raise ValueError("invalid InstructionReadRaf scatter width")
+
+    outer_names = {
+        f"{INSTRUCTION_READ_RAF_KERNEL}::{component}"
+        for component in INSTRUCTION_READ_RAF_COMPONENTS
+    }
+    metal_names = {
+        f"Metal{INSTRUCTION_READ_RAF_KERNEL}::{phase}"
+        for phase in INSTRUCTION_READ_RAF_METAL_PHASES
+    } | {
+        INSTRUCTION_READ_RAF_STAGE1_SOURCE,
+        INSTRUCTION_READ_RAF_STAGE1_SCATTER,
+        INSTRUCTION_READ_RAF_STAGE1_SEQUENCE,
+    }
+    supporting_names = {
+        PIOP_SPAN,
+        BACKEND_WITNESS_PREP_SPAN,
+        METAL_INSTRUCTION_INPUT_ROWS_PREPARE,
+        "MetalSpartanDense::witness_prepare",
+    }
+    intervals = strict_named_intervals(
+        events, outer_names | metal_names | supporting_names
+    )
+    if len(intervals[PIOP_SPAN]) != 1 or len(
+        intervals[BACKEND_WITNESS_PREP_SPAN]
+    ) != 1:
+        raise ValueError("InstructionReadRaf requires one PIOP and witness-prepare span")
+    piop = intervals[PIOP_SPAN][0]
+    witness_prepare = intervals[BACKEND_WITNESS_PREP_SPAN][0]
+    if witness_prepare[1] > piop[0]:
+        raise ValueError("InstructionReadRaf witness preparation overlaps PIOP")
+
+    by_component = {
+        component: sorted(intervals[f"{INSTRUCTION_READ_RAF_KERNEL}::{component}"])
+        for component in INSTRUCTION_READ_RAF_COMPONENTS
+    }
+    outer_counts = {
+        component: len(component_intervals)
+        for component, component_intervals in by_component.items()
+    }
+    expected_outer_counts = {
+        "prepare": 1,
+        "prove_round": 128 + log_n,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }
+    if outer_counts != expected_outer_counts:
+        raise ValueError(
+            f"InstructionReadRaf member span counts {outer_counts}, "
+            f"expected {expected_outer_counts}"
+        )
+    prepare = by_component["prepare"][0]
+    rounds = by_component["prove_round"]
+    finish = by_component["finish_rounds"][0]
+    output = by_component["output_claims"][0]
+    ordered = [prepare, *rounds, finish, output]
+    if any(start < piop[0] or end > piop[1] for start, end in ordered):
+        raise ValueError("an InstructionReadRaf member span lies outside PIOP")
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError("InstructionReadRaf member spans overlap or are out of order")
+
+    components = {
+        "prepare_us": interval_duration_us(prepare),
+        "rounds_us": [interval_duration_us(interval) for interval in rounds],
+        "finish_us": interval_duration_us(finish),
+        "output_claims_us": interval_duration_us(output),
+    }
+    components["rounds_total_us"] = sum(components["rounds_us"])
+    components["member_us"] = (
+        components["prepare_us"]
+        + components["rounds_total_us"]
+        + components["finish_us"]
+        + components["output_claims_us"]
+    )
+    if any(
+        not math.isfinite(float(components[field]))
+        or float(components[field]) <= 0.0
+        for field in (
+            "prepare_us",
+            "rounds_total_us",
+            "finish_us",
+            "output_claims_us",
+            "member_us",
+        )
+    ):
+        raise ValueError("InstructionReadRaf has a non-positive member duration")
+
+    observed_metal_names = {
+        name
+        for name, _, _ in span_intervals_us(events)
+        if name.startswith(f"Metal{INSTRUCTION_READ_RAF_KERNEL}::")
+    }
+    unknown_metal_names = observed_metal_names - metal_names
+    if unknown_metal_names:
+        raise ValueError(
+            "InstructionReadRaf trace contains legacy or unknown Metal phases: "
+            f"{sorted(unknown_metal_names)}"
+        )
+    metal_counts = {
+        name.rsplit("::", 1)[-1]: len(intervals[name]) for name in metal_names
+    }
+    stage1_expected = backend == "metal"
+    if not stage1_expected:
+        if any(metal_counts.values()):
+            raise ValueError("InstructionReadRaf CPU route unexpectedly exercised Metal")
+        if intervals[METAL_INSTRUCTION_INPUT_ROWS_PREPARE] or intervals[
+            "MetalSpartanDense::witness_prepare"
+        ]:
+            raise ValueError("InstructionReadRaf CPU route published a Stage1 owner")
+        return {
+            "components": components,
+            "outer_counts": outer_counts,
+            "metal_counts": metal_counts,
+            "source_observation": None,
+            "scatter_observation": None,
+            "stage1_projection": None,
+            "resource_observation": None,
+        }
+
+    expected_metal_counts = {
+        "stage1_source_publish": 1,
+        "stage1_grouped_scatter": 1,
+        "stage1_grouped_sequence_prepare": 1,
+        "address_round": 129,
+        "resident_first_message": 1,
+        "resident_handoff": 1,
+        "resident_round": log_n - cutoff_log2 - 1,
+        "readback": 1,
+    }
+    if metal_counts != expected_metal_counts:
+        raise ValueError(
+            f"InstructionReadRaf Metal span counts {metal_counts}, "
+            f"expected {expected_metal_counts}"
+        )
+    if any(
+        start < piop[0] or end > piop[1]
+        for name in metal_names - {INSTRUCTION_READ_RAF_STAGE1_SOURCE}
+        for start, end in intervals[name]
+    ):
+        raise ValueError("an InstructionReadRaf Metal phase lies outside PIOP")
+
+    source_interval = intervals[INSTRUCTION_READ_RAF_STAGE1_SOURCE][0]
+    scatter_interval = intervals[INSTRUCTION_READ_RAF_STAGE1_SCATTER][0]
+    sequence_interval = intervals[INSTRUCTION_READ_RAF_STAGE1_SEQUENCE][0]
+    require_contained(
+        source_interval,
+        witness_prepare,
+        "InstructionReadRaf Stage1 source publication",
+    )
+    require_contained(
+        scatter_interval, prepare, "InstructionReadRaf Stage1 grouped scatter"
+    )
+    require_contained(
+        sequence_interval, prepare, "InstructionReadRaf resident sequence preparation"
+    )
+    if source_interval[1] > piop[0] or scatter_interval[1] > sequence_interval[0]:
+        raise ValueError("InstructionReadRaf Stage1 phases are out of order")
+
+    phase_rounds = (
+        (
+            "address_round",
+            sorted(intervals["MetalInstructionReadRaf::address_round"]),
+            rounds[:129],
+        ),
+        (
+            "resident_first_message",
+            intervals["MetalInstructionReadRaf::resident_first_message"],
+            rounds[129:130],
+        ),
+        (
+            "resident_handoff",
+            intervals["MetalInstructionReadRaf::resident_handoff"],
+            rounds[130:131],
+        ),
+        (
+            "resident_round",
+            sorted(intervals["MetalInstructionReadRaf::resident_round"]),
+            rounds[131 : 131 + log_n - cutoff_log2 - 1],
+        ),
+    )
+    for phase, inner_intervals, outer_intervals in phase_rounds:
+        if len(inner_intervals) != len(outer_intervals):
+            raise ValueError(f"InstructionReadRaf {phase} round mapping is incomplete")
+        for index, (inner, outer) in enumerate(zip(inner_intervals, outer_intervals)):
+            require_contained(
+                inner,
+                outer,
+                f"InstructionReadRaf {phase} round {index}",
+            )
+    require_contained(
+        intervals["MetalInstructionReadRaf::readback"][0],
+        finish,
+        "InstructionReadRaf readback",
+    )
+
+    source_fields = {
+        "rows",
+        "row_bytes",
+        "claim_bytes",
+        "resident_device_bytes",
+        "count_chunks",
+        "count_bytes",
+        "host_row_write_bytes",
+        "host_claim_write_bytes",
+        "host_count_update_bytes",
+        "row_allocation_identity",
+        "claim_allocation_identity",
+        "count_allocation_identity",
+        "device_registry_id",
+        "source_generation",
+        "completion_serial",
+        "count_order",
+        "publication_kind",
+        "complete_overwrite",
+        "source_windows",
+        "member_upload_bytes",
+        "projection_dispatches",
+    }
+    source_args = exact_span_args(
+        events, INSTRUCTION_READ_RAF_STAGE1_SOURCE, source_fields
+    )
+    source = {
+        field: nonnegative_trace_integer(value, f"Stage1 source {field}")
+        for field, value in source_args.items()
+        if field
+        not in {"count_order", "publication_kind", "complete_overwrite"}
+    }
+    source["count_order"] = trace_string(source_args["count_order"], "count_order")
+    source["publication_kind"] = trace_string(
+        source_args["publication_kind"], "publication_kind"
+    )
+    source["complete_overwrite"] = trace_boolean(
+        source_args["complete_overwrite"]
+    )
+    rows = 1 << log_n
+    chunks = rows // 4096
+    expected_source = {
+        "rows": rows,
+        "row_bytes": 40 * rows,
+        "claim_bytes": rows,
+        "resident_device_bytes": 41 * rows,
+        "count_chunks": chunks,
+        "count_bytes": 328 * chunks,
+        "host_row_write_bytes": 40 * rows,
+        "host_claim_write_bytes": rows,
+        "host_count_update_bytes": 4 * rows,
+        "count_order": "table_major_then_none_v1",
+        "publication_kind": "host_fill_v1",
+        "complete_overwrite": True,
+        "source_windows": rows,
+        "member_upload_bytes": 0,
+        "projection_dispatches": 0,
+    }
+    if any(source[field] != value for field, value in expected_source.items()):
+        raise ValueError(f"InstructionReadRaf Stage1 source ledger is invalid: {source}")
+    source_id_fields = (
+        "row_allocation_identity",
+        "claim_allocation_identity",
+        "count_allocation_identity",
+    )
+    source_ids = [source[field] for field in source_id_fields]
+    if (
+        any(identity <= 0 for identity in source_ids)
+        or len(set(source_ids)) != len(source_ids)
+        or source["device_registry_id"] <= 0
+        or source["source_generation"] <= 0
+        or source["completion_serial"] <= 0
+    ):
+        raise ValueError("InstructionReadRaf Stage1 source provenance is invalid")
+
+    compact_fields = {
+        "source_kind",
+        "witness_row_extractions",
+        "residual_rows_written",
+        "compact_rows_written",
+        "compact_row_bytes",
+        "residual_row_bytes",
+        "compact_allocations",
+        "residual_allocations",
+        "full_row_allocations",
+        "full_domain_copy_bytes",
+        "full_domain_copy_dispatches",
+        "host_repack_rows",
+        "resident_rows",
+        "explicit_rows",
+        "compact_rows_storage_id",
+        "residual_rows_storage_id",
+    }
+    compact_args = exact_span_args(
+        events, METAL_INSTRUCTION_INPUT_ROWS_PREPARE, compact_fields
+    )
+    compact = {
+        field: nonnegative_trace_integer(value, f"Stage1 compact rows {field}")
+        for field, value in compact_args.items()
+        if field != "source_kind"
+    }
+    compact["source_kind"] = trace_string(
+        compact_args["source_kind"], "compact source_kind"
+    )
+    if len(intervals[METAL_INSTRUCTION_INPUT_ROWS_PREPARE]) != 1:
+        raise ValueError("InstructionReadRaf requires one compact-row producer")
+    require_contained(
+        intervals[METAL_INSTRUCTION_INPUT_ROWS_PREPARE][0],
+        witness_prepare,
+        "InstructionReadRaf compact-row producer",
+    )
+    compact_expected = {
+        "source_kind": "owned_random_access",
+        "witness_row_extractions": rows,
+        "residual_rows_written": rows,
+        "compact_rows_written": rows,
+        "compact_row_bytes": 48,
+        "residual_row_bytes": 112,
+        "compact_allocations": 1,
+        "residual_allocations": 1,
+        "full_row_allocations": 0,
+        "full_domain_copy_bytes": 0,
+        "full_domain_copy_dispatches": 0,
+        "host_repack_rows": 0,
+        "resident_rows": rows,
+    }
+    if any(compact[field] != value for field, value in compact_expected.items()):
+        raise ValueError("InstructionReadRaf compact-row production is inconsistent")
+    if (
+        compact["explicit_rows"] > rows
+        or compact["compact_rows_storage_id"] <= 0
+        or compact["residual_rows_storage_id"] <= 0
+        or compact["compact_rows_storage_id"]
+        == compact["residual_rows_storage_id"]
+    ):
+        raise ValueError("InstructionReadRaf compact-row storage provenance is invalid")
+
+    witness_fields = {
+        "cycles",
+        "source",
+        "admitted",
+        "fallback_reason",
+        "native_register_contract_bytes",
+        "owner_generation",
+        "shift_late_copy_dispatches",
+        "shift_resident_bytes",
+        "shift_row_extractions",
+    }
+    witness_args = exact_span_args(
+        events, "MetalSpartanDense::witness_prepare", witness_fields
+    )
+    if len(intervals["MetalSpartanDense::witness_prepare"]) != 1:
+        raise ValueError("InstructionReadRaf requires one Stage1 projection")
+    require_contained(
+        intervals["MetalSpartanDense::witness_prepare"][0],
+        witness_prepare,
+        "InstructionReadRaf Stage1 projection",
+    )
+    stage1_projection = {
+        field: nonnegative_trace_integer(value, f"Stage1 projection {field}")
+        for field, value in witness_args.items()
+        if field not in {"source", "admitted", "fallback_reason"}
+    }
+    stage1_projection["source"] = trace_string(witness_args["source"], "source")
+    stage1_projection["admitted"] = trace_boolean(witness_args["admitted"])
+    stage1_projection["fallback_reason"] = trace_string(
+        witness_args["fallback_reason"], "fallback_reason"
+    )
+    if (
+        stage1_projection["cycles"] != rows
+        or stage1_projection["source"] != "stage1_single_projection"
+        or stage1_projection["admitted"] is not True
+        or stage1_projection["fallback_reason"] != "none"
+        or stage1_projection["owner_generation"] <= 0
+        or stage1_projection["shift_row_extractions"] != rows
+        or stage1_projection["shift_late_copy_dispatches"] != 0
+        or stage1_projection["native_register_contract_bytes"] <= 0
+        or stage1_projection["shift_resident_bytes"] <= 0
+    ):
+        raise ValueError("InstructionReadRaf Stage1 projection is inconsistent")
+
+    scatter_fields = {
+        "rows",
+        "preparation_wall_ns",
+        "command_wall_ns",
+        "gpu_active_ns",
+        "status_readback_bytes",
+        "packed_rows_bytes",
+        "lookups_bytes",
+        "inverse_bytes",
+        "weights_bytes",
+        "packed_rows_identity",
+        "lookups_identity",
+        "inverse_identity",
+        "weights_identity",
+        "source_generation",
+        "source_completion_serial",
+        "source_row_allocation_identity",
+        "source_claim_allocation_identity",
+        "source_count_allocation_identity",
+        "source_count_chunks",
+        "source_count_bytes",
+        "source_count_order",
+        "source_device_registry_id",
+        "scatter_completion_serial",
+        "e_in_length",
+        "e_out_length",
+        "command_buffers",
+        "encoders",
+        "waits",
+        "dispatches",
+        "threadgroups",
+        "threads_per_threadgroup",
+        "dynamic_threadgroup_bytes",
+        "static_threadgroup_bytes",
+        "source_copy_bytes",
+        "full_plane_readback_bytes",
+        "complete_overwrite",
+        "additional_allocation_bytes",
+    }
+    scatter_args = exact_span_args(
+        events, INSTRUCTION_READ_RAF_STAGE1_SCATTER, scatter_fields
+    )
+    scatter = {
+        field: nonnegative_trace_integer(value, f"Stage1 scatter {field}")
+        for field, value in scatter_args.items()
+        if field not in {"source_count_order", "complete_overwrite"}
+    }
+    scatter["source_count_order"] = trace_string(
+        scatter_args["source_count_order"], "source_count_order"
+    )
+    scatter["complete_overwrite"] = trace_boolean(
+        scatter_args["complete_overwrite"]
+    )
+    e_out = 1 << (log_n // 2)
+    e_in = rows // e_out
+    expected_additional_bytes = (
+        37 * rows
+        + 328 * chunks
+        + 332
+        + 16 * (e_in + e_out)
+        + 4
+        + 48
+    )
+    expected_scatter = {
+        "rows": rows,
+        "status_readback_bytes": 4,
+        "packed_rows_bytes": rows,
+        "lookups_bytes": 16 * rows,
+        "inverse_bytes": 4 * rows,
+        "weights_bytes": 16 * rows,
+        "source_generation": source["source_generation"],
+        "source_completion_serial": source["completion_serial"],
+        "source_row_allocation_identity": source["row_allocation_identity"],
+        "source_claim_allocation_identity": source["claim_allocation_identity"],
+        "source_count_allocation_identity": source["count_allocation_identity"],
+        "source_count_chunks": source["count_chunks"],
+        "source_count_bytes": source["count_bytes"],
+        "source_count_order": source["count_order"],
+        "source_device_registry_id": source["device_registry_id"],
+        "e_in_length": e_in,
+        "e_out_length": e_out,
+        "command_buffers": 1,
+        "encoders": 1,
+        "waits": 1,
+        "dispatches": 1,
+        "threadgroups": chunks,
+        "threads_per_threadgroup": scatter_threads,
+        "dynamic_threadgroup_bytes": 328,
+        "static_threadgroup_bytes": 0,
+        "source_copy_bytes": 0,
+        "full_plane_readback_bytes": 0,
+        "complete_overwrite": True,
+        "additional_allocation_bytes": expected_additional_bytes,
+    }
+    if any(scatter[field] != value for field, value in expected_scatter.items()):
+        raise ValueError(f"InstructionReadRaf Stage1 scatter ledger is invalid: {scatter}")
+    output_ids = [
+        scatter[field]
+        for field in (
+            "packed_rows_identity",
+            "lookups_identity",
+            "inverse_identity",
+            "weights_identity",
+        )
+    ]
+    if (
+        any(identity <= 0 for identity in output_ids)
+        or len(set(output_ids)) != len(output_ids)
+        or set(output_ids) & set(source_ids)
+        or scatter["scatter_completion_serial"] <= 0
+        or scatter["preparation_wall_ns"] <= 0
+        or scatter["command_wall_ns"] <= 0
+        or scatter["gpu_active_ns"] <= 0
+        or scatter["gpu_active_ns"] > scatter["command_wall_ns"]
+        or (scatter["preparation_wall_ns"] + scatter["command_wall_ns"])
+        > int(components["prepare_us"] * 1000.0)
+    ):
+        raise ValueError("InstructionReadRaf Stage1 scatter execution is invalid")
+
+    stage1_projection_observation = {
+        "compact_rows": compact,
+        "witness": stage1_projection,
+    }
+    return {
+        "components": components,
+        "outer_counts": outer_counts,
+        "metal_counts": metal_counts,
+        "source_observation": source,
+        "scatter_observation": scatter,
+        "stage1_projection": stage1_projection_observation,
+        "resource_observation": {
+            "source": source,
+            "scatter": scatter,
+            "stage1_projection": stage1_projection_observation,
+        },
+    }
+
+
 def booleanity_address_member_breakdown(
     events: list[dict[str, Any]],
     backend: str,
@@ -1937,6 +2526,7 @@ def booleanity_address_member_breakdown(
     kernel: str = BOOLEANITY_ADDRESS_KERNEL,
     row_source_span: str = OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE,
     require_hamming_lifecycle: bool = False,
+    stage1_source: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     if backend not in {"optimized", "metal"}:
         raise ValueError(f"unsupported Booleanity address backend {backend!r}")
@@ -2221,9 +2811,18 @@ def booleanity_address_member_breakdown(
             "row_allocations",
             "row_upload_bytes",
         }
+        stage5_provenance_fields = {
+            "source_kind",
+            "source_generation",
+            "source_completion_serial",
+            "source_claim_allocation_identity",
+        }
+        stage5_fields = lifecycle_fields | (
+            stage5_provenance_fields if stage1_source is not None else set()
+        )
         lifecycle_args = {
             "stage5": exact_span_args(
-                events, METAL_BOOLEANITY_ROWS_STAGE5_PREPARE, lifecycle_fields
+                events, METAL_BOOLEANITY_ROWS_STAGE5_PREPARE, stage5_fields
             ),
             "stage6a": exact_span_args(
                 events, METAL_BOOLEANITY_ROWS_STAGE6A_USE, lifecycle_fields
@@ -2267,6 +2866,48 @@ def booleanity_address_member_breakdown(
             and trace_boolean(lifecycle_args["stage7"]["terminal_carry_removed"])
             is True
         )
+        if stage1_source is None:
+            stage5_source_exact = (
+                parsed_lifecycle["stage5"]["row_allocations"] == 1
+                and parsed_lifecycle["stage5"]["row_upload_bytes"] == rows * 40
+            )
+            stage5_source = {
+                "source_kind": "member_upload_v1",
+                "source_generation": 0,
+                "source_completion_serial": 0,
+                "source_claim_allocation_identity": 0,
+            }
+        else:
+            stage5_source = {
+                "source_kind": trace_string(
+                    lifecycle_args["stage5"]["source_kind"], "source_kind"
+                ),
+                **{
+                    field: booleanity_trace_integer(
+                        lifecycle_args["stage5"][field],
+                        f"stage5 {field}",
+                        allow_zero=True,
+                    )
+                    for field in stage5_provenance_fields - {"source_kind"}
+                },
+            }
+            stage5_source_exact = (
+                parsed_lifecycle["stage5"]["row_allocations"] == 0
+                and parsed_lifecycle["stage5"]["row_upload_bytes"] == 0
+                and stage5_source
+                == {
+                    "source_kind": "stage1_owner_v1",
+                    "source_generation": stage1_source["source_generation"],
+                    "source_completion_serial": stage1_source[
+                        "completion_serial"
+                    ],
+                    "source_claim_allocation_identity": stage1_source[
+                        "claim_allocation_identity"
+                    ],
+                }
+                and storage_ids[0] == stage1_source["row_allocation_identity"]
+                and registries[0] == stage1_source["device_registry_id"]
+            )
         if (
             any(storage_id <= 0 for storage_id in storage_ids)
             or len(set(storage_ids)) != 1
@@ -2277,8 +2918,7 @@ def booleanity_address_member_breakdown(
                 or parsed_lifecycle[stage]["resident_row_bytes"] != 40
                 for stage in lifecycle_stages
             )
-            or parsed_lifecycle["stage5"]["row_allocations"] != 1
-            or parsed_lifecycle["stage5"]["row_upload_bytes"] != rows * 40
+            or not stage5_source_exact
             or any(
                 parsed_lifecycle[stage]["row_allocations"] != 0
                 or parsed_lifecycle[stage]["row_upload_bytes"] != 0
@@ -2300,6 +2940,7 @@ def booleanity_address_member_breakdown(
             "stage5_storage_id": storage_ids[0],
             "stage6a_storage_id": storage_ids[1],
             "stage6b_storage_id": storage_ids[2],
+            **(stage5_source if stage1_source is not None else {}),
             **{
                 stage: {
                     "row_allocations": parsed_lifecycle[stage]["row_allocations"],
@@ -2523,6 +3164,7 @@ def hamming_weight_member_breakdown(
     selectors_per_tile: int = 6,
     tile_threads: int = 512,
     finalize_threads: int = 1024,
+    stage1_source: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     return booleanity_address_member_breakdown(
         events,
@@ -2535,6 +3177,7 @@ def hamming_weight_member_breakdown(
         kernel=HAMMING_WEIGHT_KERNEL,
         row_source_span=OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE,
         require_hamming_lifecycle=True,
+        stage1_source=stage1_source,
     )
 
 
@@ -2672,7 +3315,9 @@ def booleanity_outer_member_breakdown(
 
 
 def retained_hamming_lifecycle(
-    events: list[dict[str, Any]], log_n: int
+    events: list[dict[str, Any]],
+    log_n: int,
+    stage1_source: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     raw_names = {
         METAL_BOOLEANITY_ROWS_STAGE5_PREPARE,
@@ -2742,9 +3387,18 @@ def retained_hamming_lifecycle(
         "row_allocations",
         "row_upload_bytes",
     }
+    stage5_provenance_fields = {
+        "source_kind",
+        "source_generation",
+        "source_completion_serial",
+        "source_claim_allocation_identity",
+    }
+    stage5_fields = raw_fields | (
+        stage5_provenance_fields if stage1_source is not None else set()
+    )
     raw_args = {
         "stage5": exact_span_args(
-            events, METAL_BOOLEANITY_ROWS_STAGE5_PREPARE, raw_fields
+            events, METAL_BOOLEANITY_ROWS_STAGE5_PREPARE, stage5_fields
         ),
         "stage6a": exact_span_args(
             events, METAL_BOOLEANITY_ROWS_STAGE6A_USE, raw_fields
@@ -2757,12 +3411,51 @@ def retained_hamming_lifecycle(
         stage: {
             field: booleanity_trace_integer(value, f"{stage} {field}", allow_zero=True)
             for field, value in args.items()
+            if field in raw_fields
         }
         for stage, args in raw_args.items()
     }
     rows = 1 << log_n
     source_ids = [raw[stage]["resident_rows_storage_id"] for stage in raw]
     registries = [raw[stage]["device_registry_id"] for stage in raw]
+    if stage1_source is None:
+        stage5_source_exact = (
+            raw["stage5"]["row_allocations"] == 1
+            and raw["stage5"]["row_upload_bytes"] == rows * 40
+        )
+        stage5_source = {
+            "source_kind": "member_upload_v1",
+            "source_generation": 0,
+            "source_completion_serial": 0,
+            "source_claim_allocation_identity": 0,
+        }
+    else:
+        stage5_source = {
+            "source_kind": trace_string(
+                raw_args["stage5"]["source_kind"], "source_kind"
+            ),
+            **{
+                field: booleanity_trace_integer(
+                    raw_args["stage5"][field], f"stage5 {field}", allow_zero=True
+                )
+                for field in stage5_provenance_fields - {"source_kind"}
+            },
+        }
+        stage5_source_exact = (
+            raw["stage5"]["row_allocations"] == 0
+            and raw["stage5"]["row_upload_bytes"] == 0
+            and stage5_source
+            == {
+                "source_kind": "stage1_owner_v1",
+                "source_generation": stage1_source["source_generation"],
+                "source_completion_serial": stage1_source["completion_serial"],
+                "source_claim_allocation_identity": stage1_source[
+                    "claim_allocation_identity"
+                ],
+            }
+            and source_ids[0] == stage1_source["row_allocation_identity"]
+            and registries[0] == stage1_source["device_registry_id"]
+        )
     if (
         any(identity <= 0 for identity in source_ids)
         or len(set(source_ids)) != 1
@@ -2773,8 +3466,7 @@ def retained_hamming_lifecycle(
             or raw[stage]["resident_row_bytes"] != 40
             for stage in raw
         )
-        or raw["stage5"]["row_allocations"] != 1
-        or raw["stage5"]["row_upload_bytes"] != rows * 40
+        or not stage5_source_exact
         or any(
             raw[stage]["row_allocations"] != 0
             or raw[stage]["row_upload_bytes"] != 0
@@ -2848,6 +3540,7 @@ def retained_hamming_lifecycle(
         "device_registry_id": registries[0],
         "source_rows_storage_id": source_ids[0],
         "hot_rows_storage_id": retain["hot_rows_storage_id"],
+        **(stage5_source if stage1_source is not None else {}),
         "stage5": {
             "row_allocations": raw["stage5"]["row_allocations"],
             "row_upload_bytes": raw["stage5"]["row_upload_bytes"],
@@ -2874,7 +3567,10 @@ def retained_hamming_lifecycle(
 
 
 def packed_hot_booleanity_address_member_breakdown(
-    events: list[dict[str, Any]], backend: str, log_n: int
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    stage1_source: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     if backend != "metal":
         raise ValueError("packed-hot Booleanity parsing requires the Metal arm")
@@ -2884,7 +3580,7 @@ def packed_hot_booleanity_address_member_breakdown(
         BOOLEANITY_ADDRESS_KERNEL,
         OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE,
     )
-    lifecycle = retained_hamming_lifecycle(events, log_n)
+    lifecycle = retained_hamming_lifecycle(events, log_n, stage1_source)
     names = {
         "prepare": "MetalBooleanityAddressPhase::prepare",
         "sequence": "MetalBooleanityAddressPhase::packed_hot_sequence",
@@ -3023,7 +3719,10 @@ def packed_hot_booleanity_address_member_breakdown(
 
 
 def retained_hot_hamming_weight_member_breakdown(
-    events: list[dict[str, Any]], backend: str, log_n: int
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    stage1_source: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     if backend != "metal":
         raise ValueError("retained-hot Hamming parsing requires the Metal arm")
@@ -3033,7 +3732,7 @@ def retained_hot_hamming_weight_member_breakdown(
         HAMMING_WEIGHT_KERNEL,
         OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE,
     )
-    lifecycle = retained_hamming_lifecycle(events, log_n)
+    lifecycle = retained_hamming_lifecycle(events, log_n, stage1_source)
     names = {
         "sequence": "MetalHammingWeightClaimReduction::retained_sequence",
         "dispatch": "MetalHammingWeightClaimReduction::retained_dispatch",
@@ -4265,17 +4964,19 @@ def local_member_decision(
 def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     if not pairs:
         raise ValueError("at least one CPU/Metal pair is required")
-    hamming_fields = {
+    required_member_fields = {
+        "cpu_instruction_read_raf_us",
+        "metal_instruction_read_raf_us",
         "cpu_hamming_weight_us",
         "metal_hamming_weight_us",
         "cpu_hamming_weight_service_us",
         "metal_hamming_weight_service_us",
     }
     for index, pair in enumerate(pairs, 1):
-        missing = hamming_fields - pair.keys()
+        missing = required_member_fields - pair.keys()
         if missing:
             raise ValueError(
-                f"pair {index} is missing Hamming-weight timing fields: {sorted(missing)}"
+                f"pair {index} is missing required member timing fields: {sorted(missing)}"
             )
     cpu = [float(pair["cpu_us"]) for pair in pairs]
     metal = [float(pair["metal_us"]) for pair in pairs]
@@ -4290,11 +4991,11 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         float(pair["metal_instruction_input_us"]) for pair in pairs
     ]
     cpu_instruction_read_raf = [
-        float(pair.get("cpu_instruction_read_raf_us", pair["cpu_hamming_weight_us"]))
+        float(pair["cpu_instruction_read_raf_us"])
         for pair in pairs
     ]
     metal_instruction_read_raf = [
-        float(pair.get("metal_instruction_read_raf_us", pair["metal_hamming_weight_us"]))
+        float(pair["metal_instruction_read_raf_us"])
         for pair in pairs
     ]
     cpu_booleanity_address = [
@@ -4959,7 +5660,7 @@ def local_kernel_primary_us(result: dict[str, Any], kernel: str) -> float:
     elif kernel == INSTRUCTION_CLAIM_KERNEL:
         value = kernel_wall_us(result["attribution"], kernel)
     elif kernel == INSTRUCTION_READ_RAF_KERNEL:
-        value = kernel_wall_us(result["attribution"], kernel)
+        value = result["instruction_read_raf_member"]["components"]["member_us"]
     else:
         raise ValueError(f"unsupported local kernel {kernel}")
     value = float(value)
@@ -4982,6 +5683,7 @@ def run_backend(
     backend: str,
     instruction_ra_materialize_width: int,
     instruction_ra_reuse_inverse: bool,
+    instruction_read_raf_scatter_threads: int,
     bytecode_message_threads: int,
     bytecode_transition_threads: int,
     bytecode_max_threadgroups: int,
@@ -5028,6 +5730,8 @@ def run_backend(
         "chrome",
         "--backend",
         backend,
+        "--instruction-read-raf-metal-scatter-threads",
+        str(instruction_read_raf_scatter_threads),
         "--bytecode-cycle-algebra",
         "q10",
         "--bytecode-metal-message-threads",
@@ -5145,6 +5849,11 @@ def run_backend(
         instruction_input_trace_cutoff_log2,
         instruction_input_borrow_outer_residual,
     )
+    instruction_read_raf_config = validate_instruction_read_raf_stdout(
+        result.stdout,
+        backend,
+        instruction_read_raf_scatter_threads,
+    )
     booleanity_address_config = validate_booleanity_address_stdout(
         result.stdout,
         backend,
@@ -5201,9 +5910,16 @@ def run_backend(
         instruction_input_cutoff_log2,
         instruction_input_borrow_outer_residual,
     )
+    instruction_read_raf_member = instruction_read_raf_member_breakdown(
+        events,
+        backend,
+        log_n,
+        scatter_threads=instruction_read_raf_scatter_threads,
+    )
+    stage1_source = instruction_read_raf_member["source_observation"]
     if backend == "metal" and booleanity_address_implementation == "packed-hot":
         booleanity_address_member = packed_hot_booleanity_address_member_breakdown(
-            events, backend, log_n
+            events, backend, log_n, stage1_source
         )
     else:
         booleanity_address_member = booleanity_address_member_breakdown(
@@ -5214,10 +5930,11 @@ def run_backend(
             booleanity_address_selectors_per_tile,
             booleanity_address_tile_threads,
             booleanity_address_finalize_threads,
+            stage1_source=stage1_source,
         )
     if backend == "metal" and hamming_weight_implementation == "retained-hot":
         hamming_weight_member = retained_hot_hamming_weight_member_breakdown(
-            events, backend, log_n
+            events, backend, log_n, stage1_source
         )
     else:
         hamming_weight_member = hamming_weight_member_breakdown(
@@ -5228,6 +5945,7 @@ def run_backend(
             hamming_weight_selectors_per_tile,
             hamming_weight_tile_threads,
             hamming_weight_finalize_threads,
+            stage1_source,
         )
     outer_remainder_member = outer_remainder_member_breakdown(
         events,
@@ -5262,6 +5980,7 @@ def run_backend(
     for name, member in (
         (BYTECODE_KERNEL, bytecode_member),
         (INSTRUCTION_INPUT_KERNEL, instruction_input_member),
+        (INSTRUCTION_READ_RAF_KERNEL, instruction_read_raf_member),
         (BOOLEANITY_ADDRESS_KERNEL, booleanity_address_member),
         (HAMMING_WEIGHT_KERNEL, hamming_weight_member),
     ):
@@ -5292,6 +6011,8 @@ def run_backend(
         "bytecode_member": bytecode_member,
         "instruction_input_config": instruction_input_config,
         "instruction_input_member": instruction_input_member,
+        "instruction_read_raf_config": instruction_read_raf_config,
+        "instruction_read_raf_member": instruction_read_raf_member,
         "booleanity_address_config": booleanity_address_config,
         "booleanity_address_member": booleanity_address_member,
         "hamming_weight_config": hamming_weight_config,
@@ -5447,6 +6168,12 @@ def parser() -> argparse.ArgumentParser:
         default=16,
     )
     result.add_argument("--instruction-ra-reuse-inverse", action="store_true")
+    result.add_argument(
+        "--instruction-read-raf-metal-scatter-threads",
+        type=int,
+        choices=[128, 256, 512, 1024],
+        default=256,
+    )
     result.add_argument(
         "--bytecode-metal-message-threads",
         type=int,
@@ -5759,6 +6486,7 @@ def main() -> int:
                     backend,
                     args.instruction_ra_materialize_width,
                     args.instruction_ra_reuse_inverse,
+                    args.instruction_read_raf_metal_scatter_threads,
                     args.bytecode_metal_message_threads,
                     args.bytecode_metal_transition_threads,
                     args.bytecode_metal_max_threadgroups,
@@ -5849,13 +6577,15 @@ def main() -> int:
                             "service_us"
                         ]
                     ),
-                    "cpu_instruction_read_raf_us": kernel_wall_us(
-                        results["optimized"]["attribution"],
-                        INSTRUCTION_READ_RAF_KERNEL,
+                    "cpu_instruction_read_raf_us": float(
+                        results["optimized"]["instruction_read_raf_member"][
+                            "components"
+                        ]["member_us"]
                     ),
-                    "metal_instruction_read_raf_us": kernel_wall_us(
-                        results["metal"]["attribution"],
-                        INSTRUCTION_READ_RAF_KERNEL,
+                    "metal_instruction_read_raf_us": float(
+                        results["metal"]["instruction_read_raf_member"][
+                            "components"
+                        ]["member_us"]
                     ),
                     "cpu_booleanity_address_us": float(
                         booleanity_address_records["optimized"][
@@ -5944,6 +6674,20 @@ def main() -> int:
                         ],
                         "metal_member": results["metal"]["instruction_input_member"],
                     },
+                    "instruction_read_raf": {
+                        "optimized_config": results["optimized"][
+                            "instruction_read_raf_config"
+                        ],
+                        "metal_config": results["metal"][
+                            "instruction_read_raf_config"
+                        ],
+                        "optimized_member": results["optimized"][
+                            "instruction_read_raf_member"
+                        ],
+                        "metal_member": results["metal"][
+                            "instruction_read_raf_member"
+                        ],
+                    },
                     "booleanity_address": {
                         "optimized_config": results["optimized"][
                             "booleanity_address_config"
@@ -6015,6 +6759,20 @@ def main() -> int:
                             "instruction_input_row_lifecycle": results[backend][
                                 "instruction_input_member"
                             ]["row_lifecycle"],
+                            "instruction_read_raf": member_record(
+                                results[backend]["instruction_read_raf_member"]
+                            ),
+                            "instruction_read_raf_resources": {
+                                "source": results[backend][
+                                    "instruction_read_raf_member"
+                                ]["source_observation"],
+                                "scatter": results[backend][
+                                    "instruction_read_raf_member"
+                                ]["scatter_observation"],
+                                "stage1_projection": results[backend][
+                                    "instruction_read_raf_member"
+                                ]["stage1_projection"],
+                            },
                             "booleanity_address": booleanity_address_records[backend],
                             "booleanity_address_row_lifecycle": results[backend][
                                 "booleanity_address_member"
@@ -6102,6 +6860,11 @@ def main() -> int:
                 "metal_proofs_verified": True,
                 "unique_piop_span": True,
                 "unique_backend_witness_prepare_span": True,
+                "moved_work_control_lower_metal_total": all(
+                    pair["metal_us"] + pair["metal_prepare_us"]
+                    < pair["cpu_us"] + pair["cpu_prepare_us"]
+                    for pair in pairs
+                ),
                 "rayon_threads_pinned": all(
                     sample["execution"]
                     == {
@@ -6170,6 +6933,109 @@ def main() -> int:
                 "instruction_read_raf_local_gate": metrics[
                     "instruction_read_raf_decision"
                 ]["clears"],
+                "instruction_read_raf_cpu_control": all(
+                    sample["instruction_read_raf"]["optimized_member"][
+                        "source_observation"
+                    ]
+                    is None
+                    and sample["instruction_read_raf"]["optimized_member"][
+                        "scatter_observation"
+                    ]
+                    is None
+                    and not any(
+                        sample["instruction_read_raf"]["optimized_member"][
+                            "metal_counts"
+                        ].values()
+                    )
+                    for sample in attributions
+                ),
+                "instruction_read_raf_stage1_route_exact": all(
+                    sample["instruction_read_raf"]["metal_member"]["outer_counts"]
+                    == {
+                        "prepare": 1,
+                        "prove_round": 128 + args.log_n,
+                        "finish_rounds": 1,
+                        "output_claims": 1,
+                    }
+                    and sample["instruction_read_raf"]["metal_member"][
+                        "metal_counts"
+                    ]
+                    == {
+                        "stage1_source_publish": 1,
+                        "stage1_grouped_scatter": 1,
+                        "stage1_grouped_sequence_prepare": 1,
+                        "address_round": 129,
+                        "resident_first_message": 1,
+                        "resident_handoff": 1,
+                        "resident_round": args.log_n - 17,
+                        "readback": 1,
+                    }
+                    for sample in attributions
+                ),
+                "instruction_read_raf_source_provenance_exact": all(
+                    (source_observation := sample["instruction_read_raf"][
+                        "metal_member"
+                    ]["source_observation"])
+                    is not None
+                    and source_observation["rows"] == 1 << args.log_n
+                    and source_observation["resident_device_bytes"]
+                    == 41 * (1 << args.log_n)
+                    and source_observation["member_upload_bytes"] == 0
+                    and source_observation["projection_dispatches"] == 0
+                    and source_observation["complete_overwrite"] is True
+                    for sample in attributions
+                ),
+                "instruction_read_raf_scatter_exact": all(
+                    (scatter_observation := sample["instruction_read_raf"][
+                        "metal_member"
+                    ]["scatter_observation"])
+                    is not None
+                    and scatter_observation["threads_per_threadgroup"]
+                    == args.instruction_read_raf_metal_scatter_threads
+                    and scatter_observation["source_copy_bytes"] == 0
+                    and scatter_observation["full_plane_readback_bytes"] == 0
+                    and scatter_observation["status_readback_bytes"] == 4
+                    and scatter_observation["complete_overwrite"] is True
+                    for sample in attributions
+                ),
+                "instruction_read_raf_scatter_within_roof_target": all(
+                    sample["instruction_read_raf"]["metal_member"][
+                        "scatter_observation"
+                    ]["gpu_active_ns"]
+                    <= round(7_250_000 * (2 ** (args.log_n - 25)))
+                    for sample in attributions
+                ),
+                "instruction_read_raf_stage5_owner_reused": all(
+                    (source_observation := sample["instruction_read_raf"][
+                        "metal_member"
+                    ]["source_observation"])
+                    is not None
+                    and all(
+                        (lifecycle := sample[family]["metal_member"][
+                            "row_lifecycle"
+                        ])["source_kind"]
+                        == "stage1_owner_v1"
+                        and lifecycle["source_generation"]
+                        == source_observation["source_generation"]
+                        and lifecycle["source_completion_serial"]
+                        == source_observation["completion_serial"]
+                        and lifecycle["source_claim_allocation_identity"]
+                        == source_observation["claim_allocation_identity"]
+                        and lifecycle["device_registry_id"]
+                        == source_observation["device_registry_id"]
+                        and (
+                            lifecycle.get(
+                                "stage5_storage_id",
+                                lifecycle.get("source_rows_storage_id"),
+                            )
+                            == source_observation["row_allocation_identity"]
+                        )
+                        and lifecycle["stage5"]["row_allocations"] == 0
+                        and lifecycle["stage5"]["row_upload_bytes"] == 0
+                        for family in ("booleanity_address", "hamming_weight")
+                    )
+                    for sample in attributions
+                ),
                 "instruction_input_cpu_control": all(
                     not any(
                         sample["instruction_input"]["optimized_member"]["metal_counts"].values()
@@ -6977,6 +7843,12 @@ def main() -> int:
             "resources": {
                 "metal_piop_seconds": sum(pair["metal_us"] for pair in pairs)
                 / 1_000_000.0,
+                "instruction_read_raf_stage1": [
+                    sample["instruction_read_raf"]["metal_member"][
+                        "resource_observation"
+                    ]
+                    for sample in attributions
+                ],
                 "optimized_max_rss_bytes": [
                     pair["arms"]["optimized"]["max_rss_bytes"] for pair in pair_records
                 ],
@@ -6996,6 +7868,7 @@ def main() -> int:
                 "rayon_threads": PRODUCTION_RAYON_THREADS,
                 "instruction_ra_materialize_width": args.instruction_ra_materialize_width,
                 "instruction_ra_reuse_inverse": args.instruction_ra_reuse_inverse,
+                "instruction_read_raf_metal_scatter_threads": args.instruction_read_raf_metal_scatter_threads,
                 "bytecode_metal_message_threads": args.bytecode_metal_message_threads,
                 "bytecode_metal_transition_threads": args.bytecode_metal_transition_threads,
                 "bytecode_metal_max_threadgroups": args.bytecode_metal_max_threadgroups,

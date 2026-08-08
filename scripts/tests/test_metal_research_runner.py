@@ -2121,6 +2121,25 @@ class ResultAdapterTests(unittest.TestCase):
         self.assertEqual(instruction_result["primary"]["name"], "piop_speedup")
         self.assertEqual(instruction_result["local"]["kernel"], "InstructionReadRaf")
         self.assertEqual(instruction_observed["median"], 5.0)
+
+        instruction_v11_output = copy.deepcopy(instruction_output)
+        instruction_v11_output["schema_version"] = 11
+        instruction_v11_tier = copy.deepcopy(instruction_tier)
+        instruction_v11_tier["evaluator"]["result_adapter"] = "metal_piop_v11"
+        instruction_v11_result, _ = adapt_result(
+            instruction_v11_tier,
+            instruction_v11_output,
+            "instruction_read_raf",
+        )
+        self.assertEqual(
+            instruction_v11_result["result_contract"], "metal_piop_v11"
+        )
+        self.assertEqual(
+            validate_tier_result(instruction_v11_result, instruction_v11_tier)[
+                "median"
+            ],
+            5.0,
+        )
         with self.assertRaisesRegex(ValueError, "wrong contract"):
             adapt_result(tier, instruction_output, "outer_remainder")
 

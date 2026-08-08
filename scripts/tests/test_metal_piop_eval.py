@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import unittest
 from pathlib import Path
@@ -431,6 +432,185 @@ def complete_instruction_input_trace(
         events.append(
             event("MetalInstructionInput::cpu_tail", finish_start + 20.0, 20.0)
         )
+    return events
+
+
+def complete_instruction_read_raf_trace(
+    log_n: int, backend: str, scatter_threads: int = 512
+) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    rounds = 128 + log_n
+    round_starts = [1_400.0 + 20.0 * index for index in range(rounds)]
+    finish_start = 1_400.0 + 20.0 * rounds
+    events = [
+        event("jolt_prover::backend_witness_prepare", 0.0, 900.0),
+        event("jolt_prover::piop", 1_000.0, 5_000.0),
+        event("InstructionReadRaf::prepare", 1_100.0, 250.0),
+        *(
+            event("InstructionReadRaf::prove_round", timestamp, 10.0)
+            for timestamp in round_starts
+        ),
+        event("InstructionReadRaf::finish_rounds", finish_start, 10.0),
+        event("InstructionReadRaf::output_claims", finish_start + 20.0, 10.0),
+    ]
+    if backend == "optimized":
+        return events
+
+    rows = 1 << log_n
+    chunks = rows // 4096
+    e_out = 1 << (log_n // 2)
+    e_in = rows // e_out
+    source = {
+        "rows": str(rows),
+        "row_bytes": str(40 * rows),
+        "claim_bytes": str(rows),
+        "resident_device_bytes": str(41 * rows),
+        "count_chunks": str(chunks),
+        "count_bytes": str(328 * chunks),
+        "host_row_write_bytes": str(40 * rows),
+        "host_claim_write_bytes": str(rows),
+        "host_count_update_bytes": str(4 * rows),
+        "row_allocation_identity": "501",
+        "claim_allocation_identity": "502",
+        "count_allocation_identity": "503",
+        "device_registry_id": "17",
+        "source_generation": "7",
+        "completion_serial": "9",
+        "count_order": "table_major_then_none_v1",
+        "publication_kind": "host_fill_v1",
+        "complete_overwrite": "true",
+        "source_windows": str(rows),
+        "member_upload_bytes": "0",
+        "projection_dispatches": "0",
+    }
+    compact = {
+        "source_kind": "owned_random_access",
+        "witness_row_extractions": str(rows),
+        "residual_rows_written": str(rows),
+        "compact_rows_written": str(rows),
+        "compact_row_bytes": "48",
+        "residual_row_bytes": "112",
+        "compact_allocations": "1",
+        "residual_allocations": "1",
+        "full_row_allocations": "0",
+        "full_domain_copy_bytes": "0",
+        "full_domain_copy_dispatches": "0",
+        "host_repack_rows": "0",
+        "resident_rows": str(rows),
+        "explicit_rows": str(rows - 1),
+        "compact_rows_storage_id": "601",
+        "residual_rows_storage_id": "602",
+    }
+    witness = {
+        "cycles": str(rows),
+        "source": "stage1_single_projection",
+        "admitted": "true",
+        "fallback_reason": "none",
+        "native_register_contract_bytes": str(24 * rows),
+        "owner_generation": "19",
+        "shift_late_copy_dispatches": "0",
+        "shift_resident_bytes": str(16 * rows),
+        "shift_row_extractions": str(rows),
+    }
+    additional = 37 * rows + 328 * chunks + 332 + 16 * (e_in + e_out) + 4 + 48
+    scatter = {
+        "rows": str(rows),
+        "preparation_wall_ns": "10000",
+        "command_wall_ns": "60000",
+        "gpu_active_ns": "50000",
+        "status_readback_bytes": "4",
+        "packed_rows_bytes": str(rows),
+        "lookups_bytes": str(16 * rows),
+        "inverse_bytes": str(4 * rows),
+        "weights_bytes": str(16 * rows),
+        "packed_rows_identity": "701",
+        "lookups_identity": "702",
+        "inverse_identity": "703",
+        "weights_identity": "704",
+        "source_generation": "7",
+        "source_completion_serial": "9",
+        "source_row_allocation_identity": "501",
+        "source_claim_allocation_identity": "502",
+        "source_count_allocation_identity": "503",
+        "source_count_chunks": str(chunks),
+        "source_count_bytes": str(328 * chunks),
+        "source_count_order": "table_major_then_none_v1",
+        "source_device_registry_id": "17",
+        "scatter_completion_serial": "11",
+        "e_in_length": str(e_in),
+        "e_out_length": str(e_out),
+        "command_buffers": "1",
+        "encoders": "1",
+        "waits": "1",
+        "dispatches": "1",
+        "threadgroups": str(chunks),
+        "threads_per_threadgroup": str(scatter_threads),
+        "dynamic_threadgroup_bytes": "328",
+        "static_threadgroup_bytes": "0",
+        "source_copy_bytes": "0",
+        "full_plane_readback_bytes": "0",
+        "complete_overwrite": "true",
+        "additional_allocation_bytes": str(additional),
+    }
+    events.extend(
+        [
+            event("MetalSpartanDense::witness_prepare", 50.0, 700.0, witness),
+            event("MetalInstructionInput::compact_rows_prepare", 100.0, 500.0, compact),
+            event(
+                "MetalInstructionReadRaf::stage1_source_publish",
+                800.0,
+                1.0,
+                source,
+            ),
+            event(
+                "MetalInstructionReadRaf::stage1_grouped_scatter",
+                1_150.0,
+                1.0,
+                scatter,
+            ),
+            event(
+                "MetalInstructionReadRaf::stage1_grouped_sequence_prepare",
+                1_160.0,
+                1.0,
+            ),
+            *(
+                event("MetalInstructionReadRaf::address_round", timestamp + 1.0, 1.0)
+                for timestamp in round_starts[:129]
+            ),
+            event(
+                "MetalInstructionReadRaf::resident_first_message",
+                round_starts[129] + 1.0,
+                1.0,
+            ),
+            event(
+                "MetalInstructionReadRaf::resident_handoff",
+                round_starts[130] + 1.0,
+                1.0,
+            ),
+            *(
+                event("MetalInstructionReadRaf::resident_round", timestamp + 1.0, 1.0)
+                for timestamp in round_starts[131 : 131 + log_n - 17]
+            ),
+            event("MetalInstructionReadRaf::readback", finish_start + 1.0, 1.0),
+        ]
+    )
     return events
 
 
@@ -1606,6 +1786,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 10.0,
                     "cpu_instruction_input_us": 80.0,
                     "metal_instruction_input_us": 16.0,
+                    "cpu_instruction_read_raf_us": 80.0,
+                    "metal_instruction_read_raf_us": 16.0,
                     "cpu_booleanity_address_us": 60.0,
                     "metal_booleanity_address_us": 10.0,
                     "cpu_hamming_weight_us": 45.0,
@@ -1624,6 +1806,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 15.0,
                     "cpu_instruction_input_us": 90.0,
                     "metal_instruction_input_us": 30.0,
+                    "cpu_instruction_read_raf_us": 90.0,
+                    "metal_instruction_read_raf_us": 30.0,
                     "cpu_booleanity_address_us": 70.0,
                     "metal_booleanity_address_us": 14.0,
                     "cpu_hamming_weight_us": 36.0,
@@ -1656,7 +1840,7 @@ class MetalPiopEvalTests(unittest.TestCase):
 
         incomplete = [dict(pair) for pair in pairs]
         incomplete[0].pop("cpu_hamming_weight_us")
-        with self.assertRaisesRegex(ValueError, "missing Hamming-weight timing"):
+        with self.assertRaisesRegex(ValueError, "missing required member timing"):
             metal_piop_eval.summarize_pairs(incomplete)
 
     def test_instruction_claim_gate_requires_critical_path_and_family(self) -> None:
@@ -1671,6 +1855,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_bytecode_us": 200.0,
             "cpu_instruction_input_us": 800.0,
             "metal_instruction_input_us": 160.0,
+            "cpu_instruction_read_raf_us": 800.0,
+            "metal_instruction_read_raf_us": 160.0,
             "cpu_booleanity_address_us": 1_000.0,
             "metal_booleanity_address_us": 200.0,
             "cpu_hamming_weight_us": 900.0,
@@ -2853,6 +3039,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_bytecode_us": 200.0,
             "cpu_instruction_input_us": 1_000.0,
             "metal_instruction_input_us": 200.0,
+            "cpu_instruction_read_raf_us": 1_000.0,
+            "metal_instruction_read_raf_us": 200.0,
             "cpu_booleanity_address_us": 1_000.0,
             "metal_booleanity_address_us": 200.0,
             "cpu_hamming_weight_us": 900.0,
@@ -2907,6 +3095,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 10_000.0 if metal_first else 200.0,
                     "cpu_instruction_input_us": 1_000.0,
                     "metal_instruction_input_us": 200.0,
+                    "cpu_instruction_read_raf_us": 1_000.0,
+                    "metal_instruction_read_raf_us": 200.0,
                     "cpu_booleanity_address_us": 1_000.0,
                     "metal_booleanity_address_us": 200.0,
                     "cpu_hamming_weight_us": 900.0,
@@ -2940,6 +3130,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "metal_bytecode_us": 200.0,
                 "cpu_instruction_input_us": 800.0,
                 "metal_instruction_input_us": 160.0,
+                "cpu_instruction_read_raf_us": 800.0,
+                "metal_instruction_read_raf_us": 160.0,
                 "cpu_booleanity_address_us": 1_000.0,
                 "metal_booleanity_address_us": 200.0,
                 "cpu_hamming_weight_us": 900.0,
@@ -2974,6 +3166,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 200.0,
                     "cpu_instruction_input_us": 800.0,
                     "metal_instruction_input_us": 160.0,
+                    "cpu_instruction_read_raf_us": 800.0,
+                    "metal_instruction_read_raf_us": 160.0,
                     "cpu_booleanity_address_us": 1_000.0,
                     "metal_booleanity_address_us": 10_000.0
                     if metal_first
@@ -3012,6 +3206,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 200.0,
                     "cpu_instruction_input_us": 800.0,
                     "metal_instruction_input_us": 160.0,
+                    "cpu_instruction_read_raf_us": 800.0,
+                    "metal_instruction_read_raf_us": 160.0,
                     "cpu_booleanity_address_us": 1_000.0,
                     "metal_booleanity_address_us": 200.0,
                     "cpu_hamming_weight_us": 1_000.0,
@@ -3123,12 +3319,192 @@ class MetalPiopEvalTests(unittest.TestCase):
                         "wall_ms": 12.5,
                     }
                 ]
-            }
+            },
+            "instruction_read_raf_member": {
+                "components": {"member_us": 12_500.0}
+            },
         }
         self.assertEqual(
             metal_piop_eval.local_kernel_primary_us(result, "InstructionReadRaf"),
             12_500.0,
         )
+
+    def test_instruction_read_raf_stage1_route_is_exact(self) -> None:
+        optimized = metal_piop_eval.instruction_read_raf_member_breakdown(
+            complete_instruction_read_raf_trace(25, "optimized"),
+            "optimized",
+            25,
+            scatter_threads=512,
+        )
+        self.assertIsNone(optimized["resource_observation"])
+        self.assertFalse(any(optimized["metal_counts"].values()))
+
+        events = complete_instruction_read_raf_trace(25, "metal", 512)
+        observed = metal_piop_eval.instruction_read_raf_member_breakdown(
+            events, "metal", 25, scatter_threads=512
+        )
+        self.assertEqual(observed["outer_counts"]["prove_round"], 153)
+        self.assertEqual(observed["metal_counts"]["address_round"], 129)
+        self.assertEqual(
+            observed["source_observation"]["resident_device_bytes"],
+            41 * (1 << 25),
+        )
+        self.assertEqual(
+            observed["scatter_observation"]["additional_allocation_bytes"],
+            1_244_397_952,
+        )
+        self.assertEqual(
+            observed["scatter_observation"]["threads_per_threadgroup"], 512
+        )
+
+        mutated = copy.deepcopy(events)
+        source = next(
+            event
+            for event in mutated
+            if event["name"]
+            == "MetalInstructionReadRaf::stage1_source_publish"
+        )
+        source["args"]["member_upload_bytes"] = "1"
+        with self.assertRaisesRegex(ValueError, "source ledger"):
+            metal_piop_eval.instruction_read_raf_member_breakdown(
+                mutated, "metal", 25, scatter_threads=512
+            )
+
+        mutated = copy.deepcopy(events)
+        scatter = next(
+            event
+            for event in mutated
+            if event["name"]
+            == "MetalInstructionReadRaf::stage1_grouped_scatter"
+        )
+        scatter["args"]["source_generation"] = "8"
+        with self.assertRaisesRegex(ValueError, "scatter ledger"):
+            metal_piop_eval.instruction_read_raf_member_breakdown(
+                mutated, "metal", 25, scatter_threads=512
+            )
+
+        mutated = copy.deepcopy(events)
+        mutated.append(
+            {
+                "name": "MetalInstructionReadRaf::sequence_prepare",
+                "ph": "X",
+                "pid": 1,
+                "tid": 0,
+                "ts": 1_170.0,
+                "dur": 1.0,
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "legacy or unknown"):
+            metal_piop_eval.instruction_read_raf_member_breakdown(
+                mutated, "metal", 25, scatter_threads=512
+            )
+
+        mutated = copy.deepcopy(events)
+        resident_first = next(
+            event
+            for event in mutated
+            if event["name"]
+            == "MetalInstructionReadRaf::resident_first_message"
+        )
+        resident_first["ts"] -= 20.0
+        with self.assertRaisesRegex(ValueError, "resident_first_message round"):
+            metal_piop_eval.instruction_read_raf_member_breakdown(
+                mutated, "metal", 25, scatter_threads=512
+            )
+
+        with self.assertRaisesRegex(ValueError, "requires log-n at least 25"):
+            metal_piop_eval.instruction_read_raf_member_breakdown(
+                complete_instruction_read_raf_trace(24, "optimized"),
+                "metal",
+                24,
+                scatter_threads=512,
+            )
+
+    def test_instruction_read_raf_stage1_rows_are_reused_by_booleanity(self) -> None:
+        source = metal_piop_eval.instruction_read_raf_member_breakdown(
+            complete_instruction_read_raf_trace(26, "metal", 512),
+            "metal",
+            26,
+            scatter_threads=512,
+        )["source_observation"]
+        self.assertIsNotNone(source)
+
+        for events, parser in (
+            (
+                complete_booleanity_address_trace(26, "metal"),
+                lambda trace: metal_piop_eval.booleanity_address_member_breakdown(
+                    trace, "metal", 26, stage1_source=source
+                ),
+            ),
+            (
+                complete_hamming_weight_trace(26, "metal"),
+                lambda trace: metal_piop_eval.hamming_weight_member_breakdown(
+                    trace, "metal", 26, stage1_source=source
+                ),
+            ),
+        ):
+            for event in events:
+                args = event.get("args")
+                if not isinstance(args, dict):
+                    continue
+                if "resident_rows_storage_id" in args:
+                    args["resident_rows_storage_id"] = str(
+                        source["row_allocation_identity"]
+                    )
+                if event["name"] == "MetalBooleanityRows::stage5_prepare":
+                    args.update(
+                        {
+                            "row_allocations": "0",
+                            "row_upload_bytes": "0",
+                            "source_kind": "stage1_owner_v1",
+                            "source_generation": str(source["source_generation"]),
+                            "source_completion_serial": str(
+                                source["completion_serial"]
+                            ),
+                            "source_claim_allocation_identity": str(
+                                source["claim_allocation_identity"]
+                            ),
+                        }
+                    )
+            lifecycle = parser(events)["row_lifecycle"]
+            self.assertEqual(lifecycle["source_kind"], "stage1_owner_v1")
+            self.assertEqual(lifecycle["stage5"]["row_allocations"], 0)
+            self.assertEqual(lifecycle["stage5"]["row_upload_bytes"], 0)
+
+            broken = copy.deepcopy(events)
+            stage5 = next(
+                event
+                for event in broken
+                if event["name"] == "MetalBooleanityRows::stage5_prepare"
+            )
+            stage5["args"]["source_generation"] = "8"
+            with self.assertRaisesRegex(ValueError, "lifecycle"):
+                parser(broken)
+
+    def test_validates_instruction_read_raf_runtime_config(self) -> None:
+        stdout = (
+            "INSTRUCTION_READ_RAF_METAL_CONFIG backend=metal "
+            "address_cutoff=33554432 cutoff=65536 stage1_scatter_threads=512"
+        )
+        self.assertEqual(
+            metal_piop_eval.validate_instruction_read_raf_stdout(
+                stdout, "metal", 512
+            ),
+            {
+                "address_cutoff": 1 << 25,
+                "cutoff": 1 << 16,
+                "stage1_scatter_threads": 512,
+            },
+        )
+        self.assertIsNone(
+            metal_piop_eval.validate_instruction_read_raf_stdout(
+                "", "optimized", 512
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "unexpected"):
+            metal_piop_eval.validate_instruction_read_raf_stdout(
+                stdout, "metal", 256
+            )
 
     def test_instruction_read_raf_summary_uses_complete_member_wall(self) -> None:
         base = {
