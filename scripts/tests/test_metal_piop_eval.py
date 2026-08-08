@@ -1571,7 +1571,223 @@ def complete_instruction_claim_trace(
     return events
 
 
+def complete_registers_claim_trace(
+    log_n: int,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    rows = 1 << log_n
+    prefix_vars = (log_n + 1) // 2
+    prefix_elements = 1 << prefix_vars
+    suffix_elements = rows // prefix_elements
+    outer_carrier = {
+        "source_generation": 17,
+        "source_compact_storage_id": 101,
+        "rd_storage_id": 103,
+        "device_registry_id": 107,
+    }
+    round_starts = [200.0 + 100.0 * index for index in range(log_n)]
+    midpoint_start = round_starts[prefix_vars]
+    events = [
+        event("jolt_prover::piop", 0.0, 10_000.0),
+        event("RegistersClaimReduction::prepare", 100.0, 50.0),
+        *[
+            event("RegistersClaimReduction::prove_round", timestamp, 80.0)
+            for timestamp in round_starts
+        ],
+        event(
+            "RegistersClaimReduction::finish_rounds",
+            200.0 + 100.0 * log_n,
+            50.0,
+        ),
+        event(
+            "RegistersClaimReduction::output_claims",
+            300.0 + 100.0 * log_n,
+            40.0,
+        ),
+        event(
+            "MetalRegistersClaimReduction::route",
+            105.0,
+            5.0,
+            {
+                "cycles": rows,
+                "requested": "outer_carrier_alias_hybrid",
+                "stage1_carry_present": True,
+                "alias_receiver_present": True,
+                "realized_route": "outer_carrier_alias_hybrid",
+                "fallback_reason": "none",
+            },
+        ),
+        event(
+            "MetalRegistersClaimReduction::prepare",
+            112.0,
+            20.0,
+            {
+                "cycles": rows,
+                "requested": "outer_carrier_alias_hybrid",
+                "realized_route": "outer_carrier_alias_hybrid",
+                "fallback_reason": "none",
+                "resident_bytes": 8 * rows,
+                "source_allocations": 0,
+                "source_upload_bytes": 0,
+                "source_host_write_bytes": 0,
+                "source_generation": outer_carrier["source_generation"],
+                "source_compact_storage_id": outer_carrier[
+                    "source_compact_storage_id"
+                ],
+                "source_rd_storage_id": outer_carrier["rd_storage_id"],
+                "alias_generation": 19,
+            },
+        ),
+        event(
+            "MetalInstructionInput::registers_claim_alias_publish",
+            midpoint_start + 5.0,
+            5.0,
+            {
+                "rows": rows,
+                "source_compact_storage_id": outer_carrier[
+                    "source_compact_storage_id"
+                ],
+                "alias_generation": 19,
+                "prefix_challenges": prefix_vars,
+                "table_0": 1,
+                "table_1": 5,
+                "host_table_copies": 2,
+                "snapshot_host_bytes": 32 * suffix_elements,
+                "publishes": 1,
+            },
+        ),
+        event(
+            "MetalRegistersClaimReduction::midpoint_projection",
+            midpoint_start + 20.0,
+            20.0,
+            {
+                "source": "outer_carrier_alias",
+                "round": prefix_vars,
+                "rows": rows,
+                "source_generation": outer_carrier["source_generation"],
+                "device_registry_id": outer_carrier["device_registry_id"],
+                "source_compact_storage_id": outer_carrier[
+                    "source_compact_storage_id"
+                ],
+                "source_rd_storage_id": outer_carrier["rd_storage_id"],
+                "alias_generation": 19,
+                "rd_source_bytes": 8 * rows,
+                "eq_upload_bytes": 16 * prefix_elements,
+                "readback_bytes": 16 * suffix_elements,
+                "device_allocations": 2,
+                "dispatches": 1,
+                "command_buffers": 1,
+                "waits": 1,
+                "alias_takes": 1,
+                "useful_half_width_terms": rows,
+                "gpu_active_ns": 10_000,
+                "resident_wall_ns": 20_000,
+            },
+        ),
+        event("sumcheck_round", midpoint_start, 80.0),
+    ]
+    return events, outer_carrier
+
+
 class MetalPiopEvalTests(unittest.TestCase):
+    def test_outer_registers_carrier_is_complete_overwrite_storage(self) -> None:
+        geometry = metal_piop_eval.outer_remainder_storage_geometry(26, True, True)
+        carrier = geometry["registers_claim_carrier"]
+        self.assertEqual(carrier["partial_bytes"], 100_663_296)
+        self.assertEqual(carrier["component_bytes"], 393_216)
+        self.assertEqual(carrier["rd_bytes"], 536_870_912)
+        self.assertEqual(carrier["owned_bytes"], 637_927_424)
+        self.assertEqual(
+            geometry["owned_bytes"] - geometry["initialization_bytes"],
+            carrier["owned_bytes"],
+        )
+
+    def test_instruction_input_alias_publication_is_route_scoped(self) -> None:
+        events = complete_instruction_input_trace(26, "metal")
+        rounds = [
+            event
+            for event in events
+            if event["name"] == "InstructionInput::prove_round"
+        ]
+        midpoint = rounds[(26 + 1) // 2]
+        events.append(
+            {
+                "name": "MetalInstructionInput::registers_claim_alias_publish",
+                "ph": "X",
+                "pid": 1,
+                "tid": 0,
+                "ts": float(midpoint["ts"]) + 1.0,
+                "dur": 1.0,
+            }
+        )
+        observed = metal_piop_eval.instruction_input_member_breakdown(
+            events,
+            "metal",
+            26,
+            16,
+            False,
+            True,
+        )
+        self.assertEqual(
+            observed["metal_counts"]["registers_claim_alias_publish"], 1
+        )
+        with self.assertRaisesRegex(ValueError, "span counts"):
+            metal_piop_eval.instruction_input_member_breakdown(
+                events,
+                "metal",
+                26,
+                16,
+                False,
+                False,
+            )
+
+    def test_registers_claim_parser_requires_the_carrier_alias_route(self) -> None:
+        events, carrier = complete_registers_claim_trace(26)
+        observed = metal_piop_eval.registers_claim_member_breakdown(
+            events,
+            "metal",
+            26,
+            "outer-carrier-alias-hybrid",
+            carrier,
+        )
+        resources = observed["resource_observation"]
+        self.assertEqual(resources["route"]["fallback_reason"], "none")
+        self.assertEqual(resources["prepare"]["source_upload_bytes"], 0)
+        self.assertEqual(resources["midpoint"]["useful_half_width_terms"], 1 << 26)
+
+        drifted = copy.deepcopy(events)
+        route = next(
+            event
+            for event in drifted
+            if event["name"] == "MetalRegistersClaimReduction::route"
+        )
+        route["args"]["fallback_reason"] = "missing_stage1_carry"
+        with self.assertRaisesRegex(ValueError, "lifecycle"):
+            metal_piop_eval.registers_claim_member_breakdown(
+                drifted,
+                "metal",
+                26,
+                "outer-carrier-alias-hybrid",
+                carrier,
+            )
+
     def test_instruction_claim_observation_proves_async_residency(self) -> None:
         optimized = metal_piop_eval.instruction_claim_observation(
             complete_instruction_claim_trace(26, "optimized"), "optimized", 26
@@ -1691,7 +1907,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff=262144 "
             "cutoff=65536 materialize_threads=256 transition_threads=128 "
             "output_threads=256 max_threadgroups=8192 binding_plan=b_only_v1 "
-            "storage_initialization=full product_uniskip_carrier=false"
+            "storage_initialization=full product_uniskip_carrier=false "
+            "registers_claim_carrier=false"
         )
         config = metal_piop_eval.validate_outer_remainder_stdout(
             stdout, "metal"
@@ -1699,8 +1916,30 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(config["cutoff"], 1 << 16)
         self.assertEqual(config["binding_plan"], "b_only_v1")
         self.assertFalse(config["product_uniskip_carrier"])
+        self.assertFalse(config["registers_claim_carrier"])
         self.assertIsNone(
             metal_piop_eval.validate_outer_remainder_stdout("", "optimized")
+        )
+
+    def test_validates_registers_claim_runtime_config(self) -> None:
+        stdout = (
+            "REGISTERS_CLAIM_METAL_CONFIG backend=metal "
+            "implementation=outer-carrier-alias-hybrid trace_cutoff=33554432"
+        )
+        config = metal_piop_eval.validate_registers_claim_stdout(
+            stdout,
+            "metal",
+            "outer-carrier-alias-hybrid",
+            25,
+        )
+        self.assertEqual(config["trace_cutoff"], 1 << 25)
+        self.assertIsNone(
+            metal_piop_eval.validate_registers_claim_stdout(
+                "",
+                "optimized",
+                "outer-carrier-alias-hybrid",
+                25,
+            )
         )
 
     def test_worktree_digest_binds_untracked_paths_and_contents(self) -> None:
@@ -1790,6 +2029,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 10.0,
                     "cpu_instruction_input_us": 80.0,
                     "metal_instruction_input_us": 16.0,
+                    "cpu_registers_claim_us": 80.0,
+                    "metal_registers_claim_us": 16.0,
                     "cpu_instruction_read_raf_us": 80.0,
                     "metal_instruction_read_raf_us": 16.0,
                     "cpu_booleanity_address_us": 60.0,
@@ -1810,6 +2051,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 15.0,
                     "cpu_instruction_input_us": 90.0,
                     "metal_instruction_input_us": 30.0,
+                    "cpu_registers_claim_us": 90.0,
+                    "metal_registers_claim_us": 30.0,
                     "cpu_instruction_read_raf_us": 90.0,
                     "metal_instruction_read_raf_us": 30.0,
                     "cpu_booleanity_address_us": 70.0,
@@ -1859,6 +2102,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_bytecode_us": 200.0,
             "cpu_instruction_input_us": 800.0,
             "metal_instruction_input_us": 160.0,
+            "cpu_registers_claim_us": 800.0,
+            "metal_registers_claim_us": 160.0,
             "cpu_instruction_read_raf_us": 800.0,
             "metal_instruction_read_raf_us": 160.0,
             "cpu_booleanity_address_us": 1_000.0,
@@ -3043,6 +3288,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_bytecode_us": 200.0,
             "cpu_instruction_input_us": 1_000.0,
             "metal_instruction_input_us": 200.0,
+            "cpu_registers_claim_us": 1_000.0,
+            "metal_registers_claim_us": 200.0,
             "cpu_instruction_read_raf_us": 1_000.0,
             "metal_instruction_read_raf_us": 200.0,
             "cpu_booleanity_address_us": 1_000.0,
@@ -3099,6 +3346,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 10_000.0 if metal_first else 200.0,
                     "cpu_instruction_input_us": 1_000.0,
                     "metal_instruction_input_us": 200.0,
+                    "cpu_registers_claim_us": 1_000.0,
+                    "metal_registers_claim_us": 200.0,
                     "cpu_instruction_read_raf_us": 1_000.0,
                     "metal_instruction_read_raf_us": 200.0,
                     "cpu_booleanity_address_us": 1_000.0,
@@ -3134,6 +3383,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "metal_bytecode_us": 200.0,
                 "cpu_instruction_input_us": 800.0,
                 "metal_instruction_input_us": 160.0,
+                "cpu_registers_claim_us": 800.0,
+                "metal_registers_claim_us": 160.0,
                 "cpu_instruction_read_raf_us": 800.0,
                 "metal_instruction_read_raf_us": 160.0,
                 "cpu_booleanity_address_us": 1_000.0,
@@ -3170,6 +3421,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 200.0,
                     "cpu_instruction_input_us": 800.0,
                     "metal_instruction_input_us": 160.0,
+                    "cpu_registers_claim_us": 800.0,
+                    "metal_registers_claim_us": 160.0,
                     "cpu_instruction_read_raf_us": 800.0,
                     "metal_instruction_read_raf_us": 160.0,
                     "cpu_booleanity_address_us": 1_000.0,
@@ -3210,6 +3463,8 @@ class MetalPiopEvalTests(unittest.TestCase):
                     "metal_bytecode_us": 200.0,
                     "cpu_instruction_input_us": 800.0,
                     "metal_instruction_input_us": 160.0,
+                    "cpu_registers_claim_us": 800.0,
+                    "metal_registers_claim_us": 160.0,
                     "cpu_instruction_read_raf_us": 800.0,
                     "metal_instruction_read_raf_us": 160.0,
                     "cpu_booleanity_address_us": 1_000.0,
@@ -3522,6 +3777,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_bytecode_us": 200.0,
             "cpu_instruction_input_us": 800.0,
             "metal_instruction_input_us": 160.0,
+            "cpu_registers_claim_us": 800.0,
+            "metal_registers_claim_us": 160.0,
             "cpu_instruction_read_raf_us": 3_750.0,
             "metal_instruction_read_raf_us": 750.0,
             "cpu_booleanity_address_us": 1_000.0,

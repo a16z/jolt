@@ -25,7 +25,7 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
@@ -60,6 +60,7 @@ INSTRUCTION_INPUT_METAL_PHASES = (
     "dense_round",
     "readback",
     "cpu_tail",
+    "registers_claim_alias_publish",
 )
 INSTRUCTION_INPUT_MIN_SPEEDUP = 5.0
 INSTRUCTION_READ_RAF_KERNEL = "InstructionReadRaf"
@@ -123,6 +124,7 @@ OUTER_REMAINDER_METAL_PHASES = (
     "output_claims",
     "row_release",
     "product_uniskip_carrier_park",
+    "registers_claim_carrier_park",
 )
 OUTER_REMAINDER_MIN_SPEEDUP = 5.0
 OUTER_REMAINDER_A_LOOKUP_FIELDS = 202
@@ -134,6 +136,8 @@ PRODUCT_REMAINDER_MIN_SPEEDUP = 5.0
 OUTER_PRODUCT_FAMILY_MIN_SPEEDUP = 5.0
 INSTRUCTION_CLAIM_KERNEL = "InstructionClaimReduction"
 INSTRUCTION_CLAIM_MIN_SPEEDUP = 5.0
+REGISTERS_CLAIM_KERNEL = "RegistersClaimReduction"
+REGISTERS_CLAIM_MIN_SPEEDUP = 5.0
 OPTIMIZED_HAMMING_WEIGHT_ROW_SOURCE = (
     "OptimizedHammingWeightClaimReduction::row_source"
 )
@@ -141,6 +145,7 @@ SUMCHECK_ROUND_SPAN = "sumcheck_round"
 SUMCHECK_HOST_FIAT_SHAMIR_SPAN = "sumcheck_host_fiat_shamir"
 OPTIMIZED_BOOLEANITY_ADDRESS_ROW_SOURCE = "OptimizedBooleanityAddress::row_source"
 PRODUCTION_RAYON_THREADS = 16
+PIOP_MIN_SPEEDUP = 5.0
 METAL_BOOLEANITY_ROWS_STAGE5_PREPARE = "MetalBooleanityRows::stage5_prepare"
 METAL_BOOLEANITY_ROWS_STAGE6A_USE = "MetalBooleanityRows::stage6a_address_use"
 METAL_BOOLEANITY_ROWS_STAGE6B_USE = "MetalBooleanityRows::stage6b_cycle_use"
@@ -218,6 +223,12 @@ LOCAL_KERNELS = {
         "metric": "instruction_claim_reduction_critical_path_speedup",
         "paired_metric": "paired_instruction_claim_reduction_critical_path_speedups",
         "backend_prefix": "MetalInstructionClaimReduction::",
+    },
+    "RegistersClaimReduction": {
+        "name": REGISTERS_CLAIM_KERNEL,
+        "metric": "registers_claim_reduction_member_speedup",
+        "paired_metric": "paired_registers_claim_reduction_member_speedups",
+        "backend_prefix": "MetalRegistersClaimReduction::",
     },
 }
 
@@ -317,7 +328,13 @@ OUTER_REMAINDER_METAL_CONFIG_RE = re.compile(
     r"max_threadgroups=(?P<max_threadgroups>\d+) "
     r"binding_plan=(?P<binding_plan>\S+) "
     r"storage_initialization=(?P<storage_initialization>\S+) "
-    r"product_uniskip_carrier=(?P<product_uniskip_carrier>true|false)$"
+    r"product_uniskip_carrier=(?P<product_uniskip_carrier>true|false) "
+    r"registers_claim_carrier=(?P<registers_claim_carrier>true|false)$"
+)
+REGISTERS_CLAIM_METAL_CONFIG_RE = re.compile(
+    r"^REGISTERS_CLAIM_METAL_CONFIG backend=metal "
+    r"implementation=(?P<implementation>cpu|direct-hybrid|outer-carrier-alias-hybrid) "
+    r"trace_cutoff=(?P<trace_cutoff>\d+)$"
 )
 PIOP_EXECUTION_CONFIG_RE = re.compile(
     r"^PIOP_EXECUTION_CONFIG rayon_threads=(?P<rayon_threads>\d+)$"
@@ -772,6 +789,7 @@ def validate_outer_remainder_stdout(
     trace_cutoff_log2: int = 18,
     binding_plan: str = "b_only_v1",
     product_uniskip_carrier: bool = False,
+    registers_claim_carrier: bool = False,
 ) -> Optional[dict[str, Any]]:
     configs = [
         match
@@ -800,6 +818,7 @@ def validate_outer_remainder_stdout(
         "storage_initialization": raw["storage_initialization"],
         "binding_plan": raw["binding_plan"],
         "product_uniskip_carrier": raw["product_uniskip_carrier"] == "true",
+        "registers_claim_carrier": raw["registers_claim_carrier"] == "true",
     }
     expected = {
         "trace_cutoff": 1 << trace_cutoff_log2,
@@ -811,9 +830,41 @@ def validate_outer_remainder_stdout(
         "storage_initialization": "full",
         "binding_plan": binding_plan,
         "product_uniskip_carrier": product_uniskip_carrier,
+        "registers_claim_carrier": registers_claim_carrier,
     }
     if config != expected:
         raise ValueError(f"unexpected OuterRemainder Metal config: {config}")
+    return config
+
+
+def validate_registers_claim_stdout(
+    stdout: str,
+    backend: str,
+    implementation: str,
+    trace_cutoff_log2: int,
+) -> Optional[dict[str, Any]]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := REGISTERS_CLAIM_METAL_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if backend == "optimized":
+        if configs:
+            raise ValueError("optimized evaluator emitted a RegistersClaim Metal config")
+        return None
+    if len(configs) != 1:
+        raise ValueError("Metal evaluator must emit exactly one RegistersClaim config")
+    raw = configs[0].groupdict()
+    config = {
+        "implementation": raw["implementation"],
+        "trace_cutoff": int(raw["trace_cutoff"]),
+    }
+    expected = {
+        "implementation": implementation,
+        "trace_cutoff": 1 << trace_cutoff_log2,
+    }
+    if config != expected:
+        raise ValueError(f"unexpected RegistersClaim Metal config: {config}")
     return config
 
 
@@ -1371,7 +1422,9 @@ def instruction_claim_observation(
 
 
 def outer_remainder_storage_geometry(
-    log_n: int, product_uniskip_carrier: bool = False
+    log_n: int,
+    product_uniskip_carrier: bool = False,
+    registers_claim_carrier: bool = False,
 ) -> dict[str, Any]:
     rows = 1 << log_n
     weight_capacity = 1 << ((log_n + 1) // 2)
@@ -1388,10 +1441,35 @@ def outer_remainder_storage_geometry(
         opening_outputs * threadgroups,
         opening_outputs,
     ]
+    initialization_bytes = 16 * sum(elements)
+    carrier = None
+    if registers_claim_carrier:
+        prefix_elements = 1 << ((log_n + 1) // 2)
+        suffix_elements = rows // prefix_elements
+        blocks = min(suffix_elements, 256)
+        carrier = {
+            "prefix_elements": prefix_elements,
+            "suffix_elements": suffix_elements,
+            "blocks": blocks,
+            "partial_bytes": 48 * blocks * prefix_elements,
+            "component_bytes": 48 * prefix_elements,
+            "rd_bytes": 8 * rows,
+        }
+        carrier["owned_bytes"] = (
+            carrier["partial_bytes"]
+            + carrier["component_bytes"]
+            + carrier["rd_bytes"]
+        )
+    carrier_owned_bytes = 0 if carrier is None else carrier["owned_bytes"]
+    carrier_maximum_bytes = 0 if carrier is None else max(
+        carrier["partial_bytes"], carrier["component_bytes"], carrier["rd_bytes"]
+    )
     return {
         "element_counts": elements,
-        "owned_bytes": 16 * sum(elements),
-        "maximum_buffer_bytes": 16 * max(elements),
+        "initialization_bytes": initialization_bytes,
+        "owned_bytes": initialization_bytes + carrier_owned_bytes,
+        "maximum_buffer_bytes": max(16 * max(elements), carrier_maximum_bytes),
+        "registers_claim_carrier": carrier,
     }
 
 
@@ -1402,6 +1480,7 @@ def outer_remainder_member_breakdown(
     cutoff_log2: int = 16,
     trace_cutoff_log2: int = 18,
     product_uniskip_carrier: bool = False,
+    registers_claim_carrier: bool = False,
 ) -> dict[str, Any]:
     if backend not in {"optimized", "metal"}:
         raise ValueError(f"unsupported OuterRemainder backend {backend!r}")
@@ -1474,6 +1553,7 @@ def outer_remainder_member_breakdown(
         resource_observation = None
         row_lifecycle = None
         product_uniskip_carrier_observation = None
+        registers_claim_carrier_observation = None
     else:
         expected_counts = {
             "storage_prepare": 1,
@@ -1491,6 +1571,7 @@ def outer_remainder_member_breakdown(
             "output_claims": 1,
             "row_release": 1,
             "product_uniskip_carrier_park": int(product_uniskip_carrier),
+            "registers_claim_carrier_park": int(registers_claim_carrier),
         }
         if metal_counts != expected_counts:
             raise ValueError(
@@ -1507,7 +1588,9 @@ def outer_remainder_member_breakdown(
                     require_contained(interval, member, f"OuterRemainder {phase}")
 
         rows = 1 << log_n
-        geometry = outer_remainder_storage_geometry(log_n, product_uniskip_carrier)
+        geometry = outer_remainder_storage_geometry(
+            log_n, product_uniskip_carrier, registers_claim_carrier
+        )
         storage_fields = {
             "cycles",
             "planned_device_bytes",
@@ -1589,19 +1672,19 @@ def outer_remainder_member_breakdown(
             or storage["fallback_reason"] != "none"
             or storage["initialization_mode"] != "full"
             or storage["device_buffers"] != 9
-            or storage["initialization_bytes"] != geometry["owned_bytes"]
+            or storage["initialization_bytes"] != geometry["initialization_bytes"]
             or storage["current_device_bytes"] + storage["planned_device_bytes"]
             > storage["recommended_max_working_set_bytes"]
             or any(identity <= 0 for identity in buffer_ids)
             or len(set(buffer_ids)) != 9
             or initialization["mode"] != "full"
             or initialization["device_buffers"] != 9
-            or initialization["bytes"] != geometry["owned_bytes"]
+            or initialization["bytes"] != geometry["initialization_bytes"]
             or initialization["protocol_dispatches"] != 0
             or initialization_ids != buffer_ids
             or completion["mode"] != "full"
             or completion["command_completed"] is not True
-            or completion["bytes"] != geometry["owned_bytes"]
+            or completion["bytes"] != geometry["initialization_bytes"]
             or completion["wall_ns"] <= 0
             or completion["gpu_active_ns"] <= 0
             or completion["gpu_active_ns"] > completion["wall_ns"]
@@ -1687,8 +1770,8 @@ def outer_remainder_member_breakdown(
             or sequence["planned_device_bytes"] != geometry["owned_bytes"]
             or sequence["storage_reused"] is not True
             or sequence["storage_initialization_mode"] != "full"
-            or sequence["preinitialized_device_bytes"] != geometry["owned_bytes"]
-            or sequence["initialization_bytes"] != geometry["owned_bytes"]
+            or sequence["preinitialized_device_bytes"] != geometry["initialization_bytes"]
+            or sequence["initialization_bytes"] != geometry["initialization_bytes"]
             or sequence["attached_owned_bytes"] != geometry["owned_bytes"]
             or any(
                 sequence[field] != 0
@@ -1774,6 +1857,105 @@ def outer_remainder_member_breakdown(
             }:
                 raise ValueError("OuterRemainder Product uni-skip carrier is inconsistent")
 
+        registers_claim_carrier_observation = None
+        if registers_claim_carrier:
+            carrier_fields = {
+                "rows",
+                "explicit_rows",
+                "prefix_elements",
+                "suffix_elements",
+                "blocks",
+                "device_registry_id",
+                "source_generation",
+                "completion_serial",
+                "source_compact_storage_id",
+                "source_residual_storage_id",
+                "partial_storage_id",
+                "component_storage_id",
+                "rd_storage_id",
+                "partial_bytes",
+                "component_bytes",
+                "component_host_read_bytes",
+                "rd_bytes",
+                "scratch_release_bytes",
+                "retained_rd_bytes",
+                "source_allocations",
+                "row_scans",
+                "carrier_dispatches",
+                "command_buffers",
+                "waits",
+                "uploads",
+                "prezero_dispatches",
+                "complete_overwrite",
+                "stage1_carry_parks",
+            }
+            carrier_raw = exact_span_args(
+                events,
+                "MetalOuterRemainder::registers_claim_carrier_park",
+                carrier_fields,
+            )
+            registers_claim_carrier_observation = {
+                field: nonnegative_trace_integer(carrier_raw[field], field)
+                for field in carrier_fields - {"complete_overwrite"}
+            }
+            registers_claim_carrier_observation["complete_overwrite"] = trace_boolean(
+                carrier_raw["complete_overwrite"]
+            )
+            expected_carrier = geometry["registers_claim_carrier"]
+            assert expected_carrier is not None
+            identities = [
+                registers_claim_carrier_observation[field]
+                for field in (
+                    "source_compact_storage_id",
+                    "source_residual_storage_id",
+                    "partial_storage_id",
+                    "component_storage_id",
+                    "rd_storage_id",
+                )
+            ]
+            if (
+                registers_claim_carrier_observation["rows"] != rows
+                or registers_claim_carrier_observation["explicit_rows"] > rows
+                or registers_claim_carrier_observation["prefix_elements"]
+                != expected_carrier["prefix_elements"]
+                or registers_claim_carrier_observation["suffix_elements"]
+                != expected_carrier["suffix_elements"]
+                or registers_claim_carrier_observation["blocks"]
+                != expected_carrier["blocks"]
+                or registers_claim_carrier_observation["device_registry_id"]
+                != handoff["device_registry_id"]
+                or registers_claim_carrier_observation["source_generation"] <= 0
+                or registers_claim_carrier_observation["completion_serial"] <= 0
+                or registers_claim_carrier_observation["source_compact_storage_id"]
+                != handoff["compact_rows_storage_id"]
+                or registers_claim_carrier_observation["source_residual_storage_id"]
+                != handoff["residual_rows_storage_id"]
+                or any(identity <= 0 for identity in identities)
+                or len(set(identities)) != len(identities)
+                or registers_claim_carrier_observation["partial_bytes"]
+                != expected_carrier["partial_bytes"]
+                or registers_claim_carrier_observation["component_bytes"]
+                != expected_carrier["component_bytes"]
+                or registers_claim_carrier_observation["component_host_read_bytes"]
+                != expected_carrier["component_bytes"]
+                or registers_claim_carrier_observation["rd_bytes"]
+                != expected_carrier["rd_bytes"]
+                or registers_claim_carrier_observation["scratch_release_bytes"]
+                != expected_carrier["partial_bytes"] + expected_carrier["component_bytes"]
+                or registers_claim_carrier_observation["retained_rd_bytes"]
+                != expected_carrier["rd_bytes"]
+                or registers_claim_carrier_observation["source_allocations"] != 3
+                or registers_claim_carrier_observation["row_scans"] != 2
+                or registers_claim_carrier_observation["carrier_dispatches"] != 3
+                or registers_claim_carrier_observation["command_buffers"] != 1
+                or registers_claim_carrier_observation["waits"] != 1
+                or registers_claim_carrier_observation["uploads"] != 0
+                or registers_claim_carrier_observation["prezero_dispatches"] != 0
+                or registers_claim_carrier_observation["complete_overwrite"] is not True
+                or registers_claim_carrier_observation["stage1_carry_parks"] != 1
+            ):
+                raise ValueError("OuterRemainder RegistersClaim carrier is inconsistent")
+
         release_fields = handoff_fields | {
             "residual_row_bytes",
             "remaining_sequence_storage_bytes",
@@ -1830,6 +2012,7 @@ def outer_remainder_member_breakdown(
             "sequence": sequence,
             "readback": readback,
             "output": output,
+            "registers_claim_carrier": registers_claim_carrier_observation,
         }
         row_lifecycle = {"handoff": handoff, "release": release}
 
@@ -1847,6 +2030,330 @@ def outer_remainder_member_breakdown(
         "resource_observation": resource_observation,
         "row_lifecycle": row_lifecycle,
         "product_uniskip_carrier": product_uniskip_carrier_observation,
+        "registers_claim_carrier": registers_claim_carrier_observation,
+    }
+
+
+def registers_claim_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    implementation: str,
+    outer_carrier: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    if backend not in {"optimized", "metal"}:
+        raise ValueError(f"unsupported RegistersClaim backend {backend!r}")
+    component_names = {
+        f"{REGISTERS_CLAIM_KERNEL}::{component}"
+        for component in ("prepare", "prove_round", "finish_rounds", "output_claims")
+    }
+    metal_names = {
+        "MetalRegistersClaimReduction::route",
+        "MetalRegistersClaimReduction::prepare",
+        "MetalRegistersClaimReduction::midpoint_projection",
+        "MetalInstructionInput::registers_claim_alias_publish",
+    }
+    unknown = {
+        name
+        for event in events
+        if isinstance((name := event.get("name")), str)
+        and name.startswith("MetalRegistersClaimReduction::")
+        and name not in metal_names
+    }
+    if unknown:
+        raise ValueError(
+            f"RegistersClaim trace contains unknown Metal phases: {sorted(unknown)}"
+        )
+    intervals = strict_named_intervals(
+        events, component_names | metal_names | {PIOP_SPAN, SUMCHECK_ROUND_SPAN}
+    )
+    if len(intervals[PIOP_SPAN]) != 1:
+        raise ValueError("trace must contain one PIOP span for RegistersClaim")
+    piop = intervals[PIOP_SPAN][0]
+    by_component = {
+        component: sorted(intervals[f"{REGISTERS_CLAIM_KERNEL}::{component}"])
+        for component in ("prepare", "prove_round", "finish_rounds", "output_claims")
+    }
+    outer_counts = {name: len(values) for name, values in by_component.items()}
+    expected_outer_counts = {
+        "prepare": 1,
+        "prove_round": log_n,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }
+    if outer_counts != expected_outer_counts:
+        raise ValueError(
+            f"RegistersClaim member span counts {outer_counts}, expected {expected_outer_counts}"
+        )
+    prepare = by_component["prepare"][0]
+    rounds = by_component["prove_round"]
+    finish = by_component["finish_rounds"][0]
+    output = by_component["output_claims"][0]
+    ordered = [prepare, *rounds, finish, output]
+    if any(start < piop[0] or end > piop[1] for start, end in ordered):
+        raise ValueError("a RegistersClaim member span lies outside PIOP")
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError("RegistersClaim member spans overlap or appear out of order")
+
+    metal_counts = {name: len(intervals[name]) for name in metal_names}
+    resource_observation = None
+    if backend == "optimized":
+        if any(metal_counts.values()) or outer_carrier is not None:
+            raise ValueError("optimized RegistersClaim unexpectedly contains Metal state")
+    elif implementation != "outer-carrier-alias-hybrid":
+        if any(metal_counts.values()) or outer_carrier is not None:
+            raise ValueError("CPU RegistersClaim unexpectedly contains Metal state")
+    else:
+        expected_metal_counts = {name: 1 for name in metal_names}
+        if metal_counts != expected_metal_counts or outer_carrier is None:
+            raise ValueError("RegistersClaim Metal carrier lifecycle is incomplete")
+        route_interval = intervals["MetalRegistersClaimReduction::route"][0]
+        prepare_interval = intervals["MetalRegistersClaimReduction::prepare"][0]
+        midpoint_interval = intervals[
+            "MetalRegistersClaimReduction::midpoint_projection"
+        ][0]
+        alias_interval = intervals[
+            "MetalInstructionInput::registers_claim_alias_publish"
+        ][0]
+        require_contained(route_interval, prepare, "RegistersClaim route")
+        require_contained(prepare_interval, prepare, "RegistersClaim Metal prepare")
+        prefix_vars = (log_n + 1) // 2
+        require_contained(
+            midpoint_interval,
+            rounds[prefix_vars],
+            "RegistersClaim midpoint projection",
+        )
+        if alias_interval[1] > midpoint_interval[0]:
+            raise ValueError("RegistersClaim alias publication did not precede its midpoint")
+        enclosing_alias_rounds = [
+            interval
+            for interval in intervals[SUMCHECK_ROUND_SPAN]
+            if interval[0] <= alias_interval[0] and alias_interval[1] <= interval[1]
+        ]
+        enclosing_midpoint_rounds = [
+            interval
+            for interval in intervals[SUMCHECK_ROUND_SPAN]
+            if interval[0] <= midpoint_interval[0]
+            and midpoint_interval[1] <= interval[1]
+        ]
+        if (
+            len(enclosing_alias_rounds) != 1
+            or enclosing_alias_rounds != enclosing_midpoint_rounds
+        ):
+            raise ValueError("RegistersClaim alias and midpoint cross a Fiat-Shamir seam")
+
+        route_fields = {
+            "cycles",
+            "requested",
+            "stage1_carry_present",
+            "alias_receiver_present",
+            "realized_route",
+            "fallback_reason",
+        }
+        route_raw = exact_span_args(
+            events, "MetalRegistersClaimReduction::route", route_fields
+        )
+        route = {
+            "cycles": nonnegative_trace_integer(route_raw["cycles"], "cycles"),
+            "requested": trace_string(route_raw["requested"], "requested"),
+            "stage1_carry_present": trace_boolean(route_raw["stage1_carry_present"]),
+            "alias_receiver_present": trace_boolean(route_raw["alias_receiver_present"]),
+            "realized_route": trace_string(
+                route_raw["realized_route"], "realized_route"
+            ),
+            "fallback_reason": trace_string(
+                route_raw["fallback_reason"], "fallback_reason"
+            ),
+        }
+        prepare_fields = {
+            "cycles",
+            "requested",
+            "realized_route",
+            "fallback_reason",
+            "resident_bytes",
+            "source_allocations",
+            "source_upload_bytes",
+            "source_host_write_bytes",
+            "source_generation",
+            "source_compact_storage_id",
+            "source_rd_storage_id",
+            "alias_generation",
+        }
+        prepare_raw = exact_span_args(
+            events, "MetalRegistersClaimReduction::prepare", prepare_fields
+        )
+        prepare_receipt = {
+            field: nonnegative_trace_integer(prepare_raw[field], field)
+            for field in prepare_fields
+            - {"requested", "realized_route", "fallback_reason"}
+        }
+        prepare_receipt.update(
+            {
+                field: trace_string(prepare_raw[field], field)
+                for field in ("requested", "realized_route", "fallback_reason")
+            }
+        )
+        alias_fields = {
+            "rows",
+            "source_compact_storage_id",
+            "alias_generation",
+            "prefix_challenges",
+            "table_0",
+            "table_1",
+            "host_table_copies",
+            "snapshot_host_bytes",
+            "publishes",
+        }
+        alias_raw = exact_span_args(
+            events,
+            "MetalInstructionInput::registers_claim_alias_publish",
+            alias_fields,
+        )
+        alias = {
+            field: nonnegative_trace_integer(alias_raw[field], field)
+            for field in alias_fields
+        }
+        midpoint_fields = {
+            "source",
+            "round",
+            "rows",
+            "source_generation",
+            "device_registry_id",
+            "source_compact_storage_id",
+            "source_rd_storage_id",
+            "alias_generation",
+            "rd_source_bytes",
+            "eq_upload_bytes",
+            "readback_bytes",
+            "device_allocations",
+            "dispatches",
+            "command_buffers",
+            "waits",
+            "alias_takes",
+            "useful_half_width_terms",
+            "gpu_active_ns",
+            "resident_wall_ns",
+        }
+        midpoint_raw = exact_span_args(
+            events,
+            "MetalRegistersClaimReduction::midpoint_projection",
+            midpoint_fields,
+        )
+        midpoint = {
+            field: nonnegative_trace_integer(midpoint_raw[field], field)
+            for field in midpoint_fields - {"source"}
+        }
+        midpoint["source"] = trace_string(midpoint_raw["source"], "source")
+
+        rows = 1 << log_n
+        prefix_elements = 1 << prefix_vars
+        suffix_elements = rows // prefix_elements
+        if (
+            route
+            != {
+                "cycles": rows,
+                "requested": "outer_carrier_alias_hybrid",
+                "stage1_carry_present": True,
+                "alias_receiver_present": True,
+                "realized_route": "outer_carrier_alias_hybrid",
+                "fallback_reason": "none",
+            }
+            or prepare_receipt["cycles"] != rows
+            or prepare_receipt["requested"] != "outer_carrier_alias_hybrid"
+            or prepare_receipt["realized_route"] != "outer_carrier_alias_hybrid"
+            or prepare_receipt["fallback_reason"] != "none"
+            or prepare_receipt["resident_bytes"] != 8 * rows
+            or any(
+                prepare_receipt[field] != 0
+                for field in (
+                    "source_allocations",
+                    "source_upload_bytes",
+                    "source_host_write_bytes",
+                )
+            )
+            or min(
+                prepare_receipt["source_generation"],
+                prepare_receipt["source_compact_storage_id"],
+                prepare_receipt["source_rd_storage_id"],
+                prepare_receipt["alias_generation"],
+            )
+            <= 0
+            or prepare_receipt["source_generation"]
+            != outer_carrier["source_generation"]
+            or prepare_receipt["source_compact_storage_id"]
+            != outer_carrier["source_compact_storage_id"]
+            or prepare_receipt["source_rd_storage_id"]
+            != outer_carrier["rd_storage_id"]
+            or alias
+            != {
+                "rows": rows,
+                "source_compact_storage_id": prepare_receipt[
+                    "source_compact_storage_id"
+                ],
+                "alias_generation": prepare_receipt["alias_generation"],
+                "prefix_challenges": prefix_vars,
+                "table_0": 1,
+                "table_1": 5,
+                "host_table_copies": 2,
+                "snapshot_host_bytes": 32 * suffix_elements,
+                "publishes": 1,
+            }
+            or midpoint["source"] != "outer_carrier_alias"
+            or midpoint["round"] != prefix_vars
+            or midpoint["rows"] != rows
+            or midpoint["source_generation"] != prepare_receipt["source_generation"]
+            or midpoint["device_registry_id"] != outer_carrier["device_registry_id"]
+            or midpoint["source_compact_storage_id"]
+            != prepare_receipt["source_compact_storage_id"]
+            or midpoint["source_rd_storage_id"]
+            != prepare_receipt["source_rd_storage_id"]
+            or midpoint["alias_generation"] != prepare_receipt["alias_generation"]
+            or midpoint["rd_source_bytes"] != 8 * rows
+            or midpoint["eq_upload_bytes"] != 16 * prefix_elements
+            or midpoint["readback_bytes"] != 16 * suffix_elements
+            or midpoint["device_allocations"] != 2
+            or midpoint["dispatches"] != 1
+            or midpoint["command_buffers"] != 1
+            or midpoint["waits"] != 1
+            or midpoint["alias_takes"] != 1
+            or midpoint["useful_half_width_terms"] != rows
+            or midpoint["gpu_active_ns"] <= 0
+            or midpoint["resident_wall_ns"] < midpoint["gpu_active_ns"]
+        ):
+            raise ValueError("RegistersClaim Metal lifecycle is inconsistent")
+        resource_observation = {
+            "route": route,
+            "prepare": prepare_receipt,
+            "alias_publish": alias,
+            "midpoint": midpoint,
+            "outer_carrier": outer_carrier,
+        }
+
+    round_durations = [interval_duration_us(interval) for interval in rounds]
+    components = {
+        "prepare_us": interval_duration_us(prepare),
+        "rounds_us": round_durations,
+        "rounds_total_us": sum(round_durations),
+        "finish_us": interval_duration_us(finish),
+        "output_claims_us": interval_duration_us(output),
+    }
+    components["member_us"] = (
+        components["prepare_us"]
+        + components["rounds_total_us"]
+        + components["finish_us"]
+        + components["output_claims_us"]
+    )
+    if any(
+        not math.isfinite(value) or value <= 0.0
+        for value in components.values()
+        if not isinstance(value, list)
+    ):
+        raise ValueError("RegistersClaim member duration is invalid")
+    return {
+        "components": components,
+        "outer_counts": outer_counts,
+        "metal_counts": metal_counts,
+        "resource_observation": resource_observation,
     }
 
 
@@ -3878,6 +4385,7 @@ def instruction_input_member_breakdown(
     log_n: int,
     cutoff_log2: int = 16,
     borrow_outer_residual: bool = False,
+    registers_claim_alias: bool = False,
 ) -> dict[str, Any]:
     outer_names = {
         f"{INSTRUCTION_INPUT_KERNEL}::{component}"
@@ -4052,6 +4560,7 @@ def instruction_input_member_breakdown(
             "dense_round": log_n - cutoff_log2 - 1,
             "readback": 1,
             "cpu_tail": cutoff_log2,
+            "registers_claim_alias_publish": int(registers_claim_alias),
         }
         if inner_counts != expected_inner_counts:
             raise ValueError(
@@ -4176,6 +4685,12 @@ def instruction_input_member_breakdown(
         require_contained(
             inner["cpu_tail"][-1], finish, "InstructionInput CPU-tail finish"
         )
+        if registers_claim_alias:
+            require_contained(
+                inner["registers_claim_alias_publish"][0],
+                rounds[(log_n + 1) // 2],
+                "InstructionInput RegistersClaim alias publication",
+            )
 
         storage = unique_span_args(
             events, f"Metal{INSTRUCTION_INPUT_KERNEL}::storage_prepare"
@@ -4976,6 +5491,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     required_member_fields = {
         "cpu_instruction_read_raf_us",
         "metal_instruction_read_raf_us",
+        "cpu_registers_claim_us",
+        "metal_registers_claim_us",
         "cpu_hamming_weight_us",
         "metal_hamming_weight_us",
         "cpu_hamming_weight_service_us",
@@ -4998,6 +5515,12 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     cpu_instruction_input = [float(pair["cpu_instruction_input_us"]) for pair in pairs]
     metal_instruction_input = [
         float(pair["metal_instruction_input_us"]) for pair in pairs
+    ]
+    cpu_registers_claim = [
+        float(pair["cpu_registers_claim_us"]) for pair in pairs
+    ]
+    metal_registers_claim = [
+        float(pair["metal_registers_claim_us"]) for pair in pairs
     ]
     cpu_instruction_read_raf = [
         float(pair["cpu_instruction_read_raf_us"])
@@ -5103,6 +5626,22 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             metal_product_remainder,
         )
     ]
+    cpu_outer_product_instruction_input_registers_family = [
+        family + instruction_input + registers
+        for family, instruction_input, registers in zip(
+            cpu_outer_product_family,
+            cpu_instruction_input,
+            cpu_registers_claim,
+        )
+    ]
+    metal_outer_product_instruction_input_registers_family = [
+        family + instruction_input + registers
+        for family, instruction_input, registers in zip(
+            metal_outer_product_family,
+            metal_instruction_input,
+            metal_registers_claim,
+        )
+    ]
     cpu_instruction_claim = [
         float(pair.get("cpu_instruction_claim_us", pair["cpu_hamming_weight_us"]))
         for pair in pairs
@@ -5144,6 +5683,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_bytecode
         + cpu_instruction_input
         + metal_instruction_input
+        + cpu_registers_claim
+        + metal_registers_claim
         + cpu_instruction_read_raf
         + metal_instruction_read_raf
         + cpu_booleanity_address
@@ -5162,6 +5703,8 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_product_remainder
         + cpu_outer_product_family
         + metal_outer_product_family
+        + cpu_outer_product_instruction_input_registers_family
+        + metal_outer_product_instruction_input_registers_family
         + cpu_instruction_claim
         + metal_instruction_claim
         + metal_instruction_claim_isolated_service
@@ -5169,7 +5712,6 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_product_instruction_claim
     ):
         raise ValueError("kernel durations must be finite and positive")
-    paired_speedups = [cpu_us / metal_us for cpu_us, metal_us in zip(cpu, metal)]
     instruction_ra_speedups = [
         cpu_us / metal_us for cpu_us, metal_us in zip(cpu_instruction_ra, metal_instruction_ra)
     ]
@@ -5187,6 +5729,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             metal_instruction_input,
             INSTRUCTION_INPUT_MIN_SPEEDUP,
         )
+    )
+    (
+        registers_claim_speedups,
+        registers_claim_improvements,
+        registers_claim_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_registers_claim,
+        metal_registers_claim,
+        REGISTERS_CLAIM_MIN_SPEEDUP,
     )
     (
         instruction_read_raf_speedups,
@@ -5281,6 +5833,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         OUTER_PRODUCT_FAMILY_MIN_SPEEDUP,
     )
     (
+        outer_product_instruction_input_registers_family_speedups,
+        outer_product_instruction_input_registers_family_improvements,
+        outer_product_instruction_input_registers_family_decision,
+    ) = local_member_decision(
+        pairs,
+        cpu_outer_product_instruction_input_registers_family,
+        metal_outer_product_instruction_input_registers_family,
+        REGISTERS_CLAIM_MIN_SPEEDUP,
+    )
+    (
         instruction_claim_speedups,
         instruction_claim_improvements,
         instruction_claim_decision,
@@ -5312,6 +5874,12 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             cpu, metal, cpu_prepare, metal_prepare
         )
     ]
+    piop_speedups, piop_improvements, piop_decision = local_member_decision(
+        pairs,
+        cpu,
+        metal,
+        PIOP_MIN_SPEEDUP,
+    )
     bytecode_speedup_median = statistics.median(bytecode_speedups)
     bytecode_improvement_median = statistics.median(bytecode_improvements)
     bytecode_improvement_mad = statistics.median(
@@ -5353,11 +5921,14 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         and metal_first_median >= BYTECODE_MIN_SPEEDUP
     )
     return {
-        "piop_speedup": statistics.median(paired_speedups),
+        "piop_speedup": statistics.median(piop_speedups),
         "instruction_ra_speedup": statistics.median(instruction_ra_speedups),
         "bytecode_read_raf_cycle_speedup": bytecode_speedup_median,
         "instruction_input_kernel_service_speedup": statistics.median(
             instruction_input_speedups
+        ),
+        "registers_claim_reduction_member_speedup": statistics.median(
+            registers_claim_speedups
         ),
         "instruction_read_raf_speedup": statistics.median(
             instruction_read_raf_speedups
@@ -5388,6 +5959,9 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "outer_product_family_speedup": statistics.median(
             outer_product_family_speedups
         ),
+        "outer_product_instruction_input_registers_family_speedup": statistics.median(
+            outer_product_instruction_input_registers_family_speedups
+        ),
         "instruction_claim_reduction_critical_path_speedup": statistics.median(
             instruction_claim_speedups
         ),
@@ -5402,12 +5976,16 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_piop_ms": statistics.median(metal) / 1000.0,
         "cpu_backend_witness_prepare_ms": statistics.median(cpu_prepare) / 1000.0,
         "metal_backend_witness_prepare_ms": statistics.median(metal_prepare) / 1000.0,
-        "paired_speedups": paired_speedups,
+        "paired_speedups": piop_speedups,
         "paired_instruction_ra_speedups": instruction_ra_speedups,
         "paired_bytecode_read_raf_cycle_speedups": bytecode_speedups,
         "paired_bytecode_read_raf_cycle_fractional_improvements": bytecode_improvements,
         "paired_instruction_input_kernel_service_speedups": instruction_input_speedups,
         "paired_instruction_input_kernel_service_fractional_improvements": instruction_input_improvements,
+        "paired_registers_claim_reduction_member_speedups": registers_claim_speedups,
+        "paired_registers_claim_reduction_member_fractional_improvements": (
+            registers_claim_improvements
+        ),
         "paired_instruction_read_raf_speedups": instruction_read_raf_speedups,
         "paired_instruction_read_raf_fractional_improvements": instruction_read_raf_improvements,
         "paired_booleanity_address_phase_speedups": booleanity_address_speedups,
@@ -5434,6 +6012,13 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "paired_outer_product_family_fractional_improvements": (
             outer_product_family_improvements
         ),
+        "paired_outer_product_instruction_input_registers_family_speedups": (
+            outer_product_instruction_input_registers_family_speedups
+        ),
+        "paired_outer_product_instruction_input_registers_family_fractional_improvements": (
+            outer_product_instruction_input_registers_family_improvements
+        ),
+        "paired_piop_fractional_improvements": piop_improvements,
         "paired_instruction_claim_reduction_critical_path_speedups": instruction_claim_speedups,
         "paired_instruction_claim_reduction_critical_path_fractional_improvements": (
             instruction_claim_improvements
@@ -5461,6 +6046,12 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         ],
         "metal_instruction_input_kernel_service_ms_samples": [
             value / 1000.0 for value in metal_instruction_input
+        ],
+        "cpu_registers_claim_reduction_member_ms_samples": [
+            value / 1000.0 for value in cpu_registers_claim
+        ],
+        "metal_registers_claim_reduction_member_ms_samples": [
+            value / 1000.0 for value in metal_registers_claim
         ],
         "cpu_instruction_read_raf_ms_samples": [
             value / 1000.0 for value in cpu_instruction_read_raf
@@ -5522,6 +6113,14 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "metal_outer_product_family_ms_samples": [
             value / 1000.0 for value in metal_outer_product_family
         ],
+        "cpu_outer_product_instruction_input_registers_family_ms_samples": [
+            value / 1000.0
+            for value in cpu_outer_product_instruction_input_registers_family
+        ],
+        "metal_outer_product_instruction_input_registers_family_ms_samples": [
+            value / 1000.0
+            for value in metal_outer_product_instruction_input_registers_family
+        ],
         "cpu_instruction_claim_reduction_critical_path_ms_samples": [
             value / 1000.0 for value in cpu_instruction_claim
         ],
@@ -5538,6 +6137,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             value / 1000.0 for value in metal_product_instruction_claim
         ],
         "instruction_input_kernel_service_decision": instruction_input_decision,
+        "registers_claim_reduction_member_decision": registers_claim_decision,
         "instruction_read_raf_decision": instruction_read_raf_decision,
         "booleanity_address_phase_decision": booleanity_address_decision,
         "hamming_weight_claim_reduction_decision": hamming_weight_decision,
@@ -5545,6 +6145,10 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         "outer_remainder_decision": outer_remainder_decision,
         "product_remainder_decision": product_remainder_decision,
         "outer_product_family_decision": outer_product_family_decision,
+        "outer_product_instruction_input_registers_family_decision": (
+            outer_product_instruction_input_registers_family_decision
+        ),
+        "piop_decision": piop_decision,
         "instruction_claim_reduction_critical_path_decision": instruction_claim_decision,
         "product_instruction_claim_family_decision": product_instruction_claim_decision,
         "bytecode_read_raf_cycle_decision": {
@@ -5668,6 +6272,8 @@ def local_kernel_primary_us(result: dict[str, Any], kernel: str) -> float:
         value = kernel_wall_us(result["attribution"], kernel)
     elif kernel == INSTRUCTION_CLAIM_KERNEL:
         value = kernel_wall_us(result["attribution"], kernel)
+    elif kernel == REGISTERS_CLAIM_KERNEL:
+        value = result["registers_claim_member"]["components"]["member_us"]
     elif kernel == INSTRUCTION_READ_RAF_KERNEL:
         value = result["instruction_read_raf_member"]["components"]["member_us"]
     else:
@@ -5726,6 +6332,8 @@ def run_backend(
     outer_remainder_trace_cutoff_log2: int,
     outer_remainder_binding_plan: str,
     product_uniskip_outer_carrier: bool,
+    registers_claim_implementation: str,
+    registers_claim_trace_cutoff_log2: int,
     pair_index: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
@@ -5805,6 +6413,10 @@ def run_backend(
         str(outer_remainder_trace_cutoff_log2),
         "--outer-remainder-metal-binding-plan",
         outer_remainder_binding_plan,
+        "--registers-claim-metal-implementation",
+        registers_claim_implementation,
+        "--registers-claim-metal-trace-cutoff-log2",
+        str(registers_claim_trace_cutoff_log2),
     ]
     if product_uniskip_outer_carrier:
         benchmark_command.append("--product-uniskip-outer-carrier")
@@ -5893,6 +6505,13 @@ def run_backend(
         outer_remainder_trace_cutoff_log2,
         outer_remainder_binding_plan,
         product_uniskip_outer_carrier,
+        registers_claim_implementation == "outer-carrier-alias-hybrid",
+    )
+    registers_claim_config = validate_registers_claim_stdout(
+        result.stdout,
+        backend,
+        registers_claim_implementation,
+        registers_claim_trace_cutoff_log2,
     )
     source = trace_path(root, workload, log_n, backend)
     if not source.is_file() or source.stat().st_mtime_ns <= started_ns:
@@ -5918,6 +6537,7 @@ def run_backend(
         log_n,
         instruction_input_cutoff_log2,
         instruction_input_borrow_outer_residual,
+        registers_claim_implementation == "outer-carrier-alias-hybrid",
     )
     instruction_read_raf_member = instruction_read_raf_member_breakdown(
         events,
@@ -5963,6 +6583,14 @@ def run_backend(
         outer_remainder_cutoff_log2,
         outer_remainder_trace_cutoff_log2,
         product_uniskip_outer_carrier,
+        registers_claim_implementation == "outer-carrier-alias-hybrid",
+    )
+    registers_claim_member = registers_claim_member_breakdown(
+        events,
+        backend,
+        log_n,
+        registers_claim_implementation,
+        outer_remainder_member["registers_claim_carrier"],
     )
     product_uniskip = product_uniskip_observation(
         events,
@@ -5992,6 +6620,7 @@ def run_backend(
         (INSTRUCTION_READ_RAF_KERNEL, instruction_read_raf_member),
         (BOOLEANITY_ADDRESS_KERNEL, booleanity_address_member),
         (HAMMING_WEIGHT_KERNEL, hamming_weight_member),
+        (REGISTERS_CLAIM_KERNEL, registers_claim_member),
     ):
         attributed_us = kernel_wall_us(attribution, name)
         if name in {BOOLEANITY_ADDRESS_KERNEL, HAMMING_WEIGHT_KERNEL}:
@@ -6028,6 +6657,8 @@ def run_backend(
         "hamming_weight_member": hamming_weight_member,
         "outer_remainder_config": outer_remainder_config,
         "outer_remainder_member": outer_remainder_member,
+        "registers_claim_config": registers_claim_config,
+        "registers_claim_member": registers_claim_member,
         "product_uniskip": product_uniskip,
         "instruction_claim": instruction_claim,
         "execution_config": execution_config,
@@ -6369,6 +7000,17 @@ def parser() -> argparse.ArgumentParser:
         default="b_only_v1",
     )
     result.add_argument("--product-uniskip-outer-carrier", action="store_true")
+    result.add_argument(
+        "--registers-claim-metal-implementation",
+        choices=["cpu", "outer-carrier-alias-hybrid"],
+        default="outer-carrier-alias-hybrid",
+    )
+    result.add_argument(
+        "--registers-claim-metal-trace-cutoff-log2",
+        type=int,
+        choices=[25, 26, 27, 28],
+        default=25,
+    )
     result.add_argument("--trace", type=Path)
     return result
 
@@ -6457,6 +7099,46 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    if args.registers_claim_metal_trace_cutoff_log2 > args.log_n:
+        print(
+            "error: RegistersClaim Metal trace cutoff disables the measured backend",
+            file=sys.stderr,
+        )
+        return 2
+    if args.registers_claim_metal_implementation == "outer-carrier-alias-hybrid":
+        if (
+            args.outer_remainder_metal_trace_cutoff_log2
+            > args.registers_claim_metal_trace_cutoff_log2
+            or args.instruction_input_metal_trace_cutoff_log2
+            > args.registers_claim_metal_trace_cutoff_log2
+        ):
+            print(
+                "error: RegistersClaim carrier producers must activate no later than the consumer",
+                file=sys.stderr,
+            )
+            return 2
+        if args.instruction_input_metal_cutoff_log2 < 1 + args.log_n // 2:
+            print(
+                "error: RegistersClaim alias requires InstructionInput host tables before the midpoint",
+                file=sys.stderr,
+            )
+            return 2
+        if args.outer_remainder_metal_binding_plan != "b_only_v1":
+            print(
+                "error: RegistersClaim carrier promotion is frozen to b_only_v1",
+                file=sys.stderr,
+            )
+            return 2
+    if (
+        args.local_kernel == REGISTERS_CLAIM_KERNEL
+        and args.registers_claim_metal_implementation
+        != "outer-carrier-alias-hybrid"
+    ):
+        print(
+            "error: RegistersClaim local evaluation requires the carrier-alias route",
+            file=sys.stderr,
+        )
+        return 2
     if args.instruction_ra_reuse_inverse and args.instruction_ra_materialize_width == 16:
         print("error: width-16 Instruction RA cannot reuse the inverse", file=sys.stderr)
         return 2
@@ -6529,6 +7211,8 @@ def main() -> int:
                     args.outer_remainder_metal_trace_cutoff_log2,
                     args.outer_remainder_metal_binding_plan,
                     args.product_uniskip_outer_carrier,
+                    args.registers_claim_metal_implementation,
+                    args.registers_claim_metal_trace_cutoff_log2,
                     index + 1,
                     args.timeout_seconds,
                 )
@@ -6584,6 +7268,16 @@ def main() -> int:
                     "metal_instruction_input_us": float(
                         results["metal"]["instruction_input_member"]["components"][
                             "service_us"
+                        ]
+                    ),
+                    "cpu_registers_claim_us": float(
+                        results["optimized"]["registers_claim_member"]["components"][
+                            "member_us"
+                        ]
+                    ),
+                    "metal_registers_claim_us": float(
+                        results["metal"]["registers_claim_member"]["components"][
+                            "member_us"
                         ]
                     ),
                     "cpu_instruction_read_raf_us": float(
@@ -6683,6 +7377,16 @@ def main() -> int:
                         ],
                         "metal_member": results["metal"]["instruction_input_member"],
                     },
+                    "registers_claim": {
+                        "optimized_config": results["optimized"][
+                            "registers_claim_config"
+                        ],
+                        "metal_config": results["metal"]["registers_claim_config"],
+                        "optimized_member": results["optimized"][
+                            "registers_claim_member"
+                        ],
+                        "metal_member": results["metal"]["registers_claim_member"],
+                    },
                     "instruction_read_raf": {
                         "optimized_config": results["optimized"][
                             "instruction_read_raf_config"
@@ -6768,6 +7472,9 @@ def main() -> int:
                             "instruction_input_row_lifecycle": results[backend][
                                 "instruction_input_member"
                             ]["row_lifecycle"],
+                            "registers_claim": member_record(
+                                results[backend]["registers_claim_member"]
+                            ),
                             "instruction_read_raf": member_record(
                                 results[backend]["instruction_read_raf_member"]
                             ),
@@ -7301,6 +8008,69 @@ def main() -> int:
                 "instruction_input_local_gate": metrics[
                     "instruction_input_kernel_service_decision"
                 ]["clears"],
+                "registers_claim_cpu_control": all(
+                    sample["registers_claim"]["optimized_member"][
+                        "resource_observation"
+                    ]
+                    is None
+                    and not any(
+                        sample["registers_claim"]["optimized_member"][
+                            "metal_counts"
+                        ].values()
+                    )
+                    for sample in attributions
+                ),
+                "registers_claim_carrier_alias_route_exact": all(
+                    (
+                        observation := sample["registers_claim"]["metal_member"][
+                            "resource_observation"
+                        ]
+                    )
+                    is not None
+                    and observation["route"]
+                    == {
+                        "cycles": 1 << args.log_n,
+                        "requested": "outer_carrier_alias_hybrid",
+                        "stage1_carry_present": True,
+                        "alias_receiver_present": True,
+                        "realized_route": "outer_carrier_alias_hybrid",
+                        "fallback_reason": "none",
+                    }
+                    and observation["prepare"]["source_allocations"] == 0
+                    and observation["prepare"]["source_upload_bytes"] == 0
+                    and observation["prepare"]["source_host_write_bytes"] == 0
+                    and observation["midpoint"]["alias_takes"] == 1
+                    and observation["midpoint"]["useful_half_width_terms"]
+                    == 1 << args.log_n
+                    for sample in attributions
+                ),
+                "registers_claim_shared_provenance_exact": all(
+                    (
+                        observation := sample["registers_claim"]["metal_member"][
+                            "resource_observation"
+                        ]
+                    )
+                    is not None
+                    and observation["prepare"]["source_generation"]
+                    == observation["outer_carrier"]["source_generation"]
+                    and observation["prepare"]["source_compact_storage_id"]
+                    == observation["outer_carrier"]["source_compact_storage_id"]
+                    == observation["alias_publish"]["source_compact_storage_id"]
+                    and observation["prepare"]["source_rd_storage_id"]
+                    == observation["outer_carrier"]["rd_storage_id"]
+                    == observation["midpoint"]["source_rd_storage_id"]
+                    and observation["prepare"]["alias_generation"]
+                    == observation["alias_publish"]["alias_generation"]
+                    == observation["midpoint"]["alias_generation"]
+                    for sample in attributions
+                ),
+                "registers_claim_local_gate": metrics[
+                    "registers_claim_reduction_member_decision"
+                ]["clears"],
+                "registers_claim_charged_family_gate": metrics[
+                    "outer_product_instruction_input_registers_family_decision"
+                ]["clears"],
+                "piop_gate": metrics["piop_decision"]["clears"],
                 "booleanity_address_cpu_control": all(
                     not any(
                         sample["booleanity_address"]["optimized_member"][
@@ -7858,6 +8628,12 @@ def main() -> int:
                     ]
                     for sample in attributions
                 ],
+                "registers_claim": [
+                    sample["registers_claim"]["metal_member"][
+                        "resource_observation"
+                    ]
+                    for sample in attributions
+                ],
                 "optimized_max_rss_bytes": [
                     pair["arms"]["optimized"]["max_rss_bytes"] for pair in pair_records
                 ],
@@ -7926,6 +8702,30 @@ def main() -> int:
                 << args.outer_remainder_metal_trace_cutoff_log2,
                 "outer_remainder_metal_binding_plan": args.outer_remainder_metal_binding_plan,
                 "product_uniskip_outer_carrier": args.product_uniskip_outer_carrier,
+                "registers_claim_metal_implementation": (
+                    args.registers_claim_metal_implementation
+                ),
+                "registers_claim_metal_trace_cutoff_log2": (
+                    args.registers_claim_metal_trace_cutoff_log2
+                ),
+                "registers_claim_metal_trace_cutoff_elements": 1
+                << args.registers_claim_metal_trace_cutoff_log2,
+                "registers_claim_outer_carrier": (
+                    args.registers_claim_metal_implementation
+                    == "outer-carrier-alias-hybrid"
+                ),
+                "registers_claim_required_instruction_input_cutoff_log2": 1
+                + args.log_n // 2,
+                "registers_claim_carrier_owned_bytes": (
+                    outer_remainder_storage_geometry(
+                        args.log_n,
+                        args.product_uniskip_outer_carrier,
+                        True,
+                    )["registers_claim_carrier"]["owned_bytes"]
+                    if args.registers_claim_metal_implementation
+                    == "outer-carrier-alias-hybrid"
+                    else 0
+                ),
                 "span": PIOP_SPAN,
                 "orders": orders,
             },
