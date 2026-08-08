@@ -77,7 +77,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let use_metal_address =
             trace_elements >= self.config.instruction_read_raf.address_cutoff_elements;
         let collect_bytecode_support = self.config.bytecode_read_raf_address.implementation
-            == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajorShadow
+            == crate::metal::BytecodeReadRafAddressImplementation::AddressMajorShadow
             && trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
         let retain_lookup_plane = trace_elements
             >= self

@@ -576,6 +576,7 @@ mod akita_benchmark {
         Cpu,
         CsrShadow,
         AddressMajorShadow,
+        AddressMajor,
     }
 
     impl BytecodeAddressImplementation {
@@ -584,6 +585,7 @@ mod akita_benchmark {
                 Self::Cpu => "cpu",
                 Self::CsrShadow => "csr-shadow",
                 Self::AddressMajorShadow => "address-major-shadow",
+                Self::AddressMajor => "address-major",
             }
         }
     }
@@ -1236,6 +1238,9 @@ mod akita_benchmark {
                         }
                         BytecodeAddressImplementation::AddressMajorShadow => {
                             jolt_kernels::metal::BytecodeReadRafAddressImplementation::AddressMajorShadow
+                        }
+                        BytecodeAddressImplementation::AddressMajor => {
+                            jolt_kernels::metal::BytecodeReadRafAddressImplementation::AddressMajor
                         }
                     };
                 config.bytecode_read_raf_address.address_major.outer_tiles =

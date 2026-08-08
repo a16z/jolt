@@ -151,9 +151,9 @@ pub(crate) use instruction_read_raf::{
     instruction_read_raf_claim_and_count_rank, instruction_read_raf_stage1_claim_bytes,
     instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafCountOrder,
-    InstructionReadRafDenseGroupedPlanes, InstructionReadRafStage1Lease,
-    InstructionReadRafStage1Owner, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
-    INSTRUCTION_READ_RAF_SEGMENTS,
+    InstructionReadRafDenseGroupedPlanes, InstructionReadRafStage1ChunkWriter,
+    InstructionReadRafStage1Lease, InstructionReadRafStage1Owner, InstructionReadRafStage1Receipt,
+    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, INSTRUCTION_READ_RAF_SEGMENTS,
 };
 #[cfg(feature = "test-utils")]
 pub use instruction_read_raf::{
@@ -262,6 +262,7 @@ pub use spartan_outer_uniskip::{
 pub(crate) use spartan_outer_uniskip::{
     spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_residual_row_bytes,
     spartan_outer_uniskip_row_bytes, OuterResidualArenaKey, OuterResidualReleaseReceipt,
+    SpartanOuterUniskipResidualRow,
 };
 
 pub const OFFSET_275: u32 = 275;
@@ -481,6 +482,8 @@ pub enum MetalError {
     AddressPhaseLayoutLength { expected: usize, got: usize },
     #[error("invalid grouped InstructionReadRaf state: {0}")]
     InvalidInstructionReadRafGrouped(String),
+    #[error("invalid bytecode read-RAF address configuration: {0}")]
+    InvalidBytecodeReadRafAddressConfig(&'static str),
     #[error("address cycle phase tables contain {got} fields, expected {expected}")]
     AddressCyclePhaseTableShape { expected: usize, got: usize },
     #[error("address cycle has {got} table values, expected {expected}")]

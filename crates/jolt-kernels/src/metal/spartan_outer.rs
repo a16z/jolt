@@ -170,6 +170,28 @@ fn validate_resident_row_buffer(row_bytes: u64, maximum: u64) -> Result<(), Meta
     Ok(())
 }
 
+fn bytecode_address_major_plane_bytes(cycles: usize) -> Result<[u64; 3], MetalError> {
+    use super::solinas::bytecode_read_raf_address::carrier::{ADDRESS_LOG2, INNER_LOG2};
+
+    if cycles < 1usize << INNER_LOG2 || !cycles.is_power_of_two() {
+        return Err(MetalError::InputTooLong(cycles));
+    }
+    let rows = u64::try_from(cycles).map_err(|_| MetalError::InputTooLong(cycles))?;
+    let outer = rows >> INNER_LOG2;
+    let addresses = 1u64 << ADDRESS_LOG2;
+    let cells = outer
+        .checked_mul(addresses)
+        .and_then(|elements| elements.checked_mul(4))
+        .ok_or(MetalError::InputTooLong(cycles))?;
+    let inner_sign = rows
+        .checked_mul(4)
+        .ok_or(MetalError::InputTooLong(cycles))?;
+    let magnitude = rows
+        .checked_mul(8)
+        .ok_or(MetalError::InputTooLong(cycles))?;
+    Ok([cells, inner_sign, magnitude])
+}
+
 fn use_metal_stage1(cycles: usize, config: &MetalConfig, resident_rows: bool) -> bool {
     cycles >= config.spartan_outer_uniskip.trace_cutoff_elements && resident_rows
 }
@@ -360,13 +382,21 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let instruction_read_raf_owner_requested =
             self.config.instruction_read_raf.address_implementation
                 == InstructionReadRafAddressImplementation::Stage1Grouped
-            && cycles >= self.config.instruction_read_raf.address_cutoff_elements
-            && !(self.config.bytecode_read_raf_address.implementation
-                == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajorShadow
-                && cycles >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff)
-            && witness
+                && cycles >= self.config.instruction_read_raf.address_cutoff_elements
+                && !(self.config.bytecode_read_raf_address.implementation
+                    == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajorShadow
+                    && cycles >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff)
+                && witness
                     .owned_rows()
                     .is_some_and(|rows| cycles <= rows.cycles());
+        let prepare_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
+            == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajor
+            && cycles >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
+        if prepare_bytecode_carrier && !instruction_read_raf_owner_requested {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode address-major requires the random-access Stage-1 owner",
+            });
+        }
         stage1_eligible |= instruction_read_raf_owner_requested;
         let instruction_ra_dispatch = self.config.instruction_ra_virtualization.dispatch;
         if cycles
@@ -394,6 +424,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             session.park::<InstructionRaSequenceStorage>(storage);
         }
         let mut admitted_plan = None;
+        let mut last_admission_error = None;
         if stage1_eligible || instruction_input_eligible {
             let instruction_input_bytes =
                 instruction_input_row_bytes(cycles).map_err(metal_prepare_error)?;
@@ -401,6 +432,9 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             for candidate in
                 resident_row_admission_candidates(stage1_eligible, instruction_input_eligible)
             {
+                if prepare_bytecode_carrier && !candidate.stage1 {
+                    continue;
+                }
                 let borrow_outer_residual = self.config.instruction_input.dense_storage_mode
                     == InstructionInputDenseStorageMode::OuterResidual;
                 if borrow_outer_residual && candidate.instruction_input && !candidate.stage1 {
@@ -432,6 +466,11 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                     device.max_buffer_length,
                                 )?;
                             }
+                            if prepare_bytecode_carrier && candidate.stage1 {
+                                for bytes in bytecode_address_major_plane_bytes(cycles)? {
+                                    validate_resident_row_buffer(bytes, device.max_buffer_length)?;
+                                }
+                            }
                             Ok(())
                         })
                         .and_then(|()| {
@@ -447,7 +486,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                     device.max_buffer_length,
                                 )?;
                             }
-                            resident_row_working_set(
+                            let bytes = resident_row_working_set(
                                 cycles,
                                 candidate.stage1,
                                 candidate.instruction_input,
@@ -463,7 +502,17 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                             .spartan_outer_remainder
                                             .trace_cutoff_elements,
                                 self.config.spartan_outer_remainder.dispatch,
-                            )
+                            )?;
+                            if prepare_bytecode_carrier && candidate.stage1 {
+                                bytecode_address_major_plane_bytes(cycles)?
+                                    .into_iter()
+                                    .try_fold(bytes, |sum, plane| {
+                                        sum.checked_add(plane)
+                                            .ok_or(MetalError::InputTooLong(cycles))
+                                    })
+                            } else {
+                                Ok(bytes)
+                            }
                         })
                         .and_then(|additional| {
                             self.context.validate_additional_working_set(additional)
@@ -481,14 +530,23 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             instruction_input = candidate.instruction_input,
                             "Metal resident-row plan was not admitted"
                         );
+                        last_admission_error = Some(error);
                     }
                     Err(error) => return Err(metal_prepare_error(error)),
                 }
             }
         }
+        if prepare_bytecode_carrier && admitted_plan.is_none() {
+            return Err(last_admission_error.map_or(
+                KernelError::InvariantViolation {
+                    reason: "bytecode address-major Stage-1 plan was not admitted",
+                },
+                metal_prepare_error,
+            ));
+        }
         if let Some(plan) = admitted_plan {
             if plan.stage1 {
-                let (mut rows, instruction_read_raf_owner) = if cycles
+                let (mut rows, instruction_read_raf_owner, bytecode_carrier) = if cycles
                     >= self.config.spartan_shift.trace_cutoff_elements
                 {
                     let span = tracing::info_span!(
@@ -509,18 +567,21 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             &self.context,
                             witness,
                             cycles,
+                            prepare_bytecode_carrier,
                         )
-                        .map(|(rows, shift_rows, owner)| (rows, shift_rows, Some(owner)))
+                        .map(|(rows, shift_rows, owner, carrier)| {
+                            (rows, shift_rows, Some(owner), carrier)
+                        })
                     } else {
                         prepare_metal_spartan_outer_shift_witness_rows(
                             &self.context,
                             witness,
                             cycles,
                         )
-                        .map(|(rows, shift_rows)| (rows, shift_rows, None))
+                        .map(|(rows, shift_rows)| (rows, shift_rows, None, None))
                     };
                     match prepared {
-                        Ok((rows, shift_rows, instruction_read_raf_owner)) => {
+                        Ok((rows, shift_rows, instruction_read_raf_owner, bytecode_carrier)) => {
                             let shift_resident_bytes = shift_rows.resident_bytes();
                             let owner =
                                 SpartanDenseResidentOwner::from_co_produced_shift(shift_rows)
@@ -540,7 +601,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             let _ = span.record("admitted", true);
                             let _ = span.record("fallback_reason", "none");
                             session.park(owner);
-                            (rows, instruction_read_raf_owner)
+                            (rows, instruction_read_raf_owner, bytecode_carrier)
                         }
                         Err(error) if error.is_capacity_error() => {
                             let _ = span.record("admitted", false);
@@ -555,8 +616,9 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                     &self.context,
                                     witness,
                                     cycles,
+                                    prepare_bytecode_carrier,
                                 )
-                                .map(|(rows, owner)| (rows, Some(owner)))
+                                .map(|(rows, owner, carrier)| (rows, Some(owner), carrier))
                                 .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
                             } else {
                                 (
@@ -565,6 +627,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                         witness,
                                         cycles,
                                     )?,
+                                    None,
                                     None,
                                 )
                             }
@@ -576,12 +639,14 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         &self.context,
                         witness,
                         cycles,
+                        prepare_bytecode_carrier,
                     )
-                    .map(|(rows, owner)| (rows, Some(owner)))
+                    .map(|(rows, owner, carrier)| (rows, Some(owner), carrier))
                     .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
                 } else {
                     (
                         prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?,
+                        None,
                         None,
                     )
                 };
@@ -613,6 +678,9 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                     )
                     .entered();
                     session.park(owner);
+                }
+                if let Some(carrier) = bytecode_carrier {
+                    session.park(carrier);
                 }
                 let compact_rows = plan
                     .instruction_input

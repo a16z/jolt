@@ -6,12 +6,17 @@ use jolt_field::AkitaField;
 use jolt_openings::CommitmentScheme;
 
 use super::booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
-use super::bytecode_read_raf::{BytecodeReadRafAddressMetalConfig, BytecodeReadRafMetalConfig};
+use super::bytecode_read_raf::{
+    BytecodeReadRafAddressImplementation, BytecodeReadRafAddressMetalConfig,
+    BytecodeReadRafMetalConfig,
+};
 use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_claim_reduction::InstructionClaimReductionMetalConfig;
 use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
-use super::instruction_read_raf::InstructionReadRafMetalConfig;
+use super::instruction_read_raf::{
+    InstructionReadRafAddressImplementation, InstructionReadRafMetalConfig,
+};
 use super::ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
 use super::ram_ra_claim_reduction::RamRaClaimReductionMetalConfig;
 use super::ram_ra_virtualization::RamRaVirtualizationMetalConfig;
@@ -160,6 +165,19 @@ impl MetalBackend {
         {
             return Err(MetalError::InvalidOuterRemainderConfig(
                 "registers-claim carrier producers must activate no later than their consumer",
+            ));
+        }
+        if config.bytecode_read_raf_address.implementation
+            == BytecodeReadRafAddressImplementation::AddressMajor
+            && (config.instruction_read_raf.address_implementation
+                != InstructionReadRafAddressImplementation::Stage1Grouped
+                || config.instruction_read_raf.address_cutoff_elements
+                    > config.bytecode_read_raf_address.dispatch.trace_cutoff
+                || config.bytecode_read_raf_address.dispatch.trace_cutoff < 1 << 15
+                || config.bytecode_read_raf_address.address_major.outer_tiles == 0)
+        {
+            return Err(MetalError::InvalidBytecodeReadRafAddressConfig(
+                "address-major requires the Stage-1 grouped owner at every admitted trace size",
             ));
         }
         let cutoff = config.instruction_read_raf.cutoff_elements;

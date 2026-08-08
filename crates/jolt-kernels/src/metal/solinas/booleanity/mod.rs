@@ -30,6 +30,43 @@ struct BytecodeOuterSupport {
     max_active_addresses: usize,
 }
 
+fn checked_bytecode_outer_support(
+    rows: usize,
+    offsets: &[u32],
+    addresses: &[u32],
+) -> Result<BytecodeOuterSupport, MetalError> {
+    let outer_length = rows.div_ceil(BYTECODE_ADDRESS_INNER_LENGTH);
+    let layout_valid = offsets.len() == outer_length + 1
+        && offsets.first() == Some(&0)
+        && offsets.last().copied() == u32::try_from(addresses.len()).ok();
+    let mut max_active_addresses = 0;
+    let segments_valid = layout_valid
+        && offsets.windows(2).all(|pair| {
+            let start = pair[0] as usize;
+            let end = pair[1] as usize;
+            let Some(segment) = addresses.get(start..end) else {
+                return false;
+            };
+            max_active_addresses = max_active_addresses.max(segment.len());
+            !segment.is_empty()
+                && segment
+                    .iter()
+                    .all(|address| (*address as usize) < BYTECODE_ADDRESS_COUNT)
+                && segment.windows(2).all(|entry| entry[0] < entry[1])
+        });
+    if !segments_valid {
+        return Err(MetalError::InvalidBooleanityBytecodeSupport {
+            count: addresses.len(),
+            maximum: BYTECODE_ADDRESS_COUNT,
+        });
+    }
+    Ok(BytecodeOuterSupport {
+        offsets: offsets.into(),
+        addresses: addresses.into(),
+        max_active_addresses,
+    })
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BooleanityRow {
@@ -67,6 +104,15 @@ impl BooleanityRows {
         len: usize,
         expected_device_registry_id: u64,
     ) -> Result<Self, MetalError> {
+        Self::from_initialized_buffer_inner(buffer, len, expected_device_registry_id, None)
+    }
+
+    fn from_initialized_buffer_inner(
+        buffer: Buffer,
+        len: usize,
+        expected_device_registry_id: u64,
+        bytecode_outer_support: Option<BytecodeOuterSupport>,
+    ) -> Result<Self, MetalError> {
         if len == 0 {
             return Err(MetalError::EmptyInput);
         }
@@ -89,7 +135,7 @@ impl BooleanityRows {
             buffer,
             len,
             device_registry_id: expected_device_registry_id,
-            bytecode_outer_support: None,
+            bytecode_outer_support,
         })))
     }
 
@@ -111,6 +157,12 @@ impl BooleanityRows {
 
     pub fn allocation_identity(&self) -> usize {
         self.0.buffer.as_ptr() as usize
+    }
+
+    pub(crate) fn first_mapped_pc(&self) -> Option<usize> {
+        // SAFETY: every BooleanityRows constructor publishes a fully initialized
+        // shared allocation and `len` is nonzero.
+        unsafe { self.0.buffer.contents().cast::<BooleanityRow>().read() }.mapped_pc()
     }
 
     pub(crate) fn bytecode_outer_support(&self) -> Option<(&[u32], &[u32], usize)> {
@@ -267,6 +319,15 @@ impl BooleanityRow {
             self.fused_inc_magnitude,
             self.packed_pc_and_flags,
         ]
+    }
+
+    pub(crate) const fn mapped_pc(self) -> Option<usize> {
+        let plus_one = self.packed_pc_and_flags & PACKED_PC_MASK;
+        if plus_one == 0 {
+            None
+        } else {
+            Some((plus_one - 1) as usize)
+        }
     }
 }
 
@@ -443,39 +504,8 @@ impl SolinasMetal {
         offsets: &[u32],
         addresses: &[u32],
     ) -> Result<BooleanityRows, MetalError> {
-        let outer_length = rows.len().div_ceil(BYTECODE_ADDRESS_INNER_LENGTH);
-        let layout_valid = offsets.len() == outer_length + 1
-            && offsets.first() == Some(&0)
-            && offsets.last().copied() == u32::try_from(addresses.len()).ok();
-        let mut max_active_addresses = 0;
-        let segments_valid = layout_valid
-            && offsets.windows(2).all(|pair| {
-                let start = pair[0] as usize;
-                let end = pair[1] as usize;
-                let Some(segment) = addresses.get(start..end) else {
-                    return false;
-                };
-                max_active_addresses = max_active_addresses.max(segment.len());
-                !segment.is_empty()
-                    && segment
-                        .iter()
-                        .all(|address| (*address as usize) < BYTECODE_ADDRESS_COUNT)
-                    && segment.windows(2).all(|entry| entry[0] < entry[1])
-            });
-        if !segments_valid {
-            return Err(MetalError::InvalidBooleanityBytecodeSupport {
-                count: addresses.len(),
-                maximum: BYTECODE_ADDRESS_COUNT,
-            });
-        }
-        self.prepare_booleanity_rows_inner(
-            rows,
-            Some(BytecodeOuterSupport {
-                offsets: offsets.into(),
-                addresses: addresses.into(),
-                max_active_addresses,
-            }),
-        )
+        let support = checked_bytecode_outer_support(rows.len(), offsets, addresses)?;
+        self.prepare_booleanity_rows_inner(rows, Some(support))
     }
 
     fn prepare_booleanity_rows_inner(

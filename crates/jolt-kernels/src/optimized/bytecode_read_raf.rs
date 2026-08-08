@@ -308,27 +308,6 @@ pub(crate) fn prepare_bytecode_read_raf_address<F: Field>(
     let addresses = 1usize << dimensions.log_k();
     let cycles = 1usize << dimensions.log_t();
 
-    let program = witness.program_preprocessing();
-    if program.bytecode.bytecode.len() != addresses {
-        return Err(KernelError::TableSizeMismatch {
-            table: "bytecode stage values".to_owned(),
-            expected: addresses,
-            got: program.bytecode.bytecode.len(),
-        });
-    }
-    let stage_gammas = inputs.challenges.stage_gamma_powers();
-    let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: &program.bytecode.bytecode,
-        register_read_write_point: &relation.register_read_write_point()[..REGISTER_ADDRESS_BITS],
-        register_val_evaluation_point: &relation.register_val_evaluation_point()
-            [..REGISTER_ADDRESS_BITS],
-        stage1_gammas: &stage_gammas[0],
-        stage2_gammas: &stage_gammas[1],
-        stage3_gammas: &stage_gammas[2],
-        stage4_gammas: &stage_gammas[3],
-        stage5_gammas: &stage_gammas[4],
-    });
-
     let stage_cycle_points = relation.stage_cycle_points();
     let fused_cycle_points = relation.fused_inc_cycle_points();
     for point in stage_cycle_points.iter().chain(fused_cycle_points) {
@@ -353,14 +332,6 @@ pub(crate) fn prepare_bytecode_read_raf_address<F: Field>(
         });
     }
 
-    let base_stages = stage_cycle_points.len();
-    let num_stages = base_stages + fused_cycle_points.len();
-    let gamma = inputs.challenges.gamma;
-    let mut gamma_powers = vec![F::one(); num_stages + 3];
-    for i in 1..gamma_powers.len() {
-        gamma_powers[i] = gamma_powers[i - 1] * gamma;
-    }
-
     let pushforwards =
         stage_pushforwards::<F, _, false>(stage_cycle_points, &rows, addresses, push_pc, |_| {
             F::one()
@@ -377,12 +348,75 @@ pub(crate) fn prepare_bytecode_read_raf_address<F: Field>(
         ));
         pushforwards
     };
+    prepare_bytecode_read_raf_address_from_pushforwards(
+        witness,
+        inputs,
+        pushforwards,
+        push_pc(&rows[0]),
+    )
+}
+
+pub(crate) fn prepare_bytecode_read_raf_address_from_pushforwards<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
+    pushforwards: Vec<Vec<F>>,
+    entry_trace_index: usize,
+) -> Result<AddressKernel<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let dimensions = relation.dimensions();
+    let addresses = 1usize << dimensions.log_k();
+    let entry_bytecode_index = relation.entry_bytecode_index();
+    let program = witness.program_preprocessing();
+    if program.bytecode.bytecode.len() != addresses {
+        return Err(KernelError::TableSizeMismatch {
+            table: "bytecode stage values".to_owned(),
+            expected: addresses,
+            got: program.bytecode.bytecode.len(),
+        });
+    }
+    let stage_cycle_points = relation.stage_cycle_points();
+    let fused_cycle_points = relation.fused_inc_cycle_points();
+    for point in stage_cycle_points.iter().chain(fused_cycle_points) {
+        if point.len() != dimensions.log_t() {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode stage cycle point has the wrong variable count",
+            });
+        }
+    }
+    let base_stages = stage_cycle_points.len();
+    let num_stages = base_stages + fused_cycle_points.len();
+    if pushforwards.len() != num_stages
+        || pushforwards.iter().any(|table| table.len() != addresses)
+        || entry_trace_index >= addresses
+        || entry_bytecode_index >= addresses
+    {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode address pushforward output has the wrong shape",
+        });
+    }
+    let stage_gammas = inputs.challenges.stage_gamma_powers();
+    let raw_stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
+        bytecode: &program.bytecode.bytecode,
+        register_read_write_point: &relation.register_read_write_point()[..REGISTER_ADDRESS_BITS],
+        register_val_evaluation_point: &relation.register_val_evaluation_point()
+            [..REGISTER_ADDRESS_BITS],
+        stage1_gammas: &stage_gammas[0],
+        stage2_gammas: &stage_gammas[1],
+        stage3_gammas: &stage_gammas[2],
+        stage4_gammas: &stage_gammas[3],
+        stage5_gammas: &stage_gammas[4],
+    });
+    let gamma = inputs.challenges.gamma;
+    let mut gamma_powers = vec![F::one(); num_stages + 3];
+    for i in 1..gamma_powers.len() {
+        gamma_powers[i] = gamma_powers[i - 1] * gamma;
+    }
     let pushforwards = pushforwards
         .into_iter()
         .map(Polynomial::new)
         .collect::<Vec<_>>();
     let values = (0..NUM_BYTECODE_VAL_STAGES)
-        .map(|stage| Polynomial::new(stage_values.iter().map(|row| row[stage]).collect()))
+        .map(|stage| Polynomial::new(raw_stage_values.iter().map(|row| row[stage]).collect()))
         .collect::<Vec<_>>();
     let mut stage_values = (0..base_stages).map(StageVal::Table).collect::<Vec<_>>();
     if !fused_cycle_points.is_empty() {
@@ -420,7 +454,7 @@ pub(crate) fn prepare_bytecode_read_raf_address<F: Field>(
         values,
         stage_values,
         int_table,
-        entry_trace: one_hot(push_pc(&rows[0])),
+        entry_trace: one_hot(entry_trace_index),
         entry_expected: one_hot(entry_bytecode_index),
         rounds_bound: 0,
     })
