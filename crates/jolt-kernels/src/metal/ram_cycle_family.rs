@@ -49,8 +49,45 @@ pub(super) fn shared_ram_cycle_family_owner(
         .ok_or(KernelError::Unsupported {
             reason: "RAM cycle-family cycle domain is too large",
         })?;
+    let source_collection_performed = session.state::<Arc<RamAccessColumns>>().is_none();
+    let owner_span = tracing::info_span!(
+        "MetalRamCycleFamily::owner_prepare",
+        enabled = true,
+        schema_version = super::solinas::ram_cycle_family_v3::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+        source_kind = "ram_access_tape_v1",
+        source_generation = tracing::field::Empty,
+        source_fingerprint = tracing::field::Empty,
+        log_t,
+        log_k,
+        cycles,
+        address_domain,
+        access_records = tracing::field::Empty,
+        increment_records = tracing::field::Empty,
+        hamming_exact = tracing::field::Empty,
+        retained_records = tracing::field::Empty,
+        final_memory_elements = address_domain,
+        record_bytes = tracing::field::Empty,
+        final_memory_bytes = tracing::field::Empty,
+        read_write_topology_nodes = tracing::field::Empty,
+        block_topology_nodes = tracing::field::Empty,
+        topology_bytes = tracing::field::Empty,
+        owner_bytes = tracing::field::Empty,
+        source_rows = cycles,
+        source_collection_performed,
+        shared_source_row_scans = usize::from(source_collection_performed),
+        additional_source_row_scans = 0,
+        member_upload_bytes = 0,
+        complete_publication = tracing::field::Empty,
+    );
+    let _owner_guard = owner_span.enter();
     let columns = RamAccessColumns::shared(session, witness, log_t)?;
     columns.validate_addresses(address_domain)?;
+    let activity =
+        session
+            .state::<RamIncrementActivity>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "RAM access collection did not publish increment activity",
+            })?;
     let records = {
         let tape = session
             .state::<RamAccessTape>()
@@ -58,6 +95,9 @@ pub(super) fn shared_ram_cycle_family_owner(
                 reason: "RAM access collection did not publish its retained tape",
             })?;
         if tape.validate(log_t, address_domain).is_err() || !tape.hamming_exact() {
+            return Ok(None);
+        }
+        if tape.access_count().max(activity.len()) > MAX_RETAINED_RAM_ACCESSES {
             return Ok(None);
         }
         let Some(records) = tape.records() else {
@@ -75,40 +115,7 @@ pub(super) fn shared_ram_cycle_family_owner(
             })
             .collect::<Vec<_>>()
     };
-    let owner_span = tracing::info_span!(
-        "MetalRamCycleFamily::owner_prepare",
-        enabled = true,
-        schema_version = super::solinas::ram_cycle_family_v3::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
-        source_kind = "ram_access_tape_v1",
-        source_generation = tracing::field::Empty,
-        source_fingerprint = tracing::field::Empty,
-        log_t,
-        log_k,
-        cycles,
-        address_domain,
-        access_records = records.len(),
-        increment_records = tracing::field::Empty,
-        hamming_exact = true,
-        retained_records = records.len(),
-        final_memory_elements = address_domain,
-        record_bytes = tracing::field::Empty,
-        final_memory_bytes = tracing::field::Empty,
-        read_write_topology_nodes = tracing::field::Empty,
-        block_topology_nodes = tracing::field::Empty,
-        topology_bytes = tracing::field::Empty,
-        owner_bytes = tracing::field::Empty,
-        source_rows = cycles,
-        shared_source_row_scans = 1,
-        additional_source_row_scans = 0,
-        member_upload_bytes = 0,
-        complete_publication = tracing::field::Empty,
-    );
-    let _owner_guard = owner_span.enter();
-    let increments = session
-        .state::<RamIncrementActivity>()
-        .ok_or(KernelError::InvariantViolation {
-            reason: "RAM access collection did not publish increment activity",
-        })?
+    let increments = activity
         .records()
         .map(|(cycle, increment)| {
             u64::try_from(cycle)
@@ -116,9 +123,6 @@ pub(super) fn shared_ram_cycle_family_owner(
                 .map_err(|_| owner_error("RAM increment cycle exceeds the sparse owner ABI"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if records.len().max(increments.len()) > MAX_RETAINED_RAM_ACCESSES {
-        return Ok(None);
-    }
 
     let final_memory = dense_view::<AkitaField>(witness, ram_val_final())?;
     if final_memory.len() != address_domain {
@@ -189,7 +193,10 @@ pub(super) fn shared_ram_cycle_family_owner(
         })?;
     let _ = owner_span.record("source_generation", receipt.source_generation());
     let _ = owner_span.record("source_fingerprint", receipt.fingerprint());
+    let _ = owner_span.record("access_records", receipt.access_count());
     let _ = owner_span.record("increment_records", receipt.increment_count());
+    let _ = owner_span.record("hamming_exact", true);
+    let _ = owner_span.record("retained_records", receipt.access_count());
     let _ = owner_span.record("record_bytes", record_bytes);
     let _ = owner_span.record("final_memory_bytes", final_memory_bytes);
     let _ = owner_span.record("read_write_topology_nodes", read_write_topology_nodes);

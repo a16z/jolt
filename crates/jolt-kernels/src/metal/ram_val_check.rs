@@ -180,6 +180,8 @@ impl PrepareKernel<AkitaField, RamValCheck<AkitaField>> for MetalBackend {
                 &points.ram_val,
                 gamma,
             )? {
+                let _ = session.take::<RamRafAddressPlane>();
+                let _ = session.take::<RamIncrementActivity>();
                 #[cfg(any(test, feature = "test-utils"))]
                 let _ = self
                     .ram_val_sparse_sequences
@@ -537,6 +539,8 @@ mod tests {
             let mut actual =
                 PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();
             assert_eq!(metal.ram_val_sparse_sequences(), 1);
+            assert!(session.state::<RamRafAddressPlane>().is_none());
+            assert!(session.state::<RamIncrementActivity>().is_none());
             assert!(Arc::ptr_eq(
                 &shared_owner,
                 session

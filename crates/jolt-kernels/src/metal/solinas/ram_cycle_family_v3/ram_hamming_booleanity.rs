@@ -681,6 +681,7 @@ mod tests {
         assert_eq!(plan.middle_nodes(), 6);
         assert_eq!(plan.estimated_products(), 85);
         assert_eq!(plan.topology_bytes(), 192);
+        let topology_bytes = plan.topology_bytes();
 
         let sequence = HostSparseRamHammingBooleanity::new_from_plan(
             owner,
@@ -689,6 +690,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(sequence.num_rounds(), 3);
+        assert!(sequence.owned_heap_bytes() > topology_bytes);
     }
 
     #[test]

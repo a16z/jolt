@@ -24,12 +24,10 @@ use super::solinas::{
 };
 use crate::optimized::ram_trace::RamAccessColumns;
 use crate::optimized::OptimizedBackend;
-use crate::ram_access::{RamAccessCensus, RamAccessTape};
+use crate::ram_access::RamAccessTape;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
-
-const RAM_SPARSE_CENSUS_THREADGROUP_WIDTH: usize = 256;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RamRafEvaluationMetalConfig {
@@ -86,50 +84,26 @@ impl MetalBackend {
             return Ok(());
         }
         let columns = RamAccessColumns::shared(session, witness, log_t)?;
-        let (access_count, increment_compatible, ram_ra_compatible, census) = {
+        columns.validate_addresses(RAM_RAF_ADDRESS_DOMAIN)?;
+        let (access_count, increment_compatible, ram_ra_compatible) = {
             let tape = session
                 .state::<RamAccessTape>()
                 .ok_or(KernelError::InvariantViolation {
                     reason: "RAM access collection did not publish its sparse tape",
                 })?;
-            let census = tape
-                .census(
-                    log_t,
-                    RAM_RAF_ADDRESS_DOMAIN,
-                    RAM_SPARSE_CENSUS_THREADGROUP_WIDTH,
-                )
-                .map_err(|_| KernelError::InvariantViolation {
-                    reason: "RAM sparse census rejected the collected access tape",
-                })?;
             (
                 tape.access_count(),
                 tape.increment_compatible(),
                 tape.ram_ra_compatible(),
-                census,
             )
         };
-        if let Some(census) = census {
-            tracing::info!(
-                target: "jolt::metal",
-                access_count,
-                increment_compatible,
-                ram_ra_compatible,
-                sparse_entries = census.entries_per_level().iter().sum::<usize>(),
-                sparse_groups = census.groups_per_level().iter().sum::<usize>(),
-                sparse_dispatches = census.dispatches_per_level().iter().sum::<usize>(),
-                "RAM sparse access census"
-            );
-            session.park::<RamAccessCensus>(census);
-        } else {
-            columns.validate_addresses(RAM_RAF_ADDRESS_DOMAIN)?;
-            tracing::info!(
-                target: "jolt::metal",
-                access_count,
-                increment_compatible,
-                ram_ra_compatible,
-                "RAM sparse access tape exceeded its retention bound"
-            );
-        }
+        tracing::info!(
+            target: "jolt::metal",
+            access_count,
+            increment_compatible,
+            ram_ra_compatible,
+            "prepared resident RAM address source"
+        );
         let plane = match self
             .context
             .prepare_ram_raf_addresses(&columns.addresses, config)
@@ -456,6 +430,7 @@ mod tests {
             )
             .unwrap();
             assert!(session.state::<RamRafAddressPlane>().is_some());
+            assert!(session.state::<RamAccessTape>().is_some());
             let read_write =
                 RamReadWriteChecking::new(read_write_dimensions, shape.log_k(), tau_low);
             let read_write_claims = RamReadWriteInputClaims::<AkitaField>::default();
@@ -478,6 +453,7 @@ mod tests {
                 },
             )
             .unwrap();
+            assert!(session.state::<RamAccessTape>().is_none());
             assert!(session.state::<PendingRamRafSequence>().is_some());
             let mut actual =
                 PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();

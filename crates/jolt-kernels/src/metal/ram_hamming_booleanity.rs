@@ -48,7 +48,8 @@ struct HostSparseRamHammingKernel {
     middle_nodes: usize,
     estimated_products: u64,
     topology_bytes: usize,
-    heap_bytes: usize,
+    member_heap_bytes_including_topology: usize,
+    non_topology_heap_bytes: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -132,8 +133,10 @@ impl SumcheckKernel<AkitaField> for HostSparseRamHammingKernel {
             middle_nodes = self.middle_nodes,
             estimated_products = self.estimated_products,
             topology_bytes = self.topology_bytes,
-            heap_bytes = self.heap_bytes,
-            output_claim_valid = true,
+            member_heap_bytes_including_topology = self.member_heap_bytes_including_topology,
+            non_topology_heap_bytes = self.non_topology_heap_bytes,
+            terminal_ready = true,
+            output_claim_emitted = true,
         )
         .entered();
         Ok(RamHammingBooleanityOutputClaims {
@@ -215,7 +218,8 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
             .map_err(|error| prepare_error(error.to_string()))?;
         let prepare_span = tracing::info_span!(
             "MetalRamHammingBooleanity::sparse_prepare",
-            selected = "host_sparse_v1",
+            selected = tracing::field::Empty,
+            fallback_reason = tracing::field::Empty,
             source_generation = owner.receipt().source_generation(),
             source_fingerprint = owner.receipt().fingerprint(),
             log_t,
@@ -225,9 +229,10 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
             rounds = log_t,
             estimated_products = tracing::field::Empty,
             product_cap = tracing::field::Empty,
-            topology_builds = 1,
+            topology_builds = tracing::field::Empty,
             topology_bytes = tracing::field::Empty,
-            heap_bytes = tracing::field::Empty,
+            member_heap_bytes_including_topology = tracing::field::Empty,
+            non_topology_heap_bytes = tracing::field::Empty,
             additional_source_row_scans = 0,
             dense_h_elements = 0,
             member_upload_bytes = 0,
@@ -235,13 +240,28 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
             command_buffers = 0,
             waits = 0,
             readbacks = 0,
-            complete_overwrite = true,
+            complete_plan = tracing::field::Empty,
         );
         let _prepare_guard = prepare_span.enter();
         let plan = RamHammingSparsePlan::new_from_verified_owner(&owner)
             .map_err(|error| prepare_error(error.to_string()))?;
         let predicted = plan.estimated_products();
+        let estimated_products = u64::try_from(predicted).map_err(|_| {
+            prepare_error("RAM Hamming sparse product estimate does not fit telemetry")
+        })?;
+        let product_cap = u64::try_from(self.config.ram_hamming_booleanity.max_sparse_products)
+            .map_err(|_| prepare_error("RAM Hamming sparse product cap does not fit telemetry"))?;
         if predicted > self.config.ram_hamming_booleanity.max_sparse_products {
+            let _ = prepare_span.record("selected", "optimized_cpu");
+            let _ = prepare_span.record("fallback_reason", "product_cap");
+            let _ = prepare_span.record("access_leaves", plan.access_leaves());
+            let _ = prepare_span.record("parent_nodes", plan.parent_nodes());
+            let _ = prepare_span.record("middle_nodes", plan.middle_nodes());
+            let _ = prepare_span.record("estimated_products", estimated_products);
+            let _ = prepare_span.record("product_cap", product_cap);
+            let _ = prepare_span.record("topology_builds", 1);
+            let _ = prepare_span.record("topology_bytes", plan.topology_bytes());
+            let _ = prepare_span.record("complete_plan", true);
             record_route(
                 cycles,
                 "optimized_cpu",
@@ -249,30 +269,39 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
                 owner.receipt().source_generation(),
                 owner.receipt().fingerprint(),
             );
+            drop(_prepare_guard);
             return OptimizedRamHammingBooleanity.prepare(session, witness, inputs);
         }
         let access_leaves = plan.access_leaves();
         let parent_nodes = plan.parent_nodes();
         let middle_nodes = plan.middle_nodes();
         let topology_bytes = plan.topology_bytes();
-        let estimated_products = u64::try_from(predicted).map_err(|_| {
-            prepare_error("RAM Hamming sparse product estimate does not fit telemetry")
-        })?;
-        let product_cap = u64::try_from(self.config.ram_hamming_booleanity.max_sparse_products)
-            .map_err(|_| prepare_error("RAM Hamming sparse product cap does not fit telemetry"))?;
         let source_generation = owner.receipt().source_generation();
         let source_fingerprint = owner.receipt().fingerprint();
         let sequence =
             HostSparseRamHammingBooleanity::new_from_plan(owner, stage1_cycle_binding, plan)
                 .map_err(|error| prepare_error(error.to_string()))?;
-        let heap_bytes = sequence.owned_heap_bytes();
+        let member_heap_bytes_including_topology = sequence.owned_heap_bytes();
+        let non_topology_heap_bytes = member_heap_bytes_including_topology
+            .checked_sub(topology_bytes)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "RAM Hamming member heap ledger underflowed",
+            })?;
+        let _ = prepare_span.record("selected", "host_sparse_v1");
+        let _ = prepare_span.record("fallback_reason", "none");
         let _ = prepare_span.record("access_leaves", access_leaves);
         let _ = prepare_span.record("parent_nodes", parent_nodes);
         let _ = prepare_span.record("middle_nodes", middle_nodes);
         let _ = prepare_span.record("estimated_products", estimated_products);
         let _ = prepare_span.record("product_cap", product_cap);
+        let _ = prepare_span.record("topology_builds", 1);
         let _ = prepare_span.record("topology_bytes", topology_bytes);
-        let _ = prepare_span.record("heap_bytes", heap_bytes);
+        let _ = prepare_span.record(
+            "member_heap_bytes_including_topology",
+            member_heap_bytes_including_topology,
+        );
+        let _ = prepare_span.record("non_topology_heap_bytes", non_topology_heap_bytes);
+        let _ = prepare_span.record("complete_plan", true);
         record_route(
             cycles,
             "host_sparse_v1",
@@ -299,7 +328,8 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
             middle_nodes,
             estimated_products,
             topology_bytes,
-            heap_bytes,
+            member_heap_bytes_including_topology,
+            non_topology_heap_bytes,
         }))
     }
 }
@@ -431,6 +461,68 @@ mod tests {
             actual
                 .validate_derived_tables(&relation, &points, &output_points, &challenges)
                 .unwrap();
+        });
+    }
+
+    #[test]
+    fn sparse_product_cap_is_inclusive_and_falls_back_before_round_zero() {
+        let shape = FixtureShape {
+            log_t: 5,
+            ram_k: 64,
+        };
+        let ops = vec![
+            RamOp::Write { word: 3, post: 5 },
+            RamOp::Read { word: 3 },
+            RamOp::Write { word: 57, post: 9 },
+        ];
+        with_ram_fixture_backend(shape, ops, |witness| {
+            let relation = RamHammingBooleanity::new(
+                TraceDimensions::new(shape.log_t),
+                point(71, shape.log_t),
+            );
+            let claims = RamHammingBooleanityInputClaims::default();
+            let points = RamHammingBooleanityInputClaims::default();
+            let challenges = NoChallenges::default();
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+
+            let mut session = ProofSession::default();
+            let owner =
+                shared_ram_cycle_family_owner(&mut session, witness, shape.log_t, shape.log_k())
+                    .unwrap()
+                    .unwrap();
+            let predicted = RamHammingSparsePlan::new(&owner)
+                .unwrap()
+                .estimated_products();
+            assert!(predicted > 0);
+            let mut config = MetalConfig::default();
+            config.ram_hamming_booleanity.trace_cutoff_elements = 1 << shape.log_t;
+            config.ram_hamming_booleanity.max_sparse_products = predicted;
+            let metal = MetalBackend::new(config).unwrap();
+            let _kernel = PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();
+            assert_eq!(metal.ram_hamming_sparse_sequences(), 1);
+
+            let mut fallback_session = ProofSession::default();
+            assert!(shared_ram_cycle_family_owner(
+                &mut fallback_session,
+                witness,
+                shape.log_t,
+                shape.log_k(),
+            )
+            .unwrap()
+            .is_some());
+            let mut fallback_config = MetalConfig::default();
+            fallback_config.ram_hamming_booleanity.trace_cutoff_elements = 1 << shape.log_t;
+            fallback_config.ram_hamming_booleanity.max_sparse_products = predicted - 1;
+            let fallback = MetalBackend::new(fallback_config).unwrap();
+            let _fallback_kernel =
+                PrepareKernel::prepare(&fallback, &mut fallback_session, witness, inputs())
+                    .unwrap();
+            assert_eq!(fallback.ram_hamming_sparse_sequences(), 0);
         });
     }
 }

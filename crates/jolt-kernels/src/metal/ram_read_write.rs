@@ -17,6 +17,7 @@ use super::ram_cycle_family::shared_ram_cycle_family_owner;
 use crate::optimized::ram_trace::RamAccessValues;
 use crate::optimized::rw_matrix::{AddressMajorMatrix, CycleMajorEntry, CycleMajorMatrix};
 use crate::optimized::OptimizedBackend;
+use crate::ram_access::RamAccessTape;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -444,6 +445,11 @@ impl PrepareKernel<AkitaField, RamReadWriteChecking<AkitaField>> for MetalBacken
             source_generation,
             source_fingerprint,
         );
+        let _ = session
+            .take::<RamAccessTape>()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "RAM sparse read-write lost the retained access tape",
+            })?;
         Ok(Box::new(HostSparseRamReadWriteKernel {
             phase: Some(Phase::Cycle {
                 matrix: CycleMajorMatrix { entries },
@@ -591,6 +597,9 @@ mod tests {
                 PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();
             assert_eq!(metal.ram_read_write_sparse_sequences(), 1);
             assert!(session.state::<RamAccessValues>().is_none());
+            assert!(session
+                .state::<crate::ram_access::RamAccessTape>()
+                .is_none());
             assert!(session.state::<Arc<RamCycleFamilyOwner>>().is_some());
 
             let input_claim = dense_input_claim(witness, &tau_low, challenges.gamma, shape.ram_k);
