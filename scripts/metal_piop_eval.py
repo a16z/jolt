@@ -8648,6 +8648,17 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             metal_ram_cycle_family,
             RAM_CYCLE_FAMILY_MIN_SPEEDUP,
         )
+        aggregate_family_clear = ram_cycle_family_decision["clears"]
+        raw_members_clear = all(
+            decision[2]["clears"] for decision in ram_member_decisions.values()
+        )
+        ram_cycle_family_decision.update(
+            {
+                "aggregate_family_clear": aggregate_family_clear,
+                "raw_members_clear": raw_members_clear,
+                "clears": aggregate_family_clear and raw_members_clear,
+            }
+        )
     else:
         ram_member_decisions = {
             member_name: ([], [], None)

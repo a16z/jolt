@@ -3064,6 +3064,8 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertFalse(metrics["ram_standalone_charged_metrics_additive"])
         self.assertTrue(metrics["ram_read_write_standalone_charged_decision"]["clears"])
         self.assertTrue(metrics["ram_cycle_family_decision"]["clears"])
+        self.assertTrue(metrics["ram_cycle_family_decision"]["aggregate_family_clear"])
+        self.assertTrue(metrics["ram_cycle_family_decision"]["raw_members_clear"])
         for decision in (
             "ram_raf_evaluation_decision",
             "ram_read_write_decision",
@@ -3073,6 +3075,22 @@ class MetalPiopEvalTests(unittest.TestCase):
             "ram_ra_virtualization_decision",
         ):
             self.assertTrue(metrics[decision]["clears"])
+
+        raw_member_failure = [dict(pair) for pair in pairs]
+        for pair in raw_member_failure:
+            pair["metal_ram_val_check_us"] = 150.0
+        failed_metrics = metal_piop_eval.summarize_pairs(raw_member_failure)
+        self.assertGreater(
+            failed_metrics["ram_cycle_family_decision"]["median_speedup"], 5.0
+        )
+        self.assertTrue(
+            failed_metrics["ram_cycle_family_decision"]["aggregate_family_clear"]
+        )
+        self.assertFalse(failed_metrics["ram_val_check_decision"]["clears"])
+        self.assertFalse(
+            failed_metrics["ram_cycle_family_decision"]["raw_members_clear"]
+        )
+        self.assertFalse(failed_metrics["ram_cycle_family_decision"]["clears"])
 
         partial = [dict(pair) for pair in pairs]
         for pair in partial:
