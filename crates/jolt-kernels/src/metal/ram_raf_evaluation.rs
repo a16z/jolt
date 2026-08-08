@@ -91,7 +91,7 @@ impl MetalBackend {
             source_collection_performed,
             witness_source_scans = usize::from(source_collection_performed),
             additional_witness_source_scans = 0,
-            address_validation_passes = 3,
+            address_validation_passes = tracing::field::Empty,
             address_rows = cycles,
             address_plane_storage_id = tracing::field::Empty,
             address_plane_device_registry_id = tracing::field::Empty,
@@ -120,6 +120,7 @@ impl MetalBackend {
             let _ = witness_span.record("address_plane_bytes", plane.resident_bytes());
             let _ = witness_span.record("address_plane_upload_bytes", 0);
             let _ = witness_span.record("address_plane_allocations", 0);
+            let _ = witness_span.record("address_validation_passes", 1);
             let _ = witness_span.record("address_plane_published", true);
             let _ = witness_span.record("complete_publication", owner.is_some());
             return Ok(());
@@ -171,6 +172,7 @@ impl MetalBackend {
         let _ = witness_span.record("address_plane_bytes", plane.resident_bytes());
         let _ = witness_span.record("address_plane_upload_bytes", plane.resident_bytes());
         let _ = witness_span.record("address_plane_allocations", 1);
+        let _ = witness_span.record("address_validation_passes", 3);
         let _ = witness_span.record("address_plane_published", true);
         let _ = witness_span.record("complete_publication", owner.is_some());
         session.park(plane);
