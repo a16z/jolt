@@ -340,11 +340,11 @@ def fused_bytecode_stage1_scatter(log_n: int) -> dict[str, object]:
         "bytecode_occurrence_storage_id": 806,
         "bytecode_magnitude_bytes": 8 * physical_rows,
         "bytecode_magnitude_storage_id": 807,
-        "bytecode_max_descriptors_per_chunk": 3,
-        "bytecode_max_admitted_descriptors_per_chunk": 32,
-        "bytecode_max_pivots_per_chunk": 2,
+        "bytecode_max_descriptors_per_chunk": 504,
+        "bytecode_max_admitted_descriptors_per_chunk": 512,
+        "bytecode_max_pivots_per_chunk": 11,
         "bytecode_max_admitted_pivots_per_chunk": 15,
-        "bytecode_dynamic_threadgroup_bytes": 328 + 8 * 4 + 2 * 2,
+        "bytecode_dynamic_threadgroup_bytes": 4390,
         "bytecode_threadgroup_memory_limit_bytes": 32768,
         "shared_source_row_scans": 1,
         "additional_source_row_scans": 0,
@@ -438,8 +438,8 @@ def fused_bytecode_topology_args(log_n: int, enabled: bool) -> dict[str, object]
         "address_offset_storage_id": str(
             scatter["bytecode_address_offset_storage_id"]
         ),
-        "max_descriptors_per_chunk": "3",
-        "max_pivots_per_chunk": "2",
+        "max_descriptors_per_chunk": "504",
+        "max_pivots_per_chunk": "11",
         "first_push_pc": "4096",
         "topology_completion_serial": "21",
         "complete_overwrite": "true",
@@ -1136,7 +1136,7 @@ def complete_instruction_read_raf_trace(
         pivot_elements = 2 * bytecode_chunks + 1
         work_items = bytecode_chunks + 17
         scatter["additional_allocation_bytes"] = str(additional + 10 * physical_rows)
-        scatter["dynamic_threadgroup_bytes"] = str(328 + 8 * 4 + 2 * 2)
+        scatter["dynamic_threadgroup_bytes"] = "4390"
         scatter.update(
             {
                 "bytecode_fused": "true",
@@ -1160,11 +1160,11 @@ def complete_instruction_read_raf_trace(
                 "bytecode_occurrence_storage_id": "806",
                 "bytecode_magnitude_bytes": str(8 * physical_rows),
                 "bytecode_magnitude_storage_id": "807",
-                "bytecode_max_descriptors_per_chunk": "3",
-                "bytecode_max_admitted_descriptors_per_chunk": "32",
-                "bytecode_max_pivots_per_chunk": "2",
+                "bytecode_max_descriptors_per_chunk": "504",
+                "bytecode_max_admitted_descriptors_per_chunk": "512",
+                "bytecode_max_pivots_per_chunk": "11",
                 "bytecode_max_admitted_pivots_per_chunk": "15",
-                "bytecode_dynamic_threadgroup_bytes": str(328 + 8 * 4 + 2 * 2),
+                "bytecode_dynamic_threadgroup_bytes": "4390",
                 "bytecode_threadgroup_memory_limit_bytes": "32768",
                 "shared_source_row_scans": "1",
                 "additional_source_row_scans": "0",
@@ -3795,6 +3795,8 @@ class MetalPiopEvalTests(unittest.TestCase):
             topology["descriptor_elements"],
             topology["descriptors"] + topology["chunks"],
         )
+        self.assertEqual(topology["max_descriptors_per_chunk"], 504)
+        self.assertEqual(topology["max_pivots_per_chunk"], 11)
         resources = observed["resource_observation"]
         self.assertIsNotNone(resources)
         assert resources is not None
@@ -4985,6 +4987,13 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertTrue(fused["bytecode_fused"])
         self.assertEqual(fused["bytecode_occurrence_bytes"], 2 * ((1 << 25) - 1))
         self.assertEqual(fused["bytecode_magnitude_bytes"], 8 * ((1 << 25) - 1))
+        self.assertEqual(fused["bytecode_max_descriptors_per_chunk"], 504)
+        self.assertEqual(
+            fused["bytecode_max_admitted_descriptors_per_chunk"], 512
+        )
+        self.assertEqual(fused["bytecode_max_pivots_per_chunk"], 11)
+        self.assertEqual(fused["bytecode_max_admitted_pivots_per_chunk"], 15)
+        self.assertEqual(fused["bytecode_dynamic_threadgroup_bytes"], 4390)
         self.assertEqual(fused["additional_source_row_scans"], 0)
         self.assertEqual(fused["member_upload_bytes"], 0)
 
@@ -5005,7 +5014,7 @@ class MetalPiopEvalTests(unittest.TestCase):
             )
 
         for field, value in (
-            ("bytecode_max_admitted_descriptors_per_chunk", "31"),
+            ("bytecode_max_admitted_descriptors_per_chunk", "511"),
             ("bytecode_max_admitted_pivots_per_chunk", "14"),
             ("bytecode_threadgroup_memory_limit_bytes", "1"),
         ):

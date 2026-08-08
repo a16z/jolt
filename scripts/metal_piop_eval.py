@@ -62,6 +62,8 @@ METAL_BYTECODE_ADDRESS_FUSED_CARRIER_PUBLISH = (
     "MetalBytecodeReadRafAddress::fused_carrier_publish"
 )
 METAL_BYTECODE_ADDRESS_FUSED_ROUTE = "address_major_fused_stage1_grouped_v1"
+BYTECODE_ADDRESS_MAX_ADMITTED_DESCRIPTORS_PER_CHUNK = 512
+BYTECODE_ADDRESS_MAX_ADMITTED_PIVOTS_PER_CHUNK = 15
 METAL_BYTECODE_ADDRESS_PREPARE = (
     "MetalBytecodeReadRafAddress::address_major_prepare"
 )
@@ -1502,13 +1504,19 @@ def bytecode_address_member_breakdown(
             }
             if (
                 descriptors < chunks
-                or descriptors > 32 * chunks
+                or descriptors
+                > BYTECODE_ADDRESS_MAX_ADMITTED_DESCRIPTORS_PER_CHUNK * chunks
                 or work_items < chunks
                 or work_items > physical_rows
-                or not 1 <= max_descriptors <= 32
+                or not (
+                    1
+                    <= max_descriptors
+                    <= BYTECODE_ADDRESS_MAX_ADMITTED_DESCRIPTORS_PER_CHUNK
+                )
                 or max_descriptors > descriptors
-                or pivots > 15 * chunks
-                or max_pivots > 15
+                or pivots
+                > BYTECODE_ADDRESS_MAX_ADMITTED_PIVOTS_PER_CHUNK * chunks
+                or max_pivots > BYTECODE_ADDRESS_MAX_ADMITTED_PIVOTS_PER_CHUNK
                 or max_pivots > pivots
                 or topology_observation["first_push_pc"] >= 1 << 13
                 or topology_observation["topology_completion_serial"] <= 0
@@ -4244,15 +4252,20 @@ def instruction_read_raf_member_breakdown(
             physical_rows <= 0
             or physical_rows > rows
             or real_descriptors < bytecode_chunks
-            or real_descriptors > 32 * bytecode_chunks
+            or real_descriptors
+            > BYTECODE_ADDRESS_MAX_ADMITTED_DESCRIPTORS_PER_CHUNK
+            * bytecode_chunks
             or real_pivots < 0
-            or real_pivots > 15 * bytecode_chunks
+            or real_pivots
+            > BYTECODE_ADDRESS_MAX_ADMITTED_PIVOTS_PER_CHUNK * bytecode_chunks
             or work_items < bytecode_chunks
             or work_items > physical_rows
             or not 1 <= max_descriptors <= max_admitted_descriptors
-            or max_admitted_descriptors != 32
+            or max_admitted_descriptors
+            != BYTECODE_ADDRESS_MAX_ADMITTED_DESCRIPTORS_PER_CHUNK
             or max_descriptors > real_descriptors
-            or max_admitted_pivots != 15
+            or max_admitted_pivots
+            != BYTECODE_ADDRESS_MAX_ADMITTED_PIVOTS_PER_CHUNK
             or max_pivots > max_admitted_pivots
             or max_pivots > real_pivots
             or scatter["bytecode_dynamic_threadgroup_bytes"]
@@ -11046,8 +11059,12 @@ def main() -> int:
                 "bytecode_address_producer_charge_model": (
                     "stage1_topology_plus_irraf_scatter_v1"
                 ),
-                "bytecode_address_max_admitted_descriptors_per_chunk": 32,
-                "bytecode_address_max_admitted_pivots_per_chunk": 15,
+                "bytecode_address_max_admitted_descriptors_per_chunk": (
+                    BYTECODE_ADDRESS_MAX_ADMITTED_DESCRIPTORS_PER_CHUNK
+                ),
+                "bytecode_address_max_admitted_pivots_per_chunk": (
+                    BYTECODE_ADDRESS_MAX_ADMITTED_PIVOTS_PER_CHUNK
+                ),
                 "instruction_input_metal_native_message_threads": args.instruction_input_metal_native_message_threads,
                 "instruction_input_metal_native_transition_threads": args.instruction_input_metal_native_transition_threads,
                 "instruction_input_metal_dense_transition_threads": args.instruction_input_metal_dense_transition_threads,
