@@ -1,0 +1,106 @@
+{
+  "schema": "metal_instruction_input_outer_residual_promotion_v1",
+  "schema_version": 1,
+  "recorded_at": "2026-08-08",
+  "status": "promoted_log27_production",
+  "candidate_revision": "9f1fa11ab2d6c7d0e0f82d1c646e30e052a50551",
+  "contract": {
+    "device": "Apple M4 Max",
+    "workload": "fibonacci",
+    "log_t": 27,
+    "rows": 134217728,
+    "host_fiat_shamir": true,
+    "dense_storage_mode": "OuterResidual",
+    "minimum_speedup": 5.0,
+    "minimum_pairs": 5,
+    "command": "python3 scripts/metal_piop_eval.py --mode production --local-kernel InstructionInput --workload fibonacci --log-n 27 --repeats 5 --timeout-seconds 3600 --instruction-input-metal-borrow-outer-residual --booleanity-address-metal-implementation packed-hot --hamming-weight-metal-implementation retained-hot --product-uniskip-outer-carrier"
+  },
+  "artifact": {
+    "path": "benchmark-runs/metal-piop-eval/20260808-000723-525776",
+    "result_sha256": "d8d9970548b289e195d74805db8abb534fd41ef3a582bcbf87dfe97167aae8bb",
+    "run_class": "production",
+    "acceptance_eligible": true
+  },
+  "architecture": {
+    "source": "completed OuterRemainderSequence",
+    "transfer": "one-shot checked ownership transfer",
+    "dense_a": {
+      "offset_bytes": 0,
+      "length_bytes": 8589934592
+    },
+    "dense_b": {
+      "offset_bytes": 8589934592,
+      "length_bytes": 4294967296
+    },
+    "guard_length_bytes": 2147483648,
+    "reused_device_bytes": 12884901888,
+    "instruction_input_owned_device_bytes": 1048576,
+    "instruction_input_device_buffers": 4,
+    "outer_sequence_aux_released_bytes": 5639952,
+    "row_upload_bytes": 0,
+    "round_device_buffer_allocations": 0
+  },
+  "measurements": {
+    "cpu_service_ms": [
+      1564.0067509999722,
+      1433.46,
+      1436.0124179999827,
+      1436.0616210000514,
+      1437.6576259999872
+    ],
+    "metal_service_ms": [
+      204.59245900006593,
+      205.45350100000203,
+      204.80696100004016,
+      203.07925,
+      201.64254300002753
+    ],
+    "paired_speedups": [
+      7.64449852474508,
+      6.97705316786004,
+      7.011541067687153,
+      7.071434531100797,
+      7.1297336594281635
+    ],
+    "cpu_service_median_ms": 1436.0616210000514,
+    "metal_service_median_ms": 204.59245900006593,
+    "paired_speedup_median": 7.071434531100797,
+    "metal_first_order_stratum_median_speedup": 7.024243849480419,
+    "optimized_first_order_stratum_median_speedup": 7.1297336594281635,
+    "metal_service_mad_ms": 0.8610419999361039,
+    "median_fractional_improvement": 0.8585859777670413,
+    "first_three_round_wall_ms": [
+      106.5608750000149,
+      108.84245799998939,
+      106.71216700001061,
+      104.9600829999894,
+      105.58795799998938
+    ],
+    "piop_speedup_median": 3.9244697851144186
+  },
+  "guards": {
+    "production_contract": true,
+    "stable_binary": true,
+    "stable_source": true,
+    "target_scale": true,
+    "cpu_proofs_verified": true,
+    "metal_proofs_verified": true,
+    "local_kernel_attributed": true,
+    "metal_backend_exercised": true,
+    "five_pairs": true,
+    "five_x_speedup": true,
+    "both_order_strata": true,
+    "borrowed_dense_arena_exact": true,
+    "minimal_initialization_exact": true,
+    "outer_sequence_consumed": true,
+    "native_primer_protocol_inert": true,
+    "native_primer_completed_before_join": true,
+    "no_round_device_buffer_allocations": true
+  },
+  "verdict": {
+    "decision": "promote",
+    "reason": "The checked Outer residual transfer preserves exact proofs and clears the 5x floor in every pair and both order strata at log27, with a 7.071x median service speedup.",
+    "scope": "InstructionInput only. The 3.924x aggregate PIOP result is not a failure of this promoted member; other members remain below their local gates.",
+    "next_work": "Keep this path fixed and move the campaign to InstructionReadRaf and InstructionClaimReduction."
+  }
+}
