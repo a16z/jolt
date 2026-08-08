@@ -26,6 +26,9 @@ use rayon::prelude::*;
 use super::backend::{MetalBackend, MetalConfig};
 use super::instruction_input::{InstructionInputDenseStorageMode, PreparedInstructionInput};
 use super::instruction_read_raf::InstructionReadRafAddressImplementation;
+use super::registers_claim_reduction::{
+    MetalRegistersClaimOuterSource, MetalRegistersClaimStage1Carry,
+};
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
     instruction_input_sequence_storage_bytes, instruction_ra_weight_capacities,
@@ -783,7 +786,7 @@ fn metal_round_error(error: MetalError) -> SumcheckError<AkitaField> {
     }
 }
 
-fn metal_output_error(error: MetalError) -> SumcheckKernelError<AkitaField> {
+fn metal_output_error(error: impl ToString) -> SumcheckKernelError<AkitaField> {
     SumcheckKernelError::ComputeBackend {
         backend: "metal",
         message: error.to_string(),
@@ -848,6 +851,17 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             .ok_or(KernelError::InvariantViolation {
                 reason: "Spartan outer remainder trace length overflows usize",
             })?;
+        if self
+            .config
+            .spartan_outer_remainder
+            .dispatch
+            .registers_claim_carrier
+            && session.state::<MetalRegistersClaimStage1Carry>().is_some()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "Metal outer remainder found a stale registers-claim carry",
+            });
+        }
         let rows_present = session.state::<SpartanOuterUniskipRows>().is_some();
         let storage_present = session.state::<OuterRemainderSequenceStorage>().is_some();
         if storage_present && !rows_present {
@@ -950,7 +964,7 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             device_registry_id,
             storage_reused = true,
             storage_initialization_mode = dispatch.storage_initialization.as_str(),
-            preinitialized_device_bytes = planned_device_bytes,
+            preinitialized_device_bytes = storage_initialization.bytes,
             initialization_bytes = storage_initialization.bytes,
             attached_owned_bytes = tracing::field::Empty,
             storage_buffer_0 = tracing::field::Empty,
@@ -1311,6 +1325,7 @@ struct MetalOuterRemainderKernel {
     cpu_tail_elements: usize,
     gpu_active_breakdown: OuterRemainderGpuActiveBreakdown,
     product_uniskip_endpoint_carrier: Option<MetalProductUniskipEndpointCarrier>,
+    registers_claim_stage1_carry: Option<MetalRegistersClaimStage1Carry>,
     deferred_release_bytes: Option<MetalOuterDeferredReleaseBytes>,
     #[cfg(feature = "test-utils")]
     completed_gpu_active: Option<Duration>,
@@ -1342,6 +1357,9 @@ impl allocative::Allocative for MetalOuterRemainderKernel {
                 allocative::Key::new("product_uniskip_endpoint_carrier"),
                 carrier,
             );
+        }
+        if let Some(carry) = &self.registers_claim_stage1_carry {
+            visitor.visit_field(allocative::Key::new("registers_claim_stage1_carry"), carry);
         }
         visitor.exit();
     }
@@ -1404,6 +1422,7 @@ impl MetalOuterRemainderKernel {
                 ..OuterRemainderGpuActiveBreakdown::default()
             },
             product_uniskip_endpoint_carrier: None,
+            registers_claim_stage1_carry: None,
             deferred_release_bytes: None,
             #[cfg(feature = "test-utils")]
             completed_gpu_active: None,
@@ -1603,16 +1622,42 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                 record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
             claimed
         };
+        let product_tau_low = self.host.product_tau_low();
         if let Some(endpoints) = sequence.take_product_uniskip_endpoints() {
             self.product_uniskip_endpoint_carrier = Some(MetalProductUniskipEndpointCarrier {
                 log_t: self.host.rounds - 1,
-                tau_low: self.host.product_tau_low(),
+                tau_low: product_tau_low.clone(),
                 endpoints,
                 source_rows: self.resident_rows,
                 source_row_storage_id: self.compact_rows_storage_id,
                 device_registry_id: self.device_registry_id,
             });
         }
+        if self.registers_claim_stage1_carry.is_some() {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "Metal outer remainder rebuilt its registers-claim carry",
+            });
+        }
+        let context = sequence.context().clone();
+        let registers_claim_stage1_carry = sequence
+            .take_registers_claim_carrier()
+            .map_err(metal_output_error)?
+            .map(|carrier| {
+                MetalRegistersClaimStage1Carry::from_outer(
+                    carrier,
+                    MetalRegistersClaimOuterSource {
+                        context: &context,
+                        product_tau_low: &product_tau_low,
+                        rows: self.resident_rows,
+                        compact_storage_id: self.compact_rows_storage_id,
+                        residual_storage_id: self.residual_rows_storage_id,
+                        device_registry_id: self.device_registry_id,
+                        openings: &claimed,
+                    },
+                )
+            })
+            .transpose()
+            .map_err(metal_output_error)?;
         let completed_gpu_active = sequence.gpu_active_time();
         if self.gpu_active_breakdown.total() != Some(completed_gpu_active) {
             return Err(SumcheckKernelError::InvariantViolation {
@@ -1663,6 +1708,7 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             compact: compact_release_bytes,
             total: deferred_owned_bytes,
         });
+        self.registers_claim_stage1_carry = registers_claim_stage1_carry;
         self.host.output_claims(inputs, &claimed)
     }
 
@@ -1714,6 +1760,42 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             )
             .entered();
             session.park(carrier);
+        }
+        if let Some(carry) = self.registers_claim_stage1_carry.take() {
+            let receipt = carry.receipt();
+            let _span = tracing::info_span!(
+                "MetalOuterRemainder::registers_claim_carrier_park",
+                rows = receipt.rows,
+                explicit_rows = receipt.explicit_rows,
+                prefix_elements = receipt.prefix_elements,
+                suffix_elements = receipt.suffix_elements,
+                blocks = receipt.blocks,
+                device_registry_id = receipt.device_registry_id,
+                source_generation = receipt.source_generation,
+                completion_serial = receipt.completion_serial,
+                source_compact_storage_id = receipt.source_compact_storage_id as u64,
+                source_residual_storage_id = receipt.source_residual_storage_id as u64,
+                partial_storage_id = receipt.partial_storage_id as u64,
+                component_storage_id = receipt.component_storage_id as u64,
+                rd_storage_id = receipt.rd_storage_id as u64,
+                partial_bytes = receipt.partial_bytes,
+                component_bytes = receipt.component_bytes,
+                component_host_read_bytes = receipt.component_bytes,
+                rd_bytes = receipt.rd_bytes,
+                scratch_release_bytes = receipt.partial_bytes + receipt.component_bytes,
+                retained_rd_bytes = receipt.rd_bytes,
+                source_allocations = 3u64,
+                row_scans = receipt.row_scans,
+                carrier_dispatches = 3u64,
+                command_buffers = receipt.command_buffers,
+                waits = receipt.waits,
+                uploads = receipt.uploads,
+                prezero_dispatches = receipt.prezero_dispatches,
+                complete_overwrite = receipt.complete_overwrite,
+                stage1_carry_parks = 1u64,
+            )
+            .entered();
+            session.park(carry);
         }
     }
 }

@@ -17,7 +17,9 @@ use super::ram_ra_claim_reduction::RamRaClaimReductionMetalConfig;
 use super::ram_ra_virtualization::RamRaVirtualizationMetalConfig;
 use super::ram_raf_evaluation::RamRafEvaluationMetalConfig;
 use super::ram_val_check::RamValCheckMetalConfig;
-use super::registers_claim_reduction::RegistersClaimReductionMetalConfig;
+use super::registers_claim_reduction::{
+    RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
+};
 use super::registers_val_evaluation::RegistersValEvaluationMetalConfig;
 #[cfg(feature = "test-utils")]
 use super::solinas::OuterKernelArtifact;
@@ -90,6 +92,8 @@ pub struct MetalBackend {
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) instruction_claim_sequences: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
+    pub(super) registers_claim_alias_sequences: Arc<AtomicUsize>,
+    #[cfg(any(test, feature = "test-utils"))]
     pub(super) registers_val_sequences: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) ram_val_sparse_sequences: Arc<AtomicUsize>,
@@ -105,7 +109,12 @@ pub struct MetalBackend {
 
 impl MetalBackend {
     /// Compiles the Akita field library and validates the hybrid cutoffs.
-    pub fn new(config: MetalConfig) -> Result<Self, MetalError> {
+    pub fn new(mut config: MetalConfig) -> Result<Self, MetalError> {
+        config
+            .spartan_outer_remainder
+            .dispatch
+            .registers_claim_carrier = config.registers_claim_reduction.implementation
+            == RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
         Self::validate_config(&config)?;
         Ok(Self::with_context(&config, SolinasMetal::for_akita()?))
     }
@@ -113,9 +122,14 @@ impl MetalBackend {
     #[cfg(feature = "test-utils")]
     #[doc(hidden)]
     pub fn new_with_outer_artifact(
-        config: MetalConfig,
+        mut config: MetalConfig,
         artifact: &OuterKernelArtifact,
     ) -> Result<Self, MetalError> {
+        config
+            .spartan_outer_remainder
+            .dispatch
+            .registers_claim_carrier = config.registers_claim_reduction.implementation
+            == RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
         if config.spartan_outer_remainder.dispatch.binding_plan != artifact.binding_plan() {
             return Err(MetalError::OuterArtifactBindingPlanMismatch);
         }
@@ -135,6 +149,17 @@ impl MetalBackend {
         if config.spartan_outer_remainder.dispatch.max_threadgroups == 0 {
             return Err(MetalError::InvalidOuterRemainderConfig(
                 "max_threadgroups must be nonzero",
+            ));
+        }
+        if config.registers_claim_reduction.implementation
+            == RegistersClaimReductionImplementation::OuterCarrierAliasHybrid
+            && (config.spartan_outer_remainder.trace_cutoff_elements
+                > config.registers_claim_reduction.trace_cutoff_elements
+                || config.instruction_input.trace_cutoff_elements
+                    > config.registers_claim_reduction.trace_cutoff_elements)
+        {
+            return Err(MetalError::InvalidOuterRemainderConfig(
+                "registers-claim carrier producers must activate no later than their consumer",
             ));
         }
         let cutoff = config.instruction_read_raf.cutoff_elements;
@@ -203,6 +228,8 @@ impl MetalBackend {
             #[cfg(any(test, feature = "test-utils"))]
             instruction_claim_sequences: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
+            registers_claim_alias_sequences: Arc::new(AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "test-utils"))]
             registers_val_sequences: Arc::new(AtomicUsize::new(0)),
             #[cfg(any(test, feature = "test-utils"))]
             ram_val_sparse_sequences: Arc::new(AtomicUsize::new(0)),
@@ -256,6 +283,13 @@ impl MetalBackend {
     #[doc(hidden)]
     pub fn instruction_claim_sequences(&self) -> usize {
         self.instruction_claim_sequences
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
+    pub fn registers_claim_alias_sequences(&self) -> usize {
+        self.registers_claim_alias_sequences
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

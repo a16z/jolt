@@ -10,6 +10,12 @@ use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::registers_claim_reduction::{
+    registers_claim_alias_pair, RegistersClaimAliasPublisher, RegistersClaimReductionImplementation,
+};
+use super::solinas::registers_claim_reduction::{
+    RegistersClaimGeometry, INSTRUCTION_INPUT_RS1_TABLE, INSTRUCTION_INPUT_RS2_TABLE,
+};
 use super::solinas::{
     instruction_input_weight_capacities, InstructionInputRows, InstructionInputSequence,
     InstructionInputSequenceConfig, InstructionInputSequenceStorage,
@@ -441,6 +447,31 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
             storage_buffer_5 = buffer_identities[5],
         )
         .entered();
+        let alias_publisher = if self.config.registers_claim_reduction.implementation
+            == RegistersClaimReductionImplementation::OuterCarrierAliasHybrid
+        {
+            let geometry = RegistersClaimGeometry::new(trace_elements).map_err(|_| {
+                KernelError::InvariantViolation {
+                    reason: "registers claim alias bridge geometry is invalid",
+                }
+            })?;
+            let required_cutoff = geometry.suffix_elements().checked_mul(2).ok_or(
+                KernelError::InvariantViolation {
+                    reason: "registers claim alias cutoff overflows usize",
+                },
+            )?;
+            if config.cutoff_elements < required_cutoff {
+                return Err(KernelError::InvariantViolation {
+                    reason: "InstructionInput CPU cutoff is too small for registers aliases",
+                });
+            }
+            let (publisher, receiver) =
+                registers_claim_alias_pair(trace_elements, resident_identity)?;
+            session.park(receiver);
+            Some(publisher)
+        } else {
+            None
+        };
         let cpu =
             OptimizedInstructionInputKernel::new_offloaded(r_product, inputs.challenges.gamma);
         let kernel = MetalInstructionInputKernel::new(
@@ -449,6 +480,7 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
             host_tail,
             inputs.challenges.gamma,
             config.cutoff_elements,
+            alias_publisher,
         )?;
         Ok(Box::new(kernel))
     }
@@ -491,6 +523,8 @@ struct MetalInstructionInputKernel {
     host_tail: Option<Vec<AkitaField>>,
     gamma: AkitaField,
     cutoff_elements: usize,
+    alias_publisher: Option<RegistersClaimAliasPublisher>,
+    alias_challenges: Vec<AkitaField>,
 }
 
 #[cfg(feature = "allocative")]
@@ -510,6 +544,10 @@ impl allocative::Allocative for MetalInstructionInputKernel {
                 crate::backend::vec_heap_bytes(host_tail),
             );
         }
+        visitor.visit_simple(
+            allocative::Key::new("alias_challenges"),
+            crate::backend::vec_heap_bytes(&self.alias_challenges),
+        );
         visitor.exit();
     }
 }
@@ -521,6 +559,7 @@ impl MetalInstructionInputKernel {
         host_tail: Vec<AkitaField>,
         gamma: AkitaField,
         cutoff_elements: usize,
+        alias_publisher: Option<RegistersClaimAliasPublisher>,
     ) -> Result<Self, SumcheckError<AkitaField>> {
         let host_elements = INSTRUCTION_INPUT_TABLES
             .checked_mul(cutoff_elements)
@@ -541,7 +580,46 @@ impl MetalInstructionInputKernel {
             host_tail: Some(host_tail),
             gamma,
             cutoff_elements,
+            alias_publisher,
+            alias_challenges: Vec::new(),
         })
+    }
+
+    fn publish_register_aliases(&mut self, round: usize) -> Result<(), SumcheckError<AkitaField>> {
+        let Some(publisher) = self.alias_publisher.take() else {
+            return Ok(());
+        };
+        let geometry = RegistersClaimGeometry::new(1usize << self.cpu.num_rounds())
+            .map_err(|error| metal_error(error.to_string()))?;
+        if self.alias_challenges.len() < geometry.prefix_vars() {
+            self.alias_publisher = Some(publisher);
+            return Ok(());
+        }
+        if round != geometry.prefix_vars() || self.alias_challenges.len() != geometry.prefix_vars()
+        {
+            return Err(metal_error(
+                "InstructionInput reached the registers alias point out of order",
+            ));
+        }
+        let [rs1_value, rs2_value] = self.cpu.metal_copy_dense_tables(
+            [INSTRUCTION_INPUT_RS1_TABLE, INSTRUCTION_INPUT_RS2_TABLE],
+            geometry.prefix_vars(),
+            geometry.suffix_elements(),
+        )?;
+        let phase = tracing::info_span!(
+            "MetalInstructionInput::registers_claim_alias_publish",
+            rows = publisher.rows(),
+            source_compact_storage_id = publisher.source_compact_storage_id() as u64,
+            alias_generation = publisher.generation(),
+            prefix_challenges = self.alias_challenges.len(),
+            table_0 = INSTRUCTION_INPUT_RS1_TABLE,
+            table_1 = INSTRUCTION_INPUT_RS2_TABLE,
+            host_table_copies = 2u64,
+            snapshot_host_bytes = 2 * geometry.suffix_elements() * size_of::<AkitaField>(),
+            publishes = 1u64,
+        );
+        let _phase_guard = phase.enter();
+        publisher.publish(self.alias_challenges.clone(), rs1_value, rs2_value)
     }
 
     fn join_primer(
@@ -673,7 +751,7 @@ impl ProveRounds<AkitaField> for MetalInstructionInputKernel {
             self.restore_cpu_tail()?;
         }
 
-        if self.sequence.is_some() {
+        let polynomial = if self.sequence.is_some() {
             let coefficients = if let Some(challenge) = bind {
                 self.cpu.metal_bind_offloaded(challenge)?;
                 let (e_in, e_out) = self.cpu.metal_weights()?;
@@ -711,11 +789,19 @@ impl ProveRounds<AkitaField> for MetalInstructionInputKernel {
                     .message(self.gamma, e_in, e_out)
                     .map_err(|error| metal_error(error.to_string()))?
             };
-            return self.cpu.metal_message(coefficients, round, previous_claim);
+            self.cpu
+                .metal_message(coefficients, round, previous_claim)?
+        } else {
+            let _span = tracing::info_span!("MetalInstructionInput::cpu_tail", round).entered();
+            self.cpu.prove_round(bind, round, previous_claim)?
+        };
+        if self.alias_publisher.is_some() {
+            if let Some(challenge) = bind {
+                self.alias_challenges.push(challenge);
+            }
+            self.publish_register_aliases(round)?;
         }
-
-        let _span = tracing::info_span!("MetalInstructionInput::cpu_tail", round).entered();
-        self.cpu.prove_round(bind, round, previous_claim)
+        Ok(polynomial)
     }
 
     fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {

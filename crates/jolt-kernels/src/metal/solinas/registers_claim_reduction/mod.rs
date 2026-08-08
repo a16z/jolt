@@ -70,10 +70,17 @@ pub const DIRECT_FOLD_OUTPUT_SLOT: u64 = 4;
 pub const DIRECT_FOLD_PARAMS_SLOT: u64 = 5;
 pub const DIRECT_FOLD_THREADGROUP_SLOT: u64 = 0;
 
+pub const ALIAS_FOLD_RD_WRITE_VALUE_SLOT: u64 = 0;
+pub const ALIAS_FOLD_EQ_PREFIX_SLOT: u64 = 1;
+pub const ALIAS_FOLD_OUTPUT_SLOT: u64 = 2;
+pub const ALIAS_FOLD_PARAMS_SLOT: u64 = 3;
+pub const ALIAS_FOLD_THREADGROUP_SLOT: u64 = 0;
+
 pub(crate) const BUILD_LINEAR_PIPELINE: &str = "solinas_registers_claim_build_linear_q";
 pub(crate) const BUILD_LINEAR_CANONICAL_PIPELINE: &str =
     "solinas_registers_claim_build_linear_q_canonical";
 pub(crate) const DIRECT_FOLD_PIPELINE: &str = "solinas_registers_claim_fold_direct";
+pub(crate) const ALIAS_FOLD_PIPELINE: &str = "solinas_registers_claim_fold_alias_rd";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RegistersClaimAccumulator {
@@ -1058,6 +1065,9 @@ impl<F: Field> RegistersClaimPartialQHandoff<F> {
         product_tau_low: Vec<F>,
         components: RegistersClaimLinearComponents<F>,
     ) -> Result<Self, RegistersClaimOracleError> {
+        if generation == 0 {
+            return Err(RegistersClaimOracleError::InvalidPartialQGeneration);
+        }
         let _ = split_tau(geometry, &product_tau_low)?;
         let actual = validate_three_tables(
             &components.rd_write_value,
@@ -1886,6 +1896,8 @@ pub enum RegistersClaimOracleError {
     AliasPrefixMismatch,
     #[error("stage-1 partial-q generation is {actual}, expected {expected}")]
     PartialQGenerationMismatch { expected: u64, actual: u64 },
+    #[error("stage-1 partial-q generation must be nonzero")]
+    InvalidPartialQGeneration,
     #[error("stage-1 partial-q point does not match product_tau_low")]
     PartialQPointMismatch,
     #[error("final register openings do not recombine to the bound combined table")]

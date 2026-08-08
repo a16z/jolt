@@ -19,7 +19,11 @@ use super::{
         field_bytes, opening_output_count, outer_remainder_sequence_storage_bytes_with_config,
         storage_geometry, validate_opening_threadgroup_memory, SIMD_WIDTH,
     },
-    shader::pipeline_names,
+    registers_claim::{carrier_geometry, RegistersClaimCarrierGeometry},
+    shader::{
+        opening_pipeline_name, pipeline_names, REGISTERS_CLAIM_BUILD_PIPELINE,
+        REGISTERS_CLAIM_DOT_PIPELINE, REGISTERS_CLAIM_REDUCE_PIPELINE,
+    },
 };
 
 pub(super) struct Pipelines {
@@ -28,6 +32,9 @@ pub(super) struct Pipelines {
     pub(super) transition: ComputePipelineState,
     pub(super) opening: ComputePipelineState,
     pub(super) reduction: ComputePipelineState,
+    pub(super) registers_claim_build: Option<ComputePipelineState>,
+    pub(super) registers_claim_reduce: Option<ComputePipelineState>,
+    pub(super) registers_claim_dot: Option<ComputePipelineState>,
 }
 
 pub(super) struct PipelineSetLimits {
@@ -44,6 +51,9 @@ pub(super) struct Threads {
     pub(super) transition: usize,
     pub(super) opening: usize,
     pub(super) reduction: usize,
+    pub(super) registers_claim_build: usize,
+    pub(super) registers_claim_reduce: usize,
+    pub(super) registers_claim_dot: usize,
 }
 
 pub(super) struct DenseBuffers {
@@ -60,6 +70,14 @@ pub(super) struct Buffers {
     pub(super) message_output: Buffer,
     pub(super) opening_partials: Buffer,
     pub(super) opening_output: Buffer,
+    pub(super) registers_claim: Option<RegistersClaimBuffers>,
+}
+
+pub(super) struct RegistersClaimBuffers {
+    pub(super) partials: Buffer,
+    pub(super) components: Buffer,
+    pub(super) rd_write_value: Buffer,
+    pub(super) geometry: RegistersClaimCarrierGeometry,
 }
 
 impl Buffers {
@@ -154,14 +172,27 @@ impl SolinasMetal {
         let max_threadgroups = geometry.max_threadgroups;
 
         let names = pipeline_names(config.binding_plan);
+        let opening_name = opening_pipeline_name(config.binding_plan);
         #[cfg(feature = "test-utils")]
         let pipeline_compile_started = Instant::now();
         let pipelines = Pipelines {
             materialize: self.compile_named_pipeline(names.materialize)?,
             stream_bind: self.compile_named_pipeline(names.stream_bind)?,
             transition: self.compile_named_pipeline(names.transition)?,
-            opening: self.compile_named_pipeline(names.opening)?,
+            opening: self.compile_named_pipeline(opening_name)?,
             reduction: self.compile_named_pipeline(names.reduction)?,
+            registers_claim_build: config
+                .registers_claim_carrier
+                .then(|| self.compile_named_pipeline(REGISTERS_CLAIM_BUILD_PIPELINE))
+                .transpose()?,
+            registers_claim_reduce: config
+                .registers_claim_carrier
+                .then(|| self.compile_named_pipeline(REGISTERS_CLAIM_REDUCE_PIPELINE))
+                .transpose()?,
+            registers_claim_dot: config
+                .registers_claim_carrier
+                .then(|| self.compile_named_pipeline(REGISTERS_CLAIM_DOT_PIPELINE))
+                .transpose()?,
         };
         #[cfg(feature = "test-utils")]
         let pipeline_compile_wall = pipeline_compile_started.elapsed();
@@ -176,7 +207,7 @@ impl SolinasMetal {
             (names.materialize, limits.materialize),
             (names.stream_bind, limits.stream_bind),
             (names.transition, limits.transition),
-            (names.opening, limits.opening),
+            (opening_name, limits.opening),
             (names.reduction, limits.reduction),
         ] {
             if pipeline_limits.thread_execution_width != SIMD_WIDTH {
@@ -185,6 +216,28 @@ impl SolinasMetal {
                     expected: SIMD_WIDTH,
                     got: pipeline_limits.thread_execution_width,
                 });
+            }
+        }
+        for (pipeline, state) in [
+            (
+                REGISTERS_CLAIM_BUILD_PIPELINE,
+                &pipelines.registers_claim_build,
+            ),
+            (
+                REGISTERS_CLAIM_REDUCE_PIPELINE,
+                &pipelines.registers_claim_reduce,
+            ),
+            (REGISTERS_CLAIM_DOT_PIPELINE, &pipelines.registers_claim_dot),
+        ] {
+            if let Some(state) = state {
+                let limits = Self::limits(state);
+                if limits.thread_execution_width != SIMD_WIDTH {
+                    return Err(MetalError::UnsupportedOuterRemainderExecutionWidth {
+                        pipeline,
+                        expected: SIMD_WIDTH,
+                        got: limits.thread_execution_width,
+                    });
+                }
             }
         }
 
@@ -206,6 +259,21 @@ impl SolinasMetal {
                 limits.opening,
             )?,
             reduction: Self::resolve_threadgroup_width(None, limits.reduction)?,
+            registers_claim_build: if let Some(pipeline) = &pipelines.registers_claim_build {
+                Self::resolve_threadgroup_width(Some(256), Self::limits(pipeline))?
+            } else {
+                0
+            },
+            registers_claim_reduce: if let Some(pipeline) = &pipelines.registers_claim_reduce {
+                Self::resolve_threadgroup_width(Some(128), Self::limits(pipeline))?
+            } else {
+                0
+            },
+            registers_claim_dot: if let Some(pipeline) = &pipelines.registers_claim_dot {
+                Self::resolve_threadgroup_width(Some(256), Self::limits(pipeline))?
+            } else {
+                0
+            },
         };
         if threads.opening < 128 {
             return Err(MetalError::InvalidOuterRemainderConfig(
@@ -218,6 +286,7 @@ impl SolinasMetal {
             config.binding_plan,
             threads.opening,
             config.product_uniskip_carrier,
+            config.registers_claim_carrier,
         )?;
 
         for elements in geometry.element_counts {
@@ -231,6 +300,24 @@ impl SolinasMetal {
             .checked_mul(2)
             .ok_or(MetalError::InputTooLong(current_elements))?;
         let opening_outputs = opening_output_count(config.product_uniskip_carrier);
+        let registers_claim = if config.registers_claim_carrier {
+            let geometry = carrier_geometry(cycles)?;
+            for bytes in [
+                geometry.partial_bytes,
+                geometry.component_bytes,
+                geometry.rd_bytes,
+            ] {
+                self.validate_buffer_length(bytes)?;
+            }
+            Some(RegistersClaimBuffers {
+                partials: new_private_buffer(self, geometry.partial_bytes)?,
+                components: new_buffer(self, geometry.component_bytes)?,
+                rd_write_value: new_private_buffer(self, geometry.rd_bytes)?,
+                geometry,
+            })
+        } else {
+            None
+        };
         let buffers = Buffers {
             dense: Some(DenseBuffers {
                 state_a: new_field_buffer(self, current_elements)?,
@@ -243,6 +330,7 @@ impl SolinasMetal {
             message_output: new_field_buffer(self, 2)?,
             opening_partials: new_field_buffer(self, opening_outputs * max_threadgroups)?,
             opening_output: new_field_buffer(self, opening_outputs)?,
+            registers_claim,
         };
         let initialization = initialize_storage(self, &buffers, config.storage_initialization)?;
 
@@ -405,8 +493,19 @@ pub(super) fn write_fields(
 
 fn new_field_buffer(context: &SolinasMetal, elements: usize) -> Result<Buffer, MetalError> {
     let bytes = field_bytes(elements)?;
+    new_buffer(context, bytes)
+}
+
+fn new_buffer(context: &SolinasMetal, bytes: u64) -> Result<Buffer, MetalError> {
     context.validate_buffer_length(bytes)?;
     Ok(context
         .device
         .new_buffer(bytes, MTLResourceOptions::StorageModeShared))
+}
+
+fn new_private_buffer(context: &SolinasMetal, bytes: u64) -> Result<Buffer, MetalError> {
+    context.validate_buffer_length(bytes)?;
+    Ok(context
+        .device
+        .new_buffer(bytes, MTLResourceOptions::StorageModePrivate))
 }

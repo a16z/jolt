@@ -7,6 +7,7 @@
 #define OUTER_REMAINDER_TILE_ROWS 64u
 #define OUTER_REMAINDER_SIMD_WIDTH 32u
 #define OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP 9u
+#define OUTER_REMAINDER_REGISTERS_COMPONENTS 3u
 
 struct OuterRemainderPhaseParams {
     uint source_elements;
@@ -1114,6 +1115,133 @@ kernel void solinas_outer_remainder_opening_tiles(
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
+kernel void solinas_outer_remainder_build_registers_claim(
+    device const InstructionInputRow* compact_rows [[buffer(0)]],
+    device const SpartanOuterUniskipResidualRow* residual_rows [[buffer(1)]],
+    device const SolinasFp128* e_out [[buffer(2)]],
+    device SolinasFp128* q_partials [[buffer(3)]],
+    device ulong* rd_write_value [[buffer(4)]],
+    constant OuterRemainderOpeningParams& params [[buffer(5)]],
+    threadgroup SolinasFp128* outer_weights [[threadgroup(0)]],
+    uint group [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    uint low_groups = (params.e_in_length + threads - 1u) / threads;
+    uint block = group / low_groups;
+    uint low_group = group - block * low_groups;
+    uint x_lo = low_group * threads + tid;
+    uint high_count =
+        (params.e_out_length + params.blocks - 1u - block) / params.blocks;
+    for (uint index = tid; index < high_count; index += threads) {
+        outer_weights[index] = e_out[block + index * params.blocks];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (x_lo >= params.e_in_length) {
+        return;
+    }
+
+    SolinasFp128 sums[OUTER_REMAINDER_REGISTERS_COMPONENTS];
+    for (uint component = 0u;
+         component < OUTER_REMAINDER_REGISTERS_COMPONENTS;
+         component++) {
+        sums[component] = solinas_zero();
+    }
+    for (uint high = 0u; high < high_count; high++) {
+        uint x_hi = block + high * params.blocks;
+        uint row = x_hi * params.e_in_length + x_lo;
+        ulong rs1 = 0ul;
+        ulong rs2 = 0ul;
+        ulong rd = 0ul;
+        if (row < params.source_elements) {
+            device const InstructionInputRow& compact = compact_rows[row];
+            device const SpartanOuterUniskipResidualRow& residual =
+                residual_rows[row];
+            ulong flags = instruction_input_row_word(compact, 5u);
+            bool load = outer_flag(flags, 0u) != 0;
+            bool store = outer_flag(flags, 1u) != 0;
+            rs1 = instruction_input_row_word(compact, 0u);
+            rs2 = instruction_input_row_word(compact, 2u);
+            rd = store
+                ? 0ul
+                : spartan_outer_residual_word(residual, load ? 7u : 6u);
+        }
+        rd_write_value[row] = rd;
+        SolinasFp128 weight = outer_weights[high];
+        sums[0] = solinas_add(
+            sums[0], solinas_half_width_mul_u64(weight, rd));
+        sums[1] = solinas_add(
+            sums[1], solinas_half_width_mul_u64(weight, rs1));
+        sums[2] = solinas_add(
+            sums[2], solinas_half_width_mul_u64(weight, rs2));
+    }
+    for (uint component = 0u;
+         component < OUTER_REMAINDER_REGISTERS_COMPONENTS;
+         component++) {
+        uint output =
+            (component * params.blocks + block) * params.e_in_length + x_lo;
+        q_partials[output] = sums[component];
+    }
+}
+
+kernel void solinas_outer_remainder_reduce_registers_claim(
+    device const SolinasFp128* partials [[buffer(0)]],
+    device SolinasFp128* components [[buffer(1)]],
+    constant OuterRemainderOpeningParams& params [[buffer(2)]],
+    uint output [[thread_position_in_grid]])
+{
+    uint outputs =
+        OUTER_REMAINDER_REGISTERS_COMPONENTS * params.e_in_length;
+    if (output >= outputs) {
+        return;
+    }
+    uint component = output / params.e_in_length;
+    uint x_lo = output - component * params.e_in_length;
+    SolinasFp128 sum = solinas_zero();
+    for (uint block = 0u; block < params.blocks; block++) {
+        uint index =
+            (component * params.blocks + block) * params.e_in_length + x_lo;
+        sum = solinas_add(sum, partials[index]);
+    }
+    components[output] = sum;
+}
+
+kernel void solinas_outer_remainder_dot_registers_claim(
+    device const SolinasFp128* components [[buffer(0)]],
+    device const SolinasFp128* e_in [[buffer(1)]],
+    device SolinasFp128* openings [[buffer(2)]],
+    constant OuterRemainderOpeningParams& params [[buffer(3)]],
+    threadgroup SolinasFp128* shared [[threadgroup(0)]],
+    uint component [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    SolinasFp128 sum = solinas_zero();
+    uint offset = component * params.e_in_length;
+    for (uint x_lo = tid; x_lo < params.e_in_length; x_lo += threads) {
+        sum = solinas_add(
+            sum,
+            solinas_mul_wide(e_in[x_lo], components[offset + x_lo]));
+    }
+    sum = solinas_simd_sum_32(sum);
+    if (lane == 0u) {
+        shared[simdgroup] = sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simdgroup == 0u) {
+        uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
+        sum = lane < simdgroups ? shared[lane] : solinas_zero();
+        sum = solinas_simd_sum_32(sum);
+        if (lane == 0u) {
+            uint column = component == 0u ? 10u : (component == 1u ? 8u : 9u);
+            openings[column] = sum;
+        }
     }
 }
 

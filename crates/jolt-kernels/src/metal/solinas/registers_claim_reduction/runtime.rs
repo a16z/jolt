@@ -17,13 +17,15 @@ use super::super::{
 };
 use super::{
     RegistersClaimGeometry, RegistersClaimKernelConfig, RegistersClaimLinearQPlan,
-    RegistersClaimPlan, RegistersClaimPlanError, RegistersClaimStrategy,
-    DIRECT_FOLD_EQ_PREFIX_SLOT, DIRECT_FOLD_OUTPUT_SLOT, DIRECT_FOLD_PARAMS_SLOT,
-    DIRECT_FOLD_PIPELINE, DIRECT_FOLD_RD_WRITE_VALUE_SLOT, DIRECT_FOLD_RS1_VALUE_SLOT,
-    DIRECT_FOLD_RS2_VALUE_SLOT, DIRECT_FOLD_THREADGROUP_SLOT, LINEAR_Q_EQ_SUFFIX_SLOT,
-    LINEAR_Q_GAMMA_POWERS_SLOT, LINEAR_Q_OUTPUT_SLOT, LINEAR_Q_PARAMS_SLOT,
-    LINEAR_Q_RD_WRITE_VALUE_SLOT, LINEAR_Q_RS1_VALUE_SLOT, LINEAR_Q_RS2_VALUE_SLOT,
-    REGISTERS_CLAIM_AKITA_OFFSET, REGISTERS_CLAIM_OUTPUT_COLUMNS, REGISTERS_CLAIM_SIMD_WIDTH,
+    RegistersClaimPlan, RegistersClaimPlanError, RegistersClaimStrategy, ALIAS_FOLD_EQ_PREFIX_SLOT,
+    ALIAS_FOLD_OUTPUT_SLOT, ALIAS_FOLD_PARAMS_SLOT, ALIAS_FOLD_PIPELINE,
+    ALIAS_FOLD_RD_WRITE_VALUE_SLOT, ALIAS_FOLD_THREADGROUP_SLOT, DIRECT_FOLD_EQ_PREFIX_SLOT,
+    DIRECT_FOLD_OUTPUT_SLOT, DIRECT_FOLD_PARAMS_SLOT, DIRECT_FOLD_PIPELINE,
+    DIRECT_FOLD_RD_WRITE_VALUE_SLOT, DIRECT_FOLD_RS1_VALUE_SLOT, DIRECT_FOLD_RS2_VALUE_SLOT,
+    DIRECT_FOLD_THREADGROUP_SLOT, LINEAR_Q_EQ_SUFFIX_SLOT, LINEAR_Q_GAMMA_POWERS_SLOT,
+    LINEAR_Q_OUTPUT_SLOT, LINEAR_Q_PARAMS_SLOT, LINEAR_Q_RD_WRITE_VALUE_SLOT,
+    LINEAR_Q_RS1_VALUE_SLOT, LINEAR_Q_RS2_VALUE_SLOT, REGISTERS_CLAIM_AKITA_OFFSET,
+    REGISTERS_CLAIM_OUTPUT_COLUMNS, REGISTERS_CLAIM_SIMD_WIDTH,
 };
 
 #[derive(Debug, Error)]
@@ -88,6 +90,66 @@ pub struct RegistersClaimResidentPlanes {
     rs1_value: Buffer,
     rs2_value: Buffer,
     metadata: ResidentPlaneMetadata,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResidentRdMetadata {
+    geometry: RegistersClaimGeometry,
+    plane_bytes: u64,
+    device_registry_id: u64,
+    allocation_identity: usize,
+    source_generation: u64,
+    completion_serial: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct RegistersClaimResidentRdPlane {
+    buffer: Buffer,
+    metadata: ResidentRdMetadata,
+}
+
+impl RegistersClaimResidentRdPlane {
+    pub(crate) const fn geometry(&self) -> RegistersClaimGeometry {
+        self.metadata.geometry
+    }
+
+    pub(crate) const fn resident_bytes(&self) -> u64 {
+        self.metadata.plane_bytes
+    }
+
+    pub(crate) const fn device_registry_id(&self) -> u64 {
+        self.metadata.device_registry_id
+    }
+
+    pub(crate) const fn allocation_identity(&self) -> usize {
+        self.metadata.allocation_identity
+    }
+
+    pub(crate) const fn source_generation(&self) -> u64 {
+        self.metadata.source_generation
+    }
+
+    fn validate_for(
+        &self,
+        context: &SolinasMetal,
+        geometry: RegistersClaimGeometry,
+    ) -> Result<(), RegistersClaimLinearQError> {
+        if self.metadata.geometry != geometry
+            || self.metadata.source_generation == 0
+            || self.metadata.completion_serial == 0
+        {
+            return Err(RegistersClaimLinearQError::InvalidState(
+                "resident rd receipt differs from the invocation",
+            ));
+        }
+        validate_buffer_binding(
+            &self.buffer,
+            "resident rd_write_value",
+            self.metadata.plane_bytes,
+            context.device_registry_id(),
+            self.metadata.allocation_identity,
+        )
+    }
 }
 
 impl RegistersClaimResidentPlanes {
@@ -219,6 +281,31 @@ pub struct RegistersClaimDirectFoldObservation {
     pub resident_wall: Duration,
 }
 
+struct AliasFoldBuffers {
+    eq_prefix: Buffer,
+    rd_dense: Buffer,
+}
+
+pub(crate) struct RegistersClaimAliasFoldInvocation {
+    context: SolinasMetal,
+    rd: RegistersClaimResidentRdPlane,
+    pipeline: ComputePipelineState,
+    limits: PipelineLimits,
+    buffers: AliasFoldBuffers,
+    buffer_identities: [usize; 2],
+    geometry: RegistersClaimGeometry,
+    params: super::RegistersClaimParams,
+    threads_per_threadgroup: usize,
+    dynamic_threadgroup_bytes: usize,
+}
+
+pub(crate) struct RegistersClaimAliasFoldObservation {
+    pub(crate) rd_write_value: Vec<AkitaField>,
+    pub(crate) useful_half_width_terms: u64,
+    pub(crate) gpu_active: Duration,
+    pub(crate) resident_wall: Duration,
+}
+
 impl SolinasMetal {
     pub fn prepare_registers_claim_resident_planes(
         &self,
@@ -325,6 +412,44 @@ impl SolinasMetal {
                 plane_bytes,
                 device_registry_id: expected_device,
                 allocation_identities: identities,
+            },
+        })
+    }
+
+    pub(crate) fn attach_registers_claim_resident_rd_plane(
+        &self,
+        buffer: Buffer,
+        rows: usize,
+        source_generation: u64,
+        completion_serial: u64,
+    ) -> Result<RegistersClaimResidentRdPlane, RegistersClaimLinearQError> {
+        let geometry = RegistersClaimGeometry::new(rows)?;
+        let plane_bytes = to_u64(
+            rows.checked_mul(size_of::<u64>())
+                .ok_or(MetalError::InputTooLong(rows))?,
+        )?;
+        let allocation_identity = buffer.as_ptr() as usize;
+        if source_generation == 0 || completion_serial == 0 || allocation_identity == 0 {
+            return Err(RegistersClaimLinearQError::InvalidState(
+                "resident rd receipt is incomplete",
+            ));
+        }
+        validate_buffer_binding(
+            &buffer,
+            "resident rd_write_value",
+            plane_bytes,
+            self.device_registry_id(),
+            allocation_identity,
+        )?;
+        Ok(RegistersClaimResidentRdPlane {
+            buffer,
+            metadata: ResidentRdMetadata {
+                geometry,
+                plane_bytes,
+                device_registry_id: self.device_registry_id(),
+                allocation_identity,
+                source_generation,
+                completion_serial,
             },
         })
     }
@@ -512,6 +637,91 @@ impl SolinasMetal {
             buffers,
             buffer_identities,
             plan,
+            threads_per_threadgroup,
+            dynamic_threadgroup_bytes,
+        })
+    }
+
+    pub(crate) fn prepare_registers_claim_alias_fold(
+        &self,
+        rd: &RegistersClaimResidentRdPlane,
+        prefix_challenges: &[AkitaField],
+        config: RegistersClaimKernelConfig,
+    ) -> Result<RegistersClaimAliasFoldInvocation, RegistersClaimLinearQError> {
+        if self.offset != REGISTERS_CLAIM_AKITA_OFFSET {
+            return Err(RegistersClaimLinearQError::UnsupportedOffset {
+                expected: REGISTERS_CLAIM_AKITA_OFFSET,
+                got: self.offset,
+            });
+        }
+        let geometry = rd.geometry();
+        rd.validate_for(self, geometry)?;
+        if prefix_challenges.len() != geometry.prefix_vars() {
+            return Err(RegistersClaimLinearQError::WrongPrefixChallengeCount {
+                expected: geometry.prefix_vars(),
+                actual: prefix_challenges.len(),
+            });
+        }
+        let config = config.validate()?;
+        let prefix_point = prefix_challenges.iter().rev().copied().collect::<Vec<_>>();
+        let eq_prefix = encode_fields(&EqPolynomial::<AkitaField>::evals(&prefix_point, None));
+        self.validate_inputs("registers claim alias eq_prefix", &eq_prefix)?;
+        let eq_bytes = geometry
+            .prefix_elements()
+            .checked_mul(size_of::<Fp128>())
+            .ok_or(MetalError::InputTooLong(geometry.rows()))?;
+        let output_bytes = geometry
+            .suffix_elements()
+            .checked_mul(size_of::<Fp128>())
+            .ok_or(MetalError::InputTooLong(geometry.rows()))?;
+        self.validate_buffer_length(to_u64(eq_bytes)?)?;
+        self.validate_buffer_length(to_u64(output_bytes)?)?;
+        self.validate_additional_working_set(to_u64(eq_bytes + output_bytes)?)?;
+
+        let pipeline = self.compile_named_pipeline(ALIAS_FOLD_PIPELINE)?;
+        let limits = Self::limits(&pipeline);
+        if limits.thread_execution_width != REGISTERS_CLAIM_SIMD_WIDTH {
+            return Err(RegistersClaimLinearQError::UnsupportedExecutionWidth {
+                pipeline: ALIAS_FOLD_PIPELINE,
+                expected: REGISTERS_CLAIM_SIMD_WIDTH,
+                got: limits.thread_execution_width,
+            });
+        }
+        let threads_per_threadgroup =
+            Self::resolve_threadgroup_width(Some(config.fold_threads_per_threadgroup), limits)?;
+        let dynamic_threadgroup_bytes = config.alias_fold_threadgroup_bytes()?;
+        let requested = to_u64(dynamic_threadgroup_bytes)?
+            .checked_add(limits.static_threadgroup_memory_length)
+            .ok_or(MetalError::InputTooLong(dynamic_threadgroup_bytes))?;
+        let maximum = self.device.max_threadgroup_memory_length();
+        if requested > maximum {
+            return Err(RegistersClaimLinearQError::ThreadgroupMemory { requested, maximum });
+        }
+
+        let buffers = AliasFoldBuffers {
+            eq_prefix: buffer_from_slice(&self.device, &eq_prefix),
+            rd_dense: self
+                .device
+                .new_buffer(to_u64(output_bytes)?, MTLResourceOptions::StorageModeShared),
+        };
+        let buffer_identities = [
+            buffers.eq_prefix.as_ptr() as usize,
+            buffers.rd_dense.as_ptr() as usize,
+        ];
+        if buffer_identities[0] == buffer_identities[1]
+            || buffer_identities.contains(&rd.allocation_identity())
+        {
+            return Err(RegistersClaimLinearQError::AliasedInvocationBuffers);
+        }
+        Ok(RegistersClaimAliasFoldInvocation {
+            context: self.clone(),
+            rd: rd.clone(),
+            pipeline,
+            limits,
+            buffers,
+            buffer_identities,
+            geometry,
+            params: geometry.params()?,
             threads_per_threadgroup,
             dynamic_threadgroup_bytes,
         })
@@ -869,6 +1079,108 @@ impl RegistersClaimDirectFoldInvocation {
             rs1_value: column(1),
             rs2_value: column(2),
         })
+    }
+}
+
+impl RegistersClaimAliasFoldInvocation {
+    pub(crate) fn execute_timed(
+        &self,
+    ) -> Result<RegistersClaimAliasFoldObservation, RegistersClaimLinearQError> {
+        let wall_started = Instant::now();
+        self.validate_state()?;
+        autoreleasepool(|| {
+            let command_buffer = self.context.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&self.pipeline);
+            encoder.set_buffer(ALIAS_FOLD_RD_WRITE_VALUE_SLOT, Some(&self.rd.buffer), 0);
+            encoder.set_buffer(ALIAS_FOLD_EQ_PREFIX_SLOT, Some(&self.buffers.eq_prefix), 0);
+            encoder.set_buffer(ALIAS_FOLD_OUTPUT_SLOT, Some(&self.buffers.rd_dense), 0);
+            set_inline_bytes(encoder, ALIAS_FOLD_PARAMS_SLOT, &self.params);
+            encoder.set_threadgroup_memory_length(
+                ALIAS_FOLD_THREADGROUP_SLOT,
+                to_u64(self.dynamic_threadgroup_bytes)?,
+            );
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: self.geometry.suffix_elements() as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: self.threads_per_threadgroup as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            if command_buffer.status() != MTLCommandBufferStatus::Completed {
+                return Err(MetalError::CommandFailed(command_buffer.status()).into());
+            }
+            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+                return Err(MetalError::InvalidGpuTimestamps { start, end }.into());
+            }
+            // SAFETY: command completion initializes exactly one field per
+            // suffix row in the shared output allocation.
+            let fields = unsafe {
+                slice::from_raw_parts(
+                    self.buffers.rd_dense.contents().cast::<Fp128>(),
+                    self.geometry.suffix_elements(),
+                )
+            };
+            self.context
+                .validate_inputs("registers claim alias rd output", fields)?;
+            Ok(RegistersClaimAliasFoldObservation {
+                rd_write_value: fields
+                    .iter()
+                    .map(|&value| value.into_jolt_field())
+                    .collect(),
+                useful_half_width_terms: self.geometry.rows() as u64,
+                gpu_active: Duration::from_secs_f64(end - start),
+                resident_wall: wall_started.elapsed(),
+            })
+        })
+    }
+
+    fn validate_state(&self) -> Result<(), RegistersClaimLinearQError> {
+        self.rd.validate_for(&self.context, self.geometry)?;
+        if self.params != self.geometry.params()?
+            || self.limits.thread_execution_width != REGISTERS_CLAIM_SIMD_WIDTH
+            || self.threads_per_threadgroup > self.limits.max_total_threads_per_threadgroup
+            || !self
+                .threads_per_threadgroup
+                .is_multiple_of(self.limits.thread_execution_width)
+        {
+            return Err(RegistersClaimLinearQError::InvalidState(
+                "alias-fold invocation differs from its checked plan",
+            ));
+        }
+        for (name, buffer, expected_bytes, identity) in [
+            (
+                "alias eq_prefix",
+                &self.buffers.eq_prefix,
+                self.geometry.prefix_elements() * size_of::<Fp128>(),
+                self.buffer_identities[0],
+            ),
+            (
+                "alias rd output",
+                &self.buffers.rd_dense,
+                self.geometry.suffix_elements() * size_of::<Fp128>(),
+                self.buffer_identities[1],
+            ),
+        ] {
+            validate_buffer_binding(
+                buffer,
+                name,
+                to_u64(expected_bytes)?,
+                self.context.device_registry_id(),
+                identity,
+            )?;
+        }
+        Ok(())
     }
 }
 

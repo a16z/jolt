@@ -161,7 +161,8 @@ pub use instruction_read_raf::{
 };
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
-    outer_remainder_sequence_storage_bytes_with_config, OuterRemainderSequenceStorage,
+    outer_remainder_sequence_storage_bytes_with_config, OuterRegistersClaimCarrier,
+    OuterRegistersClaimCarrierReceipt, OuterRemainderSequenceStorage,
 };
 pub use outer_remainder::{
     OuterBindingPlan, OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,

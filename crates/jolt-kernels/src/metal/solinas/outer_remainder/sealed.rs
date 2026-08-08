@@ -147,6 +147,7 @@ impl SealedOuterArtifact {
             cpu_tail_elements: self.dispatch.cpu_tail_elements,
             storage_initialization: OuterRemainderStorageInitialization::Full,
             product_uniskip_carrier: false,
+            registers_claim_carrier: false,
         }
     }
 

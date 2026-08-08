@@ -6,6 +6,7 @@ use super::api::{
     OUTER_REMAINDER_MAX_OUTPUTS, OUTER_REMAINDER_OPENINGS,
 };
 use super::artifact::OuterBindingPlan;
+use super::registers_claim::carrier_geometry;
 
 pub(super) const SIMD_WIDTH: usize = 32;
 
@@ -54,12 +55,17 @@ pub(crate) fn outer_remainder_sequence_max_buffer_bytes_with_config(
     rows: usize,
     config: OuterRemainderSequenceConfig,
 ) -> Result<u64, MetalError> {
-    storage_geometry(rows, config)?
+    let base = storage_geometry(rows, config)?
         .element_counts
         .into_iter()
         .try_fold(0, |maximum, elements| {
-            Ok(maximum.max(field_bytes(elements)?))
-        })
+            Ok::<u64, MetalError>(maximum.max(field_bytes(elements)?))
+        })?;
+    if config.registers_claim_carrier {
+        Ok(base.max(carrier_geometry(rows)?.max_buffer_bytes))
+    } else {
+        Ok(base)
+    }
 }
 
 pub(super) fn validate_opening_threadgroup_memory(
@@ -68,13 +74,19 @@ pub(super) fn validate_opening_threadgroup_memory(
     plan: OuterBindingPlan,
     threads: usize,
     product_uniskip_carrier: bool,
+    registers_claim_carrier: bool,
 ) -> Result<(), MetalError> {
-    let dynamic = opening_threadgroup_memory_lengths(plan, threads, product_uniskip_carrier)?
-        .into_iter()
-        .try_fold(0u64, |total, bytes| total.checked_add(bytes))
-        .ok_or(MetalError::InvalidOuterRemainderConfig(
-            "opening threadgroup byte count overflowed",
-        ))?;
+    let dynamic = opening_threadgroup_memory_lengths(
+        plan,
+        threads,
+        product_uniskip_carrier,
+        registers_claim_carrier,
+    )?
+    .into_iter()
+    .try_fold(0u64, |total, bytes| total.checked_add(bytes))
+    .ok_or(MetalError::InvalidOuterRemainderConfig(
+        "opening threadgroup byte count overflowed",
+    ))?;
     let requested = limits
         .static_threadgroup_memory_length
         .checked_add(dynamic)
@@ -92,6 +104,7 @@ pub(super) fn opening_threadgroup_memory_lengths(
     plan: OuterBindingPlan,
     threads: usize,
     product_uniskip_carrier: bool,
+    _registers_claim_carrier: bool,
 ) -> Result<[u64; 3], MetalError> {
     let layout = opening_layout(plan);
     let row_words = layout
@@ -145,6 +158,11 @@ pub(super) fn storage_geometry(
             "cpu_tail_elements must be a power of two of at least two",
         ));
     }
+    if config.registers_claim_carrier && config.binding_plan != OuterBindingPlan::BOnlyV1 {
+        return Err(MetalError::InvalidOuterRemainderConfig(
+            "registers-claim carrier requires the B-only-v1 opening layout",
+        ));
+    }
     let current_elements = cycles
         .checked_mul(2)
         .ok_or(MetalError::InputTooLong(cycles))?;
@@ -172,11 +190,16 @@ pub(super) fn storage_geometry(
         opening_partials,
         opening_outputs,
     ];
-    let owned_bytes = element_counts.iter().try_fold(0u64, |total, &elements| {
+    let mut owned_bytes = element_counts.iter().try_fold(0u64, |total, &elements| {
         total
             .checked_add(field_bytes(elements)?)
             .ok_or(MetalError::InputTooLong(cycles))
     })?;
+    if config.registers_claim_carrier {
+        owned_bytes = owned_bytes
+            .checked_add(carrier_geometry(cycles)?.owned_bytes)
+            .ok_or(MetalError::InputTooLong(cycles))?;
+    }
     Ok(StorageGeometry {
         current_elements,
         weight_capacity,

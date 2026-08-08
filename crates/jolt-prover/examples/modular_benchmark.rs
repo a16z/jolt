@@ -604,6 +604,24 @@ mod akita_benchmark {
         }
     }
 
+    #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Default)]
+    enum RegistersClaimImplementation {
+        #[default]
+        Cpu,
+        DirectHybrid,
+        OuterCarrierAliasHybrid,
+    }
+
+    impl RegistersClaimImplementation {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::Cpu => "cpu",
+                Self::DirectHybrid => "direct-hybrid",
+                Self::OuterCarrierAliasHybrid => "outer-carrier-alias-hybrid",
+            }
+        }
+    }
+
     #[cfg(all(feature = "metal", target_os = "macos"))]
     impl OuterRemainderBindingPlan {
         const fn as_str(self) -> &'static str {
@@ -672,6 +690,12 @@ mod akita_benchmark {
     }
 
     #[derive(Debug, Clone, Copy)]
+    struct RegistersClaimMetalTuning {
+        implementation: RegistersClaimImplementation,
+        trace_cutoff_log2: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
     struct BackendConfig {
         backend: Backend,
         instruction_ra_materialize_width: InstructionRaMaterializeWidth,
@@ -684,6 +708,7 @@ mod akita_benchmark {
         booleanity_address_metal: BooleanityAddressMetalTuning,
         hamming_weight_metal: HammingWeightMetalTuning,
         outer_remainder_metal: OuterRemainderMetalTuning,
+        registers_claim_metal: RegistersClaimMetalTuning,
     }
 
     #[derive(Parser, Debug)]
@@ -813,6 +838,12 @@ mod akita_benchmark {
 
         #[clap(long)]
         product_uniskip_outer_carrier: bool,
+
+        #[clap(long, value_enum, default_value = "cpu")]
+        registers_claim_metal_implementation: RegistersClaimImplementation,
+
+        #[clap(long, default_value_t = 25)]
+        registers_claim_metal_trace_cutoff_log2: u32,
     }
 
     pub fn run() {
@@ -899,6 +930,10 @@ mod akita_benchmark {
                 binding_plan: cli.outer_remainder_metal_binding_plan,
                 product_uniskip_carrier: cli.product_uniskip_outer_carrier,
             },
+            registers_claim_metal: RegistersClaimMetalTuning {
+                implementation: cli.registers_claim_metal_implementation,
+                trace_cutoff_log2: cli.registers_claim_metal_trace_cutoff_log2,
+            },
         };
         run_benchmark(cli.name, scale, cli.target_trace_size, backend_config);
     }
@@ -965,6 +1000,11 @@ mod akita_benchmark {
                     trace_cutoff_log2: outer_remainder_metal_trace_cutoff_log2,
                     binding_plan: outer_remainder_metal_binding_plan,
                     product_uniskip_carrier,
+                },
+            registers_claim_metal:
+                RegistersClaimMetalTuning {
+                    implementation: registers_claim_metal_implementation,
+                    trace_cutoff_log2: registers_claim_metal_trace_cutoff_log2,
                 },
         } = backend_config;
         let bench_name = bench.as_str();
@@ -1122,6 +1162,8 @@ mod akita_benchmark {
             outer_remainder_metal_trace_cutoff_log2,
             outer_remainder_metal_binding_plan,
             product_uniskip_carrier,
+            registers_claim_metal_implementation,
+            registers_claim_metal_trace_cutoff_log2,
         );
         let optimized_bytecode_algebra = match bytecode_cycle_algebra {
             BytecodeCycleAlgebra::Generic => jolt_kernels::optimized::BytecodeCycleAlgebra::Generic,
@@ -1228,6 +1270,26 @@ mod akita_benchmark {
                     } else {
                         jolt_kernels::metal::InstructionInputDenseStorageMode::Owned
                     };
+                config.registers_claim_reduction.implementation =
+                    match registers_claim_metal_implementation {
+                        RegistersClaimImplementation::Cpu => {
+                            jolt_kernels::metal::RegistersClaimReductionImplementation::Cpu
+                        }
+                        RegistersClaimImplementation::DirectHybrid => {
+                            jolt_kernels::metal::RegistersClaimReductionImplementation::DirectHybrid
+                        }
+                        RegistersClaimImplementation::OuterCarrierAliasHybrid => {
+                            jolt_kernels::metal::RegistersClaimReductionImplementation::OuterCarrierAliasHybrid
+                        }
+                    };
+                config
+                    .spartan_outer_remainder
+                    .dispatch
+                    .registers_claim_carrier = registers_claim_metal_implementation
+                    == RegistersClaimImplementation::OuterCarrierAliasHybrid;
+                config.registers_claim_reduction.trace_cutoff_elements = 1usize
+                    .checked_shl(registers_claim_metal_trace_cutoff_log2)
+                    .expect("RegistersClaim Metal trace cutoff log2 must fit usize");
                 config.booleanity_address.dispatch.inner_log2 = booleanity_address_metal_inner_log2;
                 config.booleanity_address.implementation =
                     match booleanity_address_metal_implementation {
@@ -1374,6 +1436,11 @@ mod akita_benchmark {
                     instruction_read_raf_metal_scatter_threads,
                 );
                 println!(
+                    "REGISTERS_CLAIM_METAL_CONFIG backend=metal implementation={} trace_cutoff={}",
+                    registers_claim_metal_implementation.as_str(),
+                    config.registers_claim_reduction.trace_cutoff_elements,
+                );
+                println!(
                     "BOOLEANITY_ADDRESS_METAL_CONFIG backend=metal trace_cutoff={} inner_log2={} selectors_per_tile={} tile_threads={} finalize_threads={}",
                     config.booleanity_address.trace_cutoff_elements,
                     booleanity_address_metal_inner_log2,
@@ -1400,7 +1467,7 @@ mod akita_benchmark {
                     hamming_weight_metal_implementation.as_str(),
                 );
                 println!(
-                    "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} materialize_threads={} transition_threads={} output_threads={} max_threadgroups={} binding_plan={} storage_initialization={} product_uniskip_carrier={}",
+                    "OUTER_REMAINDER_METAL_CONFIG backend=metal trace_cutoff={} cutoff={} materialize_threads={} transition_threads={} output_threads={} max_threadgroups={} binding_plan={} storage_initialization={} product_uniskip_carrier={} registers_claim_carrier={}",
                     config.spartan_outer_remainder.trace_cutoff_elements,
                     config.spartan_outer_remainder.dispatch.cpu_tail_elements,
                     outer_remainder_metal_materialize_threads,
@@ -1414,6 +1481,10 @@ mod akita_benchmark {
                         .storage_initialization
                         .as_str(),
                     product_uniskip_carrier,
+                    config
+                        .spartan_outer_remainder
+                        .dispatch
+                        .registers_claim_carrier,
                 );
                 akita::JoltAkitaBackend::metal(config).expect("Metal backend should initialize")
             }

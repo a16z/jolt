@@ -23,6 +23,7 @@ pub struct OuterRemainderSequenceConfig {
     pub cpu_tail_elements: usize,
     pub storage_initialization: OuterRemainderStorageInitialization,
     pub product_uniskip_carrier: bool,
+    pub registers_claim_carrier: bool,
 }
 
 impl Default for OuterRemainderSequenceConfig {
@@ -37,6 +38,7 @@ impl Default for OuterRemainderSequenceConfig {
             cpu_tail_elements: 1 << 18,
             storage_initialization: OuterRemainderStorageInitialization::Full,
             product_uniskip_carrier: false,
+            registers_claim_carrier: false,
         }
     }
 }
@@ -86,6 +88,7 @@ pub struct OuterRemainderDispatchCounts {
     pub dense_transitions: usize,
     pub cpu_tail_exports: usize,
     pub opening_scans: usize,
+    pub registers_claim_carriers: usize,
     pub command_buffers: usize,
 }
 

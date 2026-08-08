@@ -86,6 +86,10 @@ name = "metal-outer-remainder-successor-eval"
 required-features = ["metal", "parallel", "test-utils"]
 
 [[example]]
+name = "metal-outer-registers-claim-eval"
+required-features = ["metal", "parallel", "test-utils"]
+
+[[example]]
 name = "metal-instruction-ra-first-message-eval"
 required-features = ["metal", "parallel"]
 

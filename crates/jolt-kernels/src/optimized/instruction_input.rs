@@ -484,6 +484,33 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl<F: Field> OptimizedInstructionInputKernel<F> {
+    pub(crate) fn metal_copy_dense_tables(
+        &self,
+        table_ids: [usize; 2],
+        expected_rounds_bound: usize,
+        expected_elements: usize,
+    ) -> Result<[Vec<F>; 2], SumcheckError<F>> {
+        if self.rounds_bound != expected_rounds_bound {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot has the wrong bind count",
+            ));
+        }
+        let InputState::Dense(tables) = &self.state else {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot requires host dense tables",
+            ));
+        };
+        if table_ids
+            .iter()
+            .any(|&table| table >= tables.len() || tables[table].len() != expected_elements)
+        {
+            return Err(instruction_input_state_error(
+                "instruction input alias snapshot has the wrong table geometry",
+            ));
+        }
+        Ok(table_ids.map(|table| tables[table].evals().to_vec()))
+    }
+
     pub(crate) fn metal_weights(&self) -> Result<(&[F], &[F]), SumcheckError<F>> {
         if !matches!(self.state, InputState::Offloaded) {
             return Err(instruction_input_state_error(

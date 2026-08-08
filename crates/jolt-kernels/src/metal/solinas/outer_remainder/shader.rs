@@ -24,9 +24,18 @@ pub(super) const B_ONLY_STREAM_BIND_PIPELINE: &str =
     "solinas_outer_remainder_collapsed_a_stream_bind";
 pub(super) const TRANSITION_PIPELINE: &str = "solinas_outer_remainder_bind_and_message";
 pub(super) const OPENING_PIPELINE: &str = "solinas_outer_remainder_opening_tiles";
+pub(super) const REGISTERS_CLAIM_BUILD_PIPELINE: &str =
+    "solinas_outer_remainder_build_registers_claim";
+pub(super) const REGISTERS_CLAIM_REDUCE_PIPELINE: &str =
+    "solinas_outer_remainder_reduce_registers_claim";
+pub(super) const REGISTERS_CLAIM_DOT_PIPELINE: &str = "solinas_outer_remainder_dot_registers_claim";
 pub(super) const PADDED_56_OPENING_PIPELINE: &str =
     "solinas_outer_remainder_opening_tiles_padded_56";
 pub(super) const REDUCTION_PIPELINE: &str = "solinas_outer_remainder_reduce_columns";
+
+pub(super) const fn opening_pipeline_name(plan: OuterBindingPlan) -> &'static str {
+    pipeline_names(plan).opening
+}
 
 pub(super) const fn pipeline_names(plan: OuterBindingPlan) -> PipelineNames {
     match plan {
@@ -52,7 +61,8 @@ mod tests {
     use super::{
         pipeline_names, B_ONLY_MATERIALIZE_PIPELINE, B_ONLY_STREAM_BIND_PIPELINE,
         B_ONLY_STREAM_BIND_REFERENCE_PIPELINE, OPENING_PIPELINE, PADDED_56_OPENING_PIPELINE,
-        PADDED_56_SOURCE, REDUCTION_PIPELINE, SOURCE, TRANSITION_PIPELINE,
+        PADDED_56_SOURCE, REDUCTION_PIPELINE, REGISTERS_CLAIM_BUILD_PIPELINE,
+        REGISTERS_CLAIM_DOT_PIPELINE, REGISTERS_CLAIM_REDUCE_PIPELINE, SOURCE, TRANSITION_PIPELINE,
     };
     use crate::metal::solinas::OuterBindingPlan;
 
@@ -64,6 +74,9 @@ mod tests {
             B_ONLY_STREAM_BIND_PIPELINE,
             TRANSITION_PIPELINE,
             OPENING_PIPELINE,
+            REGISTERS_CLAIM_BUILD_PIPELINE,
+            REGISTERS_CLAIM_REDUCE_PIPELINE,
+            REGISTERS_CLAIM_DOT_PIPELINE,
             REDUCTION_PIPELINE,
         ] {
             let declaration = format!("kernel void {name}(");
@@ -86,9 +99,9 @@ mod tests {
                     .matches("kernel void solinas_outer_remainder_")
                     .count(),
             if cfg!(feature = "metal-runtime-artifact-only") {
-                6
+                9
             } else {
-                7
+                10
             },
         );
         assert_eq!(

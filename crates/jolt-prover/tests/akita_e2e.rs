@@ -239,6 +239,9 @@ mod muldiv {
 
         #[cfg(all(feature = "metal", target_os = "macos"))]
         let (backend, metal) = {
+            let instruction_input_cutoff_elements =
+                2usize << (config.trace_length.ilog2() as usize / 2);
+            assert!(instruction_input_cutoff_elements < config.trace_length);
             let metal = jolt_kernels::metal::MetalBackend::new(jolt_kernels::metal::MetalConfig {
                 spartan_outer_uniskip: jolt_kernels::metal::SpartanOuterUniskipMetalConfig {
                     trace_cutoff_elements: 2,
@@ -264,11 +267,18 @@ mod muldiv {
                     },
                 instruction_input: jolt_kernels::metal::InstructionInputMetalConfig {
                     trace_cutoff_elements: 2,
-                    cutoff_elements: 2,
+                    cutoff_elements: instruction_input_cutoff_elements,
                     dense_storage_mode:
                         jolt_kernels::metal::InstructionInputDenseStorageMode::OuterResidual,
                     ..Default::default()
                 },
+                registers_claim_reduction:
+                    jolt_kernels::metal::RegistersClaimReductionMetalConfig {
+                        implementation:
+                            jolt_kernels::metal::RegistersClaimReductionImplementation::OuterCarrierAliasHybrid,
+                        trace_cutoff_elements: 4,
+                        ..Default::default()
+                    },
                 instruction_read_raf: jolt_kernels::metal::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 8,
                     cutoff_elements: 8,
@@ -345,6 +355,7 @@ mod muldiv {
             assert_eq!(metal.product_uniskip_dispatches(), 0);
             assert_eq!(metal.product_uniskip_carrier_hits(), 1);
             assert_eq!(metal.instruction_claim_sequences(), 1);
+            assert_eq!(metal.registers_claim_alias_sequences(), 1);
         }
 
         // Live tampers on the fused-inc pipeline's claim wires: the fused

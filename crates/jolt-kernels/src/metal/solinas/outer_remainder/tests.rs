@@ -46,17 +46,24 @@ fn opening_layouts_close_their_dynamic_threadgroup_memory() {
     assert_eq!(padded_layout.row_stride_words, 21);
     assert!(!padded_layout.shard_sums);
 
-    let legacy = opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256, false).unwrap();
+    let legacy =
+        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256, false, false).unwrap();
     let padded =
-        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyPadded56V1, 256, false).unwrap();
+        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyPadded56V1, 256, false, false)
+            .unwrap();
 
     assert_eq!(legacy, [10_240, 1_024, 3_920]);
     assert_eq!(legacy.into_iter().sum::<u64>(), 15_184);
     assert_eq!(padded, [9_408, 896, 0]);
     assert_eq!(padded.into_iter().sum::<u64>(), 10_304);
 
-    let carrier = opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256, true).unwrap();
+    let carrier =
+        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256, true, false).unwrap();
     assert_eq!(carrier, [10_240, 1_024, 3_552]);
+
+    let registers =
+        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256, true, true).unwrap();
+    assert_eq!(registers, carrier);
 }
 
 #[test]
