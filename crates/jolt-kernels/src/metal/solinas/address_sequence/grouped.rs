@@ -334,6 +334,6 @@ mod tests {
         ranges[17] = 0..4;
         ranges[81] = 4..9;
 
-        validate_ranges(9, &ranges).unwrap();
+        assert!(validate_ranges(9, &ranges).is_ok());
     }
 }
