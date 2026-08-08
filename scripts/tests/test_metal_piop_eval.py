@@ -102,6 +102,171 @@ def complete_bytecode_trace(log_n: int, backend: str) -> list[dict[str, object]]
     return events
 
 
+def bytecode_address_stage1_source(log_n: int) -> dict[str, object]:
+    return {
+        "source_generation": 7,
+        "completion_serial": 11,
+        "row_allocation_identity": 101,
+        "claim_allocation_identity": 102,
+        "device_registry_id": 55,
+        "source_windows": 1 << log_n,
+    }
+
+
+def complete_bytecode_address_trace(
+    log_n: int, backend: str, outer_tiles: int = 8
+) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    rows = 1 << log_n
+    addresses = 1 << 13
+    stages = 9
+    inner = 1 << 15
+    outer = rows // inner
+    equality_bytes = 16 * stages * (inner + outer)
+    partial_bytes = 16 * stages * addresses * outer_tiles
+    output_bytes = 16 * stages * addresses
+    events = [
+        event("jolt_prover::backend_witness_prepare", 0.0, 80.0),
+        event("jolt_prover::piop", 100.0, 5_000.0),
+        event("BytecodeReadRafAddressPhase::prepare", 200.0, 500.0),
+    ]
+    round_starts = [800.0 + 100.0 * index for index in range(13)]
+    events.extend(
+        event("BytecodeReadRafAddressPhase::prove_round", timestamp, 80.0)
+        for timestamp in round_starts
+    )
+    events.extend(
+        [
+            event("BytecodeReadRafAddressPhase::finish_rounds", 2_100.0, 80.0),
+            event("BytecodeReadRafAddressPhase::output_claims", 2_200.0, 40.0),
+        ]
+    )
+    if backend == "metal":
+        source = bytecode_address_stage1_source(log_n)
+        publish = {
+            "cycles": str(rows),
+            "source_generation": str(source["source_generation"]),
+            "source_completion_serial": str(source["completion_serial"]),
+            "source_rows_storage_id": str(source["row_allocation_identity"]),
+            "source_claim_storage_id": str(source["claim_allocation_identity"]),
+            "source_device_registry_id": str(source["device_registry_id"]),
+            "source_windows": str(rows),
+            "carrier_cells_storage_id": "201",
+            "carrier_cells_bytes": str(rows),
+            "carrier_inner_sign_storage_id": "202",
+            "carrier_inner_sign_bytes": str(4 * rows),
+            "carrier_magnitude_storage_id": "203",
+            "carrier_magnitude_bytes": str(8 * rows),
+            "carrier_resident_bytes": str(13 * rows),
+            "carrier_allocations": "3",
+            "producer_persistent_write_bytes": str(13 * rows),
+            "producer_logical_movement_bytes": str(33 * rows),
+            "producer_topology_read_bytes": "0",
+            "shared_source_row_scans": "1",
+            "additional_source_row_scans": "0",
+            "member_source_upload_bytes": "0",
+            "complete_overwrite": "true",
+        }
+        complete = {
+            "cycles": str(rows),
+            "addresses": str(addresses),
+            "stages": str(stages),
+            "requested": "address_major",
+            "realized_route": "address_major",
+            "fallback_reason": "none",
+            "source_generation": str(source["source_generation"]),
+            "source_completion_serial": str(source["completion_serial"]),
+            "source_rows_storage_id": str(source["row_allocation_identity"]),
+            "source_rows_bytes": str(40 * rows),
+            "source_device_registry_id": str(source["device_registry_id"]),
+            "carrier_cells_storage_id": "201",
+            "carrier_cells_bytes": str(rows),
+            "carrier_inner_sign_storage_id": "202",
+            "carrier_inner_sign_bytes": str(4 * rows),
+            "carrier_magnitude_storage_id": "203",
+            "carrier_magnitude_bytes": str(8 * rows),
+            "carrier_resident_bytes": str(13 * rows),
+            "producer_persistent_write_bytes": str(13 * rows),
+            "producer_logical_movement_bytes": str(33 * rows),
+            "producer_topology_read_bytes": "0",
+            "member_carrier_owned_bytes": "0",
+            "member_source_scans": "0",
+            "member_source_upload_bytes": "0",
+            "equality_bytes": str(equality_bytes),
+            "partial_bytes": str(partial_bytes),
+            "output_readback_bytes": str(output_bytes),
+            "member_owned_bytes": str(equality_bytes + partial_bytes + output_bytes),
+            "command_buffers": "1",
+            "waits": "1",
+            "worker_dispatches": "1",
+            "reducer_dispatches": "1",
+            "output_fields": str(stages * addresses),
+            "submit_ns": "100",
+            "overlap_ns": "200",
+            "join_ns": "300",
+            "resident_wall_ns": "600",
+            "gpu_active_ns": "500",
+            "completed_before_join": "false",
+            "complete_overwrite": "true",
+            "carrier_released": "true",
+        }
+        events.extend(
+            [
+                event(
+                    "MetalBytecodeReadRafAddress::carrier_publish",
+                    10.0,
+                    1.0,
+                    publish,
+                ),
+                event(
+                    "MetalBytecodeReadRafAddress::route",
+                    210.0,
+                    480.0,
+                    {
+                        "cycles": str(rows),
+                        "requested": "address_major",
+                        "realized_route": "address_major",
+                        "fallback_reason": "none",
+                    },
+                ),
+                event(
+                    "MetalBytecodeReadRafAddress::address_major_prepare",
+                    220.0,
+                    80.0,
+                ),
+                event(
+                    "MetalBytecodeReadRafAddress::address_major_join",
+                    320.0,
+                    350.0,
+                ),
+                event(
+                    "MetalBytecodeReadRafAddress::address_major_complete",
+                    400.0,
+                    1.0,
+                    complete,
+                ),
+            ]
+        )
+    return events
+
+
 def complete_instruction_input_trace(
     log_n: int,
     backend: str,
@@ -2150,6 +2315,107 @@ class MetalPiopEvalTests(unittest.TestCase):
         )
         self.assertTrue(metrics["outer_product_family_decision"]["clears"])
 
+    def test_bytecode_address_charged_gate_rejects_moved_work(self) -> None:
+        base = {
+            "cpu_us": 10_000.0,
+            "metal_us": 2_000.0,
+            "cpu_prepare_us": 900.0,
+            "metal_prepare_us": 1_400.0,
+            "cpu_instruction_ra_us": 700.0,
+            "metal_instruction_ra_us": 100.0,
+            "cpu_bytecode_us": 1_000.0,
+            "metal_bytecode_us": 200.0,
+            "cpu_bytecode_address_us": 6_000.0,
+            "metal_bytecode_address_us": 1_000.0,
+            "cpu_instruction_input_us": 800.0,
+            "metal_instruction_input_us": 160.0,
+            "cpu_registers_claim_us": 800.0,
+            "metal_registers_claim_us": 160.0,
+            "cpu_instruction_read_raf_us": 800.0,
+            "metal_instruction_read_raf_us": 160.0,
+            "cpu_booleanity_address_us": 1_000.0,
+            "metal_booleanity_address_us": 200.0,
+            "cpu_hamming_weight_us": 900.0,
+            "metal_hamming_weight_us": 180.0,
+            "cpu_hamming_weight_service_us": 990.0,
+            "metal_hamming_weight_service_us": 180.0,
+        }
+        pairs = [
+            {
+                **base,
+                "order": ["optimized", "metal"]
+                if index % 2 == 0
+                else ["metal", "optimized"],
+            }
+            for index in range(5)
+        ]
+        metrics = metal_piop_eval.summarize_pairs(pairs)
+        self.assertEqual(metrics["bytecode_read_raf_address_speedup"], 6.0)
+        self.assertEqual(
+            metrics["paired_bytecode_read_raf_address_speedups"], [6.0] * 5
+        )
+        self.assertEqual(
+            metrics["cpu_bytecode_read_raf_address_ms_samples"], [6.0] * 5
+        )
+        self.assertEqual(
+            metrics["metal_bytecode_read_raf_address_ms_samples"], [1.0] * 5
+        )
+        self.assertTrue(metrics["bytecode_read_raf_address_decision"]["clears"])
+        self.assertEqual(metrics["bytecode_read_raf_address_charged_speedup"], 4.0)
+        self.assertEqual(
+            metrics[
+                "bytecode_read_raf_address_backend_witness_prepare_delta_ms_samples"
+            ],
+            [0.5] * 5,
+        )
+        self.assertEqual(
+            metrics[
+                "bytecode_read_raf_address_charged_producer_delta_ms_samples"
+            ],
+            [0.5] * 5,
+        )
+        self.assertEqual(
+            metrics["charged_metal_address_ms_samples"],
+            [1.5] * 5,
+        )
+        self.assertFalse(
+            metrics["bytecode_read_raf_address_charged_decision"]["clears"]
+        )
+
+        zero_or_negative = copy.deepcopy(pairs)
+        for index, pair in enumerate(zero_or_negative):
+            pair["cpu_prepare_us"] = 1_000.0
+            pair["metal_prepare_us"] = 1_000.0 if index % 2 == 0 else 900.0
+        uncharged = metal_piop_eval.summarize_pairs(zero_or_negative)
+        self.assertEqual(
+            uncharged[
+                "bytecode_read_raf_address_backend_witness_prepare_delta_ms_samples"
+            ],
+            [0.0, -0.1, 0.0, -0.1, 0.0],
+        )
+        self.assertEqual(
+            uncharged[
+                "bytecode_read_raf_address_charged_producer_delta_ms_samples"
+            ],
+            [0.0] * 5,
+        )
+        self.assertEqual(
+            uncharged["charged_metal_address_ms_samples"],
+            [1.0] * 5,
+        )
+        self.assertEqual(
+            uncharged["paired_bytecode_read_raf_address_charged_speedups"],
+            [6.0] * 5,
+        )
+        self.assertTrue(
+            uncharged["bytecode_read_raf_address_charged_decision"]["clears"]
+        )
+
+        incomplete = copy.deepcopy(pairs)
+        incomplete[0].pop("metal_bytecode_address_us")
+        with self.assertRaisesRegex(ValueError, "incomplete Bytecode address"):
+            metal_piop_eval.summarize_pairs(incomplete)
+
     def test_validates_target_bytecode_records(self) -> None:
         optimized = "\n".join(
             [
@@ -2184,6 +2450,35 @@ class MetalPiopEvalTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "exactly one"):
             metal_piop_eval.validate_bytecode_stdout(metal + "\n" + metal, "metal", 26)
+
+    def test_validates_bytecode_address_runtime_record(self) -> None:
+        record = (
+            "BYTECODE_ADDRESS_METAL_CONFIG backend=metal "
+            "implementation=address-major trace_cutoff=67108864 outer_tiles=8"
+        )
+        self.assertIsNone(
+            metal_piop_eval.validate_bytecode_address_stdout(
+                "", "optimized", "address-major", 8, 26
+            )
+        )
+        self.assertEqual(
+            metal_piop_eval.validate_bytecode_address_stdout(
+                record, "metal", "address-major", 8, 26
+            ),
+            {
+                "implementation": "address-major",
+                "trace_cutoff": 1 << 26,
+                "outer_tiles": 8,
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "unexpected"):
+            metal_piop_eval.validate_bytecode_address_stdout(
+                record, "metal", "address-major", 4, 26
+            )
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            metal_piop_eval.validate_bytecode_address_stdout(
+                record + "\n" + record, "metal", "address-major", 8, 26
+            )
 
     def test_validates_instruction_input_runtime_record(self) -> None:
         record = "INSTRUCTION_INPUT_METAL_CONFIG backend=metal trace_cutoff=33554432 cutoff=65536 native_message_threads=256 native_transition_threads=128 dense_transition_threads=128 storage_initialization=minimal dense_storage_mode=Owned native_primer=async"
@@ -2829,6 +3124,176 @@ class MetalPiopEvalTests(unittest.TestCase):
             metal_piop_eval.bytecode_member_breakdown(
                 complete_bytecode_trace(26, "metal"), "optimized", 26
             )
+
+    def test_requires_exact_bytecode_address_major_route_and_resources(self) -> None:
+        optimized = metal_piop_eval.bytecode_address_member_breakdown(
+            complete_bytecode_address_trace(26, "optimized"),
+            "optimized",
+            26,
+            "address-major",
+            8,
+            26,
+        )
+        self.assertFalse(any(optimized["metal_counts"].values()))
+        self.assertIsNone(optimized["resource_observation"])
+
+        observed = metal_piop_eval.bytecode_address_member_breakdown(
+            complete_bytecode_address_trace(26, "metal"),
+            "metal",
+            26,
+            "address-major",
+            8,
+            26,
+            bytecode_address_stage1_source(26),
+        )
+        self.assertEqual(observed["outer_counts"]["prove_round"], 13)
+        self.assertEqual(observed["metal_counts"]["address_major_complete"], 1)
+        self.assertEqual(observed["components"]["member_us"], 1_660.0)
+        resources = observed["resource_observation"]
+        assert resources is not None
+        self.assertEqual(
+            resources["carrier_publish"]["producer_persistent_write_bytes"],
+            13 * (1 << 26),
+        )
+        self.assertEqual(
+            resources["address_major_complete"]["member_carrier_owned_bytes"], 0
+        )
+        self.assertEqual(resources["address_major_complete"]["member_source_scans"], 0)
+
+        observed_log27 = metal_piop_eval.bytecode_address_member_breakdown(
+            complete_bytecode_address_trace(27, "metal"),
+            "metal",
+            27,
+            "address-major",
+            8,
+            26,
+            bytecode_address_stage1_source(27),
+        )
+        log27_resources = observed_log27["resource_observation"]
+        assert log27_resources is not None
+        self.assertEqual(
+            log27_resources["address_major_complete"]["source_rows_bytes"],
+            40 * (1 << 27),
+        )
+        self.assertEqual(
+            log27_resources["address_major_complete"]["carrier_resident_bytes"],
+            13 * (1 << 27),
+        )
+
+    def test_bytecode_address_cpu_route_remains_a_diagnostic_choice(self) -> None:
+        events = complete_bytecode_address_trace(26, "optimized")
+        events.append(
+            {
+                "name": "MetalBytecodeReadRafAddress::route",
+                "ph": "X",
+                "pid": 1,
+                "tid": 0,
+                "ts": 210.0,
+                "dur": 480.0,
+                "args": {
+                    "cycles": str(1 << 26),
+                    "requested": "cpu",
+                    "realized_route": "cpu",
+                    "fallback_reason": "configured_cpu",
+                },
+            }
+        )
+        observed = metal_piop_eval.bytecode_address_member_breakdown(
+            events, "metal", 26, "cpu", 8, 26
+        )
+        self.assertEqual(observed["metal_counts"]["route"], 1)
+        self.assertEqual(observed["route_observation"]["realized_route"], "cpu")
+        self.assertIsNone(observed["resource_observation"])
+
+    def test_bytecode_address_major_mutations_fail_closed(self) -> None:
+        source = bytecode_address_stage1_source(26)
+
+        wrong_route = complete_bytecode_address_trace(26, "metal")
+        route = next(
+            event
+            for event in wrong_route
+            if event["name"] == "MetalBytecodeReadRafAddress::route"
+        )
+        route["args"]["realized_route"] = "cpu"
+
+        missing_complete = complete_bytecode_address_trace(26, "metal")
+        missing_complete.remove(
+            next(
+                event
+                for event in missing_complete
+                if event["name"]
+                == "MetalBytecodeReadRafAddress::address_major_complete"
+            )
+        )
+
+        wrong_carrier = complete_bytecode_address_trace(26, "metal")
+        complete = next(
+            event
+            for event in wrong_carrier
+            if event["name"]
+            == "MetalBytecodeReadRafAddress::address_major_complete"
+        )
+        complete["args"]["carrier_cells_storage_id"] = "999"
+
+        wrong_source = complete_bytecode_address_trace(26, "metal")
+        publish = next(
+            event
+            for event in wrong_source
+            if event["name"] == "MetalBytecodeReadRafAddress::carrier_publish"
+        )
+        publish["args"]["source_generation"] = "8"
+
+        hidden_scan = complete_bytecode_address_trace(26, "metal")
+        complete = next(
+            event
+            for event in hidden_scan
+            if event["name"]
+            == "MetalBytecodeReadRafAddress::address_major_complete"
+        )
+        complete["args"]["member_source_scans"] = "1"
+
+        wrong_movement = complete_bytecode_address_trace(26, "metal")
+        publish = next(
+            event
+            for event in wrong_movement
+            if event["name"] == "MetalBytecodeReadRafAddress::carrier_publish"
+        )
+        publish["args"]["producer_logical_movement_bytes"] = str(
+            33 * (1 << 26) + 1
+        )
+
+        atom_path = complete_bytecode_address_trace(26, "metal")
+        atom_path.append(
+            {
+                "name": "MetalBytecodeReadRafAddress::atom_prepare",
+                "ph": "X",
+                "pid": 1,
+                "tid": 0,
+                "ts": 230.0,
+                "dur": 1.0,
+            }
+        )
+
+        for label, events, message in (
+            ("fallback", wrong_route, "fail-closed route"),
+            ("completion", missing_complete, "span counts"),
+            ("carrier identity", wrong_carrier, "completion ledger"),
+            ("source provenance", wrong_source, "Stage1 source"),
+            ("hidden scan", hidden_scan, "completion ledger"),
+            ("logical movement", wrong_movement, "publication ledger"),
+            ("atom path", atom_path, "forbidden Atom path"),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_piop_eval.bytecode_address_member_breakdown(
+                        events,
+                        "metal",
+                        26,
+                        "address-major",
+                        8,
+                        26,
+                        source,
+                    )
 
     def test_requires_exact_instruction_input_lifecycle_and_resources(self) -> None:
         optimized = metal_piop_eval.instruction_input_member_breakdown(
@@ -3586,6 +4051,28 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(
             metal_piop_eval.local_kernel_primary_us(result, "InstructionReadRaf"),
             12_500.0,
+        )
+
+    def test_bytecode_address_phase_is_a_local_kernel(self) -> None:
+        self.assertEqual(
+            metal_piop_eval.LOCAL_KERNELS["BytecodeReadRafAddressPhase"],
+            {
+                "name": "BytecodeReadRafAddressPhase",
+                "metric": "bytecode_read_raf_address_speedup",
+                "paired_metric": "paired_bytecode_read_raf_address_speedups",
+                "backend_prefix": "MetalBytecodeReadRafAddress::",
+            },
+        )
+        result = {
+            "bytecode_address_member": {
+                "components": {"member_us": 1_250.0}
+            }
+        }
+        self.assertEqual(
+            metal_piop_eval.local_kernel_primary_us(
+                result, "BytecodeReadRafAddressPhase"
+            ),
+            1_250.0,
         )
 
     def test_instruction_read_raf_stage1_route_is_exact(self) -> None:

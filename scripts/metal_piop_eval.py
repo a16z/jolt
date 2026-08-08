@@ -43,6 +43,29 @@ BYTECODE_METAL_PHASES = (
     "invalid_round",
 )
 BYTECODE_MIN_SPEEDUP = 5.0
+BYTECODE_ADDRESS_KERNEL = "BytecodeReadRafAddressPhase"
+BYTECODE_ADDRESS_COMPONENTS = (
+    "prepare",
+    "prove_round",
+    "finish_rounds",
+    "output_claims",
+)
+BYTECODE_ADDRESS_MIN_SPEEDUP = 5.0
+METAL_BYTECODE_ADDRESS_ROUTE = "MetalBytecodeReadRafAddress::route"
+METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH = (
+    "MetalBytecodeReadRafAddress::carrier_publish"
+)
+METAL_BYTECODE_ADDRESS_PREPARE = (
+    "MetalBytecodeReadRafAddress::address_major_prepare"
+)
+METAL_BYTECODE_ADDRESS_JOIN = "MetalBytecodeReadRafAddress::address_major_join"
+METAL_BYTECODE_ADDRESS_COMPLETE = (
+    "MetalBytecodeReadRafAddress::address_major_complete"
+)
+METAL_BYTECODE_ADDRESS_SHADOW_PREPARE = (
+    "MetalBytecodeReadRafAddress::shadow_prepare"
+)
+METAL_BYTECODE_ADDRESS_SHADOW_JOIN = "MetalBytecodeReadRafAddress::shadow_join"
 INSTRUCTION_INPUT_KERNEL = "InstructionInput"
 INSTRUCTION_INPUT_COMPONENTS = ("prepare", "prove_round", "finish_rounds", "output_claims")
 INSTRUCTION_INPUT_METAL_PHASES = (
@@ -170,6 +193,12 @@ METAL_INSTRUCTION_INPUT_ROWS_STAGE1_HANDOFF = (
 METAL_OUTER_REMAINDER_ROW_RELEASE = "MetalOuterRemainder::row_release"
 PRODUCTION_PAIRS = 5
 LOCAL_KERNELS = {
+    BYTECODE_ADDRESS_KERNEL: {
+        "name": BYTECODE_ADDRESS_KERNEL,
+        "metric": "bytecode_read_raf_address_speedup",
+        "paired_metric": "paired_bytecode_read_raf_address_speedups",
+        "backend_prefix": "MetalBytecodeReadRafAddress::",
+    },
     INSTRUCTION_READ_RAF_KERNEL: {
         "name": INSTRUCTION_READ_RAF_KERNEL,
         "metric": "instruction_read_raf_speedup",
@@ -281,6 +310,12 @@ BYTECODE_METAL_CONFIG_RE = re.compile(
     r"message_threads=(?P<message_threads>\d+) "
     r"transition_threads=(?P<transition_threads>\d+) "
     r"max_threadgroups=(?P<max_threadgroups>\d+)$"
+)
+BYTECODE_ADDRESS_METAL_CONFIG_RE = re.compile(
+    r"^BYTECODE_ADDRESS_METAL_CONFIG backend=metal "
+    r"implementation=(?P<implementation>cpu|csr-shadow|address-major-shadow|address-major) "
+    r"trace_cutoff=(?P<trace_cutoff>\d+) "
+    r"outer_tiles=(?P<outer_tiles>\d+)$"
 )
 INSTRUCTION_INPUT_METAL_CONFIG_RE = re.compile(
     r"^INSTRUCTION_INPUT_METAL_CONFIG backend=metal "
@@ -605,6 +640,44 @@ def validate_bytecode_stdout(
     else:
         metal_config = None
     return {"relation": config, "metal_runtime": metal_config}
+
+
+def validate_bytecode_address_stdout(
+    stdout: str,
+    backend: str,
+    implementation: str,
+    outer_tiles: int,
+    trace_cutoff_log2: int,
+) -> Optional[dict[str, Any]]:
+    configs = [
+        match
+        for line in stdout.splitlines()
+        if (match := BYTECODE_ADDRESS_METAL_CONFIG_RE.fullmatch(line)) is not None
+    ]
+    if backend == "optimized":
+        if configs:
+            raise ValueError(
+                "optimized evaluator emitted a Bytecode address Metal config"
+            )
+        return None
+    if len(configs) != 1:
+        raise ValueError(
+            "Metal evaluator must emit exactly one Bytecode address Metal config"
+        )
+    raw = configs[0].groupdict()
+    config = {
+        "implementation": raw["implementation"],
+        "trace_cutoff": int(raw["trace_cutoff"]),
+        "outer_tiles": int(raw["outer_tiles"]),
+    }
+    expected = {
+        "implementation": implementation,
+        "trace_cutoff": 1 << trace_cutoff_log2,
+        "outer_tiles": outer_tiles,
+    }
+    if config != expected:
+        raise ValueError(f"unexpected Bytecode address Metal config: {config}")
+    return config
 
 
 def validate_instruction_input_stdout(
@@ -1050,6 +1123,485 @@ def bytecode_member_breakdown(
             if backend == "metal"
             else None
         ),
+    }
+
+
+def bytecode_address_member_breakdown(
+    events: list[dict[str, Any]],
+    backend: str,
+    log_n: int,
+    implementation: str = "cpu",
+    outer_tiles: int = 8,
+    trace_cutoff_log2: int = 26,
+    stage1_source: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    implementations = {"cpu", "csr-shadow", "address-major-shadow", "address-major"}
+    if backend not in {"optimized", "metal"}:
+        raise ValueError(f"unsupported Bytecode address backend {backend!r}")
+    if implementation not in implementations:
+        raise ValueError(f"unsupported Bytecode address implementation {implementation!r}")
+    if log_n < 15 or outer_tiles <= 0 or trace_cutoff_log2 < 0:
+        raise ValueError("invalid Bytecode address evaluator geometry")
+
+    outer_names = {
+        f"{BYTECODE_ADDRESS_KERNEL}::{component}"
+        for component in BYTECODE_ADDRESS_COMPONENTS
+    }
+    metal_names = {
+        METAL_BYTECODE_ADDRESS_ROUTE,
+        METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH,
+        METAL_BYTECODE_ADDRESS_PREPARE,
+        METAL_BYTECODE_ADDRESS_JOIN,
+        METAL_BYTECODE_ADDRESS_COMPLETE,
+        METAL_BYTECODE_ADDRESS_SHADOW_PREPARE,
+        METAL_BYTECODE_ADDRESS_SHADOW_JOIN,
+    }
+    supporting_names = {PIOP_SPAN, BACKEND_WITNESS_PREP_SPAN}
+    intervals = strict_named_intervals(
+        events, outer_names | metal_names | supporting_names
+    )
+    if len(intervals[PIOP_SPAN]) != 1 or len(
+        intervals[BACKEND_WITNESS_PREP_SPAN]
+    ) != 1:
+        raise ValueError(
+            "Bytecode address requires one PIOP and backend witness-prepare span"
+        )
+    piop = intervals[PIOP_SPAN][0]
+    witness_prepare = intervals[BACKEND_WITNESS_PREP_SPAN][0]
+    if witness_prepare[1] > piop[0]:
+        raise ValueError("Bytecode address witness preparation overlaps PIOP")
+
+    by_component = {
+        component: sorted(intervals[f"{BYTECODE_ADDRESS_KERNEL}::{component}"])
+        for component in BYTECODE_ADDRESS_COMPONENTS
+    }
+    outer_counts = {
+        component: len(component_intervals)
+        for component, component_intervals in by_component.items()
+    }
+    expected_outer_counts = {
+        "prepare": 1,
+        "prove_round": 13,
+        "finish_rounds": 1,
+        "output_claims": 1,
+    }
+    if outer_counts != expected_outer_counts:
+        raise ValueError(
+            f"Bytecode address member span counts {outer_counts}, "
+            f"expected {expected_outer_counts}"
+        )
+    prepare = by_component["prepare"][0]
+    rounds = by_component["prove_round"]
+    finish = by_component["finish_rounds"][0]
+    output = by_component["output_claims"][0]
+    ordered = [prepare, *rounds, finish, output]
+    if any(start < piop[0] or end > piop[1] for start, end in ordered):
+        raise ValueError("a Bytecode address member span lies outside PIOP")
+    if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError("Bytecode address member spans overlap or are out of order")
+
+    components = {
+        "prepare_us": interval_duration_us(prepare),
+        "rounds_us": [interval_duration_us(interval) for interval in rounds],
+        "finish_us": interval_duration_us(finish),
+        "output_claims_us": interval_duration_us(output),
+    }
+    components["rounds_total_us"] = sum(components["rounds_us"])
+    components["member_us"] = (
+        components["prepare_us"]
+        + components["rounds_total_us"]
+        + components["finish_us"]
+        + components["output_claims_us"]
+    )
+    if any(
+        not math.isfinite(float(components[field]))
+        or float(components[field]) <= 0.0
+        for field in (
+            "prepare_us",
+            "rounds_total_us",
+            "finish_us",
+            "output_claims_us",
+            "member_us",
+        )
+    ):
+        raise ValueError("Bytecode address has a non-positive member duration")
+
+    all_span_names = {name for name, _, _ in span_intervals_us(events)}
+    atom_names = {
+        name
+        for name in all_span_names
+        if name.startswith("Metal")
+        and "bytecode" in name.lower()
+        and "address" in name.lower()
+        and "atom" in name.lower()
+    }
+    if atom_names:
+        raise ValueError(
+            f"Bytecode address trace exercised a forbidden Atom path: {sorted(atom_names)}"
+        )
+    observed_metal_names = {
+        name
+        for name in all_span_names
+        if name.startswith("MetalBytecodeReadRafAddress::")
+    }
+    unknown_metal_names = observed_metal_names - metal_names
+    if unknown_metal_names:
+        raise ValueError(
+            "Bytecode address trace contains legacy or unknown Metal phases: "
+            f"{sorted(unknown_metal_names)}"
+        )
+    metal_counts = {
+        name.rsplit("::", 1)[-1]: len(intervals[name]) for name in metal_names
+    }
+    if backend == "optimized":
+        if any(metal_counts.values()):
+            raise ValueError("Bytecode address CPU control unexpectedly exercised Metal")
+        return {
+            "components": components,
+            "outer_counts": outer_counts,
+            "metal_counts": metal_counts,
+            "route_observation": None,
+            "resource_observation": None,
+        }
+
+    expected_counts = {
+        "route": 1,
+        "carrier_publish": 0,
+        "address_major_prepare": 0,
+        "address_major_join": 0,
+        "address_major_complete": 0,
+        "shadow_prepare": 0,
+        "shadow_join": 0,
+    }
+    if implementation == "address-major":
+        expected_counts.update(
+            {
+                "carrier_publish": 1,
+                "address_major_prepare": 1,
+                "address_major_join": 1,
+                "address_major_complete": 1,
+            }
+        )
+    elif implementation == "address-major-shadow":
+        expected_counts.update({"shadow_prepare": 1, "address_major_join": 1})
+    elif implementation == "csr-shadow":
+        expected_counts.update({"shadow_prepare": 1, "shadow_join": 1})
+    if metal_counts != expected_counts:
+        raise ValueError(
+            f"Bytecode address Metal span counts {metal_counts}, expected {expected_counts}"
+        )
+
+    route_fields = {"cycles", "requested", "realized_route", "fallback_reason"}
+    raw_route = exact_span_args(events, METAL_BYTECODE_ADDRESS_ROUTE, route_fields)
+    route = {
+        "cycles": nonnegative_trace_integer(raw_route["cycles"], "cycles"),
+        "requested": trace_string(raw_route["requested"], "requested"),
+        "realized_route": trace_string(
+            raw_route["realized_route"], "realized_route"
+        ),
+        "fallback_reason": trace_string(
+            raw_route["fallback_reason"], "fallback_reason"
+        ),
+    }
+    rows = 1 << log_n
+    requested = implementation.replace("-", "_")
+    expected_route = {
+        "cycles": rows,
+        "requested": requested,
+        "realized_route": "address_major" if implementation == "address-major" else "cpu",
+        "fallback_reason": (
+            "none"
+            if implementation == "address-major"
+            else "configured_cpu"
+            if implementation == "cpu"
+            else "shadow_only"
+        ),
+    }
+    if log_n < trace_cutoff_log2 and implementation != "cpu":
+        expected_route.update(
+            {"realized_route": "cpu", "fallback_reason": "trace_cutoff"}
+        )
+    if route != expected_route:
+        raise ValueError(
+            f"Bytecode address route is not the configured fail-closed route: {route}"
+        )
+    route_interval = intervals[METAL_BYTECODE_ADDRESS_ROUTE][0]
+    require_contained(route_interval, prepare, "Bytecode address route")
+
+    if implementation == "cpu":
+        return {
+            "components": components,
+            "outer_counts": outer_counts,
+            "metal_counts": metal_counts,
+            "route_observation": route,
+            "resource_observation": None,
+        }
+    if log_n < trace_cutoff_log2:
+        raise ValueError("Bytecode address configured route fell back at the trace cutoff")
+
+    inner_prepare = intervals[
+        METAL_BYTECODE_ADDRESS_PREPARE
+        if implementation == "address-major"
+        else METAL_BYTECODE_ADDRESS_SHADOW_PREPARE
+    ][0]
+    require_contained(inner_prepare, route_interval, "Bytecode address inner prepare")
+    if implementation == "csr-shadow":
+        inner_join = intervals[METAL_BYTECODE_ADDRESS_SHADOW_JOIN][0]
+    else:
+        inner_join = intervals[METAL_BYTECODE_ADDRESS_JOIN][0]
+    require_contained(inner_join, route_interval, "Bytecode address join")
+    if inner_prepare[1] > inner_join[0]:
+        raise ValueError("Bytecode address prepare and join overlap or are out of order")
+
+    if implementation != "address-major":
+        return {
+            "components": components,
+            "outer_counts": outer_counts,
+            "metal_counts": metal_counts,
+            "route_observation": route,
+            "resource_observation": None,
+        }
+
+    publish_interval = intervals[METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH][0]
+    complete_interval = intervals[METAL_BYTECODE_ADDRESS_COMPLETE][0]
+    require_contained(
+        publish_interval,
+        witness_prepare,
+        "Bytecode address carrier publication",
+    )
+    require_contained(complete_interval, inner_join, "Bytecode address completion")
+    if publish_interval[1] > piop[0]:
+        raise ValueError("Bytecode address carrier publication extends into PIOP")
+
+    publish_fields = {
+        "cycles",
+        "source_generation",
+        "source_completion_serial",
+        "source_rows_storage_id",
+        "source_claim_storage_id",
+        "source_device_registry_id",
+        "source_windows",
+        "carrier_cells_storage_id",
+        "carrier_cells_bytes",
+        "carrier_inner_sign_storage_id",
+        "carrier_inner_sign_bytes",
+        "carrier_magnitude_storage_id",
+        "carrier_magnitude_bytes",
+        "carrier_resident_bytes",
+        "carrier_allocations",
+        "producer_persistent_write_bytes",
+        "producer_logical_movement_bytes",
+        "producer_topology_read_bytes",
+        "shared_source_row_scans",
+        "additional_source_row_scans",
+        "member_source_upload_bytes",
+        "complete_overwrite",
+    }
+    raw_publish = exact_span_args(
+        events, METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH, publish_fields
+    )
+    publish = {
+        field: nonnegative_trace_integer(value, f"carrier publication {field}")
+        for field, value in raw_publish.items()
+        if field != "complete_overwrite"
+    }
+    publish["complete_overwrite"] = trace_boolean(
+        raw_publish["complete_overwrite"]
+    )
+    expected_publish = {
+        "cycles": rows,
+        "source_windows": rows,
+        "carrier_cells_bytes": rows,
+        "carrier_inner_sign_bytes": 4 * rows,
+        "carrier_magnitude_bytes": 8 * rows,
+        "carrier_resident_bytes": 13 * rows,
+        "carrier_allocations": 3,
+        "producer_persistent_write_bytes": 13 * rows,
+        "producer_logical_movement_bytes": 33 * rows,
+        "producer_topology_read_bytes": 0,
+        "shared_source_row_scans": 1,
+        "additional_source_row_scans": 0,
+        "member_source_upload_bytes": 0,
+        "complete_overwrite": True,
+    }
+    if any(publish[field] != value for field, value in expected_publish.items()):
+        raise ValueError(
+            f"Bytecode address carrier publication ledger is invalid: {publish}"
+        )
+    source_ids = [
+        publish["source_rows_storage_id"],
+        publish["source_claim_storage_id"],
+    ]
+    carrier_ids = [
+        publish["carrier_cells_storage_id"],
+        publish["carrier_inner_sign_storage_id"],
+        publish["carrier_magnitude_storage_id"],
+    ]
+    if (
+        any(identity <= 0 for identity in source_ids + carrier_ids)
+        or len(set(source_ids)) != len(source_ids)
+        or len(set(carrier_ids)) != len(carrier_ids)
+        or set(source_ids) & set(carrier_ids)
+        or publish["source_generation"] <= 0
+        or publish["source_completion_serial"] <= 0
+        or publish["source_device_registry_id"] <= 0
+    ):
+        raise ValueError("Bytecode address carrier publication provenance is invalid")
+    if stage1_source is None:
+        raise ValueError("Bytecode address AddressMajor route is missing its Stage1 source")
+    source_match = {
+        "source_generation": stage1_source["source_generation"],
+        "source_completion_serial": stage1_source["completion_serial"],
+        "source_rows_storage_id": stage1_source["row_allocation_identity"],
+        "source_claim_storage_id": stage1_source["claim_allocation_identity"],
+        "source_device_registry_id": stage1_source["device_registry_id"],
+        "source_windows": stage1_source["source_windows"],
+    }
+    if any(publish[field] != value for field, value in source_match.items()):
+        raise ValueError("Bytecode address carrier does not match its Stage1 source")
+
+    complete_fields = {
+        "cycles",
+        "addresses",
+        "stages",
+        "requested",
+        "realized_route",
+        "fallback_reason",
+        "source_generation",
+        "source_completion_serial",
+        "source_rows_storage_id",
+        "source_rows_bytes",
+        "source_device_registry_id",
+        "carrier_cells_storage_id",
+        "carrier_cells_bytes",
+        "carrier_inner_sign_storage_id",
+        "carrier_inner_sign_bytes",
+        "carrier_magnitude_storage_id",
+        "carrier_magnitude_bytes",
+        "carrier_resident_bytes",
+        "producer_persistent_write_bytes",
+        "producer_logical_movement_bytes",
+        "producer_topology_read_bytes",
+        "member_carrier_owned_bytes",
+        "member_source_scans",
+        "member_source_upload_bytes",
+        "equality_bytes",
+        "partial_bytes",
+        "output_readback_bytes",
+        "member_owned_bytes",
+        "command_buffers",
+        "waits",
+        "worker_dispatches",
+        "reducer_dispatches",
+        "output_fields",
+        "submit_ns",
+        "overlap_ns",
+        "join_ns",
+        "resident_wall_ns",
+        "gpu_active_ns",
+        "completed_before_join",
+        "complete_overwrite",
+        "carrier_released",
+    }
+    raw_complete = exact_span_args(
+        events, METAL_BYTECODE_ADDRESS_COMPLETE, complete_fields
+    )
+    string_fields = {"requested", "realized_route", "fallback_reason"}
+    boolean_fields = {
+        "completed_before_join",
+        "complete_overwrite",
+        "carrier_released",
+    }
+    complete = {
+        field: nonnegative_trace_integer(value, f"address completion {field}")
+        for field, value in raw_complete.items()
+        if field not in string_fields | boolean_fields
+    }
+    complete.update(
+        {
+            field: trace_string(raw_complete[field], field)
+            for field in string_fields
+        }
+    )
+    complete.update(
+        {field: trace_boolean(raw_complete[field]) for field in boolean_fields}
+    )
+    addresses = 1 << 13
+    stages = 9
+    inner = 1 << 15
+    outer = rows // inner
+    equality_bytes = 16 * stages * (inner + outer)
+    partial_bytes = 16 * stages * addresses * outer_tiles
+    output_bytes = 16 * stages * addresses
+    expected_complete = {
+        "cycles": rows,
+        "addresses": addresses,
+        "stages": stages,
+        "requested": "address_major",
+        "realized_route": "address_major",
+        "fallback_reason": "none",
+        "source_generation": publish["source_generation"],
+        "source_completion_serial": publish["source_completion_serial"],
+        "source_rows_storage_id": publish["source_rows_storage_id"],
+        "source_rows_bytes": 40 * rows,
+        "source_device_registry_id": publish["source_device_registry_id"],
+        "carrier_cells_storage_id": publish["carrier_cells_storage_id"],
+        "carrier_cells_bytes": rows,
+        "carrier_inner_sign_storage_id": publish[
+            "carrier_inner_sign_storage_id"
+        ],
+        "carrier_inner_sign_bytes": 4 * rows,
+        "carrier_magnitude_storage_id": publish["carrier_magnitude_storage_id"],
+        "carrier_magnitude_bytes": 8 * rows,
+        "carrier_resident_bytes": 13 * rows,
+        "producer_persistent_write_bytes": 13 * rows,
+        "producer_logical_movement_bytes": 33 * rows,
+        "producer_topology_read_bytes": 0,
+        "member_carrier_owned_bytes": 0,
+        "member_source_scans": 0,
+        "member_source_upload_bytes": 0,
+        "equality_bytes": equality_bytes,
+        "partial_bytes": partial_bytes,
+        "output_readback_bytes": output_bytes,
+        "member_owned_bytes": equality_bytes + partial_bytes + output_bytes,
+        "command_buffers": 1,
+        "waits": 1,
+        "worker_dispatches": 1,
+        "reducer_dispatches": 1,
+        "output_fields": stages * addresses,
+        "complete_overwrite": True,
+        "carrier_released": True,
+    }
+    if any(complete[field] != value for field, value in expected_complete.items()):
+        raise ValueError(
+            f"Bytecode address AddressMajor completion ledger is invalid: {complete}"
+        )
+    if complete["completed_before_join"] is None:
+        raise ValueError("Bytecode address completion status is invalid")
+    if (
+        complete["submit_ns"] <= 0
+        or complete["resident_wall_ns"] <= 0
+        or complete["gpu_active_ns"] <= 0
+        or complete["gpu_active_ns"] > complete["resident_wall_ns"]
+        or abs(
+            complete["resident_wall_ns"]
+            - complete["submit_ns"]
+            - complete["overlap_ns"]
+            - complete["join_ns"]
+        )
+        > 100_000
+    ):
+        raise ValueError("Bytecode address AddressMajor timing ledger is invalid")
+
+    return {
+        "components": components,
+        "outer_counts": outer_counts,
+        "metal_counts": metal_counts,
+        "route_observation": route,
+        "resource_observation": {
+            "carrier_publish": publish,
+            "address_major_complete": complete,
+        },
     }
 
 
@@ -5504,6 +6056,21 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError(
                 f"pair {index} is missing required member timing fields: {sorted(missing)}"
             )
+    bytecode_address_fields = {
+        "cpu_bytecode_address_us",
+        "metal_bytecode_address_us",
+    }
+    bytecode_address_presence = []
+    for index, pair in enumerate(pairs, 1):
+        observed = bytecode_address_fields & pair.keys()
+        if observed and observed != bytecode_address_fields:
+            raise ValueError(
+                f"pair {index} has an incomplete Bytecode address timing record"
+            )
+        bytecode_address_presence.append(observed == bytecode_address_fields)
+    if any(bytecode_address_presence) and not all(bytecode_address_presence):
+        raise ValueError("Bytecode address timing records must cover every pair")
+    has_bytecode_address = all(bytecode_address_presence)
     cpu = [float(pair["cpu_us"]) for pair in pairs]
     metal = [float(pair["metal_us"]) for pair in pairs]
     cpu_prepare = [float(pair["cpu_prepare_us"]) for pair in pairs]
@@ -5512,6 +6079,31 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     metal_instruction_ra = [float(pair["metal_instruction_ra_us"]) for pair in pairs]
     cpu_bytecode = [float(pair["cpu_bytecode_us"]) for pair in pairs]
     metal_bytecode = [float(pair["metal_bytecode_us"]) for pair in pairs]
+    cpu_bytecode_address = (
+        [float(pair["cpu_bytecode_address_us"]) for pair in pairs]
+        if has_bytecode_address
+        else []
+    )
+    metal_bytecode_address = (
+        [float(pair["metal_bytecode_address_us"]) for pair in pairs]
+        if has_bytecode_address
+        else []
+    )
+    bytecode_address_prepare_deltas = (
+        [metal_us - cpu_us for cpu_us, metal_us in zip(cpu_prepare, metal_prepare)]
+        if has_bytecode_address
+        else []
+    )
+    # Conservatively charge all positive Metal witness-preparation excess to Address.
+    bytecode_address_charged_producer_deltas = [
+        max(0.0, delta) for delta in bytecode_address_prepare_deltas
+    ]
+    charged_metal_address = [
+        member_us + producer_delta_us
+        for member_us, producer_delta_us in zip(
+            metal_bytecode_address, bytecode_address_charged_producer_deltas
+        )
+    ]
     cpu_instruction_input = [float(pair["cpu_instruction_input_us"]) for pair in pairs]
     metal_instruction_input = [
         float(pair["metal_instruction_input_us"]) for pair in pairs
@@ -5681,6 +6273,9 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         + metal_instruction_ra
         + cpu_bytecode
         + metal_bytecode
+        + cpu_bytecode_address
+        + metal_bytecode_address
+        + charged_metal_address
         + cpu_instruction_input
         + metal_instruction_input
         + cpu_registers_claim
@@ -5722,6 +6317,27 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         1.0 - metal_us / cpu_us
         for cpu_us, metal_us in zip(cpu_bytecode, metal_bytecode)
     ]
+    if has_bytecode_address:
+        (
+            bytecode_address_speedups,
+            bytecode_address_improvements,
+            bytecode_address_decision,
+        ) = local_member_decision(
+            pairs,
+            cpu_bytecode_address,
+            metal_bytecode_address,
+            BYTECODE_ADDRESS_MIN_SPEEDUP,
+        )
+        (
+            bytecode_address_charged_speedups,
+            bytecode_address_charged_improvements,
+            bytecode_address_charged_decision,
+        ) = local_member_decision(
+            pairs,
+            cpu_bytecode_address,
+            charged_metal_address,
+            BYTECODE_ADDRESS_MIN_SPEEDUP,
+        )
     instruction_input_speedups, instruction_input_improvements, instruction_input_decision = (
         local_member_decision(
             pairs,
@@ -5920,7 +6536,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         and optimized_first_median >= BYTECODE_MIN_SPEEDUP
         and metal_first_median >= BYTECODE_MIN_SPEEDUP
     )
-    return {
+    metrics = {
         "piop_speedup": statistics.median(piop_speedups),
         "instruction_ra_speedup": statistics.median(instruction_ra_speedups),
         "bytecode_read_raf_cycle_speedup": bytecode_speedup_median,
@@ -6177,6 +6793,50 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             and clears_order_strata,
         },
     }
+    if has_bytecode_address:
+        metrics.update(
+            {
+                "bytecode_read_raf_address_speedup": statistics.median(
+                    bytecode_address_speedups
+                ),
+                "paired_bytecode_read_raf_address_speedups": (
+                    bytecode_address_speedups
+                ),
+                "paired_bytecode_read_raf_address_fractional_improvements": (
+                    bytecode_address_improvements
+                ),
+                "cpu_bytecode_read_raf_address_ms_samples": [
+                    value / 1000.0 for value in cpu_bytecode_address
+                ],
+                "metal_bytecode_read_raf_address_ms_samples": [
+                    value / 1000.0 for value in metal_bytecode_address
+                ],
+                "bytecode_read_raf_address_decision": bytecode_address_decision,
+                "bytecode_read_raf_address_charged_speedup": statistics.median(
+                    bytecode_address_charged_speedups
+                ),
+                "paired_bytecode_read_raf_address_charged_speedups": (
+                    bytecode_address_charged_speedups
+                ),
+                "paired_bytecode_read_raf_address_charged_fractional_improvements": (
+                    bytecode_address_charged_improvements
+                ),
+                "bytecode_read_raf_address_backend_witness_prepare_delta_ms_samples": [
+                    value / 1000.0 for value in bytecode_address_prepare_deltas
+                ],
+                "bytecode_read_raf_address_charged_producer_delta_ms_samples": [
+                    value / 1000.0
+                    for value in bytecode_address_charged_producer_deltas
+                ],
+                "charged_metal_address_ms_samples": [
+                    value / 1000.0 for value in charged_metal_address
+                ],
+                "bytecode_read_raf_address_charged_decision": (
+                    bytecode_address_charged_decision
+                ),
+            }
+        )
+    return metrics
 
 
 def microseconds_to_nanoseconds(value: float) -> int:
@@ -6254,6 +6914,8 @@ def outer_remainder_member_record(member: dict[str, Any]) -> dict[str, Any]:
 def local_kernel_primary_us(result: dict[str, Any], kernel: str) -> float:
     if kernel == BYTECODE_KERNEL:
         value = result["bytecode_member"]["components"]["member_us"]
+    elif kernel == BYTECODE_ADDRESS_KERNEL:
+        value = result["bytecode_address_member"]["components"]["member_us"]
     elif kernel == "InstructionRaVirtualization":
         value = kernel_wall_us(result["attribution"], kernel)
     elif kernel == INSTRUCTION_INPUT_KERNEL:
@@ -6460,6 +7122,13 @@ def run_backend(
         bytecode_cutoff_log2,
         bytecode_trace_cutoff_log2,
     )
+    bytecode_address_config = validate_bytecode_address_stdout(
+        result.stdout,
+        backend,
+        bytecode_address_implementation,
+        bytecode_address_outer_tiles,
+        bytecode_address_trace_cutoff_log2,
+    )
     instruction_input_config = validate_instruction_input_stdout(
         result.stdout,
         backend,
@@ -6546,6 +7215,15 @@ def run_backend(
         scatter_threads=instruction_read_raf_scatter_threads,
     )
     stage1_source = instruction_read_raf_member["source_observation"]
+    bytecode_address_member = bytecode_address_member_breakdown(
+        events,
+        backend,
+        log_n,
+        bytecode_address_implementation,
+        bytecode_address_outer_tiles,
+        bytecode_address_trace_cutoff_log2,
+        stage1_source,
+    )
     if backend == "metal" and booleanity_address_implementation == "packed-hot":
         booleanity_address_member = packed_hot_booleanity_address_member_breakdown(
             events, backend, log_n, stage1_source
@@ -6616,6 +7294,7 @@ def run_backend(
     attribution = trace_attribution(events)
     for name, member in (
         (BYTECODE_KERNEL, bytecode_member),
+        (BYTECODE_ADDRESS_KERNEL, bytecode_address_member),
         (INSTRUCTION_INPUT_KERNEL, instruction_input_member),
         (INSTRUCTION_READ_RAF_KERNEL, instruction_read_raf_member),
         (BOOLEANITY_ADDRESS_KERNEL, booleanity_address_member),
@@ -6639,14 +7318,20 @@ def run_backend(
         raise ValueError("OuterRemainder member exceeds the PIOP span")
     stdout_path = artifact_dir / f"{label}.stdout"
     stderr_path = artifact_dir / f"{label}.stderr"
+    backend_witness_prepare_us = unique_named_span_duration_us(
+        events, BACKEND_WITNESS_PREP_SPAN
+    )
+    bytecode_address_member["backend_witness_prepare_us"] = (
+        backend_witness_prepare_us
+    )
     return {
         "piop_us": unique_span_duration_us(events),
-        "backend_witness_prepare_us": unique_named_span_duration_us(
-            events, BACKEND_WITNESS_PREP_SPAN
-        ),
+        "backend_witness_prepare_us": backend_witness_prepare_us,
         "attribution": attribution,
         "bytecode_config": bytecode_config,
         "bytecode_member": bytecode_member,
+        "bytecode_address_config": bytecode_address_config,
+        "bytecode_address_member": bytecode_address_member,
         "instruction_input_config": instruction_input_config,
         "instruction_input_member": instruction_input_member,
         "instruction_read_raf_config": instruction_read_raf_config,
@@ -6846,7 +7531,7 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--bytecode-address-metal-implementation",
-        choices=["cpu", "csr-shadow", "address-major-shadow"],
+        choices=["cpu", "csr-shadow", "address-major-shadow", "address-major"],
         default="cpu",
     )
     result.add_argument(
@@ -7139,6 +7824,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    if (
+        args.local_kernel == BYTECODE_ADDRESS_KERNEL
+        and args.bytecode_address_metal_implementation != "address-major"
+    ):
+        print(
+            "error: Bytecode address local evaluation requires the AddressMajor route",
+            file=sys.stderr,
+        )
+        return 2
     if args.instruction_ra_reuse_inverse and args.instruction_ra_materialize_width == 16:
         print("error: width-16 Instruction RA cannot reuse the inverse", file=sys.stderr)
         return 2
@@ -7241,6 +7935,25 @@ def main() -> int:
             metal_instruction_claim_us = kernel_wall_us(
                 results["metal"]["attribution"], INSTRUCTION_CLAIM_KERNEL
             )
+            cpu_bytecode_address_us = float(
+                results["optimized"]["bytecode_address_member"]["components"][
+                    "member_us"
+                ]
+            )
+            metal_bytecode_address_us = float(
+                results["metal"]["bytecode_address_member"]["components"]["member_us"]
+            )
+            bytecode_address_prepare_delta_us = (
+                float(results["metal"]["backend_witness_prepare_us"])
+                - float(results["optimized"]["backend_witness_prepare_us"])
+            )
+            bytecode_address_charged_producer_delta_us = max(
+                0.0, bytecode_address_prepare_delta_us
+            )
+            charged_metal_address_us = (
+                metal_bytecode_address_us
+                + bytecode_address_charged_producer_delta_us
+            )
             pairs.append(
                 {
                     "order": order,
@@ -7260,6 +7973,15 @@ def main() -> int:
                     "metal_bytecode_us": float(
                         results["metal"]["bytecode_member"]["components"]["member_us"]
                     ),
+                    "cpu_bytecode_address_us": cpu_bytecode_address_us,
+                    "metal_bytecode_address_us": metal_bytecode_address_us,
+                    "bytecode_address_backend_witness_prepare_delta_us": (
+                        bytecode_address_prepare_delta_us
+                    ),
+                    "bytecode_address_charged_producer_delta_us": (
+                        bytecode_address_charged_producer_delta_us
+                    ),
+                    "charged_metal_address_us": charged_metal_address_us,
                     "cpu_instruction_input_us": float(
                         results["optimized"]["instruction_input_member"]["components"][
                             "service_us"
@@ -7367,6 +8089,18 @@ def main() -> int:
                         "optimized_member": results["optimized"]["bytecode_member"],
                         "metal_member": results["metal"]["bytecode_member"],
                     },
+                    "bytecode_address": {
+                        "optimized_config": results["optimized"][
+                            "bytecode_address_config"
+                        ],
+                        "metal_config": results["metal"]["bytecode_address_config"],
+                        "optimized_member": results["optimized"][
+                            "bytecode_address_member"
+                        ],
+                        "metal_member": results["metal"][
+                            "bytecode_address_member"
+                        ],
+                    },
                     "instruction_input": {
                         "optimized_config": results["optimized"][
                             "instruction_input_config"
@@ -7453,6 +8187,17 @@ def main() -> int:
                 {
                     "index": index + 1,
                     "order": order,
+                    "bytecode_address_charge": {
+                        "backend_witness_prepare_delta_ns": round(
+                            bytecode_address_prepare_delta_us * 1000.0
+                        ),
+                        "charged_producer_delta_ns": round(
+                            bytecode_address_charged_producer_delta_us * 1000.0
+                        ),
+                        "charged_metal_address_ns": microseconds_to_nanoseconds(
+                            charged_metal_address_us
+                        ),
+                    },
                     "arms": {
                         backend: {
                             "piop_ns": microseconds_to_nanoseconds(
@@ -7465,6 +8210,18 @@ def main() -> int:
                             "bytecode": member_record(
                                 results[backend]["bytecode_member"]
                             ),
+                            "bytecode_address": {
+                                **member_record(
+                                    results[backend]["bytecode_address_member"]
+                                ),
+                                "backend_witness_prepare_ns": (
+                                    microseconds_to_nanoseconds(
+                                        results[backend][
+                                            "backend_witness_prepare_us"
+                                        ]
+                                    )
+                                ),
+                            },
                             "instruction_input": member_record(
                                 results[backend]["instruction_input_member"],
                                 include_prefetch=True,
@@ -7544,6 +8301,9 @@ def main() -> int:
                                 ),
                             },
                             "config": results[backend]["bytecode_config"],
+                            "bytecode_address_config": results[backend][
+                                "bytecode_address_config"
+                            ],
                             "command": results[backend]["command"],
                             "artifacts": results[backend]["artifacts"],
                         }
@@ -7646,6 +8406,79 @@ def main() -> int:
                 "bytecode_local_gate": metrics["bytecode_read_raf_cycle_decision"][
                     "clears"
                 ],
+                "bytecode_address_raw_local_gate": metrics[
+                    "bytecode_read_raf_address_decision"
+                ]["clears"],
+                "bytecode_address_charged_local_gate": metrics[
+                    "bytecode_read_raf_address_charged_decision"
+                ]["clears"],
+                "bytecode_address_local_gate": (
+                    metrics["bytecode_read_raf_address_decision"]["clears"]
+                    and metrics["bytecode_read_raf_address_charged_decision"][
+                        "clears"
+                    ]
+                ),
+                "bytecode_address_cpu_control": all(
+                    sample["bytecode_address"]["optimized_config"] is None
+                    and not any(
+                        sample["bytecode_address"]["optimized_member"][
+                            "metal_counts"
+                        ].values()
+                    )
+                    and sample["bytecode_address"]["optimized_member"][
+                        "resource_observation"
+                    ]
+                    is None
+                    for sample in attributions
+                ),
+                "bytecode_address_configured_route_exact": all(
+                    sample["bytecode_address"]["metal_config"]
+                    == {
+                        "implementation": args.bytecode_address_metal_implementation,
+                        "trace_cutoff": 1
+                        << args.bytecode_address_metal_trace_cutoff_log2,
+                        "outer_tiles": args.bytecode_address_metal_outer_tiles,
+                    }
+                    and sample["bytecode_address"]["metal_member"][
+                        "route_observation"
+                    ]
+                    is not None
+                    for sample in attributions
+                ),
+                "bytecode_address_address_major_anti_fallback": (
+                    args.bytecode_address_metal_implementation != "address-major"
+                    or all(
+                        sample["bytecode_address"]["metal_member"][
+                            "route_observation"
+                        ]
+                        == {
+                            "cycles": 1 << args.log_n,
+                            "requested": "address_major",
+                            "realized_route": "address_major",
+                            "fallback_reason": "none",
+                        }
+                        and sample["bytecode_address"]["metal_member"][
+                            "metal_counts"
+                        ]["address_major_complete"]
+                        == 1
+                        and sample["bytecode_address"]["metal_member"][
+                            "resource_observation"
+                        ]
+                        is not None
+                        for sample in attributions
+                    )
+                ),
+                "bytecode_address_producer_time_separately_reported": all(
+                    sample["bytecode_address"]["optimized_member"][
+                        "backend_witness_prepare_us"
+                    ]
+                    > 0.0
+                    and sample["bytecode_address"]["metal_member"][
+                        "backend_witness_prepare_us"
+                    ]
+                    > 0.0
+                    for sample in attributions
+                ),
                 "instruction_read_raf_local_gate": metrics[
                     "instruction_read_raf_decision"
                 ]["clears"],
@@ -8634,6 +9467,12 @@ def main() -> int:
                     ]
                     for sample in attributions
                 ],
+                "bytecode_address": [
+                    sample["bytecode_address"]["metal_member"][
+                        "resource_observation"
+                    ]
+                    for sample in attributions
+                ],
                 "optimized_max_rss_bytes": [
                     pair["arms"]["optimized"]["max_rss_bytes"] for pair in pair_records
                 ],
@@ -8663,6 +9502,17 @@ def main() -> int:
                 "bytecode_metal_trace_cutoff_elements": 1
                 << args.bytecode_metal_trace_cutoff_log2,
                 "bytecode_cpu_tail_algebra": "q10",
+                "bytecode_address_metal_implementation": (
+                    args.bytecode_address_metal_implementation
+                ),
+                "bytecode_address_metal_outer_tiles": (
+                    args.bytecode_address_metal_outer_tiles
+                ),
+                "bytecode_address_metal_trace_cutoff_log2": (
+                    args.bytecode_address_metal_trace_cutoff_log2
+                ),
+                "bytecode_address_metal_trace_cutoff_elements": 1
+                << args.bytecode_address_metal_trace_cutoff_log2,
                 "instruction_input_metal_native_message_threads": args.instruction_input_metal_native_message_threads,
                 "instruction_input_metal_native_transition_threads": args.instruction_input_metal_native_transition_threads,
                 "instruction_input_metal_dense_transition_threads": args.instruction_input_metal_dense_transition_threads,
