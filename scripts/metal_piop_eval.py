@@ -2167,17 +2167,17 @@ def instruction_read_raf_member_breakdown(
         (
             "resident_first_message",
             intervals["MetalInstructionReadRaf::resident_first_message"],
-            rounds[129:130],
+            rounds[128:129],
         ),
         (
             "resident_handoff",
             intervals["MetalInstructionReadRaf::resident_handoff"],
-            rounds[130:131],
+            rounds[129:130],
         ),
         (
             "resident_round",
             sorted(intervals["MetalInstructionReadRaf::resident_round"]),
-            rounds[131 : 131 + log_n - cutoff_log2 - 1],
+            rounds[130 : 130 + log_n - cutoff_log2 - 1],
         ),
     )
     for phase, inner_intervals, outer_intervals in phase_rounds:
@@ -2189,9 +2189,18 @@ def instruction_read_raf_member_breakdown(
                 outer,
                 f"InstructionReadRaf {phase} round {index}",
             )
+    final_address = sorted(intervals["MetalInstructionReadRaf::address_round"])[-1]
+    resident_first_message = intervals[
+        "MetalInstructionReadRaf::resident_first_message"
+    ][0]
+    if final_address[1] > resident_first_message[0]:
+        raise ValueError(
+            "InstructionReadRaf final address round overlaps its resident first message"
+        )
+    resident_rounds = log_n - cutoff_log2 - 1
     require_contained(
         intervals["MetalInstructionReadRaf::readback"][0],
-        finish,
+        rounds[130 + resident_rounds],
         "InstructionReadRaf readback",
     )
 

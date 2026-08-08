@@ -596,19 +596,23 @@ def complete_instruction_read_raf_trace(
             ),
             event(
                 "MetalInstructionReadRaf::resident_first_message",
-                round_starts[129] + 1.0,
+                round_starts[128] + 3.0,
                 1.0,
             ),
             event(
                 "MetalInstructionReadRaf::resident_handoff",
-                round_starts[130] + 1.0,
+                round_starts[129] + 1.0,
                 1.0,
             ),
             *(
                 event("MetalInstructionReadRaf::resident_round", timestamp + 1.0, 1.0)
-                for timestamp in round_starts[131 : 131 + log_n - 17]
+                for timestamp in round_starts[130 : 130 + log_n - 17]
             ),
-            event("MetalInstructionReadRaf::readback", finish_start + 1.0, 1.0),
+            event(
+                "MetalInstructionReadRaf::readback",
+                round_starts[130 + log_n - 17] + 1.0,
+                1.0,
+            ),
         ]
     )
     return events
@@ -3406,7 +3410,7 @@ class MetalPiopEvalTests(unittest.TestCase):
             if event["name"]
             == "MetalInstructionReadRaf::resident_first_message"
         )
-        resident_first["ts"] -= 20.0
+        resident_first["ts"] += 20.0
         with self.assertRaisesRegex(ValueError, "resident_first_message round"):
             metal_piop_eval.instruction_read_raf_member_breakdown(
                 mutated, "metal", 25, scatter_threads=512
