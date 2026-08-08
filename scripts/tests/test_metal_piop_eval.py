@@ -110,6 +110,7 @@ def bytecode_address_stage1_source(log_n: int) -> dict[str, object]:
         "claim_allocation_identity": 102,
         "device_registry_id": 55,
         "source_windows": 1 << log_n,
+        "explicit_rows": (1 << log_n) - 123,
     }
 
 
@@ -139,8 +140,18 @@ def complete_bytecode_address_trace(
     stages = 9
     inner = 1 << 15
     outer = rows // inner
+    physical_rows = rows - 123
+    work_items = (physical_rows + 4095) // 4096 + 17
+    address_offset_bytes = 4 * (addresses + 1)
+    carrier_resident_bytes = (
+        10 * physical_rows + 8 * work_items + address_offset_bytes
+    )
+    producer_logical_movement_bytes = (
+        30 * physical_rows + 16 * work_items + address_offset_bytes
+    )
     equality_bytes = 16 * stages * (inner + outer)
-    partial_bytes = 16 * stages * addresses * outer_tiles
+    padding_bytes = 5 * 16
+    partial_bytes = 16 * stages * work_items
     output_bytes = 16 * stages * addresses
     events = [
         event("jolt_prover::backend_witness_prepare", 0.0, 80.0),
@@ -162,32 +173,42 @@ def complete_bytecode_address_trace(
         source = bytecode_address_stage1_source(log_n)
         publish = {
             "cycles": str(rows),
+            "physical_rows": str(physical_rows),
+            "work_items": str(work_items),
             "source_generation": str(source["source_generation"]),
             "source_completion_serial": str(source["completion_serial"]),
             "source_rows_storage_id": str(source["row_allocation_identity"]),
             "source_claim_storage_id": str(source["claim_allocation_identity"]),
             "source_device_registry_id": str(source["device_registry_id"]),
             "source_windows": str(rows),
-            "carrier_cells_storage_id": "201",
-            "carrier_cells_bytes": str(rows),
-            "carrier_inner_sign_storage_id": "202",
-            "carrier_inner_sign_bytes": str(4 * rows),
-            "carrier_magnitude_storage_id": "203",
-            "carrier_magnitude_bytes": str(8 * rows),
-            "carrier_resident_bytes": str(13 * rows),
-            "carrier_allocations": "3",
-            "producer_persistent_write_bytes": str(13 * rows),
-            "producer_logical_movement_bytes": str(33 * rows),
+            "carrier_completion_serial": "11",
+            "carrier_occurrence_storage_id": "201",
+            "carrier_occurrence_bytes": str(2 * physical_rows),
+            "carrier_magnitude_storage_id": "202",
+            "carrier_magnitude_bytes": str(8 * physical_rows),
+            "carrier_work_item_storage_id": "203",
+            "carrier_work_item_bytes": str(8 * work_items),
+            "carrier_address_offset_storage_id": "204",
+            "carrier_address_offset_bytes": str(address_offset_bytes),
+            "carrier_resident_bytes": str(carrier_resident_bytes),
+            "carrier_allocations": "4",
+            "producer_persistent_write_bytes": str(carrier_resident_bytes),
+            "producer_logical_movement_bytes": str(
+                producer_logical_movement_bytes
+            ),
             "producer_topology_read_bytes": "0",
             "shared_source_row_scans": "1",
             "additional_source_row_scans": "0",
             "member_source_upload_bytes": "0",
             "complete_overwrite": "true",
+            "covered_rows": str(physical_rows),
         }
         complete = {
             "cycles": str(rows),
             "addresses": str(addresses),
             "stages": str(stages),
+            "physical_rows": str(physical_rows),
+            "work_items": str(work_items),
             "requested": "address_major",
             "realized_route": "address_major",
             "fallback_reason": "none",
@@ -195,32 +216,53 @@ def complete_bytecode_address_trace(
             "source_completion_serial": str(source["completion_serial"]),
             "source_rows_storage_id": str(source["row_allocation_identity"]),
             "source_rows_bytes": str(40 * rows),
+            "source_claim_storage_id": str(source["claim_allocation_identity"]),
             "source_device_registry_id": str(source["device_registry_id"]),
-            "carrier_cells_storage_id": "201",
-            "carrier_cells_bytes": str(rows),
-            "carrier_inner_sign_storage_id": "202",
-            "carrier_inner_sign_bytes": str(4 * rows),
-            "carrier_magnitude_storage_id": "203",
-            "carrier_magnitude_bytes": str(8 * rows),
-            "carrier_resident_bytes": str(13 * rows),
-            "producer_persistent_write_bytes": str(13 * rows),
-            "producer_logical_movement_bytes": str(33 * rows),
+            "carrier_completion_serial": "11",
+            "carrier_occurrence_storage_id": "201",
+            "carrier_occurrence_bytes": str(2 * physical_rows),
+            "carrier_magnitude_storage_id": "202",
+            "carrier_magnitude_bytes": str(8 * physical_rows),
+            "carrier_work_item_storage_id": "203",
+            "carrier_work_item_bytes": str(8 * work_items),
+            "carrier_address_offset_storage_id": "204",
+            "carrier_address_offset_bytes": str(address_offset_bytes),
+            "carrier_resident_bytes": str(carrier_resident_bytes),
+            "producer_persistent_write_bytes": str(carrier_resident_bytes),
+            "producer_logical_movement_bytes": str(
+                producer_logical_movement_bytes
+            ),
             "producer_topology_read_bytes": "0",
             "member_carrier_owned_bytes": "0",
             "member_source_scans": "0",
             "member_source_upload_bytes": "0",
             "equality_bytes": str(equality_bytes),
+            "padding_bytes": str(padding_bytes),
             "partial_bytes": str(partial_bytes),
             "output_readback_bytes": str(output_bytes),
-            "member_owned_bytes": str(equality_bytes + partial_bytes + output_bytes),
+            "member_owned_bytes": str(
+                equality_bytes + padding_bytes + partial_bytes + output_bytes
+            ),
             "command_buffers": "1",
             "waits": "1",
             "worker_dispatches": "1",
+            "worker_variant": "packed4_halfwidth_v1",
+            "worker_simd_width": "32",
+            "worker_threads": "128",
+            "worker_items_per_threadgroup": "4",
+            "worker_threadgroups": str((work_items + 3) // 4),
+            "worker_tail_slots": str((4 - work_items % 4) % 4),
+            "worker_dynamic_threadgroup_bytes": "0",
+            "worker_static_threadgroup_bytes": "0",
+            "worker_threadgroup_bytes": "0",
             "reducer_dispatches": "1",
+            "reducer_threads": "256",
+            "reducer_threadgroups": str((stages * addresses + 255) // 256),
+            "reducer_static_threadgroup_bytes": "0",
             "output_fields": str(stages * addresses),
-            "submit_ns": "100",
-            "overlap_ns": "200",
-            "join_ns": "300",
+            "submit_ns": "0",
+            "overlap_ns": "0",
+            "join_ns": "600",
             "resident_wall_ns": "600",
             "gpu_active_ns": "500",
             "completed_before_join": "false",
@@ -264,6 +306,356 @@ def complete_bytecode_address_trace(
                 ),
             ]
         )
+    return events
+
+
+def fused_bytecode_stage1_scatter(log_n: int) -> dict[str, object]:
+    rows = 1 << log_n
+    physical_rows = rows - 123
+    chunks = (physical_rows + 4095) // 4096
+    descriptors = 3 * chunks
+    descriptor_elements = descriptors + chunks
+    pivots = 2 * chunks
+    pivot_elements = pivots + 1
+    work_items = chunks + 17
+    return {
+        "bytecode_fused": True,
+        "bytecode_physical_rows": physical_rows,
+        "bytecode_descriptor_elements": descriptor_elements,
+        "bytecode_descriptor_bytes": 8 * descriptor_elements,
+        "bytecode_descriptor_storage_id": 801,
+        "bytecode_pivot_elements": pivot_elements,
+        "bytecode_pivot_bytes": 2 * pivot_elements,
+        "bytecode_pivot_storage_id": 802,
+        "bytecode_chunk_offset_elements": 2 * chunks,
+        "bytecode_chunk_offset_bytes": 8 * chunks,
+        "bytecode_chunk_offset_storage_id": 803,
+        "bytecode_work_items": work_items,
+        "bytecode_work_item_bytes": 8 * work_items,
+        "bytecode_work_item_storage_id": 804,
+        "bytecode_address_offset_elements": (1 << 13) + 1,
+        "bytecode_address_offset_bytes": 4 * ((1 << 13) + 1),
+        "bytecode_address_offset_storage_id": 805,
+        "bytecode_occurrence_bytes": 2 * physical_rows,
+        "bytecode_occurrence_storage_id": 806,
+        "bytecode_magnitude_bytes": 8 * physical_rows,
+        "bytecode_magnitude_storage_id": 807,
+        "bytecode_max_descriptors_per_chunk": 3,
+        "bytecode_max_admitted_descriptors_per_chunk": 32,
+        "bytecode_max_pivots_per_chunk": 2,
+        "bytecode_max_admitted_pivots_per_chunk": 15,
+        "bytecode_dynamic_threadgroup_bytes": 328 + 8 * 4 + 2 * 2,
+        "bytecode_threadgroup_memory_limit_bytes": 32768,
+        "shared_source_row_scans": 1,
+        "additional_source_row_scans": 0,
+        "member_upload_bytes": 0,
+        "command_buffers": 1,
+        "waits": 1,
+        "encoders": 1,
+        "dispatches": 1,
+    }
+
+
+def fused_bytecode_topology_args(log_n: int, enabled: bool) -> dict[str, object]:
+    rows = 1 << log_n
+    physical_rows = rows - 123
+    source = bytecode_address_stage1_source(log_n)
+    common = {
+        "enabled": "true" if enabled else "false",
+        "physical_rows": str(physical_rows),
+        "chunk_rows": "4096",
+        "source_generation": str(source["source_generation"]),
+        "source_completion_serial": str(source["completion_serial"]),
+        "source_rows_storage_id": str(source["row_allocation_identity"]),
+        "source_claim_storage_id": str(source["claim_allocation_identity"]),
+        "shared_source_row_scans": "1",
+        "additional_source_row_scans": "0",
+        "extra_source_scans": "0",
+        "source_windows": str(rows),
+        "member_upload_bytes": "0",
+    }
+    if not enabled:
+        return {
+            **common,
+            **{
+                field: "0"
+                for field in (
+                    "chunks",
+                    "descriptors",
+                    "descriptor_elements",
+                    "descriptor_bytes",
+                    "descriptor_storage_id",
+                    "pivots",
+                    "pivot_elements",
+                    "pivot_bytes",
+                    "pivot_storage_id",
+                    "chunk_offset_elements",
+                    "chunk_offset_bytes",
+                    "chunk_offset_storage_id",
+                    "work_items",
+                    "work_item_elements",
+                    "work_item_bytes",
+                    "work_item_storage_id",
+                    "address_offset_elements",
+                    "address_offset_bytes",
+                    "address_offset_storage_id",
+                    "max_descriptors_per_chunk",
+                    "max_pivots_per_chunk",
+                    "first_push_pc",
+                    "topology_completion_serial",
+                    "covered_rows",
+                )
+            },
+            "complete_overwrite": "false",
+        }
+    scatter = fused_bytecode_stage1_scatter(log_n)
+    chunks = (physical_rows + 4095) // 4096
+    descriptors = 3 * chunks
+    pivots = 2 * chunks
+    work_items = chunks + 17
+    return {
+        **common,
+        "chunks": str(chunks),
+        "descriptors": str(descriptors),
+        "descriptor_elements": str(scatter["bytecode_descriptor_elements"]),
+        "descriptor_bytes": str(scatter["bytecode_descriptor_bytes"]),
+        "descriptor_storage_id": str(scatter["bytecode_descriptor_storage_id"]),
+        "pivots": str(pivots),
+        "pivot_elements": str(scatter["bytecode_pivot_elements"]),
+        "pivot_bytes": str(scatter["bytecode_pivot_bytes"]),
+        "pivot_storage_id": str(scatter["bytecode_pivot_storage_id"]),
+        "chunk_offset_elements": str(scatter["bytecode_chunk_offset_elements"]),
+        "chunk_offset_bytes": str(scatter["bytecode_chunk_offset_bytes"]),
+        "chunk_offset_storage_id": str(
+            scatter["bytecode_chunk_offset_storage_id"]
+        ),
+        "work_items": str(work_items),
+        "work_item_elements": str(work_items),
+        "work_item_bytes": str(scatter["bytecode_work_item_bytes"]),
+        "work_item_storage_id": str(scatter["bytecode_work_item_storage_id"]),
+        "address_offset_elements": str(scatter["bytecode_address_offset_elements"]),
+        "address_offset_bytes": str(scatter["bytecode_address_offset_bytes"]),
+        "address_offset_storage_id": str(
+            scatter["bytecode_address_offset_storage_id"]
+        ),
+        "max_descriptors_per_chunk": "3",
+        "max_pivots_per_chunk": "2",
+        "first_push_pc": "4096",
+        "topology_completion_serial": "21",
+        "complete_overwrite": "true",
+        "covered_rows": str(physical_rows),
+    }
+
+
+def complete_fused_bytecode_address_trace(
+    log_n: int, *, control: bool = False
+) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+            "args": args,
+        }
+
+    if control:
+        events = complete_bytecode_address_trace(log_n, "optimized")
+        events.extend(
+            [
+                event(
+                    "MetalBytecodeReadRafAddress::fused_topology_prepare",
+                    10.0,
+                    5.0,
+                    fused_bytecode_topology_args(log_n, False),
+                ),
+                event(
+                    "MetalBytecodeReadRafAddress::route",
+                    210.0,
+                    480.0,
+                    {
+                        "cycles": str(1 << log_n),
+                        "requested": "cpu",
+                        "realized_route": "cpu",
+                        "fallback_reason": "configured_cpu",
+                    },
+                ),
+            ]
+        )
+        return events
+
+    events = complete_bytecode_address_trace(log_n, "metal")
+    legacy_publish = next(
+        trace_event
+        for trace_event in events
+        if trace_event["name"] == "MetalBytecodeReadRafAddress::carrier_publish"
+    )
+    events.remove(legacy_publish)
+    route = next(
+        trace_event
+        for trace_event in events
+        if trace_event["name"] == "MetalBytecodeReadRafAddress::route"
+    )
+    route["args"]["realized_route"] = "address_major_fused_stage1_grouped_v1"
+    complete = next(
+        trace_event
+        for trace_event in events
+        if trace_event["name"]
+        == "MetalBytecodeReadRafAddress::address_major_complete"
+    )["args"]
+    scatter = fused_bytecode_stage1_scatter(log_n)
+    topology = fused_bytecode_topology_args(log_n, True)
+    physical_rows = int(scatter["bytecode_physical_rows"])
+    work_items = int(scatter["bytecode_work_items"])
+    topology_bytes = (
+        int(scatter["bytecode_descriptor_bytes"])
+        + int(scatter["bytecode_pivot_bytes"])
+        + int(scatter["bytecode_chunk_offset_bytes"])
+    )
+    carrier_resident_bytes = (
+        10 * physical_rows
+        + int(scatter["bytecode_work_item_bytes"])
+        + int(scatter["bytecode_address_offset_bytes"])
+    )
+    source = bytecode_address_stage1_source(log_n)
+    publish = {
+        "route": "address_major_fused_stage1_grouped_v1",
+        "cycles": str(1 << log_n),
+        "physical_rows": str(physical_rows),
+        "work_items": str(work_items),
+        "source_generation": str(source["source_generation"]),
+        "source_completion_serial": str(source["completion_serial"]),
+        "source_rows_storage_id": str(source["row_allocation_identity"]),
+        "source_claim_storage_id": str(source["claim_allocation_identity"]),
+        "source_device_registry_id": str(source["device_registry_id"]),
+        "source_windows": str(1 << log_n),
+        "carrier_completion_serial": "22",
+        "carrier_occurrence_storage_id": str(
+            scatter["bytecode_occurrence_storage_id"]
+        ),
+        "carrier_occurrence_bytes": str(scatter["bytecode_occurrence_bytes"]),
+        "carrier_magnitude_storage_id": str(
+            scatter["bytecode_magnitude_storage_id"]
+        ),
+        "carrier_magnitude_bytes": str(scatter["bytecode_magnitude_bytes"]),
+        "carrier_work_item_storage_id": str(
+            scatter["bytecode_work_item_storage_id"]
+        ),
+        "carrier_work_item_bytes": str(scatter["bytecode_work_item_bytes"]),
+        "carrier_address_offset_storage_id": str(
+            scatter["bytecode_address_offset_storage_id"]
+        ),
+        "carrier_address_offset_bytes": str(
+            scatter["bytecode_address_offset_bytes"]
+        ),
+        "bytecode_descriptor_storage_id": str(
+            scatter["bytecode_descriptor_storage_id"]
+        ),
+        "bytecode_descriptor_bytes": str(scatter["bytecode_descriptor_bytes"]),
+        "bytecode_pivot_storage_id": str(scatter["bytecode_pivot_storage_id"]),
+        "bytecode_pivot_bytes": str(scatter["bytecode_pivot_bytes"]),
+        "bytecode_chunk_offset_storage_id": str(
+            scatter["bytecode_chunk_offset_storage_id"]
+        ),
+        "bytecode_chunk_offset_bytes": str(
+            scatter["bytecode_chunk_offset_bytes"]
+        ),
+        "carrier_resident_bytes": str(carrier_resident_bytes),
+        "carrier_buffers": "4",
+        "scatter_output_allocations": "2",
+        "producer_persistent_write_bytes": str(10 * physical_rows),
+        "producer_logical_movement_bytes": str(10 * physical_rows + topology_bytes),
+        "producer_topology_read_bytes": str(topology_bytes),
+        "complete_overwrite": "true",
+        "covered_rows": str(physical_rows),
+        "shared_source_row_scans": "1",
+        "additional_source_row_scans": "0",
+        "member_upload_bytes": "0",
+        "command_buffers": "1",
+        "waits": "1",
+        "encoders": "1",
+        "dispatches": "1",
+        "released": "false",
+    }
+    complete.update(
+        {
+            "realized_route": "address_major_fused_stage1_grouped_v1",
+            "carrier_completion_serial": "22",
+            "carrier_occurrence_storage_id": str(
+                scatter["bytecode_occurrence_storage_id"]
+            ),
+            "carrier_occurrence_bytes": str(scatter["bytecode_occurrence_bytes"]),
+            "carrier_magnitude_storage_id": str(
+                scatter["bytecode_magnitude_storage_id"]
+            ),
+            "carrier_magnitude_bytes": str(scatter["bytecode_magnitude_bytes"]),
+            "carrier_work_item_storage_id": str(
+                scatter["bytecode_work_item_storage_id"]
+            ),
+            "carrier_work_item_bytes": str(scatter["bytecode_work_item_bytes"]),
+            "carrier_address_offset_storage_id": str(
+                scatter["bytecode_address_offset_storage_id"]
+            ),
+            "carrier_address_offset_bytes": str(
+                scatter["bytecode_address_offset_bytes"]
+            ),
+            "carrier_resident_bytes": str(carrier_resident_bytes),
+            "bytecode_descriptor_storage_id": str(
+                scatter["bytecode_descriptor_storage_id"]
+            ),
+            "bytecode_descriptor_bytes": str(scatter["bytecode_descriptor_bytes"]),
+            "bytecode_pivot_storage_id": str(
+                scatter["bytecode_pivot_storage_id"]
+            ),
+            "bytecode_pivot_bytes": str(scatter["bytecode_pivot_bytes"]),
+            "bytecode_chunk_offset_storage_id": str(
+                scatter["bytecode_chunk_offset_storage_id"]
+            ),
+            "bytecode_chunk_offset_bytes": str(
+                scatter["bytecode_chunk_offset_bytes"]
+            ),
+            "topology_publication_bytes": str(
+                topology_bytes
+                + int(scatter["bytecode_work_item_bytes"])
+                + int(scatter["bytecode_address_offset_bytes"])
+            ),
+            "producer_persistent_write_bytes": str(10 * physical_rows),
+            "producer_logical_movement_bytes": str(
+                10 * physical_rows + topology_bytes
+            ),
+            "producer_topology_read_bytes": str(topology_bytes),
+        }
+    )
+    events.extend(
+        [
+            event(
+                "MetalBytecodeReadRafAddress::fused_topology_prepare",
+                10.0,
+                20.0,
+                topology,
+            ),
+            event("InstructionReadRaf::prepare", 105.0, 80.0, {}),
+            event(
+                "MetalInstructionReadRaf::stage1_grouped_scatter",
+                115.0,
+                30.0,
+                {},
+            ),
+            event(
+                "MetalBytecodeReadRafAddress::fused_carrier_publish",
+                150.0,
+                1.0,
+                publish,
+            ),
+        ]
+    )
     return events
 
 
@@ -601,7 +993,10 @@ def complete_instruction_input_trace(
 
 
 def complete_instruction_read_raf_trace(
-    log_n: int, backend: str, scatter_threads: int = 512
+    log_n: int,
+    backend: str,
+    scatter_threads: int = 512,
+    fused_bytecode: bool = False,
 ) -> list[dict[str, object]]:
     def event(
         name: str,
@@ -694,7 +1089,7 @@ def complete_instruction_read_raf_trace(
         "shift_resident_bytes": str(16 * rows),
         "shift_row_extractions": str(rows),
     }
-    additional = 37 * rows + 328 * chunks + 332 + 16 * (e_in + e_out) + 4 + 48
+    additional = 37 * rows + 328 * chunks + 332 + 16 * (e_in + e_out) + 4 + 88
     scatter = {
         "rows": str(rows),
         "preparation_wall_ns": "10000",
@@ -734,6 +1129,48 @@ def complete_instruction_read_raf_trace(
         "complete_overwrite": "true",
         "additional_allocation_bytes": str(additional),
     }
+    if fused_bytecode:
+        physical_rows = rows - 1
+        bytecode_chunks = (physical_rows + 4095) // 4096
+        descriptor_elements = 4 * bytecode_chunks
+        pivot_elements = 2 * bytecode_chunks + 1
+        work_items = bytecode_chunks + 17
+        scatter["additional_allocation_bytes"] = str(additional + 10 * physical_rows)
+        scatter["dynamic_threadgroup_bytes"] = str(328 + 8 * 4 + 2 * 2)
+        scatter.update(
+            {
+                "bytecode_fused": "true",
+                "bytecode_physical_rows": str(physical_rows),
+                "bytecode_descriptor_elements": str(descriptor_elements),
+                "bytecode_descriptor_bytes": str(8 * descriptor_elements),
+                "bytecode_descriptor_storage_id": "801",
+                "bytecode_pivot_elements": str(pivot_elements),
+                "bytecode_pivot_bytes": str(2 * pivot_elements),
+                "bytecode_pivot_storage_id": "802",
+                "bytecode_chunk_offset_elements": str(2 * bytecode_chunks),
+                "bytecode_chunk_offset_bytes": str(8 * bytecode_chunks),
+                "bytecode_chunk_offset_storage_id": "803",
+                "bytecode_work_items": str(work_items),
+                "bytecode_work_item_bytes": str(8 * work_items),
+                "bytecode_work_item_storage_id": "804",
+                "bytecode_address_offset_elements": str((1 << 13) + 1),
+                "bytecode_address_offset_bytes": str(4 * ((1 << 13) + 1)),
+                "bytecode_address_offset_storage_id": "805",
+                "bytecode_occurrence_bytes": str(2 * physical_rows),
+                "bytecode_occurrence_storage_id": "806",
+                "bytecode_magnitude_bytes": str(8 * physical_rows),
+                "bytecode_magnitude_storage_id": "807",
+                "bytecode_max_descriptors_per_chunk": "3",
+                "bytecode_max_admitted_descriptors_per_chunk": "32",
+                "bytecode_max_pivots_per_chunk": "2",
+                "bytecode_max_admitted_pivots_per_chunk": "15",
+                "bytecode_dynamic_threadgroup_bytes": str(328 + 8 * 4 + 2 * 2),
+                "bytecode_threadgroup_memory_limit_bytes": "32768",
+                "shared_source_row_scans": "1",
+                "additional_source_row_scans": "0",
+                "member_upload_bytes": "0",
+            }
+        )
     events.extend(
         [
             event("MetalSpartanDense::witness_prepare", 50.0, 700.0, witness),
@@ -2327,6 +2764,7 @@ class MetalPiopEvalTests(unittest.TestCase):
             "metal_bytecode_us": 200.0,
             "cpu_bytecode_address_us": 6_000.0,
             "metal_bytecode_address_us": 1_000.0,
+            "metal_bytecode_address_control_prepare_us": 900.0,
             "cpu_instruction_input_us": 800.0,
             "metal_instruction_input_us": 160.0,
             "cpu_registers_claim_us": 800.0,
@@ -2346,6 +2784,9 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "order": ["optimized", "metal"]
                 if index % 2 == 0
                 else ["metal", "optimized"],
+                "producer_order": ["target", "control"]
+                if index % 2 == 0
+                else ["control", "target"],
             }
             for index in range(5)
         ]
@@ -2375,6 +2816,16 @@ class MetalPiopEvalTests(unittest.TestCase):
             [0.5] * 5,
         )
         self.assertEqual(
+            metrics[
+                "bytecode_read_raf_address_target_control_prepare_delta_ms_samples"
+            ],
+            [0.5] * 5,
+        )
+        self.assertEqual(
+            metrics["metal_bytecode_read_raf_address_control_prepare_ms_samples"],
+            [0.9] * 5,
+        )
+        self.assertEqual(
             metrics["charged_metal_address_ms_samples"],
             [1.5] * 5,
         )
@@ -2382,27 +2833,40 @@ class MetalPiopEvalTests(unittest.TestCase):
             metrics["bytecode_read_raf_address_charged_decision"]["clears"]
         )
 
-        zero_or_negative = copy.deepcopy(pairs)
-        for index, pair in enumerate(zero_or_negative):
-            pair["cpu_prepare_us"] = 1_000.0
-            pair["metal_prepare_us"] = 1_000.0 if index % 2 == 0 else 900.0
-        uncharged = metal_piop_eval.summarize_pairs(zero_or_negative)
+        changed_optimized = copy.deepcopy(pairs)
+        for index, pair in enumerate(changed_optimized):
+            pair["cpu_prepare_us"] = 1_000.0 if index % 2 == 0 else 1_500.0
+        unchanged_charge = metal_piop_eval.summarize_pairs(changed_optimized)
         self.assertEqual(
-            uncharged[
+            unchanged_charge[
                 "bytecode_read_raf_address_backend_witness_prepare_delta_ms_samples"
             ],
-            [0.0, -0.1, 0.0, -0.1, 0.0],
+            [0.4, -0.1, 0.4, -0.1, 0.4],
         )
+        self.assertEqual(
+            unchanged_charge[
+                "bytecode_read_raf_address_charged_producer_delta_ms_samples"
+            ],
+            [0.5] * 5,
+        )
+        self.assertEqual(
+            unchanged_charge["charged_metal_address_ms_samples"],
+            [1.5] * 5,
+        )
+
+        nonpositive_control_delta = copy.deepcopy(pairs)
+        for index, pair in enumerate(nonpositive_control_delta):
+            pair["metal_bytecode_address_control_prepare_us"] = (
+                1_400.0 if index % 2 == 0 else 1_500.0
+            )
+        uncharged = metal_piop_eval.summarize_pairs(nonpositive_control_delta)
         self.assertEqual(
             uncharged[
                 "bytecode_read_raf_address_charged_producer_delta_ms_samples"
             ],
             [0.0] * 5,
         )
-        self.assertEqual(
-            uncharged["charged_metal_address_ms_samples"],
-            [1.0] * 5,
-        )
+        self.assertEqual(uncharged["charged_metal_address_ms_samples"], [1.0] * 5)
         self.assertEqual(
             uncharged["paired_bytecode_read_raf_address_charged_speedups"],
             [6.0] * 5,
@@ -2414,6 +2878,102 @@ class MetalPiopEvalTests(unittest.TestCase):
         incomplete = copy.deepcopy(pairs)
         incomplete[0].pop("metal_bytecode_address_us")
         with self.assertRaisesRegex(ValueError, "incomplete Bytecode address"):
+            metal_piop_eval.summarize_pairs(incomplete)
+
+        incomplete_control = copy.deepcopy(pairs)
+        incomplete_control[0].pop("producer_order")
+        with self.assertRaisesRegex(ValueError, "incomplete Bytecode address producer"):
+            metal_piop_eval.summarize_pairs(incomplete_control)
+
+    def test_bytecode_address_fused_charge_sums_signed_stage1_and_scatter_deltas(
+        self,
+    ) -> None:
+        base = {
+            "cpu_us": 10_000.0,
+            "metal_us": 2_000.0,
+            "cpu_prepare_us": 900.0,
+            "metal_prepare_us": 1_400.0,
+            "cpu_instruction_ra_us": 700.0,
+            "metal_instruction_ra_us": 100.0,
+            "cpu_bytecode_us": 1_000.0,
+            "metal_bytecode_us": 200.0,
+            "cpu_bytecode_address_us": 6_000.0,
+            "metal_bytecode_address_us": 1_000.0,
+            "metal_bytecode_address_control_prepare_us": 900.0,
+            "metal_bytecode_address_stage1_topology_us": 300.0,
+            "metal_bytecode_address_control_stage1_topology_us": 100.0,
+            "metal_bytecode_address_irraf_scatter_us": 700.0,
+            "metal_bytecode_address_control_irraf_scatter_us": 500.0,
+            "cpu_instruction_input_us": 800.0,
+            "metal_instruction_input_us": 160.0,
+            "cpu_registers_claim_us": 800.0,
+            "metal_registers_claim_us": 160.0,
+            "cpu_instruction_read_raf_us": 800.0,
+            "metal_instruction_read_raf_us": 160.0,
+            "cpu_booleanity_address_us": 1_000.0,
+            "metal_booleanity_address_us": 200.0,
+            "cpu_hamming_weight_us": 900.0,
+            "metal_hamming_weight_us": 180.0,
+            "cpu_hamming_weight_service_us": 990.0,
+            "metal_hamming_weight_service_us": 180.0,
+        }
+        pairs = [
+            {
+                **base,
+                "order": ["optimized", "metal"]
+                if index % 2 == 0
+                else ["metal", "optimized"],
+                "producer_order": ["target", "control"]
+                if index % 2 == 0
+                else ["control", "target"],
+            }
+            for index in range(5)
+        ]
+
+        metrics = metal_piop_eval.summarize_pairs(pairs)
+        self.assertEqual(
+            metrics["bytecode_read_raf_address_stage1_topology_delta_ms_samples"],
+            [0.2] * 5,
+        )
+        self.assertEqual(
+            metrics["bytecode_read_raf_address_irraf_scatter_delta_ms_samples"],
+            [0.2] * 5,
+        )
+        self.assertEqual(
+            metrics["bytecode_read_raf_address_signed_fused_producer_delta_ms_samples"],
+            [0.4] * 5,
+        )
+        self.assertEqual(
+            metrics["bytecode_read_raf_address_charged_producer_delta_ms_samples"],
+            [0.4] * 5,
+        )
+        self.assertEqual(metrics["charged_metal_address_ms_samples"], [1.4] * 5)
+        self.assertFalse(
+            metrics["bytecode_read_raf_address_charged_decision"]["clears"]
+        )
+
+        signed = copy.deepcopy(pairs)
+        for pair in signed:
+            pair["metal_bytecode_address_stage1_topology_us"] = 100.0
+            pair["metal_bytecode_address_control_stage1_topology_us"] = 400.0
+        uncharged = metal_piop_eval.summarize_pairs(signed)
+        self.assertEqual(
+            uncharged[
+                "bytecode_read_raf_address_signed_fused_producer_delta_ms_samples"
+            ],
+            [-0.1] * 5,
+        )
+        self.assertEqual(
+            uncharged[
+                "bytecode_read_raf_address_charged_producer_delta_ms_samples"
+            ],
+            [0.0] * 5,
+        )
+        self.assertEqual(uncharged["charged_metal_address_ms_samples"], [1.0] * 5)
+
+        incomplete = copy.deepcopy(pairs)
+        incomplete[0].pop("metal_bytecode_address_control_irraf_scatter_us")
+        with self.assertRaisesRegex(ValueError, "incomplete fused Bytecode address"):
             metal_piop_eval.summarize_pairs(incomplete)
 
     def test_validates_target_bytecode_records(self) -> None:
@@ -3153,7 +3713,11 @@ class MetalPiopEvalTests(unittest.TestCase):
         assert resources is not None
         self.assertEqual(
             resources["carrier_publish"]["producer_persistent_write_bytes"],
-            13 * (1 << 26),
+            resources["carrier_publish"]["carrier_resident_bytes"],
+        )
+        self.assertEqual(
+            resources["carrier_publish"]["carrier_occurrence_bytes"],
+            2 * resources["carrier_publish"]["physical_rows"],
         )
         self.assertEqual(
             resources["address_major_complete"]["member_carrier_owned_bytes"], 0
@@ -3177,7 +3741,7 @@ class MetalPiopEvalTests(unittest.TestCase):
         )
         self.assertEqual(
             log27_resources["address_major_complete"]["carrier_resident_bytes"],
-            13 * (1 << 27),
+            log27_resources["carrier_publish"]["carrier_resident_bytes"],
         )
 
     def test_bytecode_address_cpu_route_remains_a_diagnostic_choice(self) -> None:
@@ -3204,6 +3768,152 @@ class MetalPiopEvalTests(unittest.TestCase):
         self.assertEqual(observed["metal_counts"]["route"], 1)
         self.assertEqual(observed["route_observation"]["realized_route"], "cpu")
         self.assertIsNone(observed["resource_observation"])
+
+    def test_bytecode_address_fused_stage1_grouped_route_is_exact(self) -> None:
+        log_n = 26
+        source = bytecode_address_stage1_source(log_n)
+        scatter = fused_bytecode_stage1_scatter(log_n)
+        observed = metal_piop_eval.bytecode_address_member_breakdown(
+            complete_fused_bytecode_address_trace(log_n),
+            "metal",
+            log_n,
+            "address-major",
+            8,
+            26,
+            source,
+            scatter,
+        )
+        self.assertEqual(
+            observed["route_observation"]["realized_route"],
+            "address_major_fused_stage1_grouped_v1",
+        )
+        topology = observed["topology_observation"]
+        self.assertIsNotNone(topology)
+        assert topology is not None
+        self.assertTrue(topology["enabled"])
+        self.assertEqual(
+            topology["descriptor_elements"],
+            topology["descriptors"] + topology["chunks"],
+        )
+        resources = observed["resource_observation"]
+        self.assertIsNotNone(resources)
+        assert resources is not None
+        self.assertEqual(resources["producer_kind"], "fused_stage1_grouped_v1")
+        publish = resources["carrier_publish"]
+        complete = resources["address_major_complete"]
+        self.assertEqual(
+            complete["producer_persistent_write_bytes"],
+            10 * publish["physical_rows"],
+        )
+        self.assertEqual(
+            complete["producer_logical_movement_bytes"],
+            complete["producer_persistent_write_bytes"]
+            + complete["producer_topology_read_bytes"],
+        )
+        self.assertEqual(publish["additional_source_row_scans"], 0)
+        self.assertEqual(publish["member_upload_bytes"], 0)
+
+        control = metal_piop_eval.bytecode_address_member_breakdown(
+            complete_fused_bytecode_address_trace(log_n, control=True),
+            "metal",
+            log_n,
+            "cpu",
+            8,
+            26,
+            source,
+        )
+        self.assertIsNone(control["resource_observation"])
+        self.assertIsNotNone(control["topology_observation"])
+        self.assertFalse(control["topology_observation"]["enabled"])
+        self.assertEqual(control["topology_observation"]["covered_rows"], 0)
+
+    def test_bytecode_address_fused_route_mutations_fail_closed(self) -> None:
+        log_n = 26
+        source = bytecode_address_stage1_source(log_n)
+        scatter = fused_bytecode_stage1_scatter(log_n)
+
+        missing_topology = complete_fused_bytecode_address_trace(log_n)
+        missing_topology.remove(
+            next(
+                trace_event
+                for trace_event in missing_topology
+                if trace_event["name"]
+                == "MetalBytecodeReadRafAddress::fused_topology_prepare"
+            )
+        )
+        bad_sentinel = complete_fused_bytecode_address_trace(log_n)
+        topology = next(
+            trace_event
+            for trace_event in bad_sentinel
+            if trace_event["name"]
+            == "MetalBytecodeReadRafAddress::fused_topology_prepare"
+        )
+        topology["args"]["descriptor_elements"] = str(
+            int(topology["args"]["descriptor_elements"]) - 1
+        )
+        hidden_upload = complete_fused_bytecode_address_trace(log_n)
+        publish = next(
+            trace_event
+            for trace_event in hidden_upload
+            if trace_event["name"]
+            == "MetalBytecodeReadRafAddress::fused_carrier_publish"
+        )
+        publish["args"]["member_upload_bytes"] = "1"
+        incomplete_publish = complete_fused_bytecode_address_trace(log_n)
+        publish = next(
+            trace_event
+            for trace_event in incomplete_publish
+            if trace_event["name"]
+            == "MetalBytecodeReadRafAddress::fused_carrier_publish"
+        )
+        publish["args"].pop("carrier_buffers")
+        mismatched_receipt = complete_fused_bytecode_address_trace(log_n)
+        topology = next(
+            trace_event
+            for trace_event in mismatched_receipt
+            if trace_event["name"]
+            == "MetalBytecodeReadRafAddress::fused_topology_prepare"
+        )
+        topology["args"]["work_item_storage_id"] = "999"
+
+        for label, events, message in (
+            ("missing topology", missing_topology, "span counts"),
+            ("sentinel accounting", bad_sentinel, "topology receipt"),
+            ("hidden upload", hidden_upload, "publication ledger"),
+            ("incomplete publication", incomplete_publish, "unexpected argument fields"),
+            ("receipt mismatch", mismatched_receipt, "does not match its scatter"),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, message):
+                    metal_piop_eval.bytecode_address_member_breakdown(
+                        events,
+                        "metal",
+                        log_n,
+                        "address-major",
+                        8,
+                        26,
+                        source,
+                        scatter,
+                    )
+
+        non_inert_control = complete_fused_bytecode_address_trace(log_n, control=True)
+        control_topology = next(
+            trace_event
+            for trace_event in non_inert_control
+            if trace_event["name"]
+            == "MetalBytecodeReadRafAddress::fused_topology_prepare"
+        )
+        control_topology["args"]["work_items"] = "1"
+        with self.assertRaisesRegex(ValueError, "not inert"):
+            metal_piop_eval.bytecode_address_member_breakdown(
+                non_inert_control,
+                "metal",
+                log_n,
+                "cpu",
+                8,
+                26,
+                source,
+            )
 
     def test_bytecode_address_major_mutations_fail_closed(self) -> None:
         source = bytecode_address_stage1_source(26)
@@ -3233,7 +3943,7 @@ class MetalPiopEvalTests(unittest.TestCase):
             if event["name"]
             == "MetalBytecodeReadRafAddress::address_major_complete"
         )
-        complete["args"]["carrier_cells_storage_id"] = "999"
+        complete["args"]["carrier_occurrence_storage_id"] = "999"
 
         wrong_source = complete_bytecode_address_trace(26, "metal")
         publish = next(
@@ -3259,7 +3969,7 @@ class MetalPiopEvalTests(unittest.TestCase):
             if event["name"] == "MetalBytecodeReadRafAddress::carrier_publish"
         )
         publish["args"]["producer_logical_movement_bytes"] = str(
-            33 * (1 << 26) + 1
+            int(publish["args"]["producer_logical_movement_bytes"]) + 1
         )
 
         atom_path = complete_bytecode_address_trace(26, "metal")
@@ -3274,6 +3984,50 @@ class MetalPiopEvalTests(unittest.TestCase):
             }
         )
 
+        impossible_work_items = complete_bytecode_address_trace(26, "metal")
+        impossible_count = 1
+        for trace_event in impossible_work_items:
+            if trace_event["name"] == "MetalBytecodeReadRafAddress::carrier_publish":
+                args = trace_event["args"]
+                physical_rows = int(args["physical_rows"])
+                offset_bytes = int(args["carrier_address_offset_bytes"])
+                resident_bytes = 10 * physical_rows + 8 * impossible_count + offset_bytes
+                args.update(
+                    {
+                        "work_items": str(impossible_count),
+                        "carrier_work_item_bytes": str(8 * impossible_count),
+                        "carrier_resident_bytes": str(resident_bytes),
+                        "producer_persistent_write_bytes": str(resident_bytes),
+                        "producer_logical_movement_bytes": str(
+                            30 * physical_rows + 16 * impossible_count + offset_bytes
+                        ),
+                    }
+                )
+            elif trace_event["name"] == "MetalBytecodeReadRafAddress::address_major_complete":
+                args = trace_event["args"]
+                physical_rows = int(args["physical_rows"])
+                offset_bytes = int(args["carrier_address_offset_bytes"])
+                resident_bytes = 10 * physical_rows + 8 * impossible_count + offset_bytes
+                equality_bytes = int(args["equality_bytes"])
+                padding_bytes = int(args["padding_bytes"])
+                output_bytes = int(args["output_readback_bytes"])
+                partial_bytes = 16 * 9 * impossible_count
+                args.update(
+                    {
+                        "work_items": str(impossible_count),
+                        "carrier_work_item_bytes": str(8 * impossible_count),
+                        "carrier_resident_bytes": str(resident_bytes),
+                        "producer_persistent_write_bytes": str(resident_bytes),
+                        "producer_logical_movement_bytes": str(
+                            30 * physical_rows + 16 * impossible_count + offset_bytes
+                        ),
+                        "partial_bytes": str(partial_bytes),
+                        "member_owned_bytes": str(
+                            equality_bytes + padding_bytes + partial_bytes + output_bytes
+                        ),
+                    }
+                )
+
         for label, events, message in (
             ("fallback", wrong_route, "fail-closed route"),
             ("completion", missing_complete, "span counts"),
@@ -3282,6 +4036,7 @@ class MetalPiopEvalTests(unittest.TestCase):
             ("hidden scan", hidden_scan, "completion ledger"),
             ("logical movement", wrong_movement, "publication ledger"),
             ("atom path", atom_path, "forbidden Atom path"),
+            ("impossible work-item count", impossible_work_items, "publication ledger"),
         ):
             with self.subTest(label=label):
                 with self.assertRaisesRegex(ValueError, message):
@@ -3294,6 +4049,53 @@ class MetalPiopEvalTests(unittest.TestCase):
                         26,
                         source,
                     )
+
+        geometry_mutations = {
+            "worker_variant": "legacy",
+            "worker_simd_width": "16",
+            "worker_threads": "256",
+            "worker_items_per_threadgroup": "1",
+            "worker_threadgroups": "1",
+            "worker_tail_slots": "0",
+            "worker_dynamic_threadgroup_bytes": "1",
+            "worker_static_threadgroup_bytes": "1",
+            "worker_threadgroup_bytes": "1",
+            "reducer_threads": "128",
+            "reducer_threadgroups": "1",
+            "reducer_static_threadgroup_bytes": "1",
+        }
+        for field, value in geometry_mutations.items():
+            events = complete_bytecode_address_trace(26, "metal")
+            complete = next(
+                event
+                for event in events
+                if event["name"]
+                == "MetalBytecodeReadRafAddress::address_major_complete"
+            )
+            complete["args"][field] = value
+            with self.subTest(geometry_field=field):
+                with self.assertRaisesRegex(ValueError, "completion ledger"):
+                    metal_piop_eval.bytecode_address_member_breakdown(
+                        events,
+                        "metal",
+                        26,
+                        "address-major",
+                        8,
+                        26,
+                        source,
+                    )
+
+        wrong_projection_source = {**source, "explicit_rows": int(source["explicit_rows"]) - 1}
+        with self.assertRaisesRegex(ValueError, "Stage1 projection"):
+            metal_piop_eval.bytecode_address_member_breakdown(
+                complete_bytecode_address_trace(26, "metal"),
+                "metal",
+                26,
+                "address-major",
+                8,
+                26,
+                wrong_projection_source,
+            )
 
     def test_requires_exact_instruction_input_lifecycle_and_resources(self) -> None:
         optimized = metal_piop_eval.instruction_input_member_breakdown(
@@ -4097,7 +4899,7 @@ class MetalPiopEvalTests(unittest.TestCase):
         )
         self.assertEqual(
             observed["scatter_observation"]["additional_allocation_bytes"],
-            1_244_397_952,
+            1_244_397_992,
         )
         self.assertEqual(
             observed["scatter_observation"]["threads_per_threadgroup"], 512
@@ -4164,6 +4966,73 @@ class MetalPiopEvalTests(unittest.TestCase):
                 "metal",
                 24,
                 scatter_threads=512,
+            )
+
+    def test_instruction_read_raf_fused_bytecode_scatter_is_exact(self) -> None:
+        events = complete_instruction_read_raf_trace(
+            25, "metal", 512, fused_bytecode=True
+        )
+        observed = metal_piop_eval.instruction_read_raf_member_breakdown(
+            events,
+            "metal",
+            25,
+            scatter_threads=512,
+            expect_fused_bytecode_address=True,
+        )
+        fused = observed["fused_bytecode_observation"]
+        self.assertIsNotNone(fused)
+        assert fused is not None
+        self.assertTrue(fused["bytecode_fused"])
+        self.assertEqual(fused["bytecode_occurrence_bytes"], 2 * ((1 << 25) - 1))
+        self.assertEqual(fused["bytecode_magnitude_bytes"], 8 * ((1 << 25) - 1))
+        self.assertEqual(fused["additional_source_row_scans"], 0)
+        self.assertEqual(fused["member_upload_bytes"], 0)
+
+        missing = copy.deepcopy(events)
+        scatter = next(
+            event
+            for event in missing
+            if event["name"] == "MetalInstructionReadRaf::stage1_grouped_scatter"
+        )
+        scatter["args"].pop("bytecode_occurrence_storage_id")
+        with self.assertRaisesRegex(ValueError, "unexpected argument fields"):
+            metal_piop_eval.instruction_read_raf_member_breakdown(
+                missing,
+                "metal",
+                25,
+                scatter_threads=512,
+                expect_fused_bytecode_address=True,
+            )
+
+        for field, value in (
+            ("bytecode_max_admitted_descriptors_per_chunk", "31"),
+            ("bytecode_max_admitted_pivots_per_chunk", "14"),
+            ("bytecode_threadgroup_memory_limit_bytes", "1"),
+        ):
+            invalid_admission = copy.deepcopy(events)
+            scatter = next(
+                event
+                for event in invalid_admission
+                if event["name"]
+                == "MetalInstructionReadRaf::stage1_grouped_scatter"
+            )
+            scatter["args"][field] = value
+            with self.subTest(admission_field=field):
+                with self.assertRaisesRegex(ValueError, "fused Bytecode scatter ledger"):
+                    metal_piop_eval.instruction_read_raf_member_breakdown(
+                        invalid_admission,
+                        "metal",
+                        25,
+                        scatter_threads=512,
+                        expect_fused_bytecode_address=True,
+                    )
+
+        unexpected = complete_instruction_read_raf_trace(
+            25, "metal", 512, fused_bytecode=True
+        )
+        with self.assertRaisesRegex(ValueError, "unexpected argument fields"):
+            metal_piop_eval.instruction_read_raf_member_breakdown(
+                unexpected, "metal", 25, scatter_threads=512
             )
 
     def test_instruction_read_raf_stage1_rows_are_reused_by_booleanity(self) -> None:

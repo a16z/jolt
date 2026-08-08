@@ -25,7 +25,7 @@ except ModuleNotFoundError:
     from scripts.metal_autoresearch import evaluator_lock
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 15
 FEATURES = "metal,prover-fixtures"
 PIOP_SPAN = "jolt_prover::piop"
 BACKEND_WITNESS_PREP_SPAN = "jolt_prover::backend_witness_prepare"
@@ -55,6 +55,13 @@ METAL_BYTECODE_ADDRESS_ROUTE = "MetalBytecodeReadRafAddress::route"
 METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH = (
     "MetalBytecodeReadRafAddress::carrier_publish"
 )
+METAL_BYTECODE_ADDRESS_FUSED_TOPOLOGY_PREPARE = (
+    "MetalBytecodeReadRafAddress::fused_topology_prepare"
+)
+METAL_BYTECODE_ADDRESS_FUSED_CARRIER_PUBLISH = (
+    "MetalBytecodeReadRafAddress::fused_carrier_publish"
+)
+METAL_BYTECODE_ADDRESS_FUSED_ROUTE = "address_major_fused_stage1_grouped_v1"
 METAL_BYTECODE_ADDRESS_PREPARE = (
     "MetalBytecodeReadRafAddress::address_major_prepare"
 )
@@ -1134,6 +1141,7 @@ def bytecode_address_member_breakdown(
     outer_tiles: int = 8,
     trace_cutoff_log2: int = 26,
     stage1_source: Optional[dict[str, Any]] = None,
+    stage1_scatter: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     implementations = {"cpu", "csr-shadow", "address-major-shadow", "address-major"}
     if backend not in {"optimized", "metal"}:
@@ -1150,13 +1158,20 @@ def bytecode_address_member_breakdown(
     metal_names = {
         METAL_BYTECODE_ADDRESS_ROUTE,
         METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH,
+        METAL_BYTECODE_ADDRESS_FUSED_TOPOLOGY_PREPARE,
+        METAL_BYTECODE_ADDRESS_FUSED_CARRIER_PUBLISH,
         METAL_BYTECODE_ADDRESS_PREPARE,
         METAL_BYTECODE_ADDRESS_JOIN,
         METAL_BYTECODE_ADDRESS_COMPLETE,
         METAL_BYTECODE_ADDRESS_SHADOW_PREPARE,
         METAL_BYTECODE_ADDRESS_SHADOW_JOIN,
     }
-    supporting_names = {PIOP_SPAN, BACKEND_WITNESS_PREP_SPAN}
+    supporting_names = {
+        PIOP_SPAN,
+        BACKEND_WITNESS_PREP_SPAN,
+        INSTRUCTION_READ_RAF_STAGE1_SCATTER,
+        "InstructionReadRaf::prepare",
+    }
     intervals = strict_named_intervals(
         events, outer_names | metal_names | supporting_names
     )
@@ -1261,31 +1276,52 @@ def bytecode_address_member_breakdown(
             "outer_counts": outer_counts,
             "metal_counts": metal_counts,
             "route_observation": None,
+            "topology_observation": None,
             "resource_observation": None,
         }
 
     expected_counts = {
         "route": 1,
         "carrier_publish": 0,
+        "fused_topology_prepare": 0,
+        "fused_carrier_publish": 0,
         "address_major_prepare": 0,
         "address_major_join": 0,
         "address_major_complete": 0,
         "shadow_prepare": 0,
         "shadow_join": 0,
     }
+    fused_producer = False
     if implementation == "address-major":
-        expected_counts.update(
-            {
-                "carrier_publish": 1,
-                "address_major_prepare": 1,
-                "address_major_join": 1,
-                "address_major_complete": 1,
-            }
-        )
+        legacy_counts = {
+            **expected_counts,
+            "carrier_publish": 1,
+            "address_major_prepare": 1,
+            "address_major_join": 1,
+            "address_major_complete": 1,
+        }
+        fused_counts = {
+            **expected_counts,
+            "fused_topology_prepare": 1,
+            "fused_carrier_publish": 1,
+            "address_major_prepare": 1,
+            "address_major_join": 1,
+            "address_major_complete": 1,
+        }
+        if metal_counts == fused_counts:
+            expected_counts = fused_counts
+            fused_producer = True
+        else:
+            expected_counts = legacy_counts
     elif implementation == "address-major-shadow":
         expected_counts.update({"shadow_prepare": 1, "address_major_join": 1})
     elif implementation == "csr-shadow":
         expected_counts.update({"shadow_prepare": 1, "shadow_join": 1})
+    elif (
+        implementation == "cpu"
+        and metal_counts["fused_topology_prepare"] == 1
+    ):
+        expected_counts["fused_topology_prepare"] = 1
     if metal_counts != expected_counts:
         raise ValueError(
             f"Bytecode address Metal span counts {metal_counts}, expected {expected_counts}"
@@ -1308,7 +1344,13 @@ def bytecode_address_member_breakdown(
     expected_route = {
         "cycles": rows,
         "requested": requested,
-        "realized_route": "address_major" if implementation == "address-major" else "cpu",
+        "realized_route": (
+            METAL_BYTECODE_ADDRESS_FUSED_ROUTE
+            if fused_producer
+            else "address_major"
+            if implementation == "address-major"
+            else "cpu"
+        ),
         "fallback_reason": (
             "none"
             if implementation == "address-major"
@@ -1328,12 +1370,210 @@ def bytecode_address_member_breakdown(
     route_interval = intervals[METAL_BYTECODE_ADDRESS_ROUTE][0]
     require_contained(route_interval, prepare, "Bytecode address route")
 
+    topology_observation = None
+    if metal_counts["fused_topology_prepare"] == 1:
+        topology_fields = {
+            "enabled",
+            "physical_rows",
+            "chunk_rows",
+            "chunks",
+            "descriptors",
+            "descriptor_elements",
+            "descriptor_bytes",
+            "descriptor_storage_id",
+            "pivots",
+            "pivot_elements",
+            "pivot_bytes",
+            "pivot_storage_id",
+            "chunk_offset_elements",
+            "chunk_offset_bytes",
+            "chunk_offset_storage_id",
+            "work_items",
+            "work_item_elements",
+            "work_item_bytes",
+            "work_item_storage_id",
+            "address_offset_elements",
+            "address_offset_bytes",
+            "address_offset_storage_id",
+            "max_descriptors_per_chunk",
+            "max_pivots_per_chunk",
+            "first_push_pc",
+            "source_generation",
+            "source_completion_serial",
+            "source_rows_storage_id",
+            "source_claim_storage_id",
+            "topology_completion_serial",
+            "shared_source_row_scans",
+            "additional_source_row_scans",
+            "extra_source_scans",
+            "source_windows",
+            "member_upload_bytes",
+            "complete_overwrite",
+            "covered_rows",
+        }
+        raw_topology = exact_span_args(
+            events,
+            METAL_BYTECODE_ADDRESS_FUSED_TOPOLOGY_PREPARE,
+            topology_fields,
+        )
+        topology_observation = {
+            field: nonnegative_trace_integer(value, f"fused topology {field}")
+            for field, value in raw_topology.items()
+            if field not in {"enabled", "complete_overwrite"}
+        }
+        topology_observation["enabled"] = trace_boolean(raw_topology["enabled"])
+        topology_observation["complete_overwrite"] = trace_boolean(
+            raw_topology["complete_overwrite"]
+        )
+        topology_interval = intervals[
+            METAL_BYTECODE_ADDRESS_FUSED_TOPOLOGY_PREPARE
+        ][0]
+        require_contained(
+            topology_interval,
+            witness_prepare,
+            "fused Bytecode address topology preparation",
+        )
+        topology_observation["wall_us"] = interval_duration_us(topology_interval)
+        if topology_observation["wall_us"] <= 0.0:
+            raise ValueError("fused Bytecode address topology timing is invalid")
+        if stage1_source is None:
+            raise ValueError(
+                "fused Bytecode address topology is missing its Stage1 source"
+            )
+        physical_rows = topology_observation["physical_rows"]
+        source_match = {
+            "physical_rows": stage1_source["explicit_rows"],
+            "source_generation": stage1_source["source_generation"],
+            "source_completion_serial": stage1_source["completion_serial"],
+            "source_rows_storage_id": stage1_source["row_allocation_identity"],
+            "source_claim_storage_id": stage1_source["claim_allocation_identity"],
+            "source_windows": stage1_source["source_windows"],
+        }
+        common_topology = {
+            "chunk_rows": 4096,
+            "shared_source_row_scans": 1,
+            "additional_source_row_scans": 0,
+            "extra_source_scans": 0,
+            "member_upload_bytes": 0,
+        }
+        if (
+            physical_rows <= 0
+            or physical_rows > rows
+            or any(
+                topology_observation[field] != value
+                for field, value in {**source_match, **common_topology}.items()
+            )
+        ):
+            raise ValueError(
+                "fused Bytecode address topology source or traffic is invalid"
+            )
+        if fused_producer:
+            chunks = (physical_rows + 4095) // 4096
+            descriptors = topology_observation["descriptors"]
+            pivots = topology_observation["pivots"]
+            work_items = topology_observation["work_items"]
+            max_descriptors = topology_observation["max_descriptors_per_chunk"]
+            max_pivots = topology_observation["max_pivots_per_chunk"]
+            topology_ids = [
+                topology_observation[field]
+                for field in (
+                    "descriptor_storage_id",
+                    "pivot_storage_id",
+                    "chunk_offset_storage_id",
+                    "work_item_storage_id",
+                    "address_offset_storage_id",
+                )
+            ]
+            expected_topology = {
+                "enabled": True,
+                "chunks": chunks,
+                "descriptor_elements": descriptors + chunks,
+                "descriptor_bytes": 8 * (descriptors + chunks),
+                "pivot_elements": pivots + 1,
+                "pivot_bytes": 2 * (pivots + 1),
+                "chunk_offset_elements": 2 * chunks,
+                "chunk_offset_bytes": 8 * chunks,
+                "work_item_elements": work_items,
+                "work_item_bytes": 8 * work_items,
+                "address_offset_elements": (1 << 13) + 1,
+                "address_offset_bytes": 4 * ((1 << 13) + 1),
+                "complete_overwrite": True,
+                "covered_rows": physical_rows,
+            }
+            if (
+                descriptors < chunks
+                or descriptors > 32 * chunks
+                or work_items < chunks
+                or work_items > physical_rows
+                or not 1 <= max_descriptors <= 32
+                or max_descriptors > descriptors
+                or pivots > 15 * chunks
+                or max_pivots > 15
+                or max_pivots > pivots
+                or topology_observation["first_push_pc"] >= 1 << 13
+                or topology_observation["topology_completion_serial"] <= 0
+                or any(identity <= 0 for identity in topology_ids)
+                or len(set(topology_ids)) != len(topology_ids)
+                or set(topology_ids)
+                & {
+                    topology_observation["source_rows_storage_id"],
+                    topology_observation["source_claim_storage_id"],
+                }
+                or any(
+                    topology_observation[field] != value
+                    for field, value in expected_topology.items()
+                )
+            ):
+                raise ValueError(
+                    "fused Bytecode address topology receipt is invalid"
+                )
+        elif implementation == "cpu":
+            zero_topology_fields = {
+                "chunks",
+                "descriptors",
+                "descriptor_elements",
+                "descriptor_bytes",
+                "descriptor_storage_id",
+                "pivots",
+                "pivot_elements",
+                "pivot_bytes",
+                "pivot_storage_id",
+                "chunk_offset_elements",
+                "chunk_offset_bytes",
+                "chunk_offset_storage_id",
+                "work_items",
+                "work_item_elements",
+                "work_item_bytes",
+                "work_item_storage_id",
+                "address_offset_elements",
+                "address_offset_bytes",
+                "address_offset_storage_id",
+                "max_descriptors_per_chunk",
+                "max_pivots_per_chunk",
+                "first_push_pc",
+                "topology_completion_serial",
+                "covered_rows",
+            }
+            if (
+                topology_observation["enabled"] is not False
+                or topology_observation["complete_overwrite"] is not False
+                or any(topology_observation[field] != 0 for field in zero_topology_fields)
+            ):
+                raise ValueError(
+                    "disabled Bytecode address topology control is not inert"
+                )
+        else:
+            raise ValueError(
+                "fused Bytecode address topology appeared on an unsupported route"
+            )
+
     if implementation == "cpu":
         return {
             "components": components,
             "outer_counts": outer_counts,
             "metal_counts": metal_counts,
             "route_observation": route,
+            "topology_observation": topology_observation,
             "resource_observation": None,
         }
     if log_n < trace_cutoff_log2:
@@ -1359,34 +1599,62 @@ def bytecode_address_member_breakdown(
             "outer_counts": outer_counts,
             "metal_counts": metal_counts,
             "route_observation": route,
+            "topology_observation": topology_observation,
             "resource_observation": None,
         }
 
-    publish_interval = intervals[METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH][0]
-    complete_interval = intervals[METAL_BYTECODE_ADDRESS_COMPLETE][0]
-    require_contained(
-        publish_interval,
-        witness_prepare,
-        "Bytecode address carrier publication",
+    publish_name = (
+        METAL_BYTECODE_ADDRESS_FUSED_CARRIER_PUBLISH
+        if fused_producer
+        else METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH
     )
+    publish_interval = intervals[publish_name][0]
+    complete_interval = intervals[METAL_BYTECODE_ADDRESS_COMPLETE][0]
+    if fused_producer:
+        if len(intervals["InstructionReadRaf::prepare"]) != 1 or len(
+            intervals[INSTRUCTION_READ_RAF_STAGE1_SCATTER]
+        ) != 1:
+            raise ValueError(
+                "fused Bytecode address requires one InstructionReadRaf scatter"
+            )
+        require_contained(
+            publish_interval,
+            intervals["InstructionReadRaf::prepare"][0],
+            "fused Bytecode address carrier publication",
+        )
+        if intervals[INSTRUCTION_READ_RAF_STAGE1_SCATTER][0][1] > publish_interval[0]:
+            raise ValueError(
+                "fused Bytecode address carrier was published before scatter completion"
+            )
+    else:
+        require_contained(
+            publish_interval,
+            witness_prepare,
+            "Bytecode address carrier publication",
+        )
     require_contained(complete_interval, inner_join, "Bytecode address completion")
-    if publish_interval[1] > piop[0]:
+    if not fused_producer and publish_interval[1] > piop[0]:
         raise ValueError("Bytecode address carrier publication extends into PIOP")
 
-    publish_fields = {
+    legacy_publish_fields = {
         "cycles",
+        "physical_rows",
+        "work_items",
         "source_generation",
         "source_completion_serial",
         "source_rows_storage_id",
         "source_claim_storage_id",
         "source_device_registry_id",
         "source_windows",
-        "carrier_cells_storage_id",
-        "carrier_cells_bytes",
-        "carrier_inner_sign_storage_id",
-        "carrier_inner_sign_bytes",
+        "carrier_completion_serial",
+        "carrier_occurrence_storage_id",
+        "carrier_occurrence_bytes",
         "carrier_magnitude_storage_id",
         "carrier_magnitude_bytes",
+        "carrier_work_item_storage_id",
+        "carrier_work_item_bytes",
+        "carrier_address_offset_storage_id",
+        "carrier_address_offset_bytes",
         "carrier_resident_bytes",
         "carrier_allocations",
         "producer_persistent_write_bytes",
@@ -1396,35 +1664,132 @@ def bytecode_address_member_breakdown(
         "additional_source_row_scans",
         "member_source_upload_bytes",
         "complete_overwrite",
+        "covered_rows",
     }
+    fused_publish_fields = {
+        "route",
+        "cycles",
+        "physical_rows",
+        "work_items",
+        "source_generation",
+        "source_completion_serial",
+        "source_rows_storage_id",
+        "source_claim_storage_id",
+        "source_device_registry_id",
+        "source_windows",
+        "carrier_completion_serial",
+        "carrier_occurrence_storage_id",
+        "carrier_occurrence_bytes",
+        "carrier_magnitude_storage_id",
+        "carrier_magnitude_bytes",
+        "carrier_work_item_storage_id",
+        "carrier_work_item_bytes",
+        "carrier_address_offset_storage_id",
+        "carrier_address_offset_bytes",
+        "bytecode_descriptor_storage_id",
+        "bytecode_descriptor_bytes",
+        "bytecode_pivot_storage_id",
+        "bytecode_pivot_bytes",
+        "bytecode_chunk_offset_storage_id",
+        "bytecode_chunk_offset_bytes",
+        "carrier_resident_bytes",
+        "carrier_buffers",
+        "scatter_output_allocations",
+        "producer_persistent_write_bytes",
+        "producer_logical_movement_bytes",
+        "producer_topology_read_bytes",
+        "complete_overwrite",
+        "covered_rows",
+        "shared_source_row_scans",
+        "additional_source_row_scans",
+        "member_upload_bytes",
+        "command_buffers",
+        "waits",
+        "encoders",
+        "dispatches",
+        "released",
+    }
+    publish_fields = fused_publish_fields if fused_producer else legacy_publish_fields
     raw_publish = exact_span_args(
-        events, METAL_BYTECODE_ADDRESS_CARRIER_PUBLISH, publish_fields
+        events, publish_name, publish_fields
     )
     publish = {
         field: nonnegative_trace_integer(value, f"carrier publication {field}")
         for field, value in raw_publish.items()
-        if field != "complete_overwrite"
+        if field not in {"route", "complete_overwrite", "released"}
     }
+    if fused_producer:
+        publish["route"] = trace_string(raw_publish["route"], "carrier route")
     publish["complete_overwrite"] = trace_boolean(
         raw_publish["complete_overwrite"]
+    )
+    if fused_producer:
+        publish["released"] = trace_boolean(raw_publish["released"])
+    physical_rows = publish["physical_rows"]
+    work_items = publish["work_items"]
+    addresses = 1 << 13
+    address_offset_bytes = 4 * (addresses + 1)
+    carrier_resident_bytes = (
+        10 * physical_rows + 8 * work_items + address_offset_bytes
+    )
+    producer_logical_movement_bytes = (
+        30 * physical_rows + 16 * work_items + address_offset_bytes
     )
     expected_publish = {
         "cycles": rows,
         "source_windows": rows,
-        "carrier_cells_bytes": rows,
-        "carrier_inner_sign_bytes": 4 * rows,
-        "carrier_magnitude_bytes": 8 * rows,
-        "carrier_resident_bytes": 13 * rows,
-        "carrier_allocations": 3,
-        "producer_persistent_write_bytes": 13 * rows,
-        "producer_logical_movement_bytes": 33 * rows,
-        "producer_topology_read_bytes": 0,
+        "carrier_occurrence_bytes": 2 * physical_rows,
+        "carrier_magnitude_bytes": 8 * physical_rows,
+        "carrier_work_item_bytes": 8 * work_items,
+        "carrier_address_offset_bytes": address_offset_bytes,
         "shared_source_row_scans": 1,
         "additional_source_row_scans": 0,
-        "member_source_upload_bytes": 0,
         "complete_overwrite": True,
+        "covered_rows": physical_rows,
     }
-    if any(publish[field] != value for field, value in expected_publish.items()):
+    if fused_producer:
+        topology_read_bytes = (
+            publish["bytecode_descriptor_bytes"]
+            + publish["bytecode_pivot_bytes"]
+            + publish["bytecode_chunk_offset_bytes"]
+        )
+        expected_publish.update(
+            {
+                "route": METAL_BYTECODE_ADDRESS_FUSED_ROUTE,
+                "carrier_resident_bytes": carrier_resident_bytes,
+                "carrier_buffers": 4,
+                "scatter_output_allocations": 2,
+                "producer_persistent_write_bytes": 10 * physical_rows,
+                "producer_logical_movement_bytes": 10 * physical_rows
+                + topology_read_bytes,
+                "producer_topology_read_bytes": topology_read_bytes,
+                "member_upload_bytes": 0,
+                "command_buffers": 1,
+                "waits": 1,
+                "encoders": 1,
+                "dispatches": 1,
+                "released": False,
+            }
+        )
+    else:
+        expected_publish.update(
+            {
+                "carrier_resident_bytes": carrier_resident_bytes,
+                "carrier_allocations": 4,
+                "producer_persistent_write_bytes": carrier_resident_bytes,
+                "producer_logical_movement_bytes": producer_logical_movement_bytes,
+                "producer_topology_read_bytes": 0,
+                "member_source_upload_bytes": 0,
+            }
+        )
+    if (
+        physical_rows <= 0
+        or physical_rows > rows
+        or work_items < (physical_rows + 4095) // 4096
+        or work_items > physical_rows
+        or publish["carrier_completion_serial"] <= 0
+        or any(publish[field] != value for field, value in expected_publish.items())
+    ):
         raise ValueError(
             f"Bytecode address carrier publication ledger is invalid: {publish}"
         )
@@ -1433,15 +1798,27 @@ def bytecode_address_member_breakdown(
         publish["source_claim_storage_id"],
     ]
     carrier_ids = [
-        publish["carrier_cells_storage_id"],
-        publish["carrier_inner_sign_storage_id"],
+        publish["carrier_occurrence_storage_id"],
         publish["carrier_magnitude_storage_id"],
+        publish["carrier_work_item_storage_id"],
+        publish["carrier_address_offset_storage_id"],
     ]
+    topology_ids = (
+        [
+            publish["bytecode_descriptor_storage_id"],
+            publish["bytecode_pivot_storage_id"],
+            publish["bytecode_chunk_offset_storage_id"],
+        ]
+        if fused_producer
+        else []
+    )
     if (
-        any(identity <= 0 for identity in source_ids + carrier_ids)
+        any(identity <= 0 for identity in source_ids + carrier_ids + topology_ids)
         or len(set(source_ids)) != len(source_ids)
         or len(set(carrier_ids)) != len(carrier_ids)
-        or set(source_ids) & set(carrier_ids)
+        or len(set(topology_ids)) != len(topology_ids)
+        or set(source_ids) & set(carrier_ids + topology_ids)
+        or set(carrier_ids) & set(topology_ids)
         or publish["source_generation"] <= 0
         or publish["source_completion_serial"] <= 0
         or publish["source_device_registry_id"] <= 0
@@ -1449,6 +1826,10 @@ def bytecode_address_member_breakdown(
         raise ValueError("Bytecode address carrier publication provenance is invalid")
     if stage1_source is None:
         raise ValueError("Bytecode address AddressMajor route is missing its Stage1 source")
+    if stage1_source.get("explicit_rows") != physical_rows:
+        raise ValueError(
+            "Bytecode address carrier physical rows do not match the Stage1 projection"
+        )
     source_match = {
         "source_generation": stage1_source["source_generation"],
         "source_completion_serial": stage1_source["completion_serial"],
@@ -1459,11 +1840,108 @@ def bytecode_address_member_breakdown(
     }
     if any(publish[field] != value for field, value in source_match.items()):
         raise ValueError("Bytecode address carrier does not match its Stage1 source")
+    if fused_producer:
+        if stage1_scatter is None or stage1_scatter.get("bytecode_fused") is not True:
+            raise ValueError(
+                "fused Bytecode address carrier is missing its InstructionReadRaf scatter"
+            )
+        scatter_match = {
+            "physical_rows": stage1_scatter["bytecode_physical_rows"],
+            "work_items": stage1_scatter["bytecode_work_items"],
+            "carrier_occurrence_storage_id": stage1_scatter[
+                "bytecode_occurrence_storage_id"
+            ],
+            "carrier_occurrence_bytes": stage1_scatter[
+                "bytecode_occurrence_bytes"
+            ],
+            "carrier_magnitude_storage_id": stage1_scatter[
+                "bytecode_magnitude_storage_id"
+            ],
+            "carrier_magnitude_bytes": stage1_scatter["bytecode_magnitude_bytes"],
+            "carrier_work_item_storage_id": stage1_scatter[
+                "bytecode_work_item_storage_id"
+            ],
+            "carrier_work_item_bytes": stage1_scatter["bytecode_work_item_bytes"],
+            "carrier_address_offset_storage_id": stage1_scatter[
+                "bytecode_address_offset_storage_id"
+            ],
+            "carrier_address_offset_bytes": stage1_scatter[
+                "bytecode_address_offset_bytes"
+            ],
+            "bytecode_descriptor_storage_id": stage1_scatter[
+                "bytecode_descriptor_storage_id"
+            ],
+            "bytecode_descriptor_bytes": stage1_scatter[
+                "bytecode_descriptor_bytes"
+            ],
+            "bytecode_pivot_storage_id": stage1_scatter[
+                "bytecode_pivot_storage_id"
+            ],
+            "bytecode_pivot_bytes": stage1_scatter["bytecode_pivot_bytes"],
+            "bytecode_chunk_offset_storage_id": stage1_scatter[
+                "bytecode_chunk_offset_storage_id"
+            ],
+            "bytecode_chunk_offset_bytes": stage1_scatter[
+                "bytecode_chunk_offset_bytes"
+            ],
+        }
+        if (
+            any(publish[field] != value for field, value in scatter_match.items())
+            or publish["command_buffers"] != stage1_scatter["command_buffers"]
+            or publish["waits"] != stage1_scatter["waits"]
+            or publish["encoders"] != stage1_scatter["encoders"]
+            or publish["dispatches"] != stage1_scatter["dispatches"]
+            or publish["bytecode_descriptor_bytes"] <= 0
+            or publish["bytecode_chunk_offset_bytes"] <= 0
+        ):
+            raise ValueError(
+                "fused Bytecode address carrier receipt does not match its scatter"
+            )
+        if topology_observation is None or topology_observation["enabled"] is not True:
+            raise ValueError(
+                "fused Bytecode address carrier is missing its topology receipt"
+            )
+        topology_scatter_match = {
+            "physical_rows": "bytecode_physical_rows",
+            "descriptor_elements": "bytecode_descriptor_elements",
+            "descriptor_bytes": "bytecode_descriptor_bytes",
+            "descriptor_storage_id": "bytecode_descriptor_storage_id",
+            "pivot_elements": "bytecode_pivot_elements",
+            "pivot_bytes": "bytecode_pivot_bytes",
+            "pivot_storage_id": "bytecode_pivot_storage_id",
+            "chunk_offset_elements": "bytecode_chunk_offset_elements",
+            "chunk_offset_bytes": "bytecode_chunk_offset_bytes",
+            "chunk_offset_storage_id": "bytecode_chunk_offset_storage_id",
+            "work_items": "bytecode_work_items",
+            "work_item_bytes": "bytecode_work_item_bytes",
+            "work_item_storage_id": "bytecode_work_item_storage_id",
+            "address_offset_elements": "bytecode_address_offset_elements",
+            "address_offset_bytes": "bytecode_address_offset_bytes",
+            "address_offset_storage_id": "bytecode_address_offset_storage_id",
+            "max_descriptors_per_chunk": "bytecode_max_descriptors_per_chunk",
+            "max_pivots_per_chunk": "bytecode_max_pivots_per_chunk",
+        }
+        if any(
+            topology_observation[topology_field]
+            != stage1_scatter[scatter_field]
+            for topology_field, scatter_field in topology_scatter_match.items()
+        ):
+            raise ValueError(
+                "fused Bytecode address topology does not match its scatter"
+            )
+        publish["carrier_resident_bytes"] = carrier_resident_bytes
+        publish["topology_resident_bytes"] = (
+            publish["bytecode_descriptor_bytes"]
+            + publish["bytecode_pivot_bytes"]
+            + publish["bytecode_chunk_offset_bytes"]
+        )
 
     complete_fields = {
         "cycles",
         "addresses",
         "stages",
+        "physical_rows",
+        "work_items",
         "requested",
         "realized_route",
         "fallback_reason",
@@ -1471,13 +1949,17 @@ def bytecode_address_member_breakdown(
         "source_completion_serial",
         "source_rows_storage_id",
         "source_rows_bytes",
+        "source_claim_storage_id",
         "source_device_registry_id",
-        "carrier_cells_storage_id",
-        "carrier_cells_bytes",
-        "carrier_inner_sign_storage_id",
-        "carrier_inner_sign_bytes",
+        "carrier_completion_serial",
+        "carrier_occurrence_storage_id",
+        "carrier_occurrence_bytes",
         "carrier_magnitude_storage_id",
         "carrier_magnitude_bytes",
+        "carrier_work_item_storage_id",
+        "carrier_work_item_bytes",
+        "carrier_address_offset_storage_id",
+        "carrier_address_offset_bytes",
         "carrier_resident_bytes",
         "producer_persistent_write_bytes",
         "producer_logical_movement_bytes",
@@ -1486,13 +1968,26 @@ def bytecode_address_member_breakdown(
         "member_source_scans",
         "member_source_upload_bytes",
         "equality_bytes",
+        "padding_bytes",
         "partial_bytes",
         "output_readback_bytes",
         "member_owned_bytes",
         "command_buffers",
         "waits",
         "worker_dispatches",
+        "worker_variant",
+        "worker_simd_width",
+        "worker_threads",
+        "worker_items_per_threadgroup",
+        "worker_threadgroups",
+        "worker_tail_slots",
+        "worker_dynamic_threadgroup_bytes",
+        "worker_static_threadgroup_bytes",
+        "worker_threadgroup_bytes",
         "reducer_dispatches",
+        "reducer_threads",
+        "reducer_threadgroups",
+        "reducer_static_threadgroup_bytes",
         "output_fields",
         "submit_ns",
         "overlap_ns",
@@ -1503,10 +1998,26 @@ def bytecode_address_member_breakdown(
         "complete_overwrite",
         "carrier_released",
     }
+    fused_complete_fields = {
+        "bytecode_descriptor_storage_id",
+        "bytecode_descriptor_bytes",
+        "bytecode_pivot_storage_id",
+        "bytecode_pivot_bytes",
+        "bytecode_chunk_offset_storage_id",
+        "bytecode_chunk_offset_bytes",
+        "topology_publication_bytes",
+    }
+    if fused_producer:
+        complete_fields |= fused_complete_fields
     raw_complete = exact_span_args(
         events, METAL_BYTECODE_ADDRESS_COMPLETE, complete_fields
     )
-    string_fields = {"requested", "realized_route", "fallback_reason"}
+    string_fields = {
+        "requested",
+        "realized_route",
+        "fallback_reason",
+        "worker_variant",
+    }
     boolean_fields = {
         "completed_before_join",
         "complete_overwrite",
@@ -1526,70 +2037,129 @@ def bytecode_address_member_breakdown(
     complete.update(
         {field: trace_boolean(raw_complete[field]) for field in boolean_fields}
     )
-    addresses = 1 << 13
     stages = 9
     inner = 1 << 15
     outer = rows // inner
     equality_bytes = 16 * stages * (inner + outer)
-    partial_bytes = 16 * stages * addresses * outer_tiles
+    padding_bytes = 5 * 16
+    partial_bytes = 16 * stages * work_items
     output_bytes = 16 * stages * addresses
+    producer_topology_read_bytes = (
+        publish.get("topology_resident_bytes", 0) if fused_producer else 0
+    )
+    producer_persistent_write_bytes = (
+        10 * physical_rows if fused_producer else carrier_resident_bytes
+    )
+    complete_producer_logical_movement_bytes = (
+        producer_persistent_write_bytes + producer_topology_read_bytes
+        if fused_producer
+        else producer_logical_movement_bytes
+    )
+    topology_publication_bytes = (
+        producer_topology_read_bytes
+        + publish["carrier_work_item_bytes"]
+        + publish["carrier_address_offset_bytes"]
+        if fused_producer
+        else 0
+    )
     expected_complete = {
         "cycles": rows,
         "addresses": addresses,
         "stages": stages,
+        "physical_rows": physical_rows,
+        "work_items": work_items,
         "requested": "address_major",
-        "realized_route": "address_major",
+        "realized_route": (
+            METAL_BYTECODE_ADDRESS_FUSED_ROUTE
+            if fused_producer
+            else "address_major"
+        ),
         "fallback_reason": "none",
         "source_generation": publish["source_generation"],
         "source_completion_serial": publish["source_completion_serial"],
         "source_rows_storage_id": publish["source_rows_storage_id"],
         "source_rows_bytes": 40 * rows,
+        "source_claim_storage_id": publish["source_claim_storage_id"],
         "source_device_registry_id": publish["source_device_registry_id"],
-        "carrier_cells_storage_id": publish["carrier_cells_storage_id"],
-        "carrier_cells_bytes": rows,
-        "carrier_inner_sign_storage_id": publish[
-            "carrier_inner_sign_storage_id"
+        "carrier_completion_serial": publish["carrier_completion_serial"],
+        "carrier_occurrence_storage_id": publish[
+            "carrier_occurrence_storage_id"
         ],
-        "carrier_inner_sign_bytes": 4 * rows,
+        "carrier_occurrence_bytes": 2 * physical_rows,
         "carrier_magnitude_storage_id": publish["carrier_magnitude_storage_id"],
-        "carrier_magnitude_bytes": 8 * rows,
-        "carrier_resident_bytes": 13 * rows,
-        "producer_persistent_write_bytes": 13 * rows,
-        "producer_logical_movement_bytes": 33 * rows,
-        "producer_topology_read_bytes": 0,
+        "carrier_magnitude_bytes": 8 * physical_rows,
+        "carrier_work_item_storage_id": publish[
+            "carrier_work_item_storage_id"
+        ],
+        "carrier_work_item_bytes": 8 * work_items,
+        "carrier_address_offset_storage_id": publish[
+            "carrier_address_offset_storage_id"
+        ],
+        "carrier_address_offset_bytes": address_offset_bytes,
+        "carrier_resident_bytes": carrier_resident_bytes,
+        "producer_persistent_write_bytes": producer_persistent_write_bytes,
+        "producer_logical_movement_bytes": complete_producer_logical_movement_bytes,
+        "producer_topology_read_bytes": producer_topology_read_bytes,
         "member_carrier_owned_bytes": 0,
         "member_source_scans": 0,
         "member_source_upload_bytes": 0,
         "equality_bytes": equality_bytes,
+        "padding_bytes": padding_bytes,
         "partial_bytes": partial_bytes,
         "output_readback_bytes": output_bytes,
-        "member_owned_bytes": equality_bytes + partial_bytes + output_bytes,
+        "member_owned_bytes": (
+            equality_bytes + padding_bytes + partial_bytes + output_bytes
+        ),
         "command_buffers": 1,
         "waits": 1,
         "worker_dispatches": 1,
+        "worker_variant": "packed4_halfwidth_v1",
+        "worker_simd_width": 32,
+        "worker_threads": 128,
+        "worker_items_per_threadgroup": 4,
+        "worker_threadgroups": (work_items + 3) // 4,
+        "worker_tail_slots": (4 - work_items % 4) % 4,
+        "worker_dynamic_threadgroup_bytes": 0,
+        "worker_static_threadgroup_bytes": 0,
+        "worker_threadgroup_bytes": 0,
         "reducer_dispatches": 1,
+        "reducer_threads": 256,
+        "reducer_threadgroups": (stages * addresses + 255) // 256,
+        "reducer_static_threadgroup_bytes": 0,
         "output_fields": stages * addresses,
+        "submit_ns": 0,
+        "overlap_ns": 0,
+        "completed_before_join": False,
         "complete_overwrite": True,
         "carrier_released": True,
     }
+    if fused_producer:
+        expected_complete.update(
+            {
+                "bytecode_descriptor_storage_id": publish[
+                    "bytecode_descriptor_storage_id"
+                ],
+                "bytecode_descriptor_bytes": publish["bytecode_descriptor_bytes"],
+                "bytecode_pivot_storage_id": publish["bytecode_pivot_storage_id"],
+                "bytecode_pivot_bytes": publish["bytecode_pivot_bytes"],
+                "bytecode_chunk_offset_storage_id": publish[
+                    "bytecode_chunk_offset_storage_id"
+                ],
+                "bytecode_chunk_offset_bytes": publish[
+                    "bytecode_chunk_offset_bytes"
+                ],
+                "topology_publication_bytes": topology_publication_bytes,
+            }
+        )
     if any(complete[field] != value for field, value in expected_complete.items()):
         raise ValueError(
             f"Bytecode address AddressMajor completion ledger is invalid: {complete}"
         )
-    if complete["completed_before_join"] is None:
-        raise ValueError("Bytecode address completion status is invalid")
     if (
-        complete["submit_ns"] <= 0
-        or complete["resident_wall_ns"] <= 0
+        complete["resident_wall_ns"] <= 0
+        or complete["join_ns"] != complete["resident_wall_ns"]
         or complete["gpu_active_ns"] <= 0
         or complete["gpu_active_ns"] > complete["resident_wall_ns"]
-        or abs(
-            complete["resident_wall_ns"]
-            - complete["submit_ns"]
-            - complete["overlap_ns"]
-            - complete["join_ns"]
-        )
-        > 100_000
     ):
         raise ValueError("Bytecode address AddressMajor timing ledger is invalid")
 
@@ -1598,7 +2168,12 @@ def bytecode_address_member_breakdown(
         "outer_counts": outer_counts,
         "metal_counts": metal_counts,
         "route_observation": route,
+        "topology_observation": topology_observation,
         "resource_observation": {
+            "producer_kind": (
+                "fused_stage1_grouped_v1" if fused_producer else "legacy_sparse_v1"
+            ),
+            "fused_topology_prepare": topology_observation,
             "carrier_publish": publish,
             "address_major_complete": complete,
         },
@@ -3051,6 +3626,7 @@ def instruction_read_raf_member_breakdown(
     log_n: int,
     cutoff_log2: int = 16,
     scatter_threads: int = 256,
+    expect_fused_bytecode_address: bool = False,
 ) -> dict[str, Any]:
     if backend not in {"optimized", "metal"}:
         raise ValueError(f"unsupported InstructionReadRaf backend {backend!r}")
@@ -3174,6 +3750,8 @@ def instruction_read_raf_member_breakdown(
             "metal_counts": metal_counts,
             "source_observation": None,
             "scatter_observation": None,
+            "scatter_wall_us": None,
+            "fused_bytecode_observation": None,
             "stage1_projection": None,
             "resource_observation": None,
         }
@@ -3483,13 +4061,51 @@ def instruction_read_raf_member_breakdown(
         "complete_overwrite",
         "additional_allocation_bytes",
     }
-    scatter_args = exact_span_args(
-        events, INSTRUCTION_READ_RAF_STAGE1_SCATTER, scatter_fields
+    fused_scatter_fields = {
+        "bytecode_fused",
+        "bytecode_physical_rows",
+        "bytecode_descriptor_elements",
+        "bytecode_descriptor_bytes",
+        "bytecode_descriptor_storage_id",
+        "bytecode_pivot_elements",
+        "bytecode_pivot_bytes",
+        "bytecode_pivot_storage_id",
+        "bytecode_chunk_offset_elements",
+        "bytecode_chunk_offset_bytes",
+        "bytecode_chunk_offset_storage_id",
+        "bytecode_work_items",
+        "bytecode_work_item_bytes",
+        "bytecode_work_item_storage_id",
+        "bytecode_address_offset_elements",
+        "bytecode_address_offset_bytes",
+        "bytecode_address_offset_storage_id",
+        "bytecode_occurrence_bytes",
+        "bytecode_occurrence_storage_id",
+        "bytecode_magnitude_bytes",
+        "bytecode_magnitude_storage_id",
+        "bytecode_max_descriptors_per_chunk",
+        "bytecode_max_admitted_descriptors_per_chunk",
+        "bytecode_max_pivots_per_chunk",
+        "bytecode_max_admitted_pivots_per_chunk",
+        "bytecode_dynamic_threadgroup_bytes",
+        "bytecode_threadgroup_memory_limit_bytes",
+        "shared_source_row_scans",
+        "additional_source_row_scans",
+        "member_upload_bytes",
+    }
+    scatter_args = unique_span_args(events, INSTRUCTION_READ_RAF_STAGE1_SCATTER)
+    expected_scatter_fields = scatter_fields | (
+        fused_scatter_fields if expect_fused_bytecode_address else set()
     )
+    if set(scatter_args) != expected_scatter_fields:
+        raise ValueError(
+            f"{INSTRUCTION_READ_RAF_STAGE1_SCATTER} has unexpected argument fields"
+        )
     scatter = {
         field: nonnegative_trace_integer(value, f"Stage1 scatter {field}")
         for field, value in scatter_args.items()
-        if field not in {"source_count_order", "complete_overwrite"}
+        if field
+        not in {"source_count_order", "complete_overwrite", "bytecode_fused"}
     }
     scatter["source_count_order"] = trace_string(
         scatter_args["source_count_order"], "source_count_order"
@@ -3497,6 +4113,10 @@ def instruction_read_raf_member_breakdown(
     scatter["complete_overwrite"] = trace_boolean(
         scatter_args["complete_overwrite"]
     )
+    if expect_fused_bytecode_address:
+        scatter["bytecode_fused"] = trace_boolean(
+            scatter_args["bytecode_fused"]
+        )
     e_out = 1 << (log_n // 2)
     e_in = rows // e_out
     expected_additional_bytes = (
@@ -3505,8 +4125,10 @@ def instruction_read_raf_member_breakdown(
         + 332
         + 16 * (e_in + e_out)
         + 4
-        + 48
+        + 88
     )
+    if expect_fused_bytecode_address:
+        expected_additional_bytes += 10 * compact["explicit_rows"]
     expected_scatter = {
         "rows": rows,
         "status_readback_bytes": 4,
@@ -3538,6 +4160,10 @@ def instruction_read_raf_member_breakdown(
         "complete_overwrite": True,
         "additional_allocation_bytes": expected_additional_bytes,
     }
+    if expect_fused_bytecode_address:
+        expected_scatter["dynamic_threadgroup_bytes"] = scatter[
+            "bytecode_dynamic_threadgroup_bytes"
+        ]
     if any(scatter[field] != value for field, value in expected_scatter.items()):
         raise ValueError(f"InstructionReadRaf Stage1 scatter ledger is invalid: {scatter}")
     output_ids = [
@@ -3557,11 +4183,91 @@ def instruction_read_raf_member_breakdown(
         or scatter["preparation_wall_ns"] <= 0
         or scatter["command_wall_ns"] <= 0
         or scatter["gpu_active_ns"] <= 0
+        or interval_duration_us(scatter_interval) <= 0.0
         or scatter["gpu_active_ns"] > scatter["command_wall_ns"]
         or (scatter["preparation_wall_ns"] + scatter["command_wall_ns"])
         > int(components["prepare_us"] * 1000.0)
     ):
         raise ValueError("InstructionReadRaf Stage1 scatter execution is invalid")
+
+    fused_bytecode = None
+    if expect_fused_bytecode_address:
+        physical_rows = compact["explicit_rows"]
+        work_items = scatter["bytecode_work_items"]
+        descriptor_elements = scatter["bytecode_descriptor_elements"]
+        pivot_elements = scatter["bytecode_pivot_elements"]
+        bytecode_chunks = (physical_rows + 4095) // 4096
+        chunk_offset_elements = 2 * bytecode_chunks
+        address_offset_elements = (1 << 13) + 1
+        max_descriptors = scatter["bytecode_max_descriptors_per_chunk"]
+        max_admitted_descriptors = scatter[
+            "bytecode_max_admitted_descriptors_per_chunk"
+        ]
+        max_pivots = scatter["bytecode_max_pivots_per_chunk"]
+        max_admitted_pivots = scatter[
+            "bytecode_max_admitted_pivots_per_chunk"
+        ]
+        real_descriptors = descriptor_elements - bytecode_chunks
+        real_pivots = pivot_elements - 1
+        dynamic_threadgroup_bytes = (
+            328 + 8 * (max_descriptors + 1) + 2 * max(max_pivots, 1)
+        )
+        expected_fused = {
+            "bytecode_fused": True,
+            "bytecode_physical_rows": physical_rows,
+            "bytecode_descriptor_bytes": 8 * descriptor_elements,
+            "bytecode_pivot_bytes": 2 * pivot_elements,
+            "bytecode_chunk_offset_elements": chunk_offset_elements,
+            "bytecode_chunk_offset_bytes": 4 * chunk_offset_elements,
+            "bytecode_work_item_bytes": 8 * work_items,
+            "bytecode_address_offset_elements": address_offset_elements,
+            "bytecode_address_offset_bytes": 4 * address_offset_elements,
+            "bytecode_occurrence_bytes": 2 * physical_rows,
+            "bytecode_magnitude_bytes": 8 * physical_rows,
+            "shared_source_row_scans": 1,
+            "additional_source_row_scans": 0,
+            "member_upload_bytes": 0,
+        }
+        fused_ids = [
+            scatter[field]
+            for field in (
+                "bytecode_descriptor_storage_id",
+                "bytecode_pivot_storage_id",
+                "bytecode_chunk_offset_storage_id",
+                "bytecode_work_item_storage_id",
+                "bytecode_address_offset_storage_id",
+                "bytecode_occurrence_storage_id",
+                "bytecode_magnitude_storage_id",
+            )
+        ]
+        if (
+            physical_rows <= 0
+            or physical_rows > rows
+            or real_descriptors < bytecode_chunks
+            or real_descriptors > 32 * bytecode_chunks
+            or real_pivots < 0
+            or real_pivots > 15 * bytecode_chunks
+            or work_items < bytecode_chunks
+            or work_items > physical_rows
+            or not 1 <= max_descriptors <= max_admitted_descriptors
+            or max_admitted_descriptors != 32
+            or max_descriptors > real_descriptors
+            or max_admitted_pivots != 15
+            or max_pivots > max_admitted_pivots
+            or max_pivots > real_pivots
+            or scatter["bytecode_dynamic_threadgroup_bytes"]
+            != dynamic_threadgroup_bytes
+            or scatter["bytecode_threadgroup_memory_limit_bytes"]
+            < dynamic_threadgroup_bytes + scatter["static_threadgroup_bytes"]
+            or any(scatter[field] != value for field, value in expected_fused.items())
+            or any(identity <= 0 for identity in fused_ids)
+            or len(set(fused_ids)) != len(fused_ids)
+            or set(fused_ids) & set(source_ids + output_ids)
+        ):
+            raise ValueError(
+                f"InstructionReadRaf fused Bytecode scatter ledger is invalid: {scatter}"
+            )
+        fused_bytecode = {field: scatter[field] for field in fused_scatter_fields}
 
     stage1_projection_observation = {
         "compact_rows": compact,
@@ -3573,10 +4279,13 @@ def instruction_read_raf_member_breakdown(
         "metal_counts": metal_counts,
         "source_observation": source,
         "scatter_observation": scatter,
+        "scatter_wall_us": interval_duration_us(scatter_interval),
+        "fused_bytecode_observation": fused_bytecode,
         "stage1_projection": stage1_projection_observation,
         "resource_observation": {
             "source": source,
             "scatter": scatter,
+            "fused_bytecode": fused_bytecode,
             "stage1_projection": stage1_projection_observation,
         },
     }
@@ -6071,6 +6780,43 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     if any(bytecode_address_presence) and not all(bytecode_address_presence):
         raise ValueError("Bytecode address timing records must cover every pair")
     has_bytecode_address = all(bytecode_address_presence)
+    producer_control_fields = {
+        "metal_bytecode_address_control_prepare_us",
+        "producer_order",
+    }
+    producer_control_presence = []
+    for index, pair in enumerate(pairs, 1):
+        observed = producer_control_fields & pair.keys()
+        if observed and observed != producer_control_fields:
+            raise ValueError(
+                f"pair {index} has an incomplete Bytecode address producer control"
+            )
+        producer_control_presence.append(observed == producer_control_fields)
+    if any(producer_control_presence) and not all(producer_control_presence):
+        raise ValueError("Bytecode address producer controls must cover every pair")
+    has_bytecode_address_producer_control = all(producer_control_presence)
+    fused_producer_fields = {
+        "metal_bytecode_address_stage1_topology_us",
+        "metal_bytecode_address_control_stage1_topology_us",
+        "metal_bytecode_address_irraf_scatter_us",
+        "metal_bytecode_address_control_irraf_scatter_us",
+    }
+    fused_producer_presence = []
+    for index, pair in enumerate(pairs, 1):
+        observed = fused_producer_fields & pair.keys()
+        if observed and observed != fused_producer_fields:
+            raise ValueError(
+                f"pair {index} has an incomplete fused Bytecode address producer record"
+            )
+        fused_producer_presence.append(observed == fused_producer_fields)
+    if any(fused_producer_presence) and not all(fused_producer_presence):
+        raise ValueError("fused Bytecode address producer records must cover every pair")
+    has_fused_bytecode_address_producer = all(fused_producer_presence)
+    if (
+        has_fused_bytecode_address_producer
+        and not has_bytecode_address_producer_control
+    ):
+        raise ValueError("fused Bytecode address producer requires paired controls")
     cpu = [float(pair["cpu_us"]) for pair in pairs]
     metal = [float(pair["metal_us"]) for pair in pairs]
     cpu_prepare = [float(pair["cpu_prepare_us"]) for pair in pairs]
@@ -6094,9 +6840,83 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
         if has_bytecode_address
         else []
     )
-    # Conservatively charge all positive Metal witness-preparation excess to Address.
+    bytecode_address_control_prepare = (
+        [
+            float(pair["metal_bytecode_address_control_prepare_us"])
+            for pair in pairs
+        ]
+        if has_bytecode_address_producer_control
+        else []
+    )
+    bytecode_address_target_control_deltas = (
+        [
+            target_us - control_us
+            for target_us, control_us in zip(
+                metal_prepare, bytecode_address_control_prepare
+            )
+        ]
+        if has_bytecode_address_producer_control
+        else bytecode_address_prepare_deltas
+    )
+    bytecode_address_stage1_topology = (
+        [
+            float(pair["metal_bytecode_address_stage1_topology_us"])
+            for pair in pairs
+        ]
+        if has_fused_bytecode_address_producer
+        else []
+    )
+    bytecode_address_control_stage1_topology = (
+        [
+            float(pair["metal_bytecode_address_control_stage1_topology_us"])
+            for pair in pairs
+        ]
+        if has_fused_bytecode_address_producer
+        else []
+    )
+    bytecode_address_irraf_scatter = (
+        [
+            float(pair["metal_bytecode_address_irraf_scatter_us"])
+            for pair in pairs
+        ]
+        if has_fused_bytecode_address_producer
+        else []
+    )
+    bytecode_address_control_irraf_scatter = (
+        [
+            float(pair["metal_bytecode_address_control_irraf_scatter_us"])
+            for pair in pairs
+        ]
+        if has_fused_bytecode_address_producer
+        else []
+    )
+    bytecode_address_stage1_topology_deltas = [
+        target_us - control_us
+        for target_us, control_us in zip(
+            bytecode_address_stage1_topology,
+            bytecode_address_control_stage1_topology,
+        )
+    ]
+    bytecode_address_irraf_scatter_deltas = [
+        target_us - control_us
+        for target_us, control_us in zip(
+            bytecode_address_irraf_scatter,
+            bytecode_address_control_irraf_scatter,
+        )
+    ]
+    bytecode_address_signed_producer_deltas = (
+        [
+            stage1_delta_us + scatter_delta_us
+            for stage1_delta_us, scatter_delta_us in zip(
+                bytecode_address_stage1_topology_deltas,
+                bytecode_address_irraf_scatter_deltas,
+            )
+        ]
+        if has_fused_bytecode_address_producer
+        else bytecode_address_target_control_deltas
+    )
     bytecode_address_charged_producer_deltas = [
-        max(0.0, delta) for delta in bytecode_address_prepare_deltas
+        max(0.0, delta) for delta in bytecode_address_signed_producer_deltas
     ]
     charged_metal_address = [
         member_us + producer_delta_us
@@ -6268,6 +7088,15 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
     if any(not math.isfinite(value) or value < 0.0 for value in cpu_prepare + metal_prepare):
         raise ValueError("backend witness preparation durations must be finite and non-negative")
     if any(
+        not math.isfinite(value) or value < 0.0
+        for value in bytecode_address_control_prepare
+        + bytecode_address_stage1_topology
+        + bytecode_address_control_stage1_topology
+        + bytecode_address_irraf_scatter
+        + bytecode_address_control_irraf_scatter
+    ):
+        raise ValueError("Bytecode address control preparation durations are invalid")
+    if any(
         not math.isfinite(value) or value <= 0.0
         for value in cpu_instruction_ra
         + metal_instruction_ra
@@ -6337,6 +7166,80 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
             cpu_bytecode_address,
             charged_metal_address,
             BYTECODE_ADDRESS_MIN_SPEEDUP,
+        )
+        target_first_speedups = [
+            speedup
+            for pair, speedup in zip(pairs, bytecode_address_charged_speedups)
+            if pair.get("producer_order") == ["target", "control"]
+        ]
+        control_first_speedups = [
+            speedup
+            for pair, speedup in zip(pairs, bytecode_address_charged_speedups)
+            if pair.get("producer_order") == ["control", "target"]
+        ]
+        target_first_median = (
+            statistics.median(target_first_speedups) if target_first_speedups else None
+        )
+        control_first_median = (
+            statistics.median(control_first_speedups) if control_first_speedups else None
+        )
+        signed_producer_delta_median = statistics.median(
+            bytecode_address_signed_producer_deltas
+        )
+        signed_producer_delta_mad = statistics.median(
+            abs(value - signed_producer_delta_median)
+            for value in bytecode_address_signed_producer_deltas
+        )
+        target_first_producer_deltas = [
+            delta
+            for pair, delta in zip(pairs, bytecode_address_signed_producer_deltas)
+            if pair.get("producer_order") == ["target", "control"]
+        ]
+        control_first_producer_deltas = [
+            delta
+            for pair, delta in zip(pairs, bytecode_address_signed_producer_deltas)
+            if pair.get("producer_order") == ["control", "target"]
+        ]
+        clears_producer_order_strata = (
+            has_bytecode_address_producer_control
+            and target_first_median is not None
+            and control_first_median is not None
+            and target_first_median >= BYTECODE_ADDRESS_MIN_SPEEDUP
+            and control_first_median >= BYTECODE_ADDRESS_MIN_SPEEDUP
+        )
+        bytecode_address_charged_decision.update(
+            {
+                "producer_control_present": has_bytecode_address_producer_control,
+                "charge_model": (
+                    "stage1_topology_plus_irraf_scatter_v1"
+                    if has_fused_bytecode_address_producer
+                    else "backend_witness_prepare_v1"
+                ),
+                "target_first_median_speedup": target_first_median,
+                "control_first_median_speedup": control_first_median,
+                "signed_producer_delta_ms_median": signed_producer_delta_median
+                / 1000.0,
+                "signed_producer_delta_ms_mad": signed_producer_delta_mad / 1000.0,
+                "target_first_producer_sample_count": len(
+                    target_first_producer_deltas
+                ),
+                "control_first_producer_sample_count": len(
+                    control_first_producer_deltas
+                ),
+                "target_first_signed_producer_delta_ms_median": (
+                    statistics.median(target_first_producer_deltas) / 1000.0
+                    if target_first_producer_deltas
+                    else None
+                ),
+                "control_first_signed_producer_delta_ms_median": (
+                    statistics.median(control_first_producer_deltas) / 1000.0
+                    if control_first_producer_deltas
+                    else None
+                ),
+                "clears_producer_order_strata": clears_producer_order_strata,
+                "clears": bytecode_address_charged_decision["clears"]
+                and clears_producer_order_strata,
+            }
         )
     instruction_input_speedups, instruction_input_improvements, instruction_input_decision = (
         local_member_decision(
@@ -6824,6 +7727,13 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
                 "bytecode_read_raf_address_backend_witness_prepare_delta_ms_samples": [
                     value / 1000.0 for value in bytecode_address_prepare_deltas
                 ],
+                "metal_bytecode_read_raf_address_control_prepare_ms_samples": [
+                    value / 1000.0 for value in bytecode_address_control_prepare
+                ],
+                "bytecode_read_raf_address_target_control_prepare_delta_ms_samples": [
+                    value / 1000.0
+                    for value in bytecode_address_target_control_deltas
+                ],
                 "bytecode_read_raf_address_charged_producer_delta_ms_samples": [
                     value / 1000.0
                     for value in bytecode_address_charged_producer_deltas
@@ -6836,6 +7746,37 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> dict[str, Any]:
                 ),
             }
         )
+        if has_fused_bytecode_address_producer:
+            metrics.update(
+                {
+                    "metal_bytecode_read_raf_address_stage1_topology_ms_samples": [
+                        value / 1000.0 for value in bytecode_address_stage1_topology
+                    ],
+                    "metal_bytecode_read_raf_address_control_stage1_topology_ms_samples": [
+                        value / 1000.0
+                        for value in bytecode_address_control_stage1_topology
+                    ],
+                    "metal_bytecode_read_raf_address_irraf_scatter_ms_samples": [
+                        value / 1000.0 for value in bytecode_address_irraf_scatter
+                    ],
+                    "metal_bytecode_read_raf_address_control_irraf_scatter_ms_samples": [
+                        value / 1000.0
+                        for value in bytecode_address_control_irraf_scatter
+                    ],
+                    "bytecode_read_raf_address_stage1_topology_delta_ms_samples": [
+                        value / 1000.0
+                        for value in bytecode_address_stage1_topology_deltas
+                    ],
+                    "bytecode_read_raf_address_irraf_scatter_delta_ms_samples": [
+                        value / 1000.0
+                        for value in bytecode_address_irraf_scatter_deltas
+                    ],
+                    "bytecode_read_raf_address_signed_fused_producer_delta_ms_samples": [
+                        value / 1000.0
+                        for value in bytecode_address_signed_producer_deltas
+                    ],
+                }
+            )
     return metrics
 
 
@@ -6880,6 +7821,15 @@ def member_record(
         "metal_counts": member["metal_counts"],
         "resource_observation": member["resource_observation"],
     }
+    if "topology_observation" in member:
+        record["topology_observation"] = member["topology_observation"]
+    if "scatter_wall_us" in member:
+        scatter_wall_us = member["scatter_wall_us"]
+        record["scatter_wall_ns"] = (
+            round(float(scatter_wall_us) * 1000.0)
+            if scatter_wall_us is not None
+            else None
+        )
     if host_fiat_shamir_us is not None:
         row_source_us = float(components["row_source_us"])
         if not math.isfinite(row_source_us) or row_source_us < 0.0:
@@ -6998,6 +7948,7 @@ def run_backend(
     registers_claim_trace_cutoff_log2: int,
     pair_index: int,
     timeout_seconds: int,
+    artifact_label: Optional[str] = None,
 ) -> dict[str, Any]:
     benchmark_command = [
         str(binary),
@@ -7105,7 +8056,10 @@ def run_backend(
         capture_output=True,
         text=True,
     )
-    label = f"pair-{pair_index:02d}-{backend}"
+    arm_label = artifact_label or backend
+    if re.fullmatch(r"[a-z0-9-]+", arm_label) is None:
+        raise ValueError(f"invalid evaluator arm label {arm_label!r}")
+    label = f"pair-{pair_index:02d}-{arm_label}"
     (artifact_dir / f"{label}.stdout").write_text(result.stdout)
     (artifact_dir / f"{label}.stderr").write_text(result.stderr)
     if result.returncode != 0:
@@ -7213,8 +8167,20 @@ def run_backend(
         backend,
         log_n,
         scatter_threads=instruction_read_raf_scatter_threads,
+        expect_fused_bytecode_address=(
+            backend == "metal"
+            and bytecode_address_implementation == "address-major"
+            and log_n >= bytecode_address_trace_cutoff_log2
+        ),
     )
     stage1_source = instruction_read_raf_member["source_observation"]
+    if stage1_source is not None:
+        stage1_source = {
+            **stage1_source,
+            "explicit_rows": instruction_read_raf_member["stage1_projection"][
+                "compact_rows"
+            ]["explicit_rows"],
+        }
     bytecode_address_member = bytecode_address_member_breakdown(
         events,
         backend,
@@ -7223,6 +8189,7 @@ def run_backend(
         bytecode_address_outer_tiles,
         bytecode_address_trace_cutoff_log2,
         stage1_source,
+        instruction_read_raf_member["scatter_observation"],
     )
     if backend == "metal" and booleanity_address_implementation == "packed-hot":
         booleanity_address_member = packed_hot_booleanity_address_member_breakdown(
@@ -7849,6 +8816,7 @@ def main() -> int:
     pairs = []
     pair_records = []
     orders = []
+    producer_orders = []
     attributions = []
     try:
         if args.mode == "production" and source["worktree_dirty"]:
@@ -7860,9 +8828,30 @@ def main() -> int:
         for index in range(args.repeats):
             order = ["optimized", "metal"] if index % 2 == 0 else ["metal", "optimized"]
             orders.append(order)
+            producer_control_enabled = (
+                args.bytecode_address_metal_implementation == "address-major"
+            )
+            producer_order = (
+                ["target", "control"] if index % 2 == 0 else ["control", "target"]
+            )
+            if producer_control_enabled:
+                producer_orders.append(producer_order)
+                execution_order = (
+                    ["optimized", "metal", "metal_address_control"]
+                    if index % 2 == 0
+                    else ["metal_address_control", "metal", "optimized"]
+                )
+            else:
+                execution_order = order
             results: dict[str, dict[str, Any]] = {}
-            for backend in order:
-                results[backend] = run_backend(
+            for arm in execution_order:
+                backend = "optimized" if arm == "optimized" else "metal"
+                address_implementation = (
+                    "cpu"
+                    if arm == "metal_address_control"
+                    else args.bytecode_address_metal_implementation
+                )
+                results[arm] = run_backend(
                     root,
                     binary,
                     artifact_dir,
@@ -7877,7 +8866,7 @@ def main() -> int:
                     args.bytecode_metal_max_threadgroups,
                     args.bytecode_metal_cutoff_log2,
                     args.bytecode_metal_trace_cutoff_log2,
-                    args.bytecode_address_metal_implementation,
+                    address_implementation,
                     args.bytecode_address_metal_outer_tiles,
                     args.bytecode_address_metal_trace_cutoff_log2,
                     args.instruction_input_metal_native_message_threads,
@@ -7909,6 +8898,7 @@ def main() -> int:
                     args.registers_claim_metal_trace_cutoff_log2,
                     index + 1,
                     args.timeout_seconds,
+                    arm.replace("_", "-"),
                 )
             booleanity_address_records = {
                 backend: member_record(results[backend]["booleanity_address_member"])
@@ -7947,8 +8937,73 @@ def main() -> int:
                 float(results["metal"]["backend_witness_prepare_us"])
                 - float(results["optimized"]["backend_witness_prepare_us"])
             )
+            bytecode_address_control_prepare_us = (
+                float(results["metal_address_control"]["backend_witness_prepare_us"])
+                if producer_control_enabled
+                else None
+            )
+            bytecode_address_target_control_delta_us = (
+                float(results["metal"]["backend_witness_prepare_us"])
+                - bytecode_address_control_prepare_us
+                if bytecode_address_control_prepare_us is not None
+                else bytecode_address_prepare_delta_us
+            )
+            bytecode_address_stage1_topology_us = None
+            bytecode_address_control_stage1_topology_us = None
+            bytecode_address_irraf_scatter_us = None
+            bytecode_address_control_irraf_scatter_us = None
+            if producer_control_enabled:
+                target_address = results["metal"]["bytecode_address_member"]
+                control_address = results["metal_address_control"][
+                    "bytecode_address_member"
+                ]
+                target_topology = target_address["topology_observation"]
+                control_topology = control_address["topology_observation"]
+                target_resources = target_address["resource_observation"]
+                target_scatter = results["metal"]["instruction_read_raf_member"]
+                control_scatter = results["metal_address_control"][
+                    "instruction_read_raf_member"
+                ]
+                if (
+                    target_topology is None
+                    or target_topology["enabled"] is not True
+                    or control_topology is None
+                    or control_topology["enabled"] is not False
+                    or target_resources is None
+                    or target_resources.get("producer_kind")
+                    != "fused_stage1_grouped_v1"
+                    or target_scatter["fused_bytecode_observation"] is None
+                    or control_scatter["fused_bytecode_observation"] is not None
+                    or target_scatter["scatter_wall_us"] is None
+                    or control_scatter["scatter_wall_us"] is None
+                ):
+                    raise ValueError(
+                        "fused Bytecode address producer/control evidence is incomplete"
+                    )
+                bytecode_address_stage1_topology_us = float(
+                    target_topology["wall_us"]
+                )
+                bytecode_address_control_stage1_topology_us = float(
+                    control_topology["wall_us"]
+                )
+                bytecode_address_irraf_scatter_us = float(
+                    target_scatter["scatter_wall_us"]
+                )
+                bytecode_address_control_irraf_scatter_us = float(
+                    control_scatter["scatter_wall_us"]
+                )
+                bytecode_address_signed_producer_delta_us = (
+                    bytecode_address_stage1_topology_us
+                    - bytecode_address_control_stage1_topology_us
+                    + bytecode_address_irraf_scatter_us
+                    - bytecode_address_control_irraf_scatter_us
+                )
+            else:
+                bytecode_address_signed_producer_delta_us = (
+                    bytecode_address_target_control_delta_us
+                )
             bytecode_address_charged_producer_delta_us = max(
-                0.0, bytecode_address_prepare_delta_us
+                0.0, bytecode_address_signed_producer_delta_us
             )
             charged_metal_address_us = (
                 metal_bytecode_address_us
@@ -7977,6 +9032,31 @@ def main() -> int:
                     "metal_bytecode_address_us": metal_bytecode_address_us,
                     "bytecode_address_backend_witness_prepare_delta_us": (
                         bytecode_address_prepare_delta_us
+                    ),
+                    **(
+                        {
+                            "metal_bytecode_address_control_prepare_us": (
+                                bytecode_address_control_prepare_us
+                            ),
+                            "bytecode_address_target_control_prepare_delta_us": (
+                                bytecode_address_target_control_delta_us
+                            ),
+                            "metal_bytecode_address_stage1_topology_us": (
+                                bytecode_address_stage1_topology_us
+                            ),
+                            "metal_bytecode_address_control_stage1_topology_us": (
+                                bytecode_address_control_stage1_topology_us
+                            ),
+                            "metal_bytecode_address_irraf_scatter_us": (
+                                bytecode_address_irraf_scatter_us
+                            ),
+                            "metal_bytecode_address_control_irraf_scatter_us": (
+                                bytecode_address_control_irraf_scatter_us
+                            ),
+                            "producer_order": producer_order,
+                        }
+                        if producer_control_enabled
+                        else {}
                     ),
                     "bytecode_address_charged_producer_delta_us": (
                         bytecode_address_charged_producer_delta_us
@@ -8100,6 +9180,50 @@ def main() -> int:
                         "metal_member": results["metal"][
                             "bytecode_address_member"
                         ],
+                        "producer_order": producer_order
+                        if producer_control_enabled
+                        else None,
+                        "control_config": results["metal_address_control"][
+                            "bytecode_address_config"
+                        ]
+                        if producer_control_enabled
+                        else None,
+                        "control_member": results["metal_address_control"][
+                            "bytecode_address_member"
+                        ]
+                        if producer_control_enabled
+                        else None,
+                        "control_stage1_source": results["metal_address_control"][
+                            "instruction_read_raf_member"
+                        ]["source_observation"]
+                        if producer_control_enabled
+                        else None,
+                        "control_stage1_projection": results[
+                            "metal_address_control"
+                        ]["instruction_read_raf_member"]["stage1_projection"]
+                        if producer_control_enabled
+                        else None,
+                        "control_stage1_scatter": results[
+                            "metal_address_control"
+                        ]["instruction_read_raf_member"]["scatter_observation"]
+                        if producer_control_enabled
+                        else None,
+                        "control_backend_witness_prepare_us": results[
+                            "metal_address_control"
+                        ]["backend_witness_prepare_us"]
+                        if producer_control_enabled
+                        else None,
+                        "control_max_rss_bytes": results["metal_address_control"][
+                            "max_rss_bytes"
+                        ]
+                        if producer_control_enabled
+                        else None,
+                        "control_command": results["metal_address_control"]["command"]
+                        if producer_control_enabled
+                        else None,
+                        "control_artifacts": results["metal_address_control"]["artifacts"]
+                        if producer_control_enabled
+                        else None,
                     },
                     "instruction_input": {
                         "optimized_config": results["optimized"][
@@ -8191,6 +9315,46 @@ def main() -> int:
                         "backend_witness_prepare_delta_ns": round(
                             bytecode_address_prepare_delta_us * 1000.0
                         ),
+                        "target_control_prepare_delta_ns": round(
+                            bytecode_address_target_control_delta_us * 1000.0
+                        ),
+                        "stage1_topology_target_ns": (
+                            round(bytecode_address_stage1_topology_us * 1000.0)
+                            if bytecode_address_stage1_topology_us is not None
+                            else None
+                        ),
+                        "stage1_topology_control_ns": (
+                            round(
+                                bytecode_address_control_stage1_topology_us * 1000.0
+                            )
+                            if bytecode_address_control_stage1_topology_us is not None
+                            else None
+                        ),
+                        "instruction_read_raf_scatter_target_ns": (
+                            round(bytecode_address_irraf_scatter_us * 1000.0)
+                            if bytecode_address_irraf_scatter_us is not None
+                            else None
+                        ),
+                        "instruction_read_raf_scatter_control_ns": (
+                            round(
+                                bytecode_address_control_irraf_scatter_us * 1000.0
+                            )
+                            if bytecode_address_control_irraf_scatter_us is not None
+                            else None
+                        ),
+                        "signed_fused_producer_delta_ns": round(
+                            bytecode_address_signed_producer_delta_us * 1000.0
+                        ),
+                        "control_backend_witness_prepare_ns": (
+                            microseconds_to_nanoseconds(
+                                bytecode_address_control_prepare_us
+                            )
+                            if bytecode_address_control_prepare_us is not None
+                            else None
+                        ),
+                        "producer_order": producer_order
+                        if producer_control_enabled
+                        else None,
                         "charged_producer_delta_ns": round(
                             bytecode_address_charged_producer_delta_us * 1000.0
                         ),
@@ -8199,7 +9363,8 @@ def main() -> int:
                         ),
                     },
                     "arms": {
-                        backend: {
+                        **{
+                            backend: {
                             "piop_ns": microseconds_to_nanoseconds(
                                 results[backend]["piop_us"]
                             ),
@@ -8306,12 +9471,344 @@ def main() -> int:
                             ],
                             "command": results[backend]["command"],
                             "artifacts": results[backend]["artifacts"],
-                        }
-                        for backend in ("optimized", "metal")
+                            }
+                            for backend in ("optimized", "metal")
+                        },
+                        **(
+                            {
+                                "metal_address_control": {
+                                    "piop_ns": microseconds_to_nanoseconds(
+                                        results["metal_address_control"]["piop_us"]
+                                    ),
+                                    "backend_witness_prepare_ns": (
+                                        microseconds_to_nanoseconds(
+                                            results["metal_address_control"][
+                                                "backend_witness_prepare_us"
+                                            ]
+                                        )
+                                    ),
+                                    "max_rss_bytes": results[
+                                        "metal_address_control"
+                                    ]["max_rss_bytes"],
+                                    "bytecode_address": member_record(
+                                        results["metal_address_control"][
+                                            "bytecode_address_member"
+                                        ]
+                                    ),
+                                    "instruction_read_raf_resources": {
+                                        "source": results["metal_address_control"][
+                                            "instruction_read_raf_member"
+                                        ]["source_observation"],
+                                        "scatter": results["metal_address_control"][
+                                            "instruction_read_raf_member"
+                                        ]["scatter_observation"],
+                                        "stage1_projection": results[
+                                            "metal_address_control"
+                                        ]["instruction_read_raf_member"][
+                                            "stage1_projection"
+                                        ],
+                                    },
+                                    "bytecode_address_config": results[
+                                        "metal_address_control"
+                                    ]["bytecode_address_config"],
+                                    "command": results["metal_address_control"][
+                                        "command"
+                                    ],
+                                    "artifacts": results["metal_address_control"][
+                                        "artifacts"
+                                    ],
+                                }
+                            }
+                            if producer_control_enabled
+                            else {}
+                        ),
                     },
                 }
             )
         metrics = summarize_pairs(pairs)
+        bytecode_address_sparse_receipt_exact = producer_control_enabled
+        bytecode_address_sparse_carrier_borrowed = producer_control_enabled
+        bytecode_address_sparse_member_storage_exact = producer_control_enabled
+        bytecode_address_sparse_dispatch_geometry_exact = producer_control_enabled
+        bytecode_address_producer_control_exact = producer_control_enabled
+        bytecode_address_fused_receipt_exact = producer_control_enabled
+        bytecode_address_fused_no_extra_work = producer_control_enabled
+        for sample in attributions:
+            address_sample = sample["bytecode_address"]
+            target_resources = address_sample["metal_member"]["resource_observation"]
+            target_projection = sample["instruction_read_raf"]["metal_member"][
+                "stage1_projection"
+            ]
+            target_source = sample["instruction_read_raf"]["metal_member"][
+                "source_observation"
+            ]
+            if target_resources is None or target_source is None:
+                bytecode_address_sparse_receipt_exact = False
+                bytecode_address_sparse_carrier_borrowed = False
+                bytecode_address_sparse_member_storage_exact = False
+                bytecode_address_sparse_dispatch_geometry_exact = False
+                bytecode_address_fused_receipt_exact = False
+                bytecode_address_fused_no_extra_work = False
+                continue
+            publish = target_resources["carrier_publish"]
+            complete = target_resources["address_major_complete"]
+            topology = target_resources["fused_topology_prepare"]
+            scatter = sample["instruction_read_raf"]["metal_member"][
+                "scatter_observation"
+            ]
+            fused_scatter = sample["instruction_read_raf"]["metal_member"][
+                "fused_bytecode_observation"
+            ]
+            physical_rows = publish["physical_rows"]
+            work_items = publish["work_items"]
+            offset_bytes = 4 * ((1 << 13) + 1)
+            topology_bytes = (
+                publish.get("bytecode_descriptor_bytes", 0)
+                + publish.get("bytecode_pivot_bytes", 0)
+                + publish.get("bytecode_chunk_offset_bytes", 0)
+            )
+            bytecode_address_sparse_receipt_exact &= (
+                target_resources.get("producer_kind") == "fused_stage1_grouped_v1"
+                and physical_rows
+                == target_projection["compact_rows"]["explicit_rows"]
+                and (physical_rows + 4095) // 4096 <= work_items <= physical_rows
+                and publish["carrier_resident_bytes"]
+                == 10 * physical_rows + 8 * work_items + offset_bytes
+                and complete["producer_persistent_write_bytes"] == 10 * physical_rows
+                and complete["producer_topology_read_bytes"] == topology_bytes
+                and complete["producer_logical_movement_bytes"]
+                == 10 * physical_rows + topology_bytes
+            )
+            bytecode_address_fused_receipt_exact &= (
+                topology is not None
+                and topology["enabled"] is True
+                and fused_scatter is not None
+                and publish["physical_rows"] == topology["physical_rows"]
+                and publish["work_items"] == topology["work_items"]
+                and all(
+                    publish[publish_field] == topology[topology_field]
+                    for publish_field, topology_field in (
+                        ("bytecode_descriptor_storage_id", "descriptor_storage_id"),
+                        ("bytecode_descriptor_bytes", "descriptor_bytes"),
+                        ("bytecode_pivot_storage_id", "pivot_storage_id"),
+                        ("bytecode_pivot_bytes", "pivot_bytes"),
+                        ("bytecode_chunk_offset_storage_id", "chunk_offset_storage_id"),
+                        ("bytecode_chunk_offset_bytes", "chunk_offset_bytes"),
+                        ("carrier_work_item_storage_id", "work_item_storage_id"),
+                        ("carrier_work_item_bytes", "work_item_bytes"),
+                        ("carrier_address_offset_storage_id", "address_offset_storage_id"),
+                        ("carrier_address_offset_bytes", "address_offset_bytes"),
+                    )
+                )
+            )
+            bytecode_address_fused_no_extra_work &= (
+                topology is not None
+                and topology["shared_source_row_scans"] == 1
+                and topology["additional_source_row_scans"] == 0
+                and topology["extra_source_scans"] == 0
+                and topology["member_upload_bytes"] == 0
+                and scatter is not None
+                and scatter["command_buffers"] == 1
+                and scatter["waits"] == 1
+                and scatter["encoders"] == 1
+                and scatter["dispatches"] == 1
+                and scatter["source_copy_bytes"] == 0
+                and scatter["full_plane_readback_bytes"] == 0
+                and fused_scatter is not None
+                and fused_scatter["additional_source_row_scans"] == 0
+                and fused_scatter["member_upload_bytes"] == 0
+                and publish["shared_source_row_scans"] == 1
+                and publish["additional_source_row_scans"] == 0
+                and publish["member_upload_bytes"] == 0
+                and publish["command_buffers"] == 1
+                and publish["waits"] == 1
+                and publish["encoders"] == 1
+                and publish["dispatches"] == 1
+                and complete["command_buffers"] == 1
+                and complete["waits"] == 1
+                and complete["member_source_scans"] == 0
+                and complete["member_source_upload_bytes"] == 0
+            )
+            bytecode_address_sparse_carrier_borrowed &= (
+                complete["carrier_completion_serial"]
+                == publish["carrier_completion_serial"]
+                and all(
+                    complete[field] == publish[field]
+                    for field in (
+                        "carrier_occurrence_storage_id",
+                        "carrier_magnitude_storage_id",
+                        "carrier_work_item_storage_id",
+                        "carrier_address_offset_storage_id",
+                    )
+                )
+                and complete["member_carrier_owned_bytes"] == 0
+                and complete["member_source_scans"] == 0
+                and complete["member_source_upload_bytes"] == 0
+                and complete["carrier_released"] is True
+            )
+            equality_bytes = 16 * 9 * ((1 << 15) + (1 << args.log_n) // (1 << 15))
+            partial_bytes = 16 * 9 * work_items
+            output_bytes = 16 * 9 * (1 << 13)
+            bytecode_address_sparse_member_storage_exact &= (
+                complete["equality_bytes"] == equality_bytes
+                and complete["padding_bytes"] == 5 * 16
+                and complete["partial_bytes"] == partial_bytes
+                and complete["output_readback_bytes"] == output_bytes
+                and complete["member_owned_bytes"]
+                == equality_bytes + 5 * 16 + partial_bytes + output_bytes
+            )
+            bytecode_address_sparse_dispatch_geometry_exact &= (
+                complete["worker_dispatches"] == 1
+                and complete["worker_variant"] == "packed4_halfwidth_v1"
+                and complete["worker_simd_width"] == 32
+                and complete["worker_threads"] == 128
+                and complete["worker_items_per_threadgroup"] == 4
+                and complete["worker_threadgroups"] == (work_items + 3) // 4
+                and complete["worker_tail_slots"] == (4 - work_items % 4) % 4
+                and complete["worker_dynamic_threadgroup_bytes"] == 0
+                and complete["worker_static_threadgroup_bytes"] == 0
+                and complete["worker_threadgroup_bytes"] == 0
+                and complete["reducer_dispatches"] == 1
+                and complete["reducer_threads"] == 256
+                and complete["reducer_threadgroups"] == 288
+                and complete["reducer_static_threadgroup_bytes"] == 0
+            )
+
+            control_member = address_sample["control_member"]
+            control_source = address_sample["control_stage1_source"]
+            control_projection = address_sample["control_stage1_projection"]
+            control_scatter = address_sample["control_stage1_scatter"]
+            if (
+                control_member is None
+                or control_source is None
+                or control_projection is None
+                or control_scatter is None
+            ):
+                bytecode_address_producer_control_exact = False
+                bytecode_address_fused_no_extra_work = False
+                continue
+            source_geometry_fields = {
+                "rows",
+                "row_bytes",
+                "claim_bytes",
+                "resident_device_bytes",
+                "count_chunks",
+                "count_bytes",
+                "host_row_write_bytes",
+                "host_claim_write_bytes",
+                "host_count_update_bytes",
+                "count_order",
+                "publication_kind",
+                "complete_overwrite",
+                "source_windows",
+                "member_upload_bytes",
+                "projection_dispatches",
+            }
+            compact_geometry_fields = {
+                "source_kind",
+                "witness_row_extractions",
+                "residual_rows_written",
+                "compact_rows_written",
+                "compact_row_bytes",
+                "residual_row_bytes",
+                "compact_allocations",
+                "residual_allocations",
+                "full_row_allocations",
+                "full_domain_copy_bytes",
+                "full_domain_copy_dispatches",
+                "host_repack_rows",
+                "resident_rows",
+                "explicit_rows",
+            }
+            witness_geometry_fields = {
+                "cycles",
+                "source",
+                "admitted",
+                "fallback_reason",
+                "native_register_contract_bytes",
+                "shift_late_copy_dispatches",
+                "shift_resident_bytes",
+                "shift_row_extractions",
+            }
+            target_command = list(sample["commands"]["metal"])
+            control_command = list(address_sample["control_command"] or [])
+            for command in (target_command, control_command):
+                try:
+                    implementation_index = command.index(
+                        "--bytecode-address-metal-implementation"
+                    )
+                    command[implementation_index + 1] = "<implementation>"
+                except (ValueError, IndexError):
+                    bytecode_address_producer_control_exact = False
+            bytecode_address_producer_control_exact &= (
+                address_sample["control_config"]
+                == {
+                    "implementation": "cpu",
+                    "trace_cutoff": 1
+                    << args.bytecode_address_metal_trace_cutoff_log2,
+                    "outer_tiles": args.bytecode_address_metal_outer_tiles,
+                }
+                and control_member["route_observation"]
+                == {
+                    "cycles": 1 << args.log_n,
+                    "requested": "cpu",
+                    "realized_route": "cpu",
+                    "fallback_reason": "configured_cpu",
+                }
+                and control_member["resource_observation"] is None
+                and control_member["topology_observation"] is not None
+                and control_member["topology_observation"]["enabled"] is False
+                and control_member["metal_counts"]
+                == {
+                    "route": 1,
+                    "carrier_publish": 0,
+                    "fused_topology_prepare": 1,
+                    "fused_carrier_publish": 0,
+                    "address_major_prepare": 0,
+                    "address_major_join": 0,
+                    "address_major_complete": 0,
+                    "shadow_prepare": 0,
+                    "shadow_join": 0,
+                }
+                and all(
+                    target_source[field] == control_source[field]
+                    for field in source_geometry_fields
+                )
+                and all(
+                    target_projection["compact_rows"][field]
+                    == control_projection["compact_rows"][field]
+                    for field in compact_geometry_fields
+                )
+                and all(
+                    target_projection["witness"][field]
+                    == control_projection["witness"][field]
+                    for field in witness_geometry_fields
+                )
+                and target_command == control_command
+            )
+            bytecode_address_fused_no_extra_work &= (
+                control_member["topology_observation"] is not None
+                and control_member["topology_observation"][
+                    "additional_source_row_scans"
+                ]
+                == 0
+                and control_member["topology_observation"]["extra_source_scans"] == 0
+                and control_member["topology_observation"]["member_upload_bytes"] == 0
+                and control_scatter["command_buffers"] == 1
+                and control_scatter["waits"] == 1
+                and control_scatter["encoders"] == 1
+                and control_scatter["dispatches"] == 1
+                and control_scatter["source_copy_bytes"] == 0
+                and control_scatter["full_plane_readback_bytes"] == 0
+                and "bytecode_fused" not in control_scatter
+            )
+        expected_producer_orders = [
+            ["target", "control"] if index % 2 == 0 else ["control", "target"]
+            for index in range(args.repeats)
+        ]
+        bytecode_address_producer_control_ordered = (
+            producer_control_enabled and producer_orders == expected_producer_orders
+        )
         if source_fingerprint(root) != source:
             raise ValueError("source worktree changed during the paired evaluation")
         if file_sha256(binary) != binary_sha256:
@@ -8417,6 +9914,14 @@ def main() -> int:
                     and metrics["bytecode_read_raf_address_charged_decision"][
                         "clears"
                     ]
+                    and bytecode_address_sparse_receipt_exact
+                    and bytecode_address_sparse_carrier_borrowed
+                    and bytecode_address_sparse_member_storage_exact
+                    and bytecode_address_sparse_dispatch_geometry_exact
+                    and bytecode_address_fused_receipt_exact
+                    and bytecode_address_fused_no_extra_work
+                    and bytecode_address_producer_control_exact
+                    and bytecode_address_producer_control_ordered
                 ),
                 "bytecode_address_cpu_control": all(
                     sample["bytecode_address"]["optimized_config"] is None
@@ -8454,7 +9959,7 @@ def main() -> int:
                         == {
                             "cycles": 1 << args.log_n,
                             "requested": "address_major",
-                            "realized_route": "address_major",
+                            "realized_route": METAL_BYTECODE_ADDRESS_FUSED_ROUTE,
                             "fallback_reason": "none",
                         }
                         and sample["bytecode_address"]["metal_member"][
@@ -8468,16 +9973,29 @@ def main() -> int:
                         for sample in attributions
                     )
                 ),
-                "bytecode_address_producer_time_separately_reported": all(
-                    sample["bytecode_address"]["optimized_member"][
-                        "backend_witness_prepare_us"
-                    ]
-                    > 0.0
-                    and sample["bytecode_address"]["metal_member"][
-                        "backend_witness_prepare_us"
-                    ]
-                    > 0.0
-                    for sample in attributions
+                "bytecode_address_sparse_receipt_exact": (
+                    bytecode_address_sparse_receipt_exact
+                ),
+                "bytecode_address_sparse_carrier_borrowed": (
+                    bytecode_address_sparse_carrier_borrowed
+                ),
+                "bytecode_address_sparse_member_storage_exact": (
+                    bytecode_address_sparse_member_storage_exact
+                ),
+                "bytecode_address_sparse_dispatch_geometry_exact": (
+                    bytecode_address_sparse_dispatch_geometry_exact
+                ),
+                "bytecode_address_fused_receipt_exact": (
+                    bytecode_address_fused_receipt_exact
+                ),
+                "bytecode_address_fused_no_extra_work": (
+                    bytecode_address_fused_no_extra_work
+                ),
+                "bytecode_address_producer_control_exact": (
+                    bytecode_address_producer_control_exact
+                ),
+                "bytecode_address_producer_control_ordered": (
+                    bytecode_address_producer_control_ordered
                 ),
                 "instruction_read_raf_local_gate": metrics[
                     "instruction_read_raf_decision"
@@ -9479,6 +10997,11 @@ def main() -> int:
                 "metal_max_rss_bytes": [
                     pair["arms"]["metal"]["max_rss_bytes"] for pair in pair_records
                 ],
+                "metal_address_control_max_rss_bytes": [
+                    sample["bytecode_address"]["control_max_rss_bytes"]
+                    for sample in attributions
+                    if sample["bytecode_address"]["control_max_rss_bytes"] is not None
+                ],
             },
             "fingerprint": {
                 **source,
@@ -9513,6 +11036,18 @@ def main() -> int:
                 ),
                 "bytecode_address_metal_trace_cutoff_elements": 1
                 << args.bytecode_address_metal_trace_cutoff_log2,
+                "bytecode_address_worker_variant": "packed4_halfwidth_v1",
+                "bytecode_address_worker_simd_width": 32,
+                "bytecode_address_worker_threads": 128,
+                "bytecode_address_worker_items_per_threadgroup": 4,
+                "bytecode_address_worker_threadgroup_bytes": 0,
+                "bytecode_address_reducer_threads": 256,
+                "bytecode_address_producer_route": METAL_BYTECODE_ADDRESS_FUSED_ROUTE,
+                "bytecode_address_producer_charge_model": (
+                    "stage1_topology_plus_irraf_scatter_v1"
+                ),
+                "bytecode_address_max_admitted_descriptors_per_chunk": 32,
+                "bytecode_address_max_admitted_pivots_per_chunk": 15,
                 "instruction_input_metal_native_message_threads": args.instruction_input_metal_native_message_threads,
                 "instruction_input_metal_native_transition_threads": args.instruction_input_metal_native_transition_threads,
                 "instruction_input_metal_dense_transition_threads": args.instruction_input_metal_dense_transition_threads,
@@ -9578,6 +11113,7 @@ def main() -> int:
                 ),
                 "span": PIOP_SPAN,
                 "orders": orders,
+                "bytecode_address_producer_orders": producer_orders,
             },
             "artifacts": str(artifact_dir),
         }
