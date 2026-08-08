@@ -2308,7 +2308,549 @@ def complete_registers_claim_trace(
     return events, outer_carrier
 
 
+def complete_ram_sparse_trace(log_n: int, backend: str) -> list[dict[str, object]]:
+    def event(
+        name: str,
+        timestamp: float,
+        duration: float,
+        args: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "name": name,
+            "ph": "X",
+            "pid": 1,
+            "tid": 0,
+            "ts": timestamp,
+            "dur": duration,
+        }
+        if args is not None:
+            record["args"] = args
+        return record
+
+    events = [
+        event("jolt_prover::backend_witness_prepare", 0.0, 80.0),
+        event("jolt_prover::piop", 100.0, 10_000.0),
+    ]
+
+    def member(kernel: str, rounds: int, start: float) -> tuple[float, list[float]]:
+        events.append(event(f"{kernel}::prepare", start, 80.0))
+        round_starts = [start + 100.0 + 30.0 * index for index in range(rounds)]
+        for round_start in round_starts:
+            events.extend(
+                [
+                    event("sumcheck_round", round_start - 2.0, 22.0),
+                    event(f"{kernel}::prove_round", round_start, 6.0),
+                    event("sumcheck_host_fiat_shamir", round_start + 10.0, 2.0),
+                ]
+            )
+        finish = round_starts[-1] + 25.0
+        events.append(event(f"{kernel}::finish_rounds", finish, 5.0))
+        output = finish + 10.0
+        events.append(event(f"{kernel}::output_claims", output, 8.0))
+        return output + 20.0, [finish, output]
+
+    rw_start = 200.0
+    rw_end, rw_tail = member("RamReadWriteChecking", log_n + 13, rw_start)
+    hamming_start = rw_end + 100.0
+    _, hamming_tail = member("RamHammingBooleanity", log_n, hamming_start)
+    if backend == "optimized":
+        return events
+
+    generation = 7
+    fingerprint = 9
+    address_domain = 1 << 13
+    access_records = 4
+    increment_records = 2
+    record_bytes = 24 * (access_records + increment_records)
+    final_memory_bytes = 8 * address_domain
+    topology_bytes = 1_000
+    owner_bytes = record_bytes + final_memory_bytes + topology_bytes
+    owner = {
+        "enabled": "true",
+        "schema_version": "3",
+        "source_kind": "ram_access_tape_v1",
+        "source_generation": str(generation),
+        "source_fingerprint": str(fingerprint),
+        "log_t": str(log_n),
+        "log_k": "13",
+        "cycles": str(1 << log_n),
+        "address_domain": str(address_domain),
+        "access_records": str(access_records),
+        "increment_records": str(increment_records),
+        "hamming_exact": "true",
+        "retained_records": str(access_records),
+        "final_memory_elements": str(address_domain),
+        "record_bytes": str(record_bytes),
+        "final_memory_bytes": str(final_memory_bytes),
+        "read_write_topology_nodes": "20",
+        "block_topology_nodes": "11",
+        "topology_bytes": str(topology_bytes),
+        "owner_bytes": str(owner_bytes),
+        "source_rows": str(1 << log_n),
+        "source_collection_performed": "true",
+        "shared_source_row_scans": "1",
+        "additional_source_row_scans": "0",
+        "member_upload_bytes": "0",
+        "complete_publication": "true",
+    }
+    events.extend(
+        [
+            event("MetalRamCycleFamily::owner_prepare", 20.0, 20.0, owner),
+            event(
+                "MetalRamReadWrite::sparse_prepare",
+                rw_start + 5.0,
+                35.0,
+                {
+                    "selected": "host_sparse_v1",
+                    "source_generation": str(generation),
+                    "source_fingerprint": str(fingerprint),
+                    "log_t": str(log_n),
+                    "log_k": "13",
+                    "rounds": str(log_n + 13),
+                    "access_records": str(access_records),
+                    "increment_records": str(increment_records),
+                    "owner_bytes": str(owner_bytes),
+                    "cycle_cutoff": "0",
+                    "additional_source_row_scans": "0",
+                    "member_upload_bytes": "0",
+                    "gpu_dispatches": "0",
+                    "command_buffers": "0",
+                    "waits": "0",
+                    "readbacks": "0",
+                },
+            ),
+            event(
+                "MetalRamReadWrite::route",
+                rw_start + 15.0,
+                2.0,
+                {
+                    "cycles": str(1 << log_n),
+                    "log_t": str(log_n),
+                    "log_k": "13",
+                    "requested": "host_sparse_v1",
+                    "selected": "host_sparse_v1",
+                    "fallback_reason": "none",
+                    "source_generation": str(generation),
+                    "source_fingerprint": str(fingerprint),
+                },
+            ),
+            event(
+                "MetalRamReadWrite::sparse_derived_validate",
+                rw_tail[0] + 6.0,
+                1.0,
+                {
+                    "source_generation": str(generation),
+                    "source_fingerprint": str(fingerprint),
+                    "derived_claim_valid": "true",
+                },
+            ),
+            event(
+                "MetalRamReadWrite::sparse_complete",
+                rw_tail[1] + 1.0,
+                1.0,
+                {
+                    "selected": "host_sparse_v1",
+                    "source_generation": str(generation),
+                    "source_fingerprint": str(fingerprint),
+                    "output_claims_valid": "true",
+                },
+            ),
+        ]
+    )
+    parent_nodes = 7
+    middle_nodes = 6
+    estimated_products = 7 * parent_nodes + middle_nodes + 10 * log_n
+    hamming_prepare = {
+        "selected": "host_sparse_v1",
+        "fallback_reason": "none",
+        "source_generation": str(generation),
+        "source_fingerprint": str(fingerprint),
+        "log_t": str(log_n),
+        "access_leaves": str(access_records),
+        "parent_nodes": str(parent_nodes),
+        "middle_nodes": str(middle_nodes),
+        "rounds": str(log_n),
+        "estimated_products": str(estimated_products),
+        "product_cap": "1000000",
+        "topology_builds": "1",
+        "topology_bytes": "192",
+        "member_heap_bytes_including_topology": "300",
+        "non_topology_heap_bytes": "108",
+        "additional_source_row_scans": "0",
+        "dense_h_elements": "0",
+        "member_upload_bytes": "0",
+        "gpu_dispatches": "0",
+        "command_buffers": "0",
+        "waits": "0",
+        "readbacks": "0",
+        "complete_plan": "true",
+    }
+    hamming_complete = {
+        key: value
+        for key, value in hamming_prepare.items()
+        if key
+        in {
+            "selected",
+            "source_generation",
+            "source_fingerprint",
+            "access_leaves",
+            "parent_nodes",
+            "middle_nodes",
+            "estimated_products",
+            "topology_bytes",
+            "member_heap_bytes_including_topology",
+            "non_topology_heap_bytes",
+        }
+    }
+    hamming_complete.update(
+        {"terminal_ready": "true", "output_claim_emitted": "true"}
+    )
+    events.extend(
+        [
+            event(
+                "MetalRamHammingBooleanity::sparse_prepare",
+                hamming_start + 5.0,
+                50.0,
+                hamming_prepare,
+            ),
+            event(
+                "MetalRamHammingBooleanity::route",
+                hamming_start + 20.0,
+                2.0,
+                {
+                    "cycles": str(1 << log_n),
+                    "requested": "host_sparse_v1",
+                    "selected": "host_sparse_v1",
+                    "fallback_reason": "none",
+                    "source_generation": str(generation),
+                    "source_fingerprint": str(fingerprint),
+                },
+            ),
+            event(
+                "RamRaVirtualization::prepare",
+                hamming_start + 85.0,
+                10.0,
+            ),
+            event(
+                "MetalRamCycleFamily::terminal_take",
+                hamming_start + 87.0,
+                2.0,
+                {
+                    "source_generation": str(generation),
+                    "source_fingerprint": str(fingerprint),
+                    "selected": "host_sparse_v1",
+                    "fallback_reason": "none",
+                    "session_owner_removed": "true",
+                    "columns_removed": "true",
+                },
+            ),
+            event(
+                "MetalRamHammingBooleanity::sparse_derived_validate",
+                hamming_tail[0] + 6.0,
+                1.0,
+                {
+                    "source_generation": str(generation),
+                    "source_fingerprint": str(fingerprint),
+                    "derived_claim_valid": "true",
+                },
+            ),
+            event(
+                "MetalRamHammingBooleanity::sparse_complete",
+                hamming_tail[1] + 1.0,
+                1.0,
+                hamming_complete,
+            ),
+        ]
+    )
+    return events
+
+
 class MetalPiopEvalTests(unittest.TestCase):
+    def test_ram_sparse_owner_lifecycle_and_standalone_charges_are_exact(self) -> None:
+        log_n = 4
+        optimized_events = complete_ram_sparse_trace(log_n, "optimized")
+        optimized_owner = metal_piop_eval.ram_cycle_family_owner_observation(
+            optimized_events, "optimized", log_n
+        )
+        optimized_read_write = metal_piop_eval.ram_read_write_member_breakdown(
+            optimized_events, "optimized", log_n, optimized_owner
+        )
+        optimized_hamming = metal_piop_eval.ram_hamming_member_breakdown(
+            optimized_events, "optimized", log_n, optimized_owner
+        )
+        self.assertIsNone(optimized_owner)
+        self.assertEqual(
+            optimized_read_write["components"]["charged_member_us"],
+            optimized_read_write["components"]["member_us"],
+        )
+        self.assertEqual(
+            optimized_hamming["components"]["charged_member_us"],
+            optimized_hamming["components"]["member_us"],
+        )
+
+        metal_events = complete_ram_sparse_trace(log_n, "metal")
+        owner = metal_piop_eval.ram_cycle_family_owner_observation(
+            metal_events, "metal", log_n
+        )
+        assert owner is not None
+        read_write = metal_piop_eval.ram_read_write_member_breakdown(
+            metal_events, "metal", log_n, owner
+        )
+        hamming = metal_piop_eval.ram_hamming_member_breakdown(
+            metal_events, "metal", log_n, owner
+        )
+        self.assertEqual(owner["wall_us"], 20.0)
+        self.assertEqual(owner["backend_witness_prepare_interval"], (0.0, 80.0))
+        self.assertEqual(owner["piop_interval"], (100.0, 10_100.0))
+        self.assertTrue(owner["source_collection_performed"])
+        self.assertEqual(read_write["components"]["member_us"], 195.0)
+        self.assertEqual(read_write["components"]["host_fiat_shamir_total_us"], 34.0)
+        self.assertEqual(read_write["components"]["charged_member_us"], 215.0)
+        self.assertEqual(hamming["components"]["member_us"], 117.0)
+        self.assertEqual(hamming["components"]["host_fiat_shamir_total_us"], 8.0)
+        self.assertEqual(hamming["components"]["charged_member_us"], 137.0)
+        terminal = hamming["resource_observation"]["terminal_take"]
+        self.assertEqual(terminal["source_generation"], owner["source_generation"])
+        self.assertEqual(terminal["source_fingerprint"], owner["source_fingerprint"])
+        self.assertTrue(terminal["session_owner_removed"])
+        self.assertTrue(terminal["columns_removed"])
+
+    def test_ram_sparse_parser_rejects_lifecycle_fallback_and_receipt_mutations(
+        self,
+    ) -> None:
+        log_n = 4
+
+        owner_in_read_write_prepare = complete_ram_sparse_trace(log_n, "metal")
+        next(
+            event
+            for event in owner_in_read_write_prepare
+            if event["name"] == "MetalRamCycleFamily::owner_prepare"
+        )["ts"] = 205.0
+        with self.assertRaisesRegex(ValueError, "backend witness preparation"):
+            metal_piop_eval.ram_cycle_family_owner_observation(
+                owner_in_read_write_prepare, "metal", log_n
+            )
+
+        false_collection = complete_ram_sparse_trace(log_n, "metal")
+        next(
+            event
+            for event in false_collection
+            if event["name"] == "MetalRamCycleFamily::owner_prepare"
+        )["args"]["source_collection_performed"] = "false"
+        with self.assertRaisesRegex(ValueError, "owner receipt"):
+            metal_piop_eval.ram_cycle_family_owner_observation(
+                false_collection, "metal", log_n
+            )
+
+        duplicate_owner = complete_ram_sparse_trace(log_n, "metal")
+        owner_event = next(
+            event
+            for event in duplicate_owner
+            if event["name"] == "MetalRamCycleFamily::owner_prepare"
+        )
+        duplicate_owner.append(copy.deepcopy(owner_event))
+        with self.assertRaisesRegex(ValueError, "exactly one cycle-family owner"):
+            metal_piop_eval.ram_cycle_family_owner_observation(
+                duplicate_owner, "metal", log_n
+            )
+
+        fallback = complete_ram_sparse_trace(log_n, "metal")
+        next(
+            event
+            for event in fallback
+            if event["name"] == "MetalRamReadWrite::route"
+        )["args"]["selected"] = "optimized_cpu"
+        fallback_owner = metal_piop_eval.ram_cycle_family_owner_observation(
+            fallback, "metal", log_n
+        )
+        with self.assertRaisesRegex(ValueError, "read-write sparse receipt"):
+            metal_piop_eval.ram_read_write_member_breakdown(
+                fallback, "metal", log_n, fallback_owner
+            )
+
+        malformed_hamming = complete_ram_sparse_trace(log_n, "metal")
+        for event in malformed_hamming:
+            if event["name"] in {
+                "MetalRamHammingBooleanity::sparse_prepare",
+                "MetalRamHammingBooleanity::sparse_complete",
+            }:
+                event["args"]["middle_nodes"] = "5"
+                event["args"]["estimated_products"] = "94"
+        malformed_owner = metal_piop_eval.ram_cycle_family_owner_observation(
+            malformed_hamming, "metal", log_n
+        )
+        with self.assertRaisesRegex(ValueError, "Hamming sparse receipt"):
+            metal_piop_eval.ram_hamming_member_breakdown(
+                malformed_hamming, "metal", log_n, malformed_owner
+            )
+
+        missing_enclosing = complete_ram_sparse_trace(log_n, "metal")
+        missing_enclosing.remove(
+            next(
+                event
+                for event in missing_enclosing
+                if event["name"] == "RamRaVirtualization::prepare"
+            )
+        )
+        missing_owner = metal_piop_eval.ram_cycle_family_owner_observation(
+            missing_enclosing, "metal", log_n
+        )
+        with self.assertRaisesRegex(ValueError, "one RA virtualization preparation"):
+            metal_piop_eval.ram_hamming_member_breakdown(
+                missing_enclosing, "metal", log_n, missing_owner
+            )
+
+        mismatched_take = complete_ram_sparse_trace(log_n, "metal")
+        next(
+            event
+            for event in mismatched_take
+            if event["name"] == "MetalRamCycleFamily::terminal_take"
+        )["args"]["source_generation"] = "8"
+        mismatched_owner = metal_piop_eval.ram_cycle_family_owner_observation(
+            mismatched_take, "metal", log_n
+        )
+        with self.assertRaisesRegex(ValueError, "terminal-take receipt"):
+            metal_piop_eval.ram_hamming_member_breakdown(
+                mismatched_take, "metal", log_n, mismatched_owner
+            )
+
+        retained_columns = complete_ram_sparse_trace(log_n, "metal")
+        next(
+            event
+            for event in retained_columns
+            if event["name"] == "MetalRamCycleFamily::terminal_take"
+        )["args"]["columns_removed"] = "false"
+        retained_owner = metal_piop_eval.ram_cycle_family_owner_observation(
+            retained_columns, "metal", log_n
+        )
+        with self.assertRaisesRegex(ValueError, "terminal-take receipt"):
+            metal_piop_eval.ram_hamming_member_breakdown(
+                retained_columns, "metal", log_n, retained_owner
+            )
+
+        duplicate_take = complete_ram_sparse_trace(log_n, "metal")
+        terminal = next(
+            event
+            for event in duplicate_take
+            if event["name"] == "MetalRamCycleFamily::terminal_take"
+        )
+        duplicate_take.append(copy.deepcopy(terminal))
+        duplicate_owner = metal_piop_eval.ram_cycle_family_owner_observation(
+            duplicate_take, "metal", log_n
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one cycle-family owner"):
+            metal_piop_eval.ram_hamming_member_breakdown(
+                duplicate_take, "metal", log_n, duplicate_owner
+            )
+
+    def test_ram_local_kernel_primary_uses_non_additive_standalone_charges(self) -> None:
+        result = {
+            "ram_read_write_member": {
+                "components": {"member_us": 80.0, "charged_member_us": 120.0}
+            },
+            "ram_hamming_member": {
+                "components": {"member_us": 70.0, "charged_member_us": 110.0}
+            },
+        }
+        self.assertEqual(
+            metal_piop_eval.local_kernel_primary_us(result, "RamReadWriteChecking"),
+            120.0,
+        )
+        self.assertEqual(
+            metal_piop_eval.local_kernel_primary_us(result, "RamHammingBooleanity"),
+            110.0,
+        )
+        self.assertEqual(
+            metal_piop_eval.LOCAL_KERNELS["RamReadWriteChecking"]["metric"],
+            "ram_read_write_standalone_charged_speedup",
+        )
+        self.assertEqual(
+            metal_piop_eval.LOCAL_KERNELS["RamHammingBooleanity"]["metric"],
+            "ram_hamming_booleanity_standalone_charged_speedup",
+        )
+
+    def test_ram_sparse_summary_charges_owner_once_and_rejects_partial_records(
+        self,
+    ) -> None:
+        base = {
+            "cpu_us": 2_000.0,
+            "metal_us": 400.0,
+            "cpu_prepare_us": 10.0,
+            "metal_prepare_us": 10.0,
+            "cpu_instruction_ra_us": 500.0,
+            "metal_instruction_ra_us": 100.0,
+            "cpu_bytecode_us": 500.0,
+            "metal_bytecode_us": 100.0,
+            "cpu_instruction_input_us": 500.0,
+            "metal_instruction_input_us": 100.0,
+            "cpu_registers_claim_us": 500.0,
+            "metal_registers_claim_us": 100.0,
+            "cpu_instruction_read_raf_us": 500.0,
+            "metal_instruction_read_raf_us": 100.0,
+            "cpu_booleanity_address_us": 500.0,
+            "metal_booleanity_address_us": 100.0,
+            "cpu_hamming_weight_us": 500.0,
+            "metal_hamming_weight_us": 100.0,
+            "cpu_hamming_weight_service_us": 500.0,
+            "metal_hamming_weight_service_us": 100.0,
+            "cpu_ram_read_write_us": 600.0,
+            "metal_ram_read_write_us": 80.0,
+            "metal_ram_read_write_charged_us": 120.0,
+            "cpu_ram_hamming_us": 600.0,
+            "metal_ram_hamming_us": 80.0,
+            "metal_ram_hamming_charged_us": 120.0,
+            "metal_ram_cycle_family_owner_us": 40.0,
+        }
+        pairs = [
+            {
+                **base,
+                "order": ["optimized", "metal"]
+                if index % 2 == 0
+                else ["metal", "optimized"],
+            }
+            for index in range(5)
+        ]
+        metrics = metal_piop_eval.summarize_pairs(pairs)
+        self.assertEqual(metrics["ram_read_write_speedup"], 7.5)
+        self.assertEqual(
+            metrics["ram_read_write_standalone_charged_speedup"], 5.0
+        )
+        self.assertEqual(
+            metrics["ram_hamming_booleanity_standalone_charged_speedup"], 5.0
+        )
+        self.assertEqual(metrics["ram_sparse_family_speedup"], 6.0)
+        self.assertEqual(metrics["metal_ram_sparse_family_ms_samples"], [0.2] * 5)
+        self.assertEqual(
+            metrics["metal_ram_cycle_family_owner_ms_samples"], [0.04] * 5
+        )
+        self.assertFalse(metrics["ram_standalone_charged_metrics_additive"])
+        self.assertTrue(metrics["ram_read_write_standalone_charged_decision"]["clears"])
+        self.assertTrue(metrics["ram_sparse_family_decision"]["clears"])
+
+        partial = [dict(pair) for pair in pairs]
+        for pair in partial:
+            pair.pop("metal_ram_cycle_family_owner_us")
+        with self.assertRaisesRegex(ValueError, "exact full RAM"):
+            metal_piop_eval.summarize_pairs(partial)
+
+        double_charged = [dict(pair) for pair in pairs]
+        double_charged[0]["metal_ram_hamming_charged_us"] = 160.0
+        with self.assertRaisesRegex(ValueError, "include the owner once"):
+            metal_piop_eval.summarize_pairs(double_charged)
+
+        without_ram = [
+            {
+                key: value
+                for key, value in pair.items()
+                if "_ram_" not in key
+            }
+            for pair in pairs
+        ]
+        no_ram_metrics = metal_piop_eval.summarize_pairs(without_ram)
+        self.assertIsNone(no_ram_metrics["ram_read_write_speedup"])
+        self.assertIsNone(no_ram_metrics["ram_sparse_family_speedup"])
+        self.assertEqual(no_ram_metrics["paired_ram_read_write_speedups"], [])
+
     def test_outer_registers_carrier_is_complete_overwrite_storage(self) -> None:
         geometry = metal_piop_eval.outer_remainder_storage_geometry(26, True, True)
         carrier = geometry["registers_claim_carrier"]
