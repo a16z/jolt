@@ -22,6 +22,14 @@ const ADDRESS_COUNT: usize = 1 << ADDRESS_LOG2;
 const INNER_ROWS: usize = 1 << INNER_LOG2;
 const RANK_RADIX: usize = 1 << 8;
 const SENTINEL_ADDRESS: u16 = u16::MAX;
+const BYTECODE_ADDRESS_STAGE1_MAX_ROWS: usize = 1 << 28;
+pub(crate) const BYTECODE_ADDRESS_DESCRIPTOR_COUNT_SHIFT: u32 = 20;
+pub(crate) const BYTECODE_ADDRESS_DESCRIPTOR_PIVOT_START_MASK: u32 =
+    (1 << BYTECODE_ADDRESS_DESCRIPTOR_COUNT_SHIFT) - 1;
+pub(crate) const BYTECODE_ADDRESS_DESCRIPTOR_MAX_COUNT: usize =
+    1 << (u32::BITS - BYTECODE_ADDRESS_DESCRIPTOR_COUNT_SHIFT);
+pub(crate) const BYTECODE_ADDRESS_DESCRIPTOR_MAX_PIVOT_START: usize =
+    BYTECODE_ADDRESS_DESCRIPTOR_PIVOT_START_MASK as usize;
 
 static NEXT_COMPLETION_SERIAL: AtomicU64 = AtomicU64::new(1);
 
@@ -30,10 +38,52 @@ static NEXT_COMPLETION_SERIAL: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct BytecodeAddressChunkDescriptor {
     pub(crate) address: u16,
     pub(crate) base: u16,
-    pub(crate) pivot_start: u32,
+    pub(crate) packed_count_and_pivot_start: u32,
 }
 
 const _: [(); 8] = [(); size_of::<BytecodeAddressChunkDescriptor>()];
+const _: [(); BYTECODE_ADDRESS_DESCRIPTOR_MAX_COUNT] =
+    [(); INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS];
+
+impl BytecodeAddressChunkDescriptor {
+    pub(crate) fn new(
+        address: u16,
+        base: u16,
+        pivot_start: usize,
+        count: usize,
+    ) -> Result<Self, MetalError> {
+        if pivot_start > BYTECODE_ADDRESS_DESCRIPTOR_MAX_PIVOT_START {
+            return Err(invalid(
+                "bytecode Stage-1 descriptor pivot start exceeds 20 bits",
+            ));
+        }
+        if !(1..=BYTECODE_ADDRESS_DESCRIPTOR_MAX_COUNT).contains(&count) {
+            return Err(invalid(
+                "bytecode Stage-1 descriptor count is outside 1..=4096",
+            ));
+        }
+        let pivot_start = u32::try_from(pivot_start)
+            .map_err(|_| invalid("bytecode Stage-1 descriptor pivot start exceeds u32"))?;
+        let count_minus_one = u32::try_from(count - 1)
+            .map_err(|_| invalid("bytecode Stage-1 descriptor count exceeds u32"))?;
+        Ok(Self {
+            address,
+            base,
+            packed_count_and_pivot_start: (count_minus_one
+                << BYTECODE_ADDRESS_DESCRIPTOR_COUNT_SHIFT)
+                | pivot_start,
+        })
+    }
+
+    pub(crate) const fn pivot_start(self) -> usize {
+        (self.packed_count_and_pivot_start & BYTECODE_ADDRESS_DESCRIPTOR_PIVOT_START_MASK) as usize
+    }
+
+    pub(crate) const fn count(self) -> usize {
+        ((self.packed_count_and_pivot_start >> BYTECODE_ADDRESS_DESCRIPTOR_COUNT_SHIFT) + 1)
+            as usize
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ChunkEntry {
@@ -301,7 +351,7 @@ impl BytecodeAddressStage1TopologyReceipt {
 pub(crate) fn bytecode_address_stage1_topology_max_plane_bytes(
     physical_rows: usize,
 ) -> Result<[u64; 5], MetalError> {
-    if physical_rows == 0 {
+    if physical_rows == 0 || physical_rows > BYTECODE_ADDRESS_STAGE1_MAX_ROWS {
         return Err(MetalError::InputTooLong(physical_rows));
     }
     let chunks = physical_rows.div_ceil(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS);
@@ -370,6 +420,7 @@ impl SolinasMetal {
             || !padded_rows.is_power_of_two()
             || physical_rows == 0
             || physical_rows > padded_rows
+            || padded_rows > BYTECODE_ADDRESS_STAGE1_MAX_ROWS
         {
             return Err(invalid("bytecode Stage-1 topology row geometry is invalid"));
         }
@@ -546,6 +597,15 @@ fn merge_chunk_topologies(
     physical_rows: usize,
     chunks_in: &mut [Option<ChunkTopology>],
 ) -> Result<BytecodeAddressStage1TopologyData, MetalError> {
+    let padded_rows = shape.rows().map_err(|error| invalid(error.to_string()))?;
+    if physical_rows == 0
+        || physical_rows > padded_rows
+        || padded_rows > BYTECODE_ADDRESS_STAGE1_MAX_ROWS
+    {
+        return Err(invalid(
+            "bytecode Stage-1 topology exceeds its packed descriptor capacity",
+        ));
+    }
     let mut descriptors = Vec::new();
     let mut pivots = Vec::new();
     let mut chunk_offsets = Vec::new();
@@ -630,31 +690,48 @@ fn merge_chunk_topologies(
             max_pivots_per_chunk = max_pivots_per_chunk.max(chunk.pivots.len());
             real_descriptors += chunk.entries.len();
             let pivot_base = pivots.len();
+            let mut described_rows = 0usize;
             for (index, entry) in chunk.entries.iter().copied().enumerate() {
                 let next_base = chunk
                     .entries
                     .get(index + 1)
                     .map_or(outer_rows, |next| usize::from(next.base));
-                if usize::from(entry.base) + usize::from(entry.count) > next_base {
+                let count = usize::from(entry.count);
+                let pivot_start = pivot_base
+                    .checked_add(entry.pivot_start as usize)
+                    .ok_or_else(|| invalid("bytecode Stage-1 pivot count overflowed"))?;
+                let descriptor = BytecodeAddressChunkDescriptor::new(
+                    entry.address,
+                    entry.base,
+                    pivot_start,
+                    count,
+                )?;
+                let cell_end = usize::from(descriptor.base)
+                    .checked_add(descriptor.count())
+                    .ok_or_else(|| invalid("bytecode Stage-1 descriptor end overflowed"))?;
+                if cell_end > next_base || cell_end > outer_rows {
                     return Err(invalid("bytecode Stage-1 descriptor bounds overlap"));
                 }
-                descriptors.push(BytecodeAddressChunkDescriptor {
-                    address: entry.address,
-                    base: entry.base,
-                    pivot_start: u32::try_from(pivot_base + entry.pivot_start as usize)
-                        .map_err(|_| invalid("bytecode Stage-1 pivot count exceeds u32"))?,
-                });
+                described_rows = described_rows
+                    .checked_add(descriptor.count())
+                    .ok_or_else(|| invalid("bytecode Stage-1 descriptor row count overflowed"))?;
+                descriptors.push(descriptor);
+            }
+            if described_rows != chunk.rows {
+                return Err(invalid(
+                    "bytecode Stage-1 descriptors do not cover their physical chunk",
+                ));
             }
             pivots.extend(chunk.pivots);
             let end = u32::try_from(descriptors.len())
                 .map_err(|_| invalid("bytecode Stage-1 descriptor count exceeds u32"))?;
-            descriptors.push(BytecodeAddressChunkDescriptor {
-                address: SENTINEL_ADDRESS,
-                base: u16::try_from(outer_rows)
+            descriptors.push(BytecodeAddressChunkDescriptor::new(
+                SENTINEL_ADDRESS,
+                u16::try_from(outer_rows)
                     .map_err(|_| invalid("bytecode Stage-1 outer rows exceed u16"))?,
-                pivot_start: u32::try_from(pivots.len())
-                    .map_err(|_| invalid("bytecode Stage-1 pivot count exceeds u32"))?,
-            });
+                pivots.len(),
+                1,
+            )?);
             chunk_offsets.extend([begin, end]);
             chunks += 1;
         }
@@ -679,6 +756,7 @@ fn merge_chunk_topologies(
         ));
     }
     let real_pivots = pivots.len();
+    validate_packed_descriptor_stream(physical_rows, &descriptors, real_pivots, &chunk_offsets)?;
     pivots.push(u16::MAX);
 
     work_items.sort_by_key(|item| (item.address, item.outer, item.start));
@@ -718,6 +796,89 @@ fn merge_chunk_topologies(
         work_items,
         address_offsets,
     })
+}
+
+fn validate_packed_descriptor_stream(
+    physical_rows: usize,
+    descriptors: &[BytecodeAddressChunkDescriptor],
+    real_pivots: usize,
+    chunk_offsets: &[u32],
+) -> Result<(), MetalError> {
+    let chunks = physical_rows.div_ceil(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS);
+    if chunk_offsets.len() != 2 * chunks {
+        return Err(invalid(
+            "bytecode Stage-1 packed descriptor offsets are incomplete",
+        ));
+    }
+    let mut next_descriptor = 0usize;
+    let mut next_pivot = 0usize;
+    for chunk in 0..chunks {
+        let begin = chunk_offsets[2 * chunk] as usize;
+        let end = chunk_offsets[2 * chunk + 1] as usize;
+        if begin != next_descriptor || begin >= end || end >= descriptors.len() {
+            return Err(invalid(
+                "bytecode Stage-1 packed descriptor range is invalid",
+            ));
+        }
+        let outer_begin =
+            (chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS / INNER_ROWS) * INNER_ROWS;
+        let outer_rows = physical_rows.saturating_sub(outer_begin).min(INNER_ROWS);
+        let chunk_rows = physical_rows
+            .saturating_sub(chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+            .min(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS);
+        let sentinel = descriptors[end];
+        if sentinel.address != SENTINEL_ADDRESS
+            || usize::from(sentinel.base) != outer_rows
+            || sentinel.count() != 1
+        {
+            return Err(invalid(
+                "bytecode Stage-1 packed descriptor sentinel is invalid",
+            ));
+        }
+        let mut described_rows = 0usize;
+        let mut previous_address = None;
+        for index in begin..end {
+            let descriptor = descriptors[index];
+            let next = descriptors[index + 1];
+            let address = usize::from(descriptor.address);
+            let pivot_start = descriptor.pivot_start();
+            let pivot_end = next.pivot_start();
+            let count = descriptor.count();
+            let cell_end = usize::from(descriptor.base)
+                .checked_add(count)
+                .ok_or_else(|| invalid("bytecode Stage-1 packed descriptor end overflowed"))?;
+            if address >= ADDRESS_COUNT
+                || previous_address.is_some_and(|previous| previous >= address)
+                || pivot_start != next_pivot
+                || pivot_end < pivot_start
+                || pivot_end > real_pivots
+                || pivot_end - pivot_start != (count - 1) / RANK_RADIX
+                || cell_end > usize::from(next.base)
+                || cell_end > outer_rows
+            {
+                return Err(invalid(
+                    "bytecode Stage-1 packed descriptor contents are invalid",
+                ));
+            }
+            described_rows = described_rows
+                .checked_add(count)
+                .ok_or_else(|| invalid("bytecode Stage-1 packed row count overflowed"))?;
+            previous_address = Some(address);
+            next_pivot = pivot_end;
+        }
+        if described_rows != chunk_rows {
+            return Err(invalid(
+                "bytecode Stage-1 packed descriptors do not cover their chunk",
+            ));
+        }
+        next_descriptor = end + 1;
+    }
+    if next_descriptor != descriptors.len() || next_pivot != real_pivots {
+        return Err(invalid(
+            "bytecode Stage-1 packed descriptor stream has trailing data",
+        ));
+    }
+    Ok(())
 }
 
 impl BytecodeAddressStage1TopologyStorage {
@@ -909,6 +1070,8 @@ fn validate_owner(
     }
     if receipt.physical_rows == 0
         || receipt.physical_rows > receipt.padded_rows
+        || receipt.padded_rows > BYTECODE_ADDRESS_STAGE1_MAX_ROWS
+        || receipt.pivots > BYTECODE_ADDRESS_DESCRIPTOR_MAX_PIVOT_START
         || receipt.covered_rows != receipt.physical_rows
         || receipt.chunks
             != receipt
@@ -1052,16 +1215,40 @@ mod tests {
         assert_eq!(data.descriptors.len(), 6);
         assert_eq!(data.descriptors[0].address, 1);
         assert_eq!(data.descriptors[0].base, 0);
+        assert_eq!(data.descriptors[0].count(), 2048);
         assert_eq!(data.descriptors[1].address, 3);
         assert_eq!(data.descriptors[1].base, 4096);
+        assert_eq!(data.descriptors[1].count(), 2048);
         assert_eq!(data.descriptors[2].address, SENTINEL_ADDRESS);
         assert_eq!(data.descriptors[2].base, 8192);
+        assert_eq!(data.descriptors[2].count(), 1);
         assert_eq!(data.descriptors[3].address, 1);
         assert_eq!(data.descriptors[3].base, 2048);
+        assert_eq!(data.descriptors[3].count(), 2048);
         assert_eq!(data.descriptors[4].address, 3);
         assert_eq!(data.descriptors[4].base, 6144);
+        assert_eq!(data.descriptors[4].count(), 2048);
         assert_eq!(data.descriptors[5].address, SENTINEL_ADDRESS);
         assert_eq!(data.descriptors[5].base, 8192);
+        assert_eq!(data.descriptors[5].count(), 1);
+        let first_cell_end = usize::from(data.descriptors[0].base) + data.descriptors[0].count();
+        assert_eq!(first_cell_end, 2048);
+        assert!(first_cell_end < usize::from(data.descriptors[1].base));
+        let mut corrupted = data.descriptors.clone();
+        corrupted[0] = BytecodeAddressChunkDescriptor::new(
+            corrupted[0].address,
+            corrupted[0].base,
+            corrupted[0].pivot_start(),
+            4096,
+        )
+        .unwrap();
+        assert!(validate_packed_descriptor_stream(
+            data.physical_rows,
+            &corrupted,
+            data.real_pivots,
+            &data.chunk_offsets,
+        )
+        .is_err());
         assert_eq!(ranks[0], 0);
         assert_eq!(ranks[512], 0);
         assert_eq!(ranks[4096], 0);
@@ -1091,7 +1278,9 @@ mod tests {
         );
         assert_eq!(data.pivots[15], u16::MAX);
         assert_eq!(data.descriptors[0].base, 0);
+        assert_eq!(data.descriptors[0].count(), 4096);
         assert_eq!(data.descriptors[2].base, 4096);
+        assert_eq!(data.descriptors[2].count(), 1);
         assert_eq!(data.work_items.len(), 2);
         assert_eq!(data.work_items[0].start, 0);
         assert_eq!(data.work_items[0].count, 4096);
@@ -1150,11 +1339,12 @@ mod tests {
                 .unwrap()
                 + begin;
             let descriptor = data.descriptors[descriptor_index];
-            let pivot_end = data.descriptors[descriptor_index + 1].pivot_start as usize;
-            let pivot_start = descriptor.pivot_start as usize;
+            let pivot_end = data.descriptors[descriptor_index + 1].pivot_start();
+            let pivot_start = descriptor.pivot_start();
             let rank_high =
                 data.pivots[pivot_start..pivot_end].partition_point(|pivot| *pivot <= cycle);
             let rank = rank_high * RANK_RADIX + usize::from(rank_low[row]);
+            assert!(rank < descriptor.count());
             reconstructed_ranks[row] = rank;
             actual[row] = (row / INNER_ROWS) * INNER_ROWS + usize::from(descriptor.base) + rank;
         }
@@ -1195,5 +1385,47 @@ mod tests {
         assert!(builder.record(ADDRESS_COUNT).is_err());
         assert_eq!(builder.record(0).unwrap(), 0);
         assert!(builder.finish().is_err());
+    }
+
+    #[test]
+    fn descriptor_packing_is_exact_and_capacity_checked() {
+        let descriptor = BytecodeAddressChunkDescriptor::new(
+            8191,
+            u16::MAX,
+            BYTECODE_ADDRESS_DESCRIPTOR_MAX_PIVOT_START,
+            BYTECODE_ADDRESS_DESCRIPTOR_MAX_COUNT,
+        )
+        .unwrap();
+
+        assert_eq!(descriptor.packed_count_and_pivot_start, u32::MAX);
+        assert_eq!(
+            descriptor.pivot_start(),
+            BYTECODE_ADDRESS_DESCRIPTOR_MAX_PIVOT_START
+        );
+        assert_eq!(descriptor.count(), BYTECODE_ADDRESS_DESCRIPTOR_MAX_COUNT);
+        assert!(BytecodeAddressChunkDescriptor::new(0, 0, 0, 0).is_err());
+        assert!(BytecodeAddressChunkDescriptor::new(
+            0,
+            0,
+            0,
+            BYTECODE_ADDRESS_DESCRIPTOR_MAX_COUNT + 1,
+        )
+        .is_err());
+        assert!(BytecodeAddressChunkDescriptor::new(
+            0,
+            0,
+            BYTECODE_ADDRESS_DESCRIPTOR_MAX_PIVOT_START + 1,
+            1,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn topology_capacity_is_capped_at_log28() {
+        assert!(bytecode_address_stage1_topology_max_plane_bytes(1 << 28).is_ok());
+        assert!(bytecode_address_stage1_topology_max_plane_bytes((1 << 28) + 1).is_err());
+
+        let log29 = AddressMajorShape::production(29).unwrap();
+        assert!(merge_chunk_topologies(log29, 1, &mut []).is_err());
     }
 }

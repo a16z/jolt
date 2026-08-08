@@ -14,6 +14,7 @@ constant uint INSTRUCTION_READ_RAF_STATUS_BYTECODE_TOPOLOGY = 1u << 4;
 constant uint IRRAF_BYTECODE_ADDRESS_INNER_LOG2 = 15u;
 constant uint IRRAF_BYTECODE_ADDRESS_INNER_LENGTH = 1u << IRRAF_BYTECODE_ADDRESS_INNER_LOG2;
 constant uint BYTECODE_ADDRESS_COUNT = 1u << 13u;
+constant uint BYTECODE_ADDRESS_DESCRIPTOR_PIVOT_START_MASK = 0x000fffffu;
 constant ulong BYTECODE_ADDRESS_PC_MASK = (1ul << 56u) - 1ul;
 
 struct InstructionReadRafSourceRow {
@@ -32,8 +33,21 @@ struct InstructionReadRafLookup {
 struct BytecodeAddressChunkDescriptor {
     ushort address;
     ushort base;
-    uint pivot_start;
+    uint packed_count_and_pivot_start;
 };
+
+inline uint bytecode_address_descriptor_pivot_start(
+    BytecodeAddressChunkDescriptor descriptor)
+{
+    return descriptor.packed_count_and_pivot_start
+        & BYTECODE_ADDRESS_DESCRIPTOR_PIVOT_START_MASK;
+}
+
+inline uint bytecode_address_descriptor_count(
+    BytecodeAddressChunkDescriptor descriptor)
+{
+    return (descriptor.packed_count_and_pivot_start >> 20u) + 1u;
+}
 
 struct InstructionReadRafScatterParams {
     uint rows;
@@ -151,8 +165,9 @@ kernel void solinas_instruction_read_raf_compatibility_scatter(
         if (bytecode_chunk_valid) {
             BytecodeAddressChunkDescriptor sentinel =
                 bytecode_descriptors[bytecode_descriptor_end];
-            bytecode_pivot_begin = bytecode_descriptors[bytecode_descriptor_begin].pivot_start;
-            bytecode_pivot_end = sentinel.pivot_start;
+            bytecode_pivot_begin = bytecode_address_descriptor_pivot_start(
+                bytecode_descriptors[bytecode_descriptor_begin]);
+            bytecode_pivot_end = bytecode_address_descriptor_pivot_start(sentinel);
             uint outer = (chunk * INSTRUCTION_READ_RAF_CHUNK_ROWS)
                 >> IRRAF_BYTECODE_ADDRESS_INNER_LOG2;
             uint outer_begin = outer * IRRAF_BYTECODE_ADDRESS_INNER_LENGTH;
@@ -269,12 +284,19 @@ kernel void solinas_instruction_read_raf_compatibility_scatter(
                 local_bytecode_descriptors[descriptor_lo];
             BytecodeAddressChunkDescriptor next_descriptor =
                 local_bytecode_descriptors[descriptor_lo + 1u];
-            uint pivot_begin = descriptor.pivot_start - bytecode_pivot_begin;
-            uint pivot_end = next_descriptor.pivot_start - bytecode_pivot_begin;
+            uint descriptor_pivot_start =
+                bytecode_address_descriptor_pivot_start(descriptor);
+            uint next_pivot_start =
+                bytecode_address_descriptor_pivot_start(next_descriptor);
+            uint pivot_begin = descriptor_pivot_start - bytecode_pivot_begin;
+            uint pivot_end = next_pivot_start - bytecode_pivot_begin;
             uint staged_pivots = bytecode_pivot_end - bytecode_pivot_begin;
-            if (descriptor.pivot_start < bytecode_pivot_begin
-                || descriptor.pivot_start > next_descriptor.pivot_start
-                || next_descriptor.pivot_start > bytecode_pivot_end
+            uint descriptor_base = uint(descriptor.base);
+            uint descriptor_count_rows = bytecode_address_descriptor_count(descriptor);
+            uint descriptor_end = descriptor_base + descriptor_count_rows;
+            if (descriptor_pivot_start < bytecode_pivot_begin
+                || descriptor_pivot_start > next_pivot_start
+                || next_pivot_start > bytecode_pivot_end
                 || pivot_end > staged_pivots) {
                 atomic_fetch_or_explicit(
                     status,
@@ -298,10 +320,16 @@ kernel void solinas_instruction_read_raf_compatibility_scatter(
             uint rank = rank_low | ((pivot_lo - pivot_begin) << 8u);
             uint outer = cycle >> IRRAF_BYTECODE_ADDRESS_INNER_LOG2;
             uint inner = cycle & (IRRAF_BYTECODE_ADDRESS_INNER_LENGTH - 1u);
-            uint destination = outer * IRRAF_BYTECODE_ADDRESS_INNER_LENGTH
-                + uint(descriptor.base) + rank;
+            uint outer_base = outer * IRRAF_BYTECODE_ADDRESS_INNER_LENGTH;
+            uint cell_begin = outer_base + descriptor_base;
+            uint cell_end = outer_base + descriptor_end;
+            uint destination = cell_begin + rank;
             if (rank >= INSTRUCTION_READ_RAF_CHUNK_ROWS
-                || uint(descriptor.base) + rank >= uint(next_descriptor.base)
+                || rank >= descriptor_count_rows
+                || descriptor_end < descriptor_base
+                || descriptor_end > uint(next_descriptor.base)
+                || destination < cell_begin
+                || destination >= cell_end
                 || destination >= params.bytecode_physical_rows
                 || destination >> IRRAF_BYTECODE_ADDRESS_INNER_LOG2 != outer) {
                 atomic_fetch_or_explicit(

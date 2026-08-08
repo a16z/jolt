@@ -6,12 +6,12 @@ use super::{
     carrier::AddressMajorShape,
     oracle::{HostAddressMajorCarrier, Row},
     worklist::{SparseAddressRow, SparseAddressWorklist},
-    BytecodeAddressFusedScatterRequest, BytecodeAddressMajorConfig,
+    BytecodeAddressChunkDescriptor, BytecodeAddressFusedScatterRequest, BytecodeAddressMajorConfig,
     BYTECODE_ADDRESS_MAJOR_BASE_STAGES, BYTECODE_ADDRESS_MAJOR_SIMD_WIDTH,
     BYTECODE_ADDRESS_MAJOR_STAGES,
 };
 use crate::metal::solinas::{
-    BooleanityRow, InstructionReadRafCompatibilityScatterConfig, SolinasMetal,
+    BooleanityRow, InstructionReadRafCompatibilityScatterConfig, MetalError, SolinasMetal,
     INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
 };
 
@@ -499,4 +499,122 @@ fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
         .prepare_bytecode_address_sparse_resident(carrier, &e_lo, &e_hi)
         .unwrap();
     assert_eq!(invocation.execute_timed().unwrap().output, expected);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn fused_stage1_scatter_rejects_rank_past_the_exact_chunk_cell() {
+    let context = SolinasMetal::for_akita().unwrap();
+    let shape = AddressMajorShape::production(15).unwrap();
+    let padded_rows = shape.rows().unwrap();
+    let physical_rows = 2 * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+    let resident_rows = (0..padded_rows)
+        .map(|row| {
+            let mapped_pc = if row >= physical_rows {
+                None
+            } else if row.is_multiple_of(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS) {
+                Some(7)
+            } else {
+                Some(8)
+            };
+            BooleanityRow::new(0, mapped_pc.map(|pc| pc as u64), None, row as i128).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut source = context
+        .prepare_instruction_read_raf_stage1_storage(padded_rows)
+        .unwrap();
+    let mut topology = context
+        .prepare_bytecode_address_stage1_topology_storage(padded_rows, physical_rows)
+        .unwrap();
+    topology
+        .with_chunk_writers(|topology_chunks| {
+            source.with_chunk_writers(|source_chunks| {
+                for (chunk, (source, topology)) in source_chunks
+                    .iter_mut()
+                    .zip(topology_chunks.iter_mut())
+                    .enumerate()
+                {
+                    let start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+                    for offset in 0..source.len() {
+                        let row = start + offset;
+                        let rank = if row < physical_rows {
+                            topology.record(resident_rows[row].mapped_pc().unwrap_or(0))?
+                        } else {
+                            0
+                        };
+                        source.push_with_bytecode_chunk_rank(resident_rows[row], 0, false, rank)?;
+                    }
+                    topology.finish()?;
+                }
+                Ok(())
+            })
+        })
+        .unwrap();
+    let owner = source.seal().unwrap();
+    let topology_owner = topology.seal(&owner).unwrap();
+
+    let inspection_source = owner
+        .lease(padded_rows, context.device_registry_id())
+        .unwrap();
+    let inspection = topology_owner.lease(inspection_source).unwrap();
+    let topology_receipt = inspection.receipt();
+    // SAFETY: the lease keeps the fully initialized descriptor allocation alive,
+    // and the receipt records its exact element count.
+    let descriptors = unsafe {
+        std::slice::from_raw_parts(
+            inspection
+                .descriptors_buffer()
+                .contents()
+                .cast::<BytecodeAddressChunkDescriptor>(),
+            topology_receipt.descriptor_elements(),
+        )
+    };
+    assert_eq!(descriptors[0].address, 7);
+    assert_eq!(descriptors[0].base, 0);
+    assert_eq!(descriptors[0].count(), 1);
+    assert_eq!(descriptors[1].address, 8);
+    assert_eq!(descriptors[1].base, 2);
+    let corrupted_rank = 1u8;
+    assert!(
+        usize::from(descriptors[0].base) + usize::from(corrupted_rank)
+            < usize::from(descriptors[1].base)
+    );
+    drop(inspection);
+
+    let corrupt_source = owner
+        .lease(padded_rows, context.device_registry_id())
+        .unwrap();
+    // SAFETY: no command has been submitted, the shared allocation has exactly
+    // `padded_rows` initialized entries, and the lease keeps it alive.
+    unsafe {
+        let first = corrupt_source
+            .row_buffer()
+            .contents()
+            .cast::<BooleanityRow>();
+        first.write((*first).with_bytecode_chunk_rank_low7(corrupted_rank));
+    }
+    drop(corrupt_source);
+
+    let scatter_source = owner
+        .lease(padded_rows, context.device_registry_id())
+        .unwrap();
+    let topology_source = owner
+        .lease(padded_rows, context.device_registry_id())
+        .unwrap();
+    let request =
+        BytecodeAddressFusedScatterRequest::new(topology_owner.lease(topology_source).unwrap())
+            .unwrap();
+    let result = context.prepare_instruction_read_raf_compatibility_scatter(
+        scatter_source,
+        &vec![AkitaField::zero(); shape.log_rows() as usize],
+        InstructionReadRafCompatibilityScatterConfig {
+            threads_per_threadgroup: 256,
+        },
+        Some(request),
+    );
+
+    assert!(matches!(
+        result,
+        Err(MetalError::InvalidInstructionReadRafGrouped(_))
+    ));
 }
