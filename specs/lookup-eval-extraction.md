@@ -50,6 +50,9 @@ current proof scope explicit.
   compatible with the current legacy extractor consumers.
 - CI must build and test the generated Lean package. Rust generation tests
   alone are not evidence that a generated theorem is valid.
+- The extractor must provide a deterministic standalone lookup artifact for
+  downstream formalizations. The artifact must identify the exact Jolt
+  revision used by a clean checkout and hash every exported Lean file.
 
 ### Non-Goals
 
@@ -98,6 +101,10 @@ current proof scope explicit.
 - [x] CI builds the generated `Jolt` Lean library and runs its test driver.
 - [x] No generated lookup source file contains thousands of generic CSE
   declarations.
+- [x] A lookup-only export contains the static Lean runtime, generated lookup
+  tables, exact Jolt revision, and SHA-256 file hashes.
+- [x] Repeating the lookup-only export at one revision produces identical
+  bytes.
 
 ### Testing Strategy
 
@@ -126,6 +133,10 @@ The generated Lean package provides separate checks.
 The CI workflow must run both `lake build` and `lake test` after generation.
 The Rust test jobs remain required because Lean does not check the Rust catalog
 adapter or the legacy numeric oracle.
+
+CI also runs the standalone artifact command against its exact checkout. The
+command refuses a different revision or tracked local changes. Unit tests check
+that the file set and manifest are deterministic.
 
 ### Performance
 
@@ -189,6 +200,19 @@ The current optional capability contains only AND. Adding a table family means
 adding its operations to the small materializer language, implementing its
 shared Rust materializer, and attaching that materializer in the central
 capability dispatch. It must not create a second generated module pipeline.
+
+#### Standalone artifact
+
+Downstream Lean repositories need a focused input instead of the complete
+generated circuit package. The standalone artifact contains the four static
+lookup runtime modules and the generated `Jolt.LookupTables` module. It does
+not contain instructions, constraints, sumchecks, field adapters, or tests.
+
+The caller supplies a full Jolt revision. The exporter checks that it matches
+the clean checkout, then records it in `lookup-artifact.json`. The manifest
+also records the format version, word width, generator version, the SHA-256
+hash of each Lean file, and one hash over the sorted file set. It omits times
+and local paths so repeated exports have identical bytes.
 
 #### Shared graph
 
@@ -284,7 +308,8 @@ scope for maintainers.
    backends.
 6. Prove static graph semantics and semantic AND correspondence in Lean.
 7. Build and test the complete generated Lean package in CI.
-8. Extend materializer operations and certificates one table family at a time.
+8. Export the standalone lookup artifact with exact source provenance.
+9. Extend materializer operations and certificates one table family at a time.
 
 ## References
 

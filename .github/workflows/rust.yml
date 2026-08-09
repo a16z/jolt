@@ -677,6 +677,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Export standalone lookup artifact
+        working-directory: ./zklean-extractor
+        run: |
+          cargo run --release -- \
+            --lookup-artifact-path /tmp/jolt-lookup-artifact \
+            --source-revision "$(git rev-parse HEAD)"
       - name: Extract Jolt ZkLean package
         working-directory: ./zklean-extractor
         run: cargo run --release -- -o -p jolt-zklean

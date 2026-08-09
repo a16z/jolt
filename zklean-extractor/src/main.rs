@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use zklean_extractor::constants::*;
 use zklean_extractor::instruction::*;
 use zklean_extractor::lean_tests::*;
+use zklean_extractor::lookup_artifact::{verify_checkout_revision, LookupArtifact};
 use zklean_extractor::lookup_table_flags::*;
 use zklean_extractor::lookups::*;
 use zklean_extractor::modules::*;
@@ -37,6 +38,14 @@ struct Args {
     /// Ignored if -p is not specified.
     #[arg(short, long, default_value_t = false)]
     overwrite: bool,
+
+    /// Write a standalone, provenance-bearing Lean lookup artifact
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["file", "package_path", "template_dir"])]
+    lookup_artifact_path: Option<PathBuf>,
+
+    /// Exact Jolt Git revision represented by a standalone lookup artifact
+    #[arg(long, value_name = "40_HEX", requires = "lookup_artifact_path")]
+    source_revision: Option<String>,
 }
 
 fn write_flat_file(
@@ -84,6 +93,20 @@ fn extract_modules<const XLEN: usize>() -> Vec<Box<dyn AsModule>> {
 
 fn main() -> Result<(), FSError> {
     let args = Args::parse();
+
+    if let Some(artifact_path) = args.lookup_artifact_path {
+        let source_revision = args.source_revision.ok_or_else(|| {
+            FSError::TemplateError(
+                "--source-revision is required with --lookup-artifact-path".to_string(),
+            )
+        })?;
+        verify_checkout_revision(&source_revision).map_err(FSError::TemplateError)?;
+        let artifact =
+            LookupArtifact::extract::<64>(&source_revision).map_err(FSError::TemplateError)?;
+        artifact.write_to(&artifact_path, args.overwrite)?;
+        println!("Created Lean lookup artifact at {artifact_path:?}");
+        return Ok(());
+    }
 
     let modules = match ParameterSet::XLEN {
         32 => extract_modules::<32>(),
