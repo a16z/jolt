@@ -28,6 +28,7 @@ use crate::{
 const CHUNK_LEN: usize = 8;
 const ADDRESS_BITS: usize = 128;
 const RAF_CHECKPOINTS: usize = 4;
+const HINT_POINTS: usize = 2;
 
 fn raf_initial_checkpoints<F: Field>() -> [F; RAF_CHECKPOINTS] {
     let mut checkpoints = [F::zero(); RAF_CHECKPOINTS];
@@ -235,7 +236,7 @@ impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
         if let Some(challenge) = bind {
             self.bind(challenge)?;
         }
-        let evals = if self.rounds_bound < ADDRESS_BITS {
+        if self.rounds_bound < ADDRESS_BITS {
             let device = self
                 .device
                 .as_ref()
@@ -243,33 +244,38 @@ impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
                     kind: "cuda address phase",
                 })?;
             let evals = device
-                .round_message(
+                .round_message_hinted(
                     self.context,
                     require_fr(self.gamma).map_err(|_| SumcheckError::MissingEvaluationSource {
                         kind: "cuda address gamma",
+                    })?,
+                    require_fr(previous_claim).map_err(|_| {
+                        SumcheckError::MissingEvaluationSource {
+                            kind: "cuda address claim hint",
+                        }
                     })?,
                 )
                 .map_err(|_| SumcheckError::MissingEvaluationSource {
                     kind: "cuda address round message",
                 })?;
-            let mut host = [F::zero(); 3];
+            let mut host = [F::zero(); HINT_POINTS];
             for (slot, value) in host.iter_mut().zip(evals) {
                 *slot = Self::field(value)?;
             }
-            host.to_vec()
-        } else {
-            let cycle = self
-                .cycle
-                .as_ref()
-                .ok_or(SumcheckError::MissingEvaluationSource {
-                    kind: "cuda cycle rounds",
-                })?;
-            cycle.round_message(self.context).map_err(|_| {
-                SumcheckError::MissingEvaluationSource {
-                    kind: "cuda cycle round message",
-                }
-            })?
-        };
+            return Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &host));
+        }
+
+        let cycle = self
+            .cycle
+            .as_ref()
+            .ok_or(SumcheckError::MissingEvaluationSource {
+                kind: "cuda cycle rounds",
+            })?;
+        let evals = cycle.round_message(self.context).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
+                kind: "cuda cycle round message",
+            }
+        })?;
         let round_sum = evals[0] + evals[1];
         if round_sum != previous_claim {
             return Err(SumcheckError::RoundCheckFailed {

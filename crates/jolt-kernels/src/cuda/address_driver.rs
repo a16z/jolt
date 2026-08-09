@@ -18,8 +18,10 @@ use super::context::{CudaKernelContext, BLOCK};
 use super::device::{require_fr_slice, DeviceFrVec, LIMBS};
 use super::error::CudaError;
 use super::prefixes::{default_checkpoints, NUM_PREFIXES};
+use super::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
 
 const RAF_TERMS: usize = 3;
+const HINT_POINTS: usize = 2;
 const RAF_CHECKPOINTS: usize = 4;
 const NO_PREFIX: u32 = u32::MAX;
 
@@ -249,6 +251,92 @@ impl DeviceAddressPhase {
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(chunk_count)) }?;
         context.stream().synchronize()?;
         Ok(out)
+    }
+
+    pub fn round_message_hinted(
+        &self,
+        context: &CudaKernelContext,
+        gamma: Fr,
+        previous_claim: Fr,
+    ) -> Result<[Fr; 2], CudaError> {
+        let _ = previous_claim;
+        let half = self.tables.len / 2;
+        if half == 0 {
+            return Err(CudaError::InvariantViolation {
+                reason: "the address round tables are already fully bound",
+            });
+        }
+
+        let scales = context.upload_u32_slice(&self.layout.scales)?;
+        let prefix_ids = context.upload_u32_slice(&self.layout.prefix_ids)?;
+        let suffix_slots = context.upload_u32_slice(&self.layout.suffix_slots)?;
+        let offsets = context.upload_u32_slice(&self.layout.offsets)?;
+        let counts = context.upload_u32_slice(&self.layout.counts)?;
+        let suffix_bases = context.upload_u32_slice(&self.layout.suffix_bases)?;
+
+        let table_count = CudaKernelContext::count_of(self.present.len())?;
+        let half_count = CudaKernelContext::count_of(half)?;
+        let stride = CudaKernelContext::count_of(self.tables.len)?;
+        let raf_count = CudaKernelContext::count_of(RAF_TERMS)?;
+        let lanes = HINT_POINTS as u32 * (1 + RAF_TERMS) as u32;
+        let blocks = half_count.div_ceil(BLOCK).max(1);
+        let mut slots = alloc_slots(context, lanes as usize * blocks as usize)?;
+
+        let mut builder = context
+            .stream()
+            .launch_builder(context.ap_round_message_hinted());
+        let _ = builder.arg(self.tables.prefixes.limbs());
+        let _ = builder.arg(&prefix_ids);
+        let _ = builder.arg(&suffix_slots);
+        let _ = builder.arg(&scales);
+        let _ = builder.arg(&offsets);
+        let _ = builder.arg(&counts);
+        let _ = builder.arg(self.tables.suffixes.limbs());
+        let _ = builder.arg(&suffix_bases);
+        let _ = builder.arg(&table_count);
+        let _ = builder.arg(self.tables.raf_prefix.limbs());
+        let _ = builder.arg(self.tables.raf.shift_half.limbs());
+        let _ = builder.arg(self.tables.raf.shift_full.limbs());
+        let _ = builder.arg(self.tables.raf.left.limbs());
+        let _ = builder.arg(self.tables.raf.right.limbs());
+        let _ = builder.arg(self.tables.raf.identity.limbs());
+        let _ = builder.arg(&raf_count);
+        let _ = builder.arg(&stride);
+        let _ = builder.arg(&half_count);
+        let _ = builder.arg(&mut slots);
+        // SAFETY: identical indexing to `ap_round_message` — thread `b < half`
+        // reads index `b` and `b + half` of columns that are all `stride =
+        // tables.len >= 2 * half` elements long, and term indices come from
+        // `term_layout` (`NO_PREFIX` is never dereferenced,
+        // `suffix_bases[t] + suffix_slots[term]` indexes a live suffix column).
+        // Thread 0 writes the `2 * ACCUM_LIMBS` lanes at
+        // `slots[(lane * gridDim.x + blockIdx.x) * 2 * ACCUM_LIMBS]` for
+        // `lane < lanes`, inside the `lanes * blocks` folded slots `alloc_slots`
+        // reserved. Shared memory is `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded
+        // accumulator width the reduction tree operates on — matching
+        // `shared_mem_bytes`.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: BLOCK * 2 * ACCUM_LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+        context.stream().synchronize()?;
+
+        let partials = finalize_slots(context, &slots, lanes as usize * blocks as usize)?;
+        let totals = reduce_lanes(context, partials, lanes, blocks)?.to_host()?;
+        let gamma_sqr = gamma * gamma;
+        let mut evals = [Fr::from(0u64); HINT_POINTS];
+        for (point, eval) in evals.iter_mut().enumerate() {
+            let base = point * (1 + RAF_TERMS);
+            let read = totals[base];
+            let left = totals[base + 1];
+            let right = totals[base + 2];
+            let identity = totals[base + 3];
+            *eval = read + gamma * left + gamma_sqr * (right + identity);
+        }
+        Ok(evals)
     }
 
     pub fn round_message(
@@ -505,6 +593,7 @@ mod tests {
     use jolt_field::Fr;
     use jolt_lookup_tables::tables::LookupTableKind;
     use jolt_lookup_tables::XLEN as RISCV_XLEN;
+    use jolt_poly::UnivariatePoly;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
     use proptest::prelude::*;
     use std::num::NonZeroUsize;
@@ -603,6 +692,66 @@ mod tests {
                 expected,
                 "prefix checkpoints diverged after the address phase"
             );
+        }
+
+        #[test]
+        fn hinted_address_rounds_match_the_reference_polynomial(
+            log_t in 4usize..=8,
+            seed in any::<u64>(),
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            let jolt_rows = rows(log_t, seed);
+            let gamma = fr(seed + 1);
+            let r_reduction: Vec<Fr> = (0..log_t).map(|i| fr(seed + i as u64 + 3)).collect();
+            let dimensions = InstructionReadRafDimensions::new(
+                log_t,
+                ADDRESS_BITS,
+                NonZeroUsize::new(8).unwrap(),
+            );
+
+            let mut host = InstructionReadRafKernel::new(
+                dimensions,
+                &r_reduction,
+                jolt_rows.clone(),
+                gamma,
+            )
+            .expect("reference kernel");
+
+            let indices: Vec<u128> = jolt_rows.iter().map(|row| row.lookup_index.0).collect();
+            let tables: Vec<Option<usize>> =
+                jolt_rows.iter().map(|row| row.table_index.0).collect();
+            let flags: Vec<bool> = jolt_rows.iter().map(|row| row.raf_flag.0).collect();
+            let mut device = DeviceAddressPhase::new(
+                context,
+                &indices,
+                &tables,
+                &flags,
+                &r_reduction,
+                ADDRESS_BITS,
+            )
+            .expect("device address phase");
+
+            for round in 0..ADDRESS_BITS {
+                let reference = host.address_message();
+                let expected = UnivariatePoly::from_evals(&reference);
+                let previous_claim = reference[0] + reference[1];
+                let got = UnivariatePoly::from_evals_and_hint(
+                    previous_claim,
+                    &device
+                        .round_message_hinted(context, gamma, previous_claim)
+                        .expect("device hinted message"),
+                );
+                prop_assert_eq!(
+                    got.coefficients(),
+                    expected.coefficients(),
+                    "hinted address round {} polynomial diverged",
+                    round
+                );
+
+                let challenge = fr(seed + round as u64 + 71);
+                host.bind(challenge).expect("reference bind");
+                device.bind(context, challenge).expect("device bind");
+            }
         }
     }
 }

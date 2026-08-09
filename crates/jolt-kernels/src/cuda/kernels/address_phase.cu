@@ -2,6 +2,7 @@
 #define AP_CHUNK_SIZE 256
 #define AP_RAF_LANES 6
 #define AP_MAX_SUFFIXES 4
+#define AP_HINT_POINTS 2
 #define AP_NO_TABLE 0xFFFFFFFFu
 #define AP_SKIP 0xFFFFFFFFu
 
@@ -457,6 +458,103 @@ extern "C" __global__ void ap_round_message_kernel(
             u64 total[LIMBS];
             load4(scratch, total);
             store4(partials + ((unsigned long long)lane * gridDim.x + blockIdx.x) * LIMBS, total);
+        }
+        __syncthreads();
+    }
+}
+
+extern "C" __global__ void ap_round_message_hinted_kernel(
+    const u64 *__restrict__ prefixes,
+    const unsigned int *__restrict__ prefix_ids,
+    const unsigned int *__restrict__ suffix_slots,
+    const unsigned int *__restrict__ scales,
+    const unsigned int *__restrict__ term_offsets,
+    const unsigned int *__restrict__ term_counts,
+    const u64 *__restrict__ suffixes,
+    const unsigned int *__restrict__ suffix_bases,
+    unsigned int table_count,
+    const u64 *__restrict__ raf_prefix,
+    const u64 *__restrict__ raf_shift_half,
+    const u64 *__restrict__ raf_shift_full,
+    const u64 *__restrict__ raf_left,
+    const u64 *__restrict__ raf_right,
+    const u64 *__restrict__ raf_identity,
+    unsigned int raf_count,
+    unsigned int stride,
+    unsigned int half,
+    u64 *__restrict__ slots) {
+    extern __shared__ u64 scratch[];
+    unsigned int tid = threadIdx.x;
+    unsigned int b = blockIdx.x * blockDim.x + tid;
+    unsigned int lanes = AP_HINT_POINTS * (1u + raf_count);
+
+    for (unsigned int lane = 0; lane < lanes; lane++) {
+        unsigned int slot = lane % (1u + raf_count);
+        unsigned int c = (lane / (1u + raf_count)) == 0u ? 0u : 2u;
+        u64 folded[2 * UNR_SLOTS];
+        unr_zero(folded);
+
+        if (b < half) {
+            if (slot == 0) {
+                for (unsigned int t = 0; t < table_count; t++) {
+                    unsigned int count = term_counts[t];
+                    unsigned int base = term_offsets[t];
+                    for (unsigned int k = 0; k < count; k++) {
+                        unsigned int term = base + k;
+                        const u64 *column =
+                            suffixes + (unsigned long long)(suffix_bases[t] + suffix_slots[term]) *
+                                           stride * LIMBS;
+                        u64 value[LIMBS];
+                        ap_extension(column, b, half, c, value);
+                        unsigned int prefix = prefix_ids[term];
+                        if (prefix != 0xFFFFFFFFu) {
+                            u64 p[LIMBS], product[LIMBS];
+                            ap_extension(prefixes + (unsigned long long)prefix * stride * LIMBS, b,
+                                         half, c, p);
+                            fr_mul(value, p, product);
+                            store4(value, product);
+                        }
+                        if (scales[term] != 0u) {
+                            u64 s[LIMBS], scaled[LIMBS];
+                            cmb_scale(scales[term], s);
+                            fr_mul(value, s, scaled);
+                            store4(value, scaled);
+                        }
+                        unr_add_field(folded, value);
+                    }
+                }
+            } else {
+                const u64 *prefix_column;
+                const u64 *shift_column;
+                const u64 *value_column;
+                if (slot == 1u) {
+                    prefix_column = raf_prefix;
+                    shift_column = raf_shift_half;
+                    value_column = raf_left;
+                } else if (slot == 2u) {
+                    prefix_column = raf_prefix + (unsigned long long)stride * LIMBS;
+                    shift_column = raf_shift_half;
+                    value_column = raf_right;
+                } else {
+                    prefix_column = raf_prefix + (unsigned long long)2 * stride * LIMBS;
+                    shift_column = raf_shift_full;
+                    value_column = raf_identity;
+                }
+                u64 p[LIMBS], shift[LIMBS], value[LIMBS], product[LIMBS], sum[LIMBS];
+                ap_extension(prefix_column, b, half, c, p);
+                ap_extension(shift_column, b, half, c, shift);
+                ap_extension(value_column, b, half, c, value);
+                fr_mul(p, shift, product);
+                fr_add(product, value, sum);
+                unr_add_field(folded, sum);
+            }
+        }
+
+        ap_block_reduce_folded(scratch, folded);
+        if (tid == 0) {
+            u64 *target =
+                slots + ((unsigned long long)lane * gridDim.x + blockIdx.x) * (2 * UNR_SLOTS);
+            for (int i = 0; i < 2 * UNR_SLOTS; i++) target[i] = scratch[i];
         }
         __syncthreads();
     }

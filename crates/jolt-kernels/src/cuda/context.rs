@@ -93,6 +93,7 @@ pub struct CudaKernelContext {
     ap_raf_prefix: CudaFunction,
     ap_bind_strided: CudaFunction,
     ap_round_message: CudaFunction,
+    ap_round_message_hinted: CudaFunction,
     ap_combined_val: CudaFunction,
     ap_ra: CudaFunction,
     ap_flag_keys: CudaFunction,
@@ -159,6 +160,7 @@ impl CudaKernelContext {
             ap_raf_prefix: module.load_function("ap_raf_prefix_kernel")?,
             ap_bind_strided: module.load_function("ap_bind_strided_kernel")?,
             ap_round_message: module.load_function("ap_round_message_kernel")?,
+            ap_round_message_hinted: module.load_function("ap_round_message_hinted_kernel")?,
             ap_combined_val: module.load_function("ap_combined_val_kernel")?,
             ap_ra: module.load_function("ap_ra_kernel")?,
             ap_flag_keys: module.load_function("ap_flag_keys_kernel")?,
@@ -361,6 +363,10 @@ impl CudaKernelContext {
 
     pub(super) const fn ap_bind_strided(&self) -> &CudaFunction {
         &self.ap_bind_strided
+    }
+
+    pub(super) const fn ap_round_message_hinted(&self) -> &CudaFunction {
+        &self.ap_round_message_hinted
     }
 
     pub(super) const fn ap_round_message(&self) -> &CudaFunction {
