@@ -26,7 +26,7 @@ impl<const XLEN: usize> LookupTable for ValidDiv0Table<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         let mut divisor_is_zero = F::one();
         let mut is_valid_div_by_zero = F::one();

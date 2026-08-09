@@ -13,8 +13,11 @@
 pub mod constants;
 pub mod instruction;
 pub mod lean_tests;
+pub mod lookup_graph;
+pub mod lookup_programs;
 pub mod lookup_table_flags;
 pub mod lookups;
+pub mod materializer_ast;
 pub mod modules;
 pub mod r1cs;
 pub mod sumchecks;

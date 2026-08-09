@@ -18,7 +18,7 @@ impl<const XLEN: usize> LookupTable for HalfwordAlignmentTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         let lsb = r[r.len() - 1];
         F::one() - lsb

@@ -21,7 +21,7 @@ impl<const XLEN: usize> LookupTable for NotEqualTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         F::one() - EqualTable::<XLEN>.evaluate_mle::<F, C>(r)
     }

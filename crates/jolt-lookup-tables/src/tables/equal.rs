@@ -20,7 +20,7 @@ impl<const XLEN: usize> LookupTable for EqualTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         debug_assert!(r.len().is_multiple_of(2));
         let mut result = F::one();

@@ -34,7 +34,7 @@ impl<const XLEN: usize> LookupTable for VirtualROTRWTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         assert_eq!(r.len() % 2, 0, "r must have even length");
         assert_eq!(r.len() / 2, XLEN, "r must have length 2 * XLEN");

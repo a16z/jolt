@@ -1058,6 +1058,24 @@ impl std::ops::Div for MleAst {
 
 impl FieldOps for MleAst {}
 
+impl jolt_lookup_tables::LookupEval for MleAst {
+    fn zero() -> Self {
+        <Self as Zero>::zero()
+    }
+
+    fn one() -> Self {
+        <Self as One>::one()
+    }
+
+    fn from_u64(value: u64) -> Self {
+        Self::new_scalar([value, 0, 0, 0])
+    }
+
+    fn from_u128(value: u128) -> Self {
+        Self::new_scalar([value as u64, (value >> 64) as u64, 0, 0])
+    }
+}
+
 impl std::ops::Add<&Self> for MleAst {
     type Output = Self;
 

@@ -230,7 +230,7 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
     pub fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         dispatch!(self, t => t.evaluate_mle(r))
     }

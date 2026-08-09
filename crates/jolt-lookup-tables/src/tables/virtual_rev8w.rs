@@ -28,14 +28,14 @@ impl<const XLEN: usize> LookupTable for VirtualRev8WTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         let mut bits = r.iter().rev();
         let mut bytes = iter::from_fn(|| {
             let bit_chunk = (&mut bits).take(8).enumerate();
             Some(
                 bit_chunk
-                    .map(|(i, b)| Into::<F>::into(*b).mul_u64(1 << i))
+                    .map(|(i, b)| Into::<F>::into(*b) * F::from_u64(1 << i))
                     .sum::<F>(),
             )
         });
@@ -46,7 +46,7 @@ impl<const XLEN: usize> LookupTable for VirtualRev8WTable<XLEN> {
         [d, c, b, a, h, g, f, e]
             .iter()
             .enumerate()
-            .map(|(i, b)| b.mul_u64(1 << (i * 8)))
+            .map(|(i, b)| *b * F::from_u64(1 << (i * 8)))
             .sum()
     }
 }

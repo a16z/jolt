@@ -27,6 +27,8 @@ allocative.workspace = true
 num-bigint = "0.4"
 
 jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
 common = { path = "../common" }
 tracer = { path = "../tracer" }
 

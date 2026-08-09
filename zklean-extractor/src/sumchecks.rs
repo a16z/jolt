@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use jolt_lookup_tables::LookupTableKind;
 use jolt_prover_legacy::{
     field::JoltField,
     poly::opening_proof::{PolynomialId, SumcheckId},
@@ -7,7 +8,6 @@ use jolt_prover_legacy::{
         Claim, ClaimExpr, InputOutputClaims, SumcheckFrontend, VerifierEvaluablePolynomial,
     },
     zkvm::{
-        lookup_table::LookupTables,
         ram::read_write_checking::RamReadWriteCheckingVerifier,
         registers::read_write_checking::RegistersReadWriteCheckingVerifier,
         spartan::{
@@ -17,7 +17,6 @@ use jolt_prover_legacy::{
     },
 };
 use regex::{NoExpand, Regex};
-use strum::IntoEnumIterator as _;
 
 use crate::{
     modules::{AsModule, Module},
@@ -44,12 +43,16 @@ fn extra_sumcheck_vars<const XLEN: usize>() -> Vec<ZkLeanVarRef> {
         SumcheckId::InstructionReadRaf,
         VirtualPolynomial::InstructionRafFlag,
     ))
-    .chain(LookupTables::<XLEN>::iter().enumerate().map(|(i, _table)| {
-        ZkLeanVarRef::virtual_var(
-            SumcheckId::InstructionReadRaf,
-            VirtualPolynomial::LookupTableFlag(i),
-        )
-    }))
+    .chain(
+        LookupTableKind::<XLEN>::iter()
+            .enumerate()
+            .map(|(i, _table)| {
+                ZkLeanVarRef::virtual_var(
+                    SumcheckId::InstructionReadRaf,
+                    VirtualPolynomial::LookupTableFlag(i),
+                )
+            }),
+    )
     .collect()
 }
 

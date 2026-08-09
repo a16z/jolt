@@ -8038,6 +8038,8 @@ dependencies = [
  "build-fs-tree",
  "clap",
  "common",
+ "jolt-field",
+ "jolt-lookup-tables",
  "jolt-prover-legacy",
  "num-bigint",
  "proptest",

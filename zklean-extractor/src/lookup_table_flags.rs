@@ -1,8 +1,5 @@
-use jolt_prover_legacy::{
-    poly::opening_proof::SumcheckId,
-    zkvm::{lookup_table::LookupTables, witness::VirtualPolynomial},
-};
-use strum::IntoEnumIterator as _;
+use jolt_lookup_tables::LookupTableKind;
+use jolt_prover_legacy::{poly::opening_proof::SumcheckId, zkvm::witness::VirtualPolynomial};
 
 use crate::{
     lookups::ZkLeanLookupTable,
@@ -22,7 +19,7 @@ impl<const XLEN: usize> ZkLeanLookupTableFlag<XLEN> {
     pub fn iter() -> impl Iterator<Item = Self> {
         let sumcheck_id = SumcheckId::InstructionReadRaf;
 
-        LookupTables::<XLEN>::iter()
+        LookupTableKind::<XLEN>::iter()
             .enumerate()
             .map(move |(i, lookup_table)| {
                 let var =
@@ -191,6 +188,7 @@ impl<const XLEN: usize> AsModule for ZkLeanLookupTableFlags<XLEN> {
             imports: vec![
                 String::from("zkLean"),
                 String::from("Jolt.Sumchecks"),
+                String::from("Jolt.LookupPrograms"),
                 String::from("Jolt.LookupTables"),
                 String::from("Jolt.Util"),
             ],

@@ -20,7 +20,7 @@ impl<const XLEN: usize> LookupTable for ValidUnsignedRemainderTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         let mut divisor_is_zero = F::one();
         let mut lt = F::zero();

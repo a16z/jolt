@@ -7,6 +7,7 @@ import Jolt.Util
 -- Extracted modules
 import Jolt.R1CS
 import Jolt.LookupTables
+import Jolt.LookupPrograms
 import Jolt.LookupTableFlags
 import Jolt.Instructions
 import Jolt.Sumchecks

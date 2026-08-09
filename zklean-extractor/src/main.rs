@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use zklean_extractor::constants::*;
 use zklean_extractor::instruction::*;
 use zklean_extractor::lean_tests::*;
+use zklean_extractor::lookup_programs::*;
 use zklean_extractor::lookup_table_flags::*;
 use zklean_extractor::lookups::*;
 use zklean_extractor::modules::*;
@@ -77,6 +78,9 @@ fn extract_modules<const XLEN: usize>() -> Vec<Box<dyn AsModule>> {
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
         Box::new(ZkLeanSumchecks::<ark_bn254::Fr>::extract::<XLEN>()),
         Box::new(ZkLeanLookupTables::<XLEN>::extract()),
+        Box::new(
+            ZkLeanLookupPrograms::<XLEN>::extract().expect("lookup program extraction failed"),
+        ),
         Box::new(ZkLeanLookupTableFlags::<XLEN>::extract()),
         Box::new(ZkLeanTests::<XLEN>::extract(&mut rng)),
     ]
