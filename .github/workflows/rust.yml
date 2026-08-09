@@ -681,9 +681,9 @@ jobs:
         working-directory: ./zklean-extractor
         run: cargo run --release -- -o -p jolt-zklean
 
-  #    - name: Run lake build on the extracted model
-  #      uses: leanprover/lean-action@v1
-  #      with:
-  #        lake-package-directory: ./zklean-extractor/jolt-zklean
-  #        build: true
-  #        test: true
+      - name: Build and test the extracted Lean model
+        uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9 # v1
+        with:
+          lake-package-directory: ./zklean-extractor/jolt-zklean
+          build: true
+          test: true

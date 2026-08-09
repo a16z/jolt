@@ -160,11 +160,7 @@ impl<J: JoltParameterSet> ZkLeanInstructions<J> {
     }
 
     pub fn zklean_imports(&self) -> Vec<String> {
-        vec![
-            String::from("Jolt.LookupPrograms"),
-            String::from("Jolt.LookupTables"),
-            String::from("zkLean"),
-        ]
+        vec![String::from("Jolt.LookupTables"), String::from("zkLean")]
     }
 }
 

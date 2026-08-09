@@ -23,12 +23,10 @@ impl<const XLEN: usize> LookupTable for AndTable<XLEN> {
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let mut result = F::zero();
-        for i in (0..XLEN).rev() {
+        for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            let bit = x_i * y_i;
-            let term = F::from_u64(1u64 << (XLEN - 1 - i)) * bit;
-            result = term + result;
+            result += F::from_u64(1u64 << (XLEN - 1 - i)) * x_i * y_i;
         }
         result
     }
@@ -36,12 +34,11 @@ impl<const XLEN: usize> LookupTable for AndTable<XLEN> {
 
 impl<const XLEN: usize> LookupMaterializer<XLEN> for AndTable<XLEN> {
     fn materialize<B: MaterializerBackend>(&self, backend: &mut B) -> B::Output {
-        let mut bits = Vec::with_capacity(XLEN);
-        for i in 0..XLEN {
+        let bits: [B::Bit; XLEN] = std::array::from_fn(|i| {
             let left = backend.input_bit(2 * i);
             let right = backend.input_bit(2 * i + 1);
-            bits.push(backend.and(left, right));
-        }
+            backend.and(left, right)
+        });
         backend.bits_be(bits)
     }
 }

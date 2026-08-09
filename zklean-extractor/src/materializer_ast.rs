@@ -91,8 +91,8 @@ impl MaterializerBackend for MaterializerAst {
         BoolExpr::And(Box::new(left), Box::new(right))
     }
 
-    fn bits_be(&mut self, bits: Vec<Self::Bit>) -> Self::Output {
-        NatExpr::OfBitsBe(bits)
+    fn bits_be<const N: usize>(&mut self, bits: [Self::Bit; N]) -> Self::Output {
+        NatExpr::OfBitsBe(bits.into())
     }
 }
 

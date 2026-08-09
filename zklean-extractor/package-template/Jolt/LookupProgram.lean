@@ -125,7 +125,7 @@ theorem NatExpr.cast_eval
   cases expression with
   | ofBitsBE bits => exact BoolExpr.cast_bitsToNat (F := F) bits point
 
-/-- Prove that a concrete extracted graph is exactly the arithmetic form of a materializer. -/
+/-- Prove that a concrete extracted graph has the same polynomial semantics as a materializer. -/
 macro "prove_lookup_program_correspondence" graph:ident materializer:ident : tactic =>
   `(tactic|
     (unfold $graph $materializer) <;>
@@ -136,7 +136,9 @@ macro "prove_lookup_program_correspondence" graph:ident materializer:ident : tac
         Jolt.LookupGraph.getExpression,
         NatExpr.arithmetize,
         BoolExpr.bitsArithmetize,
-        BoolExpr.arithmetize])
+        BoolExpr.arithmetize,
+        Expr.eval] <;>
+      ring)
 
 /-- The extracted field evaluator and materializer for one lookup table. -/
 structure LookupProgram (n : Nat) where
@@ -144,9 +146,8 @@ structure LookupProgram (n : Nat) where
   mleWellFormed : mle.WellFormed
   materializer : NatExpr n
   materializerWellFormed : materializer.WellFormed
-  mleCorrespondence : mle.toExpr = materializer.arithmetize
 
-/-- Check multi-affinity and exact agreement with the materializer's arithmetic form. -/
+/-- Check that the materializer's arithmetic form is syntactically multilinear. -/
 def LookupProgram.check {n : Nat} (program : LookupProgram n) : Bool :=
   program.materializer.arithmetize.isSyntacticallyMultilinear
 
@@ -170,20 +171,22 @@ theorem LookupProgram.evalVector_ofFn
 /-- A checked lookup program is the multilinear extension of its materializer. -/
 theorem LookupProgram.isLookupTableMLE
     {n : Nat} {F : Type*} [CommRing F]
-    (program : LookupProgram n) (h : program.check = true) :
+    (program : LookupProgram n) (h : program.check = true)
+    (mleCorrespondence : ∀ point : Fin n → F,
+      program.mle.toExpr.eval point = program.materializer.arithmetize.eval point) :
     IsLookupTableMLE
       (fun point : Fin n → F => program.evalVector (Vector.ofFn point))
       program.materializer.eval := by
   constructor
   · rw [show (fun point : Fin n → F => program.evalVector (Vector.ofFn point)) =
-        program.mle.toExpr.eval from by
+        program.materializer.arithmetize.eval from by
           funext point
-          exact program.evalVector_ofFn point]
-    rw [program.mleCorrespondence]
+          rw [program.evalVector_ofFn]
+          exact mleCorrespondence point]
     exact program.materializer.arithmetize.isMultiAffine (F := F) h
   · intro point
     change program.evalVector (Vector.ofFn (fun i => boolCast (point i))) = _
-    rw [LookupProgram.evalVector_ofFn, program.mleCorrespondence]
+    rw [LookupProgram.evalVector_ofFn, mleCorrespondence]
     exact (program.materializer.cast_eval (F := F) point).symm
 
 end Jolt.LookupExpression

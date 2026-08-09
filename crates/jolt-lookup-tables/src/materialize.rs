@@ -13,7 +13,7 @@ pub trait MaterializerBackend {
 
     fn input_bit(&mut self, index: usize) -> Self::Bit;
     fn and(&mut self, left: Self::Bit, right: Self::Bit) -> Self::Bit;
-    fn bits_be(&mut self, bits: Vec<Self::Bit>) -> Self::Output;
+    fn bits_be<const N: usize>(&mut self, bits: [Self::Bit; N]) -> Self::Output;
 }
 
 /// A lookup table whose materializer can run over any supported backend.
@@ -47,8 +47,8 @@ impl<const XLEN: usize> MaterializerBackend for U128Materializer<XLEN> {
         left && right
     }
 
-    fn bits_be(&mut self, bits: Vec<Self::Bit>) -> Self::Output {
-        assert!(bits.len() <= 64, "lookup output must fit in a u64");
+    fn bits_be<const N: usize>(&mut self, bits: [Self::Bit; N]) -> Self::Output {
+        assert!(N <= 64, "lookup output must fit in a u64");
         bits.into_iter()
             .fold(0, |value, bit| (value << 1) | u64::from(bit))
     }

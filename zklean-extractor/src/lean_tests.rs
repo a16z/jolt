@@ -45,11 +45,7 @@ impl<const XLEN: usize> ZkLeanTests<XLEN> {
     }
 
     fn zklean_imports(&self) -> Vec<String> {
-        vec![
-            String::from("ArkLib"),
-            String::from("Jolt.LookupPrograms"),
-            String::from("Jolt.LookupTables"),
-        ]
+        vec![String::from("ArkLib"), String::from("Jolt.LookupTables")]
     }
 
     fn zklean_pretty_print(
