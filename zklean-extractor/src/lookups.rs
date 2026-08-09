@@ -273,6 +273,9 @@ impl<const XLEN: usize> AsModule for ZkLeanLookupTables<XLEN> {
     fn as_module(&self) -> std::io::Result<Module> {
         let mut contents: Vec<u8> = vec![];
         self.zklean_pretty_print(&mut contents)?;
+        while contents.ends_with(b"\n\n") {
+            contents.pop();
+        }
 
         Ok(Module {
             name: String::from("LookupTables"),
@@ -426,5 +429,6 @@ mod test {
         assert!(lean.contains("native_decide"));
         assert!(lean.contains(".isLookupTableMLE (by native_decide)"));
         assert!(lean.contains("Xor_64_lookup_table_graph"));
+        assert!(!lean.ends_with("\n\n"));
     }
 }
