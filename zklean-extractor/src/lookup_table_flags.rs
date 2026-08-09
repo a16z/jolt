@@ -24,7 +24,7 @@ impl<const XLEN: usize> ZkLeanLookupTableFlag<XLEN> {
             .map(move |(i, lookup_table)| {
                 let var =
                     ZkLeanVarRef::virtual_var(sumcheck_id, VirtualPolynomial::LookupTableFlag(i));
-                let lookup_table_ident = ZkLeanLookupTable::from(lookup_table).name();
+                let lookup_table_ident = ZkLeanLookupTable::from(lookup_table).qualified_name();
 
                 ZkLeanLookupTableFlag {
                     var,

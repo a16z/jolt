@@ -48,6 +48,10 @@ current proof scope explicit.
 - Concrete certified materializers must not allocate.
 - Generated public lookup function names and lookup flag ordinals must remain
   compatible with the current legacy extractor consumers.
+- Generated lookup declarations must live under the stable
+  `Jolt.LookupTables` namespace. The generated module must identify itself as
+  generated source so downstream users edit the extractor rather than the
+  artifact.
 - CI must build and test the generated Lean package. Rust generation tests
   alone are not evidence that a generated theorem is valid.
 - The extractor must provide a deterministic standalone lookup artifact for
@@ -203,6 +207,13 @@ the stable generated name, one shared MLE graph, and optional materializer data.
 One emitter writes each public lookup definition. Downstream instruction,
 flag, and test modules import `Jolt.LookupTables` without knowing which tables
 carry universal certificates.
+
+The module path and declaration namespace deliberately coincide:
+`Jolt.LookupTables` owns the generated public API. Rust emitters use fully
+qualified names at every cross-module reference, while definitions within the
+generated module remain concise. This prevents generated declarations from
+leaking into Lean's root namespace and makes later table additions
+collision-safe.
 
 The current optional capability contains AND and VirtualROTR. Adding a table
 family means adding any required operations to the small materializer language,

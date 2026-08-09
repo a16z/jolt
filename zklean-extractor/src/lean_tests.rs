@@ -19,7 +19,7 @@ pub struct ZkLeanLookupTableTest<const XLEN: usize> {
 impl<const XLEN: usize> ZkLeanLookupTableTest<XLEN> {
     fn extract(lookup_table: &ZkLeanLookupTable<XLEN>, input: &[TestField]) -> Self {
         Self {
-            lookup_table_ident: lookup_table.name(),
+            lookup_table_ident: lookup_table.qualified_name(),
             output: lookup_table.lookup_table.evaluate_mle(input),
         }
     }
