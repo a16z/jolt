@@ -39,7 +39,8 @@ impl<const XLEN: usize> LookupMaterializer<XLEN> for AndTable<XLEN> {
             let right = backend.input_bit(2 * i + 1);
             backend.and(left, right)
         });
-        backend.bits_be(bits)
+        let value = backend.bits_be(bits);
+        backend.output(value)
     }
 }
 

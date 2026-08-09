@@ -135,6 +135,93 @@ impl LookupGraph {
         self.nodes.is_empty()
     }
 
+    #[cfg(test)]
+    pub fn structurally_equivalent(&self, other: &Self) -> bool {
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        enum Key {
+            Constant(Scalar),
+            Input(usize),
+            Add(Vec<usize>),
+            Sub(usize, usize),
+            Mul(Vec<usize>),
+        }
+
+        fn intern_graph(
+            graph: &LookupGraph,
+            interner: &mut HashMap<Key, usize>,
+            keys: &mut Vec<Key>,
+        ) -> usize {
+            let mut ids: Vec<usize> = Vec::with_capacity(graph.nodes.len());
+            for node in &graph.nodes {
+                let key = match node {
+                    LookupGraphNode::Constant(value) => Key::Constant(*value),
+                    LookupGraphNode::Input(index) => Key::Input(*index),
+                    LookupGraphNode::Add(left, right) => {
+                        let mut terms = Vec::new();
+                        for id in [ids[*left], ids[*right]] {
+                            match &keys[id] {
+                                Key::Add(children) => terms.extend(children),
+                                _ => terms.push(id),
+                            }
+                        }
+                        terms.retain(|id| {
+                            !matches!(&keys[*id], Key::Constant(value)
+                                if value.iter().all(|limb| *limb == 0))
+                        });
+                        terms.sort_unstable();
+                        match terms.as_slice() {
+                            [] => Key::Constant([0; 4]),
+                            [id] => keys[*id].clone(),
+                            _ => Key::Add(terms),
+                        }
+                    }
+                    LookupGraphNode::Sub(left, right) => Key::Sub(ids[*left], ids[*right]),
+                    LookupGraphNode::Mul(left, right) => {
+                        let mut factors = Vec::new();
+                        for id in [ids[*left], ids[*right]] {
+                            match &keys[id] {
+                                Key::Mul(children) => factors.extend(children),
+                                _ => factors.push(id),
+                            }
+                        }
+                        if factors.iter().any(|id| {
+                            matches!(&keys[*id], Key::Constant(value)
+                                if value.iter().all(|limb| *limb == 0))
+                        }) {
+                            Key::Constant([0; 4])
+                        } else {
+                            factors.retain(|id| {
+                                !matches!(&keys[*id], Key::Constant(value)
+                                    if value[0] == 1 && value[1..].iter().all(|limb| *limb == 0))
+                            });
+                            factors.sort_unstable();
+                            match factors.as_slice() {
+                                [] => Key::Constant([1, 0, 0, 0]),
+                                [id] => keys[*id].clone(),
+                                _ => Key::Mul(factors),
+                            }
+                        }
+                    }
+                };
+                let id = if let Some(id) = interner.get(&key) {
+                    *id
+                } else {
+                    let id = keys.len();
+                    interner.insert(key.clone(), id);
+                    keys.push(key);
+                    id
+                };
+                ids.push(id);
+            }
+            ids[graph.root]
+        }
+
+        let mut interner = HashMap::new();
+        let mut keys = Vec::new();
+        intern_graph(self, &mut interner, &mut keys)
+            == intern_graph(other, &mut interner, &mut keys)
+    }
+
     /// Evaluate the serialized graph independently of `MleAst` in tests.
     #[cfg(test)]
     pub fn evaluate<F: JoltField>(&self, point: &[F]) -> F {

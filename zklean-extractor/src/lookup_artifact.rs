@@ -19,7 +19,7 @@ const FORMAT_VERSION: u32 = 1;
 const MANIFEST_PATH: &str = "lookup-artifact.json";
 const SOURCE_REPOSITORY: &str = "https://github.com/a16z/jolt";
 
-const RUNTIME_FILES: [(&str, &[u8]); 4] = [
+const RUNTIME_FILES: [(&str, &[u8]); 6] = [
     (
         "Jolt/LookupExpression.lean",
         include_bytes!("../package-template/Jolt/LookupExpression.lean"),
@@ -31,6 +31,14 @@ const RUNTIME_FILES: [(&str, &[u8]); 4] = [
     (
         "Jolt/LookupGraphExpression.lean",
         include_bytes!("../package-template/Jolt/LookupGraphExpression.lean"),
+    ),
+    (
+        "Jolt/MaterializerGraph.lean",
+        include_bytes!("../package-template/Jolt/MaterializerGraph.lean"),
+    ),
+    (
+        "Jolt/LookupAC.lean",
+        include_bytes!("../package-template/Jolt/LookupAC.lean"),
     ),
     (
         "Jolt/LookupProgram.lean",
@@ -226,7 +234,7 @@ mod tests {
         assert_eq!(manifest["format_version"], 1);
         assert_eq!(manifest["source_revision"], REVISION);
         assert_eq!(manifest["xlen"], 8);
-        assert_eq!(manifest["files"].as_array().unwrap().len(), 5);
+        assert_eq!(manifest["files"].as_array().unwrap().len(), 7);
         assert!(first.files.contains_key("Jolt/LookupTables.lean"));
     }
 

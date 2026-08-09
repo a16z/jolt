@@ -13,8 +13,8 @@ Jolt defines lookup table multilinear extensions in Rust. The ZkLean extractor
 also needs those polynomials as Lean definitions. This change lets the
 extractor run the same modular Rust evaluator over a symbolic arithmetic type,
 then writes its shared expression graph as Lean data. Lean checks the graph
-before evaluation. For AND, Lean also proves that the extracted polynomial is
-the multilinear extension of the Boolean lookup table.
+before evaluation. For AND and VirtualROTR, Lean also proves that each
+extracted polynomial is the multilinear extension of its Boolean lookup table.
 
 ## Intent
 
@@ -43,9 +43,9 @@ current proof scope explicit.
   expression association and graph layout must not be part of this invariant.
 - A certified lookup polynomial must be affine in each input coordinate and
   must agree with its materializer on every Boolean input.
-- The concrete and symbolic AND materializers must run the same Rust semantic
-  function through different backends.
-- The concrete AND materializer must not allocate.
+- The concrete and symbolic materializers for certified tables must run the
+  same Rust semantic function through different backends.
+- Concrete certified materializers must not allocate.
 - Generated public lookup function names and lookup flag ordinals must remain
   compatible with the current legacy extractor consumers.
 - CI must build and test the generated Lean package. Rust generation tests
@@ -59,7 +59,7 @@ current proof scope explicit.
 - This change does not move the instruction catalog out of
   `jolt-prover-legacy`.
 - This change does not certify the materializers for all 40 lookup tables.
-  AND is the first complete universal certificate.
+  AND and VirtualROTR are the first complete universal certificates.
 - This change does not resolve the known RV32 `Pow2W` disagreement between the
   legacy and modular evaluators. Production extraction is RV64.
 - This change does not remove existing `sorry` placeholders for instructions
@@ -90,10 +90,14 @@ current proof scope explicit.
   symbolic execution.
 - [x] Concrete AND materialization uses a const-generic array and performs no
   heap allocation.
-- [x] Lean proves pointwise polynomial equality between the AND graph and
-  materializer arithmetization without requiring identical expression trees.
-- [x] Lean proves that the AND evaluator is the multilinear extension of its
-  materializer over every field.
+- [x] The VirtualROTR materializer uses one Rust implementation for concrete
+  and symbolic execution.
+- [x] Concrete VirtualROTR materialization performs no heap allocation.
+- [x] Lean proves pointwise polynomial equality between the AND and
+  VirtualROTR graphs and their materializer arithmetizations without requiring
+  identical expression trees.
+- [x] Lean proves that the AND and VirtualROTR evaluators are the multilinear
+  extensions of their materializers over every field.
 - [x] An exhaustive ABI test checks all 40 modular and legacy table ordinals.
 - [x] Random RV64 tests compare the modular symbolic AST and an independent
   graph interpreter with the legacy numeric evaluator.
@@ -124,9 +128,11 @@ The generated Lean package provides separate checks.
 
 1. Every graph has a decidable well-formedness theorem.
 2. The static graph proof checks interpreter semantics for every graph shape.
-3. The AND correspondence theorem proves semantic polynomial equality by
-   proof-producing ring normalization. Lean's kernel checks the proof term.
-4. The AND lookup theorem proves multi-affinity and full Boolean agreement.
+3. The AND and VirtualROTR correspondence theorems decide equality after
+   normalizing associativity, commutativity, and zero and one identities. A
+   static Lean theorem transports each result to every commutative ring.
+4. The AND and VirtualROTR lookup theorems prove multi-affinity and full
+   Boolean agreement.
 5. The test driver evaluates all 40 public lookup functions at Rust-generated
    field points.
 
@@ -147,13 +153,15 @@ sharing.
 
 The prior expanded lookup module required about 642 seconds to compile in a
 local clean measurement. The graph representation reduced the executable
-lookup module to seconds. Semantic AND certification may take longer than graph
-execution because it normalizes one concrete polynomial equality. It must stay
-within the local theorem resource limits and pass the required CI Lean job.
+lookup module to seconds. In a warm local measurement, rebuilding the static
+certificate runtime and the generated module for all 40 tables took about 17
+seconds, with the generated module itself taking about 10 seconds. The compact
+correspondence checker does not distribute products, so the VirtualROTR proof
+does not expand into a large polynomial.
 
 Concrete lookup materialization must not move from constant-space bit logic to
-per-call heap allocation. The const-generic materializer output enforces this
-for AND.
+per-call heap allocation. The shared concrete backend uses fixed-size values
+and arrays for AND and VirtualROTR.
 
 This extractor and its generated Lean build are development tools rather than
 prover hot paths. No proof throughput objective changes in `jolt-eval`.
@@ -170,12 +178,12 @@ flowchart LR
     D --> E[Canonical extracted lookup record]
     E --> F[Shared Lean graph]
     F --> G[Checked Lean evaluator]
-    H[Shared AND materializer] --> I[Concrete array backend]
-    H --> J[Symbolic materializer AST]
+    H[Shared certified materializers] --> I[Concrete backend]
+    H --> J[Symbolic materializer graph]
     J --> E
     F --> K[Semantic correspondence proof]
     J --> K
-    K --> L[Universal AND MLE theorem]
+    K --> L[Universal lookup MLE theorem]
 ```
 
 #### Arithmetic boundary
@@ -196,15 +204,16 @@ One emitter writes each public lookup definition. Downstream instruction,
 flag, and test modules import `Jolt.LookupTables` without knowing which tables
 carry universal certificates.
 
-The current optional capability contains only AND. Adding a table family means
-adding its operations to the small materializer language, implementing its
-shared Rust materializer, and attaching that materializer in the central
-capability dispatch. It must not create a second generated module pipeline.
+The current optional capability contains AND and VirtualROTR. Adding a table
+family means adding any required operations to the small materializer language,
+implementing its shared Rust materializer, and attaching that materializer in
+the central capability dispatch. It must not create a second generated module
+pipeline.
 
 #### Standalone artifact
 
 Downstream Lean repositories need a focused input instead of the complete
-generated circuit package. The standalone artifact contains the four static
+generated circuit package. The standalone artifact contains the six static
 lookup runtime modules and the generated `Jolt.LookupTables` module. It does
 not contain instructions, constraints, sumchecks, field adapters, or tests.
 
@@ -233,16 +242,19 @@ expression.
 #### Materializer and certificate
 
 `LookupMaterializer` expresses table semantics over a `MaterializerBackend`.
-The concrete backend reads bits from a `u128` index and folds a const-generic
-bit array into a `u64`. The symbolic backend records Boolean operations and a
-most-significant-bit-first natural number expression.
+The concrete backend reads bits from a `u128` index and evaluates Boolean and
+natural-number operations without allocation. The symbolic backend records
+the same program as compact, topologically ordered Boolean and natural-number
+graphs.
 
-The AND certificate does not compare serialized expression trees. It states
-that both expressions evaluate equally at every point over every commutative
-ring. Mathlib ring normalization constructs a proof for the generated concrete
-expressions. The final theorem combines this semantic correspondence with a
-static syntactic multi-affinity checker and a proof that Boolean
-arithmetization preserves the materializer.
+Each certificate compares canonical algebraic forms rather than serialized
+graph layouts. The normalizer flattens and sorts sums and products and removes
+only zero and one identities. It deliberately does not distribute products.
+Lean decides equality of the two closed canonical forms, then a reusable static
+theorem proves that this result implies equality at every point over every
+commutative ring. The final theorem combines this semantic correspondence with
+a syntactic multi-affinity check and a proof that Boolean arithmetization
+preserves the materializer.
 
 #### Compatibility boundary
 
@@ -304,9 +316,9 @@ scope for maintainers.
 2. Execute modular lookup evaluators over direct `MleAst` inputs.
 3. Serialize supported AST operations into checked shared graphs.
 4. Emit every table through one canonical extracted record.
-5. Extract AND materialization through allocation-free concrete and symbolic
-   backends.
-6. Prove static graph semantics and semantic AND correspondence in Lean.
+5. Extract AND and VirtualROTR materialization through allocation-free concrete
+   and symbolic backends.
+6. Prove static graph semantics and semantic correspondence in Lean.
 7. Build and test the complete generated Lean package in CI.
 8. Export the standalone lookup artifact with exact source provenance.
 9. Extend materializer operations and certificates one table family at a time.

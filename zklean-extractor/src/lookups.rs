@@ -4,7 +4,7 @@ use strum::IntoEnumIterator as _;
 
 use crate::{
     lookup_graph::LookupGraph,
-    materializer_ast::{MaterializerAst, NatExpr},
+    materializer_ast::{MaterializerAst, MaterializerGraph},
     modules::{AsModule, Module},
     DefaultMleAst,
 };
@@ -65,12 +65,14 @@ impl<const XLEN: usize> ZkLeanLookupTable<XLEN> {
         LookupTableKind::<XLEN>::iter().map(Self::from)
     }
 
-    fn materializer(&self) -> Option<NatExpr> {
+    fn materializer(&self) -> Option<MaterializerGraph> {
         let mut backend = MaterializerAst::new(2 * XLEN);
-        match self.lookup_table {
+        let root = match self.lookup_table {
             LookupTableKind::And(table) => Some(table.materialize(&mut backend)),
+            LookupTableKind::VirtualROTR(table) => Some(table.materialize(&mut backend)),
             _ => None,
-        }
+        }?;
+        Some(backend.finish(root))
     }
 }
 
@@ -78,7 +80,7 @@ impl<const XLEN: usize> ZkLeanLookupTable<XLEN> {
 struct ExtractedLookup {
     table_name: String,
     graph: LookupGraph,
-    materializer: Option<NatExpr>,
+    materializer: Option<MaterializerGraph>,
 }
 
 impl ExtractedLookup {
@@ -145,7 +147,7 @@ impl ExtractedLookup {
     fn zklean_pretty_print_certificate<const XLEN: usize>(
         &self,
         f: &mut impl std::io::Write,
-        materializer: &NatExpr,
+        materializer: &MaterializerGraph,
     ) -> std::io::Result<()> {
         let table_name = &self.table_name;
         let graph_name = format!("{table_name}_graph");
@@ -155,7 +157,7 @@ impl ExtractedLookup {
         let program_name = format!("{table_name}_program");
         let num_inputs = 2 * XLEN;
         let materializer = materializer
-            .format_for_lean(num_inputs)
+            .format_for_lean()
             .map_err(std::io::Error::other)?;
 
         writeln!(
@@ -164,7 +166,7 @@ impl ExtractedLookup {
         )?;
         writeln!(
             f,
-            "def {materializer_name} : Jolt.LookupExpression.NatExpr {num_inputs} :="
+            "def {materializer_name} : Jolt.LookupExpression.MaterializerGraph {num_inputs} :="
         )?;
         writeln!(f, "  {materializer}")?;
         writeln!(f)?;
@@ -178,27 +180,6 @@ impl ExtractedLookup {
             "theorem {materializer_well_formed_name} : {materializer_name}.WellFormed := by"
         )?;
         writeln!(f, "  set_option maxRecDepth 4096 in decide")?;
-        writeln!(f)?;
-
-        writeln!(f, "set_option maxRecDepth 4096 in")?;
-        writeln!(f, "set_option maxHeartbeats 1000000 in")?;
-        writeln!(
-            f,
-            "/-- The extracted graph and materializer define the same polynomial over every ring. -/"
-        )?;
-        writeln!(
-            f,
-            "theorem {correspondence_name} {{f : Type*}} [CommRing f]"
-        )?;
-        writeln!(f, "    (point : Fin {num_inputs} → f) :")?;
-        writeln!(
-            f,
-            "    {graph_name}.toExpr.eval point = {materializer_name}.arithmetize.eval point := by"
-        )?;
-        writeln!(
-            f,
-            "  prove_lookup_program_correspondence {graph_name} {materializer_name}"
-        )?;
         writeln!(f)?;
 
         writeln!(
@@ -217,6 +198,17 @@ impl ExtractedLookup {
             "    materializerWellFormed := {materializer_well_formed_name}"
         )?;
         writeln!(f, "  }}")?;
+        writeln!(f)?;
+
+        writeln!(
+            f,
+            "/-- Lean checks that the extracted graph and materializer denote the same free polynomial. -/"
+        )?;
+        writeln!(
+            f,
+            "theorem {correspondence_name} : {program_name}.Corresponds := by"
+        )?;
+        writeln!(f, "  native_decide")?;
         writeln!(f)?;
 
         writeln!(
@@ -243,7 +235,7 @@ impl ExtractedLookup {
         writeln!(f, "      {program_name}.materializer.eval :=")?;
         writeln!(
             f,
-            "  {program_name}.isLookupTableMLE (by decide) {correspondence_name}"
+            "  {program_name}.isLookupTableMLE (by native_decide) {correspondence_name}"
         )?;
 
         Ok(())
@@ -397,6 +389,25 @@ mod test {
     }
 
     #[test]
+    fn shared_materializers_match_evaluator_graphs_structurally() {
+        for table in [
+            ZkLeanLookupTable::from(LookupTableKind::<XLEN>::And(Default::default())),
+            ZkLeanLookupTable::from(LookupTableKind::<XLEN>::VirtualROTR(Default::default())),
+        ] {
+            let evaluator =
+                LookupGraph::from_mle_ast(&table.evaluate_mle().unwrap(), 2 * XLEN).unwrap();
+            let materializer_ast = table.materializer().unwrap().to_mle_ast();
+            let materializer = LookupGraph::from_mle_ast(&materializer_ast, 2 * XLEN).unwrap();
+
+            assert!(
+                evaluator.structurally_equivalent(&materializer),
+                "{}",
+                table.name()
+            );
+        }
+    }
+
+    #[test]
     fn emits_all_lookups_through_one_canonical_module() {
         let lookups = ZkLeanLookupTables::<XLEN>::extract().unwrap();
         let module = lookups.as_module().unwrap();
@@ -408,8 +419,12 @@ mod test {
         assert!(lean.contains("mle := And_64_lookup_table_graph"));
         assert!(lean.contains("And_64_lookup_table_materializer"));
         assert!(lean.contains("And_64_lookup_table_correspondence"));
-        assert!(lean.contains("prove_lookup_program_correspondence"));
-        assert!(lean.contains(".isLookupTableMLE (by decide)"));
+        assert!(lean.contains("VirtualROTR_64_lookup_table_program"));
+        assert!(lean.contains("VirtualROTR_64_lookup_table_materializer"));
+        assert!(lean.contains("VirtualROTR_64_lookup_table_correspondence"));
+        assert!(lean.contains(".Corresponds := by"));
+        assert!(lean.contains("native_decide"));
+        assert!(lean.contains(".isLookupTableMLE (by native_decide)"));
         assert!(lean.contains("Xor_64_lookup_table_graph"));
     }
 }

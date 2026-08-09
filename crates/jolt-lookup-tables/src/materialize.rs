@@ -5,15 +5,22 @@
 
 /// Operations available to a lookup materializer.
 ///
-/// The interface starts with the operations required by the AND table. New
-/// operations should be added only when another table needs them.
+/// The interface contains the operations required by the currently certified
+/// tables. New operations should be added only when another table needs them.
 pub trait MaterializerBackend {
-    type Bit;
+    type Bit: Clone;
+    type Nat: Clone;
     type Output;
 
     fn input_bit(&mut self, index: usize) -> Self::Bit;
     fn and(&mut self, left: Self::Bit, right: Self::Bit) -> Self::Bit;
-    fn bits_be<const N: usize>(&mut self, bits: [Self::Bit; N]) -> Self::Output;
+    fn not(&mut self, value: Self::Bit) -> Self::Bit;
+    fn bit_to_nat(&mut self, value: Self::Bit) -> Self::Nat;
+    fn nat_constant(&mut self, value: u128) -> Self::Nat;
+    fn nat_add(&mut self, left: Self::Nat, right: Self::Nat) -> Self::Nat;
+    fn nat_mul(&mut self, left: Self::Nat, right: Self::Nat) -> Self::Nat;
+    fn bits_be<const N: usize>(&mut self, bits: [Self::Bit; N]) -> Self::Nat;
+    fn output(&mut self, value: Self::Nat) -> Self::Output;
 }
 
 /// A lookup table whose materializer can run over any supported backend.
@@ -35,6 +42,7 @@ impl<const XLEN: usize> U128Materializer<XLEN> {
 
 impl<const XLEN: usize> MaterializerBackend for U128Materializer<XLEN> {
     type Bit = bool;
+    type Nat = u128;
     type Output = u64;
 
     fn input_bit(&mut self, index: usize) -> Self::Bit {
@@ -47,9 +55,37 @@ impl<const XLEN: usize> MaterializerBackend for U128Materializer<XLEN> {
         left && right
     }
 
-    fn bits_be<const N: usize>(&mut self, bits: [Self::Bit; N]) -> Self::Output {
+    fn not(&mut self, value: Self::Bit) -> Self::Bit {
+        !value
+    }
+
+    fn bit_to_nat(&mut self, value: Self::Bit) -> Self::Nat {
+        u128::from(value)
+    }
+
+    fn nat_constant(&mut self, value: u128) -> Self::Nat {
+        value
+    }
+
+    fn nat_add(&mut self, left: Self::Nat, right: Self::Nat) -> Self::Nat {
+        left + right
+    }
+
+    fn nat_mul(&mut self, left: Self::Nat, right: Self::Nat) -> Self::Nat {
+        left * right
+    }
+
+    fn bits_be<const N: usize>(&mut self, bits: [Self::Bit; N]) -> Self::Nat {
         assert!(N <= 64, "lookup output must fit in a u64");
         bits.into_iter()
-            .fold(0, |value, bit| (value << 1) | u64::from(bit))
+            .fold(0, |value, bit| (value << 1) | u128::from(bit))
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "lookup materializers are required to produce one XLEN-bit word"
+    )]
+    fn output(&mut self, value: Self::Nat) -> Self::Output {
+        u64::try_from(value).expect("lookup output must fit in a u64")
     }
 }
