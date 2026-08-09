@@ -197,7 +197,7 @@ impl AkitaProverSetup {
 
     /// Releases transformed setup slots after the trace commitment. Later
     /// opening work rebuilds the slots on first use.
-    pub fn release_post_commit_ntt_residency(&self) {
+    pub fn release_post_commit_ntt_residency(&self) -> Result<(), OpeningsError> {
         for prepared in [
             self.prepared_backend_setup.as_deref(),
             self.prepared_one_hot_backend_setup.as_deref(),
@@ -205,8 +205,11 @@ impl AkitaProverSetup {
         .into_iter()
         .flatten()
         {
-            let _freed = prepared.drop_built_ntt_slots();
+            let _ = prepared
+                .drop_built_ntt_slots()
+                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
         }
+        Ok(())
     }
 
     pub fn one_hot_ring_dimension(&self) -> usize {
@@ -673,7 +676,7 @@ pub(crate) fn backend_stack<'a>(
 ) -> Result<BackendStack<'a>, OpeningsError> {
     let _span = info_span!("jolt_akita::make_backend_stack").entered();
     akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         prepared_backend_setup,
         backend_prover_setup.expanded.as_ref(),
     )

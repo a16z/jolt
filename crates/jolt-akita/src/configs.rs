@@ -36,7 +36,7 @@ fn dp_planned_schedule<Cfg: CommitmentConfig>(
 /// catalog rows are included because setup matrices are shared prefix views
 /// and planned footprints are not monotone in either layout dimension.
 fn catalog_setup_capacity<Cfg: CommitmentConfig>(
-    table: GeneratedScheduleTable,
+    table: &GeneratedScheduleTable,
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<Option<SetupMatrixCapacity>, AkitaError> {
@@ -76,6 +76,8 @@ macro_rules! delegate_preset {
         $(#[$doc:meta])*
         $name:ident,
         $base:ty,
+        $ring_dimension:expr,
+        $root_honest_fold_policy:expr,
         $catalog:expr,
         $basis_range:expr
     ) => {
@@ -86,9 +88,11 @@ macro_rules! delegate_preset {
         impl CommitmentConfig for $name {
             type Field = <$base as CommitmentConfig>::Field;
             type ExtField = <$base as CommitmentConfig>::ExtField;
-            const D: usize = <$base as CommitmentConfig>::D;
-            const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
-                <$base as CommitmentConfig>::RING_DIMENSION_CANDIDATES;
+            const D: usize = $ring_dimension;
+            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
+                akita_schedules::RingDimensionScheduleMode::UniformDimension {
+                    ring_dimension: $ring_dimension,
+                };
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -121,7 +125,7 @@ macro_rules! delegate_preset {
                 }
                 if let Some(table) = $catalog {
                     if let Some(capacity) = catalog_setup_capacity::<Self>(
-                        table,
+                        &table,
                         max_num_vars,
                         max_num_batched_polys,
                     )? {
@@ -143,7 +147,7 @@ macro_rules! delegate_preset {
             }
 
             fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
-                <$base>::root_honest_fold_policy()
+                $root_honest_fold_policy
             }
 
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
@@ -196,23 +200,34 @@ macro_rules! delegate_preset {
 delegate_preset!(
     /// `D64OneHotK16` with the Jolt-generated K=16 schedule catalog.
     JoltD64OneHotK16,
-    akita_config::proof_optimized::fp128::D64OneHotK16,
+    akita_config::proof_optimized::fp128::OneHot,
+    64,
+    akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
+        akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+            128,
+            akita_types::sis::FoldWitnessNorms::new(1, 4),
+        ),
+    ),
     crate::schedules::jolt_fp128_d64_onehot_k16_table(),
-    akita_config::proof_optimized::fp128::D64OneHotK16::basis_range()
+    akita_config::proof_optimized::fp128::OneHot::basis_range()
 );
 
 delegate_preset!(
     /// `D64OneHot` (K=256) with the Jolt-generated large-trace catalog.
     JoltD64OneHotK256,
-    akita_config::proof_optimized::fp128::D64OneHot,
+    akita_config::proof_optimized::fp128::OneHot,
+    64,
+    akita_config::proof_optimized::fp128::OneHot::root_honest_fold_policy(),
     crate::schedules::jolt_fp128_d64_onehot_k256_table(),
-    akita_config::proof_optimized::fp128::D64OneHot::basis_range()
+    akita_config::proof_optimized::fp128::OneHot::basis_range()
 );
 
 delegate_preset!(
     /// D128, K=256 policy for the largest packed trace.
     JoltD128OneHotK256,
-    akita_config::proof_optimized::fp128::D128OneHot,
+    akita_config::proof_optimized::fp128::OneHot,
+    128,
+    akita_config::proof_optimized::fp128::OneHot::root_honest_fold_policy(),
     crate::schedules::jolt_fp128_d128_onehot_k256_table(),
     (6, 6)
 );
@@ -220,9 +235,11 @@ delegate_preset!(
 delegate_preset!(
     /// `D64Dense` with the Jolt-generated advice/program byte-object catalog.
     JoltD64Dense,
-    akita_config::proof_optimized::fp128::D64Dense,
+    akita_config::proof_optimized::fp128::Dense,
+    64,
+    akita_config::proof_optimized::fp128::Dense::root_honest_fold_policy(),
     crate::schedules::jolt_fp128_d64_dense_table(),
-    akita_config::proof_optimized::fp128::D64Dense::basis_range()
+    akita_config::proof_optimized::fp128::Dense::basis_range()
 );
 
 #[cfg(test)]

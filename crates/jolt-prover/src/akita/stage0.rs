@@ -173,7 +173,11 @@ where
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
-    PCS::release_post_commit_residency(&preprocessing.pcs_setup, &hint);
+    PCS::release_post_commit_residency(&preprocessing.pcs_setup, &hint).map_err(|error| {
+        VerifierError::FinalOpeningVerificationFailed {
+            reason: error.to_string(),
+        }
+    })?;
 
     // The per-proof untrusted-advice byte object; the trusted object is
     // precommitted (its commitment arrives as an argument).

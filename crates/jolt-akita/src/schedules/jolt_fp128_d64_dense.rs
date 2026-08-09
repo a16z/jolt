@@ -7,8 +7,8 @@ use super::{
     GeneratedOuterCommitMatrix, GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
     GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
     GeneratedTerminalFold, GeneratedWitnessPartition, InnerCommitMatrixParams,
-    OuterCommitMatrixParams, PlannerCostModelId, PolynomialGroupLayout, SelectionPolicyId,
-    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
+    OuterCommitMatrixParams, PlannerCostModelId, PolynomialGroupLayout, RingDimensionScheduleMode,
+    SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
 };
 
 #[rustfmt::skip]
@@ -743,13 +743,11 @@ pub(crate) static JOLT_FP128_D64_DENSE_SCHEDULES: &[GeneratedFoldScheduleEntry] 
 ];
 
 #[rustfmt::skip]
-pub(crate) static CATALOG_RING_DIMENSION_CANDIDATES: &[CommitmentRingDims] = &[CommitmentRingDims { inner: 64, outer: 64, opening: 64 }];
-#[rustfmt::skip]
 pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "jolt-fp128-d64-dense",
-    protocol_epoch: 3,
+    protocol_epoch: 1,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
     setup_field_budget: None,
@@ -766,7 +764,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     basis_range: (3, 6),
     witness_chunk: ChunkedWitnessCfg { num_chunks: 1, num_activated_levels: 0 },
     recursive_setup_planning: false,
-    ring_dimension_candidates: CATALOG_RING_DIMENSION_CANDIDATES,
+    ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 },
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 12477507731232336810,
     key_count: 42,

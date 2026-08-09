@@ -202,31 +202,19 @@ impl D64K16ShiftGroups {
             let columns = &self.group_columns[group * num_columns..group * num_columns + count];
             if self.group_counts[group] >= SHARED_SHIFT_MIN_COLUMNS {
                 let shifts = &self.group_shifts[group];
-                let src = src.coeffs();
-                for coefficient in 0..D {
-                    let shift = shifts[0];
-                    let mut sum = if coefficient >= shift {
-                        src[coefficient - shift]
-                    } else {
-                        -src[D + coefficient - shift]
-                    };
-                    for &shift in &shifts[1..] {
-                        if coefficient >= shift {
-                            sum += src[coefficient - shift];
-                        } else {
-                            sum -= src[D + coefficient - shift];
-                        }
-                    }
-                    for &column in columns {
-                        dst[usize::from(column) * n_a + a].coeffs_mut()[coefficient] += sum;
-                    }
+                let mut shifted_sum = AkitaWideRing::zero();
+                for &shift in shifts {
+                    src.shift_accumulate_into(&mut shifted_sum, shift);
+                }
+                for &column in columns {
+                    dst[usize::from(column) * n_a + a] += shifted_sum;
                 }
             } else {
                 for &column in columns {
-                    src.shift_accumulate_array_into(
-                        &mut dst[usize::from(column) * n_a + a],
-                        &self.group_shifts[group],
-                    );
+                    let dst = &mut dst[usize::from(column) * n_a + a];
+                    for &shift in &self.group_shifts[group] {
+                        src.shift_accumulate_into(dst, shift);
+                    }
                 }
             }
         }
@@ -460,22 +448,6 @@ impl RootPolyMeta<AkitaField> for TracePackedOneHot {
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         Some(self.one_hot_k)
-    }
-
-    fn release_root_opening_storage(&self) {
-        let rows = {
-            let mut rows = self
-                .rows
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            rows.take()
-        };
-        let _span = tracing::info_span!(
-            "TracePackedOneHot::release_opening_rows",
-            retained_bytes = self.num_rows * self.num_columns,
-        )
-        .entered();
-        drop(rows);
     }
 }
 
@@ -774,7 +746,9 @@ fn shift_accumulate_full_rows<const D: usize, const N: usize>(
     else {
         return false;
     };
-    src.shift_accumulate_array_into(dst, &coefficients);
+    for coefficient in coefficients {
+        src.shift_accumulate_into(dst, coefficient);
+    }
     true
 }
 
@@ -979,10 +953,10 @@ fn commit_packed<const D: usize>(
                                                 32 + usize::from(hot2),
                                                 48 + usize::from(hot3),
                                             ];
-                                            a_wide.shift_accumulate_array_into(
-                                                &mut wide[column * plan.n_a + a],
-                                                &shifts,
-                                            );
+                                            let dst = &mut wide[column * plan.n_a + a];
+                                            for shift in shifts {
+                                                a_wide.shift_accumulate_into(dst, shift);
+                                            }
                                         } else {
                                             for (row_offset, hot) in
                                                 [hot0, hot1, hot2, hot3].into_iter().enumerate()
@@ -2184,13 +2158,16 @@ fn decompose_fold_packed<const D: usize>(
 }
 
 impl<const D: usize> RootCommitKernel<TracePackedOneHotView<'_, D>, AkitaField, D> for CpuBackend {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: TracePackedOneHotView<'_, D>,
+        sources: Vec<TracePackedOneHotView<'_, D>>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<AkitaField>, AkitaError> {
-        commit_packed::<D>(self, prepared, &source.kernel_source(), plan)
+    ) -> Result<Vec<CommitInnerWitness<AkitaField>>, AkitaError> {
+        sources
+            .into_par_iter()
+            .map(|source| commit_packed::<D>(self, prepared, &source.kernel_source(), plan))
+            .collect()
     }
 }
 
@@ -2498,7 +2475,7 @@ mod tests {
             position_weights: &position_weights,
             num_positions_per_block: num_positions,
         };
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let streamed = <CpuBackend as OpeningFoldKernel<
             TracePackedOneHotView<'_, D>,
             AkitaField,
@@ -2524,8 +2501,8 @@ mod tests {
 
         let challenges = (0..num_blocks)
             .map(|block| SparseChallenge {
-                positions: vec![0, (block % (D - 1) + 1) as u32],
-                coeffs: vec![1, -1],
+                positions: vec![0, (block % (D - 1) + 1) as u32].into(),
+                coeffs: vec![1, -1].into(),
             })
             .collect::<Vec<_>>();
         let decompose_plan = DecomposeFoldPlan {
@@ -2598,72 +2575,12 @@ mod tests {
     #[test]
     fn d128_auto_uses_compact_rotations() {
         let challenges = [SparseChallenge {
-            positions: vec![0, 127],
-            coeffs: vec![1, -1],
+            positions: vec![0, 127].into(),
+            coeffs: vec![1, -1].into(),
         }];
         let rotations =
             prepare_rotations::<128>(&challenges, None, 1, DecomposeRotationMode::Auto).unwrap();
         assert!(matches!(rotations, PreparedRotations::Compact(_)));
-    }
-
-    #[test]
-    fn root_opening_storage_release_is_scoped_to_each_clone() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        struct DropRows(Arc<AtomicBool>);
-
-        impl Drop for DropRows {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::Relaxed);
-            }
-        }
-
-        impl TraceOneHotRows for DropRows {
-            fn num_rows(&self) -> usize {
-                32
-            }
-
-            fn num_columns(&self) -> usize {
-                3
-            }
-
-            fn fill_row(&self, _row: usize, hot_lanes: &mut [u8]) {
-                hot_lanes.fill(1);
-            }
-        }
-
-        let dropped = Arc::new(AtomicBool::new(false));
-        let source =
-            TracePackedOneHot::new(16, 64, 8, Arc::new(DropRows(Arc::clone(&dropped)))).unwrap();
-        let source_clone = {
-            let _view =
-                <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source)
-                    .unwrap();
-            assert!(!dropped.load(Ordering::Relaxed));
-            source.clone()
-        };
-
-        <TracePackedOneHot as RootPolyMeta<AkitaField>>::release_root_opening_storage(&source);
-
-        assert!(!dropped.load(Ordering::Relaxed));
-        assert!(
-            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source)
-                .is_err()
-        );
-        assert!(
-            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source_clone)
-                .is_ok()
-        );
-
-        <TracePackedOneHot as RootPolyMeta<AkitaField>>::release_root_opening_storage(
-            &source_clone,
-        );
-
-        assert!(dropped.load(Ordering::Relaxed));
-        assert!(
-            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source_clone)
-                .is_err()
-        );
     }
 
     #[test]

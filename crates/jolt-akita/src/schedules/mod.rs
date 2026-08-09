@@ -24,6 +24,7 @@ pub(crate) use akita_schedules::generated::{
     GeneratedRootPrecommittedGroup, GeneratedSetupPrefixInput, GeneratedTerminalFold,
     GeneratedWitnessPartition, PlannerCostModelId, SelectionPolicyId,
 };
+pub(crate) use akita_schedules::RingDimensionScheduleMode;
 pub(crate) use akita_types::{
     ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, CommittedGroupProfile,
     DecompositionParams, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,

@@ -31,7 +31,10 @@ pub struct AkitaScheme;
 pub trait PostCommitmentCleanup: CommitmentScheme {
     /// Releases backend state that can be reconstructed from the setup or
     /// opening hint before the opening proof needs it again.
-    fn release_post_commit_residency(setup: &Self::ProverSetup, hint: &Self::OpeningHint);
+    fn release_post_commit_residency(
+        setup: &Self::ProverSetup,
+        hint: &Self::OpeningHint,
+    ) -> Result<(), OpeningsError>;
 }
 
 /// Prover seam for committing the packed trace directly from row-major hot lanes.
@@ -45,8 +48,11 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 }
 
 impl PostCommitmentCleanup for AkitaScheme {
-    fn release_post_commit_residency(setup: &Self::ProverSetup, _hint: &Self::OpeningHint) {
-        setup.release_post_commit_ntt_residency();
+    fn release_post_commit_residency(
+        setup: &Self::ProverSetup,
+        _hint: &Self::OpeningHint,
+    ) -> Result<(), OpeningsError> {
+        setup.release_post_commit_ntt_residency()
     }
 }
 
@@ -432,7 +438,7 @@ impl CommitmentScheme for AkitaScheme {
                 })
                 .map_err(|err| invalid_setup(&err))?;
                 let prepared_backend_setup =
-                    with_backend_pool(|| CpuBackend.prepare_setup(&backend_prover_setup))
+                    with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
                         .map_err(|err| invalid_setup(&err))?;
                 let backend_verifier_setup =
                     with_backend_pool(|| AkitaBackendScheme::setup_verifier(&backend_prover_setup))
@@ -456,7 +462,7 @@ impl CommitmentScheme for AkitaScheme {
             )
             .map_err(|err| invalid_setup(&err))?;
             let prepared_backend_setup =
-                with_backend_pool(|| CpuBackend.prepare_setup(&backend_prover_setup))
+                with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
                     .map_err(|err| invalid_setup(&err))?;
             let backend_verifier_setup = crate::adapters::one_hot_setup_verifier(
                 params.one_hot_k,

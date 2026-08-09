@@ -34,10 +34,7 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use akita_config::{
-    proof_optimized::fp128::{D64Dense as AkitaConfig, D64OneHot as AkitaOneHotConfig},
-    CommitmentConfig,
-};
+use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, ComputeBackendSetup, CpuBackend};
 use akita_prover::{
     AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, OneHotPoly,
@@ -50,6 +47,7 @@ use akita_types::{
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
+    configs::{JoltD64Dense as AkitaConfig, JoltD64OneHotK256 as AkitaOneHotConfig},
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
     AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
@@ -322,12 +320,12 @@ fn akita_case(num_vars: usize) -> AkitaCase {
         AkitaScheme::setup(AkitaSetupParams::new(num_vars, NUM_POLYS, LAYOUT_DIGEST)).unwrap();
     let backend_prover = BackendScheme::setup_prover(num_vars, NUM_POLYS)
         .expect("Akita backend setup should succeed");
-    let backend_prepared = CpuBackend
+    let backend_prepared = CpuBackend::DEFAULT
         .prepare_setup(&backend_prover)
         .expect("Akita backend setup preparation should succeed");
     let one_hot_backend_prover = OneHotBackendScheme::setup_prover(num_vars, NUM_POLYS)
         .expect("Akita one-hot backend setup should succeed");
-    let one_hot_backend_prepared = CpuBackend
+    let one_hot_backend_prepared = CpuBackend::DEFAULT
         .prepare_setup(&one_hot_backend_prover)
         .expect("Akita one-hot backend setup preparation should succeed");
     let backend_dense_poly = make_backend_dense_poly(&dense_poly);
@@ -555,7 +553,7 @@ fn akita_prover_commit_dense(
     poly: &BackendDensePoly,
 ) -> (BackendCommitment, BackendHint) {
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &setup.dense_prepared,
         setup.dense_prover.expanded.as_ref(),
     )
@@ -573,7 +571,7 @@ fn akita_prover_commit_one_hot(
     poly: &BackendOneHotPoly,
 ) -> (BackendCommitment, BackendHint) {
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &setup.one_hot_prepared,
         setup.one_hot_prover.expanded.as_ref(),
     )
@@ -621,7 +619,7 @@ fn akita_prover_open_dense(
     hint: BackendHint,
 ) -> akita_types::AkitaBatchedProof<AkitaField, AkitaField> {
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &case.akita_prover_setup.dense_prepared,
         case.akita_prover_setup.dense_prover.expanded.as_ref(),
     )
@@ -652,7 +650,7 @@ fn akita_prover_open_one_hot(
     hint: BackendHint,
 ) -> akita_types::AkitaBatchedProof<AkitaField, AkitaField> {
     let stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         &case.akita_prover_setup.one_hot_prepared,
         case.akita_prover_setup.one_hot_prover.expanded.as_ref(),
     )

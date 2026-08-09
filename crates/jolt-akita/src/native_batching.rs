@@ -250,13 +250,14 @@ macro_rules! prove_dense_backend {
         )?;
         let (backend_prover_setup, prepared_backend_setup) = $setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
         let transcript = $transcript;
         with_backend_pool(|| {
             AkitaBackendScheme::batched_prove(
                 backend_prover_setup,
                 (selection, claims),
-                &stack,
+                &releasing_stack,
                 transcript,
                 BasisMode::Lagrange,
             )
@@ -303,27 +304,28 @@ where
         backend_hint,
     )?;
     let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+    let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     with_backend_pool(
         || match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
             (AKITA_ONE_HOT_K16, 64) => AkitaOneHotK16BackendScheme::batched_prove(
                 backend_prover_setup,
                 (selection, claims),
-                &stack,
+                &releasing_stack,
                 akita_transcript,
                 BasisMode::Lagrange,
             ),
             (AKITA_ONE_HOT_K256, 64) => AkitaOneHotK256BackendScheme::batched_prove(
                 backend_prover_setup,
                 (selection, claims),
-                &stack,
+                &releasing_stack,
                 akita_transcript,
                 BasisMode::Lagrange,
             ),
             (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::batched_prove(
                 backend_prover_setup,
                 (selection, claims),
-                &stack,
+                &releasing_stack,
                 akita_transcript,
                 BasisMode::Lagrange,
             ),
