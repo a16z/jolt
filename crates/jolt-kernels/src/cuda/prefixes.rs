@@ -4,14 +4,94 @@
 )]
 
 use cudarc::driver::PushKernelArg;
-use jolt_field::Field;
+use jolt_field::{Field, Fr};
 
 use super::context::CudaKernelContext;
-use super::device::{require_fr_slice, DeviceFrVec};
+use super::device::{require_fr, require_fr_slice, DeviceFrVec};
 use super::error::CudaError;
 use super::suffixes::upload_lookup_bits;
 
 pub const NUM_PREFIXES: usize = 46;
+const ADDRESS_BITS: usize = 128;
+
+pub fn prefix_mle_batch<F: Field>(
+    context: &CudaKernelContext,
+    prefix: u32,
+    checkpoints: &[F],
+    r_x: Option<F>,
+    c: u32,
+    bits: &[u128],
+    lens: &[u8],
+    round: usize,
+) -> Result<DeviceFrVec, CudaError> {
+    if bits.len() != lens.len() {
+        return Err(CudaError::LengthMismatch {
+            expected: bits.len(),
+            got: lens.len(),
+        });
+    }
+    if checkpoints.len() != NUM_PREFIXES {
+        return Err(CudaError::LengthMismatch {
+            expected: NUM_PREFIXES,
+            got: checkpoints.len(),
+        });
+    }
+    if prefix as usize >= NUM_PREFIXES {
+        return Err(CudaError::LengthMismatch {
+            expected: NUM_PREFIXES,
+            got: prefix as usize,
+        });
+    }
+    let b_len = lens.first().copied().unwrap_or(0) as usize;
+    if lens.iter().any(|&len| len as usize != b_len) {
+        return Err(CudaError::InvariantViolation {
+            reason: "legacy's prefix MLE derives suffix_len from a single b.len per round, so \
+                     every point in a batch must share it",
+        });
+    }
+    let suffix_len = ADDRESS_BITS
+        .checked_sub(round + b_len + 1)
+        .ok_or(CudaError::InvariantViolation {
+            reason: "the prefix MLE round and point width exceed the address width",
+        })?;
+
+    let mut out = context.alloc(bits.len())?;
+    if bits.is_empty() {
+        return Ok(out);
+    }
+    let device_checkpoints = context.upload(require_fr_slice(checkpoints)?)?;
+    let challenge = context.upload(&[match r_x {
+        Some(value) => require_fr(value)?,
+        None => Fr::from(0u64),
+    }])?;
+    let device_bits = upload_lookup_bits(context, bits)?;
+    let device_lens = context.upload_u8_slice(lens)?;
+    let count = CudaKernelContext::count_of(bits.len())?;
+    let has_r_x = u32::from(r_x.is_some());
+    let round_arg = CudaKernelContext::count_of(round)?;
+    let suffix_len_arg = CudaKernelContext::count_of(suffix_len)?;
+
+    let mut builder = context.stream().launch_builder(context.pfx_mle_batch());
+    let _ = builder.arg(device_checkpoints.limbs());
+    let _ = builder.arg(&device_bits);
+    let _ = builder.arg(&device_lens);
+    let _ = builder.arg(&prefix);
+    let _ = builder.arg(challenge.limbs());
+    let _ = builder.arg(&has_r_x);
+    let _ = builder.arg(&c);
+    let _ = builder.arg(&round_arg);
+    let _ = builder.arg(&suffix_len_arg);
+    let _ = builder.arg(out.limbs_mut());
+    let _ = builder.arg(&count);
+    // SAFETY: thread `i < count` reads `bits[2i]`/`bits[2i+1]` of a `2 * count`
+    // buffer, `lens[i]` of `count`, the single-element challenge buffer, and any
+    // of the `NUM_PREFIXES` checkpoints (length-checked above); it writes only
+    // `out[i]` of `count`. `out` is a distinct allocation and `prefix` is
+    // bounds-checked above.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+    context.stream().synchronize()?;
+    Ok(out)
+}
 
 pub fn prefix_evaluate_batch<F: Field>(
     context: &CudaKernelContext,
@@ -86,15 +166,22 @@ pub fn default_checkpoints(context: &CudaKernelContext) -> Result<DeviceFrVec, C
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use ark_bn254::Fr as LegacyFr;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_lookup_tables::lookup_bits::LookupBits;
     use jolt_lookup_tables::tables::prefixes::{PrefixEval, Prefixes, ALL_PREFIXES};
+    use jolt_lookup_tables::XLEN as RISCV_XLEN;
+    use jolt_prover_legacy::utils::lookup_bits::LookupBits as LegacyBits;
+    use jolt_prover_legacy::zkvm::lookup_table::prefixes::{
+        PrefixCheckpoint as LegacyCheckpoint, PrefixEval as LegacyPrefixEval,
+        Prefixes as LegacyPrefixes,
+    };
     use proptest::prelude::*;
     use strum::EnumCount;
 
     use super::super::context::shared_context;
     use super::super::testing::fr;
-    use super::{default_checkpoints, prefix_evaluate_batch, NUM_PREFIXES};
+    use super::{default_checkpoints, prefix_evaluate_batch, prefix_mle_batch, NUM_PREFIXES};
 
     const CHUNK_LEN: usize = 8;
     const ADDRESS_BITS: usize = 128;
@@ -174,6 +261,124 @@ mod tests {
                     prefix,
                     index,
                     suffix_len
+                );
+            }
+        }
+    }
+
+    fn legacy_checkpoints(seed: u64, upto_round: usize) -> Vec<LegacyCheckpoint<LegacyFr>> {
+        let mut checkpoints: Vec<LegacyCheckpoint<LegacyFr>> =
+            vec![None.into(); LegacyPrefixes::COUNT];
+        for pair in 0..upto_round / 2 {
+            let round = 2 * pair + 1;
+            let suffix_len = ADDRESS_BITS - (round / CHUNK_LEN + 1) * CHUNK_LEN;
+            LegacyPrefixes::update_checkpoints::<RISCV_XLEN, LegacyFr, LegacyFr>(
+                &mut checkpoints,
+                legacy_fr(seed + 2 * pair as u64),
+                legacy_fr(seed + 2 * pair as u64 + 1),
+                round,
+                suffix_len,
+            );
+        }
+        checkpoints
+    }
+
+    fn chunk_points_of_len(len: usize) -> (Vec<u128>, Vec<u8>) {
+        let bits = (0..1u128 << len).collect();
+        let lens = vec![len as u8; 1 << len];
+        (bits, lens)
+    }
+
+    fn legacy_fr(seed: u64) -> LegacyFr {
+        LegacyFr::from(fr(seed))
+    }
+
+    fn legacy_value(eval: LegacyPrefixEval<LegacyFr>) -> Fr {
+        let one = [eval];
+        let slice: &[LegacyPrefixEval<LegacyFr>] = &one;
+        Fr::from(slice[LegacyPrefixes::LowerWord])
+    }
+
+    fn legacy_prefix_mle(
+        prefix: LegacyPrefixes,
+        checkpoints: &[LegacyCheckpoint<LegacyFr>],
+        r_x: Option<Fr>,
+        c: u32,
+        bits: &[u128],
+        lens: &[u8],
+        round: usize,
+    ) -> Vec<Fr> {
+        let r_x = r_x.map(LegacyFr::from);
+        bits.iter()
+            .zip(lens)
+            .map(|(&value, &len)| {
+                legacy_value(prefix.prefix_mle::<RISCV_XLEN, LegacyFr, LegacyFr>(
+                    checkpoints,
+                    r_x,
+                    c,
+                    LegacyBits::new(value, len as usize),
+                    round,
+                ))
+            })
+            .collect()
+    }
+
+    fn device_checkpoints(
+        legacy: &[LegacyCheckpoint<LegacyFr>],
+        defaults: &[Fr],
+    ) -> Result<Vec<Fr>, TestCaseError> {
+        prop_assert_eq!(legacy.len(), defaults.len());
+        Ok(legacy
+            .iter()
+            .zip(defaults)
+            .map(|(checkpoint, &default)| {
+                let slice: &[LegacyCheckpoint<LegacyFr>] = std::slice::from_ref(checkpoint);
+                slice[LegacyPrefixes::LowerWord].map_or(default, Fr::from)
+            })
+            .collect())
+    }
+
+    proptest! {
+        #[test]
+        fn every_prefix_mle_matches_legacy(
+            seed in 1u64..1_000_000,
+            round in 0usize..ADDRESS_BITS,
+            c in prop::sample::select(vec![0u32, 2]),
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            let legacy = legacy_checkpoints(seed, round);
+            let host_checkpoints = device_checkpoints(&legacy, &checkpoints(0))?;
+            let (bits, lens) = chunk_points_of_len(CHUNK_LEN - 1 - round % CHUNK_LEN);
+
+            let r_x = if round % 2 == 1 { Some(fr(seed + 977)) } else { None };
+
+            for (index, prefix) in
+                <LegacyPrefixes as strum::IntoEnumIterator>::iter().enumerate()
+            {
+                let expected = legacy_prefix_mle(
+                    prefix, &legacy, r_x, c, &bits, &lens, round,
+                );
+                let got = prefix_mle_batch(
+                    context,
+                    index as u32,
+                    &host_checkpoints,
+                    r_x,
+                    c,
+                    &bits,
+                    &lens,
+                    round,
+                )
+                .expect("device prefix_mle_batch")
+                .to_host()
+                .expect("download");
+                prop_assert_eq!(
+                    got,
+                    expected,
+                    "prefix index {} diverged at round {} (c = {}, r_x = {})",
+                    index,
+                    round,
+                    c,
+                    r_x.is_some()
                 );
             }
         }

@@ -3550,6 +3550,7 @@ name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "common",
  "cudarc",
  "jolt-claims",
@@ -3559,6 +3560,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-program",
+ "jolt-prover-legacy",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",

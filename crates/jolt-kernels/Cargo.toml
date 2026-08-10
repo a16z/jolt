@@ -40,9 +40,11 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+ark-bn254.workspace = true
 common.workspace = true
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-program.workspace = true
+jolt-prover-legacy = { workspace = true, features = ["default"] }
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
 proptest.workspace = true
