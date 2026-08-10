@@ -251,8 +251,8 @@ impl ExecutionBackend for X86TracerBackend {
             OwnedTrace::new(rows),
             record.device,
             Some(record.final_memory),
-        )
-        .with_advice_tape(Some(record.advice_tape)))
+            Some(record.advice_tape),
+        ))
     }
 }
 

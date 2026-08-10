@@ -279,6 +279,19 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
                 let mut context = GuestAdviceContext { state, host };
                 build(operands, &mut context)
             };
+            // Advice faults (invalid guest pointer in an operand register) are
+            // surfaced as helper errors here — this backend has an error
+            // channel, unlike the reference tracer, which panics.
+            let values = match values {
+                Ok(values) => values,
+                Err(e) => {
+                    return fail(
+                        state,
+                        host,
+                        format!("inline {} advice failed: {e}", registration.name),
+                    );
+                }
+            };
             let Some(values) = values else { return 0 };
             if values.len() > ADVICE_SLOTS {
                 return fail(
