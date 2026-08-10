@@ -232,6 +232,12 @@ pub fn precommitted_packing_plan(shape) -> PrecommittedPackingPlan;
 // TrustedAdviceBytes (if present)                     8 + 3 + advice_vars
 ```
 
+The arities above are logical column arities. Every auxiliary object widens
+its slot capacity until the physical polynomial has at least
+`MIN_AUXILIARY_PACKED_NUM_VARS = 14` variables — Akita's dense planner has no
+fold schedule below that floor — so byte-sized advice regions and tiny
+program images commit at 14 variables with the extra slots unused.
+
 Conventions (vocabulary inherited per `lattice/mod.rs`: jolt-openings'
 logical polynomial / slot / prefix, plus each family's own dimension names —
 `(address ‖ cycle)`, `(byte ‖ place ‖ word)`, `(lane ‖ row)`):

@@ -2402,3 +2402,89 @@ impl<F: Field> VectorCommitment for NoVectorCommitment<F> {
         false
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod advice_object_tests {
+    use super::*;
+    use jolt_poly::MultilinearPoly;
+
+    /// A couple of bytes of advice must stay provable: without the packing
+    /// plan's capacity padding, the 11-variable cell domain of a one-word
+    /// region has no dense fold schedule and `advice_object_setup` fails
+    /// before anything is committed.
+    #[test]
+    fn byte_sized_advice_region_commits_and_opens() {
+        let max_advice_bytes = 8;
+        let advice_bytes = [5u8, 7];
+
+        for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
+            let setup = advice_object_setup(kind, max_advice_bytes).unwrap();
+            let AdviceOneHot {
+                plan,
+                byte_column,
+                commitment,
+                hint,
+                ..
+            } = commit_advice_one_hot(kind, &advice_bytes, max_advice_bytes, &setup).unwrap();
+            let column = JoltCommittedPolynomial::advice_bytes(kind);
+            let logical_vars = plan.logical_num_vars(column).unwrap();
+            let selector_vars = plan.packing().selector_num_vars();
+            assert!(selector_vars > 0, "tiny advice must pad selector capacity");
+
+            // Logical claim: the byte column restricted to slot zero.
+            let logical_point = (0..logical_vars)
+                .map(|index| AkitaField::from_u64(index as u64 + 2))
+                .collect::<Vec<_>>();
+            let mut physical_point = vec![AkitaField::zero(); selector_vars];
+            physical_point.extend_from_slice(&logical_point);
+            let value = byte_column.evaluate(&physical_point);
+
+            let claims = std::collections::BTreeMap::from([(
+                column,
+                EvaluationClaim::new(logical_point, value),
+            )]);
+            let packed = plan.packed_claims(&claims).unwrap();
+
+            let mut prover_transcript =
+                <AkitaTranscript as jolt_transcript::Transcript>::new(b"tiny-advice-object");
+            let physical = plan
+                .packing()
+                .reduce_claims(&packed, &mut prover_transcript)
+                .unwrap();
+            let proof = <AkitaScheme as VerifierCommitmentScheme>::open(
+                &byte_column,
+                physical.point.as_slice(),
+                physical.value,
+                &setup,
+                Some(hint),
+                &mut prover_transcript,
+            )
+            .unwrap();
+
+            let (_, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+                jolt_akita::AkitaSetupParams::dense_only(
+                    plan.packing().packed_num_vars(),
+                    1,
+                    plan.layout_digest(),
+                ),
+            )
+            .unwrap();
+            let mut verifier_transcript =
+                <AkitaTranscript as jolt_transcript::Transcript>::new(b"tiny-advice-object");
+            let reduced = plan
+                .packing()
+                .reduce_claims(&packed, &mut verifier_transcript)
+                .unwrap();
+            <AkitaScheme as VerifierCommitmentScheme>::verify(
+                &commitment,
+                reduced.point.as_slice(),
+                reduced.value,
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+            )
+            .unwrap();
+        }
+    }
+}
