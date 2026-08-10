@@ -1,4 +1,4 @@
-import Jolt.LookupAC
+import Jolt.LookupCorrespondenceCertificate
 
 /-!
 # Certified lookup programs
@@ -18,23 +18,6 @@ structure LookupProgram (n : Nat) where
   mleWellFormed : mle.WellFormed
   materializer : MaterializerGraph n
   materializerWellFormed : materializer.WellFormed
-
-/-- The verifier graph and materializer graph denote the same free polynomial. -/
-def LookupProgram.Corresponds {n : Nat} (program : LookupProgram n) : Prop :=
-  program.mle.toACExpr.equal program.materializer.toACExpr = true
-
-instance LookupProgram.instDecidableCorresponds
-    {n : Nat} (program : LookupProgram n) : Decidable program.Corresponds :=
-  inferInstanceAs (Decidable
-    (program.mle.toACExpr.equal program.materializer.toACExpr = true))
-
-/-- A checked free-polynomial equality holds over every commutative ring. -/
-theorem LookupProgram.correspondence
-    {n : Nat} {F : Type*} [CommRing F]
-    (program : LookupProgram n) (h : program.Corresponds) (point : Fin n → F) :
-    program.mle.toACExpr.eval point = program.materializer.arithEval point := by
-  rw [program.materializer.arithEval_eq_acEval,
-    (ACExpr.equal_eq_true_iff _ _).mp h]
 
 /-- Check that the verifier's extracted field expression is syntactically multilinear. -/
 def LookupProgram.check {n : Nat} (program : LookupProgram n) : Bool :=
@@ -58,6 +41,17 @@ theorem LookupProgram.evalVector_ofFn
   exact Vector.getElem_ofFn index.isLt
 
 @[simp]
+theorem LookupProgram.evalVector_ofFn_graph
+    {n : Nat} {F : Type*} [CommRing F]
+    (program : LookupProgram n) (point : Fin n → F) :
+    program.evalVector (Vector.ofFn point) =
+      program.mle.eval program.mleWellFormed point := by
+  unfold LookupProgram.evalVector Jolt.LookupGraph.Graph.evalVector
+  congr 1
+  funext index
+  exact Vector.getElem_ofFn index.isLt
+
+@[simp]
 theorem LookupProgram.evalVector_ofFn_acExpr
     {n : Nat} {F : Type*} [CommRing F]
     (program : LookupProgram n) (point : Fin n → F) :
@@ -72,7 +66,8 @@ theorem LookupProgram.evalVector_ofFn_acExpr
 theorem LookupProgram.isLookupTableMLE
     {n : Nat} {F : Type*} [CommRing F]
     (program : LookupProgram n) (h : program.check = true)
-    (mleCorrespondence : program.Corresponds) :
+    (mleCorrespondence : ∀ point : Fin n → F,
+      program.mle.eval program.mleWellFormed point = program.materializer.arithEval point) :
     IsLookupTableMLE
       (fun point : Fin n → F => program.evalVector (Vector.ofFn point))
       program.materializer.eval := by
@@ -86,7 +81,7 @@ theorem LookupProgram.isLookupTableMLE
     exact program.mle.toExpr.isMultiAffine (F := F) h
   · intro point
     change program.evalVector (Vector.ofFn (fun i => boolCast (point i))) = _
-    rw [LookupProgram.evalVector_ofFn_acExpr, program.correspondence mleCorrespondence]
+    rw [LookupProgram.evalVector_ofFn_graph, mleCorrespondence]
     exact (program.materializer.cast_eval (F := F) point).symm
 
 end Jolt.LookupExpression

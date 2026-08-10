@@ -2,6 +2,8 @@ use std::fmt::{self, Write as _};
 
 use jolt_lookup_tables::MaterializerBackend;
 
+use crate::correspondence::{CanonicalizedMaterializer, Canonicalizer};
+
 const LEAN_NODE_CHUNK_SIZE: usize = 32;
 
 /// A reference to one Boolean node in a materializer graph.
@@ -38,6 +40,101 @@ pub struct MaterializerGraph {
 }
 
 impl MaterializerGraph {
+    fn write_bool_node_for_lean(output: &mut String, node: &BoolNode, indent: &str) -> fmt::Result {
+        match node {
+            BoolNode::Input(index) => writeln!(output, "{indent}.input {index},"),
+            BoolNode::And(left, right) => {
+                writeln!(output, "{indent}.conj {} {},", left.0, right.0)
+            }
+            BoolNode::Not(value) => writeln!(output, "{indent}.neg {},", value.0),
+        }
+    }
+
+    fn write_nat_node_for_lean(output: &mut String, node: &NatNode, indent: &str) -> fmt::Result {
+        match node {
+            NatNode::Constant(value) => writeln!(output, "{indent}.constant {value},"),
+            NatNode::OfBit(value) => writeln!(output, "{indent}.ofBit {},", value.0),
+            NatNode::Add(left, right) => {
+                writeln!(output, "{indent}.add {} {},", left.0, right.0)
+            }
+            NatNode::Mul(left, right) => {
+                writeln!(output, "{indent}.mul {} {},", left.0, right.0)
+            }
+        }
+    }
+
+    pub fn canonicalize(&self, canonicalizer: &mut Canonicalizer) -> CanonicalizedMaterializer {
+        let mut bool_ids = Vec::with_capacity(self.bool_nodes.len());
+        for node in &self.bool_nodes {
+            let id = match node {
+                BoolNode::Input(index) => canonicalizer.input(*index),
+                BoolNode::And(left, right) => {
+                    canonicalizer.mul(bool_ids[left.0], bool_ids[right.0])
+                }
+                BoolNode::Not(value) => {
+                    let one = canonicalizer.one_id();
+                    canonicalizer.sub(one, bool_ids[value.0])
+                }
+            };
+            bool_ids.push(id);
+        }
+
+        let mut nat_ids = Vec::with_capacity(self.nat_nodes.len());
+        for node in &self.nat_nodes {
+            let id = match node {
+                NatNode::Constant(value) => canonicalizer.constant_u128(*value),
+                NatNode::OfBit(value) => bool_ids[value.0],
+                NatNode::Add(left, right) => canonicalizer.add(nat_ids[left.0], nat_ids[right.0]),
+                NatNode::Mul(left, right) => canonicalizer.mul(nat_ids[left.0], nat_ids[right.0]),
+            };
+            nat_ids.push(id);
+        }
+
+        CanonicalizedMaterializer {
+            root_id: nat_ids[self.root.0],
+            bool_ids,
+            nat_ids,
+        }
+    }
+
+    pub fn bool_chunks_for_lean(&self) -> Result<Vec<(usize, String, bool)>, fmt::Error> {
+        self.bool_nodes
+            .chunks(LEAN_NODE_CHUNK_SIZE)
+            .map(|chunk| {
+                let mut output = String::from("[");
+                if !chunk.is_empty() {
+                    output.push('\n');
+                }
+                for node in chunk {
+                    Self::write_bool_node_for_lean(&mut output, node, "    ")?;
+                }
+                output.push(']');
+                Ok((
+                    chunk.len(),
+                    output,
+                    chunk.iter().any(|node| matches!(node, BoolNode::And(..))),
+                ))
+            })
+            .collect()
+    }
+
+    pub fn nat_chunks_for_lean(&self) -> Result<Vec<(usize, String)>, fmt::Error> {
+        self.nat_nodes
+            .chunks(LEAN_NODE_CHUNK_SIZE)
+            .map(|chunk| {
+                let mut output = String::from("[");
+                if !chunk.is_empty() {
+                    output.push('\n');
+                }
+                for node in chunk {
+                    Self::write_nat_node_for_lean(&mut output, node, "    ")?;
+                }
+                output.push(']');
+                Ok((chunk.len(), output))
+            })
+            .collect()
+    }
+
     pub fn evaluate(&self, point: &[bool]) -> u128 {
         let mut bool_values: Vec<bool> = Vec::with_capacity(self.bool_nodes.len());
         for node in &self.bool_nodes {
@@ -68,13 +165,7 @@ impl MaterializerGraph {
         for chunk in self.bool_nodes.chunks(LEAN_NODE_CHUNK_SIZE) {
             writeln!(output, "      [")?;
             for node in chunk {
-                match node {
-                    BoolNode::Input(index) => writeln!(output, "        .input {index},")?,
-                    BoolNode::And(left, right) => {
-                        writeln!(output, "        .conj {} {},", left.0, right.0)?
-                    }
-                    BoolNode::Not(value) => writeln!(output, "        .neg {},", value.0)?,
-                }
+                Self::write_bool_node_for_lean(&mut output, node, "        ")?;
             }
             writeln!(output, "      ],")?;
         }
@@ -84,16 +175,7 @@ impl MaterializerGraph {
         for chunk in self.nat_nodes.chunks(LEAN_NODE_CHUNK_SIZE) {
             writeln!(output, "      [")?;
             for node in chunk {
-                match node {
-                    NatNode::Constant(value) => writeln!(output, "        .constant {value},")?,
-                    NatNode::OfBit(value) => writeln!(output, "        .ofBit {},", value.0)?,
-                    NatNode::Add(left, right) => {
-                        writeln!(output, "        .add {} {},", left.0, right.0)?
-                    }
-                    NatNode::Mul(left, right) => {
-                        writeln!(output, "        .mul {} {},", left.0, right.0)?
-                    }
-                }
+                Self::write_nat_node_for_lean(&mut output, node, "        ")?;
             }
             writeln!(output, "      ],")?;
         }

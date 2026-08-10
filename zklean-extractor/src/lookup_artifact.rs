@@ -16,7 +16,7 @@ const FORMAT_VERSION: u32 = 1;
 const MANIFEST_PATH: &str = "lookup-artifact.json";
 const SOURCE_REPOSITORY: &str = "https://github.com/a16z/jolt";
 
-const RUNTIME_FILES: [(&str, &[u8]); 7] = [
+const RUNTIME_FILES: [(&str, &[u8]); 8] = [
     (
         "Jolt/LookupExpression.lean",
         include_bytes!("../package-template/Jolt/LookupExpression.lean"),
@@ -32,6 +32,10 @@ const RUNTIME_FILES: [(&str, &[u8]); 7] = [
     (
         "Jolt/LookupGraphCertificate.lean",
         include_bytes!("../package-template/Jolt/LookupGraphCertificate.lean"),
+    ),
+    (
+        "Jolt/LookupCorrespondenceCertificate.lean",
+        include_bytes!("../package-template/Jolt/LookupCorrespondenceCertificate.lean"),
     ),
     (
         "Jolt/MaterializerGraph.lean",

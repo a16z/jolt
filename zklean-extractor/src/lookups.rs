@@ -4,6 +4,7 @@ use std::io::Write as _;
 use strum::IntoEnumIterator as _;
 
 use crate::{
+    correspondence::Canonicalizer,
     lookup_graph::LookupGraph,
     materializer_ast::{MaterializerAst, MaterializerGraph},
     modules::{AsModule, Module},
@@ -28,23 +29,34 @@ fn lookup_module(name: String, imports: Vec<String>, mut body: Vec<u8>) -> Modul
     }
 }
 
-fn write_summary_tree(
+fn write_value_tree<T>(
     f: &mut impl std::io::Write,
-    summaries: &[(u128, bool)],
+    values: &[T],
     start: usize,
     indent: &str,
+    render: &impl Fn(&T) -> String,
 ) -> std::io::Result<()> {
-    if let [summary] = summaries {
-        return writeln!(f, "{indent}⟨{}, {}⟩", summary.0, summary.1);
+    if let [value] = values {
+        return writeln!(f, "{indent}{}", render(value));
     }
 
-    let left_len = summaries.len() / 2;
-    let (left, right) = summaries.split_at(left_len);
+    let left_len = values.len() / 2;
+    let (left, right) = values.split_at(left_len);
     let split = start + left_len;
     writeln!(f, "{indent}if index < {split} then")?;
-    write_summary_tree(f, left, start, &format!("{indent}  "))?;
+    write_value_tree(f, left, start, &format!("{indent}  "), render)?;
     writeln!(f, "{indent}else")?;
-    write_summary_tree(f, right, split, &format!("{indent}  "))
+    write_value_tree(f, right, split, &format!("{indent}  "), render)
+}
+
+fn append_canon_validations(names: &[String]) -> std::io::Result<String> {
+    let mut names = names.iter().rev();
+    let Some(last) = names.next() else {
+        return Err(std::io::Error::other("missing canonical validation chunks"));
+    };
+    Ok(names.fold(last.clone(), |rest, name| {
+        format!("Jolt.LookupCorrespondence.CanonRangeValid.append {name} ({rest})")
+    }))
 }
 
 /// A modular lookup table together with its generated-name compatibility adapter.
@@ -126,6 +138,21 @@ struct ExtractedLookup {
     materializer: Option<MaterializerGraph>,
 }
 
+struct FinalCertificateInputs<'a> {
+    summary_oracle: &'a str,
+    summary_validations: &'a [String],
+    canon_oracle: &'a str,
+    canon_count: usize,
+    one_id: usize,
+    graph_ids: &'a str,
+    bool_ids: &'a str,
+    nat_ids: &'a str,
+    graph_canon_validations: &'a [String],
+    bool_validations: &'a [String],
+    nat_validations: &'a [String],
+    canon_validations: &'a [String],
+}
+
 impl ExtractedLookup {
     fn extract<const XLEN: usize>(table: ZkLeanLookupTable<XLEN>) -> Result<Self, String> {
         let table_name = table.name();
@@ -196,7 +223,6 @@ impl ExtractedLookup {
         let graph_name = format!("{table_name}_graph");
         let materializer_name = format!("{table_name}_materializer");
         let materializer_well_formed_name = format!("{materializer_name}_wellFormed");
-        let correspondence_name = format!("{table_name}_correspondence");
         let program_name = format!("{table_name}_program");
         let num_inputs = 2 * XLEN;
         let materializer = materializer
@@ -245,17 +271,6 @@ impl ExtractedLookup {
 
         writeln!(
             f,
-            "/-- Lean checks that the extracted graph and materializer denote the same free polynomial. -/"
-        )?;
-        writeln!(
-            f,
-            "theorem {correspondence_name} : {program_name}.Corresponds := by"
-        )?;
-        writeln!(f, "  native_decide")?;
-        writeln!(f)?;
-
-        writeln!(
-            f,
             "/-- Evaluate the extracted lookup polynomial on a field vector. -/"
         )?;
         writeln!(
@@ -275,15 +290,29 @@ impl ExtractedLookup {
     fn zklean_pretty_print_multilinearity_final<const XLEN: usize>(
         &self,
         f: &mut impl std::io::Write,
-        oracle_name: &str,
-        validation_names: &[String],
+        inputs: FinalCertificateInputs<'_>,
     ) -> std::io::Result<()> {
+        let FinalCertificateInputs {
+            summary_oracle,
+            summary_validations,
+            canon_oracle,
+            canon_count,
+            one_id,
+            graph_ids,
+            bool_ids,
+            nat_ids,
+            graph_canon_validations,
+            bool_validations,
+            nat_validations,
+            canon_validations,
+        } = inputs;
         let table_name = &self.table_name;
         let graph_name = format!("{table_name}_graph");
         let theorem_name = format!("{graph_name}_multilinear");
         let program_name = format!("{table_name}_program");
         let correspondence_name = format!("{table_name}_correspondence");
-        let valid_name = format!("{oracle_name}_valid");
+        let materializer_name = format!("{table_name}_materializer");
+        let valid_name = format!("{summary_oracle}_valid");
         let num_inputs = 2 * XLEN;
 
         writeln!(f, "set_option maxRecDepth 100000")?;
@@ -294,13 +323,13 @@ impl ExtractedLookup {
         )?;
         writeln!(
             f,
-            "theorem {valid_name} : {graph_name}.ValidSummary {oracle_name} := by"
+            "theorem {valid_name} : {graph_name}.ValidSummary {summary_oracle} := by"
         )?;
         writeln!(f, "  unfold Jolt.LookupGraph.Graph.ValidSummary")?;
         writeln!(f, "  constructor")?;
         writeln!(f, "  · unfold {graph_name}")?;
         writeln!(f, "    simp only [Jolt.LookupGraph.ChunksValid]")?;
-        writeln!(f, "    exact ⟨{}, trivial⟩", validation_names.join(", "))?;
+        writeln!(f, "    exact ⟨{}, trivial⟩", summary_validations.join(", "))?;
         writeln!(f, "  · decide")?;
         writeln!(f)?;
 
@@ -314,8 +343,125 @@ impl ExtractedLookup {
         )?;
         writeln!(
             f,
-            "  rw [{graph_name}.checkMultilinear_eq_of_validSummary {oracle_name} {valid_name}]"
+            "  rw [{graph_name}.checkMultilinear_eq_of_validSummary {summary_oracle} {valid_name}]"
         )?;
+        writeln!(f, "  rfl")?;
+        writeln!(f)?;
+
+        let canon_valid_name = format!("{canon_oracle}_valid");
+        writeln!(
+            f,
+            "theorem {canon_valid_name} : Jolt.LookupCorrespondence.CanonRangeValid"
+        )?;
+        writeln!(f, "    {num_inputs} {canon_oracle} 0 {canon_count} := by")?;
+        writeln!(
+            f,
+            "  exact {}",
+            append_canon_validations(canon_validations)?
+        )?;
+        writeln!(f)?;
+
+        let graph_canon_valid_name = format!("{graph_ids}_valid");
+        writeln!(
+            f,
+            "theorem {graph_canon_valid_name} : Jolt.LookupCorrespondence.GraphChunksValid"
+        )?;
+        writeln!(
+            f,
+            "    {num_inputs} {canon_count} {canon_oracle} {graph_ids} 0 {graph_name}.nodeChunks := by"
+        )?;
+        writeln!(f, "  unfold {graph_name}")?;
+        writeln!(
+            f,
+            "  simp only [Jolt.LookupCorrespondence.GraphChunksValid]"
+        )?;
+        writeln!(
+            f,
+            "  exact ⟨{}, trivial⟩",
+            graph_canon_validations.join(", ")
+        )?;
+        writeln!(f)?;
+
+        let bool_valid_name = format!("{bool_ids}_valid");
+        writeln!(
+            f,
+            "theorem {bool_valid_name} : Jolt.LookupCorrespondence.MaterializerBoolChunksValid"
+        )?;
+        writeln!(
+            f,
+            "    {num_inputs} {canon_count} {canon_oracle} {one_id} {bool_ids} 0"
+        )?;
+        writeln!(f, "      {materializer_name}.boolNodeChunks := by")?;
+        writeln!(f, "  unfold {materializer_name}")?;
+        writeln!(
+            f,
+            "  simp only [Jolt.LookupCorrespondence.MaterializerBoolChunksValid]"
+        )?;
+        writeln!(f, "  exact ⟨{}, trivial⟩", bool_validations.join(", "))?;
+        writeln!(f)?;
+
+        let nat_valid_name = format!("{nat_ids}_valid");
+        writeln!(
+            f,
+            "theorem {nat_valid_name} : Jolt.LookupCorrespondence.MaterializerNatChunksValid"
+        )?;
+        writeln!(
+            f,
+            "    {materializer_name}.boolNodes.length {canon_count} {canon_oracle}"
+        )?;
+        writeln!(
+            f,
+            "      {bool_ids} {nat_ids} 0 {materializer_name}.natNodeChunks := by"
+        )?;
+        writeln!(f, "  unfold {materializer_name}")?;
+        writeln!(
+            f,
+            "  simp only [Jolt.LookupCorrespondence.MaterializerNatChunksValid,"
+        )?;
+        writeln!(
+            f,
+            "    Jolt.LookupExpression.MaterializerGraph.boolNodes, List.flatten]"
+        )?;
+        writeln!(f, "  exact ⟨{}, trivial⟩", nat_validations.join(", "))?;
+        writeln!(f)?;
+
+        writeln!(
+            f,
+            "/-- The verifier graph and materializer agree over every commutative ring. -/"
+        )?;
+        writeln!(
+            f,
+            "theorem {correspondence_name} {{f : Type*}} [CommRing f] (point : Fin {num_inputs} → f) :"
+        )?;
+        writeln!(
+            f,
+            "    {graph_name}.eval {graph_name}_wellFormed point = {materializer_name}.arithEval point := by"
+        )?;
+        writeln!(
+            f,
+            "  rw [Jolt.LookupCorrespondence.graph_eval_eq_canon {graph_name}"
+        )?;
+        writeln!(
+            f,
+            "    {graph_name}_wellFormed {canon_oracle} {canon_count} {graph_ids}"
+        )?;
+        writeln!(
+            f,
+            "    {canon_valid_name} {graph_canon_valid_name} (by decide) point]"
+        )?;
+        writeln!(
+            f,
+            "  rw [Jolt.LookupCorrespondence.materializer_eval_eq_canon {materializer_name}"
+        )?;
+        writeln!(
+            f,
+            "    {canon_oracle} {canon_count} {one_id} {bool_ids} {nat_ids}"
+        )?;
+        writeln!(
+            f,
+            "    {canon_valid_name} (by decide) (by rfl) {bool_valid_name} {nat_valid_name}"
+        )?;
+        writeln!(f, "    (by decide) point]")?;
         writeln!(f, "  rfl")?;
         writeln!(f)?;
 
@@ -338,13 +484,17 @@ impl ExtractedLookup {
     }
 
     fn certificate_modules<const XLEN: usize>(&self) -> std::io::Result<Vec<Module>> {
-        if self.materializer.is_none() {
+        let Some(materializer) = self.materializer.as_ref() else {
             return Ok(Vec::new());
-        }
+        };
 
         let arity = 2 * XLEN;
         let graph_name = format!("{}_graph", self.table_name);
         let oracle_name = format!("{graph_name}_summary");
+        let canon_name = format!("{graph_name}_canon");
+        let graph_ids_name = format!("{graph_name}_canon_ids");
+        let bool_ids_name = format!("{}_materializer_bool_canon_ids", self.table_name);
+        let nat_ids_name = format!("{}_materializer_nat_canon_ids", self.table_name);
         let stem = self.certificate_module_stem();
         let base_name = format!("{stem}Base");
         let summaries = self
@@ -372,6 +522,24 @@ impl ExtractedLookup {
             )));
         }
 
+        let mut canonicalizer = Canonicalizer::default();
+        let canonical_graph = self.graph.canonicalize(&mut canonicalizer);
+        let canonical_materializer = materializer.canonicalize(&mut canonicalizer);
+        let one_id = canonicalizer.one_id();
+        if canonical_graph.root_id != canonical_materializer.root_id {
+            return Err(std::io::Error::other(format!(
+                "{} evaluator and materializer have different canonical roots",
+                self.table_name
+            )));
+        }
+        let canon_nodes = canonicalizer.nodes();
+        let bool_chunks = materializer
+            .bool_chunks_for_lean()
+            .map_err(std::io::Error::other)?;
+        let nat_chunks = materializer
+            .nat_chunks_for_lean()
+            .map_err(std::io::Error::other)?;
+
         let mut base_body = Vec::new();
         self.zklean_pretty_print_base::<XLEN>(&mut base_body)?;
         writeln!(base_body)?;
@@ -384,14 +552,45 @@ impl ExtractedLookup {
             "def {oracle_name} (index : Nat) : Jolt.LookupGraph.ExprSummary {arity} :="
         )?;
         writeln!(base_body, "  if index < {} then", summaries.len())?;
-        write_summary_tree(&mut base_body, &summaries, 0, "    ")?;
+        write_value_tree(&mut base_body, &summaries, 0, "    ", &|summary| {
+            format!("⟨{}, {}⟩", summary.0, summary.1)
+        })?;
         writeln!(base_body, "  else")?;
         writeln!(base_body, "    ⟨0, false⟩")?;
+        writeln!(base_body)?;
+        writeln!(
+            base_body,
+            "/-- Shared hash-consed associative-commutative certificate DAG. -/"
+        )?;
+        writeln!(
+            base_body,
+            "def {canon_name} (index : Nat) : Jolt.LookupCorrespondence.CanonNode :="
+        )?;
+        writeln!(base_body, "  if index < {} then", canon_nodes.len())?;
+        write_value_tree(&mut base_body, canon_nodes, 0, "    ", &|node| {
+            node.format_for_lean()
+        })?;
+        writeln!(base_body, "  else")?;
+        writeln!(base_body, "    .constant 0")?;
+
+        for (name, ids) in [
+            (&graph_ids_name, &canonical_graph.ids),
+            (&bool_ids_name, &canonical_materializer.bool_ids),
+            (&nat_ids_name, &canonical_materializer.nat_ids),
+        ] {
+            writeln!(base_body)?;
+            writeln!(base_body, "def {name} (index : Nat) : Nat :=")?;
+            writeln!(base_body, "  if index < {} then", ids.len())?;
+            write_value_tree(&mut base_body, ids, 0, "    ", &usize::to_string)?;
+            writeln!(base_body, "  else")?;
+            writeln!(base_body, "    0")?;
+        }
         let mut modules = vec![lookup_module(
             base_name.clone(),
             vec![
                 String::from("Jolt.LookupProgram"),
                 String::from("Jolt.LookupGraphCertificate"),
+                String::from("Jolt.LookupCorrespondenceCertificate"),
                 String::from("Mathlib.Algebra.Field.Defs"),
             ],
             base_body,
@@ -399,9 +598,11 @@ impl ExtractedLookup {
 
         let mut position = 0;
         let mut validation_names = Vec::with_capacity(chunks.len());
+        let mut graph_canon_validation_names = Vec::with_capacity(chunks.len());
         let mut previous_module = base_name;
         for (index, (chunk_length, chunk)) in chunks.into_iter().enumerate() {
             let validation_name = format!("{oracle_name}_chunk_{index}_valid");
+            let canon_validation_name = format!("{graph_ids_name}_chunk_{index}_valid");
             let module_name = format!("{stem}Chunk{index}");
             let mut body = Vec::new();
 
@@ -421,6 +622,31 @@ impl ExtractedLookup {
             writeln!(body, "    Jolt.LookupGraph.Node.wellFormedAt,")?;
             writeln!(body, "    Jolt.LookupGraph.Node.summaryFrom,")?;
             writeln!(body, "    {oracle_name}]")?;
+            writeln!(body)?;
+            writeln!(
+                body,
+                "/-- Proof-producing canonical-ID validation for graph chunk {index}. -/"
+            )?;
+            writeln!(body, "theorem {canon_validation_name} :")?;
+            writeln!(
+                body,
+                "    Jolt.LookupCorrespondence.GraphNodesValid {arity} {} {canon_name}",
+                canon_nodes.len()
+            )?;
+            writeln!(body, "      {graph_ids_name} {position} {chunk} := by")?;
+            writeln!(body, "  simp [Jolt.LookupCorrespondence.GraphNodesValid,")?;
+            writeln!(body, "    Jolt.LookupGraph.Node.ValidCanonAt,")?;
+            writeln!(body, "    Jolt.LookupGraph.Node.wellFormedAt,")?;
+            writeln!(body, "    Jolt.LookupGraph.Node.canonStep,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.CanonStep.Matches,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.CanonStep.matches,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.smartAdd,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.smartMul,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.addTerms,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.mulFactors,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.sortIds,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.insertId,")?;
+            writeln!(body, "    {canon_name}, {graph_ids_name}]")?;
 
             modules.push(lookup_module(
                 module_name.clone(),
@@ -428,16 +654,167 @@ impl ExtractedLookup {
                 body,
             ));
             validation_names.push(validation_name);
+            graph_canon_validation_names.push(canon_validation_name);
             previous_module = module_name;
             position += chunk_length;
+        }
+
+        let mut bool_position = 0;
+        let mut bool_validation_names = Vec::with_capacity(bool_chunks.len());
+        for (index, (chunk_length, chunk, uses_mul)) in bool_chunks.into_iter().enumerate() {
+            let validation_name = format!("{bool_ids_name}_chunk_{index}_valid");
+            let module_name = format!("{stem}BoolChunk{index}");
+            let mut body = Vec::new();
+            writeln!(body, "set_option maxHeartbeats 0")?;
+            writeln!(body, "set_option maxRecDepth 8192")?;
+            writeln!(body, "theorem {validation_name} :")?;
+            writeln!(
+                body,
+                "    Jolt.LookupCorrespondence.MaterializerBoolNodesValid {arity} {}",
+                canon_nodes.len()
+            )?;
+            writeln!(
+                body,
+                "      {canon_name} {one_id} {bool_ids_name} {bool_position} {chunk} := by"
+            )?;
+            writeln!(
+                body,
+                "  simp [Jolt.LookupCorrespondence.MaterializerBoolNodesValid,"
+            )?;
+            writeln!(
+                body,
+                "    Jolt.LookupExpression.MaterializerBoolNode.ValidCanonAt,"
+            )?;
+            writeln!(
+                body,
+                "    Jolt.LookupExpression.MaterializerBoolNode.wellFormedAt,"
+            )?;
+            writeln!(
+                body,
+                "    Jolt.LookupExpression.MaterializerBoolNode.canonStep,"
+            )?;
+            writeln!(body, "    Jolt.LookupCorrespondence.CanonStep.Matches,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.CanonStep.matches,")?;
+            if uses_mul {
+                writeln!(body, "    Jolt.LookupCorrespondence.smartMul,")?;
+                writeln!(body, "    Jolt.LookupCorrespondence.mulFactors,")?;
+                writeln!(body, "    Jolt.LookupCorrespondence.sortIds,")?;
+                writeln!(body, "    Jolt.LookupCorrespondence.insertId,")?;
+            }
+            writeln!(body, "    {canon_name}, {bool_ids_name}]")?;
+            modules.push(lookup_module(
+                module_name.clone(),
+                vec![format!("Jolt.{previous_module}")],
+                body,
+            ));
+            bool_validation_names.push(validation_name);
+            previous_module = module_name;
+            bool_position += chunk_length;
+        }
+
+        let mut nat_position = 0;
+        let mut nat_validation_names = Vec::with_capacity(nat_chunks.len());
+        for (index, (chunk_length, chunk)) in nat_chunks.into_iter().enumerate() {
+            let validation_name = format!("{nat_ids_name}_chunk_{index}_valid");
+            let module_name = format!("{stem}NatChunk{index}");
+            let mut body = Vec::new();
+            writeln!(body, "set_option maxHeartbeats 0")?;
+            writeln!(body, "set_option maxRecDepth 8192")?;
+            writeln!(body, "theorem {validation_name} :")?;
+            writeln!(
+                body,
+                "    Jolt.LookupCorrespondence.MaterializerNatNodesValid {bool_position} {}",
+                canon_nodes.len()
+            )?;
+            writeln!(
+                body,
+                "      {canon_name} {bool_ids_name} {nat_ids_name} {nat_position} {chunk} := by"
+            )?;
+            writeln!(
+                body,
+                "  simp [Jolt.LookupCorrespondence.MaterializerNatNodesValid,"
+            )?;
+            writeln!(
+                body,
+                "    Jolt.LookupExpression.MaterializerNatNode.ValidCanonAt,"
+            )?;
+            writeln!(
+                body,
+                "    Jolt.LookupExpression.MaterializerNatNode.wellFormedAt,"
+            )?;
+            writeln!(
+                body,
+                "    Jolt.LookupExpression.MaterializerNatNode.canonStep,"
+            )?;
+            writeln!(body, "    Jolt.LookupCorrespondence.CanonStep.Matches,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.CanonStep.matches,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.smartAdd,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.smartMul,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.addTerms,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.mulFactors,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.sortIds,")?;
+            writeln!(body, "    Jolt.LookupCorrespondence.insertId,")?;
+            writeln!(body, "    {canon_name}, {bool_ids_name}, {nat_ids_name}]")?;
+            modules.push(lookup_module(
+                module_name.clone(),
+                vec![format!("Jolt.{previous_module}")],
+                body,
+            ));
+            nat_validation_names.push(validation_name);
+            previous_module = module_name;
+            nat_position += chunk_length;
+        }
+
+        const CANON_CHUNK_SIZE: usize = 64;
+        let mut canon_validation_names = Vec::new();
+        for (index, start) in (0..canon_nodes.len()).step_by(CANON_CHUNK_SIZE).enumerate() {
+            let length = (canon_nodes.len() - start).min(CANON_CHUNK_SIZE);
+            let validation_name = format!("{canon_name}_chunk_{index}_valid");
+            let module_name = format!("{stem}CanonChunk{index}");
+            let mut body = Vec::new();
+            writeln!(body, "set_option maxHeartbeats 0")?;
+            writeln!(body, "set_option maxRecDepth 8192")?;
+            writeln!(
+                body,
+                "theorem {validation_name} : Jolt.LookupCorrespondence.CanonRangeValid"
+            )?;
+            writeln!(body, "    {arity} {canon_name} {start} {length} := by")?;
+            writeln!(
+                body,
+                "  simp (config := {{ maxSteps := 5000000 }}) [Jolt.LookupCorrespondence.CanonRangeValid,"
+            )?;
+            writeln!(
+                body,
+                "    Jolt.LookupCorrespondence.CanonNode.WellFormedAt,"
+            )?;
+            writeln!(body, "    {canon_name}]")?;
+            modules.push(lookup_module(
+                module_name.clone(),
+                vec![format!("Jolt.{previous_module}")],
+                body,
+            ));
+            canon_validation_names.push(validation_name);
+            previous_module = module_name;
         }
 
         let final_name = stem;
         let mut final_body = Vec::new();
         self.zklean_pretty_print_multilinearity_final::<XLEN>(
             &mut final_body,
-            &oracle_name,
-            &validation_names,
+            FinalCertificateInputs {
+                summary_oracle: &oracle_name,
+                summary_validations: &validation_names,
+                canon_oracle: &canon_name,
+                canon_count: canon_nodes.len(),
+                one_id,
+                graph_ids: &graph_ids_name,
+                bool_ids: &bool_ids_name,
+                nat_ids: &nat_ids_name,
+                graph_canon_validations: &graph_canon_validation_names,
+                bool_validations: &bool_validation_names,
+                nat_validations: &nat_validation_names,
+                canon_validations: &canon_validation_names,
+            },
         )?;
         modules.push(lookup_module(
             final_name,
@@ -657,11 +1034,12 @@ mod test {
         assert!(lean.contains("VirtualROTR_64_lookup_table_program"));
         assert!(lean.contains("VirtualROTR_64_lookup_table_materializer"));
         assert!(lean.contains("VirtualROTR_64_lookup_table_correspondence"));
-        assert!(lean.contains(".Corresponds := by"));
-        assert_eq!(lean.matches("native_decide").count(), 2);
+        assert!(!lean.contains("native_decide"));
+        assert!(lean.contains("And_64_lookup_table_graph_canon_ids_chunk_0_valid"));
+        assert!(lean.contains("VirtualROTR_64_lookup_table_materializer_bool_canon_ids"));
+        assert!(lean.contains("Jolt.LookupCorrespondence.CanonRangeValid"));
         assert!(lean.contains("And_64_lookup_table_graph_summary_chunk_0_valid"));
         assert!(lean.contains("VirtualROTR_64_lookup_table_graph_multilinear"));
-        assert!(!lean.contains(".isLookupTableMLE (by native_decide)"));
         assert!(lean.contains("Xor_64_lookup_table_graph"));
         assert!(!module.contents.ends_with(b"\n\n"));
     }
