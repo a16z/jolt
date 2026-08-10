@@ -42,6 +42,10 @@ pub enum JoltRelationId {
     TrustedAdviceReconstruction,
     ProgramImageReconstruction,
     BytecodeChunkReconstruction,
+    /// Reduces the committed `Carry` openings (product virtualization, shift,
+    /// and the `carry_init` all-zeros point) to one final opening.
+    #[cfg(feature = "implicit-carry")]
+    CarryClaimReduction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -441,6 +445,10 @@ pub enum JoltCommittedPolynomial {
         chunk: usize,
     },
     ProgramImageBytes,
+    /// The row's incoming implicit carry (previous row's carry-out); dense
+    /// u64 column. Appended last: `Ord` is protocol data (see above).
+    #[cfg(feature = "implicit-carry")]
+    Carry,
 }
 
 impl JoltCommittedPolynomial {
@@ -503,6 +511,13 @@ pub enum JoltVirtualPolynomial {
     // constant folded into the chunk reconstruction). Appended for codec
     // stability.
     FusedInc,
+    /// Product-virtualized `OpFlags(UsesCarry) * Carry` (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    CarryUsed,
+    /// The row's carry-out, checked against the next row's committed `Carry`
+    /// by the shift relation (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    NextCarry,
 }
 
 #[derive(

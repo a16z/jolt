@@ -870,6 +870,8 @@ pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelatio
             JoltRelationId::ProgramImageClaimReduction
         }
         prover_opening::SumcheckId::IncClaimReduction => JoltRelationId::IncClaimReduction,
+        #[cfg(feature = "implicit-carry")]
+        prover_opening::SumcheckId::CarryClaimReduction => JoltRelationId::CarryClaimReduction,
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
         }
@@ -947,6 +949,8 @@ fn convert_committed_polynomial(
         prover_witness::CommittedPolynomial::ProgramImageBytes => {
             JoltCommittedPolynomial::ProgramImageBytes
         }
+        #[cfg(feature = "implicit-carry")]
+        prover_witness::CommittedPolynomial::Carry => JoltCommittedPolynomial::Carry,
     }
 }
 
@@ -1043,6 +1047,10 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
             JoltVirtualPolynomial::ProgramImageInitContributionRw
         }
         prover_witness::VirtualPolynomial::FusedInc => JoltVirtualPolynomial::FusedInc,
+        #[cfg(feature = "implicit-carry")]
+        prover_witness::VirtualPolynomial::CarryUsed => JoltVirtualPolynomial::CarryUsed,
+        #[cfg(feature = "implicit-carry")]
+        prover_witness::VirtualPolynomial::NextCarry => JoltVirtualPolynomial::NextCarry,
     }
 }
 
@@ -1077,6 +1085,10 @@ fn convert_circuit_flag(flag: prover_instruction::CircuitFlags) -> jolt_riscv::C
         prover_instruction::CircuitFlags::IsLastInSequence => {
             jolt_riscv::CircuitFlags::IsLastInSequence
         }
+        #[cfg(feature = "implicit-carry")]
+        prover_instruction::CircuitFlags::UsesCarry => jolt_riscv::CircuitFlags::UsesCarry,
+        #[cfg(feature = "implicit-carry")]
+        prover_instruction::CircuitFlags::ProducesCarry => jolt_riscv::CircuitFlags::ProducesCarry,
     }
 }
 

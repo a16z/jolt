@@ -77,6 +77,11 @@ pub enum CommittedPolynomial {
     /// Byte one-hot decomposition of the program image words
     /// (lattice/packed mode; a `ProgramOneHot` slot).
     ProgramImageBytes,
+    /// The row's incoming implicit carry (the previous row's carry-out).
+    /// Dense u64 column; grounds the implicit-carry chain in the claim DAG.
+    /// Appended last for serialization-tag stability.
+    #[cfg(feature = "implicit-carry")]
+    Carry,
 }
 
 /// Returns a list of symbols representing all committed polynomials.
@@ -91,6 +96,12 @@ pub fn all_committed_polynomials(one_hot_params: &OneHotParams) -> Vec<Committed
     for i in 0..one_hot_params.bytecode_d {
         polynomials.push(CommittedPolynomial::BytecodeRa(i));
     }
+    // WARNING: appended last; `commitments_from_proof_payload_order` and the
+    // verifier's `proof_commitment_order` split this list positionally and
+    // must pull `Carry` explicitly (the trailing `BytecodeRa` collect would
+    // otherwise swallow it silently).
+    #[cfg(feature = "implicit-carry")]
+    polynomials.push(CommittedPolynomial::Carry);
     polynomials
 }
 
@@ -128,6 +139,14 @@ impl CommittedPolynomial {
                         }
                         _ => 0,
                     })
+                    .collect();
+                PCS::process_chunk(&preprocessing.generators, &row)
+            }
+            #[cfg(feature = "implicit-carry")]
+            CommittedPolynomial::Carry => {
+                let row: Vec<i128> = row_cycles
+                    .iter()
+                    .map(|cycle| cycle.carry() as i128)
                     .collect();
                 PCS::process_chunk(&preprocessing.generators, &row)
             }
@@ -234,6 +253,11 @@ impl CommittedPolynomial {
                         post_value as i128 - pre_value as i128
                     })
                     .collect();
+                coeffs.into()
+            }
+            #[cfg(feature = "implicit-carry")]
+            CommittedPolynomial::Carry => {
+                let coeffs: Vec<u64> = trace.par_iter().map(|cycle| cycle.carry()).collect();
                 coeffs.into()
             }
             CommittedPolynomial::RamInc => {
@@ -364,4 +388,13 @@ pub enum VirtualPolynomial {
     /// The gamma-batched RamInc/RdInc stream of the lattice mode; its
     /// destination selector is the existing `OpFlags(Store)` flag.
     FusedInc,
+    /// Product-virtualized `OpFlags(UsesCarry) * Carry`: the carry actually
+    /// consumed by the row (equals `Carry` on `ADDC`/`MULC` rows, else 0).
+    #[cfg(feature = "implicit-carry")]
+    CarryUsed,
+    /// The row's carry-out: the high 64 bits of the true arithmetic result on
+    /// carry-producing rows, 0 elsewhere. Checked against the next row's
+    /// committed `Carry` by the shift relation.
+    #[cfg(feature = "implicit-carry")]
+    NextCarry,
 }

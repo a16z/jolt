@@ -77,9 +77,11 @@ field-inline = [
   "tracer/field-inline",
 ]
 implicit-carry = [
+  "jolt-claims?/implicit-carry",
   "jolt-lookup-tables/implicit-carry",
   "jolt-program/implicit-carry",
   "jolt-riscv/implicit-carry",
+  "jolt-verifier/implicit-carry",
   "tracer/implicit-carry",
 ]
 transcript-poseidon = ["dep:light-poseidon", "challenge-254-bit"]
