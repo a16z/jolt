@@ -34,6 +34,10 @@ const REGS: usize = REGISTER_COUNT as usize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Class {
     Supported,
+    /// Implemented, but only legal inside a source group that computes
+    /// advice; a bare row must be a compile-time error (never a stale
+    /// advice-slot read), so the single-row harness cannot drive it.
+    RequiresAdviceGroup,
     NotYetSupported,
 }
 
@@ -106,14 +110,15 @@ const SUPPORTED: &[&str] = &[
     "VirtualChangeDivisorW",
     "VirtualAdviceLen",
     "VirtualAdviceLoad",
-    // Slice 3b: value comes from the group's advice slots, so the
-    // single-row harness cannot drive it; whole-guest gates cover it
-    // (muldiv's DIV/REM groups).
-    "VirtualAdvice",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
-    if SUPPORTED.contains(&marker) {
+    // Slice 3b: VirtualAdvice reads the group's advice slots, filled by the
+    // group's advice computation; whole-guest gates cover it (muldiv's
+    // DIV/REM groups, the inline guests).
+    if marker == "VirtualAdvice" {
+        Class::RequiresAdviceGroup
+    } else if SUPPORTED.contains(&marker) {
         Class::Supported
     } else {
         Class::NotYetSupported
@@ -156,7 +161,8 @@ fn default_row(kind: JoltInstructionKind) -> JoltInstructionRow {
 }
 
 /// The classification must agree with what the transpiler accepts: every
-/// supported kind compiles, every unsupported kind fails fast.
+/// supported kind compiles as a bare row, everything else fails fast
+/// (unimplemented kinds and advice-group-only kinds alike).
 #[test]
 fn classification_matches_compiler() {
     for &kind in JoltInstructionKind::ALL {
@@ -171,6 +177,23 @@ fn classification_matches_compiler() {
             kind
         );
     }
+}
+
+/// Regression: a `VirtualAdvice` row in a group without an advice
+/// computation must be refused at compile time with the advice-specific
+/// error, not compiled into a stale-slot read (and not rejected as merely
+/// unsupported).
+#[test]
+fn bare_virtual_advice_is_a_compile_error() {
+    let mut row = default_row(kind_by_name("VirtualAdvice"));
+    row.operands.rd = Some(5);
+    let error = harness::compile_only(&single_row_program(row))
+        .expect_err("bare VirtualAdvice must not compile");
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("without an advice computation"),
+        "expected the advice-group error, got: {message}"
+    );
 }
 
 // ── Random row/state generation ─────────────────────────────────────
@@ -692,10 +715,11 @@ difftests! {
     diff_advice_load => advice_load;
 }
 
-/// Every supported kind has a differential test above (one test per kind,
-/// 39 of each); this pins the count so growing SUPPORTED without adding a
-/// test fails.
+/// Every supported kind has a differential test above; this pins the count
+/// so growing SUPPORTED without adding a test fails. (`VirtualAdvice` is
+/// classified `RequiresAdviceGroup`, not listed here: a bare row is a
+/// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 67);
+    assert_eq!(SUPPORTED.len(), 66);
 }

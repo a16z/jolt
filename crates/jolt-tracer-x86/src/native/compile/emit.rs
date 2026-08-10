@@ -942,6 +942,14 @@ impl DynasmEmitter {
             K::VirtualAdvice(_) => {
                 // The value comes from this group's advice slots, filled before
                 // the group's first row ran; slots are consumed in row order.
+                // A group without an advice computation has no values to read
+                // (the slots still hold a previous group's), so refuse at
+                // compile time rather than emit a stale-slot read.
+                if !e.advice_ready {
+                    return Err(TraceError::Backend(
+                        "VirtualAdvice row in a group without an advice computation",
+                    ));
+                }
                 let slot = e.advice_slot;
                 if slot >= super::super::state::ADVICE_SLOTS {
                     return Err(TraceError::Backend(
