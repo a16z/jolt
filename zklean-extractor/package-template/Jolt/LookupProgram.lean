@@ -38,7 +38,7 @@ theorem LookupProgram.correspondence
 
 /-- Check that the verifier's extracted field expression is syntactically multilinear. -/
 def LookupProgram.check {n : Nat} (program : LookupProgram n) : Bool :=
-  program.mle.toExpr.isSyntacticallyMultilinear
+  program.mle.checkMultilinear
 
 /-- Evaluate a lookup program on a vector of field elements. -/
 def LookupProgram.evalVector
@@ -81,6 +81,8 @@ theorem LookupProgram.isLookupTableMLE
         program.mle.toExpr.eval from by
           funext point
           exact program.evalVector_ofFn point]
+    change program.mle.checkMultilinear = true at h
+    rw [program.mle.checkMultilinear_eq_toExpr] at h
     exact program.mle.toExpr.isMultiAffine (F := F) h
   · intro point
     change program.evalVector (Vector.ofFn (fun i => boolCast (point i))) = _

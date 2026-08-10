@@ -10,16 +10,13 @@ use std::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::{
-    lookups::ZkLeanLookupTables,
-    modules::{AsModule, Module},
-};
+use crate::{lookups::ZkLeanLookupTables, modules::Module};
 
 const FORMAT_VERSION: u32 = 1;
 const MANIFEST_PATH: &str = "lookup-artifact.json";
 const SOURCE_REPOSITORY: &str = "https://github.com/a16z/jolt";
 
-const RUNTIME_FILES: [(&str, &[u8]); 6] = [
+const RUNTIME_FILES: [(&str, &[u8]); 7] = [
     (
         "Jolt/LookupExpression.lean",
         include_bytes!("../package-template/Jolt/LookupExpression.lean"),
@@ -31,6 +28,10 @@ const RUNTIME_FILES: [(&str, &[u8]); 6] = [
     (
         "Jolt/LookupGraphExpression.lean",
         include_bytes!("../package-template/Jolt/LookupGraphExpression.lean"),
+    ),
+    (
+        "Jolt/LookupGraphCertificate.lean",
+        include_bytes!("../package-template/Jolt/LookupGraphCertificate.lean"),
     ),
     (
         "Jolt/MaterializerGraph.lean",
@@ -75,18 +76,17 @@ impl LookupArtifact {
     pub fn extract<const XLEN: usize>(source_revision: &str) -> Result<Self, String> {
         let source_revision = validate_source_revision(source_revision)?;
         let lookup_tables = ZkLeanLookupTables::<XLEN>::extract()?;
-        let lookup_module = lookup_tables
-            .as_module()
+        let lookup_modules = lookup_tables
+            .as_modules()
             .map_err(|error| error.to_string())?;
 
         let mut files = RUNTIME_FILES
             .into_iter()
             .map(|(path, contents)| (path.to_string(), contents.to_vec()))
             .collect::<BTreeMap<_, _>>();
-        files.insert(
-            "Jolt/LookupTables.lean".to_string(),
-            render_module(lookup_module),
-        );
+        for module in lookup_modules {
+            files.insert(format!("Jolt/{}.lean", module.name), render_module(module));
+        }
 
         let file_entries = files
             .iter()
@@ -240,8 +240,12 @@ mod tests {
         assert_eq!(manifest["format_version"], 1);
         assert_eq!(manifest["source_revision"], REVISION);
         assert_eq!(manifest["xlen"], 8);
-        assert_eq!(manifest["files"].as_array().unwrap().len(), 7);
+        assert!(manifest["files"].as_array().unwrap().len() > 7);
         assert!(first.files.contains_key("Jolt/LookupTables.lean"));
+        assert!(first
+            .files
+            .keys()
+            .any(|path| path.starts_with("Jolt/LookupCertificateAnd_8_lookup_table")));
     }
 
     #[test]

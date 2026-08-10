@@ -28,6 +28,30 @@ pub struct LookupGraph {
 const LEAN_NODE_CHUNK_SIZE: usize = 32;
 
 impl LookupGraph {
+    fn write_node_for_lean(
+        output: &mut String,
+        node: &LookupGraphNode,
+        indent: &str,
+    ) -> fmt::Result {
+        match node {
+            LookupGraphNode::Constant(value) => writeln!(
+                output,
+                "{indent}.constant {},",
+                scalar_to_decimal_string(value)
+            ),
+            LookupGraphNode::Input(index) => writeln!(output, "{indent}.input {index},"),
+            LookupGraphNode::Add(left, right) => {
+                writeln!(output, "{indent}.add {left} {right},")
+            }
+            LookupGraphNode::Sub(left, right) => {
+                writeln!(output, "{indent}.sub {left} {right},")
+            }
+            LookupGraphNode::Mul(left, right) => {
+                writeln!(output, "{indent}.mul {left} {right},")
+            }
+        }
+    }
+
     /// Preserve arena sharing while converting the lookup subset of `MleAst`.
     pub fn from_mle_ast(ast: &MleAst, num_inputs: usize) -> Result<Self, String> {
         struct Builder {
@@ -133,6 +157,76 @@ impl LookupGraph {
 
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    /// Return the root node's index in the emitted topological order.
+    pub fn root_index(&self) -> usize {
+        self.root
+    }
+
+    /// Compute compact support summaries for every graph node.
+    pub fn multilinearity_summaries(&self, arity: usize) -> Result<Vec<(u128, bool)>, String> {
+        if arity > u128::BITS as usize {
+            return Err(format!(
+                "multilinearity certificates support at most {} inputs, got {arity}",
+                u128::BITS
+            ));
+        }
+
+        let mut summaries: Vec<(u128, bool)> = Vec::with_capacity(self.nodes.len());
+        for chunk in self.nodes.chunks(LEAN_NODE_CHUNK_SIZE) {
+            for node in chunk {
+                let summary = match node {
+                    LookupGraphNode::Constant(_) => (0, true),
+                    LookupGraphNode::Input(index) => {
+                        if *index >= arity {
+                            return Err(format!(
+                                "lookup input {index} is outside certificate arity {arity}"
+                            ));
+                        }
+                        (1_u128 << *index, true)
+                    }
+                    LookupGraphNode::Add(left, right) | LookupGraphNode::Sub(left, right) => {
+                        let left = summaries
+                            .get(*left)
+                            .ok_or_else(|| format!("invalid certificate reference {left}"))?;
+                        let right = summaries
+                            .get(*right)
+                            .ok_or_else(|| format!("invalid certificate reference {right}"))?;
+                        (left.0 | right.0, left.1 && right.1)
+                    }
+                    LookupGraphNode::Mul(left, right) => {
+                        let left = summaries
+                            .get(*left)
+                            .ok_or_else(|| format!("invalid certificate reference {left}"))?;
+                        let right = summaries
+                            .get(*right)
+                            .ok_or_else(|| format!("invalid certificate reference {right}"))?;
+                        (left.0 | right.0, left.1 && right.1 && left.0 & right.0 == 0)
+                    }
+                };
+                summaries.push(summary);
+            }
+        }
+        Ok(summaries)
+    }
+
+    /// Format each emitted node chunk independently for certificate obligations.
+    pub fn chunks_for_lean(&self) -> Result<Vec<(usize, String)>, fmt::Error> {
+        self.nodes
+            .chunks(LEAN_NODE_CHUNK_SIZE)
+            .map(|chunk| {
+                let mut output = String::from("[");
+                if !chunk.is_empty() {
+                    output.push('\n');
+                }
+                for node in chunk {
+                    Self::write_node_for_lean(&mut output, node, "    ")?;
+                }
+                output.push(']');
+                Ok((chunk.len(), output))
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -252,27 +346,7 @@ impl LookupGraph {
         for chunk in self.nodes.chunks(LEAN_NODE_CHUNK_SIZE) {
             writeln!(output, "      [")?;
             for node in chunk {
-                match node {
-                    LookupGraphNode::Constant(value) => {
-                        writeln!(
-                            output,
-                            "        .constant {},",
-                            scalar_to_decimal_string(value)
-                        )?;
-                    }
-                    LookupGraphNode::Input(index) => {
-                        writeln!(output, "        .input {index},")?;
-                    }
-                    LookupGraphNode::Add(left, right) => {
-                        writeln!(output, "        .add {left} {right},")?;
-                    }
-                    LookupGraphNode::Sub(left, right) => {
-                        writeln!(output, "        .sub {left} {right},")?;
-                    }
-                    LookupGraphNode::Mul(left, right) => {
-                        writeln!(output, "        .mul {left} {right},")?;
-                    }
-                }
+                Self::write_node_for_lean(&mut output, node, "        ")?;
             }
             writeln!(output, "      ],")?;
         }
@@ -305,5 +379,30 @@ mod tests {
         let error = LookupGraph::from_mle_ast(&expression, 2).unwrap_err();
 
         assert_eq!(error, "lookup variable 2 is outside graph arity 2");
+    }
+
+    #[test]
+    fn multilinearity_summaries_detect_reused_support() {
+        let left = MleAst::from_var(0);
+        let right = MleAst::from_var(1);
+        let shared = left + right;
+        let graph = LookupGraph::from_mle_ast(&(shared * shared), 2).unwrap();
+
+        assert_eq!(
+            graph.multilinearity_summaries(2).unwrap().last(),
+            Some(&(3, false))
+        );
+    }
+
+    #[test]
+    fn multilinearity_summaries_accept_disjoint_support() {
+        let expression = MleAst::from_var(0) * MleAst::from_var(1);
+        let graph = LookupGraph::from_mle_ast(&expression, 2).unwrap();
+
+        assert_eq!(
+            graph.multilinearity_summaries(2).unwrap().last(),
+            Some(&(3, true))
+        );
+        assert!(graph.multilinearity_summaries(129).is_err());
     }
 }

@@ -8,6 +8,7 @@ use util::{read_fs_tree_recursively, FSResult, FSTree};
 const DEFAULT_TEMPLATE_YAML: &str = include_str!(env!("TEMPLATE_YAML_PATH"));
 
 /// A module to write to the ZkLean Jolt package
+#[derive(Clone)]
 pub struct Module {
     /// The name of the module. The filename will become `Jolt/{name}.lean`.
     pub name: String,
@@ -22,6 +23,12 @@ pub struct Module {
 // dispatch.
 pub trait AsModule {
     fn as_module(&self) -> std::io::Result<Module>;
+}
+
+impl AsModule for Module {
+    fn as_module(&self) -> std::io::Result<Module> {
+        Ok(self.clone())
+    }
 }
 
 /// Write each module, along with its imports, to `Jolt/{name}.lean` in a template directory.
