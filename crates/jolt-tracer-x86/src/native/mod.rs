@@ -27,9 +27,25 @@ use state::{ExitReason, GuestState, HostContext, Observation};
 /// Compiles a [`JoltProgram`]'s expanded bytecode to native code on first use
 /// and caches the artifact keyed by the program's identity, so repeated
 /// traces and chunk replays reuse it.
-#[derive(Default)]
 pub struct X86TracerBackend {
     cache: Option<CachedProgram>,
+    /// Minimum row distance between checkpoint snapshots in [`Self::execute`]
+    /// (each carries a full memory image; `skip_rows` covers the gap to the
+    /// chunk mark). Production default is [`MIN_SPACING_ROWS`]; tests lower it
+    /// to force the pause/resume machinery on small guests.
+    min_checkpoint_spacing_rows: usize,
+}
+
+/// Default minimum spacing between checkpoint snapshots, in rows.
+const MIN_SPACING_ROWS: usize = 1 << 16;
+
+impl Default for X86TracerBackend {
+    fn default() -> Self {
+        Self {
+            cache: None,
+            min_checkpoint_spacing_rows: MIN_SPACING_ROWS,
+        }
+    }
 }
 
 struct CachedProgram {
@@ -84,6 +100,15 @@ pub struct FastRunOutput {
 impl X86TracerBackend {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Override the minimum checkpoint spacing (rows). Test seam: production
+    /// keeps the default, tests shrink it so small guests exercise the
+    /// pause/resume path (`Paused` exits, multi-boundary selection, boundary
+    /// restore) that real spacing only reaches past 2^16 rows.
+    #[doc(hidden)]
+    pub fn set_min_checkpoint_spacing_rows(&mut self, rows: usize) {
+        self.min_checkpoint_spacing_rows = rows.max(1);
     }
 
     fn compiled(&mut self, program: &JoltProgram) -> Result<Arc<CompiledProgram>, TraceError> {
@@ -362,6 +387,15 @@ pub struct X86Checkpoint {
 }
 
 impl X86Checkpoint {
+    /// Rows this checkpoint discards between its boundary and the chunk mark.
+    /// Test seam: lets the chunk-composition tests assert that checkpoints
+    /// resume from nearby boundaries (i.e. that pausing actually happened)
+    /// rather than replaying the whole prefix.
+    #[doc(hidden)]
+    pub fn skip_rows(&self) -> usize {
+        self.skip_rows
+    }
+
     /// Largest expansion of one source instruction in the static bytecode.
     fn max_group_rows(bytecode: &[JoltInstructionRow]) -> usize {
         let mut longest = 1usize;
@@ -504,8 +538,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         // Run in increments, capturing a boundary at each pause. Checkpoints
         // carry a full image, so they are spaced at least this far apart
         // regardless of how small chunk_size is; `skip_rows` covers the gap.
-        const MIN_SPACING_ROWS: usize = 1 << 16;
-        let spacing = chunk_size.max(MIN_SPACING_ROWS);
+        let spacing = chunk_size.max(self.min_checkpoint_spacing_rows);
         loop {
             guest.row_limit = (guest.trace_len as usize + spacing) as u64;
             compiled.run_pausable(&mut guest)?;
