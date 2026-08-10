@@ -1,5 +1,13 @@
 //! Lattice-mode Hamming-weight claim reduction, extended with the fused
 //! increment's one-hot decomposition.
+//!
+//! WARNING: the decode leg is not a range check on `FusedInc`. One-hotness pins
+//! each digit and the carry only to `[-K/2, K/2)`, so the reachable set is the
+//! `K · 2^64` integers the balanced numeral spans (~`±2^71` at `K = 256`), not
+//! the honest `|delta| < 2^64`. That is safe because the encoding is injective,
+//! fp128 leaves 56 bits of headroom over `2^71`, and base mode commits `Inc`
+//! with no range relation at all — see "Increment range" in
+//! `specs/lattice-claims.md`. Do not treat this reduction as bounding `Inc`.
 
 use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};

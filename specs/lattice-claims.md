@@ -363,8 +363,11 @@ relation ids across variant sumcheck structs. The base
 `relations/booleanity/*` files stay untouched; the lattice variant reuses the
 base geometry helpers. Every increment column, including the carry, is a full
 `K x T` one-hot column and produces an opening at the common
-`(r_address, r_cycle)` point. For each cycle the carry row is one-hot at
-lane 0, 1, or K-1 — the three lanes a carry in `{0, +1, -1}` can occupy.
+`(r_address, r_cycle)` point. The honest encoder puts each cycle's carry row on
+lane 0, 1, or K-1 — the three lanes a carry in `{0, +1, -1}` occupies — but the
+relations enforce only one-hotness over all K lanes, so the carry is pinned to
+the same `[-K/2, K/2)` alphabet as the digits. See "Increment range" below for
+why that slack is safe.
 
 ### 3. Lattice `HammingWeightClaimReduction` (Stage 7)
 
@@ -386,6 +389,33 @@ bits batches:
 - **Outputs**: every RA, increment digit, and carry opening at the same full
   `(r_address, r_cycle)` point.
 - degree 2, `b` rounds, using the existing hamming batching challenge.
+
+**Increment range.** The decomposition is *not* a 64-bit range check on
+`FusedInc`, and nothing else range-checks it either. One-hotness pins every
+digit and the carry to `[-K/2, K/2)`, so the reachable set is the `K · 2^64`
+consecutive integers spanned by `Σ_j K^j·d_j + K^n·c` — roughly `±2^71` at
+`K = 256` — against an honest `|delta| < 2^64`. Restricting the carry to
+`{0, +1, -1}` would not close this: the digit columns alone already tile
+exactly `2^64` consecutive integers, so even then the window is `±1.5·2^64`.
+
+Three facts make the slack safe, none of them currently tested:
+
+1. The map `(digits, carry) → value` is a **bijection** onto that window: the
+   digit sum tiles exactly `K^n` consecutive integers and the carry's place
+   value is exactly `K^n`, so tiles abut without gap or overlap. A given
+   `FusedInc` therefore has at most one encoding — the honest one.
+2. No **field wraparound**: akita runs over fp128 (`p = 2^128 − c`, see
+   `jolt-field`'s akita binding), not BN254, so the margin over `2^71` is 56
+   bits. Growing `FUSED_INC_BITS` or the chunk width eats into it directly.
+3. `Inc` **carries no range obligation** in Jolt's design: in base mode
+   `RdInc`/`RamInc` are plain committed dense columns with no range relation at
+   all, so this decomposition's window is strictly *stronger* than the
+   non-akita baseline rather than weaker.
+
+If a real bound on `Inc` is ever wanted, the cheap shape is a public lane-mask
+leg in this reduction with no matching input term (the `upper_half_all_ones`
+pattern), costing one γ power — not a narrower carry column, which would break
+the shared-final-point invariant.
 
 There is no standalone increment reconstruction and no additional alignment
 sumcheck after Stage 7.

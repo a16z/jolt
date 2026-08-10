@@ -51,7 +51,9 @@ pub enum CommittedPolynomial {
     /// (lattice/packed mode only; a slot of the packed witness `W`).
     BalancedIncDigit(usize),
     /// One-hot column carrying the signed carry above bit 63 of that
-    /// decomposition — a value in `{-1, 0, 1}`, not a bit
+    /// decomposition — a signed digit, not a bit. The honest encoder only
+    /// produces `{-1, 0, 1}`; the protocol pins it to the same `[-K/2, K/2)`
+    /// alphabet as the digits
     /// (lattice/packed mode only; a slot of the packed witness `W`).
     BalancedIncCarry,
     /// One-hot register selector `(chunk, lane)` of the precommitted

@@ -616,8 +616,9 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
 
 /// Extends the base Booleanity parameters with the increment digits and
 /// the carry. Every added member is a full `(address ‖ cycle)` one-hot
-/// polynomial over the same `K` lanes; the carry decodes to a signed value, so
-/// it selects lane `0`, `1`, or `K - 1`. The batching weights therefore grow
+/// polynomial over the same `K` lanes; the carry decodes to a signed value,
+/// which the honest encoder keeps in `{0, +1, -1}` though only the full
+/// alphabet is enforced. The batching weights therefore grow
 /// by `chunk_count + 1`, and every added member participates in both phases.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub fn lattice_booleanity_params<F: JoltField>(
@@ -655,8 +656,10 @@ pub fn lattice_booleanity_params<F: JoltField>(
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub struct FusedIncColumns {
     /// One-hot hot-address lanes: the increment digit columns in index
-    /// order, then the carry column (hot lane `0`, `1`, or `K - 1`) last — the
-    /// batching order of [`lattice_booleanity_params`]. Lanes are never
+    /// order, then the carry column last (which this encoder keeps on lane
+    /// `0`, `1`, or `K - 1`, though the protocol enforces only one-hotness
+    /// over all `K`) — the batching order of
+    /// [`lattice_booleanity_params`]. Lanes are never
     /// `None`: Booleanity must see the lane-zero-*inclusive* columns, unlike
     /// the commitment, which omits lane zero and lets Stage 7 reconstruct it.
     /// The `Option` is the [`RaPolynomial`] index encoding.
