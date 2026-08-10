@@ -43,9 +43,10 @@ impl LatticeBooleanityDimensions {
 }
 
 /// Every boolean-checked opening at the booleanity point: the base `Ra`
-/// families, unsigned-inc chunks, and increment MSB at the same full
-/// `(r_address || r_cycle)` point. The MSB column is a strict one-hot column
-/// whose hot address is zero or one.
+/// families, unsigned-inc chunks, and the increment carry at the same full
+/// `(r_address || r_cycle)` point. The carry column is a strict one-hot column
+/// over the same `K` lanes as the digits; it decodes to the signed carry above
+/// bit 63, so its hot lane is `0`, `1`, or `K - 1` (which decodes to `-1`).
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(

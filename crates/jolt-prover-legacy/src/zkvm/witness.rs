@@ -46,10 +46,12 @@ pub enum CommittedPolynomial {
     UntrustedAdvice,
     /// Program image (initial RAM image) polynomial for committed program mode.
     ProgramImageInit,
-    /// One-hot chunk column `j` of the fused unsigned increment stream
+    /// One-hot digit column `j` of the fused increment's balanced radix-`K`
+    /// decomposition; the decoded digit is centered in `[-K/2, K/2)`
     /// (lattice/packed mode only; a slot of the packed witness `W`).
     UnsignedIncChunk(usize),
-    /// Boolean msb column of the fused unsigned increment stream
+    /// One-hot column carrying the signed carry above bit 63 of that
+    /// decomposition — a value in `{-1, 0, 1}`, not a bit
     /// (lattice/packed mode only; a slot of the packed witness `W`).
     UnsignedIncMsb,
     /// One-hot register selector `(chunk, lane)` of the precommitted

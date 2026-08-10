@@ -615,8 +615,9 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
 }
 
 /// Extends the base Booleanity parameters with the unsigned-inc chunks and
-/// MSB. Every added member is a full `(address ‖ cycle)` one-hot polynomial;
-/// the MSB selects address zero or one. The batching weights therefore grow
+/// the carry. Every added member is a full `(address ‖ cycle)` one-hot
+/// polynomial over the same `K` lanes; the carry decodes to a signed value, so
+/// it selects lane `0`, `1`, or `K - 1`. The batching weights therefore grow
 /// by `chunk_count + 1`, and every added member participates in both phases.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub fn lattice_booleanity_params<F: JoltField>(
@@ -654,9 +655,11 @@ pub fn lattice_booleanity_params<F: JoltField>(
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub struct FusedIncColumns {
     /// One-hot hot-address lanes: the unsigned-inc chunk columns in index
-    /// order, then the MSB column (hot address zero or one) last — the
+    /// order, then the carry column (hot lane `0`, `1`, or `K - 1`) last — the
     /// batching order of [`lattice_booleanity_params`]. Lanes are never
-    /// `None`; the `Option` is the [`RaPolynomial`] index encoding.
+    /// `None`: Booleanity must see the lane-zero-*inclusive* columns, unlike
+    /// the commitment, which omits lane zero and lets Stage 7 reconstruct it.
+    /// The `Option` is the [`RaPolynomial`] index encoding.
     pub one_hot: Vec<Arc<Vec<Option<u8>>>>,
     /// The signed fused delta per cycle.
     pub fused: Vec<i128>,
