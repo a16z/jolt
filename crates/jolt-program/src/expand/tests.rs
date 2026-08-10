@@ -458,6 +458,9 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // LRW/SCW, which recursively embed the word-load expansion.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
+    // WARNING: guards against accidental truncation when re-baselining (a
+    // filtering rewrite of the fixture must not drop unchanged entries).
+    assert_eq!(cases.len(), 360);
 
     for case in cases {
         let mut allocator = ExpansionAllocator::new();
