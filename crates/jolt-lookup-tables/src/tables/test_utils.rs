@@ -2,7 +2,6 @@ use jolt_field::Field;
 use rand::prelude::*;
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
-use crate::interleave::interleave_bits;
 use crate::lookup_bits::LookupBits;
 use crate::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use crate::tables::suffixes::SuffixEval;
@@ -22,28 +21,6 @@ pub fn index_to_field_bitvector<F: Field + ChallengeOps<F>>(value: u128, bits: u
         }
     }
     bitvector
-}
-
-pub fn gen_bitmask_lookup_index<const XLEN: usize>(rng: &mut StdRng) -> u128 {
-    let mask = ((1u128 << XLEN) - 1) as u64;
-    let x = rng.next_u64() & mask;
-    let zeros = rng.gen_range(0..=XLEN);
-    let y_full = (!0u64).wrapping_shl(zeros as u32);
-    let y = y_full & mask;
-    interleave_bits(x, y)
-}
-
-pub fn gen_bitmask_w_lookup_index<const XLEN: usize>(rng: &mut StdRng) -> u128 {
-    let x_mask = if XLEN == 64 {
-        u64::MAX
-    } else {
-        (1u64 << XLEN) - 1
-    };
-    let half = XLEN / 2;
-    let x = rng.next_u64() & x_mask;
-    let shift = rng.gen_range(0..half);
-    let y = ((1u128 << half) - (1u128 << shift)) as u64;
-    interleave_bits(x, y)
 }
 
 /// Verify the MLE of `T` agrees with `materialize_entry` on every point of
@@ -120,7 +97,7 @@ fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
     let mut rng = StdRng::seed_from_u64(12345);
 
     for _ in 0..num_runs {
-        let lookup_index = T::random_lookup_index(&mut rng);
+        let lookup_index = T::default().random_lookup_index(&mut rng);
         let full_bits = LookupBits::new(lookup_index, total_bits);
 
         let mut checkpoints: Vec<PrefixEval<F>> = ALL_PREFIXES
