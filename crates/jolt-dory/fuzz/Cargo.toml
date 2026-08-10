@@ -1,5 +1,15 @@
 [workspace]
 
+# The fuzz sub-workspace does not inherit the root workspace's `[patch.crates-io]`.
+# `light-poseidon` (via jolt-transcript) pulls unpatched `ark-ff` from crates.io;
+# jolt-dory's types are built against the patched fork. Apply the same patches
+# here so both sides see the same `ark-ff`.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
 [package]
 name = "jolt-dory-fuzz"
 version = "0.0.0"
@@ -9,8 +19,27 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.jolt-fuzz.targets.deser_commitment]
+focus = "defensive"
+pr-seconds = 15
+daily-seconds = 300
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.verify_tampered]
+focus = "soundness"
+pr-seconds = 20
+daily-seconds = 300
+weekly-seconds = 900
+
+[package.metadata.jolt-fuzz.targets.zk_mode_confusion]
+focus = "soundness"
+pr-seconds = 60
+daily-seconds = 1500
+weekly-seconds = 2700
+
 [dependencies]
 libfuzzer-sys = "0.4"
+dory = { package = "dory-pcs", version = "0.4.0" }
 jolt-dory = { path = ".." }
 jolt-field = { path = "../../jolt-field" }
 jolt-openings = { path = "../../jolt-openings" }
@@ -24,9 +53,20 @@ rand_chacha = "0.3"
 [[bin]]
 name = "deser_commitment"
 path = "fuzz_targets/deser_commitment.rs"
+test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "verify_tampered"
 path = "fuzz_targets/verify_tampered.rs"
+test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "zk_mode_confusion"
+path = "fuzz_targets/zk_mode_confusion.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,39 @@
+[workspace]
+
+# The fuzz sub-workspace does not inherit the root workspace's `[patch.crates-io]`.
+# Keep Dory and transcript dependencies on the same patched arkworks fork.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
+[package]
+name = "jolt-openings-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[package.metadata.jolt-fuzz.targets.dory_homomorphic_batch_must_reject]
+focus = "soundness"
+pr-seconds = 30
+daily-seconds = 1200
+weekly-seconds = 3600
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-dory = { path = "../../jolt-dory" }
+jolt-field = { path = "../../jolt-field", features = ["bn254"] }
+jolt-openings = { path = ".." }
+jolt-poly = { path = "../../jolt-poly" }
+jolt-transcript = { path = "../../jolt-transcript" }
+
+[[bin]]
+name = "dory_homomorphic_batch_must_reject"
+path = "fuzz_targets/dory_homomorphic_batch_must_reject.rs"
+test = false
+doc = false
+bench = false
