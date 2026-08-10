@@ -288,8 +288,8 @@ mod tests {
     #[test]
     fn checkout_revision_rejects_wrong_head() {
         let (checkout, head) = clean_checkout();
-        let wrong_head = if head.starts_with('0') {
-            format!("1{}", &head[1..])
+        let wrong_head = if let Some(stripped) = head.strip_prefix('0') {
+            format!("1{stripped}")
         } else {
             format!("0{}", &head[1..])
         };
