@@ -38,9 +38,33 @@ struct CachedProgram {
 }
 
 impl CachedProgram {
-    /// FNV-1a over the ELF bytes: cheap, stable identity for the compile cache.
-    fn fingerprint(bytes: &[u8]) -> u64 {
-        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    /// Cheap, stable identity for the compile cache.
+    ///
+    /// The compiled artifact is a function of the expanded bytecode, which
+    /// `build_jolt_program*` derives deterministically from the ELF, the
+    /// instruction profile, and the linked inline registry (fixed at link
+    /// time). Hashing millions of rows per trace call would cost more than
+    /// the compile it saves, so the key is FNV-1a over the ELF bytes plus the
+    /// profile and two cheap bytecode guards (length, entry) that also
+    /// separate hand-assembled `from_parts` programs sharing an ELF.
+    fn fingerprint(program: &JoltProgram) -> u64 {
+        let mut hash = Self::fnv_extend(0xcbf2_9ce4_8422_2325, program.elf_bytes());
+        // Domain-separated so source and inline extension lists cannot alias.
+        for &extension in program.profile.source_extensions {
+            hash = Self::fnv_extend(hash, &[b'S', extension as u8]);
+        }
+        for &extension in program.profile.inline_extensions {
+            hash = Self::fnv_extend(hash, &[b'I', extension as u8]);
+        }
+        hash = Self::fnv_extend(
+            hash,
+            &(program.expanded_bytecode.len() as u64).to_le_bytes(),
+        );
+        hash = Self::fnv_extend(hash, &program.entry_address.to_le_bytes());
+        hash
+    }
+
+    fn fnv_extend(mut hash: u64, bytes: &[u8]) -> u64 {
         for &byte in bytes {
             hash ^= byte as u64;
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
@@ -63,7 +87,7 @@ impl X86TracerBackend {
     }
 
     fn compiled(&mut self, program: &JoltProgram) -> Result<Arc<CompiledProgram>, TraceError> {
-        let fingerprint = CachedProgram::fingerprint(program.elf_bytes());
+        let fingerprint = CachedProgram::fingerprint(program);
         if let Some(cached) = &self.cache {
             if cached.fingerprint == fingerprint {
                 return Ok(Arc::clone(&cached.compiled));
@@ -588,5 +612,84 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             &observations[checkpoint.skip_rows..],
         )?;
         Ok(OwnedTrace::new(rows))
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used)]
+mod tests {
+    use super::*;
+    use jolt_riscv::{NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
+
+    /// A one-row program (an always-taken self-branch) that compiles under
+    /// any profile, with a fake ELF identity for cache-key tests.
+    fn program_with_profile(profile: jolt_riscv::JoltInstructionProfile) -> JoltProgram {
+        let terminal = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::BEQ,
+            address: 0x8000_1000,
+            operands: NormalizedOperands {
+                rs1: Some(0),
+                rs2: Some(0),
+                rd: None,
+                imm: 0,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: true,
+            is_compressed: false,
+        };
+        JoltProgram::from_parts_with_profile(
+            Vec::new(),
+            vec![terminal],
+            Vec::new(),
+            0x8000_0400,
+            0x8000_1000,
+            profile,
+        )
+    }
+
+    /// Same ELF under a different instruction profile expands to different
+    /// bytecode, so it must miss the compile cache and recompile.
+    #[test]
+    fn cache_recompiles_when_only_the_profile_differs() {
+        let base = program_with_profile(RV64IMAC_JOLT);
+        let mut inlines = base.clone();
+        inlines.profile = RV64IMAC_JOLT_ALL_INLINES;
+        assert_ne!(
+            CachedProgram::fingerprint(&base),
+            CachedProgram::fingerprint(&inlines),
+            "profile must be part of the cache key"
+        );
+
+        let mut backend = X86TracerBackend::new();
+        let first = backend.compiled(&base).expect("compile failed");
+        let second = backend.compiled(&inlines).expect("compile failed");
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "same-ELF program with a different profile reused the cached artifact"
+        );
+        // Unchanged identity is a hit, not a recompile.
+        let third = backend.compiled(&inlines).expect("compile failed");
+        assert!(Arc::ptr_eq(&second, &third));
+    }
+
+    /// Hand-assembled programs share an (empty) ELF; the bytecode guards must
+    /// still separate them.
+    #[test]
+    fn cache_key_separates_programs_sharing_an_elf() {
+        let one = program_with_profile(RV64IMAC_JOLT);
+        let mut two = one.clone();
+        two.expanded_bytecode
+            .extend_from_slice(&one.expanded_bytecode);
+        assert_ne!(
+            CachedProgram::fingerprint(&one),
+            CachedProgram::fingerprint(&two)
+        );
+
+        let mut entry = one.clone();
+        entry.entry_address += 4;
+        assert_ne!(
+            CachedProgram::fingerprint(&one),
+            CachedProgram::fingerprint(&entry)
+        );
     }
 }
