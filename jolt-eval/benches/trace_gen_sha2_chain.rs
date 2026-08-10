@@ -40,14 +40,26 @@ fn bench(c: &mut Criterion) {
     });
     // The AOT backend's arms exist only where it has native codegen;
     // elsewhere NativeBackend is the interpreter and these would duplicate
-    // the reference id.
+    // the reference id. One backend outside the measured region, warmed with
+    // an un-timed run: iterations must reuse the compile cache, not pay the
+    // one-time AOT compile per iteration.
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     {
+        let mut backend = jolt_tracer_x86::X86TracerBackend::new();
+        assert_eq!(
+            objective.run_x86_fast(&mut backend, &setup),
+            setup.trace_len
+        );
         group.bench_function("x86", |b| {
-            b.iter(|| assert_eq!(objective.run_x86(&setup), setup.trace_len))
+            b.iter(|| assert_eq!(objective.run_x86(&mut backend, &setup), setup.trace_len))
         });
         group.bench_function("x86_fast", |b| {
-            b.iter(|| assert_eq!(objective.run_x86_fast(&setup), setup.trace_len))
+            b.iter(|| {
+                assert_eq!(
+                    objective.run_x86_fast(&mut backend, &setup),
+                    setup.trace_len
+                );
+            })
         });
     }
     group.finish();
