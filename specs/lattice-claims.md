@@ -22,7 +22,7 @@ commitment homomorphism. Two consequences for Jolt:
    fast, so OneHotTrace and the auxiliary objects stay one-hot/boolean throughout — this is a
    performance choice, not a norm-bound requirement. Every committed column
    that is not already one-hot gets a one-hot encoding: the dense signed
-   `RdInc`/`RamInc` columns become a **fused, shifted, one-hot chunk
+   `RdInc`/`RamInc` columns become a **fused, balanced-digit, one-hot
    decomposition**, and all unstructured committed data (trusted/untrusted
    advice, program image, bytecode lanes) is byte one-hotted. The
    one-hot *validity* relations double as the range checks the reconstructions
@@ -47,7 +47,7 @@ V1 scope (full prototype parity):
 ```text
 canonical native one-hot OneHotTrace layout plus auxiliary prefix-packed objects
 inc fusion (RamInc/RdInc -> one Inc stream selected by the bytecode Store flag)
-base-2^b one-hot chunk decomposition + full one-hot msb column
+balanced radix-2^b one-hot digit decomposition + one-hot signed-carry column
 four fused-inc consumer val stages inside the bytecode read-RAF, discharging
     the reduced inc claims and producing the FusedInc opening at the shared
     stage-6b cycle point
@@ -78,7 +78,7 @@ structural validity (one-hot shape, store/rd disjointness, canonical imm
 bytes) checked **offline at preprocessing** — the verifier holds the public
 bytecode and program image, so no in-protocol relation is spent on them.
 In-protocol validity relations cover prover-supplied columns: the inc
-chunks/msb (via lattice Booleanity and HammingWeightClaimReduction) and
+digits/carry (via lattice Booleanity and HammingWeightClaimReduction) and
 untrusted advice bytes (via dedicated byte-validity relations, which are also
 the range checks for the reconstructed words). Trusted advice is one-hot encoded
 like everything else but precommitted by a party the verifier trusts, so its
@@ -155,8 +155,9 @@ BytecodeChunkReconstruction,     // chunk -> lane sub-column decode
 // JoltCommittedPolynomial — appended variants (committed only in lattice mode,
 // as native OneHotTrace columns or auxiliary packed columns; base mode never
 // constructs them)
-UnsignedIncChunk(usize),   // one-hot column j of the fused unsigned inc
-UnsignedIncMsb,            // full K x T one-hot column, hot address 0 or 1
+BalancedIncDigit(usize),   // centered digit j of the fused increment
+BalancedIncCarry,          // full K x T one-hot column; signed carry above
+                           // bit 63, so hot address 0, 1, or K-1
 TrustedAdviceBytes,        // byte one-hot advice encodings
 UntrustedAdviceBytes,
 // Precommitted bytecode sub-columns + program image bytes. These are real
@@ -175,8 +176,8 @@ ProgramImageBytes,
 // JoltVirtualPolynomial — appended variant
 FusedInc,                  // gamma-batched RamInc/RdInc stream; opened once,
                            // by the read-raf cycle phase at the shared 6b
-                           // cycle point; its +2^64 shift is folded into the
-                           // stage-7 hamming reduction
+                           // cycle point; the stage-7 hamming reduction
+                           // decodes the balanced digits against it
 ```
 
 Enum `Ord` is not protocol ordering. Every physical slot order is constructed
@@ -210,9 +211,9 @@ to zero and logical address lane zero virtualized out of the witness.
 /// Canonical per-proof OneHotTrace column order.
 pub fn one_hot_trace_columns(shape) -> Vec<JoltCommittedPolynomial>;
 // InstructionRa(0..I), BytecodeRa(0..B), RamRa(0..R)   log_k_chunk + log_T each
-// UnsignedIncChunk(0..N)                               log_k_chunk + log_T each
+// BalancedIncDigit(0..N)                               log_k_chunk + log_T each
 //                       (chunk width b = log_k_chunk, N = 64 / b)
-// UnsignedIncMsb                                       log_k_chunk + log_T
+// BalancedIncCarry                                       log_k_chunk + log_T
 
 // Advice columns are separate auxiliary objects, each over
 // 8 + 3 + advice_vars variables.
@@ -348,22 +349,22 @@ its `FusedInc` opening lands directly at the 6b cycle point — the point
 stage 7 consumes — as the relation's own output claim alongside the
 `BytecodeRa` openings.
 
-There is no separate unsigned-shift relation: `+2^64` is a constant, hence
-free at any opening point, and is folded into the Stage 7 decode leg below.
+There is no unsigned shift to undo: the balanced digits encode the signed
+increment directly, so the Stage 7 decode leg below carries no bias constant.
 There is also no second point-alignment sumcheck: the opening is born at the
 shared point.
 
 ### 2. Lattice `Booleanity` (same `JoltRelationId::Booleanity`)
 
 Same relation id, lattice-mode shape: the base output sum over `Ra` columns is
-extended with the `UnsignedIncChunk(0..N)` columns and the `UnsignedIncMsb`
+extended with the `BalancedIncDigit(0..N)` columns and the `BalancedIncCarry`
 booleanity term. Precedent: the full/committed bytecode modes already share
 relation ids across variant sumcheck structs. The base
 `relations/booleanity/*` files stay untouched; the lattice variant reuses the
-base geometry helpers. Every increment column, including the MSB, is a full
+base geometry helpers. Every increment column, including the carry, is a full
 `K x T` one-hot column and produces an opening at the common
-`(r_address, r_cycle)` point. For each cycle the MSB row is `[1,0,...]` or
-`[0,1,0,...]`.
+`(r_address, r_cycle)` point. For each cycle the carry row is one-hot at
+lane 0, 1, or K-1 — the three lanes a carry in `{0, +1, -1}` can occupy.
 
 ### 3. Lattice `HammingWeightClaimReduction` (Stage 7)
 
@@ -371,18 +372,18 @@ The existing RA hamming-weight claim reduction is extended, on the Akita path
 only, with the increment columns. One sumcheck over the `b = log_K` address
 bits batches:
 
-- **hamming weight**: every increment chunk and the MSB has exactly one hot
+- **hamming weight**: every increment digit and the carry has exactly one hot
   address per cycle row,
 - **claim reduction**: reduces the chunk openings produced by lattice
   Booleanity to Stage 7's bound address point, and
 - **value reconstruction**:
-  `Σ_j 2^(b*j) * address(chunk_j) + 2^64 * address(msb)
-   = FusedInc + 2^64`.
+  `Σ_j 2^(b*j) * value(digit_j) + 2^64 * value(carry) = FusedInc`, where
+   `value(lane) = lane` for `lane < K/2` and `lane - K` otherwise.
 
 - **Inputs**: `FusedInc@BytecodeReadRaf` (the read-raf cycle phase's own
-  output, already at the shared 6b cycle point), `UnsignedIncMsb@Booleanity`,
-  `UnsignedIncChunk(j)@Booleanity`.
-- **Outputs**: every RA, increment chunk, and MSB opening at the same full
+  output, already at the shared 6b cycle point), `BalancedIncCarry@Booleanity`,
+  `BalancedIncDigit(j)@Booleanity`.
+- **Outputs**: every RA, increment digit, and carry opening at the same full
   `(r_address, r_cycle)` point.
 - degree 2, `b` rounds, using the existing hamming batching challenge.
 
@@ -457,7 +458,7 @@ deriveds), a one-hot selector decode (`RegisterSelectorWeight(lane)` /
 `ImmByteDecode` deriveds, folding the lane weight). One sumcheck over the
 widest byte lane's `(byte ‖ place)` prefix with the row point fixed; the
 narrower selector legs bind only their suffix rounds and the flag legs none
-at all — mixed-round legs are precedented by the lattice booleanity's msb
+at all — mixed-round legs are precedented by the lattice booleanity's carry
 column. Inputs `Vec<BytecodeChunk@BytecodeClaimReduction>`; outputs one
 opening per sub-column slot. degree 2, `8 + max(3, log₂ imm_byte_width)`
 rounds. Draws `Gamma`.
@@ -470,7 +471,7 @@ would emit.
 ## Packed-Claim Invariants and Final Openings
 
 OneHotTrace's native batch requires one evaluation per committed column at exactly
-one point. Stage 7 therefore lands all RA, increment chunk, and MSB claims at
+one point. Stage 7 therefore lands all RA, increment digit, and carry claims at
 the same `(address || cycle)` point, after which Stage 8 applies the common
 row-major permutation. Any missing column, arity mismatch, or point mismatch
 is rejected before the native Akita verifier runs.
@@ -482,14 +483,22 @@ shorter claims into that domain by multiplying their value by
 is no generic arbitrary-point reduction sumcheck.
 
 **Padding invariant**: the hamming legs claim "exactly one hot cell per row"
-summed over the *full* Boolean hypercube, so padding rows must be encoded as
-the canonical shifted-zero encoding — never as all-zero cells. For fused
-increment zero, every chunk is hot at address zero and the MSB is hot at
-address one because the encoded value is `2^64`. This also applies to advice
-byte positions beyond the actual
-advice size (and, by the offline checks, to padded bytecode/program-image
-rows). All-zero padding would falsify the claimed input sums (`1` per chunk
-row, `γ` for the advice column).
+of the *semantic* column, summed over the full Boolean hypercube, so every row
+— padding included — must carry a hot lane. Which cells that puts in the
+commitment differs by object:
+
+- **OneHotTrace columns** omit lane zero: it is reconstructed from the
+  column's activation, so a row whose semantic hot lane is zero is physically
+  empty and the hamming leg is discharged by the reconstruction rather than by
+  committed cells. The balanced digit encoding is chosen so that a zero fused
+  increment lands every digit and the carry on lane zero, making padding rows
+  free. The prover must not invent a nonzero lane for them.
+- **Auxiliary prefix-packed objects** (advice bytes, precommitted bytecode
+  lanes) still commit lane zero, so their padding rows must be hot-lane-zero
+  hot and never all-zero — including advice byte positions beyond the actual
+  advice size and, by the offline checks, padded bytecode/program-image rows.
+  All-zero padding there would falsify the claimed input sums (`γ` for the
+  advice column).
 
 `lattice/packing.rs` is the single source of truth for the endgame:
 
@@ -514,8 +523,8 @@ pub fn final_opening(polynomial: JoltCommittedPolynomial) -> LatticeFinalOpening
 // BytecodeChunk(i)               -> Virtualized (via relation 9)
 // ProgramImageInit               -> Virtualized (via relation 8)
 // InstructionRa/BytecodeRa/RamRa -> Packed, from HammingWeightClaimReduction
-// UnsignedIncChunk(j)            -> Packed, from HammingWeightClaimReduction
-// UnsignedIncMsb                 -> Packed, from HammingWeightClaimReduction
+// BalancedIncDigit(j)            -> Packed, from HammingWeightClaimReduction
+// BalancedIncCarry                 -> Packed, from HammingWeightClaimReduction
 // {Un}trustedAdviceBytes         -> Packed, from relation 6/7
 // bytecode lane polynomials      -> Packed, from BytecodeChunkReconstruction
 // ProgramImageBytes              -> Packed, from ProgramImageReconstruction
@@ -537,7 +546,7 @@ base stage-8 RLC order for lattice mode.
   the `FusedInc` factor and produces its opening at the shared cycle point —
   there is no separate fused-inc member.
 - Stage 7 extends `HammingWeightClaimReduction` with hamming, Booleanity, and
-  shifted-decode terms for all increment one-hot columns.
+  balanced-decode terms for all increment one-hot columns.
 - Stage 8 selector-reduces `OneHotTrace` and every present auxiliary object,
   then runs one direct Akita opening per physical polynomial.
 - The Dory build instantiates the original Booleanity, increment claim
@@ -550,11 +559,11 @@ base stage-8 RLC order for lattice mode.
   assert the closed-form formula; assert `required_openings/deriveds/
   challenges` sets and opening order.
 - Reconstruction identity test: for random signed values,
-  `Σ 2^(b*j)·address(chunk_j) + 2^64·address(msb) − 2^64`
+  `Σ 2^(b*j)·value(digit_j) + 2^64·value(carry)`
   round-trips the value.
 - Semantic integration tests (`tests/lattice_semantics.rs`) over concrete
   witness data: every OneHotTrace column is a uniform `K x T` one-hot polynomial;
-  the chunk/MSB decomposition reconstructs signed increments including
+  the digit/carry decomposition reconstructs signed increments including
   padding; auxiliary lane/advice reconstruction terms reproduce the committed
   evaluations.
 - Determinism: `one_hot_trace_columns`/`precommitted_packing_plan` are pure functions of
@@ -569,7 +578,7 @@ base stage-8 RLC order for lattice mode.
 | `JoltOpeningId::Lattice { relation, index }` | deleted | untyped; hid polynomial identity and point identity |
 | `PackingValidityRequirement`/`PackingValidityKind` + digest | deleted | validity is not metadata; it is the validity **relations** (prover-supplied columns) or an **offline preprocessing check** (public precommitted columns) |
 | `PackingViewFormula`/`PackingViewTerm` | deleted | briefly survived as `ReconstructionTerm` lists, then replaced outright by the reconstruction *relations* (5–8) + the decode-weight point algebra; provenness follows from the column's validity story |
-| two-entry one-hot boolean-flag encoding | replaced for auxiliary public bytecode flags | plain 0/1 columns of `log_rows` variables; `1 − flag` is expression algebra, and the auxiliary commitment stays 0/1. The increment MSB is not such a flag: it is a full `K x T` OneHotTrace one-hot column. |
+| two-entry one-hot boolean-flag encoding | replaced for auxiliary public bytecode flags | plain 0/1 columns of `log_rows` variables; `1 − flag` is expression algebra, and the auxiliary commitment stays 0/1. The increment carry is not such a flag: it is a full `K x T` OneHotTrace one-hot column. |
 | bytecode store-rd-disjoint, canonical imm bytes, sub-column one-hot validity | moved offline | public precommitted data; the verifier checks structure at preprocessing instead of spending relations |
 | Public→Challenge enum migration (EqCycle etc.) | not ported | orthogonal to lattice; main's Derived model already covers it |
 | eq-polynomial / coefficient materialization helpers | not ported | belongs to verifier/witness crates per the boundary contract |

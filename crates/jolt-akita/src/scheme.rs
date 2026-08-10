@@ -1080,7 +1080,7 @@ mod flavor_bench {
         let union_vars = cell_vars + slots.next_power_of_two().ilog2() as usize;
         let mut state = 0x1234_5678;
 
-        // Per-slot hot lanes; the last slot mimics the msb column (lanes {0, 1}).
+        // Per-slot hot lanes; the last slot mimics a two-lane column.
         let slot_indices: Vec<Vec<Option<u8>>> = (0..slots)
             .map(|slot| {
                 (0..t)

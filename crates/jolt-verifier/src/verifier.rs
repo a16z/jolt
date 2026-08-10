@@ -1492,8 +1492,8 @@ mod tests {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
-                        unsigned_inc_chunks: Vec::new(),
-                        unsigned_inc_msb: zero,
+                        balanced_inc_digits: Vec::new(),
+                        balanced_inc_carry: zero,
                     },
                 ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
@@ -1522,9 +1522,9 @@ mod tests {
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
                         #[cfg(feature = "akita")]
-                        unsigned_inc_chunks: Vec::new(),
+                        balanced_inc_digits: Vec::new(),
                         #[cfg(feature = "akita")]
-                        unsigned_inc_msb: zero,
+                        balanced_inc_carry: zero,
                     },
                 trusted_advice: None,
                 untrusted_advice: None,

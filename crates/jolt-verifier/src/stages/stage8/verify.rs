@@ -368,8 +368,8 @@ where
                     .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
-                JoltCommittedPolynomial::UnsignedIncChunk(_)
-                | JoltCommittedPolynomial::UnsignedIncMsb
+                JoltCommittedPolynomial::BalancedIncDigit(_)
+                | JoltCommittedPolynomial::BalancedIncCarry
                 | JoltCommittedPolynomial::TrustedAdviceBytes
                 | JoltCommittedPolynomial::UntrustedAdviceBytes
                 | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }

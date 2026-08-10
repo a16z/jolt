@@ -17,7 +17,7 @@ use super::super::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use super::super::geometry::ra::JoltRaPolynomialLayout;
 use super::super::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
 use super::geometry::{
-    byte_num_vars, word_byte_num_vars, LatticeGeometryError, UnsignedIncChunking,
+    byte_num_vars, word_byte_num_vars, BalancedIncChunking, LatticeGeometryError,
 };
 
 /// Fixed selector capacity of the packed trace polynomial at K=16.
@@ -47,7 +47,7 @@ pub struct OneHotTraceShape {
     pub ra_layout: JoltRaPolynomialLayout,
     pub log_t: usize,
     /// Shared one-hot chunk size: the address bits of each `Ra` family and
-    /// the width of each unsigned-inc chunk (equal by the shared-final-point
+    /// the width of each increment digit (equal by the shared-final-point
     /// convention).
     pub log_k_chunk: usize,
 }
@@ -87,7 +87,7 @@ pub struct PrecommittedPackingPlan {
 pub fn one_hot_trace_columns(
     shape: &OneHotTraceShape,
 ) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
-    let chunking = UnsignedIncChunking::new(shape.log_k_chunk)?;
+    let chunking = BalancedIncChunking::new(shape.log_k_chunk)?;
     let _capacity = one_hot_trace_column_capacity(shape.log_k_chunk)?;
     let instruction_columns = 2 * XLEN / shape.log_k_chunk;
     if shape.ra_layout.instruction() != instruction_columns {
@@ -102,8 +102,8 @@ pub fn one_hot_trace_columns(
     let mut polynomials = (0..instruction_columns)
         .map(JoltCommittedPolynomial::InstructionRa)
         .collect::<Vec<_>>();
-    polynomials.extend((0..chunking.chunk_count()).map(JoltCommittedPolynomial::UnsignedIncChunk));
-    polynomials.push(JoltCommittedPolynomial::UnsignedIncMsb);
+    polynomials.extend((0..chunking.chunk_count()).map(JoltCommittedPolynomial::BalancedIncDigit));
+    polynomials.push(JoltCommittedPolynomial::BalancedIncCarry);
     polynomials.extend((0..shape.ra_layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa));
     polynomials.extend((0..shape.ra_layout.ram()).map(JoltCommittedPolynomial::RamRa));
     Ok(polynomials)
@@ -420,9 +420,9 @@ mod tests {
 
         assert_eq!(columns.len(), 16 + 8 + 1 + 2);
         assert_eq!(columns[0], JoltCommittedPolynomial::InstructionRa(0));
-        assert!(columns.contains(&JoltCommittedPolynomial::UnsignedIncChunk(7)));
-        assert_eq!(columns[16], JoltCommittedPolynomial::UnsignedIncChunk(0));
-        assert_eq!(columns[24], JoltCommittedPolynomial::UnsignedIncMsb);
+        assert!(columns.contains(&JoltCommittedPolynomial::BalancedIncDigit(7)));
+        assert_eq!(columns[16], JoltCommittedPolynomial::BalancedIncDigit(0));
+        assert_eq!(columns[24], JoltCommittedPolynomial::BalancedIncCarry);
         assert_eq!(columns[25], JoltCommittedPolynomial::BytecodeRa(0));
         assert_eq!(columns.last(), Some(&JoltCommittedPolynomial::RamRa(0)));
     }

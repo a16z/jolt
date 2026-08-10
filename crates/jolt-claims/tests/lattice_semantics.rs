@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::lattice::geometry::{
     balanced_inc_value, byte_decode_weight, selector_block_weight,
 };
 use jolt_claims::protocols::jolt::lattice::{
-    one_hot_trace_columns, OneHotTraceShape, UnsignedIncChunking,
+    one_hot_trace_columns, BalancedIncChunking, OneHotTraceShape,
 };
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_field::{Fr, FromPrimitiveInt, RingCore};
@@ -104,15 +104,15 @@ fn one_hot_trace_columns_share_a_uniform_semantic_domain() {
     };
     let members = one_hot_trace_columns(&shape).unwrap();
 
-    let chunk_count = UnsignedIncChunking::new(log_k_chunk).unwrap().chunk_count();
+    let chunk_count = BalancedIncChunking::new(log_k_chunk).unwrap().chunk_count();
     assert_eq!(chunk_count, 16);
     assert_eq!(members.len(), 51);
     assert_eq!(members[0], JoltCommittedPolynomial::InstructionRa(0));
-    assert_eq!(members[48], JoltCommittedPolynomial::UnsignedIncMsb);
+    assert_eq!(members[48], JoltCommittedPolynomial::BalancedIncCarry);
     assert_eq!(members.last(), Some(&JoltCommittedPolynomial::RamRa(0)));
 
     for (index, polynomial) in members.iter().enumerate() {
-        let hot = if *polynomial == JoltCommittedPolynomial::UnsignedIncMsb {
+        let hot = if *polynomial == JoltCommittedPolynomial::BalancedIncCarry {
             (0..1 << log_t).map(|t| t % 2).collect::<Vec<_>>()
         } else {
             (0..1 << log_t)
@@ -203,7 +203,7 @@ fn implicit_zero_recentering_matches_semantic_one_hot_at_random_points() {
 #[expect(clippy::unwrap_used)]
 fn balanced_chunk_decomposition_reconstructs_signed_increments() {
     let log_t = 3;
-    let chunking = UnsignedIncChunking::new(8).unwrap();
+    let chunking = BalancedIncChunking::new(8).unwrap();
     let count = chunking.chunk_count();
     assert_eq!(count, 8);
 

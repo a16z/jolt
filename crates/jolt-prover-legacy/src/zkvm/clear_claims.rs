@@ -662,7 +662,7 @@ mod packed {
     /// The packed (akita) analog of the base clear-claims projection: the
     /// base stage payloads plus the reconstruction phase cells, with the
     /// lattice stage-6b/7 shapes (the read-raf carries the fused-inc opening;
-    /// booleanity carries the unsigned-inc columns; there is no stage-6b inc
+    /// booleanity carries the increment columns; there is no stage-6b inc
     /// slot).
     pub(crate) fn build_packed_clear_claims<F: Field>(
         claims: impl IntoIterator<Item = (jolt::JoltOpeningId, F)>,
@@ -745,14 +745,14 @@ mod packed {
                 JoltRelationId::Booleanity,
             )
         });
-        let unsigned_inc_chunks = indexed_family(claims, |index| {
+        let balanced_inc_digits = indexed_family(claims, |index| {
             JoltOpeningId::committed(
-                JoltCommittedPolynomial::UnsignedIncChunk(index),
+                JoltCommittedPolynomial::BalancedIncDigit(index),
                 JoltRelationId::Booleanity,
             )
         });
-        let unsigned_inc_msb = claims.require(JoltOpeningId::committed(
-            JoltCommittedPolynomial::UnsignedIncMsb,
+        let balanced_inc_carry = claims.require(JoltOpeningId::committed(
+            JoltCommittedPolynomial::BalancedIncCarry,
             JoltRelationId::Booleanity,
         ))?;
 
@@ -774,8 +774,8 @@ mod packed {
                 instruction_ra: booleanity_instruction_ra,
                 bytecode_ra: booleanity_bytecode_ra,
                 ram_ra: booleanity_ram_ra,
-                unsigned_inc_chunks,
-                unsigned_inc_msb,
+                balanced_inc_digits,
+                balanced_inc_carry,
             },
             ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: claims.require(ram::ram_hamming_weight())?,
@@ -824,10 +824,10 @@ mod packed {
             });
         }
 
-        let chunks = indexed_family(claims, lattice_hamming::reduced_unsigned_inc_chunk_opening);
+        let chunks = indexed_family(claims, lattice_hamming::reduced_balanced_inc_digit_opening);
         if chunks.is_empty() {
             return Err(VerifierError::MissingOpeningClaim {
-                id: lattice_hamming::reduced_unsigned_inc_chunk_opening(0),
+                id: lattice_hamming::reduced_balanced_inc_digit_opening(0),
             });
         }
 
@@ -836,9 +836,9 @@ mod packed {
                 instruction_ra,
                 bytecode_ra,
                 ram_ra,
-                unsigned_inc_chunks: chunks,
-                unsigned_inc_msb: claims
-                    .require(lattice_hamming::reduced_unsigned_inc_msb_opening())?,
+                balanced_inc_digits: chunks,
+                balanced_inc_carry: claims
+                    .require(lattice_hamming::reduced_balanced_inc_carry_opening())?,
             },
             trusted_advice: advice_address_phase_claim_from_openings(
                 claims,

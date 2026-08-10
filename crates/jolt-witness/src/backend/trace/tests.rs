@@ -892,8 +892,8 @@ fn excluded_ids_report_their_classification() {
         assert_reason(JoltPolynomialId::Committed(id), COMMITTED_PROGRAM_REASON);
     }
     for id in [
-        JoltCommittedPolynomial::UnsignedIncChunk(0),
-        JoltCommittedPolynomial::UnsignedIncMsb,
+        JoltCommittedPolynomial::BalancedIncDigit(0),
+        JoltCommittedPolynomial::BalancedIncCarry,
         JoltCommittedPolynomial::TrustedAdviceBytes,
         JoltCommittedPolynomial::UntrustedAdviceBytes,
         JoltCommittedPolynomial::BytecodeLookupSelector { chunk: 0 },

@@ -263,12 +263,12 @@ fn validate_cycle_phase_claim_shape<F: Field>(
         });
     }
 
-    // The packed unsigned-inc chunk claims: one per chunk of the shared
+    // The packed increment digit claims: one per chunk of the shared
     // one-hot chunking.
     #[cfg(feature = "akita")]
     {
         let expected_chunks =
-            jolt_claims::protocols::jolt::lattice::geometry::UnsignedIncChunking::new(
+            jolt_claims::protocols::jolt::lattice::geometry::BalancedIncChunking::new(
                 committed_chunk_bits,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -276,12 +276,12 @@ fn validate_cycle_phase_claim_shape<F: Field>(
                 reason: error.to_string(),
             })?
             .chunk_count();
-        if claims.booleanity.unsigned_inc_chunks.len() != expected_chunks {
+        if claims.booleanity.balanced_inc_digits.len() != expected_chunks {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::Booleanity,
                 reason: format!(
-                    "unsigned-inc chunk claim count mismatch: expected {expected_chunks}, got {}",
-                    claims.booleanity.unsigned_inc_chunks.len()
+                    "increment digit claim count mismatch: expected {expected_chunks}, got {}",
+                    claims.booleanity.balanced_inc_digits.len()
                 ),
             });
         }
@@ -427,8 +427,8 @@ pub fn stage6b_opening_values<F: Field>(
     values.extend(&claims.booleanity.ram_ra);
     #[cfg(feature = "akita")]
     {
-        values.extend(&claims.booleanity.unsigned_inc_chunks);
-        values.push(claims.booleanity.unsigned_inc_msb);
+        values.extend(&claims.booleanity.balanced_inc_digits);
+        values.push(claims.booleanity.balanced_inc_carry);
     }
     values.extend(claims.ram_hamming_booleanity.opening_values());
     values.extend(claims.ram_ra_virtualization.opening_values());
@@ -483,10 +483,10 @@ fn append_opening_claims<F, T>(
     }
     #[cfg(feature = "akita")]
     {
-        for opening_claim in &claims.booleanity.unsigned_inc_chunks {
+        for opening_claim in &claims.booleanity.balanced_inc_digits {
             transcript.append_labeled(b"opening_claim", opening_claim);
         }
-        transcript.append_labeled(b"opening_claim", &claims.booleanity.unsigned_inc_msb);
+        transcript.append_labeled(b"opening_claim", &claims.booleanity.balanced_inc_carry);
     }
     claims.ram_hamming_booleanity.append_openings(transcript);
     claims.ram_ra_virtualization.append_openings(transcript);
@@ -536,7 +536,7 @@ mod tests {
     /// Per-mode sample claims with sentinel values in the canonical append
     /// order: base interleaves the inc member after the RA virtualizations;
     /// Akita carries the read-raf `FusedInc` cell and the lattice booleanity
-    /// chunk/MSB cells instead.
+    /// digit/carry cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(not(feature = "akita"))]
         let (bytecode_read_raf, booleanity, last) = (
@@ -560,8 +560,8 @@ mod tests {
                 instruction_ra: vec![fr(4)],
                 bytecode_ra: vec![fr(5)],
                 ram_ra: vec![fr(6)],
-                unsigned_inc_chunks: vec![fr(7)],
-                unsigned_inc_msb: fr(8),
+                balanced_inc_digits: vec![fr(7)],
+                balanced_inc_carry: fr(8),
             },
             11,
         );

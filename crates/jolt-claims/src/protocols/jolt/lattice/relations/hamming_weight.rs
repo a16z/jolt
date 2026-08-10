@@ -17,16 +17,16 @@ use crate::{challenge, constant, derived, opening, InputClaims, OutputClaims, Sy
 
 use crate::protocols::jolt::geometry::bytecode::fused_inc_read_raf_opening;
 
-use super::super::geometry::{LatticeGeometryError, UnsignedIncChunking, UNSIGNED_INC_BITS};
+use super::super::geometry::{BalancedIncChunking, LatticeGeometryError, FUSED_INC_BITS};
 use super::booleanity::{
-    booleanity_unsigned_inc_chunk_opening, booleanity_unsigned_inc_msb_opening,
+    booleanity_balanced_inc_carry_opening, booleanity_balanced_inc_digit_opening,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LatticeHammingWeightClaimReductionDimensions {
     pub layout: JoltRaPolynomialLayout,
     pub log_k_chunk: usize,
-    chunking: UnsignedIncChunking,
+    chunking: BalancedIncChunking,
 }
 
 impl LatticeHammingWeightClaimReductionDimensions {
@@ -37,11 +37,11 @@ impl LatticeHammingWeightClaimReductionDimensions {
         Ok(Self {
             layout,
             log_k_chunk,
-            chunking: UnsignedIncChunking::new(log_k_chunk)?,
+            chunking: BalancedIncChunking::new(log_k_chunk)?,
         })
     }
 
-    pub fn chunking(self) -> UnsignedIncChunking {
+    pub fn chunking(self) -> BalancedIncChunking {
         self.chunking
     }
 }
@@ -62,10 +62,10 @@ pub struct LatticeHammingWeightClaimReductionInputClaims<C> {
     pub bytecode_virtualization: Vec<C>,
     #[opening(committed = RamRa, from = RamRaVirtualization)]
     pub ram_virtualization: Vec<C>,
-    #[opening(committed = UnsignedIncChunk, from = Booleanity)]
-    pub unsigned_inc_chunk_booleanity: Vec<C>,
-    #[opening(committed = UnsignedIncMsb, from = Booleanity)]
-    pub unsigned_inc_msb_booleanity: C,
+    #[opening(committed = BalancedIncDigit, from = Booleanity)]
+    pub balanced_inc_digit_booleanity: Vec<C>,
+    #[opening(committed = BalancedIncCarry, from = Booleanity)]
+    pub balanced_inc_carry_booleanity: C,
     #[opening(FusedInc, from = BytecodeReadRaf)]
     pub fused_inc: C,
 }
@@ -84,10 +84,10 @@ pub struct LatticeHammingWeightClaimReductionOutputClaims<C> {
     pub bytecode_ra: Vec<C>,
     #[opening(committed = RamRa)]
     pub ram_ra: Vec<C>,
-    #[opening(committed = UnsignedIncChunk)]
-    pub unsigned_inc_chunks: Vec<C>,
-    #[opening(committed = UnsignedIncMsb)]
-    pub unsigned_inc_msb: C,
+    #[opening(committed = BalancedIncDigit)]
+    pub balanced_inc_digits: Vec<C>,
+    #[opening(committed = BalancedIncCarry)]
+    pub balanced_inc_carry: C,
 }
 
 #[derive(Clone)]
@@ -150,12 +150,12 @@ impl SymbolicSumcheck for LatticeHammingWeightClaimReduction {
             input = input
                 + gamma.clone().pow(offset)
                 + gamma.clone().pow(offset + 1)
-                    * opening(booleanity_unsigned_inc_chunk_opening(index));
+                    * opening(booleanity_balanced_inc_digit_opening(index));
         }
         let msb_offset = self.ra_terms() + 2 * self.shape.chunking.chunk_count();
         input = input
             + gamma.clone().pow(msb_offset)
-            + gamma.clone().pow(msb_offset + 1) * opening(booleanity_unsigned_inc_msb_opening());
+            + gamma.clone().pow(msb_offset + 1) * opening(booleanity_balanced_inc_carry_opening());
         input + gamma.pow(self.decode_power()) * opening(fused_inc_read_raf_opening())
     }
 
@@ -199,30 +199,30 @@ impl SymbolicSumcheck for LatticeHammingWeightClaimReduction {
                     * inc_value.clone();
             output = output
                 + eq_default.clone() * baseline_coefficient
-                + sparse_coefficient * opening(reduced_unsigned_inc_chunk_opening(index));
+                + sparse_coefficient * opening(reduced_balanced_inc_digit_opening(index));
         }
         let msb_offset = self.ra_terms() + 2 * self.shape.chunking.chunk_count();
         let baseline_coefficient = gamma.clone().pow(msb_offset)
             + gamma.clone().pow(msb_offset + 1) * eq_booleanity_default.clone();
         let sparse_coefficient = gamma.pow(msb_offset + 1)
             * (eq_booleanity - eq_booleanity_default)
-            + decode_scale * constant(F::pow2(UNSIGNED_INC_BITS)) * inc_value;
+            + decode_scale * constant(F::pow2(FUSED_INC_BITS)) * inc_value;
         output
             + eq_default * baseline_coefficient
-            + sparse_coefficient * opening(reduced_unsigned_inc_msb_opening())
+            + sparse_coefficient * opening(reduced_balanced_inc_carry_opening())
     }
 }
 
-pub fn reduced_unsigned_inc_chunk_opening(index: usize) -> JoltOpeningId {
+pub fn reduced_balanced_inc_digit_opening(index: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
-        crate::protocols::jolt::JoltCommittedPolynomial::UnsignedIncChunk(index),
+        crate::protocols::jolt::JoltCommittedPolynomial::BalancedIncDigit(index),
         JoltRelationId::HammingWeightClaimReduction,
     )
 }
 
-pub fn reduced_unsigned_inc_msb_opening() -> JoltOpeningId {
+pub fn reduced_balanced_inc_carry_opening() -> JoltOpeningId {
     JoltOpeningId::committed(
-        crate::protocols::jolt::JoltCommittedPolynomial::UnsignedIncMsb,
+        crate::protocols::jolt::JoltCommittedPolynomial::BalancedIncCarry,
         JoltRelationId::HammingWeightClaimReduction,
     )
 }
@@ -271,14 +271,14 @@ mod tests {
                 == crate::protocols::jolt::geometry::claim_reductions::hamming_weight::virtualization_claim(
                     JoltRaPolynomial::Ram(0),
                 ) => *virt_ra,
-            id if id == booleanity_unsigned_inc_chunk_opening(0) => *bool_0,
-            id if id == booleanity_unsigned_inc_chunk_opening(1) => *bool_1,
-            id if id == booleanity_unsigned_inc_msb_opening() => *bool_msb,
+            id if id == booleanity_balanced_inc_digit_opening(0) => *bool_0,
+            id if id == booleanity_balanced_inc_digit_opening(1) => *bool_1,
+            id if id == booleanity_balanced_inc_carry_opening() => *bool_msb,
             id if id == fused_inc_read_raf_opening() => *fused,
             id if id == reduced_claim(JoltRaPolynomial::Ram(0)) => *out_ra,
-            id if id == reduced_unsigned_inc_chunk_opening(0) => *out_0,
-            id if id == reduced_unsigned_inc_chunk_opening(1) => *out_1,
-            id if id == reduced_unsigned_inc_msb_opening() => *out_msb,
+            id if id == reduced_balanced_inc_digit_opening(0) => *out_0,
+            id if id == reduced_balanced_inc_digit_opening(1) => *out_1,
+            id if id == reduced_balanced_inc_carry_opening() => *out_msb,
             _ => zero,
         }
         };
@@ -351,9 +351,9 @@ mod tests {
         assert_eq!(output, expected_output);
 
         assert_eq!(
-            reduced_unsigned_inc_msb_opening(),
+            reduced_balanced_inc_carry_opening(),
             JoltOpeningId::committed(
-                JoltCommittedPolynomial::UnsignedIncMsb,
+                JoltCommittedPolynomial::BalancedIncCarry,
                 JoltRelationId::HammingWeightClaimReduction,
             )
         );

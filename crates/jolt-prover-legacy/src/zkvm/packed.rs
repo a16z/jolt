@@ -74,7 +74,7 @@ use crate::zkvm::instruction_lookups::ra_virtual::{
     InstructionRaSumcheckParams, InstructionRaSumcheckProver as LookupsRaSumcheckProver,
 };
 use crate::zkvm::packed_witness::{
-    pack_one_hot_columns, FusedIncValue, SparseUnitPolynomial, UNSIGNED_INC_BITS,
+    pack_one_hot_columns, FusedIncValue, SparseUnitPolynomial, FUSED_INC_BITS,
 };
 use crate::zkvm::prover::JoltCpuProver;
 use crate::zkvm::ram::hamming_booleanity::{
@@ -765,10 +765,10 @@ impl AkitaPackedProver<'_> {
                             }
                             JoltCommittedPolynomial::RamRa(index) => (*ram_address)
                                 .map(|address| params.ram_address_chunk(address, *index) as usize),
-                            JoltCommittedPolynomial::UnsignedIncChunk(index) => {
+                            JoltCommittedPolynomial::BalancedIncDigit(index) => {
                                 Some(inc.balanced_chunk_hot_lane_bits(params.log_k_chunk, *index))
                             }
-                            JoltCommittedPolynomial::UnsignedIncMsb => {
+                            JoltCommittedPolynomial::BalancedIncCarry => {
                                 Some(inc.balanced_carry_hot_lane_bits(params.log_k_chunk))
                             }
                             _ => unreachable!("OneHotTrace plan contains only canonical columns"),
@@ -799,7 +799,7 @@ impl AkitaPackedProver<'_> {
         use rayon::prelude::*;
         use std::sync::Arc;
 
-        let chunk_count = UNSIGNED_INC_BITS / self.one_hot_params.log_k_chunk;
+        let chunk_count = FUSED_INC_BITS / self.one_hot_params.log_k_chunk;
         let width = self.one_hot_params.log_k_chunk;
         let one_hot: Vec<Arc<Vec<Option<u8>>>> = (0..chunk_count)
             .map(|index| {
@@ -1349,12 +1349,12 @@ impl AkitaPackedProver<'_> {
                 CommittedPolynomial::RamRa(index),
                 SumcheckId::HammingWeightClaimReduction,
             ),
-            JoltCommittedPolynomial::UnsignedIncChunk(index) => (
-                CommittedPolynomial::UnsignedIncChunk(index),
+            JoltCommittedPolynomial::BalancedIncDigit(index) => (
+                CommittedPolynomial::BalancedIncDigit(index),
                 SumcheckId::HammingWeightClaimReduction,
             ),
-            JoltCommittedPolynomial::UnsignedIncMsb => (
-                CommittedPolynomial::UnsignedIncMsb,
+            JoltCommittedPolynomial::BalancedIncCarry => (
+                CommittedPolynomial::BalancedIncCarry,
                 SumcheckId::HammingWeightClaimReduction,
             ),
             other => {
@@ -1833,7 +1833,7 @@ mod tests {
         verify(&proof).expect("packed verifier should accept the packed proof");
 
         // Live tampers on the fused-inc pipeline's claim wires: the fused
-        // increment's reduced claim and the hamming-reduction chunk/msb
+        // increment's reduced claim and the hamming-reduction digit/carry
         // finals each participate in a batched output fold — an offset on
         // any of them must be rejected.
         let tamper = |mutate: &dyn Fn(&mut jolt_verifier::proof::ClearProofClaims<AkitaField>)| {
@@ -1857,17 +1857,17 @@ mod tests {
             verify(&tamper(&|claims| claims
                 .stage7
                 .hamming_weight_claim_reduction
-                .unsigned_inc_chunks[0] += one))
+                .balanced_inc_digits[0] += one))
             .is_err(),
-            "tampered unsigned-inc chunk final must be rejected"
+            "tampered increment digit final must be rejected"
         );
         assert!(
             verify(&tamper(&|claims| claims
                 .stage7
                 .hamming_weight_claim_reduction
-                .unsigned_inc_msb += one))
+                .balanced_inc_carry += one))
             .is_err(),
-            "tampered unsigned-inc msb final must be rejected"
+            "tampered increment carry final must be rejected"
         );
     }
 

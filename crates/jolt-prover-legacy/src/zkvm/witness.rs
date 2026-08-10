@@ -49,11 +49,11 @@ pub enum CommittedPolynomial {
     /// One-hot digit column `j` of the fused increment's balanced radix-`K`
     /// decomposition; the decoded digit is centered in `[-K/2, K/2)`
     /// (lattice/packed mode only; a slot of the packed witness `W`).
-    UnsignedIncChunk(usize),
+    BalancedIncDigit(usize),
     /// One-hot column carrying the signed carry above bit 63 of that
     /// decomposition — a value in `{-1, 0, 1}`, not a bit
     /// (lattice/packed mode only; a slot of the packed witness `W`).
-    UnsignedIncMsb,
+    BalancedIncCarry,
     /// One-hot register selector `(chunk, lane)` of the precommitted
     /// bytecode decomposition (lattice/packed mode; a `ProgramOneHot` slot). Lane
     /// order is rs1, rs2, rd.
@@ -180,8 +180,8 @@ impl CommittedPolynomial {
             | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
             | CommittedPolynomial::BytecodeImmBytes(_)
             | CommittedPolynomial::ProgramImageBytes
-            | CommittedPolynomial::UnsignedIncChunk(_)
-            | CommittedPolynomial::UnsignedIncMsb => {
+            | CommittedPolynomial::BalancedIncDigit(_)
+            | CommittedPolynomial::BalancedIncCarry => {
                 panic!("Lattice columns commit through the packed witness, not per-polynomial streaming")
             }
         }
@@ -268,7 +268,7 @@ impl CommittedPolynomial {
                 ))
             }
             #[cfg(feature = "prover")]
-            CommittedPolynomial::UnsignedIncChunk(_) | CommittedPolynomial::UnsignedIncMsb => {
+            CommittedPolynomial::BalancedIncDigit(_) | CommittedPolynomial::BalancedIncCarry => {
                 panic!(
                     "OneHotTrace columns commit through the packed witness, not generate_witness"
                 )
@@ -299,8 +299,8 @@ impl CommittedPolynomial {
             | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
             | CommittedPolynomial::BytecodeImmBytes(_)
             | CommittedPolynomial::ProgramImageBytes
-            | CommittedPolynomial::UnsignedIncChunk(_)
-            | CommittedPolynomial::UnsignedIncMsb => {
+            | CommittedPolynomial::BalancedIncDigit(_)
+            | CommittedPolynomial::BalancedIncCarry => {
                 panic!("Lattice columns require the prover feature")
             }
         }
@@ -311,7 +311,7 @@ impl CommittedPolynomial {
             CommittedPolynomial::InstructionRa(_)
             | CommittedPolynomial::BytecodeRa(_)
             | CommittedPolynomial::RamRa(_)
-            | CommittedPolynomial::UnsignedIncChunk(_) => Some(one_hot_params.k_chunk),
+            | CommittedPolynomial::BalancedIncDigit(_) => Some(one_hot_params.k_chunk),
             _ => None,
         }
     }

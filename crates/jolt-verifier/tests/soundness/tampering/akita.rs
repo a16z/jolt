@@ -424,8 +424,8 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
         instruction_ra,
         bytecode_ra: booleanity_bytecode_ra,
         ram_ra,
-        unsigned_inc_chunks,
-        unsigned_inc_msb,
+        balanced_inc_digits,
+        balanced_inc_carry,
     } = booleanity;
     for scalar in instruction_ra.iter_mut() {
         f(scalar);
@@ -436,10 +436,10 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    for scalar in unsigned_inc_chunks.iter_mut() {
+    for scalar in balanced_inc_digits.iter_mut() {
         f(scalar);
     }
-    f(unsigned_inc_msb);
+    f(balanced_inc_carry);
     let RamHammingBooleanityOutputClaims { ram_hamming_weight } = ram_hamming_booleanity;
     f(ram_hamming_weight);
     let RamRaVirtualizationOutputClaims {
@@ -491,8 +491,8 @@ fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(
         instruction_ra,
         bytecode_ra,
         ram_ra,
-        unsigned_inc_chunks,
-        unsigned_inc_msb,
+        balanced_inc_digits,
+        balanced_inc_carry,
     } = hamming_weight_claim_reduction;
     for scalar in instruction_ra.iter_mut() {
         f(scalar);
@@ -503,10 +503,10 @@ fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    for scalar in unsigned_inc_chunks.iter_mut() {
+    for scalar in balanced_inc_digits.iter_mut() {
         f(scalar);
     }
-    f(unsigned_inc_msb);
+    f(balanced_inc_carry);
     if let Some(TrustedAdviceAddressPhaseOutputClaims { trusted }) = trusted_advice {
         f(trusted);
     }

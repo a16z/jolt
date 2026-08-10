@@ -282,7 +282,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             .map(|index| {
                 accumulator
                     .get_committed_polynomial_opening(
-                        CommittedPolynomial::UnsignedIncChunk(index),
+                        CommittedPolynomial::BalancedIncDigit(index),
                         SumcheckId::Booleanity,
                     )
                     .1
@@ -290,7 +290,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             .chain(core::iter::once(
                 accumulator
                     .get_committed_polynomial_opening(
-                        CommittedPolynomial::UnsignedIncMsb,
+                        CommittedPolynomial::BalancedIncCarry,
                         SumcheckId::Booleanity,
                     )
                     .1,
@@ -769,7 +769,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         let chunk_count = self.params.inc_booleanity_claims.len().saturating_sub(1);
         for index in 0..chunk_count {
             accumulator.append_sparse(
-                vec![CommittedPolynomial::UnsignedIncChunk(index)],
+                vec![CommittedPolynomial::BalancedIncDigit(index)],
                 SumcheckId::HammingWeightClaimReduction,
                 r_address.clone(),
                 self.params.r_cycle.clone(),
@@ -778,7 +778,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
         }
         if !self.params.inc_booleanity_claims.is_empty() {
             accumulator.append_sparse(
-                vec![CommittedPolynomial::UnsignedIncMsb],
+                vec![CommittedPolynomial::BalancedIncCarry],
                 SumcheckId::HammingWeightClaimReduction,
                 r_address,
                 self.params.r_cycle.clone(),

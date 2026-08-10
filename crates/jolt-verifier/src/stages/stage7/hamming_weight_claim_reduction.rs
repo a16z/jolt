@@ -57,9 +57,9 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
         bytecode_virtualization: cycle_phase.bytecode_read_raf.bytecode_ra.clone(),
         ram_virtualization: cycle_phase.ram_ra_virtualization.ram_ra.clone(),
         #[cfg(feature = "akita")]
-        unsigned_inc_chunk_booleanity: cycle_phase.booleanity.unsigned_inc_chunks.clone(),
+        balanced_inc_digit_booleanity: cycle_phase.booleanity.balanced_inc_digits.clone(),
         #[cfg(feature = "akita")]
-        unsigned_inc_msb_booleanity: cycle_phase.booleanity.unsigned_inc_msb,
+        balanced_inc_carry_booleanity: cycle_phase.booleanity.balanced_inc_carry,
         #[cfg(feature = "akita")]
         fused_inc: cycle_phase.bytecode_read_raf.fused_inc,
     }
@@ -223,12 +223,12 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
             bytecode_ra: vec![opening_point.clone(); layout.bytecode()],
             ram_ra: vec![opening_point.clone(); layout.ram()],
             #[cfg(feature = "akita")]
-            unsigned_inc_chunks: vec![
+            balanced_inc_digits: vec![
                 opening_point.clone();
                 self.dimensions.chunking().chunk_count()
             ],
             #[cfg(feature = "akita")]
-            unsigned_inc_msb: opening_point,
+            balanced_inc_carry: opening_point,
         })
     }
 

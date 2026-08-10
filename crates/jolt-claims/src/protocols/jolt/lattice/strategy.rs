@@ -27,8 +27,8 @@ pub struct OneHotTraceColumnRanges {
     pub instruction: Range<usize>,
     pub bytecode: Range<usize>,
     pub ram: Range<usize>,
-    pub unsigned_inc: Range<usize>,
-    pub unsigned_inc_msb: usize,
+    pub balanced_inc: Range<usize>,
+    pub balanced_inc_carry: usize,
 }
 
 /// Canonical column order and packed geometry for one proof.
@@ -65,10 +65,10 @@ impl OneHotTraceLayout {
         }
 
         let instruction_end = shape.ra_layout.instruction();
-        let unsigned_inc_end =
-            instruction_end + super::geometry::UNSIGNED_INC_BITS / shape.log_k_chunk;
-        let unsigned_inc_msb = unsigned_inc_end;
-        let bytecode_start = unsigned_inc_msb + 1;
+        let balanced_inc_end =
+            instruction_end + super::geometry::FUSED_INC_BITS / shape.log_k_chunk;
+        let balanced_inc_carry = balanced_inc_end;
+        let bytecode_start = balanced_inc_carry + 1;
         let bytecode_end = bytecode_start + shape.ra_layout.bytecode();
         let ram_end = bytecode_end + shape.ra_layout.ram();
         debug_assert_eq!(ram_end, columns.len());
@@ -82,8 +82,8 @@ impl OneHotTraceLayout {
                 instruction: 0..instruction_end,
                 bytecode: bytecode_start..bytecode_end,
                 ram: bytecode_end..ram_end,
-                unsigned_inc: instruction_end..unsigned_inc_end,
-                unsigned_inc_msb,
+                balanced_inc: instruction_end..balanced_inc_end,
+                balanced_inc_carry,
             },
             layout_digest,
         })
@@ -120,8 +120,8 @@ impl OneHotTraceLayout {
             JoltCommittedPolynomial::InstructionRa(_)
                 | JoltCommittedPolynomial::BytecodeRa(_)
                 | JoltCommittedPolynomial::RamRa(_)
-                | JoltCommittedPolynomial::UnsignedIncChunk(_)
-                | JoltCommittedPolynomial::UnsignedIncMsb
+                | JoltCommittedPolynomial::BalancedIncDigit(_)
+                | JoltCommittedPolynomial::BalancedIncCarry
         ) {
             return Err(invalid(format!(
                 "polynomial {polynomial:?} is not a OneHotTrace column"
@@ -198,11 +198,11 @@ fn layout_digest(
                 hasher.update([2]);
                 append_usize(&mut hasher, *index);
             }
-            JoltCommittedPolynomial::UnsignedIncChunk(index) => {
+            JoltCommittedPolynomial::BalancedIncDigit(index) => {
                 hasher.update([3]);
                 append_usize(&mut hasher, *index);
             }
-            JoltCommittedPolynomial::UnsignedIncMsb => hasher.update([4]),
+            JoltCommittedPolynomial::BalancedIncCarry => hasher.update([4]),
             other => {
                 return Err(OpeningsError::InvalidBatch(format!(
                     "non-OneHotTrace polynomial {other:?} in packed one-hot layout"
@@ -240,8 +240,8 @@ mod tests {
         assert_eq!(plan.packing().slot_capacity(), 32);
         assert_eq!(plan.packing().selector_num_vars(), 5);
         assert_eq!(plan.ranges().instruction, 0..16);
-        assert_eq!(plan.ranges().unsigned_inc, 16..24);
-        assert_eq!(plan.ranges().unsigned_inc_msb, 24);
+        assert_eq!(plan.ranges().balanced_inc, 16..24);
+        assert_eq!(plan.ranges().balanced_inc_carry, 24);
         assert_eq!(plan.ranges().bytecode, 25..26);
         assert_eq!(plan.ranges().ram, 26..27);
         assert_eq!(
@@ -275,8 +275,8 @@ mod tests {
             JoltCommittedPolynomial::InstructionRa(0),
             JoltCommittedPolynomial::BytecodeRa(0),
             JoltCommittedPolynomial::RamRa(0),
-            JoltCommittedPolynomial::UnsignedIncChunk(0),
-            JoltCommittedPolynomial::UnsignedIncMsb,
+            JoltCommittedPolynomial::BalancedIncDigit(0),
+            JoltCommittedPolynomial::BalancedIncCarry,
         ] {
             assert_eq!(
                 ONE_HOT_TRACE_LAYOUT

@@ -411,8 +411,8 @@ pub enum JoltCommittedPolynomial {
     ProgramImageInit,
     // Lattice-mode committed polynomials (slots of the packed witness); base
     // mode never constructs these. Appended for codec stability.
-    UnsignedIncChunk(usize),
-    UnsignedIncMsb,
+    BalancedIncDigit(usize),
+    BalancedIncCarry,
     TrustedAdviceBytes,
     UntrustedAdviceBytes,
     // Lattice-mode precommitted bytecode decompositions: the per-lane one-hot /
