@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786376934370,
+  "lastUpdate": 1786393197690,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -134194,6 +134194,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 860792,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bc9080ea672ca5284e09f7d29063a4f712ae0823",
+          "message": "ci: nightly Z3 formal-verification workflow (#1758)\n\n* ci: nightly Z3 formal-verification workflow\n\nRuns the full z3-verifier symbolic_exec suite (all-input formal proofs of\nthe virtual-sequence expansions) against a hermetic bundled Z3, nightly +\non-demand. Kept off the PR-blocking path: the bundled Z3 build is slow and\nthe obligations only move when expansions or the z3 model change. Files a\ndeduplicated issue on failure.\n\nProposed in #1750 review discussion.\n\n* fix(z3-verifier): enable the Z3 per-check timeout\n\nThe timeout was declared but never applied: `Z3_TIMEOUT_MS` was\nunderscore-prefixed as dead code and both `set_u32(\"timeout\", ..)` calls\nwere commented out, so `SatResult::Unknown` could never fire from a\ntimeout and a hard obligation hung instead of failing. `do_test` in\ncpu_constraints built its `Solver` with no `Params` at all, so those 51\ntests had neither a bound nor a fixed seed.\n\nHoist both constants to the crate root and apply them in all three\nsolver constructions. The whole suite discharges in 0.33s locally\n(slowest test 0.13s), so 30s only fires on a genuine blowup — and when\nit does, the failure is attributable to a named test rather than a\nstalled run.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* build(z3-verifier): pin the vendored Z3 behind a `vendored-z3` feature\n\n`z3/bundled` is deprecated in z3-sys 0.11 (its build script prints a\ndeprecation warning) in favour of `z3/vendored`, and neither pins\nanything: z3-sys requests `z3-src = \"416\"`, so the solver the nightly\nbuilds could change between runs. A Z3 upgrade that flips an obligation\nto `SatResult::Unknown` would then file a \"potential soundness signal\"\nissue that is really dependency drift.\n\nAdd a `vendored-z3` feature that turns on `z3/vendored` alongside an\nexact `z3-src = \"=416.0.2\"` (Z3 release 4.16.0), and record z3-src +\ncmake in Cargo.lock so `--locked` enforces it. z3-src is declared but\nnever used from Rust — it is a version pin only, hence the machete\nignore. It has `build = false`, so this adds no second Z3 build.\n\nA future `z3` bump needing a different z3-src major now fails resolution\nloudly instead of silently changing the solver under the suite.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* ci(z3-nightly): report hangs, and describe the suite's real scope\n\nTwo problems with the workflow as written.\n\nA hang was the one failure that produced no signal. `timeout-minutes`\nwas job-level, and a job-level timeout CANCELS the job — which skips the\n`if: failure()` reporting step. Since the div/rem obligations are known\nnon-terminating under the 64-bit model, an expansion change tipping a\nrunning obligation into that regime is a live scenario, not a\nhypothetical. Move the budget to the run step (75m) so a hang fails the\nstep and still files an issue; keep a job-level backstop at 100m.\n\nThe header and the auto-filed issue body claimed the suite \"proves every\nvirtual-sequence expansion against its architectural semantics for all\ninputs\". It does not: 20 of 103 tests are #[ignore]d and never run, and\nof the 67 source-only kinds only 26 are declared at all — no memory,\natomic, LR/SC, CSR/trap, or inline expansion is covered. Whoever gets\npaged reads that body while deciding whether soundness just broke, so\nstate the actual scope and name the two non-soundness causes to rule out\nfirst.\n\nAlso switch to the pinned `vendored-z3` feature and pass --locked.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-10T12:13:02-07:00",
+          "tree_id": "c82ce546fba355042289dd0b5452a5a408cdd28d",
+          "url": "https://github.com/a16z/jolt/commit/bc9080ea672ca5284e09f7d29063a4f712ae0823"
+        },
+        "date": 1786393192918,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7969,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 868120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4094,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 509116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 508816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7654,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.2162,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 506748,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 6.4678,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 192452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5115,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859416,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6026,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500364,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4933,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 506992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.452,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 504660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.104,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.222,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1115680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2985,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 634208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 103.0295,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2119524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5894,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 507012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 507260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.1092,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 860840,
             "unit": "KB",
             "extra": ""
           }
