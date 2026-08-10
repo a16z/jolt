@@ -129,15 +129,19 @@ impl LookupArtifact {
 
 /// Check that an artifact revision names the clean Jolt checkout used to generate it.
 pub fn verify_checkout_revision(source_revision: &str) -> Result<(), String> {
+    verify_checkout_revision_at(Path::new("."), source_revision)
+}
+
+fn verify_checkout_revision_at(checkout: &Path, source_revision: &str) -> Result<(), String> {
     let source_revision = validate_source_revision(source_revision)?;
-    let head = git_output(["rev-parse", "HEAD"])?;
+    let head = git_output(checkout, ["rev-parse", "HEAD"])?;
     if head != source_revision {
         return Err(format!(
             "source revision {source_revision} does not match checked out Jolt revision {head}"
         ));
     }
 
-    let tracked_changes = git_output(["status", "--porcelain", "--untracked-files=no"])?;
+    let tracked_changes = git_output(checkout, ["status", "--porcelain", "--untracked-files=no"])?;
     if !tracked_changes.is_empty() {
         return Err(
             "tracked Jolt files are dirty; commit them before exporting an artifact".into(),
@@ -146,8 +150,9 @@ pub fn verify_checkout_revision(source_revision: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn git_output<const N: usize>(arguments: [&str; N]) -> Result<String, String> {
+fn git_output<const N: usize>(checkout: &Path, arguments: [&str; N]) -> Result<String, String> {
     let output = Command::new("git")
+        .current_dir(checkout)
         .args(arguments)
         .output()
         .map_err(|error| format!("failed to run git: {error}"))?;
@@ -219,6 +224,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use serde_json::Value;
+    use tempfile::TempDir;
 
     use super::*;
 
@@ -242,5 +248,63 @@ mod tests {
     fn artifact_rejects_ambiguous_source_revisions() {
         assert!(LookupArtifact::extract::<8>("main").is_err());
         assert!(LookupArtifact::extract::<8>("0123456789abcdef0123456789abcdef0123456g").is_err());
+    }
+
+    fn git(checkout: &Path, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(checkout)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    fn clean_checkout() -> (TempDir, String) {
+        let checkout = tempfile::tempdir().unwrap();
+        git(checkout.path(), &["init", "--quiet"]);
+        git(checkout.path(), &["config", "user.name", "Jolt test"]);
+        git(
+            checkout.path(),
+            &["config", "user.email", "jolt-test@example.com"],
+        );
+        fs::write(checkout.path().join("tracked"), "committed\n").unwrap();
+        git(checkout.path(), &["add", "tracked"]);
+        git(checkout.path(), &["commit", "--quiet", "-m", "initial"]);
+        let head = git(checkout.path(), &["rev-parse", "HEAD"]);
+        (checkout, head)
+    }
+
+    #[test]
+    fn checkout_revision_accepts_exact_clean_head() {
+        let (checkout, head) = clean_checkout();
+        assert_eq!(verify_checkout_revision_at(checkout.path(), &head), Ok(()));
+    }
+
+    #[test]
+    fn checkout_revision_rejects_wrong_head() {
+        let (checkout, head) = clean_checkout();
+        let wrong_head = if head.starts_with('0') {
+            format!("1{}", &head[1..])
+        } else {
+            format!("0{}", &head[1..])
+        };
+        let error = verify_checkout_revision_at(checkout.path(), &wrong_head).unwrap_err();
+        assert!(error.contains("does not match checked out Jolt revision"));
+    }
+
+    #[test]
+    fn checkout_revision_rejects_dirty_tracked_files() {
+        let (checkout, head) = clean_checkout();
+        fs::write(checkout.path().join("tracked"), "modified\n").unwrap();
+        let error = verify_checkout_revision_at(checkout.path(), &head).unwrap_err();
+        assert_eq!(
+            error,
+            "tracked Jolt files are dirty; commit them before exporting an artifact"
+        );
     }
 }
