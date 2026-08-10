@@ -58,6 +58,7 @@ use tracer::{
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
         virtual_muliw::VirtualMULIW,
+        virtual_pext::VirtualPext,
         virtual_pext_signed::VirtualPextSigned,
         virtual_pow2::VirtualPow2,
         virtual_pow2_w::VirtualPow2W,
@@ -67,6 +68,8 @@ use tracer::{
         virtual_srai::VirtualSRAI,
         virtual_srl::VirtualSRL,
         virtual_srli::VirtualSRLI,
+        virtual_window_mask_b::VirtualWindowMaskB,
+        virtual_window_mask_h::VirtualWindowMaskH,
         virtual_window_mask_w::VirtualWindowMaskW,
         virtual_zero_extend_word::VirtualZeroExtendWord,
         xor::XOR,
@@ -451,6 +454,28 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let shift = bit2 * cpu.bv_u64(cpu.word_bits as u64);
             let word_mask = cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
             cpu.x[operands.rd as usize] = word_mask.bvshl(shift);
+        }
+        Instruction::VirtualWindowMaskB(VirtualWindowMaskB { operands, .. }) => {
+            let ea = cpu.x[operands.rs1 as usize].clone();
+            let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
+            let shift = offset * cpu.bv_u64(8);
+            cpu.x[operands.rd as usize] = cpu.bv_u64(0xFF).bvshl(shift);
+        }
+        Instruction::VirtualWindowMaskH(VirtualWindowMaskH { operands, .. }) => {
+            let ea = cpu.x[operands.rs1 as usize].clone();
+            let offset = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2);
+            let shift = offset * cpu.bv_u64(16);
+            cpu.x[operands.rd as usize] = cpu.bv_u64(0xFFFF).bvshl(shift);
+        }
+        Instruction::VirtualPext(VirtualPext { operands, .. }) => {
+            // Faithful for contiguous nonzero masks (the only shape the
+            // window-mask instructions produce): zero-extending extract via
+            // shift-left then logical shift-right.
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            let tz = trailing_zeros(&rs2, cpu.bv_bits);
+            let lz = leading_zeros(&rs2, cpu.bv_bits);
+            cpu.x[operands.rd as usize] = rs1.bvshl(&lz).bvlshr(lz + tz);
         }
         Instruction::VirtualPextSigned(VirtualPextSigned { operands, .. }) => {
             // Sign-extending extract via shift-left then arithmetic

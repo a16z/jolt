@@ -356,6 +356,9 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             }
             JoltInstruction::WindowMaskW(_) => LookupTables::WindowMaskW(Default::default()),
             JoltInstruction::PextSigned(_) => LookupTables::PextSigned(Default::default()),
+            JoltInstruction::Pext(_) => LookupTables::Pext(Default::default()),
+            JoltInstruction::WindowMaskB(_) => LookupTables::WindowMaskB(Default::default()),
+            JoltInstruction::WindowMaskH(_) => LookupTables::WindowMaskH(Default::default()),
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -506,7 +509,8 @@ define_rv64imac_trait_impls! {
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
-        VirtualWindowMaskW, VirtualPextSigned
+        VirtualWindowMaskW, VirtualPextSigned,
+        VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
     ]
 }
 
@@ -559,6 +563,7 @@ pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
 pub mod virtual_muliw;
+pub mod virtual_pext;
 pub mod virtual_pext_signed;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
@@ -574,6 +579,8 @@ pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_window_mask_b;
+pub mod virtual_window_mask_h;
 pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;

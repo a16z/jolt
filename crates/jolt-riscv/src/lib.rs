@@ -175,6 +175,9 @@ macro_rules! for_each_instruction_kind {
                 VirtualXORROTW7 => VirtualXorRotW7 => "jolt.virtual.xorrotw7",
                 VirtualWindowMaskW => WindowMaskW => "jolt.virtual.windowmaskw",
                 VirtualPextSigned => PextSigned => "jolt.virtual.pextsigned",
+                VirtualPext => Pext => "jolt.virtual.pext",
+                VirtualWindowMaskB => WindowMaskB => "jolt.virtual.windowmaskb",
+                VirtualWindowMaskH => WindowMaskH => "jolt.virtual.windowmaskh",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -275,6 +278,10 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualMULIW => MulIW => (0x008e, "jolt.virtual.muliw"),
                 VirtualWindowMaskW => WindowMaskW => (0x008f, "jolt.virtual.windowmaskw"),
                 VirtualPextSigned => PextSigned => (0x0090, "jolt.virtual.pextsigned"),
+                VirtualPext => Pext => (0x0092, "jolt.virtual.pext"),
+                VirtualWindowMaskB => WindowMaskB => (0x0093, "jolt.virtual.windowmaskb"),
+                VirtualWindowMaskH => WindowMaskH => (0x0094, "jolt.virtual.windowmaskh"),
+                // 0x0095-0x0097 are reserved by the narrow-store slice (ShiftDataB/H/W).
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

@@ -29,9 +29,9 @@ pub(in crate::expand) fn expand_ram_region_assertion(
 /// Lowers `LB`/`LBU` by loading the containing doubleword and extracting a byte.
 ///
 /// The effective address is rounded down to the aligned 8-byte address for the
-/// `LD`. The byte offset then determines how far to left-shift the containing
-/// doubleword so the requested byte lands in bits 63:56; the final arithmetic
-/// or logical right shift performs signed or unsigned extension.
+/// `LD`. `VirtualWindowMaskB` turns the effective address into the byte mask of
+/// the addressed lane, and a single fused parallel-extract lookup (signed or
+/// unsigned) pulls the byte out of the loaded doubleword.
 pub(in crate::expand) fn expand_byte_load(
     instruction: &SourceInstructionRow,
     signed: bool,
@@ -55,25 +55,22 @@ pub(in crate::expand) fn expand_byte_load(
         format_i_imm(-8),
     );
     asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // Under the RV64 shift mask, ((address ^ 7) << 3) is
-    // (7 - byte_offset) * 8, moving the selected byte to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 7);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
-        SourceInstructionKind::SLL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
+    // v0 = byte mask of the lane at offset `ea mod 8`.
     asm.expand_i(
+        SourceInstructionKind::VirtualWindowMaskB,
+        v0.operand(),
+        v0.operand(),
+        0,
+    );
+    asm.expand_r(
         if signed {
-            SourceInstructionKind::SRAI
+            SourceInstructionKind::VirtualPextSigned
         } else {
-            SourceInstructionKind::SRLI
+            SourceInstructionKind::VirtualPext
         },
         reg(rd(instruction)?),
         v1.operand(),
-        56,
+        v0.operand(),
     );
     asm.release_many([v0, v1]);
 
@@ -83,8 +80,9 @@ pub(in crate::expand) fn expand_byte_load(
 /// Lowers `LH`/`LHU` by loading the containing doubleword and extracting a halfword.
 ///
 /// Halfword alignment is asserted first. The extraction mirrors byte loads:
-/// shift the selected halfword into bits 63:48, then use arithmetic or logical
-/// right shift to get signed or unsigned extension.
+/// `VirtualWindowMaskH` builds the halfword lane's byte mask from the
+/// effective address, and a fused parallel-extract lookup (signed or unsigned)
+/// pulls the lane out of the loaded doubleword.
 pub(in crate::expand) fn expand_halfword_load(
     instruction: &SourceInstructionRow,
     signed: bool,
@@ -113,25 +111,23 @@ pub(in crate::expand) fn expand_halfword_load(
         format_i_imm(-8),
     );
     asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // Under the RV64 shift mask, ((address ^ 6) << 3) selects the aligned
-    // halfword lane and moves it to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 6);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.expand_r(
-        SourceInstructionKind::SLL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
+    // v0 = byte mask of the halfword lane at offset `ea mod 8`
+    // (VirtualWindowMaskH ignores bit 0, which the assert above zeroes).
     asm.expand_i(
+        SourceInstructionKind::VirtualWindowMaskH,
+        v0.operand(),
+        v0.operand(),
+        0,
+    );
+    asm.expand_r(
         if signed {
-            SourceInstructionKind::SRAI
+            SourceInstructionKind::VirtualPextSigned
         } else {
-            SourceInstructionKind::SRLI
+            SourceInstructionKind::VirtualPext
         },
         reg(rd(instruction)?),
         v1.operand(),
-        48,
+        v0.operand(),
     );
     asm.release_many([v0, v1]);
 
