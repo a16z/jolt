@@ -1,4 +1,4 @@
-import Jolt.LookupAC
+import Jolt.MaterializerGraph
 import Mathlib.Algebra.BigOperators.Group.List.Basic
 
 /-!

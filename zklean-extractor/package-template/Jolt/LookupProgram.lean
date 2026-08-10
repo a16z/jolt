@@ -10,8 +10,6 @@ establishes their correspondence over every commutative ring.
 
 namespace Jolt.LookupExpression
 
-open Jolt.LookupAC
-
 /-- The extracted field evaluator and materializer for one lookup table. -/
 structure LookupProgram (n : Nat) where
   mle : Jolt.LookupGraph.Graph n
@@ -47,17 +45,6 @@ theorem LookupProgram.evalVector_ofFn_graph
     program.evalVector (Vector.ofFn point) =
       program.mle.eval program.mleWellFormed point := by
   unfold LookupProgram.evalVector Jolt.LookupGraph.Graph.evalVector
-  congr 1
-  funext index
-  exact Vector.getElem_ofFn index.isLt
-
-@[simp]
-theorem LookupProgram.evalVector_ofFn_acExpr
-    {n : Nat} {F : Type*} [CommRing F]
-    (program : LookupProgram n) (point : Fin n → F) :
-    program.evalVector (Vector.ofFn point) = program.mle.toACExpr.eval point := by
-  unfold LookupProgram.evalVector Jolt.LookupGraph.Graph.evalVector
-  rw [program.mle.eval_eq_acEval]
   congr 1
   funext index
   exact Vector.getElem_ofFn index.isLt

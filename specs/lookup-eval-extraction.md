@@ -63,13 +63,17 @@ current proof scope explicit.
 - This change does not move the instruction catalog out of
   `jolt-prover-legacy`.
 - This change does not certify the materializers for all 40 lookup tables.
-  AND and VirtualROTR are the first complete universal certificates.
+  AND and VirtualROTR are the first universally quantified lookup-MLE
+  certificates.
 - This change does not resolve the known RV32 `Pow2W` disagreement between the
   legacy and modular evaluators. Production extraction is RV64.
 - This change does not remove existing `sorry` placeholders for instructions
   that have no lookup table.
 - This change does not alter a proof transcript, proof format, verifier input,
   serialization format, or runtime proof acceptance rule.
+- This change does not prove that instruction lookup wiring implements
+  word-level operational semantics, that the lookup protocol enforces the
+  certified relation, or that the complete zkVM is sound.
 
 ## Evaluation
 
@@ -102,6 +106,8 @@ current proof scope explicit.
   identical expression trees.
 - [x] Lean proves that the AND and VirtualROTR evaluators are the multilinear
   extensions of their materializers over every field.
+- [x] The AND and VirtualROTR correspondence and multilinearity chains contain
+  no `native_decide` dependency.
 - [x] An exhaustive ABI test checks all 40 modular and legacy table ordinals.
 - [x] Random RV64 tests compare the modular symbolic AST and an independent
   graph interpreter with the legacy numeric evaluator.
@@ -132,9 +138,10 @@ The generated Lean package provides separate checks.
 
 1. Every graph has a decidable well-formedness theorem.
 2. The static graph proof checks interpreter semantics for every graph shape.
-3. The AND and VirtualROTR correspondence theorems decide equality after
-   normalizing associativity, commutativity, and zero and one identities. A
-   static Lean theorem transports each result to every commutative ring.
+3. The AND and VirtualROTR correspondence certificates map both source graphs
+   into one hash-consed canonical DAG. Lean checks every claimed source-node ID
+   and canonical node in bounded shards, then generic fold theorems prove that
+   both roots have the same value over every commutative ring.
 4. The AND and VirtualROTR lookup theorems prove multi-affinity and full
    Boolean agreement.
 5. The test driver evaluates all 40 public lookup functions at Rust-generated
@@ -156,12 +163,11 @@ catalog must remain below 20,000 graph nodes, and no single table may exceed
 sharing.
 
 The prior expanded lookup module required about 642 seconds to compile in a
-local clean measurement. The graph representation reduced the executable
-lookup module to seconds. In a warm local measurement, rebuilding the static
-certificate runtime and the generated module for all 40 tables took about 17
-seconds, with the generated module itself taking about 10 seconds. The compact
-correspondence checker does not distribute products, so the VirtualROTR proof
-does not expand into a large polynomial.
+local clean measurement. The graph representation keeps executable lookup
+evaluation compact. The bounded certificate modules deliberately trade
+artifact size and build time for kernel-checked correspondence without one
+monolithic reduction. The canonical certificate DAG does not distribute
+products, so the VirtualROTR proof does not expand into a large polynomial.
 
 Concrete lookup materialization must not move from constant-space bit logic to
 per-call heap allocation. The shared concrete backend uses fixed-size values
@@ -185,9 +191,10 @@ flowchart LR
     H[Shared certified materializers] --> I[Concrete backend]
     H --> J[Symbolic materializer graph]
     J --> E
-    F --> K[Semantic correspondence proof]
+    F --> K[Shared canonical DAG]
     J --> K
-    K --> L[Universal lookup MLE theorem]
+    K --> L[Bounded local correspondence certificates]
+    L --> M[Universal lookup MLE theorem]
 ```
 
 #### Arithmetic boundary
@@ -224,9 +231,14 @@ pipeline.
 #### Standalone artifact
 
 Downstream Lean repositories need a focused input instead of the complete
-generated circuit package. The standalone artifact contains the six static
-lookup runtime modules and the generated `Jolt.LookupTables` module. It does
-not contain instructions, constraints, sumchecks, field adapters, or tests.
+generated circuit package. The standalone artifact contains seven static
+lookup runtime modules, the generated certificate-module families, and the
+canonical `Jolt.LookupTables` module. It does not contain instructions,
+constraints, sumchecks, field adapters, or tests.
+
+These generated files are build outputs rather than an independent source of
+truth. Jolt owns the runtime, generator, and CI checks; downstream repositories
+consume an export pinned by Jolt revision and artifact hash.
 
 The caller supplies a full Jolt revision. The exporter checks that it matches
 the clean checkout, then records it in `lookup-artifact.json`. The manifest
@@ -258,14 +270,23 @@ natural-number operations without allocation. The symbolic backend records
 the same program as compact, topologically ordered Boolean and natural-number
 graphs.
 
-Each certificate compares canonical algebraic forms rather than serialized
-graph layouts. The normalizer flattens and sorts sums and products and removes
-only zero and one identities. It deliberately does not distribute products.
-Lean decides equality of the two closed canonical forms, then a reusable static
-theorem proves that this result implies equality at every point over every
-commutative ring. The final theorem combines this semantic correspondence with
-a syntactic multi-affinity check and a proof that Boolean arithmetization
-preserves the materializer.
+Each certificate maps both serialized graph layouts into one hash-consed
+canonical DAG. Addition and multiplication flatten and sort referenced
+canonical IDs and remove only zero and one identities. They deliberately do
+not distribute products.
+
+Rust rejects generation unless the two roots receive the same canonical ID.
+Lean independently checks the canonical DAG's ranges and every verifier,
+Boolean-materializer, and natural-materializer node mapping in bounded shards.
+Generic fold theorems prove that both complete graph evaluations equal the
+shared canonical root at every point over every commutative ring. The final
+theorem combines this semantic correspondence with a syntactic multi-affinity
+check and a proof that Boolean arithmetization preserves the materializer.
+
+The certificate establishes correctness of each emitted lookup polynomial
+relative to its emitted materializer. Instruction-to-table wiring remains
+Rust-tested rather than Lean-proved, and lookup-protocol or zkVM soundness is a
+separate downstream theorem boundary.
 
 #### Compatibility boundary
 

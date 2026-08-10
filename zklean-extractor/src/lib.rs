@@ -11,7 +11,7 @@
 
 // Lean extraction modules
 pub mod constants;
-pub mod correspondence;
+mod correspondence;
 pub mod instruction;
 pub mod lean_tests;
 pub mod lookup_artifact;

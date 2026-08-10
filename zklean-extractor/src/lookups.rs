@@ -36,6 +36,11 @@ fn write_value_tree<T>(
     indent: &str,
     render: &impl Fn(&T) -> String,
 ) -> std::io::Result<()> {
+    if values.is_empty() {
+        return Err(std::io::Error::other(
+            "cannot emit an empty Lean value oracle",
+        ));
+    }
     if let [value] = values {
         return writeln!(f, "{indent}{}", render(value));
     }
@@ -889,6 +894,12 @@ mod test {
     use crate::util::{arb_field_elem, Environment, ZkLeanReprField};
 
     use jolt_prover_legacy::field::JoltField;
+
+    #[test]
+    fn value_tree_rejects_empty_oracles() {
+        let mut output = Vec::new();
+        assert!(write_value_tree(&mut output, &[] as &[usize], 0, "", &usize::to_string).is_err());
+    }
 
     use proptest::{collection::vec, prelude::*};
 

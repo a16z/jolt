@@ -167,7 +167,7 @@ impl LookupGraph {
     }
 
     /// Hash-cons this graph into a shared associative-commutative certificate DAG.
-    pub fn canonicalize(&self, canonicalizer: &mut Canonicalizer) -> CanonicalizedGraph {
+    pub(crate) fn canonicalize(&self, canonicalizer: &mut Canonicalizer) -> CanonicalizedGraph {
         let mut ids = Vec::with_capacity(self.nodes.len());
         for node in &self.nodes {
             let id = match node {

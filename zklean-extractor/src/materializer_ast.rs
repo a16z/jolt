@@ -63,7 +63,10 @@ impl MaterializerGraph {
         }
     }
 
-    pub fn canonicalize(&self, canonicalizer: &mut Canonicalizer) -> CanonicalizedMaterializer {
+    pub(crate) fn canonicalize(
+        &self,
+        canonicalizer: &mut Canonicalizer,
+    ) -> CanonicalizedMaterializer {
         let mut bool_ids = Vec::with_capacity(self.bool_nodes.len());
         for node in &self.bool_nodes {
             let id = match node {
@@ -97,7 +100,7 @@ impl MaterializerGraph {
         }
     }
 
-    pub fn bool_chunks_for_lean(&self) -> Result<Vec<(usize, String, bool)>, fmt::Error> {
+    pub(crate) fn bool_chunks_for_lean(&self) -> Result<Vec<(usize, String, bool)>, fmt::Error> {
         self.bool_nodes
             .chunks(LEAN_NODE_CHUNK_SIZE)
             .map(|chunk| {
@@ -118,7 +121,7 @@ impl MaterializerGraph {
             .collect()
     }
 
-    pub fn nat_chunks_for_lean(&self) -> Result<Vec<(usize, String)>, fmt::Error> {
+    pub(crate) fn nat_chunks_for_lean(&self) -> Result<Vec<(usize, String)>, fmt::Error> {
         self.nat_nodes
             .chunks(LEAN_NODE_CHUNK_SIZE)
             .map(|chunk| {
