@@ -1688,6 +1688,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7807,12 +7816,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "z3-src"
+version = "416.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2af0c6527de39877cf55cb87f233016573eeeb7cf77afdc1469e4b32faef832"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "z3-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c18b0a91a13522d21b3414847667de2b2056a721a3edcb5b6ee6858352d58db4"
 dependencies = [
  "pkg-config",
+ "z3-src",
 ]
 
 [[package]]
@@ -7824,6 +7843,7 @@ dependencies = [
  "paste",
  "tracer",
  "z3",
+ "z3-src",
 ]
 
 [[package]]
