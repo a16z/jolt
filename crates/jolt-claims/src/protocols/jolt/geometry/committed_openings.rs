@@ -93,6 +93,8 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
         | JoltCommittedPolynomial::BytecodeImmBytes { .. } => {
             JoltRelationId::BytecodeChunkReconstruction
         }
+        #[cfg(feature = "implicit-carry")]
+        JoltCommittedPolynomial::Carry => JoltRelationId::CarryClaimReduction,
     }
 }
 

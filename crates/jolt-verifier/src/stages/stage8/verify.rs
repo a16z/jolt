@@ -368,6 +368,13 @@ where
                     .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
+                // Wired up when the carry claim reduction lands;
+                // `final_opening_polynomial_order` does not emit `Carry` yet,
+                // so reaching this arm means the batch is malformed.
+                #[cfg(feature = "implicit-carry")]
+                JoltCommittedPolynomial::Carry => {
+                    return Err(VerifierError::MissingFinalOpeningCommitment { polynomial });
+                }
                 JoltCommittedPolynomial::UnsignedIncChunk(_)
                 | JoltCommittedPolynomial::UnsignedIncMsb
                 | JoltCommittedPolynomial::TrustedAdviceBytes

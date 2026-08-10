@@ -132,6 +132,13 @@ pub enum CircuitFlags {
     /// Is instruction at the end of a virtual sequence (virtual_sequence_remaining == Some(0)).
     /// Used to skip NextPCEqPCPlusOneIfInline for ECALL sequences that may jump to trap handlers.
     IsLastInSequence,
+    /// 1 if the instruction consumes the implicit carry from the previous row (`ADDC`, `MULC`).
+    #[cfg(feature = "implicit-carry")]
+    UsesCarry,
+    /// 1 if the instruction's arithmetic result splits into a low-64-bit `rd` and a
+    /// high-64-bit carry-out (`ADD`, `MUL`, `ADDC`, `MULC`).
+    #[cfg(feature = "implicit-carry")]
+    ProducesCarry,
 }
 
 /// Boolean flags that are not part of Jolt's R1CS constraints
@@ -167,6 +174,11 @@ pub enum InstructionFlags {
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
+
+// `circuit_flags_from_riscv` converts by bit position, so the legacy enum must
+// mirror `jolt_riscv::CircuitFlags` variant-for-variant or flags silently
+// vanish from the witness.
+const _: () = assert!(NUM_CIRCUIT_FLAGS == jolt_riscv::NUM_CIRCUIT_FLAGS);
 
 pub trait InterleavedBitsMarker {
     fn is_interleaved_operands(&self) -> bool;
@@ -433,12 +445,13 @@ fn instruction_flags_from_riscv(flags: RiscvInstructionFlagSet) -> [bool; NUM_IN
 
 macro_rules! define_rv64imac_trait_impls {
     (
-        instructions: [$($instr:ident),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident),* $(,)?]
     ) => {
         impl SupportedInstruction for Instruction {
             fn is_supported_instruction(&self) -> bool {
                 match self {
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(_) => true,
                     )*
                     _ => false,
@@ -451,6 +464,7 @@ macro_rules! define_rv64imac_trait_impls {
                 match self {
                     Cycle::NoOp => (0, 0),
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
@@ -461,6 +475,7 @@ macro_rules! define_rv64imac_trait_impls {
                 match self {
                     Cycle::NoOp => 0,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_index(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
@@ -471,6 +486,7 @@ macro_rules! define_rv64imac_trait_impls {
                 match self {
                     Cycle::NoOp => (0, 0),
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_operands(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
@@ -481,6 +497,7 @@ macro_rules! define_rv64imac_trait_impls {
                 match self {
                     Cycle::NoOp => 0,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_output(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
@@ -505,11 +522,17 @@ define_rv64imac_trait_impls! {
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
-        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7
+        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+        #[cfg(feature = "implicit-carry")]
+        ADDC,
+        #[cfg(feature = "implicit-carry")]
+        MULC
     ]
 }
 
 pub mod add;
+#[cfg(feature = "implicit-carry")]
+pub mod addc;
 pub mod addi;
 pub mod and;
 pub mod andi;
@@ -529,6 +552,8 @@ pub mod jalr;
 pub mod ld;
 pub mod lui;
 pub mod mul;
+#[cfg(feature = "implicit-carry")]
+pub mod mulc;
 pub mod mulhu;
 pub mod or;
 pub mod ori;

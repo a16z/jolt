@@ -53,12 +53,24 @@ pub enum JoltR1CSInputs {
     LookupOutput,          // (instruction rv)
     ShouldJump,            // (product virtualization)
     OpFlags(CircuitFlags),
+    /// Product-virtualized `OpFlags(UsesCarry) * Carry` (product virtualization)
+    #[cfg(feature = "implicit-carry")]
+    CarryUsed,
+    /// The row's carry-out (shift sumcheck)
+    #[cfg(feature = "implicit-carry")]
+    NextCarry,
 }
 
 pub const NUM_R1CS_INPUTS: usize = ALL_R1CS_INPUTS.len();
+
+#[cfg(not(feature = "implicit-carry"))]
+const NUM_R1CS_INPUTS_LITERAL: usize = 35;
+#[cfg(feature = "implicit-carry")]
+const NUM_R1CS_INPUTS_LITERAL: usize = 39;
+
 /// This const serves to define a canonical ordering over inputs (and thus indices
 /// for each input). This is needed for sumcheck.
-pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 35] = [
+pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; NUM_R1CS_INPUTS_LITERAL] = [
     JoltR1CSInputs::LeftInstructionInput,
     JoltR1CSInputs::RightInstructionInput,
     JoltR1CSInputs::Product,
@@ -94,6 +106,14 @@ pub const ALL_R1CS_INPUTS: [JoltR1CSInputs; 35] = [
     JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence),
     JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence),
+    #[cfg(feature = "implicit-carry")]
+    JoltR1CSInputs::OpFlags(CircuitFlags::UsesCarry),
+    #[cfg(feature = "implicit-carry")]
+    JoltR1CSInputs::OpFlags(CircuitFlags::ProducesCarry),
+    #[cfg(feature = "implicit-carry")]
+    JoltR1CSInputs::CarryUsed,
+    #[cfg(feature = "implicit-carry")]
+    JoltR1CSInputs::NextCarry,
 ];
 
 impl JoltR1CSInputs {
@@ -146,6 +166,14 @@ impl JoltR1CSInputs {
             JoltR1CSInputs::OpFlags(CircuitFlags::IsCompressed) => 32,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsFirstInSequence) => 33,
             JoltR1CSInputs::OpFlags(CircuitFlags::IsLastInSequence) => 34,
+            #[cfg(feature = "implicit-carry")]
+            JoltR1CSInputs::OpFlags(CircuitFlags::UsesCarry) => 35,
+            #[cfg(feature = "implicit-carry")]
+            JoltR1CSInputs::OpFlags(CircuitFlags::ProducesCarry) => 36,
+            #[cfg(feature = "implicit-carry")]
+            JoltR1CSInputs::CarryUsed => 37,
+            #[cfg(feature = "implicit-carry")]
+            JoltR1CSInputs::NextCarry => 38,
         }
     }
 }
@@ -175,6 +203,10 @@ impl From<&JoltR1CSInputs> for VirtualPolynomial {
             JoltR1CSInputs::RightInstructionInput => VirtualPolynomial::RightInstructionInput,
             JoltR1CSInputs::NextIsVirtual => VirtualPolynomial::NextIsVirtual,
             JoltR1CSInputs::NextIsFirstInSequence => VirtualPolynomial::NextIsFirstInSequence,
+            #[cfg(feature = "implicit-carry")]
+            JoltR1CSInputs::CarryUsed => VirtualPolynomial::CarryUsed,
+            #[cfg(feature = "implicit-carry")]
+            JoltR1CSInputs::NextCarry => VirtualPolynomial::NextCarry,
         }
     }
 }
@@ -250,6 +282,14 @@ pub struct R1CSCycleInputs {
     pub next_is_virtual: bool,
     /// `FirstInSequence` flag for the next cycle (false for last cycle).
     pub next_is_first_in_sequence: bool,
+
+    /// Derived: incoming carry if `UsesCarry`, else 0 (`OpFlags(UsesCarry) * Carry`).
+    #[cfg(feature = "implicit-carry")]
+    pub carry_used: u64,
+    /// The next cycle's incoming carry, i.e. this row's carry-out; 0 for the
+    /// last cycle (the shift relation requires the final next-value to be 0).
+    #[cfg(feature = "implicit-carry")]
+    pub next_carry: u64,
 }
 
 impl R1CSCycleInputs {
@@ -351,6 +391,17 @@ impl R1CSCycleInputs {
                 (false, false)
             };
 
+        #[cfg(feature = "implicit-carry")]
+        let carry_used = if flags_view[CircuitFlags::UsesCarry] {
+            cycle.cycle().carry()
+        } else {
+            0
+        };
+        #[cfg(feature = "implicit-carry")]
+        let next_carry = next_cycle
+            .as_ref()
+            .map_or(0, |next_cycle| next_cycle.cycle().carry());
+
         Self {
             left_input,
             right_input,
@@ -375,6 +426,10 @@ impl R1CSCycleInputs {
             should_branch,
             next_is_virtual,
             next_is_first_in_sequence,
+            #[cfg(feature = "implicit-carry")]
+            carry_used,
+            #[cfg(feature = "implicit-carry")]
+            next_carry,
         }
     }
 
@@ -403,6 +458,10 @@ impl R1CSCycleInputs {
             JoltR1CSInputs::LookupOutput => self.lookup_output as i128,
             JoltR1CSInputs::ShouldJump => self.should_jump as i128,
             JoltR1CSInputs::OpFlags(flag) => self.flags[flag] as i128,
+            #[cfg(feature = "implicit-carry")]
+            JoltR1CSInputs::CarryUsed => self.carry_used as i128,
+            #[cfg(feature = "implicit-carry")]
+            JoltR1CSInputs::NextCarry => self.next_carry as i128,
         }
     }
 }
@@ -586,6 +645,10 @@ mod tests {
                 (JoltR1CSInputs::OpFlags(flag1), JoltR1CSInputs::OpFlags(flag2)) => {
                     self.const_eq_circuit_flags(*flag1, *flag2)
                 }
+                #[cfg(feature = "implicit-carry")]
+                (JoltR1CSInputs::CarryUsed, JoltR1CSInputs::CarryUsed) => true,
+                #[cfg(feature = "implicit-carry")]
+                (JoltR1CSInputs::NextCarry, JoltR1CSInputs::NextCarry) => true,
                 _ => false,
             }
         }
@@ -629,7 +692,20 @@ mod tests {
                         CircuitFlags::IsLastInSequence,
                         CircuitFlags::IsLastInSequence
                     )
-            )
+            ) || {
+                #[cfg(feature = "implicit-carry")]
+                {
+                    matches!(
+                        (flag1, flag2),
+                        (CircuitFlags::UsesCarry, CircuitFlags::UsesCarry)
+                            | (CircuitFlags::ProducesCarry, CircuitFlags::ProducesCarry)
+                    )
+                }
+                #[cfg(not(feature = "implicit-carry"))]
+                {
+                    false
+                }
+            }
         }
     }
 
