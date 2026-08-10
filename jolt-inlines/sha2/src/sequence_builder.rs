@@ -95,7 +95,9 @@ impl Sha256SequenceBuilder {
             if self.big_endian_input {
                 self.asm
                     .emit_ld::<LD>(lo, self.operands.rs2, (i as i64) * 8);
-                self.asm.emit_r::<VirtualRev8W>(lo, lo, 0);
+                // VirtualRev8W is FormatT (rd, rs1, no rs2): emit an I-shaped row so the
+                // bytecode operands (rs2 = None, imm = 0) match the tracer's format.
+                self.asm.emit_i::<VirtualRev8W>(lo, lo, 0);
                 self.asm.emit_i::<SRLI>(hi, lo, 32);
             } else {
                 self.asm
