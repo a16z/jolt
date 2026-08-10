@@ -463,6 +463,12 @@ macro_rules! source_extension_for_marker {
     (FieldLoadImm) => {
         Some(SourceExtension::FieldInline)
     };
+    (AddC) => {
+        Some(SourceExtension::ImplicitCarry)
+    };
+    (MulC) => {
+        Some(SourceExtension::ImplicitCarry)
+    };
 }
 
 macro_rules! source_side_effects_for_marker {
@@ -892,6 +898,12 @@ macro_rules! source_side_effects_for_marker {
     (FieldLoadImm) => {
         true
     };
+    (AddC) => {
+        true
+    };
+    (MulC) => {
+        true
+    };
 }
 
 macro_rules! jolt_target_extension_for_marker {
@@ -1120,6 +1132,12 @@ macro_rules! jolt_target_extension_for_marker {
     (FieldLoadImm) => {
         Some(JoltTargetExtension::FieldInline)
     };
+    (AddC) => {
+        Some(JoltTargetExtension::ImplicitCarry)
+    };
+    (MulC) => {
+        Some(JoltTargetExtension::ImplicitCarry)
+    };
 }
 
 macro_rules! jolt_side_effects_for_marker {
@@ -1184,6 +1202,12 @@ macro_rules! jolt_side_effects_for_marker {
         true
     };
     (FieldLoadImm) => {
+        true
+    };
+    (AddC) => {
+        true
+    };
+    (MulC) => {
         true
     };
     (Add) => {

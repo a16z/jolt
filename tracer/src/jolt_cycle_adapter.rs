@@ -49,4 +49,9 @@ impl<T: RISCVInstruction + JoltInstructionRowData> JoltCycle for RISCVCycle<T> {
             RAMAccess::NoOp => None,
         }
     }
+
+    #[cfg(feature = "implicit-carry")]
+    fn carry(&self) -> u64 {
+        self.carry
+    }
 }

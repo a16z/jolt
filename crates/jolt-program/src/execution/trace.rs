@@ -245,6 +245,10 @@ pub struct TraceRow {
     pub ram_access: RamAccess,
     #[cfg(feature = "field-inline")]
     pub field_inline: Option<Arc<FieldInlineTraceData>>,
+    /// The row's incoming implicit carry (the previous row's carry-out).
+    /// Zero on padding rows.
+    #[cfg(feature = "implicit-carry")]
+    pub carry: u64,
 }
 
 impl JoltCycle for TraceRow {
@@ -296,6 +300,12 @@ impl JoltCycle for TraceRow {
             RamAccess::Write(write) => Some(write.post_value),
             RamAccess::Read(_) | RamAccess::NoOp => None,
         }
+    }
+
+    #[cfg(feature = "implicit-carry")]
+    #[inline]
+    fn carry(&self) -> u64 {
+        self.carry
     }
 }
 
