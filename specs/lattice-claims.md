@@ -192,8 +192,10 @@ relation's (house convention) and are aggregated as appended
 BytecodeReadRafPublic::{StageValue, StageCycleEq} index the relation's val
     stages 0..READ_RAF_CYCLE_STAGES (9 in lattice mode; see relation 1)
 HammingWeightClaimReductionPublic additionally includes EqBooleanityAtDefault,
-    EqVirtualizationAtDefault(i), EqDefault, RamHammingWeight, and
-    BalancedIncValueAtAddress — the implicit-zero recentering publics
+    EqVirtualizationAtDefault(i), and BalancedIncValueAtAddress — the
+    implicit-zero recentering publics. The `*AtDefault` weights appear in both
+    expressions: the input claim folds in each leg's lane-zero baseline, the
+    output coefficients are the sparse `w(ρ) − w(0)` remainders
 ```
 
 There is **no** `JoltOpeningId::Lattice { relation, index }` variant. Every
@@ -377,10 +379,12 @@ The existing RA hamming-weight claim reduction is extended, on the Akita path
 only, with the increment columns. One sumcheck over the `b = log_K` address
 bits batches:
 
-- **hamming weight**: every increment digit and the carry has exactly one hot
-  address per cycle row,
 - **claim reduction**: reduces the chunk openings produced by lattice
-  Booleanity to Stage 7's bound address point, and
+  Booleanity to Stage 7's bound address point (there are no hamming-weight
+  legs: with lane zero defined as `A − Σ_{k≠0} Q`, per-row one-hotness follows
+  from booleanity of the reconstruction plus the definitional column sum, so
+  the legs would pair `A` against `A`; their γ powers are left unused to keep
+  the layout aligned with base mode), and
 - **value reconstruction**:
   `Σ_j 2^(b*j) * value(digit_j) + 2^64 * value(carry) = FusedInc`, where
    `value(lane) = lane` for `lane < K/2` and `lane - K` otherwise.
@@ -527,10 +531,19 @@ commitment differs by object:
   free. The prover must not invent a nonzero lane for them.
 **Where the RAM activation is pinned.** `RamRa` is the one OneHotTrace family
 whose activation `A` is a prover-supplied claim (`RamHammingWeight`) rather
-than the constant 1, so its `γ^(3i)` hamming leg is *deliberately vacuous*:
-`Σ_k L(k,t) = A(t)` holds by construction, and base mode's direct tie
-`Σ_k ra(k, r_cycle) = A` against committed data has no analogue here. `A` is
-instead pinned by a cross-stage chain — the `γ^(3i+2)` leg → the
+than the constant 1. Its hamming leg is *omitted* here, because
+`Σ_k L(k,t) = A(t)` holds by construction and the leg would only pair `A`
+against `A`; base mode keeps it, since there it is the direct tie
+`Σ_k ra(k, r_cycle) = A` against committed data.
+
+`A` is still consumed by this relation, as an ordinary input opening: each
+`RamRa` leg's lane-zero baseline `w(0)·A` is folded into the input claim
+(`γ^(3i+1)·(c_bool − eq(0, r_bool)·A) + γ^(3i+2)·(c_virt − eq(0, r_virt)·A)`),
+so the relation reduces `{c_bool_i, c_virt_i, A}` to the committed opening
+`V_i`. What the direct tie bought on top of that was redundancy: it pinned `A`
+locally against the column's own row sum. Without it, `A`'s remaining tie to
+the rest of the execution runs through a cross-stage chain — the `γ^(3i+2)`
+leg → the
 `RamRaVirtualization` product → the stage-5 `RamRaClaimReduction` → the
 `RamRafEvaluation` identity `Σ_k (8k + lowest_address)·ra(k,t) = RamAddress(t)`
 → Spartan's `RamAddress`, pinned by rv64 rows 0/1 (`RamAddrEqRs1PlusImmIfLoadStore`

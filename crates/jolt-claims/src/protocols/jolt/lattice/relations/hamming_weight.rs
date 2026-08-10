@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
     booleanity_claim, hamming_weight_claim, reduced_claim,
 };
-use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
+use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use crate::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltExpr,
@@ -56,6 +56,12 @@ impl LatticeHammingWeightClaimReductionDimensions {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct LatticeHammingWeightClaimReductionInputClaims<C> {
+    /// The RAM activation `A` — the reconstruction coefficient of the omitted
+    /// lane zero, `L(k,t) = Q(k,t) + eq(k,0)·(A(t) − S(t))`. Each `RamRa` leg's
+    /// baseline `w(0)·A` is folded into the input claim, so this claim enters
+    /// with a negative `eq(0, ·)`-weighted coefficient rather than through a
+    /// standalone hamming term (which would be vacuous: `Σ_k L(k,t) = A(t)`
+    /// holds by construction).
     #[opening(RamHammingWeight, from = RamHammingBooleanity)]
     pub ram_hamming_weight: C,
     #[opening(committed = InstructionRa, from = Booleanity)]
@@ -145,25 +151,41 @@ impl SymbolicSumcheck for LatticeHammingWeightClaimReduction {
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
         let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
+        let eq_booleanity_default =
+            derived(HammingWeightClaimReductionPublic::EqBooleanityAtDefault);
         let mut input = JoltExpr::zero();
+        // The committed columns omit lane zero, reconstructed as `A − Σ_{k≠0} Q`.
+        // Each leg's lane-zero baseline `w(0)·A` is folded into the input claim,
+        // so the sumcheck runs over the committed `Q` alone:
+        // `Σ_k (w(k) − w(0))·Q(k) = c − w(0)·A`. The hamming legs (`w ≡ 1`)
+        // cancel entirely — `Σ_k L(k,t) = A(t)` holds by construction — so their
+        // γ powers (`3i` and the even inc offsets) are left unused rather than
+        // renumbered, keeping this layout aligned with the base relation's
+        // (where the hamming leg is a real anchor) and with the shared prover's
+        // `gamma_powers` indexing.
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
+            let eq_virtualization_default =
+                derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(i));
+            let activation = hamming_weight_claim(polynomial);
             input = input
-                + gamma.clone().pow(3 * i) * hamming_weight_claim(polynomial)
-                + gamma.clone().pow(3 * i + 1) * opening(booleanity_claim(polynomial))
+                + gamma.clone().pow(3 * i + 1)
+                    * (opening(booleanity_claim(polynomial))
+                        - eq_booleanity_default.clone() * activation.clone())
                 + gamma.clone().pow(3 * i + 2)
-                    * opening(crate::protocols::jolt::geometry::claim_reductions::hamming_weight::virtualization_claim(polynomial));
+                    * (opening(crate::protocols::jolt::geometry::claim_reductions::hamming_weight::virtualization_claim(polynomial))
+                        - eq_virtualization_default * activation);
         }
         for index in 0..self.shape.chunking.chunk_count() {
             let offset = self.ra_terms() + 2 * index;
             input = input
-                + gamma.clone().pow(offset)
                 + gamma.clone().pow(offset + 1)
-                    * opening(booleanity_balanced_inc_digit_opening(index));
+                    * (opening(booleanity_balanced_inc_digit_opening(index))
+                        - eq_booleanity_default.clone());
         }
         let msb_offset = self.ra_terms() + 2 * self.shape.chunking.chunk_count();
         input = input
-            + gamma.clone().pow(msb_offset)
-            + gamma.clone().pow(msb_offset + 1) * opening(booleanity_balanced_inc_carry_opening());
+            + gamma.clone().pow(msb_offset + 1)
+                * (opening(booleanity_balanced_inc_carry_opening()) - eq_booleanity_default);
         input + gamma.pow(self.decode_power()) * opening(fused_inc_read_raf_opening())
     }
 
@@ -172,52 +194,35 @@ impl SymbolicSumcheck for LatticeHammingWeightClaimReduction {
         let eq_booleanity = derived(HammingWeightClaimReductionPublic::EqBooleanity);
         let eq_booleanity_default =
             derived(HammingWeightClaimReductionPublic::EqBooleanityAtDefault);
-        let eq_default = derived(HammingWeightClaimReductionPublic::EqDefault);
-        let ram_hamming_weight = derived(HammingWeightClaimReductionPublic::RamHammingWeight);
         let inc_value = derived(HammingWeightClaimReductionPublic::BalancedIncValueAtAddress);
         let decode_scale = gamma.clone().pow(self.decode_power());
         let mut output = JoltExpr::zero();
 
+        // Purely sparse: every leg's lane-zero baseline lives in
+        // `input_expression`, so each coefficient here is `w(ρ) − w(0)` (the
+        // decode leg's `w(0)` is zero already: `balanced_inc_value(0) = 0`).
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
             let eq_virtualization = derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
             let eq_virtualization_default =
                 derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(i));
-            let baseline_coefficient = gamma.clone().pow(3 * i)
-                + gamma.clone().pow(3 * i + 1) * eq_booleanity_default.clone()
-                + gamma.clone().pow(3 * i + 2) * eq_virtualization_default.clone();
-            let sparse_coefficient = gamma.clone().pow(3 * i + 1)
+            let coefficient = gamma.clone().pow(3 * i + 1)
                 * (eq_booleanity.clone() - eq_booleanity_default.clone())
                 + gamma.clone().pow(3 * i + 2) * (eq_virtualization - eq_virtualization_default);
-            let hamming_weight = match polynomial {
-                JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => JoltExpr::one(),
-                JoltRaPolynomial::Ram(_) => ram_hamming_weight.clone(),
-            };
-            output = output
-                + eq_default.clone() * hamming_weight * baseline_coefficient
-                + sparse_coefficient * opening(reduced_claim(polynomial));
+            output = output + coefficient * opening(reduced_claim(polynomial));
         }
         for index in 0..self.shape.chunking.chunk_count() {
             let offset = self.ra_terms() + 2 * index;
-            let baseline_coefficient = gamma.clone().pow(offset)
-                + gamma.clone().pow(offset + 1) * eq_booleanity_default.clone();
-            let sparse_coefficient = gamma.clone().pow(offset + 1)
+            let coefficient = gamma.clone().pow(offset + 1)
                 * (eq_booleanity.clone() - eq_booleanity_default.clone())
                 + decode_scale.clone()
                     * constant(self.shape.chunking.place_value::<F>(index))
                     * inc_value.clone();
-            output = output
-                + eq_default.clone() * baseline_coefficient
-                + sparse_coefficient * opening(reduced_balanced_inc_digit_opening(index));
+            output = output + coefficient * opening(reduced_balanced_inc_digit_opening(index));
         }
         let msb_offset = self.ra_terms() + 2 * self.shape.chunking.chunk_count();
-        let baseline_coefficient = gamma.clone().pow(msb_offset)
-            + gamma.clone().pow(msb_offset + 1) * eq_booleanity_default.clone();
-        let sparse_coefficient = gamma.pow(msb_offset + 1)
-            * (eq_booleanity - eq_booleanity_default)
+        let coefficient = gamma.pow(msb_offset + 1) * (eq_booleanity - eq_booleanity_default)
             + decode_scale * constant(F::pow2(FUSED_INC_BITS)) * inc_value;
-        output
-            + eq_default * baseline_coefficient
-            + sparse_coefficient * opening(reduced_balanced_inc_carry_opening())
+        output + coefficient * opening(reduced_balanced_inc_carry_opening())
     }
 }
 
@@ -264,7 +269,6 @@ mod tests {
         let eq_bool_default = Fr::from_u64(17);
         let eq_virt = Fr::from_u64(19);
         let eq_virt_default = Fr::from_u64(23);
-        let eq_default = Fr::from_u64(29);
         let inc_value = Fr::from_u64(31);
         let power = |exponent: usize| {
             (0..exponent).fold(Fr::from_u64(1), |accumulator, _| accumulator * gamma)
@@ -310,12 +314,6 @@ mod tests {
                 HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(0),
             ) => eq_virt_default,
             JoltDerivedId::HammingWeightClaimReduction(
-                HammingWeightClaimReductionPublic::EqDefault,
-            ) => eq_default,
-            JoltDerivedId::HammingWeightClaimReduction(
-                HammingWeightClaimReductionPublic::RamHammingWeight,
-            ) => *hamming,
-            JoltDerivedId::HammingWeightClaimReduction(
                 HammingWeightClaimReductionPublic::BalancedIncValueAtAddress,
             ) => inc_value,
             _ => zero,
@@ -326,15 +324,15 @@ mod tests {
             challenge_value,
             derived_value,
         );
-        let expected_input = *hamming
-            + power(1) * *bool_ra
-            + power(2) * *virt_ra
-            + power(3)
-            + power(4) * *bool_0
-            + power(5)
-            + power(6) * *bool_1
-            + power(7)
-            + power(8) * *bool_msb
+        // The hamming legs (powers 0, 3, 5, 7) are gone, and each remaining
+        // booleanity/virtualization claim carries its lane-zero baseline:
+        // `c − w(0)·A`, with `A = hamming` for the RAM family and `1` for the
+        // increment columns.
+        let expected_input = power(1) * (*bool_ra - eq_bool_default * *hamming)
+            + power(2) * (*virt_ra - eq_virt_default * *hamming)
+            + power(4) * (*bool_0 - eq_bool_default)
+            + power(6) * (*bool_1 - eq_bool_default)
+            + power(8) * (*bool_msb - eq_bool_default)
             + power(9) * *fused;
         assert_eq!(input, expected_input);
 
@@ -343,17 +341,12 @@ mod tests {
             challenge_value,
             derived_value,
         );
-        let expected_output = eq_default
-            * *hamming
-            * (power(0) + power(1) * eq_bool_default + power(2) * eq_virt_default)
-            + *out_ra
-                * (power(1) * (eq_bool - eq_bool_default) + power(2) * (eq_virt - eq_virt_default))
-            + eq_default * (power(3) + power(4) * eq_bool_default)
+        // Purely sparse: no baseline terms, no `EqDefault`.
+        let expected_output = *out_ra
+            * (power(1) * (eq_bool - eq_bool_default) + power(2) * (eq_virt - eq_virt_default))
             + *out_0 * (power(4) * (eq_bool - eq_bool_default) + power(9) * inc_value)
-            + eq_default * (power(5) + power(6) * eq_bool_default)
             + *out_1
                 * (power(6) * (eq_bool - eq_bool_default) + power(9) * Fr::pow2(32) * inc_value)
-            + eq_default * (power(7) + power(8) * eq_bool_default)
             + *out_msb
                 * (power(8) * (eq_bool - eq_bool_default) + power(9) * Fr::pow2(64) * inc_value);
         assert_eq!(output, expected_output);

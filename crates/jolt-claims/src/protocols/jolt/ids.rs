@@ -141,8 +141,6 @@ pub enum HammingWeightClaimReductionPublic {
     EqBooleanityAtDefault,
     EqVirtualization(usize),
     EqVirtualizationAtDefault(usize),
-    EqDefault,
-    RamHammingWeight,
     BalancedIncValueAtAddress,
 }
 

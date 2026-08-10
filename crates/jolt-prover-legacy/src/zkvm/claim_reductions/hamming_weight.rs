@@ -159,6 +159,17 @@ pub struct HammingWeightClaimReductionParams<F: JoltField> {
     pub fused_inc_claim: Option<F>,
     /// Place weights for the increment columns, chunks followed by `2^64` for carry.
     pub inc_weights: Vec<F>,
+    /// Lattice-only: lane zero is omitted from the commitment and reconstructed
+    /// from the activation, so each leg's lane-zero baseline `w(0)·A` is folded
+    /// into the input claim and the hamming legs cancel (`Σ_k L(k,t) = A(t)`
+    /// holds by construction). Base mode keeps the plain form — there the
+    /// hamming leg is the anchor tying `A` to the committed column.
+    pub implicit_zero: bool,
+    /// Lattice-only `eq(0, r_addr_bool)` — the booleanity legs' `w(0)`.
+    pub eq_bool_at_zero: F,
+    /// Lattice-only `eq(0, r_addr_virt[i])` per polynomial — the
+    /// virtualization legs' `w(0)`.
+    pub eq_virt_at_zero: Vec<F>,
 }
 
 impl<F: JoltField> HammingWeightClaimReductionParams<F> {
@@ -268,6 +279,9 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             inc_booleanity_claims: Vec::new(),
             fused_inc_claim: None,
             inc_weights: Vec::new(),
+            implicit_zero: false,
+            eq_bool_at_zero: F::zero(),
+            eq_virt_at_zero: Vec::new(),
         }
     }
 
@@ -277,6 +291,13 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         transcript: &mut impl Transcript,
     ) -> Self {
         let mut params = Self::new(one_hot_params, accumulator, transcript);
+        params.implicit_zero = true;
+        params.eq_bool_at_zero = EqPolynomial::<F>::evals(&params.r_addr_bool)[0];
+        params.eq_virt_at_zero = params
+            .r_addr_virt
+            .iter()
+            .map(|point| EqPolynomial::<F>::evals(point)[0])
+            .collect();
         let chunk_count = 64 / one_hot_params.log_k_chunk;
         params.inc_booleanity_claims = (0..chunk_count)
             .map(|index| {
@@ -323,17 +344,31 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
 
 impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionParams<F> {
     fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
-        // Σ_i (γ^{3i} · claim_hw_i + γ^{3i+1} · claim_bool_i + γ^{3i+2} · claim_virt_i)
+        // Base: Σ_i (γ^{3i}·claim_hw_i + γ^{3i+1}·claim_bool_i + γ^{3i+2}·claim_virt_i).
+        // Implicit-zero (lattice): each leg's lane-zero baseline `w(0)·A` is
+        // folded in — γ^{3i+1}·(claim_bool_i − eq(0,r_bool)·A_i) +
+        // γ^{3i+2}·(claim_virt_i − eq(0,r_virt_i)·A_i) — and the hamming legs
+        // cancel entirely (`Σ_k L = A` holds by construction), leaving their γ
+        // powers unused.
         let mut claim = F::zero();
         for i in 0..self.polynomial_types.len() {
-            claim += self.gamma_powers[3 * i] * self.claims_hw[i];
-            claim += self.gamma_powers[3 * i + 1] * self.claims_bool[i];
-            claim += self.gamma_powers[3 * i + 2] * self.claims_virt[i];
+            if self.implicit_zero {
+                claim += self.gamma_powers[3 * i + 1]
+                    * (self.claims_bool[i] - self.eq_bool_at_zero * self.claims_hw[i]);
+                claim += self.gamma_powers[3 * i + 2]
+                    * (self.claims_virt[i] - self.eq_virt_at_zero[i] * self.claims_hw[i]);
+            } else {
+                claim += self.gamma_powers[3 * i] * self.claims_hw[i];
+                claim += self.gamma_powers[3 * i + 1] * self.claims_bool[i];
+                claim += self.gamma_powers[3 * i + 2] * self.claims_virt[i];
+            }
         }
         let offset = 3 * self.polynomial_types.len();
         for (index, booleanity) in self.inc_booleanity_claims.iter().enumerate() {
-            claim += self.gamma_powers[offset + 2 * index];
-            claim += self.gamma_powers[offset + 2 * index + 1] * *booleanity;
+            // Increment columns are lattice-only, so `implicit_zero` holds here;
+            // their activation is the constant 1.
+            claim +=
+                self.gamma_powers[offset + 2 * index + 1] * (*booleanity - self.eq_bool_at_zero);
         }
         if let Some(fused_inc) = self.fused_inc_claim {
             claim += self.gamma_powers[offset + 2 * self.inc_booleanity_claims.len()] * fused_inc;
@@ -483,15 +518,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
 /// Memory optimization: eq_bool is shared across all families (1 polynomial, thanks
 /// to Booleanity), while eq_virt requires one per ra_i (N polynomials).
 #[cfg(feature = "prover")]
-#[derive(Allocative)]
-struct ImplicitZeroReduction<F: JoltField> {
-    eq_zero: MultilinearPolynomial<F>,
-    inc_value: MultilinearPolynomial<F>,
-    eq_bool_at_zero: F,
-    eq_virt_at_zero: Vec<F>,
-    baseline_scale: F,
-}
-
 #[cfg(feature = "prover")]
 #[derive(Allocative)]
 pub struct HammingWeightClaimReductionProver<F: JoltField> {
@@ -502,7 +528,10 @@ pub struct HammingWeightClaimReductionProver<F: JoltField> {
     eq_bool: MultilinearPolynomial<F>,
     /// eq(r_addr_virt_i, ·) for each ra polynomial (N total)
     eq_virt: Vec<MultilinearPolynomial<F>>,
-    implicit_zero: Option<ImplicitZeroReduction<F>>,
+    /// Lattice-only decode-weight table: the centered lane value
+    /// `balanced_inc_value` over the `k_chunk` lanes. Present iff
+    /// `params.implicit_zero`.
+    inc_value: Option<MultilinearPolynomial<F>>,
     #[allocative(skip)]
     pub params: HammingWeightClaimReductionParams<F>,
 }
@@ -512,7 +541,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
     fn from_G(
         params: HammingWeightClaimReductionParams<F>,
         G: Vec<Vec<F>>,
-        implicit_zero: Option<ImplicitZeroReduction<F>>,
+        inc_value: Option<MultilinearPolynomial<F>>,
     ) -> Self {
         let G = G.into_iter().map(MultilinearPolynomial::from).collect();
         let eq_bool = MultilinearPolynomial::from(EqPolynomial::evals(&params.r_addr_bool));
@@ -525,7 +554,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
             G,
             eq_bool,
             eq_virt,
-            implicit_zero,
+            inc_value,
             params,
         }
     }
@@ -590,33 +619,14 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
             &params.r_cycle,
         );
         G.extend(increment_g);
+        // The commitment omits lane zero; the sumcheck runs over the committed
+        // `Q`, so the pushforwards must agree (the lane-zero baselines live in
+        // the input claim instead — see `input_claim`).
         for polynomial in &mut G {
             polynomial[0] = F::zero();
         }
 
-        let eq_bool_at_zero = EqPolynomial::<F>::evals(&params.r_addr_bool)[0];
-        let eq_virt_at_zero = params
-            .r_addr_virt
-            .iter()
-            .map(|point| EqPolynomial::<F>::evals(point)[0])
-            .collect::<Vec<_>>();
-        let N = params.polynomial_types.len();
-        let mut baseline_scale = F::zero();
-        for i in 0..N {
-            baseline_scale += params.claims_hw[i]
-                * (params.gamma_powers[3 * i]
-                    + params.gamma_powers[3 * i + 1] * eq_bool_at_zero
-                    + params.gamma_powers[3 * i + 2] * eq_virt_at_zero[i]);
-        }
-        let offset = 3 * N;
-        for index in 0..params.inc_booleanity_claims.len() {
-            baseline_scale += params.gamma_powers[offset + 2 * index]
-                + params.gamma_powers[offset + 2 * index + 1] * eq_bool_at_zero;
-        }
-
         let k_chunk = 1usize << params.log_k_chunk;
-        let mut eq_zero = vec![F::zero(); k_chunk];
-        eq_zero[0] = F::one();
         let half = k_chunk / 2;
         let inc_value: Vec<F> = (0..k_chunk)
             .map(|lane| {
@@ -627,14 +637,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
                 }
             })
             .collect();
-        let implicit_zero = ImplicitZeroReduction {
-            eq_zero: MultilinearPolynomial::from(eq_zero),
-            inc_value: MultilinearPolynomial::from(inc_value),
-            eq_bool_at_zero,
-            eq_virt_at_zero,
-            baseline_scale,
-        };
-        Self::from_G(params, G, Some(implicit_zero))
+        Self::from_G(params, G, Some(MultilinearPolynomial::from(inc_value)))
     }
 }
 
@@ -673,9 +676,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 let gamma_virt = self.params.gamma_powers[3 * i + 2];
 
                 for k in 0..DEGREE_BOUND {
-                    let coefficient = if let Some(implicit) = &self.implicit_zero {
-                        gamma_bool * (eq_b_evals[k] - implicit.eq_bool_at_zero)
-                            + gamma_virt * (eq_v_evals[k] - implicit.eq_virt_at_zero[i])
+                    // Implicit-zero: `w(k) − w(0)` — every lane-zero baseline is
+                    // folded into the input claim, so the summand is purely sparse.
+                    let coefficient = if self.params.implicit_zero {
+                        gamma_bool * (eq_b_evals[k] - self.params.eq_bool_at_zero)
+                            + gamma_virt * (eq_v_evals[k] - self.params.eq_virt_at_zero[i])
                     } else {
                         gamma_hw + gamma_bool * eq_b_evals[k] + gamma_virt * eq_v_evals[k]
                     };
@@ -683,19 +688,12 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 }
             }
 
-            if let Some(implicit) = &self.implicit_zero {
-                let eq_zero_evals = implicit
-                    .eq_zero
-                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-                let inc_value_evals = implicit
-                    .inc_value
-                    .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+            if let Some(inc_value) = &self.inc_value {
+                let inc_value_evals =
+                    inc_value.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
                 let offset = 3 * N;
                 let decode =
                     self.params.gamma_powers[offset + 2 * self.params.inc_booleanity_claims.len()];
-                for evaluation in 0..DEGREE_BOUND {
-                    evals[evaluation] += implicit.baseline_scale * eq_zero_evals[evaluation];
-                }
                 for index in 0..self.params.inc_booleanity_claims.len() {
                     let g_evals = self.G[N + index]
                         .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
@@ -703,7 +701,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                     let weight = self.params.inc_weights[index];
                     for evaluation in 0..DEGREE_BOUND {
                         evals[evaluation] += g_evals[evaluation]
-                            * (booleanity * (eq_b_evals[evaluation] - implicit.eq_bool_at_zero)
+                            * (booleanity * (eq_b_evals[evaluation] - self.params.eq_bool_at_zero)
                                 + decode * weight * inc_value_evals[evaluation]);
                     }
                 }
@@ -716,11 +714,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 
     #[tracing::instrument(skip_all, name = "HammingWeightClaimReductionProver::ingest_challenge")]
     fn ingest_challenge(&mut self, r_j: F::Challenge, _round: usize) {
-        if let Some(implicit) = self.implicit_zero.as_mut() {
-            implicit.eq_zero.bind_parallel(r_j, BindingOrder::LowToHigh);
-            implicit
-                .inc_value
-                .bind_parallel(r_j, BindingOrder::LowToHigh);
+        if let Some(inc_value) = self.inc_value.as_mut() {
+            inc_value.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
         // Bind all polynomials in parallel
         rayon::scope(|s| {

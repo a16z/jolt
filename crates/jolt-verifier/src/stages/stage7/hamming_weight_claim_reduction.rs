@@ -117,10 +117,6 @@ pub struct HammingWeightClaimReduction<F: Field> {
     /// The per-RA virtualization address chunks (one per layout polynomial, in
     /// canonical order) that `EqVirtualization(i)` compares against.
     virtualization_points: Vec<Vec<F>>,
-    /// Clear Stage 6 RAM activation used by Akita's implicit-default recentering.
-    /// This value is already transcript-bound as the Stage 6 input opening.
-    #[cfg(feature = "akita")]
-    ram_hamming_weight: Option<F>,
 }
 
 impl<F: Field> HammingWeightClaimReduction<F> {
@@ -129,18 +125,13 @@ impl<F: Field> HammingWeightClaimReduction<F> {
         r_cycle: Vec<F>,
         r_address: Vec<F>,
         virtualization_points: Vec<Vec<F>>,
-        ram_hamming_weight: Option<F>,
     ) -> Self {
-        #[cfg(not(feature = "akita"))]
-        let _ = ram_hamming_weight;
         Self {
             symbolic: HammingSymbolic::new(dimensions),
             dimensions,
             r_cycle,
             r_address,
             virtualization_points,
-            #[cfg(feature = "akita")]
-            ram_hamming_weight,
         }
     }
 
@@ -196,6 +187,15 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+/// `eq(point, 0) = Π (1 − point_j)` — the lane-zero weight of an `eq` leg, the
+/// `w(0)` baseline the input claim folds in under Akita's implicit-zero
+/// recentering.
+fn eq_at_default<F: Field>(point: &[F]) -> F {
+    point.iter().fold(F::one(), |accumulator, value| {
+        accumulator * (F::one() - *value)
+    })
+}
+
 impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
     type Symbolic = HammingSymbolic;
 
@@ -243,17 +243,12 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         let rho_rev = self.rho_reversed(output_points)?;
-        let eq_default = |point: &[F]| {
-            point.iter().fold(F::one(), |accumulator, value| {
-                accumulator * (F::one() - *value)
-            })
-        };
         match public_id {
             HammingWeightClaimReductionPublic::EqBooleanity => {
                 try_eq_mle(rho_rev, &self.r_address).map_err(public_input_failed)
             }
             HammingWeightClaimReductionPublic::EqBooleanityAtDefault => {
-                Ok(eq_default(&self.r_address))
+                Ok(eq_at_default(&self.r_address))
             }
             HammingWeightClaimReductionPublic::EqVirtualization(index) => {
                 let point = self.virtualization_points.get(*index).ok_or_else(|| {
@@ -269,22 +264,7 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                         "missing HammingWeight virtualization point for index {index}"
                     ))
                 })?;
-                Ok(eq_default(point))
-            }
-            HammingWeightClaimReductionPublic::EqDefault => Ok(eq_default(rho_rev)),
-            HammingWeightClaimReductionPublic::RamHammingWeight => {
-                #[cfg(feature = "akita")]
-                {
-                    self.ram_hamming_weight.ok_or_else(|| {
-                        public_input_failed(
-                            "missing clear RAM hamming-weight value for implicit-default reduction",
-                        )
-                    })
-                }
-                #[cfg(not(feature = "akita"))]
-                {
-                    Err(VerifierError::MissingStageClaimDerived { id: *id })
-                }
+                Ok(eq_at_default(point))
             }
             HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
                 #[cfg(feature = "akita")]
@@ -295,6 +275,40 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 {
                     Err(VerifierError::MissingStageClaimDerived { id: *id })
                 }
+            }
+        }
+    }
+
+    /// The lattice input expression folds each leg's lane-zero baseline into the
+    /// input claim, so the `*AtDefault` weights are input publics too. They are
+    /// pure functions of the (transcript-fixed) stage-6 points — no bound point
+    /// is needed.
+    fn derive_input_term(
+        &self,
+        id: &JoltDerivedId,
+        _challenges: &HammingWeightClaimReductionChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
+            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+        };
+        match public_id {
+            HammingWeightClaimReductionPublic::EqBooleanityAtDefault => {
+                Ok(eq_at_default(&self.r_address))
+            }
+            HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(index) => {
+                let point = self.virtualization_points.get(*index).ok_or_else(|| {
+                    public_input_failed(format!(
+                        "missing HammingWeight virtualization point for index {index}"
+                    ))
+                })?;
+                Ok(eq_at_default(point))
+            }
+            // Output publics — resolved in `derive_output_term`, never in the
+            // input expression.
+            HammingWeightClaimReductionPublic::EqBooleanity
+            | HammingWeightClaimReductionPublic::EqVirtualization(_)
+            | HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
+                Err(VerifierError::MissingStageClaimDerived { id: *id })
             }
         }
     }

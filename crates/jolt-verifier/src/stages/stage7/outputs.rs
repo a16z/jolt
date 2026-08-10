@@ -214,7 +214,7 @@ mod tests {
                 4,
             )
             .unwrap();
-            HammingWeightClaimReduction::new(dimensions, Vec::new(), Vec::new(), Vec::new(), None)
+            HammingWeightClaimReduction::new(dimensions, Vec::new(), Vec::new(), Vec::new())
         };
         let trusted_instance = || {
             TrustedAdviceAddressPhase::new(
