@@ -455,7 +455,9 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     //
     // 18 hashes were re-baselined when LW moved to the fused
     // VirtualWindowMaskW + VirtualPextSigned extraction: all LW cases, plus
-    // LRW/SCW, which recursively embed the word-load expansion.
+    // LRW/SCW, which recursively embed the word-load expansion. A further 60
+    // (LB/LBU/LH/LHU/LWU, 12 each) were re-baselined when the remaining loads
+    // moved to their window-mask + parallel-extract sequences.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a
