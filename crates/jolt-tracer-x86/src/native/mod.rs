@@ -465,14 +465,15 @@ impl Boundary {
     }
 }
 
-// SAFETY: every field is owned data or an Arc to an immutable artifact (the
-// compiled code and the bytecode), so the checkpoint can move between
-// threads.
-unsafe impl Send for X86Checkpoint {}
-// SAFETY: replay only reads the checkpoint, copying its image and registers
-// into fresh per-replay state, so shared references are safe to use
-// concurrently; there is no interior mutability.
-unsafe impl Sync for X86Checkpoint {}
+// Checkpoints are Send + Sync by construction: every field is owned data or
+// an Arc to an immutable artifact (the compiled code, the bytecode, the
+// boundary snapshot), so the auto traits apply — no unsafe impls, which would
+// silently vouch for a future non-thread-safe field. This assertion keeps the
+// property from regressing, since parallel chunk replay depends on it.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<X86Checkpoint>();
+};
 
 impl ChunkedExecutionBackend for X86TracerBackend {
     type Checkpoint = X86Checkpoint;

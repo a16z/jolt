@@ -566,6 +566,13 @@ impl DynasmEmitter {
     ) -> Result<EmitOutcome, TraceError> {
         use JoltInstructionKind as K;
 
+        // Decline before any bytes are emitted: `EmitterSet` requires a
+        // declining emitter to leave the assembly untouched (it asserts the
+        // offset), so the next emitter in the set can claim the row cleanly.
+        if matches!(row.instruction_kind, K::Noop(_)) {
+            return Ok(EmitOutcome::Unsupported);
+        }
+
         // Every row is one trace row.
         dynasm!(e.ops ; .arch x64 ; inc r14);
 
@@ -968,13 +975,9 @@ impl DynasmEmitter {
             }
 
             // Every other final kind is implemented above; `Noop` never appears
-            // in executable bytecode. Reporting `Unsupported` (rather than
-            // erroring) lets another emitter in the set claim the kind; the set
-            // raises the fail-fast error when none does.
-            other @ K::Noop(_) => {
-                let _ = other;
-                return Ok(EmitOutcome::Unsupported);
-            }
+            // in executable bytecode and was declined before any emission (the
+            // early return above), so this arm only completes the match.
+            K::Noop(_) => return Ok(EmitOutcome::Unsupported),
         }
         if record && !transfers_control {
             e.obs_rd_post(row);

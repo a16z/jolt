@@ -10,7 +10,7 @@
 
 use common::constants::RAM_START_ADDRESS;
 
-use super::state::{AdviceJob, ExitReason, GuestState, HostContext, ADVICE_SLOTS};
+use super::state::{AdviceCompute, ExitReason, GuestState, HostContext};
 
 // jolt-platform host-IO ABI (mirrors tracer/src/emulator/cpu.rs handlers).
 use jolt_platform::{
@@ -228,8 +228,8 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
     // SAFETY: `advice_jobs` points at the compiled program's job table, which
     // outlives the run; generated code only passes indices it emitted.
     let job = unsafe { &*state.advice_jobs.add(job_index as usize) };
-    match job {
-        AdviceJob::Div { code, rs1, rs2 } => {
+    match &job.compute {
+        AdviceCompute::Div { code, rs1, rs2 } => {
             let x = state.x[*rs1 as usize] as i64;
             let y = state.x[*rs2 as usize] as i64;
             let (a, b) = match code {
@@ -269,7 +269,7 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
             state.advice_slots[1] = b;
             0
         }
-        AdviceJob::Inline {
+        AdviceCompute::Inline {
             registration,
             operands,
         } => {
@@ -292,18 +292,23 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
                     );
                 }
             };
-            let Some(values) = values else { return 0 };
-            if values.len() > ADVICE_SLOTS {
+            // The provided count must match the group's VirtualAdvice rows
+            // exactly — a short vector would leave stale slots to be read as
+            // advice. The interpreter panics on the same mismatch
+            // ("did not provide enough values" / "provided too many values");
+            // this backend errors (spec invariant 7 asymmetry).
+            let provided = values.as_ref().map_or(0, std::collections::VecDeque::len);
+            if provided != job.advice_rows {
                 return fail(
                     state,
                     host,
                     format!(
-                        "inline {} produced {} advice values (max {ADVICE_SLOTS})",
-                        registration.name,
-                        values.len()
+                        "inline {} provided {provided} advice values; its group reads {}",
+                        registration.name, job.advice_rows
                     ),
                 );
             }
+            let Some(values) = values else { return 0 };
             for (slot, value) in values.into_iter().enumerate() {
                 state.advice_slots[slot] = value;
             }

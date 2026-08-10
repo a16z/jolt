@@ -146,7 +146,18 @@ const _: () = {
 pub const ADVICE_SLOTS: usize = 16;
 
 /// One group's advice computation, resolved at compile time.
-pub enum AdviceJob {
+pub struct AdviceJob {
+    pub compute: AdviceCompute,
+    /// Number of `VirtualAdvice` rows in the job's group, i.e. how many
+    /// values the computation must provide. Patched in once the group's rows
+    /// have been emitted; the runtime helper checks the provided count
+    /// against it so a short advice vector fails loudly instead of leaving
+    /// stale slots to be read (the interpreter panics on the same mismatch).
+    pub advice_rows: usize,
+}
+
+/// How a group's advice values are computed.
+pub enum AdviceCompute {
     /// DIV/REM family: `code` selects the variant's formula.
     Div { code: u8, rs1: u8, rs2: u8 },
     /// A registered inline's `build_advice`, called through

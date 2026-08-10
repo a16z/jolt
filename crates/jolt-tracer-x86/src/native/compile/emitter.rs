@@ -13,6 +13,7 @@
 //! the driver: those are properties of the execution model, not of how a row
 //! is encoded.
 
+use dynasmrt::DynasmApi as _;
 use jolt_program::execution::TraceError;
 use jolt_riscv::JoltInstructionRow;
 
@@ -65,8 +66,17 @@ impl EmitterSet {
 
     pub fn emit_row(&self, cx: &mut Emitter, row: &JoltInstructionRow) -> Result<(), TraceError> {
         for emitter in &self.emitters {
+            let before = cx.ops.offset();
             if emitter.emit_row(cx, row)? == EmitOutcome::Emitted {
                 return Ok(());
+            }
+            // Contract: declining must be side-effect-free. Partial emission
+            // before a decline (a row prelude, say) would silently double the
+            // trace-row count once a later emitter claims the kind.
+            if cx.ops.offset() != before {
+                return Err(TraceError::Backend(
+                    "row emitter declined a kind after emitting code",
+                ));
             }
         }
         // No emitter handles this kind: refuse to compile rather than
@@ -148,5 +158,40 @@ mod tests {
         let program = single_row_program(add_row());
         let set = EmitterSet::from_emitters(vec![Box::new(DeclineAll)]);
         assert!(super::super::CompiledProgram::compile_with(&program, &set).is_err());
+    }
+
+    /// An emitter that emits bytes and then declines would double-count rows
+    /// once a later emitter claims the kind; the set must reject it.
+    struct EmitThenDecline;
+
+    impl RowEmitter for EmitThenDecline {
+        fn emit_row(
+            &self,
+            cx: &mut Emitter,
+            _row: &JoltInstructionRow,
+        ) -> Result<EmitOutcome, TraceError> {
+            use dynasmrt::DynasmApi as _;
+            cx.ops.push(0x90); // stray nop
+            Ok(EmitOutcome::Unsupported)
+        }
+
+        fn emit_advice_compute(&self, _cx: &mut Emitter, _job_index: usize) {}
+    }
+
+    #[test]
+    fn partial_emission_before_decline_is_rejected() {
+        let program = single_row_program(add_row());
+        let set = EmitterSet::from_emitters(vec![
+            Box::new(EmitThenDecline),
+            Box::new(super::super::emit::DynasmEmitter),
+        ]);
+        let error = match super::super::CompiledProgram::compile_with(&program, &set) {
+            Err(error) => format!("{error:?}"),
+            Ok(_) => String::from("compiled successfully"),
+        };
+        assert!(
+            error.contains("declined a kind after emitting"),
+            "expected the partial-emission error, got: {error}"
+        );
     }
 }

@@ -17,7 +17,7 @@ use dynasmrt::{x64::Assembler, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLa
 use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::SourceInstructionKind;
 
-use super::state::{AdviceJob, GuestState};
+use super::state::{AdviceCompute, AdviceJob, GuestState};
 use emitter::EmitterSet;
 use jolt_riscv::JoltInstructionRow;
 
@@ -173,6 +173,9 @@ pub struct Emitter {
     /// Whether the current group emitted an advice computation (i.e. its
     /// `VirtualAdvice` rows have values to read).
     pub advice_ready: bool,
+    /// Index of the current group's advice job, until the group ends and its
+    /// consumed-slot count is patched in (see [`Self::finish_advice_group`]).
+    current_advice_job: Option<usize>,
     /// Dynamic label per group-start guest address (branch/jump targets).
     labels: BTreeMap<u64, DynamicLabel>,
     /// Guest addresses that start a compiled group, with their code offsets.
@@ -189,6 +192,24 @@ impl Emitter {
         let label = self.ops.new_dynamic_label();
         let _ = self.labels.insert(address, label);
         label
+    }
+
+    /// A group's rows are all emitted: record how many `VirtualAdvice` slots
+    /// it consumed on its job, so the runtime helper can check the computed
+    /// value count against it. Div computations provide exactly two values,
+    /// which makes over-consumption a compile-time error.
+    fn finish_advice_group(&mut self) -> Result<(), TraceError> {
+        let Some(index) = self.current_advice_job.take() else {
+            return Ok(());
+        };
+        let job = &mut self.advice_jobs[index];
+        job.advice_rows = self.advice_slot;
+        if matches!(job.compute, AdviceCompute::Div { .. }) && job.advice_rows > 2 {
+            return Err(TraceError::Backend(
+                "DIV/REM group consumes more advice values than its computation provides",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -222,6 +243,14 @@ impl CompiledBody {
         let text_base = rows.iter().map(|r| r.address as u64).min().unwrap_or(0);
         let text_end = rows.iter().map(|r| r.address as u64).max().unwrap_or(0) + 4;
         let text_span = text_end - text_base;
+        // The dispatch sequence compares the target's byte delta against the
+        // span as an i32 immediate; a larger span would sign-extend negative
+        // and let every in-range check pass vacuously.
+        if text_span > i32::MAX as u64 {
+            return Err(TraceError::Backend(
+                "program text span exceeds the dispatch table's addressable range",
+            ));
+        }
 
         let mut emitter = Emitter {
             mode,
@@ -232,6 +261,7 @@ impl CompiledBody {
             advice_jobs: Vec::new(),
             advice_slot: 0,
             advice_ready: false,
+            current_advice_job: None,
             labels: BTreeMap::new(),
             group_offsets: Vec::new(),
             text_base,
@@ -256,12 +286,17 @@ impl CompiledBody {
                     emitter.emit_group_pause_check(address);
                 }
                 previous_address = Some(address);
+                emitter.finish_advice_group()?;
                 emitter.advice_slot = 0;
                 emitter.advice_ready = false;
                 if let Some(source) = sources.get(&address) {
-                    if let Some(job) = AdviceJob::from_source(source)? {
-                        emitter.advice_jobs.push(job);
+                    if let Some(compute) = AdviceCompute::from_source(source)? {
+                        emitter.advice_jobs.push(AdviceJob {
+                            compute,
+                            advice_rows: 0,
+                        });
                         let index = emitter.advice_jobs.len() - 1;
+                        emitter.current_advice_job = Some(index);
                         emitters.emit_advice_compute(&mut emitter, index)?;
                         emitter.advice_ready = true;
                     }
@@ -269,6 +304,7 @@ impl CompiledBody {
             }
             emitters.emit_row(&mut emitter, row)?;
         }
+        emitter.finish_advice_group()?;
 
         // Execution falling off the end of the program is a bad jump.
         emitter.emit_jump_to_bad_jump();
@@ -302,7 +338,7 @@ impl CompiledBody {
     }
 }
 
-impl AdviceJob {
+impl AdviceCompute {
     /// The advice computation a source instruction's group needs, if any.
     fn from_source(
         source: &jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>,
