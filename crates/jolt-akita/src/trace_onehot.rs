@@ -38,7 +38,6 @@ const MAX_WIDE_ACCUMULATIONS: usize = 1 << 15;
 const TASKS_PER_RAYON_WORKER: usize = 4;
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
 const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
-const D64_K16_SHIFT_KEY_SPACE: usize = 1 << 16;
 const SHARED_SHIFT_MIN_COLUMNS: u8 = 3;
 const K256_ROW_BATCH: usize = 1 << 13;
 const _: () = assert!(K256_ROW_BATCH <= i16::MAX as usize);
@@ -116,36 +115,38 @@ impl<const D: usize> DeferredFp128Ring<D> {
     }
 }
 
-struct D64K16ShiftGroups {
-    group_by_key: Vec<u8>,
+/// Groups columns that share four consecutive K=16 lane shifts. Adaptive
+/// dimensions use one, two, or four of these groups per ring, preserving the
+/// useful four-row reuse pattern without dimension-specific implementations.
+struct K16FourRowShiftGroups {
+    group_by_key: Vec<(u64, u8)>,
     group_columns: Vec<u8>,
     group_counts: Vec<u8>,
     group_shifts: Vec<[usize; 4]>,
-    touched_keys: Vec<u16>,
     partial_columns: Vec<u8>,
+    row_start: usize,
     num_groups: u8,
 }
 
-impl D64K16ShiftGroups {
-    fn new(num_columns: usize) -> Option<Self> {
+impl K16FourRowShiftGroups {
+    fn new(num_columns: usize, row_start: usize) -> Option<Self> {
         if num_columns >= usize::from(u8::MAX) {
             return None;
         }
+        let key_slots = (2 * num_columns).next_power_of_two();
         Some(Self {
-            group_by_key: vec![u8::MAX; D64_K16_SHIFT_KEY_SPACE],
+            group_by_key: vec![(0, u8::MAX); key_slots],
             group_columns: vec![u8::MAX; num_columns * num_columns],
             group_counts: vec![0; num_columns],
             group_shifts: vec![[0; 4]; num_columns],
-            touched_keys: Vec::with_capacity(num_columns),
             partial_columns: Vec::with_capacity(num_columns),
+            row_start,
             num_groups: 0,
         })
     }
 
     fn build(&mut self, lanes: &[u8], num_columns: usize) -> bool {
-        for key in self.touched_keys.drain(..) {
-            self.group_by_key[usize::from(key)] = u8::MAX;
-        }
+        self.group_by_key.fill((0, u8::MAX));
         self.partial_columns.clear();
         self.num_groups = 0;
         if lanes.len() != 4 * num_columns {
@@ -153,32 +154,39 @@ impl D64K16ShiftGroups {
         }
 
         for column in 0..num_columns {
-            let hot0 = lanes[column];
-            let hot1 = lanes[num_columns + column];
-            let hot2 = lanes[2 * num_columns + column];
-            let hot3 = lanes[3 * num_columns + column];
-            if [hot0, hot1, hot2, hot3].contains(&NO_HOT_LANE) {
+            let mut key = 0u64;
+            let mut shifts = [0usize; 4];
+            let mut complete = true;
+            for (row_offset, row_lanes) in lanes.chunks_exact(num_columns).enumerate() {
+                let hot = row_lanes[column];
+                if hot == NO_HOT_LANE {
+                    complete = false;
+                    break;
+                }
+                key |= u64::from(hot) << (4 * row_offset);
+                shifts[row_offset] = 16 * (self.row_start + row_offset) + usize::from(hot);
+            }
+            if !complete {
                 self.partial_columns.push(column as u8);
                 continue;
             }
-            let key = u16::from(hot0)
-                | (u16::from(hot1) << 4)
-                | (u16::from(hot2) << 8)
-                | (u16::from(hot3) << 12);
-            let mut group = self.group_by_key[usize::from(key)];
-            if group == u8::MAX {
-                group = self.num_groups;
-                self.num_groups += 1;
-                self.group_by_key[usize::from(key)] = group;
-                self.touched_keys.push(key);
-                self.group_counts[usize::from(group)] = 0;
-                self.group_shifts[usize::from(group)] = [
-                    usize::from(hot0),
-                    16 + usize::from(hot1),
-                    32 + usize::from(hot2),
-                    48 + usize::from(hot3),
-                ];
-            }
+            let slot_mask = self.group_by_key.len() - 1;
+            let mut slot = key.wrapping_mul(0x9e37_79b9_7f4a_7c15) as usize & slot_mask;
+            let group = loop {
+                let (stored_key, stored_group) = self.group_by_key[slot];
+                if stored_group != u8::MAX && stored_key == key {
+                    break stored_group;
+                }
+                if stored_group == u8::MAX {
+                    let group = self.num_groups;
+                    self.num_groups += 1;
+                    self.group_by_key[slot] = (key, group);
+                    self.group_counts[usize::from(group)] = 0;
+                    self.group_shifts[usize::from(group)] = shifts;
+                    break group;
+                }
+                slot = (slot + 1) & slot_mask;
+            };
             let group = usize::from(group);
             let count = usize::from(self.group_counts[group]);
             self.group_columns[group * num_columns + count] = column as u8;
@@ -201,9 +209,8 @@ impl D64K16ShiftGroups {
             let count = usize::from(self.group_counts[group]);
             let columns = &self.group_columns[group * num_columns..group * num_columns + count];
             if self.group_counts[group] >= SHARED_SHIFT_MIN_COLUMNS {
-                let shifts = &self.group_shifts[group];
                 let mut shifted_sum = AkitaWideRing::zero();
-                for &shift in shifts {
+                for &shift in &self.group_shifts[group] {
                     src.shift_accumulate_into(&mut shifted_sum, shift);
                 }
                 for &column in columns {
@@ -225,7 +232,7 @@ impl D64K16ShiftGroups {
                 if hot != NO_HOT_LANE {
                     src.shift_accumulate_into(
                         &mut dst[column * n_a + a],
-                        row_offset * 16 + usize::from(hot),
+                        (self.row_start + row_offset) * 16 + usize::from(hot),
                     );
                 }
             }
@@ -874,10 +881,8 @@ fn commit_packed<const D: usize>(
             tasks = blocks_per_column * parts,
             active_columns = num_columns,
             rows_per_ring = D / source.one_hot_k,
-            fused_four_shifts = D == 64 && source.one_hot_k == 16,
-            shared_shift_groups = D == 64 && source.one_hot_k == 16,
-            generic_fused_row_shifts =
-                D != 64 && matches!(D / source.one_hot_k, 2 | 4 | 8 | 16 | 32),
+            shared_shift_groups = source.one_hot_k == 16 && matches!(D, 64 | 128 | 256),
+            generic_fused_row_shifts = matches!(D / source.one_hot_k, 2 | 4 | 8 | 16 | 32),
         )
         .entered();
         let partials = (0..blocks_per_column * parts)
@@ -895,7 +900,7 @@ fn commit_packed<const D: usize>(
                 );
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
-                let rank_tiled_k256 = matches!(D, 64 | 128)
+                let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
                     && source.one_hot_k == 256
                     && num_columns <= u32::BITS as usize;
                 let mut wide = if rank_tiled_k256 {
@@ -906,10 +911,14 @@ fn commit_packed<const D: usize>(
                 let mut budget = 0usize;
                 if source.one_hot_k < D {
                     let rows_per_ring = D / source.one_hot_k;
-                    let fuse_four_shifts = D == 64 && source.one_hot_k == 16;
-                    let mut shift_groups = fuse_four_shifts
-                        .then(|| D64K16ShiftGroups::new(num_columns))
-                        .flatten();
+                    let mut shift_groups = (source.one_hot_k == 16
+                        && rows_per_ring.is_multiple_of(4))
+                    .then(|| {
+                        (0..rows_per_ring / 4)
+                            .map(|chunk| K16FourRowShiftGroups::new(num_columns, 4 * chunk))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .flatten();
                     visit_segment_ring_lane_range::<D>(
                         source,
                         ring_start,
@@ -917,85 +926,53 @@ fn commit_packed<const D: usize>(
                         |ring, lanes| {
                             let position = ring - block_ring_start;
                             let a_col = position * plan.num_digits_inner;
-                            let grouped = shift_groups
-                                .as_mut()
-                                .is_some_and(|groups| groups.build(lanes, num_columns));
+                            let grouped = shift_groups.as_mut().is_some_and(|groups| {
+                                groups
+                                    .iter_mut()
+                                    .zip(lanes.chunks_exact(4 * num_columns))
+                                    .all(|(groups, lanes)| groups.build(lanes, num_columns))
+                            });
                             for (a, a_row) in a_rows.iter().enumerate() {
                                 let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
                                 if grouped {
                                     if let Some(groups) = &shift_groups {
-                                        groups.accumulate(
-                                            &a_wide,
-                                            &mut wide,
-                                            a,
-                                            plan.n_a,
-                                            lanes,
-                                            num_columns,
-                                        );
+                                        for (groups, lanes) in
+                                            groups.iter().zip(lanes.chunks_exact(4 * num_columns))
+                                        {
+                                            groups.accumulate(
+                                                &a_wide,
+                                                &mut wide,
+                                                a,
+                                                plan.n_a,
+                                                lanes,
+                                                num_columns,
+                                            );
+                                        }
                                         continue;
                                     }
                                 }
-                                if fuse_four_shifts {
-                                    debug_assert_eq!(rows_per_ring, 4);
-                                    for column in 0..num_columns {
-                                        let hot0 = lanes[column];
-                                        let hot1 = lanes[num_columns + column];
-                                        let hot2 = lanes[2 * num_columns + column];
-                                        let hot3 = lanes[3 * num_columns + column];
-                                        if hot0 != NO_HOT_LANE
-                                            && hot1 != NO_HOT_LANE
-                                            && hot2 != NO_HOT_LANE
-                                            && hot3 != NO_HOT_LANE
-                                        {
-                                            let shifts = [
-                                                usize::from(hot0),
-                                                16 + usize::from(hot1),
-                                                32 + usize::from(hot2),
-                                                48 + usize::from(hot3),
-                                            ];
-                                            let dst = &mut wide[column * plan.n_a + a];
-                                            for shift in shifts {
-                                                a_wide.shift_accumulate_into(dst, shift);
-                                            }
-                                        } else {
-                                            for (row_offset, hot) in
-                                                [hot0, hot1, hot2, hot3].into_iter().enumerate()
-                                            {
-                                                if hot == NO_HOT_LANE {
-                                                    continue;
-                                                }
-                                                a_wide.shift_accumulate_into(
-                                                    &mut wide[column * plan.n_a + a],
-                                                    row_offset * 16 + usize::from(hot),
-                                                );
-                                            }
-                                        }
+                                for column in 0..num_columns {
+                                    let dst = &mut wide[column * plan.n_a + a];
+                                    if try_shift_accumulate_full_rows(
+                                        &a_wide,
+                                        dst,
+                                        lanes,
+                                        num_columns,
+                                        column,
+                                        source.one_hot_k,
+                                        rows_per_ring,
+                                    ) {
+                                        continue;
                                     }
-                                } else {
-                                    for column in 0..num_columns {
-                                        let dst = &mut wide[column * plan.n_a + a];
-                                        if try_shift_accumulate_full_rows(
-                                            &a_wide,
-                                            dst,
-                                            lanes,
-                                            num_columns,
-                                            column,
-                                            source.one_hot_k,
-                                            rows_per_ring,
-                                        ) {
-                                            continue;
-                                        }
-                                        for (row_offset, row_lanes) in
-                                            lanes.chunks_exact(num_columns).enumerate()
-                                        {
-                                            let hot = row_lanes[column];
-                                            if hot != NO_HOT_LANE {
-                                                a_wide.shift_accumulate_into(
-                                                    dst,
-                                                    row_offset * source.one_hot_k
-                                                        + usize::from(hot),
-                                                );
-                                            }
+                                    for (row_offset, row_lanes) in
+                                        lanes.chunks_exact(num_columns).enumerate()
+                                    {
+                                        let hot = row_lanes[column];
+                                        if hot != NO_HOT_LANE {
+                                            a_wide.shift_accumulate_into(
+                                                dst,
+                                                row_offset * source.one_hot_k + usize::from(hot),
+                                            );
                                         }
                                     }
                                 }
@@ -1010,7 +987,7 @@ fn commit_packed<const D: usize>(
                 } else if rank_tiled_k256 {
                     // Stream one A rank at a time so its destination accumulators fit in cache.
                     let rings_per_row = source.one_hot_k / D;
-                    debug_assert!(matches!(rings_per_row, 2 | 4));
+                    debug_assert!(matches!(rings_per_row, 1 | 2 | 4));
                     debug_assert_eq!(ring_start % rings_per_row, 0);
                     debug_assert_eq!(ring_end % rings_per_row, 0);
                     let row_start = ring_start / rings_per_row;
@@ -2391,6 +2368,62 @@ mod tests {
         }
     }
 
+    fn assert_k16_shift_groups<const D: usize>() {
+        const COLUMNS: usize = 5;
+        let rows_per_ring = D / 16;
+        let mut lanes = vec![NO_HOT_LANE; rows_per_ring * COLUMNS];
+        for row in 0..rows_per_ring {
+            let shared_hot = ((row + 1) % 15 + 1) as u8;
+            lanes[row * COLUMNS] = shared_hot;
+            lanes[row * COLUMNS + 1] = shared_hot;
+            lanes[row * COLUMNS + 2] = shared_hot;
+            lanes[row * COLUMNS + 3] = ((2 * row + 3) % 15 + 1) as u8;
+            lanes[row * COLUMNS + 4] = if row == 1 {
+                NO_HOT_LANE
+            } else {
+                ((3 * row + 5) % 15 + 1) as u8
+            };
+        }
+
+        let source: CyclotomicRing<AkitaField, D> =
+            CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+                AkitaField::from_u64((index + 1) as u64)
+            }));
+        let source: AkitaWideRing<D> = AkitaWideRing::from_ring(&source);
+        let mut actual = vec![AkitaWideRing::zero(); COLUMNS];
+        for (chunk, chunk_lanes) in lanes.chunks_exact(4 * COLUMNS).enumerate() {
+            let mut groups = K16FourRowShiftGroups::new(COLUMNS, 4 * chunk).unwrap();
+            assert!(groups.build(chunk_lanes, COLUMNS));
+            groups.accumulate(&source, &mut actual, 0, 1, chunk_lanes, COLUMNS);
+        }
+
+        let mut expected = vec![AkitaWideRing::zero(); COLUMNS];
+        for (row, row_lanes) in lanes.chunks_exact(COLUMNS).enumerate() {
+            for (column, &hot) in row_lanes.iter().enumerate() {
+                if hot != NO_HOT_LANE {
+                    source
+                        .shift_accumulate_into(&mut expected[column], 16 * row + usize::from(hot));
+                }
+            }
+        }
+        let actual = actual
+            .into_iter()
+            .map(|value| value.reduce::<AkitaField>())
+            .collect::<Vec<_>>();
+        let expected = expected
+            .into_iter()
+            .map(|value| value.reduce::<AkitaField>())
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn k16_shared_shift_groups_cover_adaptive_dimensions() {
+        assert_k16_shift_groups::<64>();
+        assert_k16_shift_groups::<128>();
+        assert_k16_shift_groups::<256>();
+    }
+
     #[test]
     fn constructor_enforces_selector_capacity() {
         let rows = Arc::new(TestRows {
@@ -2432,6 +2465,7 @@ mod tests {
     fn deferred_fp128_shift_accumulator_matches_canonical_at_batch_bound() {
         assert_deferred_fp128_shift_accumulator::<64>();
         assert_deferred_fp128_shift_accumulator::<128>();
+        assert_deferred_fp128_shift_accumulator::<256>();
     }
 
     fn assert_opening_kernels_match_materialized<const D: usize>(

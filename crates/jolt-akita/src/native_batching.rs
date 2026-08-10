@@ -35,9 +35,8 @@ use crate::adapters::{
     AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBackendProof, AkitaBackendScheme,
     AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintPolynomials,
     AkitaOneHotK16BackendScheme, AkitaOneHotK16Config, AkitaOneHotK256BackendScheme,
-    AkitaOneHotK256Config, AkitaOneHotK256D128BackendScheme, AkitaOneHotK256D128Config,
-    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_K16,
-    AKITA_ONE_HOT_K256,
+    AkitaOneHotK256Config, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup,
+    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
@@ -61,7 +60,6 @@ fn validate_statement(
     max_num_vars: usize,
     max_num_polys_per_commitment_group: usize,
     one_hot_k: usize,
-    one_hot_ring_dimension: usize,
 ) -> Result<ValidatedStatement<'_>, OpeningsError> {
     let first = statement
         .first()
@@ -108,20 +106,15 @@ fn validate_statement(
         )));
     }
     match commitment.backend_flavor {
-        AkitaBackendFlavor::Dense
-            if commitment.one_hot_k != 0 || commitment.ring_dimension != AKITA_D =>
-        {
+        AkitaBackendFlavor::Dense if commitment.one_hot_k != 0 => {
             return Err(invalid_batch(
-                "Akita dense commitment has invalid ring metadata",
+                "Akita dense commitment has invalid one-hot metadata",
             ));
         }
-        AkitaBackendFlavor::OneHot
-            if commitment.one_hot_k != one_hot_k
-                || commitment.ring_dimension != one_hot_ring_dimension =>
-        {
+        AkitaBackendFlavor::OneHot if commitment.one_hot_k != one_hot_k => {
             return Err(invalid_batch(format!(
-                "Akita commitment one-hot geometry K={}, D={} does not match setup K={one_hot_k}, D={one_hot_ring_dimension}",
-                commitment.one_hot_k, commitment.ring_dimension
+                "Akita commitment one-hot K={} does not match setup K={one_hot_k}",
+                commitment.one_hot_k
             )));
         }
         AkitaBackendFlavor::Dense | AkitaBackendFlavor::OneHot => {}
@@ -284,16 +277,9 @@ where
 {
     let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
     let backend_point = reverse_point(point);
-    let selection = match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
-        (AKITA_ONE_HOT_K16, 64) => {
-            single_group_selection::<AkitaOneHotK16Config>(&backend_commitment)?
-        }
-        (AKITA_ONE_HOT_K256, 64) => {
-            single_group_selection::<AkitaOneHotK256Config>(&backend_commitment)?
-        }
-        (AKITA_ONE_HOT_K256, 128) => {
-            single_group_selection::<AkitaOneHotK256D128Config>(&backend_commitment)?
-        }
+    let selection = match setup.one_hot_k() {
+        AKITA_ONE_HOT_K16 => single_group_selection::<AkitaOneHotK16Config>(&backend_commitment)?,
+        AKITA_ONE_HOT_K256 => single_group_selection::<AkitaOneHotK256Config>(&backend_commitment)?,
         _ => unreachable!("the one-hot setup geometry was validated during setup"),
     };
     let claims = single_group_batch(
@@ -306,32 +292,23 @@ where
     let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
     let releasing_stack = akita_prover::ReleaseRootNttAfterFold::new(&stack);
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
-    with_backend_pool(
-        || match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
-            (AKITA_ONE_HOT_K16, 64) => AkitaOneHotK16BackendScheme::batched_prove(
-                backend_prover_setup,
-                (selection, claims),
-                &releasing_stack,
-                akita_transcript,
-                BasisMode::Lagrange,
-            ),
-            (AKITA_ONE_HOT_K256, 64) => AkitaOneHotK256BackendScheme::batched_prove(
-                backend_prover_setup,
-                (selection, claims),
-                &releasing_stack,
-                akita_transcript,
-                BasisMode::Lagrange,
-            ),
-            (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::batched_prove(
-                backend_prover_setup,
-                (selection, claims),
-                &releasing_stack,
-                akita_transcript,
-                BasisMode::Lagrange,
-            ),
-            _ => unreachable!("the one-hot setup geometry was validated during setup"),
-        },
-    )
+    with_backend_pool(|| match setup.one_hot_k() {
+        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_prove(
+            backend_prover_setup,
+            (selection, claims),
+            &releasing_stack,
+            akita_transcript,
+            BasisMode::Lagrange,
+        ),
+        AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_prove(
+            backend_prover_setup,
+            (selection, claims),
+            &releasing_stack,
+            akita_transcript,
+            BasisMode::Lagrange,
+        ),
+        _ => unreachable!("the one-hot setup geometry was validated during setup"),
+    })
     .map_err(prove_failed)
 }
 
@@ -363,7 +340,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.max_num_vars(),
             setup.max_num_polys_per_commitment_group(),
             setup.one_hot_k(),
-            setup.one_hot_ring_dimension(),
         )?;
         let _span = info_span!(
             "AkitaNativeBatching::prove_batch",
@@ -466,7 +442,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.max_num_vars,
             setup.max_num_polys_per_commitment_group,
             setup.one_hot_k,
-            setup.one_hot_ring_dimension,
         )?;
         let backend_point = match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => point.to_vec(),
@@ -507,22 +482,15 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 batch_statement,
                 BasisMode::Lagrange,
             ),
-            AkitaBackendFlavor::OneHot => match (setup.one_hot_k, setup.one_hot_ring_dimension) {
-                (AKITA_ONE_HOT_K16, 64) => AkitaOneHotK16BackendScheme::batched_verify(
+            AkitaBackendFlavor::OneHot => match setup.one_hot_k {
+                AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::batched_verify(
                     &backend_proof,
                     backend_verifier,
                     &mut akita_transcript,
                     batch_statement,
                     BasisMode::Lagrange,
                 ),
-                (AKITA_ONE_HOT_K256, 64) => AkitaOneHotK256BackendScheme::batched_verify(
-                    &backend_proof,
-                    backend_verifier,
-                    &mut akita_transcript,
-                    batch_statement,
-                    BasisMode::Lagrange,
-                ),
-                (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::batched_verify(
+                AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::batched_verify(
                     &backend_proof,
                     backend_verifier,
                     &mut akita_transcript,

@@ -8,7 +8,7 @@
 //!
 //! These cases separate commitment time from opening-proof time. The sparse
 //! logical case preserves Jolt's row-major `k=256` one-hot representation, so
-//! `AkitaScheme` should route to Akita's native `D64OneHot` backend. The sparse materialized case
+//! `AkitaScheme` should route to Akita's native adaptive one-hot backend. The sparse materialized case
 //! uses the same one-hot data expanded into a dense evaluation table, forcing
 //! the slower dense path and making the expected sparse speedup visible. The
 //! `akita_prover` groups use the same Akita-order data without Jolt commitment
@@ -47,7 +47,7 @@ use akita_types::{
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
-    configs::{JoltD64Dense as AkitaConfig, JoltD64OneHotK256 as AkitaOneHotConfig},
+    configs::{JoltDense as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
     AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };

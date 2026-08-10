@@ -13,13 +13,12 @@ use std::sync::Arc;
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
     domain_size, invalid_batch, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    sparse_unit_polynomial, transparent_zk_error, validate_one_hot_k,
-    validate_one_hot_ring_dimension, with_backend_pool, AkitaBackendCommitment,
-    AkitaBackendDensePoly, AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBackendScheme,
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
-    AkitaLayoutDigest, AkitaOneHotK16BackendScheme, AkitaOneHotK256BackendScheme,
-    AkitaOneHotK256D128BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
-    AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    sparse_unit_polynomial, transparent_zk_error, validate_one_hot_k, with_backend_pool,
+    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendHint, AkitaBackendOneHotPoly,
+    AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
+    AkitaHintPolynomials, AkitaLayoutDigest, AkitaOneHotK16BackendScheme,
+    AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
+    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
@@ -60,7 +59,7 @@ impl AkitaScheme {
     /// Returns true when the Akita backend sparse-ring path can represent a
     /// unit-valued sparse polynomial with this multilinear dimension.
     pub fn supports_unit_sparse_dimension(num_vars: usize) -> bool {
-        domain_size(num_vars).is_some_and(|size| size >= AKITA_D)
+        domain_size(num_vars).is_some_and(|size| size >= AKITA_SOURCE_RING_DIMENSION)
     }
 
     pub fn commit_group(
@@ -109,11 +108,7 @@ impl AkitaScheme {
                         polynomial.num_vars()
                     )));
                 }
-                one_hot_polynomial(
-                    polynomial,
-                    setup.one_hot_k(),
-                    setup.one_hot_ring_dimension(),
-                )?
+                one_hot_polynomial(polynomial, setup.one_hot_k())?
                 .ok_or_else(|| {
                     invalid_batch(format!(
                         "Akita one-hot commitment group requires row-major K={} one-hot polynomials",
@@ -130,7 +125,6 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::OneHot(backend_polynomials.into()),
-            setup.one_hot_ring_dimension(),
         )
     }
 
@@ -156,11 +150,7 @@ impl AkitaScheme {
                         polynomial.num_vars()
                     )));
                 }
-                owned_one_hot_polynomial(
-                    polynomial,
-                    setup.one_hot_k(),
-                    setup.one_hot_ring_dimension(),
-                )
+                owned_one_hot_polynomial(polynomial, setup.one_hot_k())
             })
             .collect::<Result<Vec<_>, _>>()?;
         let (backend_commitment, backend_hint) =
@@ -171,7 +161,6 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::OneHot(backend_polynomials.into()),
-            setup.one_hot_ring_dimension(),
         )
     }
 
@@ -185,7 +174,7 @@ impl AkitaScheme {
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let source = TracePackedOneHot::new(
             setup.one_hot_k(),
-            setup.one_hot_ring_dimension(),
+            AKITA_SOURCE_RING_DIMENSION,
             column_capacity,
             rows,
         )
@@ -194,35 +183,26 @@ impl AkitaScheme {
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let (backend_commitment, backend_hint) =
-            with_backend_pool(
-                || match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
-                    (AKITA_ONE_HOT_K16, 64) => AkitaOneHotK16BackendScheme::commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                    ),
-                    (AKITA_ONE_HOT_K256, 64) => AkitaOneHotK256BackendScheme::commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                    ),
-                    (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                    ),
-                    _ => unreachable!("the one-hot setup geometry was validated during setup"),
-                },
-            )
-            .map_err(commit_failed)?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(&source),
+                &stack,
+            ),
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        })
+        .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
             num_vars,
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::TraceOneHot(vec![source].into()),
-            setup.one_hot_ring_dimension(),
         )
     }
 
@@ -267,22 +247,15 @@ impl AkitaScheme {
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        with_backend_pool(
-            || match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
-                (AKITA_ONE_HOT_K16, 64) => {
-                    AkitaOneHotK16BackendScheme::commit(backend_prover_setup, polynomials, &stack)
-                }
-                (AKITA_ONE_HOT_K256, 64) => {
-                    AkitaOneHotK256BackendScheme::commit(backend_prover_setup, polynomials, &stack)
-                }
-                (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::commit(
-                    backend_prover_setup,
-                    polynomials,
-                    &stack,
-                ),
-                _ => unreachable!("the one-hot setup geometry was validated during setup"),
-            },
-        )
+        with_backend_pool(|| match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => {
+                AkitaOneHotK16BackendScheme::commit(backend_prover_setup, polynomials, &stack)
+            }
+            AKITA_ONE_HOT_K256 => {
+                AkitaOneHotK256BackendScheme::commit(backend_prover_setup, polynomials, &stack)
+            }
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        })
         .map_err(commit_failed)
     }
 
@@ -316,7 +289,6 @@ impl AkitaScheme {
         backend_commitment: AkitaBackendCommitment,
         backend_hint: AkitaBackendHint,
         polynomials: AkitaHintPolynomials,
-        ring_dimension: usize,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let backend_flavor = polynomials.backend_flavor();
         let one_hot_k = match backend_flavor {
@@ -331,7 +303,6 @@ impl AkitaScheme {
             num_vars,
             poly_count: polynomials.len(),
             one_hot_k,
-            ring_dimension,
             backend_coeff_len: backend_commitment.rows().coeff_len(),
             serialized_backend_bytes: serialize_akita(backend_commitment.commitment())?,
         };
@@ -363,7 +334,6 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::Dense(dense.into()),
-            AKITA_D,
         )
     }
 }
@@ -424,8 +394,6 @@ impl CommitmentScheme for AkitaScheme {
         );
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
             .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
-        validate_one_hot_ring_dimension(params.one_hot_k, params.one_hot_ring_dimension)
-            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
         let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) =
             if params.one_hot_only {
                 (None, None, None)
@@ -456,7 +424,6 @@ impl CommitmentScheme for AkitaScheme {
         ) = if params.max_num_vars >= one_hot_log_k && !params.dense_only {
             let backend_prover_setup = crate::adapters::one_hot_setup_prover(
                 params.one_hot_k,
-                params.one_hot_ring_dimension,
                 params.max_num_vars,
                 params.max_num_polys_per_commitment_group,
             )
@@ -464,11 +431,8 @@ impl CommitmentScheme for AkitaScheme {
             let prepared_backend_setup =
                 with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
                     .map_err(|err| invalid_setup(&err))?;
-            let backend_verifier_setup = crate::adapters::one_hot_setup_verifier(
-                params.one_hot_k,
-                params.one_hot_ring_dimension,
-                &backend_prover_setup,
-            )?;
+            let backend_verifier_setup =
+                crate::adapters::one_hot_setup_verifier(params.one_hot_k, &backend_prover_setup)?;
             (
                 Some(std::sync::Arc::new(backend_prover_setup)),
                 Some(std::sync::Arc::new(prepared_backend_setup)),
@@ -482,7 +446,6 @@ impl CommitmentScheme for AkitaScheme {
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
-            one_hot_ring_dimension: params.one_hot_ring_dimension,
             backend_cache: Default::default(),
         };
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
@@ -504,9 +467,7 @@ impl CommitmentScheme for AkitaScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        if let Some(one_hot) =
-            one_hot_polynomial(poly, setup.one_hot_k(), setup.one_hot_ring_dimension())?
-        {
+        if let Some(one_hot) = one_hot_polynomial(poly, setup.one_hot_k())? {
             let num_vars = akita_prover::RootPolyMeta::num_vars(&one_hot);
             Self::validate_commit_shape(setup, num_vars, 1)?;
             let (backend_commitment, backend_hint) =
@@ -517,7 +478,6 @@ impl CommitmentScheme for AkitaScheme {
                 backend_commitment,
                 backend_hint,
                 AkitaHintPolynomials::OneHot(vec![one_hot].into()),
-                setup.one_hot_ring_dimension(),
             );
         }
 
@@ -543,17 +503,18 @@ impl CommitmentScheme for AkitaScheme {
                 backend_commitment,
                 backend_hint,
                 AkitaHintPolynomials::SparseUnit(vec![sparse].into()),
-                AKITA_D,
             );
         }
 
         let num_vars = poly.num_vars();
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let evals = akita_ordered_evaluations(poly)?;
-        let dense = vec![
-            AkitaBackendDensePoly::from_field_evals(num_vars, AKITA_D, &evals)
-                .map_err(akita_error)?,
-        ];
+        let dense = vec![AkitaBackendDensePoly::from_field_evals(
+            num_vars,
+            AKITA_SOURCE_RING_DIMENSION,
+            &evals,
+        )
+        .map_err(akita_error)?];
         Self::commit_dense_backend(setup, setup.default_layout_digest(), num_vars, dense)
     }
 
@@ -625,11 +586,7 @@ impl CommitmentScheme for AkitaScheme {
                         polynomial.num_vars()
                     )));
                 }
-                one_hot_polynomial(
-                    *polynomial,
-                    setup.one_hot_k(),
-                    setup.one_hot_ring_dimension(),
-                )?
+                one_hot_polynomial(*polynomial, setup.one_hot_k())?
                 .ok_or_else(|| {
                     invalid_batch(format!(
                         "Akita one-hot commitment group requires row-major K={} one-hot polynomials",
@@ -646,7 +603,6 @@ impl CommitmentScheme for AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::OneHot(backend_polynomials.into()),
-            setup.one_hot_ring_dimension(),
         )
     }
 
@@ -805,7 +761,6 @@ mod tests {
             max_num_polys_per_commitment_group: 1,
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_ring_dimension: 64,
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -821,17 +776,6 @@ mod tests {
         let mut flavor_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
         append_verifier_setup(&mut flavor_transcript, &setup, AkitaBackendFlavor::OneHot);
         assert_ne!(baseline.state(), flavor_transcript.state());
-
-        let mut changed_dimension = setup.clone();
-        changed_dimension.one_hot_ring_dimension = 128;
-        let mut dimension_transcript =
-            Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(
-            &mut dimension_transcript,
-            &changed_dimension,
-            AkitaBackendFlavor::OneHot,
-        );
-        assert_ne!(flavor_transcript.state(), dimension_transcript.state());
 
         let mut changed_shape = setup.clone();
         changed_shape.max_num_vars = 5;
@@ -860,12 +804,9 @@ mod tests {
         assert_ne!(digest_transcript.state(), k_transcript.state());
     }
 
-    fn one_hot_roundtrip(one_hot_k: usize, ring_dimension: Option<usize>) {
+    fn one_hot_roundtrip(one_hot_k: usize) {
         let num_vars = one_hot_k.ilog2() as usize + 8;
-        let mut setup_params = AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k);
-        if let Some(ring_dimension) = ring_dimension {
-            setup_params.one_hot_ring_dimension = ring_dimension;
-        }
+        let setup_params = AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let indices = (0..256usize)
             .map(|row| {
@@ -884,10 +825,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(commitment.one_hot_k(), one_hot_k);
-        assert_eq!(
-            commitment.ring_dimension(),
-            verifier_setup.one_hot_ring_dimension()
-        );
 
         let point = vec![AkitaField::from_u64(3); num_vars];
         let value = polynomial.evaluate(&point);
@@ -914,22 +851,6 @@ mod tests {
         .unwrap();
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
-        let mut wrong_d_statement = statement.clone();
-        wrong_d_statement[0].commitment.ring_dimension =
-            if verifier_setup.one_hot_ring_dimension() == 64 {
-                128
-            } else {
-                64
-            };
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
-        let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-            &verifier_setup,
-            &wrong_d_statement,
-            &proof,
-            &mut verifier_transcript,
-        )
-        .expect_err("commitment ring dimension must match verifier setup");
-
         let mut wrong_k_statement = statement;
         wrong_k_statement[0].commitment.one_hot_k = if one_hot_k == AKITA_ONE_HOT_K16 {
             AKITA_ONE_HOT_K256
@@ -948,31 +869,12 @@ mod tests {
 
     #[test]
     fn one_hot_k16_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K16, None);
+        one_hot_roundtrip(AKITA_ONE_HOT_K16);
     }
 
     #[test]
     fn one_hot_k256_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K256, None);
-    }
-
-    #[test]
-    fn one_hot_k256_d128_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K256, Some(128));
-    }
-
-    #[test]
-    fn large_k256_setup_selects_d128() {
-        assert_eq!(
-            AkitaSetupParams::one_hot_only(40, 1, [0; 32], AKITA_ONE_HOT_K256)
-                .one_hot_ring_dimension(),
-            64
-        );
-        assert_eq!(
-            AkitaSetupParams::one_hot_only(41, 1, [0; 32], AKITA_ONE_HOT_K256)
-                .one_hot_ring_dimension(),
-            128
-        );
+        one_hot_roundtrip(AKITA_ONE_HOT_K256);
     }
 
     /// A serde roundtrip drops the primed key cache; the transported setup

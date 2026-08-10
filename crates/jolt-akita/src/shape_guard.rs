@@ -25,7 +25,7 @@ use crate::adapters::{
     deserialize_akita, invalid_batch, AkitaBackendCommitment, AkitaBackendCommitmentPayload,
     AkitaBackendFlavor, AkitaBackendProof, AkitaBackendProofShape, AkitaBatchProof,
     AkitaCommitment, AkitaConfig, AkitaField, AkitaOneHotK16Config, AkitaOneHotK256Config,
-    AkitaOneHotK256D128Config, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use jolt_openings::OpeningsError;
 
@@ -128,19 +128,16 @@ fn resolve_schedule(
 ) -> Result<ResolvedScheduleRow, OpeningsError> {
     let schedule = match commitment.backend_flavor {
         AkitaBackendFlavor::Dense => resolve_schedule_row::<AkitaConfig>(layout, backend_point),
-        AkitaBackendFlavor::OneHot => match (commitment.one_hot_k, commitment.ring_dimension) {
-            (AKITA_ONE_HOT_K16, 64) => {
+        AkitaBackendFlavor::OneHot => match commitment.one_hot_k {
+            AKITA_ONE_HOT_K16 => {
                 resolve_schedule_row::<AkitaOneHotK16Config>(layout, backend_point)
             }
-            (AKITA_ONE_HOT_K256, 64) => {
+            AKITA_ONE_HOT_K256 => {
                 resolve_schedule_row::<AkitaOneHotK256Config>(layout, backend_point)
             }
-            (AKITA_ONE_HOT_K256, 128) => {
-                resolve_schedule_row::<AkitaOneHotK256D128Config>(layout, backend_point)
-            }
-            (one_hot_k, ring_dimension) => {
+            one_hot_k => {
                 return Err(invalid_batch(format!(
-                    "Akita one-hot K={one_hot_k} does not support ring dimension {ring_dimension}"
+                    "unsupported Akita one-hot K={one_hot_k}"
                 )))
             }
         },
@@ -376,7 +373,6 @@ mod tests {
             num_vars,
             poly_count,
             one_hot_k: 0,
-            ring_dimension: 64,
             backend_coeff_len: 0,
             serialized_backend_bytes: Vec::new(),
         }
