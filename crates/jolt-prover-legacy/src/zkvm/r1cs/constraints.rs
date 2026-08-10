@@ -528,8 +528,13 @@ pub static R1CS_CONSTRAINTS_FIRST_GROUP: [NamedR1CSConstraint; OUTER_UNIVARIATE_
 pub static R1CS_CONSTRAINTS_SECOND_GROUP: [NamedR1CSConstraint; NUM_REMAINING_R1CS_CONSTRAINTS] =
     filter_r1cs_constraints(&R1CS_CONSTRAINTS_SECOND_GROUP_LABELS);
 
-/// Domain sizing for product-virtualization univariate-skip (size-5 window)
+/// Domain sizing for product-virtualization univariate-skip: the domain has
+/// one point per product constraint.
+#[cfg(not(feature = "implicit-carry"))]
 pub const NUM_PRODUCT_VIRTUAL: usize = 3;
+#[cfg(feature = "implicit-carry")]
+pub const NUM_PRODUCT_VIRTUAL: usize = 4;
+const _: () = assert!(NUM_PRODUCT_VIRTUAL == NUM_PRODUCT_CONSTRAINTS);
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DOMAIN_SIZE: usize = NUM_PRODUCT_VIRTUAL;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_DEGREE: usize = NUM_PRODUCT_VIRTUAL - 1;
 pub const PRODUCT_VIRTUAL_UNIVARIATE_SKIP_EXTENDED_DOMAIN_SIZE: usize =
@@ -545,17 +550,23 @@ pub enum ProductConstraintLabel {
     Instruction,
     ShouldBranch,
     ShouldJump,
+    #[cfg(feature = "implicit-carry")]
+    CarryUsed,
 }
 
 /// Number of product virtualization constraints
 pub const NUM_PRODUCT_CONSTRAINTS: usize = ProductConstraintLabel::COUNT;
 
-/// Factor expression for product constraints: either a direct virtual polynomial,
-/// or 1 minus a virtual polynomial (used for NextIsNoop in ShouldJump).
+/// Factor expression for product constraints: a direct virtual polynomial,
+/// 1 minus a virtual polynomial (used for NextIsNoop in ShouldJump), or a
+/// committed polynomial read directly (used for Carry in CarryUsed, so the
+/// carry chain has exactly one proof-visible source).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProductFactorExpr {
     Var(VirtualPolynomial),
     OneMinus(VirtualPolynomial),
+    #[cfg(feature = "implicit-carry")]
+    Committed(crate::zkvm::witness::CommittedPolynomial),
 }
 
 /// A single product constraint row: Az · Bz = z', where z' is a virtual
@@ -593,6 +604,14 @@ pub const PRODUCT_CONSTRAINTS: [ProductConstraint; NUM_PRODUCT_CONSTRAINTS] = [
         left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::Jump)),
         right: ProductFactorExpr::OneMinus(VirtualPolynomial::NextIsNoop),
         output: VirtualPolynomial::ShouldJump,
+    },
+    // 3: CarryUsed = OpFlags(UsesCarry) · Carry (committed)
+    #[cfg(feature = "implicit-carry")]
+    ProductConstraint {
+        label: ProductConstraintLabel::CarryUsed,
+        left: ProductFactorExpr::Var(VirtualPolynomial::OpFlags(CircuitFlags::UsesCarry)),
+        right: ProductFactorExpr::Committed(crate::zkvm::witness::CommittedPolynomial::Carry),
+        output: VirtualPolynomial::CarryUsed,
     },
 ];
 

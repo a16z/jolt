@@ -477,7 +477,10 @@ impl R1CSCycleInputs {
 /// 5: InstructionFlags(Branch)
 /// 6: NextIsNoop
 /// 7: OpFlags(VirtualInstruction) — not a product factor, but opened here for downstream stages
-pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 8] = [
+/// 8 (implicit-carry): OpFlags(UsesCarry) — left factor of CarryUsed; the right
+///    factor is the committed `Carry` column, opened separately via
+///    `append_dense` rather than through this virtual list.
+pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; NUM_PRODUCT_UNIQUE_FACTORS] = [
     VirtualPolynomial::LeftInstructionInput,
     VirtualPolynomial::RightInstructionInput,
     VirtualPolynomial::OpFlags(CircuitFlags::Jump),
@@ -486,7 +489,14 @@ pub const PRODUCT_UNIQUE_FACTOR_VIRTUALS: [VirtualPolynomial; 8] = [
     VirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
     VirtualPolynomial::NextIsNoop,
     VirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+    #[cfg(feature = "implicit-carry")]
+    VirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
 ];
+
+#[cfg(not(feature = "implicit-carry"))]
+pub const NUM_PRODUCT_UNIQUE_FACTORS: usize = 8;
+#[cfg(feature = "implicit-carry")]
+pub const NUM_PRODUCT_UNIQUE_FACTORS: usize = 9;
 
 /// Minimal, unified view for the Product-virtualization round: the 6 product pairs
 /// (left, right) materialized from the trace for a single cycle.
@@ -513,6 +523,12 @@ pub struct ProductCycleInputs {
     pub not_next_noop: bool,
     /// VirtualInstruction flag (boolean) — opened at product cycle point for downstream stages
     pub virtual_instruction_flag: bool,
+    /// CarryUsed left flag (boolean)
+    #[cfg(feature = "implicit-carry")]
+    pub uses_carry_flag: bool,
+    /// CarryUsed right factor: the committed incoming carry for this row
+    #[cfg(feature = "implicit-carry")]
+    pub carry: u64,
 }
 
 impl ProductCycleInputs {
@@ -565,6 +581,10 @@ impl ProductCycleInputs {
             jump_flag,
             not_next_noop,
             virtual_instruction_flag,
+            #[cfg(feature = "implicit-carry")]
+            uses_carry_flag: flags_view[CircuitFlags::UsesCarry],
+            #[cfg(feature = "implicit-carry")]
+            carry: cycle.cycle().carry(),
         }
     }
 }
