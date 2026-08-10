@@ -8,6 +8,7 @@ use crate::{
     lookup_graph::LookupGraph,
     materializer_ast::{MaterializerAst, MaterializerGraph},
     modules::{AsModule, Module},
+    util::ZkLeanReprField,
     DefaultMleAst,
 };
 
@@ -62,6 +63,19 @@ fn append_canon_validations(names: &[String]) -> std::io::Result<String> {
     Ok(names.fold(last.clone(), |rest, name| {
         format!("Jolt.LookupCorrespondence.CanonRangeValid.append {name} ({rest})")
     }))
+}
+
+/// Render an extracted MLE through its arithmetic Lean pretty-printer.
+struct DisplayZkLean<'a> {
+    mle: &'a DefaultMleAst,
+    name: &'a str,
+    num_variables: usize,
+}
+
+impl std::fmt::Display for DisplayZkLean<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.mle.format_for_lean(f, self.name, self.num_variables)
+    }
 }
 
 /// A modular lookup table together with its generated-name compatibility adapter.
@@ -139,6 +153,7 @@ impl<const XLEN: usize> ZkLeanLookupTable<XLEN> {
 /// One canonical extracted record for a modular lookup table.
 struct ExtractedLookup {
     table_name: String,
+    mle: DefaultMleAst,
     graph: LookupGraph,
     materializer: Option<MaterializerGraph>,
 }
@@ -162,11 +177,13 @@ impl ExtractedLookup {
     fn extract<const XLEN: usize>(table: ZkLeanLookupTable<XLEN>) -> Result<Self, String> {
         let table_name = table.name();
         let num_inputs = 2 * XLEN;
-        let graph = LookupGraph::from_mle_ast(&table.evaluate_mle()?, num_inputs)
+        let mle = table.evaluate_mle()?;
+        let graph = LookupGraph::from_mle_ast(&mle, num_inputs)
             .map_err(|error| format!("failed to build {table_name}: {error}"))?;
 
         Ok(Self {
             table_name,
+            mle,
             graph,
             materializer: table.materializer(),
         })
@@ -184,6 +201,27 @@ impl ExtractedLookup {
             .graph
             .format_for_lean()
             .map_err(std::io::Error::other)?;
+
+        if self.materializer.is_some() {
+            let formula_name = format!("{table_name}_formula");
+            writeln!(
+                f,
+                "/- Readable arithmetic expansion emitted mechanically from the same Rust evaluator AST."
+            )?;
+            writeln!(
+                f,
+                "The compact graph below remains the authoritative checked representation. -/"
+            )?;
+            write!(
+                f,
+                "{}",
+                DisplayZkLean {
+                    mle: &self.mle,
+                    name: &formula_name,
+                    num_variables: num_inputs,
+                }
+            )?;
+        }
 
         writeln!(
             f,
@@ -1038,6 +1076,10 @@ mod test {
             .unwrap()
             .ends_with("\nend Jolt.LookupTables\n"));
         assert!(lean.contains("And_64_lookup_table_program"));
+        assert!(lean.contains("And_64_lookup_table_formula"));
+        assert!(lean.contains("VirtualROTR_64_lookup_table_formula"));
+        assert!(!lean.contains("Xor_64_lookup_table_formula"));
+        assert!(lean.contains("v[0] * v[1]"));
         assert!(lean.contains("And_64_lookup_table_graph"));
         assert!(lean.contains("mle := And_64_lookup_table_graph"));
         assert!(lean.contains("And_64_lookup_table_materializer"));

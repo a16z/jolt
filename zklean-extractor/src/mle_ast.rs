@@ -625,7 +625,10 @@ fn fmt_atom(f: &mut fmt::Formatter<'_>, fmt_data: &FormattingData<'_>, atom: Ato
                 .expect("unreachable: register name missing in var");
             write!(f, "{name}[{index}]")?;
         }
-        Atom::NamedVar(index) => write!(f, "{}{index} x", fmt_data.prefix)?,
+        Atom::NamedVar(index) => {
+            let name = fmt_data.reg_name.unwrap_or('x');
+            write!(f, "{}{index} {name}", fmt_data.prefix)?
+        }
     }
 
     Ok(())
@@ -920,6 +923,7 @@ impl crate::util::ZkLeanReprField for MleAst {
     ) -> fmt::Result {
         let (bindings, node) = common_subexpression_elimination(get_node(self.root));
         let node_id = insert_node(node);
+        let reg_name = self.reg_name.unwrap_or('x');
         let fmt_data = FormattingData {
             prefix: &format!("{name}_{CSE_PREFIX}_"),
             reg_name: self.reg_name,
@@ -927,7 +931,7 @@ impl crate::util::ZkLeanReprField for MleAst {
         for (index, binding) in bindings.iter().enumerate() {
             write!(
                 f,
-                "def {}{index} [Field f] (x : Vector f {num_variables}) : f := ",
+                "private def {}{index} [Field f] ({reg_name} : Vector f {num_variables}) : f := ",
                 fmt_data.prefix,
             )?;
             fmt_node(f, &fmt_data, insert_node(binding.clone()), false)?;
@@ -935,7 +939,7 @@ impl crate::util::ZkLeanReprField for MleAst {
         }
         write!(
             f,
-            "def {name} [Field f] (x : Vector f {num_variables}) : f := "
+            "def {name} [Field f] ({reg_name} : Vector f {num_variables}) : f := "
         )?;
         fmt_node(f, &fmt_data, node_id, false)?;
         writeln!(f)?;
