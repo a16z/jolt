@@ -138,6 +138,8 @@ pub struct AzFirstGroup {
     pub should_jump: bool,            // ShouldJump
     pub virtual_instr_not_last: bool, // VirtualInstruction && !IsLastInSequence
     pub must_start_sequence: bool,    // NextIsVirtual && !NextIsFirstInSequence
+    #[cfg(feature = "implicit-carry")]
+    pub not_produces_carry: bool, // !ProducesCarry
 }
 
 impl AzFirstGroup {
@@ -160,6 +162,8 @@ impl AzFirstGroup {
         acc.fmadd(&w[7], &self.should_jump);
         acc.fmadd(&w[8], &self.virtual_instr_not_last);
         acc.fmadd(&w[9], &self.must_start_sequence);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[10], &self.not_produces_carry);
     }
 }
 
@@ -176,6 +180,8 @@ pub struct BzFirstGroup {
     pub next_unexp_pc_minus_lookup_output: S64,      // NextUnexpandedPC - LookupOutput
     pub next_pc_minus_pc_plus_one: S64,              // NextPC - (PC + 1)
     pub one_minus_do_not_update_unexpanded_pc: bool, // 1 - DoNotUpdateUnexpandedPC
+    #[cfg(feature = "implicit-carry")]
+    pub next_carry: u64, // NextCarry - 0
 }
 
 impl BzFirstGroup {
@@ -198,6 +204,8 @@ impl BzFirstGroup {
         acc.fmadd(&w[7], &self.next_unexp_pc_minus_lookup_output);
         acc.fmadd(&w[8], &self.next_pc_minus_pc_plus_one);
         acc.fmadd(&w[9], &self.one_minus_do_not_update_unexpanded_pc);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[10], &self.next_carry);
     }
 }
 
@@ -213,6 +221,8 @@ pub struct AzSecondGroup {
     pub write_pc_to_rd: bool,         // OpFlags(Jump)
     pub should_branch: bool,          // ShouldBranch
     pub not_jump_or_branch: bool,     // !(Jump || ShouldBranch)
+    #[cfg(feature = "implicit-carry")]
+    pub produces_carry: bool, // ProducesCarry
 }
 
 impl AzSecondGroup {
@@ -234,6 +244,8 @@ impl AzSecondGroup {
         acc.fmadd(&w[6], &self.write_pc_to_rd);
         acc.fmadd(&w[7], &self.should_branch);
         acc.fmadd(&w[8], &self.not_jump_or_branch);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[9], &self.produces_carry);
     }
 }
 
@@ -249,6 +261,8 @@ pub struct BzSecondGroup {
     pub rd_write_minus_pc_plus_const: S64, // RdWrite - (UnexpandedPC + const)
     pub next_unexp_pc_minus_pc_plus_imm: i128, // NextUnexpandedPC - (UnexpandedPC + Imm)
     pub next_unexp_pc_minus_expected: S64, // NextUnexpandedPC - (UnexpandedPC + const)
+    #[cfg(feature = "implicit-carry")]
+    pub right_lookup_minus_split: S160, // RightLookup - (LookupOutput + 2^64 * NextCarry)
 }
 
 impl BzSecondGroup {
@@ -270,6 +284,8 @@ impl BzSecondGroup {
         acc.fmadd(&w[6], &self.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &self.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &self.next_unexp_pc_minus_expected);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[9], &self.right_lookup_minus_split);
     }
 }
 
@@ -311,6 +327,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             should_jump: self.row.should_jump,
             virtual_instr_not_last: inline_seq && !self.row.flags[CircuitFlags::IsLastInSequence],
             must_start_sequence: self.row.next_is_virtual && !self.row.next_is_first_in_sequence,
+            #[cfg(feature = "implicit-carry")]
+            not_produces_carry: !flags[CircuitFlags::ProducesCarry],
         }
     }
 
@@ -346,6 +364,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             ),
             one_minus_do_not_update_unexpanded_pc: !self.row.flags
                 [CircuitFlags::DoNotUpdateUnexpandedPC],
+            #[cfg(feature = "implicit-carry")]
+            next_carry: self.row.next_carry,
         }
     }
 
@@ -363,6 +383,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[7], &az.should_jump);
         acc.fmadd(&w[8], &az.virtual_instr_not_last);
         acc.fmadd(&w[9], &az.must_start_sequence);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[10], &az.not_produces_carry);
         acc.barrett_reduce()
     }
 
@@ -380,6 +402,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_lookup_output);
         acc.fmadd(&w[8], &bz.next_pc_minus_pc_plus_one);
         acc.fmadd(&w[9], &bz.one_minus_do_not_update_unexpanded_pc);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[10], &bz.next_carry);
         acc.barrett_reduce()
     }
 
@@ -481,6 +505,16 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             bz_eval_s128.fmadd(&c9_i32, &bz.one_minus_do_not_update_unexpanded_pc);
         }
 
+        #[cfg(feature = "implicit-carry")]
+        {
+            let c10_i32 = coeffs_i32[10];
+            if az.not_produces_carry {
+                az_eval_i32 += c10_i32;
+            } else {
+                bz_eval_s128.fmadd(&c10_i32, &bz.next_carry);
+            }
+        }
+
         let az_eval_s64 = S64::from_i64(az_eval_i32 as i64);
         az_eval_s64.mul_trunc::<2, 3>(&bz_eval_s128.sum)
     }
@@ -537,6 +571,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             az.must_start_sequence,
             !bz.one_minus_do_not_update_unexpanded_pc,
         );
+        #[cfg(feature = "implicit-carry")]
+        self.assert_constraint_first_group(10, az.not_produces_carry, bz.next_carry == 0);
     }
 
     #[inline]
@@ -562,6 +598,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             write_pc_to_rd: flags[CircuitFlags::Jump],
             should_branch: self.row.should_branch,
             not_jump_or_branch: next_update_otherwise,
+            #[cfg(feature = "implicit-carry")]
+            produces_carry: flags[CircuitFlags::ProducesCarry],
         }
     }
 
@@ -580,14 +618,27 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let right_sub_expected =
             (self.row.left_input as i128) - self.row.right_input.to_i128() + (1i128 << 64);
 
+        #[cfg(not(feature = "implicit-carry"))]
         let right_lookup_minus_add_result =
             S160::from(self.row.right_lookup) - S160::from(right_add_expected);
+        #[cfg(feature = "implicit-carry")]
+        let right_lookup_minus_add_result = S160::from(self.row.right_lookup)
+            - S160::from(right_add_expected + self.row.carry_used as i128);
         let right_lookup_minus_sub_result =
             S160::from(self.row.right_lookup) - S160::from(right_sub_expected);
+        #[cfg(not(feature = "implicit-carry"))]
         let right_lookup_minus_product =
             S160::from(self.row.right_lookup) - S160::from(self.row.product);
+        #[cfg(feature = "implicit-carry")]
+        let right_lookup_minus_product = S160::from(self.row.right_lookup)
+            - S160::from(self.row.product)
+            - S160::from(self.row.carry_used as i128);
         let right_lookup_minus_right_input =
             S160::from(self.row.right_lookup) - S160::from(self.row.right_input);
+        // LookupSplitsIntoOutputAndNextCarry: RightLookup - (LookupOutput + 2^64 * NextCarry)
+        #[cfg(feature = "implicit-carry")]
+        let right_lookup_minus_split = S160::from(self.row.right_lookup)
+            - S160::from(self.row.lookup_output as u128 + ((self.row.next_carry as u128) << 64));
 
         // Rd write checks (fit in i64 range by construction)
         let rd_write_minus_lookup_output =
@@ -628,6 +679,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             rd_write_minus_pc_plus_const,
             next_unexp_pc_minus_pc_plus_imm,
             next_unexp_pc_minus_expected,
+            #[cfg(feature = "implicit-carry")]
+            right_lookup_minus_split,
         }
     }
 
@@ -645,6 +698,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[6], &az.write_pc_to_rd);
         acc.fmadd(&w[7], &az.should_branch);
         acc.fmadd(&w[8], &az.not_jump_or_branch);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[9], &az.produces_carry);
         acc.barrett_reduce()
     }
 
@@ -662,6 +717,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[6], &bz.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &bz.next_unexp_pc_minus_expected);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[9], &bz.right_lookup_minus_split);
         acc.barrett_reduce()
     }
 
@@ -756,6 +813,16 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             bz_eval_s192.fmadd(&c8, &bz.next_unexp_pc_minus_expected);
         }
 
+        #[cfg(feature = "implicit-carry")]
+        {
+            let c9 = coeffs_i32[9];
+            if az.produces_carry {
+                az_eval_i32 += c9;
+            } else {
+                bz_eval_s192.fmadd(&c9, &bz.right_lookup_minus_split);
+            }
+        }
+
         let az_eval_s64 = S64::from_i64(az_eval_i32 as i64);
         az_eval_s64.mul_trunc::<3, 3>(&bz_eval_s192.sum)
     }
@@ -811,6 +878,12 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             az.not_jump_or_branch,
             bz.next_unexp_pc_minus_expected.is_zero(),
         );
+        #[cfg(feature = "implicit-carry")]
+        self.assert_constraint_second_group(
+            9,
+            az.produces_carry,
+            bz.right_lookup_minus_split.is_zero(),
+        );
     }
 
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
@@ -859,6 +932,10 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 let mut acc_flags: Vec<SmallAccumU<F>> = (0..NUM_CIRCUIT_FLAGS)
                     .map(|_| SmallAccumU::zero())
                     .collect();
+                #[cfg(feature = "implicit-carry")]
+                let mut acc_carry_used: MedAccumU<F> = MedAccumU::zero();
+                #[cfg(feature = "implicit-carry")]
+                let mut acc_next_carry: MedAccumU<F> = MedAccumU::zero();
 
                 let eq_two_len = eq_two.len();
                 for x2 in 0..eq_two_len {
@@ -891,6 +968,11 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     acc_next_is_first_in_sequence.fmadd(&e_in, &row.next_is_first_in_sequence);
                     for flag in CircuitFlags::iter() {
                         acc_flags[flag as usize].fmadd(&e_in, &row.flags[flag as usize]);
+                    }
+                    #[cfg(feature = "implicit-carry")]
+                    {
+                        acc_carry_used.fmadd(&e_in, &row.carry_used);
+                        acc_next_carry.fmadd(&e_in, &row.next_carry);
                     }
                 }
 
@@ -942,6 +1024,13 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     let idx = JoltR1CSInputs::OpFlags(flag).to_index();
                     let f_idx = flag as usize;
                     out_unr[idx] = eq1_val.mul_to_product_accum(acc_flags[f_idx].barrett_reduce());
+                }
+                #[cfg(feature = "implicit-carry")]
+                {
+                    out_unr[JoltR1CSInputs::CarryUsed.to_index()] =
+                        eq1_val.mul_to_product_accum(acc_carry_used.barrett_reduce());
+                    out_unr[JoltR1CSInputs::NextCarry.to_index()] =
+                        eq1_val.mul_to_product_accum(acc_next_carry.barrett_reduce());
                 }
                 out_unr
             })

@@ -172,6 +172,12 @@ pub enum R1CSConstraintLabel {
     NextUnexpPCUpdateOtherwise,
     NextPCEqPCPlusOneIfInline,
     MustStartSequenceFromBeginning,
+    /// if ProducesCarry: RightLookupOperand == LookupOutput + 2^64 * NextCarry
+    #[cfg(feature = "implicit-carry")]
+    LookupSplitsIntoOutputAndNextCarry,
+    /// if !ProducesCarry: NextCarry == 0
+    #[cfg(feature = "implicit-carry")]
+    NextCarryZeroIfNotProducesCarry,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -287,10 +293,19 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
     // If AddOperands {
     //     assert!(RightLookupOperand == LeftInstructionInput + RightInstructionInput)
     // }
+    #[cfg(not(feature = "implicit-carry"))]
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::RightLookupAdd,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } + { JoltR1CSInputs::RightInstructionInput } )
+    ),
+    // CarryUsed is 0 for every AddOperands user except ADDC, so the
+    // non-carry instructions keep today's semantics.
+    #[cfg(feature = "implicit-carry")]
+    r1cs_eq_conditional!(
+        label: R1CSConstraintLabel::RightLookupAdd,
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::AddOperands) } }
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } + { JoltR1CSInputs::RightInstructionInput } + { JoltR1CSInputs::CarryUsed } )
     ),
     // If SubtractOperands {
     //     assert!(RightLookupOperand == LeftInstructionInput - RightInstructionInput)
@@ -301,10 +316,17 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::SubtractOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LeftInstructionInput } - { JoltR1CSInputs::RightInstructionInput } + { 0x10000000000000000i128 } )
     ),
+    #[cfg(not(feature = "implicit-carry"))]
     r1cs_eq_conditional!(
         label: R1CSConstraintLabel::RightLookupEqProductIfMul,
         if { { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
         => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } )
+    ),
+    #[cfg(feature = "implicit-carry")]
+    r1cs_eq_conditional!(
+        label: R1CSConstraintLabel::RightLookupEqProductIfMul,
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::MultiplyOperands) } }
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::Product } + { JoltR1CSInputs::CarryUsed } )
     ),
     // if !(AddOperands || SubtractOperands || MultiplyOperands || Advice) {
     //     assert!(RightLookupOperand == RightInstructionInput)
@@ -406,6 +428,27 @@ pub static R1CS_CONSTRAINTS: [NamedR1CSConstraint; NUM_R1CS_CONSTRAINTS] = [
         label: R1CSConstraintLabel::MustStartSequenceFromBeginning,
         if { { JoltR1CSInputs::NextIsVirtual } - { JoltR1CSInputs::NextIsFirstInSequence } }
         => ( { 1i128 } ) == ( { JoltR1CSInputs::OpFlags(CircuitFlags::DoNotUpdateUnexpandedPC) } )
+    ),
+    // if ProducesCarry {
+    //     assert!(RightLookupOperand == LookupOutput + 2^64 * NextCarry)
+    // }
+    // The lookup domain bounds RightLookupOperand < 2^128 and the RangeCheck
+    // table forces LookupOutput = low64(RightLookupOperand), so NextCarry is
+    // the high 64 bits with no explicit range check needed.
+    #[cfg(feature = "implicit-carry")]
+    r1cs_eq_conditional!(
+        label: R1CSConstraintLabel::LookupSplitsIntoOutputAndNextCarry,
+        if { { JoltR1CSInputs::OpFlags(CircuitFlags::ProducesCarry) } }
+        => ( { JoltR1CSInputs::RightLookupOperand } ) == ( { JoltR1CSInputs::LookupOutput } + { 0x10000000000000000i128 * JoltR1CSInputs::NextCarry } )
+    ),
+    // if !ProducesCarry {
+    //     assert!(NextCarry == 0)
+    // }
+    #[cfg(feature = "implicit-carry")]
+    r1cs_eq_conditional!(
+        label: R1CSConstraintLabel::NextCarryZeroIfNotProducesCarry,
+        if { { 1i128 } - { JoltR1CSInputs::OpFlags(CircuitFlags::ProducesCarry) } }
+        => ( { JoltR1CSInputs::NextCarry } ) == ( { 0i128 } )
     ),
 ];
 
@@ -513,6 +556,10 @@ pub const R1CS_CONSTRAINTS_FIRST_GROUP_LABELS: [R1CSConstraintLabel;
     R1CSConstraintLabel::NextUnexpPCEqLookupIfShouldJump,
     R1CSConstraintLabel::NextPCEqPCPlusOneIfInline,
     R1CSConstraintLabel::MustStartSequenceFromBeginning,
+    // Low-degree carry row keeps the first group at the uniskip domain size
+    // (21 constraints -> domain 11).
+    #[cfg(feature = "implicit-carry")]
+    R1CSConstraintLabel::NextCarryZeroIfNotProducesCarry,
 ];
 
 /// Second group: complement of first within R1CS_CONSTRAINTS
