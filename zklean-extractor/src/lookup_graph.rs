@@ -294,6 +294,76 @@ impl LookupGraph {
         write!(output, "    ]\n    root := {} }}", self.root)?;
         Ok(output)
     }
+
+    /// Format the graph as a readable chain of ordinary Lean arithmetic definitions.
+    pub fn format_formula_for_lean(
+        &self,
+        name: &str,
+        num_inputs: usize,
+    ) -> Result<String, fmt::Error> {
+        let mut depends_on_input = Vec::with_capacity(self.nodes.len());
+        for node in &self.nodes {
+            let depends = match node {
+                LookupGraphNode::Constant(_) => false,
+                LookupGraphNode::Input(_) => true,
+                LookupGraphNode::Add(left, right)
+                | LookupGraphNode::Sub(left, right)
+                | LookupGraphNode::Mul(left, right) => {
+                    depends_on_input[*left] || depends_on_input[*right]
+                }
+            };
+            depends_on_input.push(depends);
+        }
+
+        let mut output = String::new();
+        for (index, node) in self.nodes.iter().enumerate() {
+            write!(
+                output,
+                "private def {name}_node_{index} [Field f]{} : f := ",
+                if depends_on_input[index] {
+                    format!(" (v : Vector f {num_inputs})")
+                } else {
+                    String::new()
+                }
+            )?;
+            let node_ref = |child: usize| {
+                format!(
+                    "{name}_node_{child}{}",
+                    if depends_on_input[child] { " v" } else { "" }
+                )
+            };
+            match node {
+                LookupGraphNode::Constant(value) => {
+                    writeln!(output, "{}", scalar_to_decimal_string(value))?;
+                }
+                LookupGraphNode::Input(input) => writeln!(output, "v[{input}]")?,
+                LookupGraphNode::Add(left, right) => {
+                    writeln!(output, "{} + {}", node_ref(*left), node_ref(*right))?;
+                }
+                LookupGraphNode::Sub(left, right) => {
+                    writeln!(output, "{} - {}", node_ref(*left), node_ref(*right))?;
+                }
+                LookupGraphNode::Mul(left, right) => {
+                    writeln!(output, "{} * {}", node_ref(*left), node_ref(*right))?;
+                }
+            }
+        }
+        writeln!(
+            output,
+            "def {name} [Field f] ({} : Vector f {num_inputs}) : f := {}",
+            if depends_on_input[self.root] {
+                "v"
+            } else {
+                "_v"
+            },
+            if depends_on_input[self.root] {
+                format!("{name}_node_{} v", self.root)
+            } else {
+                format!("{name}_node_{}", self.root)
+            }
+        )?;
+        Ok(output)
+    }
 }
 
 #[cfg(test)]
@@ -345,5 +415,33 @@ mod tests {
             Some(&(3, true))
         );
         assert!(graph.multilinearity_summaries(129).is_err());
+    }
+
+    #[test]
+    fn readable_formula_preserves_graph_sharing_and_uses_lean_notation() {
+        let left = MleAst::from_var(0);
+        let right = MleAst::from_var(1);
+        let shared = left + right;
+        let graph = LookupGraph::from_mle_ast(&(shared * shared), 2).unwrap();
+
+        let formula = graph.format_formula_for_lean("example_formula", 2).unwrap();
+        assert!(formula.contains(
+            "private def example_formula_node_2 [Field f] (v : Vector f 2) : f := \
+             example_formula_node_0 v + example_formula_node_1 v"
+        ));
+        assert!(formula.contains(
+            "private def example_formula_node_3 [Field f] (v : Vector f 2) : f := \
+             example_formula_node_2 v * example_formula_node_2 v"
+        ));
+        assert!(formula.ends_with(
+            "def example_formula [Field f] (v : Vector f 2) : f := example_formula_node_3 v\n"
+        ));
+
+        let with_constant = LookupGraph::from_mle_ast(&(MleAst::from(7_u128) + left), 2).unwrap();
+        let formula = with_constant
+            .format_formula_for_lean("constant_formula", 2)
+            .unwrap();
+        assert!(formula.contains("private def constant_formula_node_0 [Field f] : f := 7"));
+        assert!(formula.contains("constant_formula_node_0 + constant_formula_node_1 v"));
     }
 }
