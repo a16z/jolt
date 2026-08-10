@@ -596,6 +596,9 @@ pub struct ShiftSumcheckCycleState {
     pub is_virtual: bool,
     pub is_first_in_sequence: bool,
     pub is_noop: bool,
+    /// The row's incoming implicit carry (shifted output of the carry term).
+    #[cfg(feature = "implicit-carry")]
+    pub carry: u64,
 }
 
 impl ShiftSumcheckCycleState {
@@ -609,6 +612,8 @@ impl ShiftSumcheckCycleState {
             is_virtual: circuit_flags[CircuitFlags::VirtualInstruction],
             is_first_in_sequence: circuit_flags[CircuitFlags::IsFirstInSequence],
             is_noop: jolt_cycle.instruction_flags()[InstructionFlags::IsNoop],
+            #[cfg(feature = "implicit-carry")]
+            carry: cycle.carry(),
         }
     }
 }

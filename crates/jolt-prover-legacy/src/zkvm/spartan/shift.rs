@@ -54,9 +54,16 @@ use rayon::prelude::*;
 /// Degree bound of the sumcheck round polynomials in [`ShiftSumcheckVerifier`].
 const DEGREE_BOUND: usize = 2;
 
+/// Number of gamma-batched shift terms: five base columns, plus (implicit-carry)
+/// NextCarry vs the shifted committed Carry column.
+#[cfg(not(feature = "implicit-carry"))]
+pub const SHIFT_GAMMA_COUNT: usize = 5;
+#[cfg(feature = "implicit-carry")]
+pub const SHIFT_GAMMA_COUNT: usize = 6;
+
 #[derive(Allocative, Clone)]
 pub struct ShiftSumcheckParams<F: JoltField> {
-    pub gamma_powers: [F; 5],
+    pub gamma_powers: [F; SHIFT_GAMMA_COUNT],
     pub n_cycle_vars: usize, // = log(T)
     pub r_outer: OpeningPoint<BIG_ENDIAN, F>,
     pub r_product: OpeningPoint<BIG_ENDIAN, F>,
@@ -68,7 +75,10 @@ impl<F: JoltField> ShiftSumcheckParams<F> {
         opening_accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let gamma_powers = transcript.challenge_scalar_powers(5).try_into().unwrap();
+        let gamma_powers = transcript
+            .challenge_scalar_powers(SHIFT_GAMMA_COUNT)
+            .try_into()
+            .unwrap();
         let (outer_sumcheck_r, _) = opening_accumulator
             .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
         let (r_outer, _rx_var) = outer_sumcheck_r.split_at(n_cycle_vars);
@@ -117,11 +127,23 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
             SumcheckId::SpartanProductVirtualization,
         );
 
+        #[cfg(feature = "implicit-carry")]
+        let carry_term = {
+            let (_, input_claim_next_carry) = accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::NextCarry,
+                SumcheckId::SpartanOuter,
+            );
+            input_claim_next_carry * self.gamma_powers[5]
+        };
+        #[cfg(not(feature = "implicit-carry"))]
+        let carry_term = F::zero();
+
         input_claim_next_unexpanded_pc
             + input_claim_next_pc * self.gamma_powers[1]
             + input_claim_next_is_virtual * self.gamma_powers[2]
             + input_claim_next_is_first_in_sequence * self.gamma_powers[3]
             + (F::one() - input_claim_next_is_noop) * self.gamma_powers[4]
+            + carry_term
     }
 
     fn normalize_opening_point(
@@ -168,19 +190,30 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
                 ValueSource::Challenge(4),
                 vec![ValueSource::Opening(next_is_noop)],
             ), // -gamma[4] * next_is_noop
+            #[cfg(feature = "implicit-carry")]
+            ProductTerm::scaled(
+                ValueSource::Challenge(5),
+                vec![ValueSource::Opening(OpeningId::virt(
+                    VirtualPolynomial::NextCarry,
+                    SumcheckId::SpartanOuter,
+                ))],
+            ),
         ];
         InputClaimConstraint::sum_of_products(terms)
     }
 
     #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
-        vec![
+        let mut values = vec![
             self.gamma_powers[1],
             self.gamma_powers[2],
             self.gamma_powers[3],
             self.gamma_powers[4],
             -self.gamma_powers[4],
-        ]
+        ];
+        #[cfg(feature = "implicit-carry")]
+        values.push(self.gamma_powers[5]);
+        values
     }
 
     #[cfg(feature = "zk")]
@@ -220,6 +253,14 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
                 ValueSource::Challenge(5),
                 vec![ValueSource::Opening(is_noop)],
             ),
+            #[cfg(feature = "implicit-carry")]
+            ProductTerm::scaled(
+                ValueSource::Challenge(6),
+                vec![ValueSource::Opening(OpeningId::committed(
+                    crate::zkvm::witness::CommittedPolynomial::Carry,
+                    SumcheckId::SpartanShift,
+                ))],
+            ),
         ];
 
         Some(OutputClaimConstraint::sum_of_products(terms))
@@ -235,14 +276,17 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
 
         let gamma_powers = &self.gamma_powers;
 
-        vec![
+        let mut values = vec![
             gamma_powers[0] * eq_plus_one_outer,
             gamma_powers[1] * eq_plus_one_outer,
             gamma_powers[2] * eq_plus_one_outer,
             gamma_powers[3] * eq_plus_one_outer,
             gamma_powers[4] * eq_plus_one_product,
             -gamma_powers[4] * eq_plus_one_product,
-        ]
+        ];
+        #[cfg(feature = "implicit-carry")]
+        values.push(gamma_powers[5] * eq_plus_one_outer);
+        values
     }
 }
 
@@ -331,6 +375,8 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         let is_virtual_eval = state.is_virtual_poly.final_sumcheck_claim();
         let is_first_in_sequence_eval = state.is_first_in_sequence_poly.final_sumcheck_claim();
         let is_noop_eval = state.is_noop_poly.final_sumcheck_claim();
+        #[cfg(feature = "implicit-carry")]
+        let carry_eval = state.carry_poly.final_sumcheck_claim();
 
         let opening_point = normalize_opening_point(sumcheck_challenges);
         accumulator.append_virtual(
@@ -360,9 +406,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for ShiftSumcheck
         accumulator.append_virtual(
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
-            opening_point,
+            opening_point.clone(),
             is_noop_eval,
         );
+        #[cfg(feature = "implicit-carry")]
+        accumulator.append_dense(
+            crate::zkvm::witness::CommittedPolynomial::Carry,
+            SumcheckId::SpartanShift,
+            opening_point.r,
+            carry_eval,
+        );
+        #[cfg(not(feature = "implicit-carry"))]
+        drop(opening_point);
     }
 
     #[cfg(feature = "allocative")]
@@ -434,6 +489,17 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         let eq_plus_one_r_product_at_shift =
             EqPlusOnePolynomial::<F>::new(self.params.r_product.r.to_vec()).evaluate(&r.r);
 
+        #[cfg(feature = "implicit-carry")]
+        let carry_term = {
+            let (_, carry_claim) = accumulator.get_committed_polynomial_opening(
+                crate::zkvm::witness::CommittedPolynomial::Carry,
+                SumcheckId::SpartanShift,
+            );
+            self.params.gamma_powers[5] * carry_claim * eq_plus_one_r_outer_at_shift
+        };
+        #[cfg(not(feature = "implicit-carry"))]
+        let carry_term = F::zero();
+
         let result = [
             unexpanded_pc_claim,
             pc_claim,
@@ -447,7 +513,8 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
             * eq_plus_one_r_outer_at_shift
             + self.params.gamma_powers[4]
                 * (F::one() - is_noop_claim)
-                * eq_plus_one_r_product_at_shift;
+                * eq_plus_one_r_product_at_shift
+            + carry_term;
 
         #[cfg(test)]
         {
@@ -492,8 +559,16 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
         accumulator.append_virtual(
             VirtualPolynomial::InstructionFlags(InstructionFlags::IsNoop),
             SumcheckId::SpartanShift,
-            opening_point,
+            opening_point.clone(),
         );
+        #[cfg(feature = "implicit-carry")]
+        accumulator.append_dense(
+            crate::zkvm::witness::CommittedPolynomial::Carry,
+            SumcheckId::SpartanShift,
+            opening_point.r,
+        );
+        #[cfg(not(feature = "implicit-carry"))]
+        drop(opening_point);
     }
 }
 
@@ -557,6 +632,14 @@ impl<F: JoltField> SumcheckFrontend<F> for ShiftSumcheckVerifier<F> {
                     input_claim_expr: ClaimExpr::Constant(F::one()) - next_is_noop,
                     batching_poly: product_sumcheck_r,
                     expected_output_claim_expr: ClaimExpr::Constant(F::one()) - is_noop,
+                },
+                #[cfg(feature = "implicit-carry")]
+                Claim {
+                    input_sumcheck_id: SumcheckId::SpartanOuter,
+                    input_claim_expr: VirtualPolynomial::NextCarry.into(),
+                    batching_poly: outer_sumcheck_r,
+                    expected_output_claim_expr: crate::zkvm::witness::CommittedPolynomial::Carry
+                        .into(),
                 },
             ],
             output_sumcheck_id: SumcheckId::SpartanShift,
@@ -649,6 +732,8 @@ impl<F: JoltField> Phase1State<F> {
                                 is_virtual,
                                 is_first_in_sequence,
                                 is_noop,
+                                #[cfg(feature = "implicit-carry")]
+                                carry,
                             } = ShiftSumcheckCycleState::new(&trace[x], bytecode_preprocessing);
 
                             let mut v =
@@ -658,6 +743,10 @@ impl<F: JoltField> Phase1State<F> {
                             }
                             if is_first_in_sequence {
                                 v += params.gamma_powers[3];
+                            }
+                            #[cfg(feature = "implicit-carry")]
+                            {
+                                v += params.gamma_powers[5].mul_u64(carry);
                             }
                             Q_0_for_r_outer_unreduced[i] +=
                                 v.mul_to_product_accum(suffix_0_for_r_outer[x_hi]);
@@ -747,6 +836,8 @@ struct Phase2State<F: JoltField> {
     is_virtual_poly: MultilinearPolynomial<F>,
     is_first_in_sequence_poly: MultilinearPolynomial<F>,
     is_noop_poly: MultilinearPolynomial<F>,
+    #[cfg(feature = "implicit-carry")]
+    carry_poly: MultilinearPolynomial<F>,
     eq_plus_one_r_outer: MultilinearPolynomial<F>,
     eq_plus_one_r_product: MultilinearPolynomial<F>,
 }
@@ -828,6 +919,8 @@ impl<F: JoltField> Phase2State<F> {
                             is_virtual,
                             is_first_in_sequence,
                             is_noop,
+                            #[cfg(feature = "implicit-carry")]
+                                carry: _,
                         } = ShiftSumcheckCycleState::new(cycle, bytecode_preprocessing);
                         let eq_eval = eq_evals[i];
                         unexpanded_pc_eval_unreduced += eq_eval.mul_u64_unreduced(unexpanded_pc);
@@ -852,12 +945,31 @@ impl<F: JoltField> Phase2State<F> {
                 },
             );
 
+        // Carry(r_prefix, j): separate pass to keep the base 6-tuple zip intact.
+        #[cfg(feature = "implicit-carry")]
+        let carry_poly: MultilinearPolynomial<F> = {
+            let mut carry_vals = vec![F::zero(); 1 << n_remaining_rounds];
+            carry_vals
+                .par_iter_mut()
+                .zip(trace.par_chunks(eq_evals.len()))
+                .for_each(|(out, trace_chunk)| {
+                    let mut unreduced = F::UnreducedMulU64::zero();
+                    for (i, cycle) in trace_chunk.iter().enumerate() {
+                        unreduced += eq_evals[i].mul_u64_unreduced(cycle.carry());
+                    }
+                    *out = F::reduce_mul_u64(unreduced);
+                });
+            carry_vals.into()
+        };
+
         Self {
             unexpanded_pc_poly: unexpanded_pc_poly.into(),
             pc_poly: pc_poly.into(),
             is_virtual_poly: is_virtual_poly.into(),
             is_first_in_sequence_poly: is_first_in_sequence_poly.into(),
             is_noop_poly: is_noop_poly.into(),
+            #[cfg(feature = "implicit-carry")]
+            carry_poly,
             eq_plus_one_r_outer,
             eq_plus_one_r_product,
         }
@@ -888,7 +1000,16 @@ impl<F: JoltField> Phase2State<F> {
             let eq_plus_one_r_product_evals = self
                 .eq_plus_one_r_product
                 .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
+            #[cfg(feature = "implicit-carry")]
+            let carry_evals = self
+                .carry_poly
+                .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
             evals = array::from_fn(|i| {
+                #[cfg(feature = "implicit-carry")]
+                let carry_term =
+                    params.gamma_powers[5] * eq_plus_one_r_outer_evals[i] * carry_evals[i];
+                #[cfg(not(feature = "implicit-carry"))]
+                let carry_term = F::zero();
                 evals[i]
                     + eq_plus_one_r_outer_evals[i]
                         * (unexpanded_pc_evals[i]
@@ -898,6 +1019,7 @@ impl<F: JoltField> Phase2State<F> {
                     + params.gamma_powers[4]
                         * eq_plus_one_r_product_evals[i]
                         * (F::one() - is_noop_evals[i])
+                    + carry_term
             });
         }
 
@@ -911,9 +1033,13 @@ impl<F: JoltField> Phase2State<F> {
             is_virtual_poly,
             is_first_in_sequence_poly,
             is_noop_poly,
+            #[cfg(feature = "implicit-carry")]
+            carry_poly,
             eq_plus_one_r_outer,
             eq_plus_one_r_product,
         } = self;
+        #[cfg(feature = "implicit-carry")]
+        carry_poly.bind(r_j, BindingOrder::LowToHigh);
         unexpanded_pc_poly.bind(r_j, BindingOrder::LowToHigh);
         pc_poly.bind(r_j, BindingOrder::LowToHigh);
         is_virtual_poly.bind(r_j, BindingOrder::LowToHigh);
