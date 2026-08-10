@@ -102,6 +102,7 @@ mod support {
                     untrusted_advice: untrusted_advice.to_vec(),
                     trusted_advice: trusted_advice.to_vec(),
                     memory_config,
+                    advice_tape: None,
                 },
             )
             .expect("modular trace")
@@ -132,6 +133,7 @@ mod support {
             OwnedTrace::new(rows),
             trace_output.device,
             trace_output.final_memory,
+            trace_output.advice_tape,
         )
     }
 

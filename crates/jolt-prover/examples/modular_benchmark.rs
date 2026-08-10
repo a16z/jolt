@@ -387,6 +387,7 @@ mod dory_benchmark {
                     untrusted_advice: Vec::new(),
                     trusted_advice: Vec::new(),
                     memory_config,
+                    advice_tape: None,
                 },
             )
             .expect("modular trace")
@@ -768,6 +769,7 @@ mod akita_benchmark {
                     untrusted_advice: Vec::new(),
                     trusted_advice: Vec::new(),
                     memory_config,
+                    advice_tape: None,
                 },
             )
             .expect("modular trace")
