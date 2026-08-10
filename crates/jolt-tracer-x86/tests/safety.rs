@@ -121,3 +121,20 @@ fn out_of_bounds_store_reports_a_fault() {
         outcome.exit, outcome.helper_error
     );
 }
+
+/// An aligned address inside the text span but between compiled group starts
+/// must take the jump-table filler path and report the bad target.
+#[test]
+fn in_range_unmapped_jump_reports_bad_target() {
+    let program = single_row_program(row(JoltInstructionKind::JALR, Some(1), None, 0));
+    let mut pre = [0u64; REGS];
+    pre[1] = TEST_ADDR + 2;
+
+    let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
+    assert_eq!(
+        outcome.exit, 3,
+        "expected the bad-jump exit reason, got {} ({:?})",
+        outcome.exit, outcome.helper_error
+    );
+    assert_eq!(outcome.fault_addr, TEST_ADDR + 2);
+}

@@ -37,6 +37,18 @@ struct CachedProgram {
     compiled: Arc<CompiledProgram>,
 }
 
+impl CachedProgram {
+    /// FNV-1a over the ELF bytes: cheap, stable identity for the compile cache.
+    fn fingerprint(bytes: &[u8]) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for &byte in bytes {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
+}
+
 /// Result of a fast (non-recording) pass.
 pub struct FastRunOutput {
     pub trace_len: usize,
@@ -51,13 +63,13 @@ impl X86TracerBackend {
     }
 
     fn compiled(&mut self, program: &JoltProgram) -> Result<Arc<CompiledProgram>, TraceError> {
-        let fingerprint = fingerprint(program.elf_bytes());
+        let fingerprint = CachedProgram::fingerprint(program.elf_bytes());
         if let Some(cached) = &self.cache {
             if cached.fingerprint == fingerprint {
                 return Ok(Arc::clone(&cached.compiled));
             }
         }
-        let compiled = Arc::new(compile::compile(program)?);
+        let compiled = Arc::new(CompiledProgram::compile(program)?);
         self.cache = Some(CachedProgram {
             fingerprint,
             compiled: Arc::clone(&compiled),
@@ -115,7 +127,7 @@ impl X86TracerBackend {
         });
 
         compiled.run_record(&mut guest)?;
-        check_exit(&guest, &mut host)?;
+        guest.check_exit(&mut host)?;
 
         // The cursor's advance is the recorded row count.
         let recorded =
@@ -177,7 +189,7 @@ impl X86TracerBackend {
         });
 
         compiled.run(&mut guest)?;
-        check_exit(&guest, &mut host)?;
+        guest.check_exit(&mut host)?;
 
         Ok(FastRunOutput {
             trace_len: guest.trace_len as usize,
@@ -188,38 +200,6 @@ impl X86TracerBackend {
             advice_tape: host.advice_tape,
         })
     }
-}
-
-/// Translate a generated-code exit into a `TraceError`.
-fn check_exit(guest: &GuestState, host: &mut HostContext) -> Result<(), TraceError> {
-    match guest.exit {
-        e if e == ExitReason::Terminated as u64 => {}
-        e if e == ExitReason::FaultOutOfBounds as u64 => {
-            return Err(TraceError::Backend("guest RAM access out of bounds"));
-        }
-        e if e == ExitReason::FaultBadJumpTarget as u64 => {
-            return Err(TraceError::Backend(
-                "indirect jump to a non-compiled address",
-            ));
-        }
-        e if e == ExitReason::FaultObservationOverflow as u64 => {
-            return Err(TraceError::Backend(
-                "record pass overflowed the observation buffer (row-count divergence)",
-            ));
-        }
-        _ => {
-            if let Some(message) = host.helper_error.take() {
-                tracing_error(&message);
-            }
-            return Err(TraceError::Backend("host helper reported an error"));
-        }
-    }
-    Ok(())
-}
-
-#[expect(clippy::print_stderr)]
-fn tracing_error(message: &str) {
-    eprintln!("jolt-tracer-x86 helper error: {message}");
 }
 
 impl ExecutionBackend for X86TracerBackend {
@@ -246,7 +226,7 @@ impl ExecutionBackend for X86TracerBackend {
                 "record pass emitted a different row count than the fast pass",
             ));
         }
-        let rows = reassemble_rows(&program.expanded_bytecode, &record.observations)?;
+        let rows = Observation::reassemble_rows(&program.expanded_bytecode, &record.observations)?;
         Ok(TraceOutput::new(
             OwnedTrace::new(rows),
             record.device,
@@ -264,90 +244,67 @@ struct RecordRunOutput {
     advice_tape: Vec<u8>,
 }
 
-/// Longest run of rows sharing a source address, i.e. the largest expansion
-/// a single source instruction produces.
-fn longest_group(bytecode: &[JoltInstructionRow]) -> usize {
-    let mut longest = 1usize;
-    let mut current = 1usize;
-    for pair in bytecode.windows(2) {
-        if pair[0].address == pair[1].address {
-            current += 1;
-            longest = longest.max(current);
-        } else {
-            current = 1;
+impl Observation {
+    /// Rebuild `TraceRow`s from the static bytecode plus the recorded dynamic
+    /// values. Generated code cannot construct `TraceRow` directly (its
+    /// `Option` fields have no guaranteed layout), so this is the seam between
+    /// the two.
+    fn reassemble_rows(
+        bytecode: &[JoltInstructionRow],
+        observations: &[Self],
+    ) -> Result<Vec<TraceRow>, TraceError> {
+        let mut rows = Vec::with_capacity(observations.len());
+        for observation in observations {
+            let row = bytecode
+                .get(observation.row_index as usize)
+                .ok_or(TraceError::Backend("observation row index out of range"))?;
+            rows.push(TraceRow {
+                instruction: *row,
+                registers: RegisterState {
+                    rs1: Self::register_read(row.operands.rs1, observation.rs1),
+                    rs2: Self::register_read(row.operands.rs2, observation.rs2),
+                    rd: row.operands.rd.map(|register| RegisterWrite {
+                        register,
+                        // x0 reads as zero on both sides of a write.
+                        pre_value: if register == 0 { 0 } else { observation.rd_pre },
+                        post_value: if register == 0 {
+                            0
+                        } else {
+                            observation.rd_post
+                        },
+                    }),
+                },
+                ram_access: observation.ram_access(row.instruction_kind),
+                #[cfg(feature = "field-inline")]
+                field_inline: None,
+            });
+        }
+        Ok(rows)
+    }
+
+    fn register_read(register: Option<u8>, value: u64) -> Option<RegisterRead> {
+        register.map(|register| RegisterRead {
+            register,
+            value: if register == 0 { 0 } else { value },
+        })
+    }
+
+    /// Which RAM access a row records is a static property of its kind: only
+    /// `Ld` and `Sd` touch RAM in final bytecode.
+    fn ram_access(&self, kind: JoltInstructionKind) -> RamAccess {
+        match kind {
+            JoltInstructionKind::LD => RamAccess::Read(RamRead {
+                address: self.ram_address,
+                value: self.ram_pre,
+            }),
+            JoltInstructionKind::SD => RamAccess::Write(RamWrite {
+                address: self.ram_address,
+                pre_value: self.ram_pre,
+                post_value: self.ram_post,
+            }),
+            _ => RamAccess::NoOp,
         }
     }
-    longest
-}
-
-/// Rebuild `TraceRow`s from the static bytecode plus the recorded dynamic
-/// values. Generated code cannot construct `TraceRow` directly (its `Option`
-/// fields have no guaranteed layout), so this is the seam between the two.
-fn reassemble_rows(
-    bytecode: &[JoltInstructionRow],
-    observations: &[Observation],
-) -> Result<Vec<TraceRow>, TraceError> {
-    let mut rows = Vec::with_capacity(observations.len());
-    for observation in observations {
-        let row = bytecode
-            .get(observation.row_index as usize)
-            .ok_or(TraceError::Backend("observation row index out of range"))?;
-        rows.push(TraceRow {
-            instruction: *row,
-            registers: RegisterState {
-                rs1: register_read(row.operands.rs1, observation.rs1),
-                rs2: register_read(row.operands.rs2, observation.rs2),
-                rd: row.operands.rd.map(|register| RegisterWrite {
-                    register,
-                    // x0 reads as zero on both sides of a write.
-                    pre_value: if register == 0 { 0 } else { observation.rd_pre },
-                    post_value: if register == 0 {
-                        0
-                    } else {
-                        observation.rd_post
-                    },
-                }),
-            },
-            ram_access: ram_access(row.instruction_kind, observation),
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        });
-    }
-    Ok(rows)
-}
-
-fn register_read(register: Option<u8>, value: u64) -> Option<RegisterRead> {
-    register.map(|register| RegisterRead {
-        register,
-        value: if register == 0 { 0 } else { value },
-    })
-}
-
-/// Which RAM access a row records is a static property of its kind: only
-/// `Ld` and `Sd` touch RAM in final bytecode.
-fn ram_access(kind: JoltInstructionKind, observation: &Observation) -> RamAccess {
-    match kind {
-        JoltInstructionKind::LD => RamAccess::Read(RamRead {
-            address: observation.ram_address,
-            value: observation.ram_pre,
-        }),
-        JoltInstructionKind::SD => RamAccess::Write(RamWrite {
-            address: observation.ram_address,
-            pre_value: observation.ram_pre,
-            post_value: observation.ram_post,
-        }),
-        _ => RamAccess::NoOp,
-    }
-}
-
-/// FNV-1a over the ELF bytes: cheap, stable identity for the compile cache.
-fn fingerprint(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for &byte in bytes {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
 }
 
 /// A resume point for the chunked contract: the guest state at a group
@@ -380,6 +337,23 @@ pub struct X86Checkpoint {
     max_group_rows: usize,
 }
 
+impl X86Checkpoint {
+    /// Largest expansion of one source instruction in the static bytecode.
+    fn max_group_rows(bytecode: &[JoltInstructionRow]) -> usize {
+        let mut longest = 1usize;
+        let mut current = 1usize;
+        for pair in bytecode.windows(2) {
+            if pair[0].address == pair[1].address {
+                current += 1;
+                longest = longest.max(current);
+            } else {
+                current = 1;
+            }
+        }
+        longest
+    }
+}
+
 /// Guest state at a group boundary: everything a replay needs to resume.
 struct Boundary {
     registers: [u64; common::constants::REGISTER_COUNT as usize],
@@ -394,6 +368,43 @@ struct Boundary {
     device_panic: bool,
     advice_tape: Vec<u8>,
     advice_cursor: usize,
+}
+
+impl Boundary {
+    fn capture(
+        guest: &GuestState,
+        host: &HostContext,
+        plane: &MemoryPlane,
+        memory_config: common::jolt_device::MemoryConfig,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            registers: guest.x,
+            pc: guest.pc,
+            memory: plane.to_vec(),
+            memory_config,
+            device_inputs: host.device.inputs.clone(),
+            device_trusted_advice: host.device.trusted_advice.clone(),
+            device_untrusted_advice: host.device.untrusted_advice.clone(),
+            device_outputs: host.device.outputs.clone(),
+            device_panic: host.device.panic,
+            advice_tape: host.advice_tape.clone(),
+            advice_cursor: host.advice_cursor,
+        })
+    }
+
+    fn restore_device(&self) -> JoltDevice {
+        let mut device = JoltDevice::new(&self.memory_config);
+        device.inputs.clone_from(&self.device_inputs);
+        device
+            .trusted_advice
+            .clone_from(&self.device_trusted_advice);
+        device
+            .untrusted_advice
+            .clone_from(&self.device_untrusted_advice);
+        device.outputs.clone_from(&self.device_outputs);
+        device.panic = self.device_panic;
+        device
+    }
 }
 
 // SAFETY: every field is owned data or an Arc to an immutable artifact (the
@@ -460,23 +471,11 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         // initial state, which every early chunk resumes from.
         let mut boundaries: Vec<(usize, Arc<Boundary>)> = Vec::new();
         let bytecode = Arc::new(program.expanded_bytecode.clone());
-        let max_group_rows = longest_group(&bytecode);
-        let snapshot = |guest: &GuestState, host: &HostContext, plane: &MemoryPlane| {
-            Arc::new(Boundary {
-                registers: guest.x,
-                pc: guest.pc,
-                memory: plane.to_vec(),
-                memory_config: inputs.memory_config,
-                device_inputs: host.device.inputs.clone(),
-                device_trusted_advice: host.device.trusted_advice.clone(),
-                device_untrusted_advice: host.device.untrusted_advice.clone(),
-                device_outputs: host.device.outputs.clone(),
-                device_panic: host.device.panic,
-                advice_tape: host.advice_tape.clone(),
-                advice_cursor: host.advice_cursor,
-            })
-        };
-        boundaries.push((0, snapshot(&guest, &host, &plane)));
+        let max_group_rows = X86Checkpoint::max_group_rows(&bytecode);
+        boundaries.push((
+            0,
+            Boundary::capture(&guest, &host, &plane, inputs.memory_config),
+        ));
 
         // Run in increments, capturing a boundary at each pause. Checkpoints
         // carry a full image, so they are spaced at least this far apart
@@ -488,10 +487,13 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             compiled.run_pausable(&mut guest)?;
             if guest.exit == ExitReason::Paused as u64 {
                 guest.exit = ExitReason::Running as u64;
-                boundaries.push((guest.trace_len as usize, snapshot(&guest, &host, &plane)));
+                boundaries.push((
+                    guest.trace_len as usize,
+                    Boundary::capture(&guest, &host, &plane, inputs.memory_config),
+                ));
                 continue;
             }
-            check_exit(&guest, &mut host)?;
+            guest.check_exit(&mut host)?;
             break;
         }
         let trace_len = guest.trace_len as usize;
@@ -531,16 +533,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
     /// leading rows the boundary precedes and keeping exactly this chunk's.
     fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError> {
         let boundary = &checkpoint.boundary;
-        let mut device = JoltDevice::new(&boundary.memory_config);
-        device.inputs.clone_from(&boundary.device_inputs);
-        device
-            .trusted_advice
-            .clone_from(&boundary.device_trusted_advice);
-        device
-            .untrusted_advice
-            .clone_from(&boundary.device_untrusted_advice);
-        device.outputs.clone_from(&boundary.device_outputs);
-        device.panic = boundary.device_panic;
+        let device = boundary.restore_device();
 
         let mut plane = MemoryPlane::new(boundary.memory.len())?;
         plane.restore(&boundary.memory);
@@ -579,7 +572,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 
         checkpoint.compiled.run_record_pausable(&mut guest)?;
         if guest.exit != ExitReason::Paused as u64 {
-            check_exit(&guest, &mut host)?;
+            guest.check_exit(&mut host)?;
         }
 
         let recorded =
@@ -590,7 +583,10 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             ));
         }
         observations.truncate(needed);
-        let rows = reassemble_rows(&checkpoint.bytecode, &observations[checkpoint.skip_rows..])?;
+        let rows = Observation::reassemble_rows(
+            &checkpoint.bytecode,
+            &observations[checkpoint.skip_rows..],
+        )?;
         Ok(OwnedTrace::new(rows))
     }
 }

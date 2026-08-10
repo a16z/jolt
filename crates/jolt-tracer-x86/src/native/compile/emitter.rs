@@ -138,7 +138,7 @@ mod tests {
             Box::new(DeclineAll),
             Box::new(super::super::emit::DynasmEmitter),
         ]);
-        assert!(super::super::compile_with(&program, &set).is_ok());
+        assert!(super::super::CompiledProgram::compile_with(&program, &set).is_ok());
     }
 
     /// When no emitter claims a kind, compilation fails fast rather than
@@ -147,6 +147,6 @@ mod tests {
     fn unclaimed_kind_fails_compilation() {
         let program = single_row_program(add_row());
         let set = EmitterSet::from_emitters(vec![Box::new(DeclineAll)]);
-        assert!(super::super::compile_with(&program, &set).is_err());
+        assert!(super::super::CompiledProgram::compile_with(&program, &set).is_err());
     }
 }

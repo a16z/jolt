@@ -7,13 +7,11 @@ use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
-use super::compile;
-
 /// The row-emission seam, re-exported so emitter A/B experiments (benches,
 /// integration tests, the Alternative 11 stencil spike) can build their own
 /// `EmitterSet` and compile with it.
 pub use super::compile::emitter::{EmitOutcome, EmitterSet, RowEmitter};
-pub use super::compile::{compile_with, CompiledProgram};
+pub use super::compile::CompiledProgram;
 use super::memory::MemoryPlane;
 use super::state::{ExitReason, GuestState, HostContext};
 
@@ -94,19 +92,19 @@ pub fn straight_line_program(mut row: JoltInstructionRow, count: usize) -> JoltP
 
 /// Compile without running (fail-fast coverage checks).
 pub fn compile_only(program: &JoltProgram) -> Result<(), TraceError> {
-    compile::compile(program).map(|_| ())
+    CompiledProgram::compile(program).map(|_| ())
 }
 
 /// Compile and hand back the artifact, so callers that inspect the live code
 /// mapping (the safety tests) keep it alive while they look.
 pub fn compile_program(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
-    compile::compile(program)
+    CompiledProgram::compile(program)
 }
 
 /// A compiled synthetic program plus its memory plane, reusable across runs
 /// (for microbenchmarks: compilation stays outside the measured region).
 pub struct Prepared {
-    compiled: compile::CompiledProgram,
+    compiled: CompiledProgram,
     plane: MemoryPlane,
     entry: u64,
     pre_regs: [u64; REGISTER_COUNT as usize],
@@ -118,7 +116,7 @@ impl Prepared {
         pre_regs: [u64; REGISTER_COUNT as usize],
     ) -> Result<Self, TraceError> {
         Ok(Self {
-            compiled: compile::compile(program)?,
+            compiled: CompiledProgram::compile(program)?,
             plane: MemoryPlane::new(MEM_CAPACITY as usize)?,
             entry: program.entry_address,
             pre_regs,
@@ -181,7 +179,7 @@ pub fn run_program(
     scratch: &[u64],
     advice: &[u8],
 ) -> Result<Outcome, TraceError> {
-    let compiled = compile::compile(program)?;
+    let compiled = CompiledProgram::compile(program)?;
 
     let plane = MemoryPlane::new(MEM_CAPACITY as usize)?;
     let base = plane.base();

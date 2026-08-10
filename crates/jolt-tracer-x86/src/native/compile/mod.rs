@@ -49,6 +49,50 @@ pub struct CompiledProgram {
 }
 
 impl CompiledProgram {
+    /// Compile with the production emitter set (dynasm templates).
+    pub fn compile(program: &JoltProgram) -> Result<Self, TraceError> {
+        Self::compile_with(program, &EmitterSet::dynasm())
+    }
+
+    /// Compile with an explicit emitter set — the A/B entry point for
+    /// alternative row emitters (see `compile/emitter.rs`).
+    pub fn compile_with(program: &JoltProgram, emitters: &EmitterSet) -> Result<Self, TraceError> {
+        // VirtualSRL uses `tzcnt`; on pre-BMI1 CPUs it silently decodes as `bsf`
+        // with different zero-input semantics, so refuse rather than mis-execute.
+        if !std::arch::is_x86_feature_detected!("bmi1") {
+            return Err(TraceError::Backend(
+                "jolt-tracer-x86 requires BMI1 (tzcnt) support",
+            ));
+        }
+        let rows = &program.expanded_bytecode;
+        if rows.is_empty() {
+            return Err(TraceError::Backend("program has no expanded bytecode"));
+        }
+
+        // Source rows keyed by address: the expanded bytecode erases the source
+        // kind and inline key, which the per-group advice computations need.
+        let sources = Self::source_rows(program)?;
+
+        // Four bodies: {execute, record} x {eager, pausable}. Compilation is
+        // ~10ms per body, so keeping the eager paths free of the chunk-boundary
+        // check is worth the duplication.
+        let (fast, advice_jobs) =
+            CompiledBody::compile(rows, &sources, emitters, EmitMode::Fast, false)?;
+        let (record, _) = CompiledBody::compile(rows, &sources, emitters, EmitMode::Record, false)?;
+        let (fast_pausable, _) =
+            CompiledBody::compile(rows, &sources, emitters, EmitMode::Fast, true)?;
+        let (record_pausable, _) =
+            CompiledBody::compile(rows, &sources, emitters, EmitMode::Record, true)?;
+
+        Ok(Self {
+            fast,
+            record,
+            fast_pausable,
+            record_pausable,
+            advice_jobs,
+        })
+    }
+
     pub fn advice_jobs_ptr(&self) -> *const AdviceJob {
         self.advice_jobs.as_ptr()
     }
@@ -57,41 +101,47 @@ impl CompiledProgram {
     /// tests can assert the finalized mapping's permissions (AC11): code is
     /// never writable and executable at the same time.
     pub fn code_address(&self) -> usize {
-        self.fast.buffer.ptr(self.fast.entry) as usize
+        self.fast.code_address()
     }
 
     /// Run the fast body: execution only, no row materialization.
     pub fn run(&self, state: &mut GuestState) -> Result<(), TraceError> {
-        Self::run_body(&self.fast, state)
+        self.fast.run(state)
     }
 
     /// Run the record body, filling the observation buffer described by
     /// `GuestState::obs_cursor`/`obs_end`.
     pub fn run_record(&self, state: &mut GuestState) -> Result<(), TraceError> {
-        Self::run_body(&self.record, state)
+        self.record.run(state)
     }
 
     /// Run the pausable execute body: stops at the first group boundary at or
     /// past `GuestState::row_limit`, publishing the resume PC.
     pub fn run_pausable(&self, state: &mut GuestState) -> Result<(), TraceError> {
-        Self::run_body(&self.fast_pausable, state)
+        self.fast_pausable.run(state)
     }
 
     /// Run the pausable record body, for chunk replay.
     pub fn run_record_pausable(&self, state: &mut GuestState) -> Result<(), TraceError> {
-        Self::run_body(&self.record_pausable, state)
+        self.record_pausable.run(state)
     }
 
-    fn run_body(body: &CompiledBody, state: &mut GuestState) -> Result<(), TraceError> {
-        let entry = body.buffer.ptr(body.entry);
-        // SAFETY: `entry` points into the finalized (read+execute) buffer at
-        // the prologue emitted by `compile`; the generated code only touches
-        // the GuestState plane, the RAM plane it carries, the observation
-        // buffer, and the jump table, per the emitter's invariants.
-        let f: extern "sysv64" fn(*mut GuestState, *const usize) =
-            unsafe { core::mem::transmute(entry) };
-        f(state, body.jump_table.as_ptr());
-        Ok(())
+    /// Decode the program's source instructions and key them by address.
+    ///
+    /// Programs assembled directly from rows (the test/bench harness) carry no
+    /// ELF; they get an empty map, and any group that actually needs advice then
+    /// fails at emission rather than here.
+    fn source_rows(program: &JoltProgram) -> Result<SourceMap, TraceError> {
+        if program.elf_bytes().is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let image = jolt_program::image::decode_elf(program.elf_bytes(), program.profile)
+            .map_err(|_| TraceError::Backend("failed to decode program ELF for source recovery"))?;
+        Ok(image
+            .instructions
+            .into_iter()
+            .map(|instruction| (instruction.row().address as u64, instruction))
+            .collect())
     }
 }
 
@@ -142,200 +192,154 @@ impl Emitter {
     }
 }
 
-/// Compile with the production emitter set (dynasm templates).
-pub fn compile(program: &JoltProgram) -> Result<CompiledProgram, TraceError> {
-    compile_with(program, &EmitterSet::dynasm())
-}
-
-/// Compile with an explicit emitter set — the A/B entry point for
-/// alternative row emitters (see `compile/emitter.rs`).
-pub fn compile_with(
-    program: &JoltProgram,
-    emitters: &EmitterSet,
-) -> Result<CompiledProgram, TraceError> {
-    // VirtualSRL uses `tzcnt`; on pre-BMI1 CPUs it silently decodes as `bsf`
-    // with different zero-input semantics, so refuse rather than mis-execute.
-    if !std::arch::is_x86_feature_detected!("bmi1") {
-        return Err(TraceError::Backend(
-            "jolt-tracer-x86 requires BMI1 (tzcnt) support",
-        ));
-    }
-    let rows = &program.expanded_bytecode;
-    if rows.is_empty() {
-        return Err(TraceError::Backend("program has no expanded bytecode"));
-    }
-
-    // Source rows keyed by address: the expanded bytecode erases the source
-    // kind and inline key, which the per-group advice computations need.
-    let sources = source_rows(program)?;
-
-    // Four bodies: {execute, record} x {eager, pausable}. Compilation is
-    // ~10ms per body, so keeping the eager paths free of the chunk-boundary
-    // check is worth the duplication.
-    let (fast, advice_jobs) = compile_body(rows, &sources, emitters, EmitMode::Fast, false)?;
-    let (record, _) = compile_body(rows, &sources, emitters, EmitMode::Record, false)?;
-    let (fast_pausable, _) = compile_body(rows, &sources, emitters, EmitMode::Fast, true)?;
-    let (record_pausable, _) = compile_body(rows, &sources, emitters, EmitMode::Record, true)?;
-
-    Ok(CompiledProgram {
-        fast,
-        record,
-        fast_pausable,
-        record_pausable,
-        advice_jobs,
-    })
-}
-
 type SourceMap = BTreeMap<u64, jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>>;
 
-/// Emit one code body over every expanded row.
-fn compile_body(
-    rows: &[JoltInstructionRow],
-    sources: &SourceMap,
-    emitters: &EmitterSet,
-    mode: EmitMode,
-    pausable: bool,
-) -> Result<(CompiledBody, Vec<AdviceJob>), TraceError> {
-    let text_base = rows.iter().map(|r| r.address as u64).min().unwrap_or(0);
-    let text_end = rows.iter().map(|r| r.address as u64).max().unwrap_or(0) + 4;
-    let text_span = text_end - text_base;
+impl CompiledBody {
+    fn code_address(&self) -> usize {
+        self.buffer.ptr(self.entry) as usize
+    }
 
-    let mut emitter = Emitter {
-        mode,
-        pausable,
-        row_index: 0,
-        ops: Assembler::new().map_err(|_| TraceError::Backend("failed to create x64 assembler"))?,
-        advice_jobs: Vec::new(),
-        advice_slot: 0,
-        advice_ready: false,
-        labels: BTreeMap::new(),
-        group_offsets: Vec::new(),
-        text_base,
-        text_span,
-    };
+    fn run(&self, state: &mut GuestState) -> Result<(), TraceError> {
+        let entry = self.buffer.ptr(self.entry);
+        // SAFETY: `entry` points into the finalized (read+execute) buffer at
+        // the prologue emitted by `compile`; the generated code only touches
+        // the GuestState plane, the RAM plane it carries, the observation
+        // buffer, and the jump table, per the emitter's invariants.
+        let f: extern "sysv64" fn(*mut GuestState, *const usize) =
+            unsafe { core::mem::transmute(entry) };
+        f(state, self.jump_table.as_ptr());
+        Ok(())
+    }
 
-    let entry = emit::prologue(&mut emitter);
+    /// Emit one code body over every expanded row.
+    fn compile(
+        rows: &[JoltInstructionRow],
+        sources: &SourceMap,
+        emitters: &EmitterSet,
+        mode: EmitMode,
+        pausable: bool,
+    ) -> Result<(Self, Vec<AdviceJob>), TraceError> {
+        let text_base = rows.iter().map(|r| r.address as u64).min().unwrap_or(0);
+        let text_end = rows.iter().map(|r| r.address as u64).max().unwrap_or(0) + 4;
+        let text_span = text_end - text_base;
 
-    let mut previous_address = None;
-    for (row_index, row) in rows.iter().enumerate() {
-        emitter.row_index = row_index;
-        let address = row.address as u64;
-        if previous_address != Some(address) {
-            // Group start: define the branch-target label, record the jump
-            // table offset, and emit this group's advice computation (which
-            // must observe the pre-group register state) before its rows.
-            let label = emitter.label_for(address);
-            let offset = emitter.ops.offset();
-            emitter.ops.dynamic_label(label);
-            emitter.group_offsets.push((address, offset));
-            if emitter.pausable {
-                emit::group_pause_check(&mut emitter, address);
-            }
-            previous_address = Some(address);
-            emitter.advice_slot = 0;
-            emitter.advice_ready = false;
-            if let Some(source) = sources.get(&address) {
-                if let Some(job) = advice_job(source)? {
-                    emitter.advice_jobs.push(job);
-                    let index = emitter.advice_jobs.len() - 1;
-                    emitters.emit_advice_compute(&mut emitter, index)?;
-                    emitter.advice_ready = true;
+        let mut emitter = Emitter {
+            mode,
+            pausable,
+            row_index: 0,
+            ops: Assembler::new()
+                .map_err(|_| TraceError::Backend("failed to create x64 assembler"))?,
+            advice_jobs: Vec::new(),
+            advice_slot: 0,
+            advice_ready: false,
+            labels: BTreeMap::new(),
+            group_offsets: Vec::new(),
+            text_base,
+            text_span,
+        };
+
+        let entry = emitter.emit_prologue();
+
+        let mut previous_address = None;
+        for (row_index, row) in rows.iter().enumerate() {
+            emitter.row_index = row_index;
+            let address = row.address as u64;
+            if previous_address != Some(address) {
+                // Group start: define the branch-target label, record the jump
+                // table offset, and emit this group's advice computation (which
+                // must observe the pre-group register state) before its rows.
+                let label = emitter.label_for(address);
+                let offset = emitter.ops.offset();
+                emitter.ops.dynamic_label(label);
+                emitter.group_offsets.push((address, offset));
+                if emitter.pausable {
+                    emitter.emit_group_pause_check(address);
+                }
+                previous_address = Some(address);
+                emitter.advice_slot = 0;
+                emitter.advice_ready = false;
+                if let Some(source) = sources.get(&address) {
+                    if let Some(job) = AdviceJob::from_source(source)? {
+                        emitter.advice_jobs.push(job);
+                        let index = emitter.advice_jobs.len() - 1;
+                        emitters.emit_advice_compute(&mut emitter, index)?;
+                        emitter.advice_ready = true;
+                    }
                 }
             }
+            emitters.emit_row(&mut emitter, row)?;
         }
-        emitters.emit_row(&mut emitter, row)?;
+
+        // Execution falling off the end of the program is a bad jump.
+        emitter.emit_jump_to_bad_jump();
+        let stubs = emitter.emit_stubs();
+
+        let group_offsets = core::mem::take(&mut emitter.group_offsets);
+        let advice_jobs = core::mem::take(&mut emitter.advice_jobs);
+        let buffer = emitter
+            .ops
+            .finalize()
+            .map_err(|_| TraceError::Backend("x64 assembly finalize failed"))?;
+
+        // Build the halfword-granular dispatch table with the bad-jump stub as
+        // filler.
+        let bad_jump = buffer.ptr(stubs.bad_jump) as usize;
+        let slots = (text_span / 2) as usize;
+        let mut jump_table = vec![bad_jump; slots];
+        for (address, offset) in group_offsets {
+            let slot = ((address - text_base) / 2) as usize;
+            jump_table[slot] = buffer.ptr(offset) as usize;
+        }
+
+        Ok((
+            Self {
+                buffer,
+                entry,
+                jump_table,
+            },
+            advice_jobs,
+        ))
     }
-
-    // Execution falling off the end of the program is a bad jump.
-    emit::jump_to_bad_jump(&mut emitter);
-    let stubs = emit::stubs(&mut emitter);
-
-    let group_offsets = core::mem::take(&mut emitter.group_offsets);
-    let advice_jobs = core::mem::take(&mut emitter.advice_jobs);
-    let buffer = emitter
-        .ops
-        .finalize()
-        .map_err(|_| TraceError::Backend("x64 assembly finalize failed"))?;
-
-    // Build the halfword-granular dispatch table with the bad-jump stub as
-    // filler.
-    let bad_jump = buffer.ptr(stubs.bad_jump) as usize;
-    let slots = (text_span / 2) as usize;
-    let mut jump_table = vec![bad_jump; slots];
-    for (address, offset) in group_offsets {
-        let slot = ((address - text_base) / 2) as usize;
-        jump_table[slot] = buffer.ptr(offset) as usize;
-    }
-
-    Ok((
-        CompiledBody {
-            buffer,
-            entry,
-            jump_table,
-        },
-        advice_jobs,
-    ))
 }
 
-/// Decode the program's source instructions and key them by address.
-///
-/// Programs assembled directly from rows (the test/bench harness) carry no
-/// ELF; they get an empty map, and any group that actually needs advice then
-/// fails at emission (see the `VirtualAdvice` arm) rather than here.
-fn source_rows(
-    program: &JoltProgram,
-) -> Result<
-    BTreeMap<u64, jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>>,
-    TraceError,
-> {
-    if program.elf_bytes().is_empty() {
-        return Ok(BTreeMap::new());
+impl AdviceJob {
+    /// The advice computation a source instruction's group needs, if any.
+    fn from_source(
+        source: &jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>,
+    ) -> Result<Option<Self>, TraceError> {
+        use SourceInstructionKind as S;
+        let row = source.row();
+        let (rs1, rs2) = (row.operands.rs1, row.operands.rs2);
+        // Codes mirror the tracer's per-variant advice formulas (helpers.rs).
+        let code = match source.kind() {
+            S::Div(_) | S::Rem(_) => 0u8,
+            S::DivW(_) | S::RemW(_) => 1,
+            S::DivU(_) | S::RemU(_) => 2,
+            S::DivUW(_) | S::RemUW(_) => 3,
+            S::InlineDispatch(_) => {
+                let inline = row
+                    .inline
+                    .ok_or(TraceError::Backend("inline source row without inline key"))?;
+                let registration = tracer::instruction::inline::find_inline_registration(
+                    u32::from(inline.opcode),
+                    u32::from(inline.funct3),
+                    u32::from(inline.funct7),
+                )
+                .ok_or(TraceError::Backend("no registered inline for source row"))?;
+                let operands =
+                    tracer::instruction::format::format_inline::FormatInline::from(row.operands);
+                return Ok(Some(Self::Inline {
+                    registration,
+                    operands,
+                }));
+            }
+            _ => return Ok(None),
+        };
+        let (Some(rs1), Some(rs2)) = (rs1, rs2) else {
+            return Err(TraceError::Backend(
+                "div-family source row missing operands",
+            ));
+        };
+        Ok(Some(Self::Div { code, rs1, rs2 }))
     }
-    let image = jolt_program::image::decode_elf(program.elf_bytes(), program.profile)
-        .map_err(|_| TraceError::Backend("failed to decode program ELF for source recovery"))?;
-    Ok(image
-        .instructions
-        .into_iter()
-        .map(|instruction| (instruction.row().address as u64, instruction))
-        .collect())
-}
-
-/// The advice computation a source instruction's group needs, if any.
-fn advice_job(
-    source: &jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>,
-) -> Result<Option<AdviceJob>, TraceError> {
-    use SourceInstructionKind as S;
-    let row = source.row();
-    let (rs1, rs2) = (row.operands.rs1, row.operands.rs2);
-    // Codes mirror the tracer's per-variant advice formulas (helpers.rs).
-    let code = match source.kind() {
-        S::Div(_) | S::Rem(_) => 0u8,
-        S::DivW(_) | S::RemW(_) => 1,
-        S::DivU(_) | S::RemU(_) => 2,
-        S::DivUW(_) | S::RemUW(_) => 3,
-        S::InlineDispatch(_) => {
-            let inline = row
-                .inline
-                .ok_or(TraceError::Backend("inline source row without inline key"))?;
-            let registration = tracer::instruction::inline::find_inline_registration(
-                u32::from(inline.opcode),
-                u32::from(inline.funct3),
-                u32::from(inline.funct7),
-            )
-            .ok_or(TraceError::Backend("no registered inline for source row"))?;
-            let operands =
-                tracer::instruction::format::format_inline::FormatInline::from(row.operands);
-            return Ok(Some(AdviceJob::Inline {
-                registration,
-                operands,
-            }));
-        }
-        _ => return Ok(None),
-    };
-    let (Some(rs1), Some(rs2)) = (rs1, rs2) else {
-        return Err(TraceError::Backend(
-            "div-family source row missing operands",
-        ));
-    };
-    Ok(Some(AdviceJob::Div { code, rs1, rs2 }))
 }

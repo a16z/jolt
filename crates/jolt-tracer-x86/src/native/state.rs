@@ -6,6 +6,7 @@
 
 use common::constants::REGISTER_COUNT;
 use common::jolt_device::JoltDevice;
+use jolt_program::execution::TraceError;
 
 /// Why generated code returned to the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,36 @@ pub struct GuestState {
     pub obs_cursor: *mut Observation,
     /// Record mode: one past the last writable slot.
     pub obs_end: *mut Observation,
+}
+
+impl GuestState {
+    /// Translate the generated-code exit state into the backend error channel.
+    #[expect(clippy::print_stderr)]
+    pub fn check_exit(&self, host: &mut HostContext) -> Result<(), TraceError> {
+        match self.exit {
+            e if e == ExitReason::Terminated as u64 => {}
+            e if e == ExitReason::FaultOutOfBounds as u64 => {
+                return Err(TraceError::Backend("guest RAM access out of bounds"));
+            }
+            e if e == ExitReason::FaultBadJumpTarget as u64 => {
+                return Err(TraceError::Backend(
+                    "indirect jump to a non-compiled address",
+                ));
+            }
+            e if e == ExitReason::FaultObservationOverflow as u64 => {
+                return Err(TraceError::Backend(
+                    "record pass overflowed the observation buffer (row-count divergence)",
+                ));
+            }
+            _ => {
+                if let Some(message) = host.helper_error.take() {
+                    eprintln!("jolt-tracer-x86 helper error: {message}");
+                }
+                return Err(TraceError::Backend("host helper reported an error"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// One row's dynamic values, written by generated code in record mode.
