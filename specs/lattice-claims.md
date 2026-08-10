@@ -191,7 +191,9 @@ relation's (house convention) and are aggregated as appended
 ```rust
 BytecodeReadRafPublic::{StageValue, StageCycleEq} index the relation's val
     stages 0..READ_RAF_CYCLE_STAGES (9 in lattice mode; see relation 1)
-HammingWeightClaimReductionPublic additionally includes IdentityAtAddress
+HammingWeightClaimReductionPublic additionally includes EqBooleanityAtDefault,
+    EqVirtualizationAtDefault(i), EqDefault, RamHammingWeight, and
+    BalancedIncValueAtAddress — the implicit-zero recentering publics
 ```
 
 There is **no** `JoltOpeningId::Lattice { relation, index }` variant. Every
@@ -523,6 +525,28 @@ commitment differs by object:
   committed cells. The balanced digit encoding is chosen so that a zero fused
   increment lands every digit and the carry on lane zero, making padding rows
   free. The prover must not invent a nonzero lane for them.
+**Where the RAM activation is pinned.** `RamRa` is the one OneHotTrace family
+whose activation `A` is a prover-supplied claim (`RamHammingWeight`) rather
+than the constant 1, so its `γ^(3i)` hamming leg is *deliberately vacuous*:
+`Σ_k L(k,t) = A(t)` holds by construction, and base mode's direct tie
+`Σ_k ra(k, r_cycle) = A` against committed data has no analogue here. `A` is
+instead pinned by a cross-stage chain — the `γ^(3i+2)` leg → the
+`RamRaVirtualization` product → the stage-5 `RamRaClaimReduction` → the
+`RamRafEvaluation` identity `Σ_k (8k + lowest_address)·ra(k,t) = RamAddress(t)`
+→ Spartan's `RamAddress`, pinned by rv64 rows 0/1 (`RamAddrEqRs1PlusImmIfLoadStore`
+and `RamAddrEqZeroIfNotLoadStore`).
+
+Booleanity on the reconstruction plus `A² = A` leave exactly one free bit per
+cycle, and only on cycles where every RAM chunk column is physically empty —
+which is `{no access} ∪ {access at remapped word 0}`, since `remap_word_address`
+reserves no sentinel (it returns `None` only for raw address 0). RAF closes
+both: fabricating an access puts `lowest_address` on the left while row 1
+forces `RamAddress = 0`; suppressing a genuine access to remapped word 0 puts 0
+on the left while row 0 forces `RamAddress = lowest_address`. **This argument
+depends on `unmap(0) = lowest_address ≠ 0`**, which is currently asserted only
+prover-side (`UnmapRamAddressPolynomial::new`). A zero-based remap would make
+RAF blind to lane 0 and re-open both forgeries.
+
 - **Auxiliary prefix-packed objects** (advice bytes, precommitted bytecode
   lanes) still commit lane zero, so their padding rows must be hot-lane-zero
   hot and never all-zero — including advice byte positions beyond the actual
