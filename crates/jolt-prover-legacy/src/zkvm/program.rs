@@ -3,6 +3,14 @@ use std::{
     sync::Arc,
 };
 
+/// Instruction profile for bytecode preprocessing: the implicit-carry build
+/// accepts ADDC/MULC rows; the base build rejects them fail-closed.
+#[cfg(not(feature = "implicit-carry"))]
+const PREPROCESSING_PROFILE: jolt_riscv::JoltInstructionProfile = RV64IMAC_JOLT;
+#[cfg(feature = "implicit-carry")]
+const PREPROCESSING_PROFILE: jolt_riscv::JoltInstructionProfile =
+    jolt_riscv::RV64IMAC_JOLT_IMPLICIT_CARRY;
+
 use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -81,7 +89,7 @@ impl FullProgramPreprocessing {
             bytecode: Arc::new(BytecodePreprocessing::preprocess(
                 instructions,
                 entry_address,
-                RV64IMAC_JOLT,
+                PREPROCESSING_PROFILE,
             )?),
             ram: RAMPreprocessing::preprocess(memory_init),
         })

@@ -41,6 +41,8 @@ pub fn product_uniskip_input_values_from_stage1<F: Field>(
         product: outer.product,
         should_branch: outer.should_branch,
         should_jump: outer.should_jump,
+        #[cfg(feature = "implicit-carry")]
+        carry_used: outer.carry_used,
     }
 }
 

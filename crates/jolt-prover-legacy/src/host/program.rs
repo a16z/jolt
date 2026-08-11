@@ -76,6 +76,12 @@ impl Program {
         self.add_guest_feature("field-inline");
     }
 
+    #[cfg(feature = "implicit-carry")]
+    pub fn enable_implicit_carry(&mut self) {
+        self.set_instruction_profile(jolt_riscv::RV64IMAC_JOLT_IMPLICIT_CARRY);
+        self.add_guest_feature("implicit-carry");
+    }
+
     /// Set backtrace mode for the guest build.
     ///
     /// This adds --backtrace <mode> to the cargo-jolt CLI.
