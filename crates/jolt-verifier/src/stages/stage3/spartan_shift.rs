@@ -34,6 +34,8 @@ pub fn spartan_shift_input_values_from_upstream<F: Field>(
         next_is_virtual: outer.next_is_virtual,
         next_is_first_in_sequence: outer.next_is_first_in_sequence,
         next_is_noop: stage2.product_remainder.next_is_noop,
+        #[cfg(feature = "implicit-carry")]
+        next_carry: outer.next_carry,
     }
 }
 
@@ -84,6 +86,8 @@ impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
             pc: opening_point.clone(),
             is_virtual: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            carry: opening_point.clone(),
             is_noop: opening_point,
         })
     }
