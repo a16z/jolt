@@ -10,6 +10,11 @@ use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
 #[cfg(not(feature = "akita"))]
+#[cfg(feature = "implicit-carry")]
+use super::carry_claim_reduction::{
+    carry_claim_reduction_input_points_from_upstream,
+    carry_claim_reduction_input_values_from_upstream,
+};
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
 };
@@ -108,6 +113,7 @@ where
     let input_points = stage6b_input_points_from_upstream(
         &sumchecks,
         stage2.batch_output_points(),
+        stage3.output_points(),
         stage4.output_points(),
         stage5.output_points(),
     );
@@ -202,6 +208,7 @@ where
         &sumchecks,
         claims_6a,
         &stage2.output_values,
+        &stage3.clear()?.output_values,
         stage4,
         &stage5.output_values,
     )?;
@@ -326,6 +333,8 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
     sumchecks: &Stage6bSumchecks<F>,
     address_claims: &Stage6aOutputClaims<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputClaims<F>,
+    #[cfg_attr(not(feature = "implicit-carry"), expect(unused_variables))]
+    stage3: &crate::stages::stage3::Stage3OutputClaims<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5OutputClaims<F>,
 ) -> Result<Stage6bInputClaims<F>, VerifierError> {
@@ -347,6 +356,8 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
             &stage4.output_values,
             stage5,
         ),
+        #[cfg(feature = "implicit-carry")]
+        carry_claim_reduction: carry_claim_reduction_input_values_from_upstream(stage2, stage3),
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
@@ -387,6 +398,8 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
 pub fn stage6b_input_points_from_upstream<F: Field>(
     sumchecks: &Stage6bSumchecks<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputPoints<F>,
+    #[cfg_attr(not(feature = "implicit-carry"), expect(unused_variables))]
+    stage3: &crate::stages::stage3::Stage3OutputPoints<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage4: &Stage4OutputPoints<F>,
     stage5: &Stage5OutputPoints<F>,
 ) -> Stage6bInputPoints<F> {
@@ -397,6 +410,8 @@ pub fn stage6b_input_points_from_upstream<F: Field>(
         ),
         #[cfg(not(feature = "akita"))]
         inc_claim_reduction: inc_claim_reduction_input_points_from_upstream(stage2, stage4, stage5),
+        #[cfg(feature = "implicit-carry")]
+        carry_claim_reduction: carry_claim_reduction_input_points_from_upstream(stage2, stage3),
         ..sumchecks.empty_input_points()
     }
 }
@@ -435,6 +450,8 @@ pub fn stage6b_opening_values<F: Field>(
     values.extend(claims.instruction_ra_virtualization.opening_values());
     #[cfg(not(feature = "akita"))]
     values.extend(claims.inc_claim_reduction.opening_values());
+    #[cfg(feature = "implicit-carry")]
+    values.extend(claims.carry_claim_reduction.opening_values());
     // Each advice member is a single-slot per-kind claims struct, so it
     // contributes exactly its own kind's opening.
     if let Some(advice) = &claims.trusted_advice {
@@ -495,6 +512,8 @@ fn append_opening_claims<F, T>(
         .append_openings(transcript);
     #[cfg(not(feature = "akita"))]
     claims.inc_claim_reduction.append_openings(transcript);
+    #[cfg(feature = "implicit-carry")]
+    claims.carry_claim_reduction.append_openings(transcript);
     // The optional members single-source their per-field Fiat-Shamir order from the
     // `OutputClaims` derive too. Each advice member is a single-slot per-kind claims
     // struct, so it absorbs exactly its own kind's opening.

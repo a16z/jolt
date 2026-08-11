@@ -38,3 +38,5 @@ pub use ids::{
     SpartanShiftChallenge, SpartanShiftPublic, TrustedAdviceReconstructionPublic,
     UntrustedAdviceReconstructionChallenge, UntrustedAdviceReconstructionPublic,
 };
+#[cfg(feature = "implicit-carry")]
+pub use ids::{CarryClaimReductionChallenge, CarryClaimReductionPublic};

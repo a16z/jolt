@@ -442,6 +442,11 @@ fn stage6b_claims_from_openings<F: Field>(
             ram_inc: claims.require(increments::ram_inc_reduced())?,
             rd_inc: claims.require(increments::rd_inc_reduced())?,
         },
+        #[cfg(feature = "implicit-carry")]
+        carry_claim_reduction:
+            jolt_verifier::stages::stage6b::outputs::CarryClaimReductionOutputClaims {
+                carry: claims.require(spartan::carry_reduced())?,
+            },
         trusted_advice: trusted_advice_cycle_phase_claim_from_openings(claims),
         untrusted_advice: untrusted_advice_cycle_phase_claim_from_openings(claims),
         bytecode_reduction: bytecode_cycle_phase_claims_from_openings(claims),
