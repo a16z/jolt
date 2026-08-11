@@ -6,7 +6,7 @@ use std::{
 /// Instruction profile for bytecode preprocessing: the implicit-carry build
 /// accepts ADDC/MULC rows; the base build rejects them fail-closed.
 #[cfg(not(feature = "implicit-carry"))]
-const PREPROCESSING_PROFILE: jolt_riscv::JoltInstructionProfile = RV64IMAC_JOLT;
+const PREPROCESSING_PROFILE: jolt_riscv::JoltInstructionProfile = jolt_riscv::RV64IMAC_JOLT;
 #[cfg(feature = "implicit-carry")]
 const PREPROCESSING_PROFILE: jolt_riscv::JoltInstructionProfile =
     jolt_riscv::RV64IMAC_JOLT_IMPLICIT_CARRY;
@@ -27,7 +27,7 @@ use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
 #[cfg(feature = "implicit-carry")]
 use jolt_riscv::JoltInstruction;
-use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::JoltInstructionRow;
 use tracer::instruction::Cycle;
 
 /// The legacy prover has no implicit-carry constraint support: its circuit-flag

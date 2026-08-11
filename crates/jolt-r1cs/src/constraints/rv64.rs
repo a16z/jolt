@@ -670,10 +670,12 @@ mod tests {
 
     #[test]
     fn constraint_count() {
+        // 19 eq + 3 product rows; implicit-carry adds 2 eq + 1 product row.
+        let expected = 22 + 3 * cfg!(feature = "implicit-carry") as usize;
         let matrices = rv64_trace_constraints::<Fr>();
-        assert_eq!(matrices.a.len(), 22);
-        assert_eq!(matrices.b.len(), 22);
-        assert_eq!(matrices.c.len(), 22);
+        assert_eq!(matrices.a.len(), expected);
+        assert_eq!(matrices.b.len(), expected);
+        assert_eq!(matrices.c.len(), expected);
     }
 
     #[test]
@@ -742,10 +744,13 @@ mod tests {
     fn input_columns_follow_const_then_inputs_layout() {
         assert_eq!(const_column(), V_CONST);
         assert_eq!(input_column(0), Some(V_LEFT_INSTRUCTION_INPUT));
+        #[cfg(not(feature = "implicit-carry"))]
         assert_eq!(
             input_column(NUM_R1CS_INPUTS - 1),
             Some(V_FLAG_IS_LAST_IN_SEQUENCE)
         );
+        #[cfg(feature = "implicit-carry")]
+        assert_eq!(input_column(NUM_R1CS_INPUTS - 1), Some(V_NEXT_CARRY));
         assert_eq!(input_column(NUM_R1CS_INPUTS), None);
     }
 }

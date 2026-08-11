@@ -204,6 +204,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
 
     #[cfg(feature = "zk")]
     fn input_constraint_challenge_values(&self, _: &dyn OpeningAccumulator<F>) -> Vec<F> {
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
         let mut values = vec![
             self.gamma_powers[1],
             self.gamma_powers[2],
@@ -276,6 +277,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ShiftSumcheckParams<F> {
 
         let gamma_powers = &self.gamma_powers;
 
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
         let mut values = vec![
             gamma_powers[0] * eq_plus_one_outer,
             gamma_powers[1] * eq_plus_one_outer,

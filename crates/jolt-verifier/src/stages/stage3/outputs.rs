@@ -120,6 +120,10 @@ mod tests {
     /// equal the instruction-input ones. `validate_aliases` accepts it; the tests
     /// below perturb one alias each to assert rejection. The absorb test overrides
     /// the aliased cells with sentinels to prove they are skipped.
+    /// Sentinel offset keeping the absorb sequence 1..=N when the shift
+    /// member's carry opening joins feature-on.
+    const CARRY_SHIFT: u64 = cfg!(feature = "implicit-carry") as u64;
+
     fn consistent() -> Stage3OutputClaims<Fr> {
         Stage3OutputClaims::<Fr> {
             shift: SpartanShiftOutputClaims {
@@ -128,21 +132,23 @@ mod tests {
                 is_virtual: fr(3),
                 is_first_in_sequence: fr(4),
                 is_noop: fr(5),
+                #[cfg(feature = "implicit-carry")]
+                carry: fr(6),
             },
             instruction_input: InstructionInputOutputClaims {
-                left_operand_is_rs1: fr(6),
-                rs1_value: fr(7),
-                left_operand_is_pc: fr(8),
+                left_operand_is_rs1: fr(6 + CARRY_SHIFT),
+                rs1_value: fr(7 + CARRY_SHIFT),
+                left_operand_is_pc: fr(8 + CARRY_SHIFT),
                 unexpanded_pc: fr(1),
-                right_operand_is_rs2: fr(9),
-                rs2_value: fr(10),
-                right_operand_is_imm: fr(11),
-                imm: fr(12),
+                right_operand_is_rs2: fr(9 + CARRY_SHIFT),
+                rs2_value: fr(10 + CARRY_SHIFT),
+                right_operand_is_imm: fr(11 + CARRY_SHIFT),
+                imm: fr(12 + CARRY_SHIFT),
             },
             registers_claim_reduction: RegistersClaimReductionOutputClaims {
-                rd_write_value: fr(13),
-                rs1_value: fr(7),
-                rs2_value: fr(10),
+                rd_write_value: fr(13 + CARRY_SHIFT),
+                rs1_value: fr(7 + CARRY_SHIFT),
+                rs2_value: fr(10 + CARRY_SHIFT),
             },
         }
     }
@@ -161,7 +167,7 @@ mod tests {
 
         assert_eq!(
             sumchecks().opening_values(&claims),
-            (1..=13).map(fr).collect::<Vec<_>>()
+            (1..=13 + CARRY_SHIFT).map(fr).collect::<Vec<_>>()
         );
     }
 
@@ -170,7 +176,7 @@ mod tests {
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
-        assert_eq!(sumchecks.output_claim_count(), 13);
+        assert_eq!(sumchecks.output_claim_count(), 13 + CARRY_SHIFT as usize);
         assert_eq!(
             sumchecks.opening_values(&consistent()).len(),
             sumchecks.output_claim_count(),

@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 guest = []
+field-inline = ["jolt/field-inline"]
 implicit-carry = ["jolt/implicit-carry"]
 
 [dependencies]

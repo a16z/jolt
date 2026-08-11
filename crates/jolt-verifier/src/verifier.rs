@@ -1346,13 +1346,15 @@ mod tests {
 
     #[cfg(not(feature = "akita"))]
     fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
-        crate::proof::JoltCommitments::new(
-            TestCommitment,
-            TestCommitment,
-            Vec::<TestCommitment>::new(),
-            Vec::<TestCommitment>::new(),
-            Vec::<TestCommitment>::new(),
-        )
+        crate::proof::JoltCommitments {
+            rd_inc: TestCommitment,
+            ram_inc: TestCommitment,
+            instruction_ra: Vec::new(),
+            ram_ra: Vec::new(),
+            bytecode_ra: Vec::new(),
+            #[cfg(feature = "implicit-carry")]
+            carry: TestCommitment,
+        }
     }
 
     fn clear_claims() -> TestClaims {
@@ -1387,6 +1389,10 @@ mod tests {
                         branch_flag: zero,
                         next_is_noop: zero,
                         virtual_instruction: zero,
+                        #[cfg(feature = "implicit-carry")]
+                        uses_carry: zero,
+                        #[cfg(feature = "implicit-carry")]
+                        carry: zero,
                     },
                     instruction_claim_reduction:
                         stage2::outputs::InstructionClaimReductionOutputClaims {
@@ -1411,6 +1417,8 @@ mod tests {
                     is_virtual: zero,
                     is_first_in_sequence: zero,
                     is_noop: zero,
+                    #[cfg(feature = "implicit-carry")]
+                    carry: zero,
                 },
                 instruction_input: stage3::outputs::InstructionInputOutputClaims {
                     left_operand_is_rs1: zero,
@@ -1506,6 +1514,10 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "implicit-carry")]
+                carry_claim_reduction: stage6b::outputs::CarryClaimReductionOutputClaims {
+                    carry: zero,
+                },
                 trusted_advice: None,
                 untrusted_advice: None,
                 bytecode_reduction: None,
@@ -1570,6 +1582,14 @@ mod tests {
                 is_compressed: zero,
                 is_first_in_sequence: zero,
                 is_last_in_sequence: zero,
+                #[cfg(feature = "implicit-carry")]
+                uses_carry: zero,
+                #[cfg(feature = "implicit-carry")]
+                produces_carry: zero,
+                #[cfg(feature = "implicit-carry")]
+                carry_used: zero,
+                #[cfg(feature = "implicit-carry")]
+                next_carry: zero,
             },
         }
     }

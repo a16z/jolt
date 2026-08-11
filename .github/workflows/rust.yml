@@ -126,6 +126,10 @@ jobs:
           -p jolt-program
           -p jolt-riscv
           -p jolt-lookup-tables
+          -p jolt-claims
+          -p jolt-r1cs
+          -p jolt-witness
+          -p jolt-verifier
           --all-targets
           --features implicit-carry
           --
@@ -151,6 +155,10 @@ jobs:
           -p jolt-program
           -p jolt-riscv
           -p jolt-lookup-tables
+          -p jolt-claims
+          -p jolt-r1cs
+          -p jolt-witness
+          -p jolt-verifier
           --all-targets
           --features field-inline,implicit-carry
           --
@@ -378,6 +386,22 @@ jobs:
       # suite with the carry protocol lane enabled.
       - name: Run jolt-prover-legacy tests with implicit-carry feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features implicit-carry
+      # The package selection mirrors the implicit-carry clippy lane: selecting
+      # tracer and jolt-lookup-tables alongside the modular crates keeps the
+      # feature unified across the dev-dependency graph (jolt-verifier's dev-dep
+      # on jolt-prover-legacy pulls tracer without forwarding the feature).
+      - name: Run modular crate tests with implicit-carry feature
+        run: >
+          cargo nextest run --cargo-profile ci
+          -p tracer
+          -p jolt-program
+          -p jolt-riscv
+          -p jolt-lookup-tables
+          -p jolt-claims
+          -p jolt-r1cs
+          -p jolt-witness
+          -p jolt-verifier
+          --features implicit-carry
 
   test-prover-akita:
     runs-on: ubuntu-latest

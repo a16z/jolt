@@ -262,6 +262,10 @@ mod tests {
     /// below perturb one alias each to assert rejection. The aliased cells carry
     /// the product values; the absorb test overrides them with sentinels to prove
     /// they are skipped.
+    /// Sentinel offset keeping the absorb sequence 1..=N when the two carry
+    /// openings join the product remainder feature-on.
+    const CARRY_SHIFT: u64 = 2 * cfg!(feature = "implicit-carry") as u64;
+
     fn consistent_values() -> Stage2BatchOutputClaims<Fr> {
         Stage2BatchOutputClaims::<Fr> {
             ram_read_write: RamReadWriteOutputClaims {
@@ -278,16 +282,24 @@ mod tests {
                 branch_flag: fr(9),
                 next_is_noop: fr(10),
                 virtual_instruction: fr(11),
+                #[cfg(feature = "implicit-carry")]
+                uses_carry: fr(12),
+                #[cfg(feature = "implicit-carry")]
+                carry: fr(13),
             },
             instruction_claim_reduction: InstructionClaimReductionOutputClaims {
                 lookup_output: fr(8),
-                left_lookup_operand: fr(12),
-                right_lookup_operand: fr(13),
+                left_lookup_operand: fr(12 + CARRY_SHIFT),
+                right_lookup_operand: fr(13 + CARRY_SHIFT),
                 left_instruction_input: fr(4),
                 right_instruction_input: fr(5),
             },
-            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
-            ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
+            ram_raf_evaluation: RamRafEvaluationOutputClaims {
+                ram_ra: fr(14 + CARRY_SHIFT),
+            },
+            ram_output_check: RamOutputCheckOutputClaims {
+                val_final: fr(15 + CARRY_SHIFT),
+            },
         }
     }
 
@@ -305,7 +317,7 @@ mod tests {
 
         assert_eq!(
             sumchecks().opening_values(&claims),
-            (1..=15).map(fr).collect::<Vec<_>>()
+            (1..=15 + CARRY_SHIFT).map(fr).collect::<Vec<_>>()
         );
     }
 
@@ -315,7 +327,7 @@ mod tests {
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
-        assert_eq!(sumchecks.output_claim_count(), 15);
+        assert_eq!(sumchecks.output_claim_count(), 15 + CARRY_SHIFT as usize);
         assert_eq!(
             sumchecks.opening_values(&consistent_values()).len(),
             sumchecks.output_claim_count(),

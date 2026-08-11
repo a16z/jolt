@@ -32,12 +32,12 @@ pub use bytecode::{
 pub use bytecode_reconstruction::{
     BytecodeReconstructionSumcheckParams, BytecodeReconstructionSumcheckProver,
 };
-#[cfg(feature = "prover")]
 #[cfg(feature = "implicit-carry")]
 pub use carry::{
     CarryClaimReductionSumcheckParams, CarryClaimReductionSumcheckProver,
     CarryClaimReductionSumcheckVerifier,
 };
+#[cfg(feature = "prover")]
 pub use hamming_weight::HammingWeightClaimReductionProver;
 pub use hamming_weight::{HammingWeightClaimReductionParams, HammingWeightClaimReductionVerifier};
 pub use increments::{

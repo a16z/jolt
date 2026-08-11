@@ -860,6 +860,15 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets the register increment reduction output claim",
     ),
+    #[cfg(feature = "implicit-carry")]
+    checked_standard(
+        "stage6.claims.carry_claim_reduction.carry",
+        "claims.stage6b.carry_claim_reduction.carry",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "prover-fixture test offsets the carry reduction output claim",
+    ),
     checked_standard(
         "stage6.claims.trusted_advice.trusted",
         "claims.stage6b.trusted_advice.trusted",
@@ -1274,6 +1283,14 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.is_compressed",
             "claims.stage1.outer.outer_remainder.is_first_in_sequence",
             "claims.stage1.outer.outer_remainder.is_last_in_sequence",
+            #[cfg(feature = "implicit-carry")]
+            "claims.stage1.outer.outer_remainder.uses_carry",
+            #[cfg(feature = "implicit-carry")]
+            "claims.stage1.outer.outer_remainder.produces_carry",
+            #[cfg(feature = "implicit-carry")]
+            "claims.stage1.outer.outer_remainder.carry_used",
+            #[cfg(feature = "implicit-carry")]
+            "claims.stage1.outer.outer_remainder.next_carry",
         ],
         "claims.stage2.batch_outputs.ram_read_write.*" => vec![
             "claims.stage2.batch_outputs.ram_read_write.val",
@@ -1287,6 +1304,10 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.product_remainder.lookup_output",
             "claims.stage2.batch_outputs.product_remainder.branch_flag",
             "claims.stage2.batch_outputs.product_remainder.next_is_noop",
+            #[cfg(feature = "implicit-carry")]
+            "claims.stage2.batch_outputs.product_remainder.uses_carry",
+            #[cfg(feature = "implicit-carry")]
+            "claims.stage2.batch_outputs.product_remainder.carry",
         ],
         "claims.stage2.batch_outputs.instruction_claim_reduction.*" => vec![
             "claims.stage2.batch_outputs.instruction_claim_reduction.lookup_output",
@@ -1301,6 +1322,8 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage3.shift.is_virtual",
             "claims.stage3.shift.is_first_in_sequence",
             "claims.stage3.shift.is_noop",
+            #[cfg(feature = "implicit-carry")]
+            "claims.stage3.shift.carry",
         ],
         "claims.stage3.instruction_input.*" => vec![
             "claims.stage3.instruction_input.left_operand_is_rs1",
@@ -1400,6 +1423,14 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     is_compressed: zero,
                     is_first_in_sequence: zero,
                     is_last_in_sequence: zero,
+                    #[cfg(feature = "implicit-carry")]
+                    uses_carry: zero,
+                    #[cfg(feature = "implicit-carry")]
+                    produces_carry: zero,
+                    #[cfg(feature = "implicit-carry")]
+                    carry_used: zero,
+                    #[cfg(feature = "implicit-carry")]
+                    next_carry: zero,
                 },
             },
         },
@@ -1420,6 +1451,10 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     branch_flag: zero,
                     next_is_noop: zero,
                     virtual_instruction: zero,
+                    #[cfg(feature = "implicit-carry")]
+                    uses_carry: zero,
+                    #[cfg(feature = "implicit-carry")]
+                    carry: zero,
                 },
                 instruction_claim_reduction:
                     stage2::outputs::InstructionClaimReductionOutputClaims {
@@ -1440,6 +1475,8 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                 is_virtual: zero,
                 is_first_in_sequence: zero,
                 is_noop: zero,
+                #[cfg(feature = "implicit-carry")]
+                carry: zero,
             },
             instruction_input: stage3::outputs::InstructionInputOutputClaims {
                 left_operand_is_rs1: zero,
@@ -1534,6 +1571,10 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
             inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
                 ram_inc: zero,
                 rd_inc: zero,
+            },
+            #[cfg(feature = "implicit-carry")]
+            carry_claim_reduction: stage6b::outputs::CarryClaimReductionOutputClaims {
+                carry: zero,
             },
             trusted_advice: fill_optionals.then_some(
                 stage6b::outputs::TrustedAdviceCyclePhaseOutputClaims { trusted: zero },

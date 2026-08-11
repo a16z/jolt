@@ -158,7 +158,7 @@ impl<F: JoltField> CarryClaimReductionSumcheckProver<F> {
         let carry_coeffs: Vec<u64> = trace
             .par_iter()
             .map(|cycle| cycle.carry())
-            .chain(rayon::iter::repeatn(0u64, t - trace.len()))
+            .chain(rayon::iter::repeat_n(0u64, t - trace.len()))
             .collect();
 
         let (eq_product, eq_shift) = rayon::join(
@@ -236,14 +236,11 @@ pub struct CarryClaimReductionSumcheckVerifier<F: JoltField> {
 }
 
 impl<F: JoltField> CarryClaimReductionSumcheckVerifier<F> {
-    pub fn new<A: AbstractVerifierOpeningAccumulator<F>>(
+    pub fn new<A: AbstractVerifierOpeningAccumulator<F> + OpeningAccumulator<F>>(
         trace_len: usize,
         accumulator: &A,
         transcript: &mut impl Transcript,
-    ) -> Self
-    where
-        A: OpeningAccumulator<F>,
-    {
+    ) -> Self {
         Self {
             params: CarryClaimReductionSumcheckParams::new(trace_len, accumulator, transcript),
         }

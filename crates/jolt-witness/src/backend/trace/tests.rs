@@ -195,6 +195,8 @@ fn committed_polynomial_order_uses_proof_payload_order() {
     expected.extend((0..32).map(JoltCommittedPolynomial::InstructionRa));
     expected.extend((0..2).map(JoltCommittedPolynomial::RamRa));
     expected.extend((0..2).map(JoltCommittedPolynomial::BytecodeRa));
+    #[cfg(feature = "implicit-carry")]
+    expected.push(JoltCommittedPolynomial::Carry);
     expected.push(JoltCommittedPolynomial::TrustedAdvice);
     expected.push(JoltCommittedPolynomial::UntrustedAdvice);
 
@@ -918,6 +920,19 @@ fn excluded_ids_report_their_classification() {
         JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc),
         LATTICE_REASON,
     );
+    #[cfg(feature = "implicit-carry")]
+    {
+        assert_reason(
+            JoltPolynomialId::Committed(JoltCommittedPolynomial::Carry),
+            UNSERVED_REASON,
+        );
+        for id in [
+            JoltVirtualPolynomial::CarryUsed,
+            JoltVirtualPolynomial::NextCarry,
+        ] {
+            assert_reason(JoltPolynomialId::Virtual(id), UNSERVED_REASON);
+        }
+    }
 }
 
 /// [`OwnedTrace`] with the slice accessor hidden: forces the sequential
@@ -976,6 +991,8 @@ fn slice_fast_paths_match_the_sequential_fallback() {
         TraceRow::default(),
         TraceRow {
             instruction: instruction_row,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
             ..Default::default()
         },
     ];

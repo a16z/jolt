@@ -567,7 +567,7 @@ mod tests {
                 bytecode_ra: vec![fr(4)],
                 ram_ra: vec![fr(5)],
             },
-            10,
+            10 + cfg!(feature = "implicit-carry") as u64,
         );
         #[cfg(feature = "akita")]
         let (bytecode_read_raf, booleanity, last) = (
@@ -606,6 +606,11 @@ mod tests {
                     ram_inc: fr(9),
                     rd_inc: fr(10),
                 },
+                #[cfg(feature = "implicit-carry")]
+                carry_claim_reduction:
+                    crate::stages::stage6b::outputs::CarryClaimReductionOutputClaims {
+                        carry: fr(11),
+                    },
                 trusted_advice: None,
                 untrusted_advice: None,
                 bytecode_reduction: None,
