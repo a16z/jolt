@@ -43,10 +43,6 @@ impl<const XLEN: usize, const ROTATION: u32> LookupTable for VirtualXORROTTable<
 impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
     for VirtualXORROTTable<XLEN, ROTATION>
 {
-    #[expect(
-        clippy::unreachable,
-        reason = "ROTATION is a const generic instantiated only at 16, 24, 32, and 63 by the table definitions"
-    )]
     fn prefixes(&self) -> &'static [Prefixes] {
         match ROTATION {
             16 => &[Prefixes::XorRot16],
@@ -57,10 +53,6 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
         }
     }
 
-    #[expect(
-        clippy::unreachable,
-        reason = "ROTATION is a const generic instantiated only at 16, 24, 32, and 63 by the table definitions"
-    )]
     fn suffixes(&self) -> &'static [Suffixes] {
         debug_assert_eq!(XLEN, 64);
         match ROTATION {
@@ -73,10 +65,6 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
     }
 
     #[expect(clippy::unwrap_used)]
-    #[expect(
-        clippy::unreachable,
-        reason = "ROTATION is a const generic instantiated only at 16, 24, 32, and 63 by the table definitions"
-    )]
     fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());

@@ -10,7 +10,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(
     clippy::indexing_slicing,
-    clippy::unreachable,
     clippy::get_unwrap,
     clippy::string_slice,
     clippy::fallible_impl_from,

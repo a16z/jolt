@@ -197,13 +197,7 @@ impl InlineExpansionBuilder {
         match registers.try_into() {
             Ok(registers) => Ok(registers),
             Err(_) => {
-                #[expect(
-                    clippy::unreachable,
-                    reason = "the vector length is fixed to N by the loop above"
-                )]
-                {
-                    unreachable!("vector length is fixed by the loop")
-                }
+                unreachable!("vector length is fixed by the loop")
             }
         }
     }

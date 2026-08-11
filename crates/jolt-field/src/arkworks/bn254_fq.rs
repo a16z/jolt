@@ -282,10 +282,6 @@ impl Fq {
     /// Converts a limb array to a field element without checking that it is
     /// less than the modulus.
     #[inline]
-    #[expect(
-        clippy::unreachable,
-        reason = "caller contract: limbs are canonical, and from_bigint only rejects non-canonical input"
-    )]
     pub fn from_bigint_unchecked(limbs: Limbs<4>) -> Self {
         let Some(inner) = InnerFq::from_bigint(ark_ff::BigInt::new(limbs.0)) else {
             unreachable!("unchecked BN254 Fq construction received non-canonical limbs")
@@ -343,10 +339,6 @@ impl ReducingBytes for Fq {
 
 impl TranscriptChallenge for Fq {
     #[inline]
-    #[expect(
-        clippy::unreachable,
-        reason = "the high limb is masked to 125 bits, below the BN254 Fq modulus"
-    )]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         let mut buf = [0u8; 16];
         let len = bytes.len().min(buf.len());

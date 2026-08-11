@@ -70,10 +70,6 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
         jolt_fr_to_ark(&challenge)
     }
 
-    #[expect(
-        clippy::unreachable,
-        reason = "dory-pcs never invokes reset; unsupported by design"
-    )]
     fn reset(&mut self, _domain_label: &[u8]) {
         unreachable!("reset is not invoked by dory-pcs and is intentionally unsupported")
     }

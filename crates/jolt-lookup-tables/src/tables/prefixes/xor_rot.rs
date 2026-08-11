@@ -12,10 +12,6 @@ impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotPrefix<ROTA
         F::zero()
     }
 
-    #[expect(
-        clippy::unreachable,
-        reason = "ROTATION is a const generic instantiated only at 16, 24, 32, and 63 by the table definitions"
-    )]
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
         let prefix_idx = match ROTATION {
             16 => Prefixes::XorRot16,

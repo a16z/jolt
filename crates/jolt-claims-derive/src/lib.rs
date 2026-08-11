@@ -76,7 +76,6 @@
 // than the workspace lints (specs/verifier-closure-lints.md).
 #![forbid(unsafe_code)]
 #![deny(
-    clippy::unreachable,
     clippy::get_unwrap,
     clippy::string_slice,
     clippy::fallible_impl_from,
@@ -365,15 +364,7 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
                 // A payload-carrying variant is always scalar; the `Vec`+payload
                 // combination is rejected in `plan_field`.
                 (Some(_), Some(_)) => {
-                    #[expect(
-                        clippy::unreachable,
-                        reason = "plan_field rejects Vec fields with payload annotations before id_expr runs"
-                    )]
-                    {
-                        unreachable!(
-                            "Vec fields with payload annotations are rejected in plan_field"
-                        )
-                    }
+                    unreachable!("Vec fields with payload annotations are rejected in plan_field")
                 }
                 // Indexed family over a `usize` payload: `Variant(i)`.
                 (Some(index), None) => quote!(#jolt::JoltVirtualPolynomial::#variant(#index)),

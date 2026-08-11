@@ -4,7 +4,6 @@
 #![forbid(unsafe_code)]
 #![deny(
     clippy::indexing_slicing,
-    clippy::unreachable,
     clippy::get_unwrap,
     clippy::string_slice,
     clippy::fallible_impl_from,

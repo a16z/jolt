@@ -394,10 +394,6 @@ fn remap_rows<F: Field>(rows: Vec<SparseRow<F>>) -> Vec<SparseRow<F>> {
 }
 
 #[cfg(feature = "field-inline")]
-#[expect(
-    clippy::unreachable,
-    reason = "field-inline rows are built from compile-time column constants, all of which field_inline_column maps"
-)]
 fn remap_field_inline_column(column: usize) -> usize {
     let Some(column) = field_inline_column(column) else {
         unreachable!("field-inline constraint row referenced an unknown local column")

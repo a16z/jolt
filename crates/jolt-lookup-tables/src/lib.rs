@@ -2,7 +2,6 @@
 // than the workspace lints (specs/verifier-closure-lints.md).
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(
-    clippy::unreachable,
     clippy::get_unwrap,
     clippy::string_slice,
     clippy::fallible_impl_from,

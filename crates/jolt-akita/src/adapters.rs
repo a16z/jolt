@@ -633,10 +633,6 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
     }
 }
 
-#[expect(
-    clippy::unreachable,
-    reason = "one-hot K parameters are validated at setup; later dispatch only sees those values"
-)]
 pub(crate) fn one_hot_setup_prover(
     one_hot_k: usize,
     max_num_vars: usize,
