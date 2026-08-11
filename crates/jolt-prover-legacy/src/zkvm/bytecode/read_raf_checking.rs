@@ -1449,6 +1449,18 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BytecodeReadRafAddressPhasePara
         ));
         challenge_idx += 1;
 
+        #[cfg(feature = "implicit-carry")]
+        {
+            terms.push(ProductTerm::scaled(
+                ValueSource::Challenge(challenge_idx),
+                vec![ValueSource::Opening(OpeningId::virt(
+                    VirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+                    SumcheckId::SpartanProductVirtualization,
+                ))],
+            ));
+            challenge_idx += 1;
+        }
+
         terms.push(ProductTerm::scaled(
             ValueSource::Challenge(challenge_idx),
             vec![ValueSource::Opening(OpeningId::virt(
@@ -1789,7 +1801,8 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
 
         // Generate all stage-specific gamma powers upfront (order must match verifier)
         let stage1_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS);
-        let stage2_gammas: Vec<F> = transcript.challenge_scalar_powers(4);
+        let stage2_gammas: Vec<F> =
+            transcript.challenge_scalar_powers(4 + cfg!(feature = "implicit-carry") as usize);
         let stage3_gammas: Vec<F> = transcript.challenge_scalar_powers(9);
         let stage4_gammas: Vec<F> = transcript.challenge_scalar_powers(3);
         let stage5_gammas: Vec<F> = transcript.challenge_scalar_powers(2 + NUM_LOOKUP_TABLES);
@@ -2095,6 +2108,10 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
                     if circuit_flags[CircuitFlags::VirtualInstruction] {
                         lc += stage2_gammas[3];
                     }
+                    #[cfg(feature = "implicit-carry")]
+                    if circuit_flags[CircuitFlags::UsesCarry] {
+                        lc += stage2_gammas[4];
+                    }
                     *o1 = lc;
                 }
 
@@ -2232,16 +2249,25 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             SumcheckId::SpartanProductVirtualization,
         );
 
-        [
+        let mut claims = vec![
             jump_claim,
             branch_claim,
             write_lookup_output_to_rd_flag_claim,
             virtual_instruction_claim,
-        ]
-        .into_iter()
-        .zip_eq(gamma_powers)
-        .map(|(claim, gamma)| claim * gamma)
-        .sum()
+        ];
+        #[cfg(feature = "implicit-carry")]
+        {
+            let (_, uses_carry_claim) = opening_accumulator.get_virtual_polynomial_opening(
+                VirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+                SumcheckId::SpartanProductVirtualization,
+            );
+            claims.push(uses_carry_claim);
+        }
+        claims
+            .into_iter()
+            .zip_eq(gamma_powers)
+            .map(|(claim, gamma)| claim * gamma)
+            .sum()
     }
 
     fn compute_rv_claim_3(

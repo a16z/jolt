@@ -4,6 +4,8 @@ pub mod advice_bytes;
 pub mod bytecode;
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub mod bytecode_reconstruction;
+#[cfg(feature = "implicit-carry")]
+pub mod carry;
 pub mod hamming_weight;
 pub mod increments;
 pub mod instruction_lookups;
@@ -31,6 +33,11 @@ pub use bytecode_reconstruction::{
     BytecodeReconstructionSumcheckParams, BytecodeReconstructionSumcheckProver,
 };
 #[cfg(feature = "prover")]
+#[cfg(feature = "implicit-carry")]
+pub use carry::{
+    CarryClaimReductionSumcheckParams, CarryClaimReductionSumcheckProver,
+    CarryClaimReductionSumcheckVerifier,
+};
 pub use hamming_weight::HammingWeightClaimReductionProver;
 pub use hamming_weight::{HammingWeightClaimReductionParams, HammingWeightClaimReductionVerifier};
 pub use increments::{

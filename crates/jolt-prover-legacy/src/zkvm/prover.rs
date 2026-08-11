@@ -1355,6 +1355,13 @@ impl<
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        #[cfg(feature = "implicit-carry")]
+        let carry_reduction_params =
+            crate::zkvm::claim_reductions::CarryClaimReductionSumcheckParams::new(
+                self.trace.len(),
+                &self.opening_accumulator,
+                &mut self.transcript,
+            );
 
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
@@ -1479,6 +1486,12 @@ impl<
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
         let mut inc_reduction =
             IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
+        #[cfg(feature = "implicit-carry")]
+        let mut carry_reduction =
+            crate::zkvm::claim_reductions::CarryClaimReductionSumcheckProver::initialize(
+                carry_reduction_params,
+                self.trace.clone(),
+            );
 
         #[cfg(feature = "allocative")]
         {
@@ -1515,6 +1528,8 @@ impl<
             &mut lookups_ra_virtual,
             &mut inc_reduction,
         ];
+        #[cfg(feature = "implicit-carry")]
+        instances.push(&mut carry_reduction);
         if let Some(ref mut advice) = advice_trusted {
             instances.push(advice);
         }
@@ -1542,6 +1557,8 @@ impl<
         drop_in_background_thread(ram_ra_virtual);
         drop_in_background_thread(lookups_ra_virtual);
         drop_in_background_thread(inc_reduction);
+        #[cfg(feature = "implicit-carry")]
+        drop_in_background_thread(carry_reduction);
 
         self.advice_reduction_prover_trusted = advice_trusted;
         self.advice_reduction_prover_untrusted = advice_untrusted;
