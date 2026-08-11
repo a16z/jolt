@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786470119662,
+  "lastUpdate": 1786482335059,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -134950,6 +134950,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865920,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a33d89a05f2fa245f45b4c52f91e2beff1920ac6",
+          "message": "chore(lints): panic, unsafe, and numeric discipline across the jolt-verifier and deps (#1703)\n\n* chore(lints): panic, unsafe, and numeric discipline across the jolt-verifier closure\n\nSquash of feat/tighten-clippy: spec, panic-macro and unsafe discipline,\nunsafe containment behind checked layout invariants, indexing_slicing\ndenial across the control-plane crates, numeric discipline via checked,\nwidened, and typed arithmetic, spec tick, taplo format.\n\n* fix(lints): address review findings on the closure hardening\n\n- Pin the two headline fixes with regression tests: a wrapping\n  start_index segment must reject (stage4 domain check extracted to a\n  testable validate_segments_in_domain) and truncated folded_eval_outputs\n  must surface a typed LengthMismatch, not a panic.\n- Validate the proof-supplied registers phase split eagerly at both\n  stage-4 fronts; validate_phase_split is now pub with a WHY doc.\n- Rebuild the jolt-dory Vec conversions via ManuallyDrop +\n  from_raw_parts instead of whole-container transmute.\n- Narrow the file-level expect_used blankets in jolt-hyperkzg/scheme.rs\n  and jolt-dory/transcript.rs to item scope.\n- Extend deny(indexing_slicing) to the two proc-macro crates (zero\n  violations), making the spec's tier-3 claim exact.\n- Sort memory_init before chunk_by so unsorted init data cannot\n  silently last-write-wins corrupt words; single-allocation\n  BytecodePCMapper::try_new preserving first-bucket semantics.\n- Fail-closed guards: debug_asserts on the kzg batch scalar count, the\n  packed selector-table subcube write, empty round-poly transcript\n  appends, and the spartan outer lagrange weight count; honest # Panics\n  docs on the setup-time DeriveSetup and HyperKZG From conversions.\n- Spec: record the #1674 boundary cross-references (vendored dory,\n  arkworks fork, jolt-sdk byte entry) and the eager phase-split note.\n\n* test(fs): re-bless absorb-sites inventory for the lint-discipline spellings\n\nRegenerated with JOLT_FS_BLESS=1 cargo nextest run -p jolt-verifier\n--test fs_obligations --features fs-audit. All 21 changed lines are\nidentity re-spellings introduced by this PR's own lint pass — same\nfiles, same functions, same labels, and same absorb/challenge ordinals\non both sides of every pair, so the transcript schedule is untouched:\n\n- 19x numeric discipline: `x as u64` -> `u64::from(x)` /\n  `num::u64_from_usize(x)` (a plain `value as u64` wrapper) in\n  absorb_preamble, absorb_transcript_preamble, absorb_labeled_bytes,\n  and stage8 verify's rlc_claims count.\n- 1x jolt-sumcheck CompressedLabeledRoundPoly: `coeffs[0]` ->\n  `constant` binding from split_first(); same coefficient appended.\n- 1x stage8 trailing-comma token change from the same rewrite.\n\nNo absorb site was added, removed, or reordered; challenge, scope, and\nsource-schema inventories are byte-identical.\n\n* chore(lints): narrow clippy::unreachable to jolt-verifier\n\nAcross the closure the deny does not pay. Of 29 pre-existing `unreachable!`\nsites it eliminated 4 -- all provably-dead branches the compiler could not see\n(`k % 4` over literal-only callers, a `windows(2)` postcondition, two stage8\nor-pattern artifacts) -- and left 23 production `#[expect]`s behind. In\njolt-lookup-tables and jolt-field the flagged branches are compile-time\nimpossible (const-generic rotation dispatch, masked-bit invariants); in\njolt-akita they are settled by setup-time dispatch validation. Those\nannotations are unverifiable prose rather than checked invariants, and the\nlint is structurally blind to the failure that matters: it flags the macro,\nnever the truth of the claim in its argument. Four reason strings were already\nwrong on arrival -- the `*rotw*` tables named rotations {16, 24, 32, 63} where\nthe match arms are {7, 8, 12, 16}.\n\nThe hole the lint closes is real, and stays closed where it counts.\n`unreachable!` is the only one of the four abort macros that escapes both\n`clippy::panic` and `clippy::panic_in_result_fn`, and jolt-dory's transcript\n`reset` used it as the `unimplemented!()` substitute that compiled.\njolt-verifier went 2 -> 0 in this campaign and carries no hatch, so the deny\nis free exactly where untrusted proof bytes arrive; extend it to another crate\nonce that crate reaches zero on its own.\n\nDrops the deny from 18 crate roots, deletes all 25 `#[expect]`s, and updates\nthe spec and CLAUDE.md to match. Removing two attributes left vestigial block\nwrappers that rustfmt collapsed. No runtime change.\n\nTwo sites the audit flagged as resting on prose rather than structure are now\nunlinted and left as follow-ups: `Fq::from_bigint_unchecked`\n(jolt-field/src/arkworks/bn254_fq.rs, a `pub fn` whose only guard is a\nnonexistent caller contract, zero in-workspace callers) and\n`JoltToDoryTranscript::reset` (jolt-dory/src/transcript.rs, a caret-range dep\nsurface with no call sites today).\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-08-11T13:01:04-07:00",
+          "tree_id": "80e55361880335b90dc68200a4789b569ccee2e5",
+          "url": "https://github.com/a16z/jolt/commit/a33d89a05f2fa245f45b4c52f91e2beff1920ac6"
+        },
+        "date": 1786482330356,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.8181,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 872476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3351,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 509124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 507240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7206,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5762,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 502520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.9022,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 499820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8963,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 192044,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.56,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 499080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4624,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 507304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.3273,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 507048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.9725,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.4774,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1101396,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.3335,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 638340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 94.5598,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2131764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5069,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 501776,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5319,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.695,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 865380,
             "unit": "KB",
             "extra": ""
           }
