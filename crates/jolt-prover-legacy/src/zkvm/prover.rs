@@ -3726,6 +3726,66 @@ mod tests {
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
 
+    /// Measures the spec's motivating performance claim: the same 256x256
+    /// schoolbook multiplication via MULC/ADDC carry chains vs the portable
+    /// u128 version the compiler lowers today. Trace-only (no proving); the
+    /// noop control isolates the shared startup and IO cost.
+    #[cfg(feature = "implicit-carry")]
+    #[test]
+    #[serial]
+    fn mul256_carry_vs_baseline_trace_length() {
+        let a: [u64; 4] = [u64::MAX, u64::MAX - 1, 0xdead_beef_0bad_cafe, u64::MAX / 7];
+        let b: [u64; 4] = [u64::MAX - 2, 0x8000_0000_0000_0001, u64::MAX / 3, u64::MAX];
+        let inputs = postcard::to_stdvec(&(a, b)).unwrap();
+
+        let run = |func: &str| {
+            let mut program = host::Program::new("carry-chain-guest");
+            program.enable_implicit_carry();
+            program.set_func(func);
+            let (_, trace, _, io_device) = program.trace(&inputs, &[], &[]);
+            let output: u64 = postcard::from_bytes(&io_device.outputs)
+                .expect("guest output should decode as u64");
+            (trace.len(), output)
+        };
+
+        let (noop_len, _) = run("mul256_noop");
+        let (carry_len, carry_out) = run("mul256_carry");
+        let (baseline_len, baseline_out) = run("mul256_baseline");
+
+        // Mirrors the guest's portable schoolbook and checksum fold.
+        let expected = {
+            let mut r = [0u64; 8];
+            for i in 0..4 {
+                let mut carry = 0u128;
+                for j in 0..4 {
+                    let acc = r[i + j] as u128 + (a[j] as u128) * (b[i] as u128) + carry;
+                    r[i + j] = acc as u64;
+                    carry = acc >> 64;
+                }
+                r[i + 4] = carry as u64;
+            }
+            r.iter()
+                .zip([3u64, 5, 7, 11, 13, 17, 19, 23])
+                .fold(0u64, |acc, (limb, weight)| {
+                    acc.wrapping_add(limb.wrapping_mul(weight))
+                })
+        };
+        assert_eq!(carry_out, expected, "carry-chain mul256 output mismatch");
+        assert_eq!(baseline_out, expected, "portable mul256 output mismatch");
+
+        let net_carry = carry_len - noop_len;
+        let net_baseline = baseline_len - noop_len;
+        eprintln!(
+            "mul256 net cycles: carry={net_carry}, baseline={net_baseline} \
+             (raw carry={carry_len}, baseline={baseline_len}, noop={noop_len})"
+        );
+        assert!(
+            2 * net_carry < net_baseline,
+            "implicit-carry mul256 should cost less than half the portable \
+             sequence: {net_carry} vs {net_baseline} net cycles"
+        );
+    }
+
     #[test]
     #[serial]
     fn muldiv_e2e_dory() {
