@@ -32,8 +32,8 @@ pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
     // Stage 1: UnexpandedPC, Imm, then one per circuit flag (all Spartan outer).
     2 + NUM_CIRCUIT_FLAGS,
     // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
-    // product-virtualization flags.
-    4,
+    // product-virtualization flags, plus UsesCarry under implicit-carry.
+    4 + cfg!(feature = "implicit-carry") as usize,
     // Stage 3: Imm (instruction input), UnexpandedPC (shift), the four
     // operand-source flags, IsNoop, VirtualInstruction, IsFirstInSequence.
     9,
