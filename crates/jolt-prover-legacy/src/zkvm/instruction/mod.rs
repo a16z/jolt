@@ -358,6 +358,13 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstruction::FieldLoadFromX(_)
             | JoltInstruction::FieldStoreToX(_)
             | JoltInstruction::FieldLoadImm(_) => return None,
+            // Same combined-operand range-check lookup as ADD/MUL; the legacy
+            // prover has no implicit-carry constraint support yet, so proving
+            // a trace containing these is unsupported until then.
+            #[cfg(feature = "implicit-carry")]
+            JoltInstruction::AddC(_) | JoltInstruction::MulC(_) => {
+                LookupTables::RangeCheck(Default::default())
+            }
             JoltInstructionKind::NoOp
             | JoltInstructionKind::LD
             | JoltInstructionKind::SD

@@ -66,6 +66,10 @@ macro_rules! field_instruction {
 
             fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess) {
                 ram_access.trace = Some(execute_field_inline($op, self.operands, cpu));
+                #[cfg(feature = "implicit-carry")]
+                {
+                    cpu.carry = 0;
+                }
             }
         }
 
