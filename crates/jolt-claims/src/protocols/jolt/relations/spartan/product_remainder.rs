@@ -43,6 +43,14 @@ pub struct ProductRemainderOutputClaims<C> {
     pub next_is_noop: C,
     #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
     pub virtual_instruction: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(OpFlags(CircuitFlags::UsesCarry))]
+    pub uses_carry: C,
+    /// The committed Carry column opened at the product cycle point (the
+    /// CarryUsed right factor; single proof-visible carry source).
+    #[cfg(feature = "implicit-carry")]
+    #[opening(committed = Carry)]
+    pub carry: C,
 }
 
 /// Consumed product-remainder input: the product uni-skip's reduced opening. The
@@ -92,12 +100,20 @@ impl SymbolicSumcheck for ProductRemainder {
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let left = product_weight(0) * opening(left_instruction_input_product())
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+        let mut left = product_weight(0) * opening(left_instruction_input_product())
             + product_weight(1) * opening(lookup_output_product())
             + product_weight(2) * opening(jump_flag_product());
-        let right = product_weight(0) * opening(right_instruction_input_product())
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+        let mut right = product_weight(0) * opening(right_instruction_input_product())
             + product_weight(1) * opening(branch_flag_product())
             + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()));
+        #[cfg(feature = "implicit-carry")]
+        {
+            use crate::protocols::jolt::geometry::spartan::{carry_product, uses_carry_product};
+            left = left + product_weight(3) * opening(uses_carry_product());
+            right = right + product_weight(3) * opening(carry_product());
+        }
 
         product_tau_kernel() * left * right
     }

@@ -371,6 +371,38 @@ pub fn product_should_jump_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldJump)
 }
 
+#[cfg(feature = "implicit-carry")]
+pub fn uses_carry_product() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+        JoltRelationId::SpartanProductVirtualization,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn carry_product() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
+        JoltRelationId::SpartanProductVirtualization,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn carry_shift() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
+        JoltRelationId::SpartanShift,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn next_carry_outer() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::NextCarry,
+        JoltRelationId::SpartanOuter,
+    )
+}
+
 pub fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
