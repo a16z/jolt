@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Classify a PR diff's added/removed lines into code / tests / docs / fixtures.
+"""Classify a PR diff's added/removed lines into code / tests / docs /
+fixtures / helper scripts.
 
 Every changed line gets exactly one category, so the per-category counts sum
 to the total diff. Classification order (first match wins):
@@ -12,19 +13,24 @@ to the total diff. Classification order (first match wins):
    book/ directory component.
 3. tests (file level) — anything under a tests/ or benches/ directory
    component, or source files named like tests (test.rs, tests.rs,
-   test_*.py, *_test.rs, *_tests.rs, bench*.rs, *_bench.rs, ...).
-4. mixed Rust files (line level) — lines inside `#[cfg(test)]` items /
-   `#[test]`-attributed functions are tests (a test region wins over a doc
-   comment inside it); remaining pure doc-comment lines (`///`, `//!`) are
-   docs; everything else is code.
-5. code — everything else.
+   test_*.py, *_test.rs, *_tests.rs, bench*.rs, *_bench.rs, ...). Tests
+   beat helper scripts: a test-named file under scripts/ counts as tests.
+4. helper scripts (path level) — anything under a scripts/ or tools/
+   directory component, including Rust helpers living there.
+5. actual code — Rust/jolt code only: `.rs` files (line level: lines inside
+   `#[cfg(test)]` items / `#[test]`-attributed functions are tests, with a
+   test region winning over doc comments inside it; remaining pure
+   doc-comment lines `///` / `//!` are docs; the rest is code), plus
+   Cargo.toml manifests and native guest sources (.c/.h/.S/.ld/...).
+6. helper scripts (catch-all) — everything else: CI workflows (.yml/.yaml),
+   .py/.sh tooling, justfile/Makefile-type files, lint/deploy configs, and
+   any other non-Rust support files.
 
 Added lines are classified against the NEW file (head revision), removed
 lines against the OLD file (merge-base revision), so `#[cfg(test)]` region
 membership is resolved at the revision where the line actually exists.
 
-Stdlib-only; used by .github/workflows/diff-classifier.yml. Unit tests:
-`python3 scripts/ci/test_diff_classifier.py`.
+Stdlib-only; used by .github/workflows/diff-classifier.yml.
 """
 
 from __future__ import annotations
@@ -37,15 +43,25 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-MINUS = "−"  # typographic minus used in the rendered summary
+MINUS = "−"  # typographic minus used in the plain-text summary
 
-CATEGORIES = ("code", "tests", "docs", "fixtures")
+CATEGORIES = ("code", "tests", "docs", "fixtures", "helper")
 
 CATEGORY_LABELS = {
     "code": "Diff in the actual code",
     "tests": "Diff in tests",
     "docs": "Diff in docs",
     "fixtures": "Diff in fixtures",
+    "helper": "Diff in helper scripts",
+}
+
+# Short row labels for the diff-fenced table rendering.
+TABLE_LABELS = {
+    "code": "actual code",
+    "tests": "tests",
+    "docs": "docs",
+    "fixtures": "fixtures",
+    "helper": "helper scripts",
 }
 
 COMMENT_MARKER = "<!-- diff-classifier -->"
@@ -95,6 +111,13 @@ TEST_FILE_STEM = re.compile(
 )
 TEST_FILE_EXTENSIONS = {".rs", ".py", ".sh", ".go", ".js", ".ts"}
 
+# Tooling directories: their contents are helper scripts even when Rust.
+HELPER_DIR_COMPONENTS = {"scripts", "tools"}
+
+# "Actual code" beyond .rs: manifests and native guest sources.
+CODE_BASENAMES = {"Cargo.toml"}
+CODE_EXTENSIONS = {".s", ".c", ".h", ".cc", ".cpp", ".hpp", ".ld", ".x"}
+
 # #[test], #[tokio::test], #[test_case(...)], #[rstest], ... — an attribute
 # whose final path segment is `test`-like marks the following item as a test.
 TEST_ATTR = re.compile(
@@ -125,18 +148,26 @@ def classify_path(path: str) -> str | None:
     if ext in DOC_EXTENSIONS or dirs & DOC_DIR_COMPONENTS:
         return "docs"
 
-    # 3. tests (file level)
+    # 3. tests (file level) — beats helper scripts for test-named files
     if dirs & TEST_DIR_COMPONENTS:
         return "tests"
     if ext in TEST_FILE_EXTENSIONS and TEST_FILE_STEM.match(basename[: -len(ext)]):
         return "tests"
 
-    # 4. mixed Rust file — defer to line-level analysis
+    # 4. helper scripts by path — beats code, so Rust files under scripts/
+    # count as helpers, not actual code
+    if dirs & HELPER_DIR_COMPONENTS:
+        return "helper"
+
+    # 5. actual code: mixed Rust files defer to line-level analysis;
+    # manifests and native guest sources are code as-is
     if ext == ".rs":
         return None
+    if basename in CODE_BASENAMES or ext in CODE_EXTENSIONS:
+        return "code"
 
-    # 5. code
-    return "code"
+    # 6. helper scripts catch-all
+    return "helper"
 
 
 # --- Rust line-level analysis -------------------------------------------------
@@ -673,8 +704,66 @@ def format_summary(totals: dict[str, dict[str, int]]) -> str:
     return "\n".join(lines)
 
 
+def format_diff_table(totals: dict[str, dict[str, int]]) -> str:
+    """Aligned table for a ```diff fence: `+` rows render green, `-` rows red.
+
+    Color is per-line, so each category becomes a pair of lines — the added
+    count on a `+` line, the removed count on a `-` line. Zero sides are
+    omitted; an all-zero category collapses to one neutral line.
+    """
+    total_added = sum(totals[cat]["added"] for cat in CATEGORIES)
+    total_removed = sum(totals[cat]["removed"] for cat in CATEGORIES)
+    rows = [
+        (TABLE_LABELS[cat], totals[cat]["added"], totals[cat]["removed"])
+        for cat in CATEGORIES
+    ]
+    rows.append(("total", total_added, total_removed))
+
+    name_w = max(len(name) for name, _, _ in rows)
+    added_w = max(len("added"), *(len(f"+{a}") for _, a, _ in rows))
+    removed_w = max(len("removed"), *(len(f"-{r}") for _, _, r in rows))
+
+    # Header prefix "@@ " is one char wider than the "+ "/"- " row prefixes,
+    # so its name field is one char narrower to keep the columns aligned.
+    lines = [
+        "@@ "
+        + " " * (name_w - 1)
+        + "added".rjust(added_w)
+        + "  "
+        + "removed".rjust(removed_w)
+        + " @@"
+    ]
+
+    def emit(name: str, added: int, removed: int) -> None:
+        if added == 0 and removed == 0:
+            lines.append(
+                "  "
+                + name.ljust(name_w)
+                + "0".rjust(added_w)
+                + "  "
+                + "0".rjust(removed_w)
+            )
+            return
+        if added:
+            lines.append("+ " + name.ljust(name_w) + f"+{added}".rjust(added_w))
+        if removed:
+            lines.append(
+                "- "
+                + name.ljust(name_w)
+                + " " * added_w
+                + "  "
+                + f"-{removed}".rjust(removed_w)
+            )
+
+    for name, added, removed in rows[:-1]:
+        emit(name, added, removed)
+    lines.append("  " + "-" * (name_w + added_w + removed_w + 2))
+    emit(*rows[-1])
+    return "\n".join(lines)
+
+
 def format_markdown(totals: dict[str, dict[str, int]]) -> str:
-    return f"{COMMENT_MARKER}\n```\n{format_summary(totals)}\n```\n"
+    return f"{COMMENT_MARKER}\n```diff\n{format_diff_table(totals)}\n```\n"
 
 
 def format_details(per_file: dict[str, dict[str, int]]) -> str:
