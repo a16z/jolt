@@ -3598,6 +3598,9 @@ mod tests {
         DoryGlobals::reset();
         let mut program = host::Program::new("carry-chain-guest");
         program.enable_implicit_carry();
+        // The guest holds several provable functions (the mul256 benchmark
+        // variants); select the carry-chain entry explicitly.
+        program.set_func("carry_chain");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let (a, b, c) = (u64::MAX - 5, u64::MAX / 3, 0x8000_0000_0000_0001u64);
         let inputs = postcard::to_stdvec(&(a, b, c)).unwrap();
