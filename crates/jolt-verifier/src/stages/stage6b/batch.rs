@@ -39,6 +39,7 @@ use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhaseChallenges, ProgramImageReductionCyclePhase,
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionChallenges};
 use super::instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
