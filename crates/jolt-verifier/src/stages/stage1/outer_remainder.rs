@@ -230,6 +230,14 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
             advice: opening_point.clone(),
             is_compressed: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            uses_carry: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            produces_carry: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            next_carry: opening_point.clone(),
             is_last_in_sequence: opening_point,
         })
     }

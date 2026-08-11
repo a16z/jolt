@@ -60,14 +60,33 @@ pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = field_constraints::NUM_PRO
 #[cfg(not(feature = "field-inline"))]
 pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = 0;
 
-pub const SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE: usize =
-    SPARTAN_PRODUCT_BASE_LANES + SPARTAN_PRODUCT_FIELD_INLINE_LANES;
+/// The CarryUsed product lane (implicit-carry).
+pub const SPARTAN_PRODUCT_IMPLICIT_CARRY_LANES: usize = cfg!(feature = "implicit-carry") as usize;
+
+pub const SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_PRODUCT_BASE_LANES
+    + SPARTAN_PRODUCT_FIELD_INLINE_LANES
+    + SPARTAN_PRODUCT_IMPLICIT_CARRY_LANES;
 pub const SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize =
     3 * (SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE - 1);
 
 #[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] =
-    [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
+pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] = [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    11,
+    14,
+    17,
+    18,
+    // NextCarryZeroIfNotProducesCarry (the last rv64 eq row)
+    #[cfg(feature = "implicit-carry")]
+    {
+        rv64::NUM_EQ_CONSTRAINTS - 1
+    },
+];
 
 #[cfg(feature = "field-inline")]
 pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] = [
@@ -81,6 +100,11 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
     14,
     17,
     18,
+    // NextCarryZeroIfNotProducesCarry (the last rv64 eq row)
+    #[cfg(feature = "implicit-carry")]
+    {
+        rv64::NUM_EQ_CONSTRAINTS - 1
+    },
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FADD,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FSUB,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FMUL,
@@ -88,8 +112,22 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
 ];
 
 #[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] =
-    [0, 7, 8, 9, 10, 12, 13, 15, 16];
+pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] = [
+    0,
+    7,
+    8,
+    9,
+    10,
+    12,
+    13,
+    15,
+    16,
+    // LookupSplitsIntoOutputAndNextCarry (second-to-last rv64 eq row)
+    #[cfg(feature = "implicit-carry")]
+    {
+        rv64::NUM_EQ_CONSTRAINTS - 2
+    },
+];
 
 #[cfg(feature = "field-inline")]
 pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] = [
@@ -102,6 +140,11 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     13,
     15,
     16,
+    // LookupSplitsIntoOutputAndNextCarry (second-to-last rv64 eq row)
+    #[cfg(feature = "implicit-carry")]
+    {
+        rv64::NUM_EQ_CONSTRAINTS - 2
+    },
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ASSERT_EQ,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_FROM_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
