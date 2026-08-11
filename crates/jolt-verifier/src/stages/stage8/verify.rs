@@ -105,6 +105,8 @@ where
     };
     let stage6_points = stage6.output_points();
     let inc_opening_point = stage6_points.inc_opening_point();
+    #[cfg(feature = "implicit-carry")]
+    let carry_opening_point = stage6_points.carry_opening_point();
     // `batch_entries` reads the clear claims in (stage6, stage7) order.
     let clear_claims = clear.map(|(stage7_values, stage6_values)| (stage6_values, stage7_values));
     require_commitment_layout(&proof.commitments, layout)?;
@@ -145,6 +147,8 @@ where
         &opening_point,
         hamming_opening_point.as_slice(),
         inc_opening_point,
+        #[cfg(feature = "implicit-carry")]
+        carry_opening_point,
         &precommitted_finals,
         clear_claims,
     )?;
@@ -269,6 +273,7 @@ pub fn batch_entries<'a, F, PCS, VC>(
     opening_point: &[F],
     hamming_opening_point: &[F],
     inc_opening_point: &[F],
+    #[cfg(feature = "implicit-carry")] carry_opening_point: &[F],
     precommitted_finals: &'a [PrecommittedFinalOpening<F>],
     clear_claims: Option<(&Stage6bOutputClaims<F>, &Stage7OutputClaims<F>)>,
 ) -> Result<Vec<Stage8BatchEntry<'a, F, PCS::Output>>, VerifierError>
@@ -368,13 +373,12 @@ where
                     .ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
                     (commitment, opening.point.as_slice(), opening.opening_claim)
                 }
-                // Wired up when the carry claim reduction lands;
-                // `final_opening_polynomial_order` does not emit `Carry` yet,
-                // so reaching this arm means the batch is malformed.
                 #[cfg(feature = "implicit-carry")]
-                JoltCommittedPolynomial::Carry => {
-                    return Err(VerifierError::MissingFinalOpeningCommitment { polynomial });
-                }
+                JoltCommittedPolynomial::Carry => (
+                    &commitments.carry,
+                    carry_opening_point,
+                    clear_claims.map(|(stage6, _)| stage6.carry_claim_reduction.carry),
+                ),
                 JoltCommittedPolynomial::UnsignedIncChunk(_)
                 | JoltCommittedPolynomial::UnsignedIncMsb
                 | JoltCommittedPolynomial::TrustedAdviceBytes

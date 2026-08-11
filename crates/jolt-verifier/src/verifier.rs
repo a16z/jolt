@@ -732,6 +732,10 @@ pub fn absorb_transcript_commitments<C, T>(
     for commitment in &commitments.bytecode_ra {
         absorb_commitment(commitment);
     }
+    // The Carry commitment rides after the BytecodeRa family, matching the
+    // prover's `all_committed_polynomials` order.
+    #[cfg(feature = "implicit-carry")]
+    absorb_commitment(&commitments.carry);
     if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
         append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
         transcript.append(untrusted_advice_commitment);

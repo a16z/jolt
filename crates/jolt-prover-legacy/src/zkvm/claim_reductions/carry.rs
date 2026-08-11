@@ -52,7 +52,10 @@ impl<F: JoltField> CarryClaimReductionSumcheckParams<F> {
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        let gamma_powers = transcript.challenge_scalar_powers(2).try_into().unwrap();
+        // `challenge_scalar_powers` returns `[1, gamma, gamma^2, ...]`; the
+        // batch uses gamma and gamma^2.
+        let powers = transcript.challenge_scalar_powers(3);
+        let gamma_powers = [powers[1], powers[2]];
         let (r_product, _) = accumulator.get_committed_polynomial_opening(
             CommittedPolynomial::Carry,
             SumcheckId::SpartanProductVirtualization,

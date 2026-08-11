@@ -14,6 +14,9 @@ pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommitt
     polynomials.extend((0..layout.instruction()).map(JoltCommittedPolynomial::InstructionRa));
     polynomials.extend((0..layout.ram()).map(JoltCommittedPolynomial::RamRa));
     polynomials.extend((0..layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa));
+    // Appended last, mirroring the prover's `all_committed_polynomials`.
+    #[cfg(feature = "implicit-carry")]
+    polynomials.push(JoltCommittedPolynomial::Carry);
     polynomials
 }
 
@@ -47,6 +50,10 @@ pub fn final_opening_polynomial_order(
         polynomials.extend((0..chunk_count).map(JoltCommittedPolynomial::BytecodeChunk));
         polynomials.push(JoltCommittedPolynomial::ProgramImageInit);
     }
+    // The prover pushes Carry right after the two Inc entries (prover.rs
+    // prove_stage8); the batch orders must agree entry-for-entry.
+    #[cfg(feature = "implicit-carry")]
+    polynomials.insert(2, JoltCommittedPolynomial::Carry);
     polynomials
 }
 
