@@ -15,6 +15,7 @@ use super::carry_claim_reduction::{
     carry_claim_reduction_input_points_from_upstream,
     carry_claim_reduction_input_values_from_upstream,
 };
+#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
 };
