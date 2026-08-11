@@ -178,8 +178,10 @@ def classify_path(path: str) -> str | None:
 # marks the line ranges covered by test-only items: a (possibly multiline)
 # `#[cfg(test)]` / `#[cfg(all(test, ...))]` attribute, any stacked attributes
 # after it, and the following item through its closing brace (or trailing
-# semicolon for `mod tests;`-style items). `#[test]`-style fn attributes get
-# the same treatment, and a file-inner `#![cfg(test)]` marks the whole file.
+# semicolon for `mod tests;`-style items, or trailing comma for non-item
+# targets such as struct fields, struct-literal fields, enum variants, and
+# brace-less match arms). `#[test]`-style fn attributes get the same
+# treatment, and a file-inner `#![cfg(test)]` marks the whole file.
 
 
 @dataclass
@@ -216,10 +218,23 @@ class _CfgAttr:
         return arg is not None and _is_test_only_cfg_expr(arg)
 
 
+# Item-declaration keywords (with optional visibility/qualifier prefixes).
+# A test attribute on one of these tracks braces to the item's end; anything
+# else (struct field, struct-literal field, brace-less match arm, enum
+# variant, statement) is comma-or-semicolon-terminated.
+_ITEM_KEYWORD = re.compile(
+    r"^(?:pub\s*(?:\([^)]*\))?\s+)?(?:default\s+)?(?:unsafe\s+)?(?:async\s+)?"
+    r'(?:unsafe\s+)?(?:extern\s*(?:"[^"]*")?\s+)?'
+    r"(?:fn|mod|struct|enum|union|impl|trait|const|static|type|use|macro_rules|macro)\b"
+)
+
+
 @dataclass
 class _Item:
+    keyword_item: bool = True
     saw_brace: bool = False
     brace_depth: int = 0
+    group_depth: int = 0  # unclosed parens/brackets across lines
 
     def consume_line(self, scan: LineScan) -> bool:
         """Feed one line; True when the item ends on this line."""
@@ -230,7 +245,28 @@ class _Item:
         if self.saw_brace:
             self.brace_depth += scan.open_braces - scan.close_braces
             return self.brace_depth <= 0
-        return scan.code.rstrip().endswith(";")
+        if not self.keyword_item and scan.close_braces > scan.open_braces:
+            # The enclosing block closed before the item terminated (e.g. a
+            # brace-less final match arm without a trailing comma). End here;
+            # counting the enclosing `}` line is an acceptable one-line
+            # imprecision, unbounded leakage is not.
+            return True
+        for ch in scan.code:
+            if ch in "([":
+                self.group_depth += 1
+            elif ch in ")]":
+                self.group_depth -= 1
+        if self.group_depth > 0:
+            return False
+        code = scan.code.rstrip()
+        if code.endswith(";"):
+            return True
+        # Comma-terminated targets: struct fields, struct-literal fields,
+        # enum variants, match arms. Item declarations (fn/mod/struct/...)
+        # never end at a comma — a multiline fn signature has `,`-terminated
+        # parameter lines but is either inside unclosed parens or followed by
+        # its braced body.
+        return not self.keyword_item and code.endswith(",")
 
 
 def _starts_cfg_attr(code: str) -> bool:
@@ -487,7 +523,7 @@ def analyze_rust(content: str) -> RustRegions:
                 continue
             if scan.has_code:
                 test_lines.add(lineno)
-                new_item = _Item()
+                new_item = _Item(keyword_item=bool(_ITEM_KEYWORD.match(code)))
                 if not new_item.consume_line(scan):
                     item = new_item
                 await_item = False
@@ -654,6 +690,10 @@ class DiffClassifier:
 
     def classify(self) -> tuple[dict[str, dict[str, int]], dict[str, dict[str, int]]]:
         """Returns (totals, per_file) where totals[category] = {added, removed}."""
+        # WARNING: -U0 can pick a slightly different hunk alignment than the
+        # default-context diff, so the grand total may drift a couple of lines
+        # from `git diff --shortstat` on rare inputs. Categories still exactly
+        # partition the -U0 diff this classifier actually parses.
         diff_text = _git(
             self.repo,
             "-c",
