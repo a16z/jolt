@@ -3,6 +3,7 @@
 #define AP_RAF_LANES 6
 #define AP_MAX_SUFFIXES 4
 #define AP_HINT_POINTS 2
+#define AP_PREFIX_COUNT 46
 #define AP_NO_TABLE 0xFFFFFFFFu
 #define AP_SKIP 0xFFFFFFFFu
 
@@ -509,8 +510,10 @@ extern "C" __global__ void ap_round_message_hinted_kernel(
                         unsigned int prefix = prefix_ids[term];
                         if (prefix != 0xFFFFFFFFu) {
                             u64 p[LIMBS], product[LIMBS];
-                            ap_extension(prefixes + (unsigned long long)prefix * stride * LIMBS, b,
-                                         half, c, p);
+                            unsigned long long slot =
+                                ((unsigned long long)(c == 0u ? 0u : 1u) * AP_PREFIX_COUNT +
+                                 prefix) * half + b;
+                            load4(prefixes + slot * LIMBS, p);
                             fr_mul(value, p, product);
                             store4(value, product);
                         }

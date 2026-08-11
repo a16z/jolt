@@ -54,6 +54,13 @@ pub struct WitnessEnv<'a> {
     pub(crate) preprocessing: &'a JoltProgramPreprocessing,
 }
 
+#[cfg(feature = "test-utils")]
+impl<'a> WitnessEnv<'a> {
+    pub fn new(preprocessing: &'a JoltProgramPreprocessing) -> Self {
+        Self { preprocessing }
+    }
+}
+
 /// The field encoding of an atomic witness value.
 pub trait ToField {
     fn to_field<F: Field>(self) -> F;

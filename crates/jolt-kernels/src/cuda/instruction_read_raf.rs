@@ -396,3 +396,158 @@ impl<F: Field> SumcheckKernel<F> for DeviceInstructionReadRaf<F> {
         })
     }
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test module: device operations fail loudly"
+)]
+mod tests {
+    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
+    use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafChallenges;
+    use jolt_claims::SumcheckChallenges;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_program::execution::TraceRow;
+    use jolt_program::execution::{RegisterRead, RegisterState, RegisterWrite};
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
+    use proptest::prelude::*;
+    use std::num::NonZeroUsize;
+
+    use super::super::context::shared_context;
+    use super::super::testing::{arb_point, drive, fr, reference_input_claim, RowPlane};
+    use super::super::CudaBackend;
+    use super::{InstructionReadRaf, InstructionReadRafInputClaims, ADDRESS_BITS};
+    use crate::reference::ReferenceBackend;
+    use crate::{PrepareKernel, ProofSession, ProverInputs};
+
+    const KINDS: [JoltInstructionKind; 5] = [
+        JoltInstructionKind::OR,
+        JoltInstructionKind::SLTU,
+        JoltInstructionKind::ADD,
+        JoltInstructionKind::SUB,
+        JoltInstructionKind::MUL,
+    ];
+
+    fn trace(log_t: usize, seed: u64) -> Vec<TraceRow> {
+        (0..1usize << log_t)
+            .map(|j| {
+                let mixed = (j as u64)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .wrapping_add(seed);
+                TraceRow {
+                    instruction: JoltInstructionRow {
+                        instruction_kind: KINDS[(mixed % KINDS.len() as u64) as usize],
+                        address: 0,
+                        operands: NormalizedOperands {
+                            rd: Some(1),
+                            rs1: Some(2),
+                            rs2: Some(3),
+                            imm: 0,
+                        },
+                        virtual_sequence_remaining: None,
+                        is_first_in_sequence: false,
+                        is_compressed: false,
+                    },
+                    registers: RegisterState {
+                        rs1: Some(RegisterRead {
+                            register: 2,
+                            value: mixed,
+                        }),
+                        rs2: Some(RegisterRead {
+                            register: 3,
+                            value: mixed.rotate_left(17),
+                        }),
+                        rd: Some(RegisterWrite {
+                            register: 1,
+                            pre_value: 0,
+                            post_value: 0,
+                        }),
+                    },
+                    ..TraceRow::default()
+                }
+            })
+            .collect()
+    }
+
+    proptest! {
+        #[test]
+        fn instruction_read_raf_matches_reference(
+            log_t in 4usize..=7,
+            seed in any::<u64>(),
+            gamma in any::<u64>().prop_map(fr),
+        ) {
+            let Some(_) = shared_context() else { return Ok(()); };
+            let witness = RowPlane::new(trace(log_t, seed), log_t);
+            let dimensions = InstructionReadRafDimensions::new(
+                log_t,
+                ADDRESS_BITS,
+                NonZeroUsize::new(8).unwrap(),
+            );
+            let relation = InstructionReadRaf::<Fr>::new(dimensions);
+            let challenge_set =
+                InstructionReadRafChallenges::from_transcript_values([gamma].into_iter())
+                    .expect("challenges");
+            let claims = InstructionReadRafInputClaims {
+                lookup_output: Fr::from_u64(0),
+                left_lookup_operand: Fr::from_u64(0),
+                right_lookup_operand: Fr::from_u64(0),
+            };
+            let r_cycle: Vec<Fr> = (0..log_t).map(|i| fr(seed + i as u64 + 3)).collect();
+            let points = InstructionReadRafInputClaims {
+                lookup_output: r_cycle.clone(),
+                left_lookup_operand: r_cycle.clone(),
+                right_lookup_operand: r_cycle.clone(),
+            };
+            let make_inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenge_set,
+            };
+
+            let input_claim = reference_input_claim(&witness, make_inputs);
+            let rounds = ADDRESS_BITS + log_t;
+            let challenges: Vec<Fr> =
+                (0..rounds).map(|i| fr(seed + i as u64 + 71)).collect();
+
+            let mut host = ReferenceBackend
+                .prepare(&mut ProofSession::default(), &witness, make_inputs())
+                .expect("reference prepare");
+            let mut device = CudaBackend
+                .prepare(&mut ProofSession::default(), &witness, make_inputs())
+                .expect("cuda prepare");
+
+            let expected = drive(host.as_mut(), input_claim, &challenges);
+            let got = drive(device.as_mut(), input_claim, &challenges);
+
+            prop_assert_eq!(got.len(), expected.len());
+            for (round, (got, want)) in got.iter().zip(&expected).enumerate() {
+                prop_assert_eq!(
+                    got.coefficients(),
+                    want.coefficients(),
+                    "round {} polynomial diverged",
+                    round
+                );
+            }
+
+            let want_claims = host.output_claims(&claims).expect("reference output claims");
+            let got_claims = device.output_claims(&claims).expect("cuda output claims");
+            prop_assert_eq!(
+                got_claims.lookup_table_flags,
+                want_claims.lookup_table_flags,
+                "lookup table flag claims diverged"
+            );
+            prop_assert_eq!(
+                got_claims.instruction_ra,
+                want_claims.instruction_ra,
+                "instruction ra claims diverged"
+            );
+            prop_assert_eq!(
+                got_claims.instruction_raf_flag,
+                want_claims.instruction_raf_flag,
+                "instruction raf flag claim diverged"
+            );
+        }
+    }
+}

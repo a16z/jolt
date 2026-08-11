@@ -17,7 +17,7 @@ use super::combine::{combine_terms, CombineTerm};
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{require_fr_slice, DeviceFrVec, LIMBS};
 use super::error::CudaError;
-use super::prefixes::{default_checkpoints, NUM_PREFIXES};
+use super::prefixes::{default_checkpoints, update_checkpoints, NUM_PREFIXES};
 use super::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
 
 const RAF_TERMS: usize = 3;
@@ -204,6 +204,56 @@ impl DeviceAddressPhase {
         Ok(())
     }
 
+    fn evaluate_prefixes(
+        &self,
+        context: &CudaKernelContext,
+        half: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let b_len = self
+            .tables
+            .len
+            .trailing_zeros()
+            .checked_sub(1)
+            .ok_or(CudaError::InvariantViolation {
+                reason: "the address round tables are already fully bound",
+            })? as usize;
+        let mut out = context.alloc(HINT_POINTS * NUM_PREFIXES * half)?;
+        let has_r_x = u32::from(self.rounds_bound % 2 == 1);
+        let challenge = context.upload(&[self
+            .phase_challenges
+            .last()
+            .copied()
+            .unwrap_or(Fr::from(0u64))])?;
+        let round = CudaKernelContext::count_of(self.rounds_bound)?;
+        let b_len_arg = CudaKernelContext::count_of(b_len)?;
+        let half_arg = CudaKernelContext::count_of(half)?;
+        let prefix_count = CudaKernelContext::count_of(NUM_PREFIXES)?;
+        let points = CudaKernelContext::count_of(HINT_POINTS)?;
+
+        let mut builder = context.stream().launch_builder(context.pfx_mle_round());
+        let _ = builder.arg(self.checkpoints.limbs());
+        let _ = builder.arg(challenge.limbs());
+        let _ = builder.arg(&has_r_x);
+        let _ = builder.arg(&round);
+        let _ = builder.arg(&b_len_arg);
+        let _ = builder.arg(&half_arg);
+        let _ = builder.arg(out.limbs_mut());
+        // SAFETY: block `(b_block, prefix < NUM_PREFIXES, point < HINT_POINTS)`
+        // with thread `b < half` reads the `NUM_PREFIXES` checkpoints and the
+        // single-element challenge, and writes
+        // `out[(point * NUM_PREFIXES + prefix) * half + b]`, one slot per
+        // (point, prefix, b) of the `HINT_POINTS * NUM_PREFIXES * half` allocated.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (half_arg.div_ceil(BLOCK), prefix_count, points),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: 0,
+            })
+        }?;
+        context.stream().synchronize()?;
+        Ok(out)
+    }
+
     fn build_prefix_tables(
         &self,
         context: &CudaKernelContext,
@@ -266,6 +316,7 @@ impl DeviceAddressPhase {
                 reason: "the address round tables are already fully bound",
             });
         }
+        let prefixes = self.evaluate_prefixes(context, half)?;
 
         let scales = context.upload_u32_slice(&self.layout.scales)?;
         let prefix_ids = context.upload_u32_slice(&self.layout.prefix_ids)?;
@@ -285,7 +336,7 @@ impl DeviceAddressPhase {
         let mut builder = context
             .stream()
             .launch_builder(context.ap_round_message_hinted());
-        let _ = builder.arg(self.tables.prefixes.limbs());
+        let _ = builder.arg(prefixes.limbs());
         let _ = builder.arg(&prefix_ids);
         let _ = builder.arg(&suffix_slots);
         let _ = builder.arg(&scales);
@@ -425,10 +476,23 @@ impl DeviceAddressPhase {
         self.phase_challenges.push(challenge);
         self.rounds_bound += 1;
 
+        if self.rounds_bound.is_multiple_of(2) {
+            let round = self.rounds_bound - 1;
+            let pair = self.phase_challenges.len().checked_sub(2).ok_or(
+                CudaError::InvariantViolation {
+                    reason: "a checkpoint update pair spans a phase boundary",
+                },
+            )?;
+            let r_x = self.phase_challenges[pair];
+            let r_y = self.phase_challenges[pair + 1];
+            let suffix_len = self.suffix_len(round / CHUNK_LEN)?;
+            self.checkpoints =
+                update_checkpoints(context, &self.checkpoints, r_x, r_y, round, suffix_len)?;
+        }
+
         if self.phase_challenges.len() == CHUNK_LEN {
             self.v_tables
                 .push(context.eq_evals(&self.phase_challenges)?);
-            self.checkpoints = self.tables.prefixes.try_clone()?;
             self.raf_checkpoints = self.tables.raf_prefix.try_clone()?;
             let next = self.phase + 1;
             if next < self.phases() {

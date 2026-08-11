@@ -15,10 +15,12 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
+use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{
     ChunkVisitor, FixedBackend, JoltWitnessOracle, JoltWitnessPlane, OneHotSource, ProgramSource,
     RowSource, Shape, WitnessError,
 };
+use jolt_witness::__private::TraceRow;
 use proptest::prelude::*;
 
 use crate::reference::ReferenceBackend;
@@ -188,4 +190,100 @@ pub fn drive<K: ProveRounds<Fr> + ?Sized>(
         .finish_rounds(challenges[challenges.len() - 1])
         .expect("finish_rounds must succeed");
     polys
+}
+
+pub struct RowPlane {
+    rows: Vec<TraceRow>,
+    program: JoltProgramPreprocessing,
+    log_t: usize,
+}
+
+impl RowPlane {
+    pub fn new(rows: Vec<TraceRow>, log_t: usize) -> Self {
+        Self {
+            rows,
+            log_t,
+            program: JoltProgramPreprocessing {
+                bytecode: BytecodePreprocessing::preprocess(
+                    vec![JoltInstructionRow::default()],
+                    0,
+                    RV64IMAC_JOLT,
+                )
+                .expect("bytecode fixture"),
+                ram: RAMPreprocessing::default(),
+                memory_layout: MemoryLayout::default(),
+                max_padded_trace_length: 1,
+            },
+        }
+    }
+}
+
+impl RowSource for RowPlane {
+    fn visit_chunks(
+        &self,
+        range: std::ops::Range<usize>,
+        chunk_size: usize,
+        visitor: &mut ChunkVisitor<'_>,
+    ) -> Result<(), WitnessError> {
+        let total = 1usize << self.log_t;
+        if range.end > total || chunk_size == 0 {
+            return Err(WitnessError::InvalidWitnessData {
+                label: "cuda row plane",
+                reason: "chunk request exceeds the fixture's cycle domain".to_owned(),
+            });
+        }
+        let env = WitnessEnv::new(&self.program);
+        let at = |index: usize| self.rows.get(index).cloned().unwrap_or_default();
+        let mut position = range.start;
+        while position < range.end {
+            let end = (position + chunk_size).min(range.end);
+            let rows: Vec<TraceRow> = (position..end).map(at).collect();
+            let next = (end < total).then(|| at(end));
+            visitor(&rows, next.as_ref(), &env)?;
+            position = end;
+        }
+        Ok(())
+    }
+}
+
+impl ProgramSource for RowPlane {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
+        &self.program
+    }
+}
+
+impl OneHotSource for RowPlane {
+    fn hot_indices(&self, _id: JoltPolynomialId) -> Result<Vec<Option<usize>>, WitnessError> {
+        Err(WitnessError::InvalidWitnessData {
+            label: "cuda row plane",
+            reason: "this fixture serves trace rows only, not one-hot columns".to_owned(),
+        })
+    }
+
+    fn hot_address_bits(&self, _id: JoltPolynomialId) -> Result<usize, WitnessError> {
+        Err(WitnessError::InvalidWitnessData {
+            label: "cuda row plane",
+            reason: "this fixture serves trace rows only, not one-hot columns".to_owned(),
+        })
+    }
+}
+
+impl JoltWitnessOracle<Fr> for RowPlane {
+    fn oracle_table(&self, _id: JoltPolynomialId) -> Result<Vec<Fr>, WitnessError> {
+        Err(WitnessError::InvalidWitnessData {
+            label: "cuda row plane",
+            reason: "this fixture serves trace rows only, not oracle columns".to_owned(),
+        })
+    }
+
+    fn shape(&self, _id: JoltPolynomialId) -> Result<Shape, WitnessError> {
+        Err(WitnessError::InvalidWitnessData {
+            label: "cuda row plane",
+            reason: "this fixture serves trace rows only, not oracle columns".to_owned(),
+        })
+    }
+
+    fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+        Ok(Vec::new())
+    }
 }

@@ -1559,3 +1559,32 @@ extern "C" __global__ void pfx_update_checkpoints_kernel(const u64 *__restrict__
     pml_update(i, checkpoints, r_x, r_y, round, suffix_len, value);
     store4(out + (unsigned long long)i * LIMBS, value);
 }
+
+extern "C" __global__ void pfx_mle_round_kernel(const u64 *__restrict__ checkpoints,
+                                                const u64 *__restrict__ r_x,
+                                                unsigned int has_r_x,
+                                                unsigned int round,
+                                                unsigned int b_len,
+                                                unsigned int half,
+                                                u64 *__restrict__ out) {
+    unsigned int b = blockIdx.x * blockDim.x + threadIdx.x;
+    if (b >= half) return;
+    unsigned int prefix = blockIdx.y;
+    unsigned int point = blockIdx.z;
+
+    pml_args args;
+    args.checkpoints = checkpoints;
+    args.r_x = r_x;
+    args.has_r_x = has_r_x;
+    args.c = point == 0u ? 0u : 2u;
+    args.round = round;
+    args.b = sfx_new((u128)b, b_len);
+
+    u64 value[LIMBS];
+    if (!pml_eval(prefix, &args, value)) {
+        pfx_eval(prefix, checkpoints, args.b, PFX_LOG_K - round - b_len - 1u, value);
+    }
+    unsigned long long slot =
+        ((unsigned long long)point * PFX_COUNT + prefix) * half + b;
+    store4(out + slot * LIMBS, value);
+}
