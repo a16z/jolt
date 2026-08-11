@@ -87,11 +87,15 @@ impl<F: Field> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
         let chunk_bits = self.dimensions.log_k_chunk;
         let mut reference_address: Vec<F> =
             self.instruction_r_address.iter().rev().copied().collect();
+        // Both subtractions are exact under the branch guard; `saturating_sub`
+        // only settles the (unreachable) underflow for the arithmetic lint.
         if reference_address.len() < chunk_bits {
-            let missing = chunk_bits - reference_address.len();
+            let missing = chunk_bits.saturating_sub(reference_address.len());
             reference_address.extend(transcript.challenge_vector(missing));
         } else {
-            reference_address = reference_address[reference_address.len() - chunk_bits..].to_vec();
+            // Keep the trailing `chunk_bits` entries.
+            let excess = reference_address.len().saturating_sub(chunk_bits);
+            reference_address = reference_address.split_off(excess);
         }
         Ok(BooleanityAddressPhaseChallenges {
             reference_address,

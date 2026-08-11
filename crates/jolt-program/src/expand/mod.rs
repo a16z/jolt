@@ -192,6 +192,10 @@ fn final_rows_to_instructions(
 /// `expand_*` rows are routed back through this dispatcher. That recursive
 /// route is intentional: common substeps such as narrow loads, word shifts, and
 /// virtual assertions keep one definition of their own lowering contract.
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "fail-closed: instructions without a registered expansion error out rather than silently passing through"
+)]
 fn expand_source_only_instruction(
     instruction: &SourceInstruction,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

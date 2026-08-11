@@ -137,7 +137,12 @@ where
             .iter()
             .filter(|point| point.as_slice() == booleanity_opening_point)
             .count();
-        let committed_output_claims = cycle_points.point_count() - aliased_bytecode_ra_openings;
+        // The aliased openings are a filtered subset of the bytecode RA points
+        // counted by `point_count`, so the subtraction is exact; `saturating_sub`
+        // only settles the (unreachable) underflow for the arithmetic lint.
+        let committed_output_claims = cycle_points
+            .point_count()
+            .saturating_sub(aliased_bytecode_ra_openings);
         let batch_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage6b_sumcheck_proof,

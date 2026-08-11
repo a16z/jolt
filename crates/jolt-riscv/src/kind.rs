@@ -1910,6 +1910,10 @@ mod tests {
 
     #[cfg(feature = "serialization")]
     #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside a Result-returning test"
+    )]
     fn serde_uses_source_names_and_final_tags() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             serde_json::to_string(&SourceInstructionKind::ADDW)?,

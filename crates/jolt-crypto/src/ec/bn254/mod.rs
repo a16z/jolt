@@ -29,6 +29,30 @@ macro_rules! impl_jolt_group_wrapper {
             pub fn into_inner(self) -> $projective {
                 self.0
             }
+
+            /// Reinterprets a wrapper slice as a slice of the inner arkworks type.
+            #[inline(always)]
+            pub(crate) fn as_inner_slice(slice: &[Self]) -> &[$projective] {
+                // SAFETY: $wrapper is #[repr(transparent)] over $projective
+                // (size equality asserted at compile time above), so a slice of
+                // wrappers has the identical layout as a slice of inner values.
+                unsafe {
+                    ::std::slice::from_raw_parts(slice.as_ptr().cast::<$projective>(), slice.len())
+                }
+            }
+
+            /// Reinterprets a mutable wrapper slice as a slice of the inner arkworks type.
+            #[inline(always)]
+            pub(crate) fn as_inner_slice_mut(slice: &mut [Self]) -> &mut [$projective] {
+                // SAFETY: same repr(transparent) layout guarantee as `as_inner_slice`;
+                // the exclusive borrow is carried through unchanged.
+                unsafe {
+                    ::std::slice::from_raw_parts_mut(
+                        slice.as_mut_ptr().cast::<$projective>(),
+                        slice.len(),
+                    )
+                }
+            }
         }
 
         impl ::std::fmt::Debug for $wrapper {
