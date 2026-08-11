@@ -32,8 +32,8 @@ pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
     // Stage 1: UnexpandedPC, Imm, then one per circuit flag (all Spartan outer).
     2 + NUM_CIRCUIT_FLAGS,
     // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
-    // product-virtualization flags.
-    4,
+    // product-virtualization flags, plus UsesCarry under implicit-carry.
+    4 + cfg!(feature = "implicit-carry") as usize,
     // Stage 3: Imm (instruction input), UnexpandedPC (shift), the four
     // operand-source flags, IsNoop, VirtualInstruction, IsFirstInSequence.
     9,
@@ -569,6 +569,10 @@ where
     if circuit_flags[CircuitFlags::VirtualInstruction] {
         stage2 += stage2_gammas[3];
     }
+    #[cfg(feature = "implicit-carry")]
+    if circuit_flags[CircuitFlags::UsesCarry] {
+        stage2 += stage2_gammas[4];
+    }
 
     let mut stage3 = F::from_i128(instruction.operands.imm);
     stage3 += stage3_gammas[1].mul_u64(instruction.address as u64);
@@ -662,10 +666,19 @@ where
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage2Gamma);
 
-    opening(op_flag_product(CircuitFlags::Jump))
+    let base = opening(op_flag_product(CircuitFlags::Jump))
         + beta.clone() * opening(instruction_flag_product(InstructionFlags::Branch))
         + beta.clone().pow(2) * opening(op_flag_product(CircuitFlags::WriteLookupOutputToRD))
-        + beta.pow(3) * opening(op_flag_product(CircuitFlags::VirtualInstruction))
+        + beta.clone().pow(3) * opening(op_flag_product(CircuitFlags::VirtualInstruction));
+    #[cfg(feature = "implicit-carry")]
+    {
+        base + beta.pow(4) * opening(op_flag_product(CircuitFlags::UsesCarry))
+    }
+    #[cfg(not(feature = "implicit-carry"))]
+    {
+        let _ = beta;
+        base
+    }
 }
 
 pub(crate) fn stage3_claim<F>() -> JoltExpr<F>

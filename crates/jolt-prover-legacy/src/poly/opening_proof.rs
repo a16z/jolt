@@ -181,6 +181,10 @@ pub enum SumcheckId {
     /// Lattice/packed mode: the program-image byte reconstruction of the
     /// stage-8 reconstruction phase.
     ProgramImageReconstruction,
+    /// Reduces the committed `Carry` openings (product virtualization, shift,
+    /// and the `carry_init` all-zeros point) to one final opening.
+    #[cfg(feature = "implicit-carry")]
+    CarryClaimReduction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

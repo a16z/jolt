@@ -786,6 +786,12 @@ fn stage2_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
         .into_iter()
         .map(|id| ("stage2.claims.batch_outputs.product_remainder.checked", id)),
     );
+    #[cfg(feature = "implicit-carry")]
+    openings.extend(
+        [spartan::uses_carry_product(), spartan::carry_product()]
+            .into_iter()
+            .map(|id| ("stage2.claims.batch_outputs.product_remainder.checked", id)),
+    );
     openings.extend(
         [
             instruction_claim_reduction::lookup_output_reduced(),
@@ -829,6 +835,8 @@ fn stage3_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
         .into_iter()
         .map(|id| ("stage3.claims.shift", id)),
     );
+    #[cfg(feature = "implicit-carry")]
+    openings.extend([("stage3.claims.shift", spartan::carry_shift())]);
     openings.extend(
         [
             instruction::right_operand_is_rs2(),
@@ -1009,6 +1017,11 @@ fn stage6_formula_output_openings(
         ("stage6.claims.inc_claim_reduction.ram_inc", ram_inc),
         ("stage6.claims.inc_claim_reduction.rd_inc", rd_inc),
     ]);
+    #[cfg(feature = "implicit-carry")]
+    openings.extend([(
+        "stage6.claims.carry_claim_reduction.carry",
+        spartan::carry_reduced(),
+    )]);
 
     openings
 }

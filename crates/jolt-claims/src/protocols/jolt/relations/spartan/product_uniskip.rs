@@ -28,6 +28,9 @@ pub struct ProductUniskipInputClaims<C> {
     pub should_branch: C,
     #[opening(ShouldJump, from = SpartanOuter)]
     pub should_jump: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(CarryUsed, from = SpartanOuter)]
+    pub carry_used: C,
 }
 
 /// Produced product uni-skip opening (the single reduced univariate-skip value).
@@ -81,9 +84,18 @@ impl SymbolicSumcheck for ProductUniskip {
     }
 
     fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        product_uniskip_weight(0) * opening(product_outer_opening())
+        let base = product_uniskip_weight(0) * opening(product_outer_opening())
             + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
-            + product_uniskip_weight(2) * opening(product_should_jump_outer_opening())
+            + product_uniskip_weight(2) * opening(product_should_jump_outer_opening());
+        #[cfg(feature = "implicit-carry")]
+        {
+            base + product_uniskip_weight(3)
+                * opening(
+                    crate::protocols::jolt::geometry::spartan::product_carry_used_outer_opening(),
+                )
+        }
+        #[cfg(not(feature = "implicit-carry"))]
+        base
     }
 
     fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {

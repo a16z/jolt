@@ -18,12 +18,39 @@ use super::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 pub(crate) const OUTER_REMAINDER_DEGREE: usize = 3;
 pub(crate) const PRODUCT_REMAINDER_DEGREE: usize = 3;
 pub(crate) const SHIFT_DEGREE: usize = 2;
-const SPARTAN_OUTER_RV64_ROW_COUNT: usize = 19;
-const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] =
-    [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
-const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; 9] = [0, 7, 8, 9, 10, 12, 13, 15, 16];
+const SPARTAN_OUTER_RV64_ROW_COUNT: usize = 19 + 2 * cfg!(feature = "implicit-carry") as usize;
+const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; OUTER_UNISKIP_DOMAIN_SIZE] = [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    11,
+    14,
+    17,
+    18,
+    // NextCarryZeroIfNotProducesCarry
+    #[cfg(feature = "implicit-carry")]
+    20,
+];
+const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; 9 + cfg!(feature = "implicit-carry") as usize] = [
+    0,
+    7,
+    8,
+    9,
+    10,
+    12,
+    13,
+    15,
+    16,
+    // LookupSplitsIntoOutputAndNextCarry
+    #[cfg(feature = "implicit-carry")]
+    19,
+];
 
-pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 35] = [
+pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial;
+    35 + 4 * cfg!(feature = "implicit-carry") as usize] = [
     JoltVirtualPolynomial::LeftInstructionInput,
     JoltVirtualPolynomial::RightInstructionInput,
     JoltVirtualPolynomial::Product,
@@ -59,6 +86,14 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 35] = [
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsCompressed),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsLastInSequence),
+    #[cfg(feature = "implicit-carry")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+    #[cfg(feature = "implicit-carry")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::ProducesCarry),
+    #[cfg(feature = "implicit-carry")]
+    JoltVirtualPolynomial::CarryUsed,
+    #[cfg(feature = "implicit-carry")]
+    JoltVirtualPolynomial::NextCarry,
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -336,6 +371,54 @@ pub fn product_should_jump_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldJump)
 }
 
+#[cfg(feature = "implicit-carry")]
+pub fn uses_carry_product() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+        JoltRelationId::SpartanProductVirtualization,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn carry_product() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
+        JoltRelationId::SpartanProductVirtualization,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn carry_reduced() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
+        JoltRelationId::CarryClaimReduction,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn carry_shift() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
+        JoltRelationId::SpartanShift,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn next_carry_outer() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::NextCarry,
+        JoltRelationId::SpartanOuter,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn product_carry_used_outer_opening() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::CarryUsed,
+        JoltRelationId::SpartanOuter,
+    )
+}
+
 pub fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,
@@ -494,7 +577,11 @@ mod tests {
     #[test]
     fn outer_remainder_plan_computes_group_row_weights() {
         let plan = SpartanOuterRemainderPlan::from_dimensions(&outer_dimensions());
-        let r0 = Fr::from_i64(-4);
+        // The first node of the centered uniskip domain, so the Lagrange weight
+        // lands on the first row of each group.
+        let r0 = Fr::from_i64(
+            jolt_poly::lagrange::centered_domain_start(OUTER_UNISKIP_DOMAIN_SIZE).unwrap(),
+        );
 
         let first_group = plan.row_weights(r0, Fr::from_u64(0)).unwrap();
         assert_eq!(first_group[1], Fr::from_u64(1));

@@ -143,11 +143,17 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: Field>(
         outer_is_compressed: outer.is_compressed,
         outer_is_first_in_sequence: outer.is_first_in_sequence,
         outer_is_last_in_sequence: outer.is_last_in_sequence,
+        #[cfg(feature = "implicit-carry")]
+        outer_uses_carry: outer.uses_carry,
+        #[cfg(feature = "implicit-carry")]
+        outer_produces_carry: outer.produces_carry,
         outer_pc: outer.pc,
         product_jump: product.jump_flag,
         product_branch: product.branch_flag,
         product_write_lookup_output_to_rd: product.write_lookup_output_to_rd,
         product_virtual_instruction: product.virtual_instruction,
+        #[cfg(feature = "implicit-carry")]
+        product_uses_carry: product.uses_carry,
         instruction_input_imm: instruction_input.imm,
         shift_unexpanded_pc: shift.unexpanded_pc,
         left_operand_is_rs1_value: instruction_input.left_operand_is_rs1,

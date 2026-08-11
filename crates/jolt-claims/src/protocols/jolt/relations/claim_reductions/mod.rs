@@ -2,6 +2,8 @@
 
 pub mod advice;
 pub mod bytecode;
+#[cfg(feature = "implicit-carry")]
+pub mod carry;
 pub mod hamming_weight;
 pub mod increments;
 pub mod instruction;

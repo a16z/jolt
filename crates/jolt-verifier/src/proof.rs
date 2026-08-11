@@ -117,6 +117,9 @@ pub struct JoltCommitments<C> {
     pub instruction_ra: Vec<C>,
     pub ram_ra: Vec<C>,
     pub bytecode_ra: Vec<C>,
+    /// The committed Carry column (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    pub carry: C,
 }
 
 impl<C> JoltCommitments<C> {
@@ -126,6 +129,7 @@ impl<C> JoltCommitments<C> {
         instruction_ra: Vec<C>,
         ram_ra: Vec<C>,
         bytecode_ra: Vec<C>,
+        #[cfg(feature = "implicit-carry")] carry: C,
     ) -> Self {
         Self {
             rd_inc,
@@ -133,6 +137,8 @@ impl<C> JoltCommitments<C> {
             instruction_ra,
             ram_ra,
             bytecode_ra,
+            #[cfg(feature = "implicit-carry")]
+            carry,
         }
     }
 }

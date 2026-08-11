@@ -87,6 +87,8 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                         Compact,
                     ))
                 }
+                #[cfg(feature = "implicit-carry")]
+                C::Carry => Err(not_served(id, UNSERVED_REASON)),
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
@@ -143,6 +145,8 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 | V::RamHammingWeight
                 | V::OpFlags(_)
                 | V::InstructionFlags(_) => Ok(Shape::new(self.trace_log_rows(), Dense)),
+                #[cfg(feature = "implicit-carry")]
+                V::CarryUsed | V::NextCarry => Err(not_served(id, UNSERVED_REASON)),
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)
@@ -191,6 +195,8 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 ),
                 C::TrustedAdvice => self.materialize_trusted_advice(),
                 C::UntrustedAdvice => self.materialize_untrusted_advice(),
+                #[cfg(feature = "implicit-carry")]
+                C::Carry => Err(not_served(id, UNSERVED_REASON)),
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
@@ -249,6 +255,8 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 V::LookupTableFlag(table) => {
                     self.materialize_cycle_indexed::<F, LookupTableFlag, _>(table)
                 }
+                #[cfg(feature = "implicit-carry")]
+                V::CarryUsed | V::NextCarry => Err(not_served(id, UNSERVED_REASON)),
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)

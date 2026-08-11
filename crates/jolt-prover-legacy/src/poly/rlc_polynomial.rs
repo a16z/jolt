@@ -193,6 +193,10 @@ impl<F: JoltField> RLCPolynomial<F> {
                 CommittedPolynomial::RdInc | CommittedPolynomial::RamInc => {
                     dense_polys.push((*poly_id, *coeff));
                 }
+                #[cfg(feature = "implicit-carry")]
+                CommittedPolynomial::Carry => {
+                    dense_polys.push((*poly_id, *coeff));
+                }
                 CommittedPolynomial::InstructionRa(_)
                 | CommittedPolynomial::BytecodeRa(_)
                 | CommittedPolynomial::RamRa(_) => {
@@ -677,8 +681,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     let row_idx = row_start + local_idx;
                     let chunk_start = row_idx * num_columns;
 
-                    let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
-                    let scaled_ram_inc = row_weight * setup.ram_inc_coeff;
+                    let scaled = setup.scaled_dense(row_weight);
 
                     // Split into valid trace range vs padding range.
                     let valid_end = std::cmp::min(chunk_start + num_columns, trace_len);
@@ -691,12 +694,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                     // Process valid trace elements.
                     for (col_idx, cycle) in row_cycles.iter().enumerate() {
                         if main_embedding_mode {
-                            setup.process_cycle_dense(
-                                cycle,
-                                scaled_rd_inc,
-                                scaled_ram_inc,
-                                &mut dense_accs[col_idx],
-                            );
+                            setup.process_cycle_dense(cycle, &scaled, &mut dense_accs[col_idx]);
                             setup.process_cycle_onehot_prefix(
                                 cycle,
                                 chunk_start + col_idx,
@@ -710,8 +708,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                             let row_factor = setup.row_factors[row_idx];
                             setup.process_cycle(
                                 cycle,
-                                scaled_rd_inc,
-                                scaled_ram_inc,
+                                &scaled,
                                 row_factor,
                                 &mut dense_accs[col_idx],
                                 &mut onehot_accs[col_idx],
@@ -762,19 +759,13 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                 || VmvSetup::<F>::create_accumulators(num_columns),
                 |(mut dense_accs, mut onehot_accs), (row_idx, chunk)| {
                     let row_weight = left_vec[row_idx];
-                    let scaled_rd_inc = row_weight * setup.rd_inc_coeff;
-                    let scaled_ram_inc = row_weight * setup.ram_inc_coeff;
+                    let scaled = setup.scaled_dense(row_weight);
 
                     // Process columns within chunk sequentially.
                     for (col_idx, cycle) in chunk.iter().enumerate() {
                         let cycle_idx = row_idx * num_columns + col_idx;
                         if main_embedding_mode && cycle_idx < trace_len {
-                            setup.process_cycle_dense(
-                                cycle,
-                                scaled_rd_inc,
-                                scaled_ram_inc,
-                                &mut dense_accs[col_idx],
-                            );
+                            setup.process_cycle_dense(cycle, &scaled, &mut dense_accs[col_idx]);
                             setup.process_cycle_onehot_prefix(
                                 cycle,
                                 cycle_idx,
@@ -788,8 +779,7 @@ guardrail in gen_from_trace should ensure sigma_main >= sigma_a."
                             let row_factor = setup.row_factors[row_idx];
                             setup.process_cycle(
                                 cycle,
-                                scaled_rd_inc,
-                                scaled_ram_inc,
+                                &scaled,
                                 row_factor,
                                 &mut dense_accs[col_idx],
                                 &mut onehot_accs[col_idx],
@@ -829,6 +819,9 @@ struct VmvSetup<'a, F: JoltField> {
     rd_inc_coeff: F,
     /// Coefficient for RamInc dense polynomial
     ram_inc_coeff: F,
+    /// Coefficient for the Carry dense polynomial
+    #[cfg(feature = "implicit-carry")]
+    carry_coeff: F,
     /// Row factors from left vector decomposition
     row_factors: Vec<F>,
     /// Folded one-hot tables (coeff * eq_k pre-multiplied)
@@ -838,6 +831,14 @@ struct VmvSetup<'a, F: JoltField> {
     memory_layout: &'a MemoryLayout,
     /// Reference to one-hot parameters
     one_hot_params: &'a OneHotParams,
+}
+
+/// Dense-polynomial coefficients scaled by one row weight.
+struct ScaledDense<F: JoltField> {
+    rd_inc: F,
+    ram_inc: F,
+    #[cfg(feature = "implicit-carry")]
+    carry: F,
 }
 
 impl<'a, F: JoltField> VmvSetup<'a, F> {
@@ -868,10 +869,14 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         // Extract dense coefficients
         let mut rd_inc_coeff = F::zero();
         let mut ram_inc_coeff = F::zero();
+        #[cfg(feature = "implicit-carry")]
+        let mut carry_coeff = F::zero();
         for (poly_id, coeff) in ctx.dense_polys.iter() {
             match poly_id {
                 CommittedPolynomial::RdInc => rd_inc_coeff = *coeff,
                 CommittedPolynomial::RamInc => ram_inc_coeff = *coeff,
+                #[cfg(feature = "implicit-carry")]
+                CommittedPolynomial::Carry => carry_coeff = *coeff,
                 _ => unreachable!("one-hot polynomial found in dense_polys"),
             }
         }
@@ -883,6 +888,8 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
         Self {
             rd_inc_coeff,
             ram_inc_coeff,
+            #[cfg(feature = "implicit-carry")]
+            carry_coeff,
             row_factors,
             folded_tables,
             bytecode: &ctx.preprocessing.bytecode,
@@ -917,20 +924,38 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
     }
 
     #[inline(always)]
+    /// Per-row dense coefficients pre-scaled by the row weight.
+    fn scaled_dense(&self, row_weight: F) -> ScaledDense<F> {
+        ScaledDense {
+            rd_inc: row_weight * self.rd_inc_coeff,
+            ram_inc: row_weight * self.ram_inc_coeff,
+            #[cfg(feature = "implicit-carry")]
+            carry: row_weight * self.carry_coeff,
+        }
+    }
+
     fn process_cycle_dense(
         &self,
         cycle: &Cycle,
-        scaled_rd_inc: F,
-        scaled_ram_inc: F,
+        scaled: &ScaledDense<F>,
         dense_acc: &mut MedAccumS<F>,
     ) {
         let (_, pre_value, post_value) = cycle.rd_write().unwrap_or_default();
         let diff = s64_from_diff_u64s(post_value, pre_value);
-        dense_acc.fmadd(&scaled_rd_inc, &diff);
+        dense_acc.fmadd(&scaled.rd_inc, &diff);
 
         if let tracer::instruction::RAMAccess::Write(write) = cycle.ram_access() {
             let diff = s64_from_diff_u64s(write.post_value, write.pre_value);
-            dense_acc.fmadd(&scaled_ram_inc, &diff);
+            dense_acc.fmadd(&scaled.ram_inc, &diff);
+        }
+
+        #[cfg(feature = "implicit-carry")]
+        {
+            let carry = cycle.carry();
+            if carry != 0 {
+                let value = s64_from_diff_u64s(carry, 0);
+                dense_acc.fmadd(&scaled.carry, &value);
+            }
         }
     }
 
@@ -1043,13 +1068,12 @@ impl<'a, F: JoltField> VmvSetup<'a, F> {
     fn process_cycle(
         &self,
         cycle: &Cycle,
-        scaled_rd_inc: F,
-        scaled_ram_inc: F,
+        scaled: &ScaledDense<F>,
         row_factor: F,
         dense_acc: &mut MedAccumS<F>,
         onehot_acc: &mut F::UnreducedProductAccum,
     ) {
-        self.process_cycle_dense(cycle, scaled_rd_inc, scaled_ram_inc, dense_acc);
+        self.process_cycle_dense(cycle, scaled, dense_acc);
 
         // One-hot polynomials: accumulate using pre-folded K tables (unreduced)
         let mut inner_sum = F::UnreducedMulU64::default();

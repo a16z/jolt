@@ -195,6 +195,8 @@ fn committed_polynomial_order_uses_proof_payload_order() {
     expected.extend((0..32).map(JoltCommittedPolynomial::InstructionRa));
     expected.extend((0..2).map(JoltCommittedPolynomial::RamRa));
     expected.extend((0..2).map(JoltCommittedPolynomial::BytecodeRa));
+    #[cfg(feature = "implicit-carry")]
+    expected.push(JoltCommittedPolynomial::Carry);
     expected.push(JoltCommittedPolynomial::TrustedAdvice);
     expected.push(JoltCommittedPolynomial::UntrustedAdvice);
 
@@ -279,6 +281,8 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     let rows = vec![
         TraceRow {
             instruction: instruction_row,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
             registers: RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
@@ -504,6 +508,8 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let row = TraceRow {
         instruction: instruction_row,
+        #[cfg(feature = "implicit-carry")]
+        carry: 0,
         registers: RegisterState {
             rs1: Some(RegisterRead {
                 register: 2,
@@ -922,6 +928,19 @@ fn excluded_ids_report_their_classification() {
         JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc),
         LATTICE_REASON,
     );
+    #[cfg(feature = "implicit-carry")]
+    {
+        assert_reason(
+            JoltPolynomialId::Committed(JoltCommittedPolynomial::Carry),
+            UNSERVED_REASON,
+        );
+        for id in [
+            JoltVirtualPolynomial::CarryUsed,
+            JoltVirtualPolynomial::NextCarry,
+        ] {
+            assert_reason(JoltPolynomialId::Virtual(id), UNSERVED_REASON);
+        }
+    }
 }
 
 /// [`OwnedTrace`] with the slice accessor hidden: forces the sequential
@@ -960,6 +979,8 @@ fn slice_fast_paths_match_the_sequential_fallback() {
     let rows = vec![
         TraceRow {
             instruction: instruction_row,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
             registers: RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
@@ -982,6 +1003,8 @@ fn slice_fast_paths_match_the_sequential_fallback() {
         TraceRow::default(),
         TraceRow {
             instruction: instruction_row,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
             ..Default::default()
         },
     ];

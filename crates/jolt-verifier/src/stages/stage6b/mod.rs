@@ -3,6 +3,8 @@
 pub mod batch;
 pub mod booleanity;
 pub mod bytecode_read_raf;
+#[cfg(feature = "implicit-carry")]
+pub mod carry_claim_reduction;
 pub mod committed_reduction_cycle_phase;
 pub mod inc_claim_reduction;
 pub mod instruction_ra_virtualization;
