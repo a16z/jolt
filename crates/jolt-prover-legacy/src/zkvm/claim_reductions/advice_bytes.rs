@@ -635,115 +635,135 @@ mod tests {
 
     type Challenge = <Fr as JoltField>::Challenge;
 
-    const WORD_VARS: usize = 2;
-
-    /// Drives the full round loop over a synthetic advice column and checks
+    /// Drives the full round loop over synthetic advice columns and checks
     /// every message folds the previous claim, the final claim equals the
     /// legacy verifier half's closed form, and the cached byte opening
     /// decodes directly against the column — pinning the msb-first cell
-    /// conventions non-circularly.
+    /// conventions non-circularly. Word patterns exercise mixed values,
+    /// duplicate lanes, empty advice (all-padding), and implicit padding
+    /// rows past `words.len()`.
     #[test]
     fn round_loop_reduces_to_the_byte_column_opening() {
-        let words: Vec<u64> = vec![0x0102030405060708, 0, u64::MAX, 0xdeadbeef];
-        let r_word: Vec<Challenge> = (0..WORD_VARS)
-            .map(|i| Challenge::from((31 + 7 * i as u64) as u128))
-            .collect();
-        let word_claim = MultilinearPolynomial::<Fr>::from(words.clone()).evaluate(&r_word);
+        let cases: Vec<(usize, Vec<u64>)> = vec![
+            (2, vec![0x0102030405060708, 0, u64::MAX, 0xdeadbeef]),
+            // Duplicate lanes: every row of a word hits the same byte value.
+            (2, vec![0x4242424242424242; 4]),
+            // Pure padding: the all-zero column (lane 0 hot everywhere).
+            (2, vec![]),
+            // Implicit padding rows past words.len().
+            (3, vec![0xa5, 0x00ff00ff00ff00ff, 0x8000000000000001]),
+        ];
+        for (case_index, (word_vars, words)) in cases.into_iter().enumerate() {
+            let r_word: Vec<Challenge> = (0..word_vars)
+                .map(|i| Challenge::from((31 + 7 * (i + case_index) as u64) as u128))
+                .collect();
+            let mut padded = words.clone();
+            padded.resize(1 << word_vars, 0);
+            let word_claim = MultilinearPolynomial::<Fr>::from(padded).evaluate(&r_word);
 
-        let mut accumulator = ProverOpeningAccumulator::<Fr>::new(WORD_VARS);
-        accumulator.append_untrusted_advice(
-            SumcheckId::AdviceClaimReduction,
-            OpeningPoint::new(r_word.clone()),
-            word_claim,
-        );
-
-        let mut transcript = Blake2bTranscript::new(b"advice-bytes-test");
-        let params = UntrustedAdviceReconstructionSumcheckParams::<Fr>::new(
-            WORD_VARS,
-            &accumulator,
-            &mut transcript,
-        );
-        let mut prover =
-            UntrustedAdviceReconstructionSumcheckProver::initialize(params.clone(), &words);
-
-        let mut claim = params.input_claim(&accumulator);
-        let mut challenges = Vec::new();
-        for round in 0..params.num_rounds() {
-            let message = SumcheckInstanceProver::<Fr, Blake2bTranscript>::compute_message(
-                &mut prover,
-                round,
-                claim,
+            let mut accumulator = ProverOpeningAccumulator::<Fr>::new(word_vars);
+            accumulator.append_untrusted_advice(
+                SumcheckId::AdviceClaimReduction,
+                OpeningPoint::new(r_word.clone()),
+                word_claim,
             );
-            assert_eq!(
-                message.eval_at_zero() + message.eval_at_one(),
-                claim,
-                "round {round} message must fold the previous claim"
-            );
-            let r_j = Challenge::from((211 + 13 * round) as u128);
-            claim = message.evaluate(&r_j);
-            challenges.push(r_j);
-            SumcheckInstanceProver::<Fr, Blake2bTranscript>::ingest_challenge(
-                &mut prover,
-                r_j,
-                round,
-            );
-        }
-        SumcheckInstanceProver::<Fr, Blake2bTranscript>::cache_openings(
-            &prover,
-            &mut accumulator,
-            &challenges,
-        );
 
-        // The verifier's closed form over the cached opening: the same five
-        // publics the jolt-verifier ConcreteSumcheck derives (eq splits,
-        // msb-first identity and place kernels).
-        let opening_point = params.normalize_opening_point(&challenges);
-        let (_, bytes_claim) = accumulator
-            .get_advice_opening(
-                AdviceKind::Untrusted,
-                SumcheckId::UntrustedAdviceReconstruction,
-            )
-            .unwrap();
-        let limb_bits = WORD_BYTES.log_2();
-        let point: Vec<Fr> = opening_point.r.iter().map(|&c| c.into()).collect();
-        let reference: Vec<Fr> = params.r_reference.iter().map(|&c| c.into()).collect();
-        let (r_symbol, r_limb_word) = point.split_at(BYTE_BITS);
-        let (r_limb, r_word_bound) = r_limb_word.split_at(limb_bits);
-        let r_word_field: Vec<Fr> = r_word.iter().map(|&c| c.into()).collect();
-        let eq_cell_mle: Fr = EqPolynomial::mle(&point, &reference);
-        let eq_limb_word: Fr = EqPolynomial::mle(r_limb_word, &reference[BYTE_BITS..]);
-        let eq_word: Fr = EqPolynomial::mle(r_word_bound, &r_word_field);
-        let identity_at_symbol = r_symbol
-            .iter()
-            .fold(Fr::from_u64(0), |acc, coordinate| acc + acc + *coordinate);
-        let place_at_limb =
-            r_limb
-                .iter()
-                .enumerate()
-                .fold(Fr::from_u64(1), |acc, (position, coordinate)| {
-                    let weight = 1usize << (limb_bits - 1 - position);
-                    let place = Fr::from_u64(1u64 << (8 * weight));
-                    acc * ((place - Fr::from_u64(1)) * *coordinate + Fr::from_u64(1))
-                });
-        let gamma = params.gamma;
-        let expected = eq_cell_mle * (bytes_claim.square() - bytes_claim)
-            + gamma * eq_limb_word * bytes_claim
-            + gamma * gamma * identity_at_symbol * place_at_limb * eq_word * bytes_claim;
-        assert_eq!(claim, expected, "final claim must equal the closed form");
+            let mut transcript = Blake2bTranscript::new(b"advice-bytes-test");
+            let params = UntrustedAdviceReconstructionSumcheckParams::<Fr>::new(
+                word_vars,
+                &accumulator,
+                &mut transcript,
+            );
+            let mut prover =
+                UntrustedAdviceReconstructionSumcheckProver::initialize(params.clone(), &words);
 
-        // The cached opening must equal the byte column evaluated directly at
-        // the produced msb-first cell point.
-        let cell_vars = word_byte_num_vars(WORD_VARS);
-        let eq_cell = EqPolynomial::<Fr>::evals(&opening_point.r);
-        let limb_bits = WORD_BYTES.log_2();
-        let mut direct = Fr::from_u64(0);
-        for limb in 0..WORD_BYTES {
-            for (word_index, word) in words.iter().enumerate() {
-                let byte = ((word >> (8 * limb)) & 0xff) as usize;
-                direct += eq_cell[(((byte << limb_bits) | limb) << WORD_VARS) | word_index];
+            let mut claim = params.input_claim(&accumulator);
+            let mut challenges = Vec::new();
+            for round in 0..params.num_rounds() {
+                let message = SumcheckInstanceProver::<Fr, Blake2bTranscript>::compute_message(
+                    &mut prover,
+                    round,
+                    claim,
+                );
+                assert_eq!(
+                    message.eval_at_zero() + message.eval_at_one(),
+                    claim,
+                    "case {case_index} round {round}: message must fold the previous claim"
+                );
+                let r_j = Challenge::from((211 + 13 * (round + case_index)) as u128);
+                claim = message.evaluate(&r_j);
+                challenges.push(r_j);
+                SumcheckInstanceProver::<Fr, Blake2bTranscript>::ingest_challenge(
+                    &mut prover,
+                    r_j,
+                    round,
+                );
             }
+            SumcheckInstanceProver::<Fr, Blake2bTranscript>::cache_openings(
+                &prover,
+                &mut accumulator,
+                &challenges,
+            );
+
+            // The verifier's closed form over the cached opening: the same five
+            // publics the jolt-verifier ConcreteSumcheck derives (eq splits,
+            // msb-first identity and place kernels).
+            let opening_point = params.normalize_opening_point(&challenges);
+            let (_, bytes_claim) = accumulator
+                .get_advice_opening(
+                    AdviceKind::Untrusted,
+                    SumcheckId::UntrustedAdviceReconstruction,
+                )
+                .unwrap();
+            let limb_bits = WORD_BYTES.log_2();
+            let point: Vec<Fr> = opening_point.r.iter().map(|&c| c.into()).collect();
+            let reference: Vec<Fr> = params.r_reference.iter().map(|&c| c.into()).collect();
+            let (r_symbol, r_limb_word) = point.split_at(BYTE_BITS);
+            let (r_limb, r_word_bound) = r_limb_word.split_at(limb_bits);
+            let r_word_field: Vec<Fr> = r_word.iter().map(|&c| c.into()).collect();
+            let eq_cell_mle: Fr = EqPolynomial::mle(&point, &reference);
+            let eq_limb_word: Fr = EqPolynomial::mle(r_limb_word, &reference[BYTE_BITS..]);
+            let eq_word: Fr = EqPolynomial::mle(r_word_bound, &r_word_field);
+            let identity_at_symbol = r_symbol
+                .iter()
+                .fold(Fr::from_u64(0), |acc, coordinate| acc + acc + *coordinate);
+            let place_at_limb =
+                r_limb
+                    .iter()
+                    .enumerate()
+                    .fold(Fr::from_u64(1), |acc, (position, coordinate)| {
+                        let weight = 1usize << (limb_bits - 1 - position);
+                        let place = Fr::from_u64(1u64 << (8 * weight));
+                        acc * ((place - Fr::from_u64(1)) * *coordinate + Fr::from_u64(1))
+                    });
+            let gamma = params.gamma;
+            let expected = eq_cell_mle * (bytes_claim.square() - bytes_claim)
+                + gamma * eq_limb_word * bytes_claim
+                + gamma * gamma * identity_at_symbol * place_at_limb * eq_word * bytes_claim;
+            assert_eq!(
+                claim, expected,
+                "case {case_index}: final claim must equal the closed form"
+            );
+
+            // The cached opening must equal the byte column evaluated directly
+            // at the produced msb-first cell point; padding rows past
+            // words.len() decode as zero words (lane 0 hot).
+            let cell_vars = word_byte_num_vars(word_vars);
+            let eq_cell = EqPolynomial::<Fr>::evals(&opening_point.r);
+            let limb_bits = WORD_BYTES.log_2();
+            let mut direct = Fr::from_u64(0);
+            for limb in 0..WORD_BYTES {
+                for word_index in 0..(1usize << word_vars) {
+                    let word = words.get(word_index).copied().unwrap_or(0);
+                    let byte = ((word >> (8 * limb)) & 0xff) as usize;
+                    direct += eq_cell[(((byte << limb_bits) | limb) << word_vars) | word_index];
+                }
+            }
+            assert_eq!(cell_vars, opening_point.len());
+            assert_eq!(
+                bytes_claim, direct,
+                "case {case_index}: byte opening must decode the column"
+            );
         }
-        assert_eq!(cell_vars, opening_point.len());
-        assert_eq!(bytes_claim, direct, "byte opening must decode the column");
     }
 }
