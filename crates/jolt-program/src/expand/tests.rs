@@ -458,6 +458,8 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // LRW/SCW, which recursively embed the word-load expansion. A further 60
     // (LB/LBU/LH/LHU/LWU, 12 each) were re-baselined when the remaining loads
     // moved to their window-mask + parallel-extract sequences.
+    // A further 27 (SB/SH/SW, 8 each, plus 3 SCW) were re-baselined when the
+    // narrow stores moved to the window-mask + ANDN + shift-data sequences.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a

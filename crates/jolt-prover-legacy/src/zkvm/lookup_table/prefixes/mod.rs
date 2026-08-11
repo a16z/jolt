@@ -8,6 +8,7 @@ use negative_divisor_equals_remainder::NegativeDivisorEqualsRemainderPrefix;
 use negative_divisor_greater_than_remainder::NegativeDivisorGreaterThanRemainderPrefix;
 use negative_divisor_zero_remainder::NegativeDivisorZeroRemainderPrefix;
 use num_derive::FromPrimitive;
+use offset_scale::OffsetScalePrefix;
 use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
 use pow2::Pow2Prefix;
@@ -17,6 +18,7 @@ use rayon::prelude::*;
 use rev8w::Rev8WPrefix;
 use right_shift::RightShiftPrefix;
 use right_shift_w::RightShiftWPrefix;
+use shift_data::ShiftDataPrefix;
 use sign_extension::SignExtensionPrefix;
 use sign_extension_right_operand::SignExtensionRightOperandPrefix;
 use sign_extension_upper_half::SignExtensionUpperHalfPrefix;
@@ -73,6 +75,7 @@ pub mod lt;
 pub mod negative_divisor_equals_remainder;
 pub mod negative_divisor_greater_than_remainder;
 pub mod negative_divisor_zero_remainder;
+pub mod offset_scale;
 pub mod or;
 pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
@@ -87,6 +90,7 @@ pub mod right_operand;
 pub mod right_operand_w;
 pub mod right_shift;
 pub mod right_shift_w;
+pub mod shift_data;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
@@ -196,6 +200,12 @@ pub enum Prefixes {
     WindowSignPow2,
     Pow2OffsetB,
     Pow2OffsetH,
+    ShiftDataB,
+    ShiftDataH,
+    ShiftDataW,
+    OffsetScaleB,
+    OffsetScaleH,
+    OffsetScaleW,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -353,6 +363,24 @@ impl Prefixes {
             }
             Prefixes::Pow2OffsetH => {
                 Pow2OffsetPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataB => {
+                ShiftDataPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataH => {
+                ShiftDataPrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::ShiftDataW => {
+                ShiftDataPrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleB => {
+                OffsetScalePrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleH => {
+                OffsetScalePrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::OffsetScaleW => {
+                OffsetScalePrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j)
             }
         };
         PrefixEval(eval)
@@ -706,6 +734,48 @@ impl Prefixes {
                 suffix_len,
             ),
             Prefixes::Pow2OffsetH => Pow2OffsetPrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ShiftDataB => ShiftDataPrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ShiftDataH => ShiftDataPrefix::<XLEN, 2>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ShiftDataW => ShiftDataPrefix::<XLEN, 4>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleB => OffsetScalePrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleH => OffsetScalePrefix::<XLEN, 2>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::OffsetScaleW => OffsetScalePrefix::<XLEN, 4>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
                 r_y,

@@ -233,6 +233,18 @@ fn modular_lookup_table_indices_match_prover_abi() {
             LookupTableKind::<XLEN>::WindowMaskH(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::WindowMaskH(Default::default())),
         ),
+        (
+            LookupTableKind::<XLEN>::ShiftDataB(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::ShiftDataB(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::ShiftDataH(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::ShiftDataH(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::ShiftDataW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::ShiftDataW(Default::default())),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());

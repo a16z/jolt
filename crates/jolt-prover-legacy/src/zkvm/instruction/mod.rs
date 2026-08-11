@@ -354,6 +354,9 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstruction::Pext(_) => LookupTables::Pext(Default::default()),
             JoltInstruction::WindowMaskB(_) => LookupTables::WindowMaskB(Default::default()),
             JoltInstruction::WindowMaskH(_) => LookupTables::WindowMaskH(Default::default()),
+            JoltInstruction::ShiftDataB(_) => LookupTables::ShiftDataB(Default::default()),
+            JoltInstruction::ShiftDataH(_) => LookupTables::ShiftDataH(Default::default()),
+            JoltInstruction::ShiftDataW(_) => LookupTables::ShiftDataW(Default::default()),
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -505,7 +508,8 @@ define_rv64imac_trait_impls! {
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
         VirtualWindowMaskW, VirtualPextSigned,
-        VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH
+        VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
+        VirtualShiftDataB, VirtualShiftDataH, VirtualShiftDataW
     ]
 }
 
@@ -562,6 +566,9 @@ pub mod virtual_pow2w;
 pub mod virtual_rev8w;
 pub mod virtual_rotri;
 pub mod virtual_rotriw;
+pub mod virtual_shift_data_b;
+pub mod virtual_shift_data_h;
+pub mod virtual_shift_data_w;
 pub mod virtual_shift_right_bitmask;
 pub mod virtual_shift_right_bitmaski;
 pub mod virtual_sign_extend_word;
