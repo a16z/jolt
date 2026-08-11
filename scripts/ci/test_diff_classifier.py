@@ -72,6 +72,8 @@ class ClassifyPathTests(unittest.TestCase):
         # helper infrastructure even when not cfg(test)-gated.
         self.assertEqual(classify_path("tracer/src/instruction/test.rs"), "tests")
         self.assertEqual(classify_path("crates/foo/src/bench.rs"), "tests")
+        # Test-named source files in other languages count too.
+        self.assertEqual(classify_path("scripts/ci/test_diff_classifier.py"), "tests")
         self.assertIsNone(classify_path("crates/foo/src/attest.rs"))
         self.assertIsNone(classify_path("crates/foo/src/latest.rs"))
         # Non-data files under tests/ are test code.

@@ -11,8 +11,8 @@ to the total diff. Classification order (first match wins):
 2. docs — `*.md`/`*.mdx` anywhere, and anything under a docs/, specs/, or
    book/ directory component.
 3. tests (file level) — anything under a tests/ or benches/ directory
-   component, or Rust files named like tests (test_*.rs, *_test.rs,
-   *_tests.rs, tests.rs, *_bench.rs, bench_*.rs, benches.rs).
+   component, or source files named like tests (test.rs, tests.rs,
+   test_*.py, *_test.rs, *_tests.rs, bench*.rs, *_bench.rs, ...).
 4. mixed Rust files (line level) — lines inside `#[cfg(test)]` items /
    `#[test]`-attributed functions are tests (a test region wins over a doc
    comment inside it); remaining pure doc-comment lines (`///`, `//!`) are
@@ -89,9 +89,11 @@ DOC_DIR_COMPONENTS = {"docs", "specs", "book"}
 
 DOC_EXTENSIONS = {".md", ".mdx"}
 
-TEST_FILE_NAMES = re.compile(
-    r"^(?:tests?|test_.*|.*_tests?|bench(?:es)?|bench_.*|.*_bench)\.rs$"
+# Source files named like tests (any implementation language).
+TEST_FILE_STEM = re.compile(
+    r"^(?:tests?|test_.*|.*_tests?|bench(?:es)?|bench_.*|.*_bench)$"
 )
+TEST_FILE_EXTENSIONS = {".rs", ".py", ".sh", ".go", ".js", ".ts"}
 
 # #[test], #[tokio::test], #[test_case(...)], #[rstest], ... — an attribute
 # whose final path segment is `test`-like marks the following item as a test.
@@ -126,7 +128,7 @@ def classify_path(path: str) -> str | None:
     # 3. tests (file level)
     if dirs & TEST_DIR_COMPONENTS:
         return "tests"
-    if ext == ".rs" and TEST_FILE_NAMES.match(basename):
+    if ext in TEST_FILE_EXTENSIONS and TEST_FILE_STEM.match(basename[: -len(ext)]):
         return "tests"
 
     # 4. mixed Rust file — defer to line-level analysis
