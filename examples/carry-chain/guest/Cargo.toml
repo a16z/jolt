@@ -1,0 +1,22 @@
+[package]
+name = "carry-chain-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+implicit-carry = ["jolt/implicit-carry"]
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "carry-chain-guest"
+path = "src/main.rs"
+test = false
+bench = false

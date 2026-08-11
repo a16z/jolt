@@ -411,6 +411,14 @@ pub fn next_carry_outer() -> JoltOpeningId {
     )
 }
 
+#[cfg(feature = "implicit-carry")]
+pub fn product_carry_used_outer_opening() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::CarryUsed,
+        JoltRelationId::SpartanOuter,
+    )
+}
+
 pub fn left_instruction_input_product() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::LeftInstructionInput,

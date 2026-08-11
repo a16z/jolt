@@ -15,6 +15,18 @@ compile_error!(
      packed commitment axis (a lattice-friendly hiding commitment is a future workstream)"
 );
 
+#[cfg(all(feature = "implicit-carry", feature = "akita"))]
+compile_error!(
+    "the `implicit-carry` and `akita` features are mutually exclusive for now: the packed \
+     witness layout has no Carry column (see specs/implicit-carry-handling.md)"
+);
+
+#[cfg(all(feature = "implicit-carry", feature = "zk"))]
+compile_error!(
+    "`implicit-carry` + `zk` is not supported yet: the BlindFold constraints for the carry \
+     relations are staged for a follow-up and fail closed until then"
+);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZkConfig {
     Transparent,
@@ -37,6 +49,20 @@ pub enum CommitmentConfig {
 pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
     pub commitment: CommitmentConfig,
+    /// The ISA axis: present only in implicit-carry builds so the feature-off
+    /// wire format is unchanged. Cross-build proofs fail closed at
+    /// deserialization (the config frames differ).
+    #[cfg(feature = "implicit-carry")]
+    pub isa: IsaConfig,
+}
+
+/// The ISA axis of the protocol (implicit-carry builds only).
+#[cfg(feature = "implicit-carry")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IsaConfig {
+    /// RV64IMAC extended with the ADDC/MULC implicit-carry instructions and
+    /// the carry proof machinery.
+    Rv64imacImplicitCarry,
 }
 
 impl JoltProtocolConfig {
@@ -48,6 +74,8 @@ impl JoltProtocolConfig {
                 ZkConfig::Transparent
             },
             commitment: SELECTED_COMMITMENT_CONFIG,
+            #[cfg(feature = "implicit-carry")]
+            isa: IsaConfig::Rv64imacImplicitCarry,
         }
     }
 }
@@ -68,6 +96,8 @@ pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Homom
 pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
     zk: SELECTED_ZK_CONFIG,
     commitment: SELECTED_COMMITMENT_CONFIG,
+    #[cfg(feature = "implicit-carry")]
+    isa: IsaConfig::Rv64imacImplicitCarry,
 };
 
 pub fn validate_proof_config(

@@ -3587,6 +3587,145 @@ mod tests {
         eprintln!("dory verify: {:.2?}", verify_start.elapsed());
     }
 
+    /// End-to-end prove+verify over a guest exercising every
+    /// `{ADD, MUL} -> {ADDC, MULC}` implicit-carry pairing via `.insn`
+    /// assembly, with the guest output checked against a u128-arithmetic
+    /// reference; plus carry-specific tamper rejection.
+    #[cfg(feature = "implicit-carry")]
+    #[test]
+    #[serial]
+    fn carry_chain_e2e_dory() {
+        DoryGlobals::reset();
+        let mut program = host::Program::new("carry-chain-guest");
+        program.enable_implicit_carry();
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (a, b, c) = (u64::MAX - 5, u64::MAX / 3, 0x8000_0000_0000_0001u64);
+        let inputs = postcard::to_stdvec(&(a, b, c)).unwrap();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        // Mirrors examples/carry-chain/guest's reference in u128 arithmetic.
+        fn carry_chain_reference(a: u64, b: u64, c: u64) -> u64 {
+            let sum = a as u128 + b as u128;
+            let add_lo = sum as u64;
+            let add_hi = (c as u128 + a as u128 + (sum >> 64)) as u64;
+            let product = a as u128 * b as u128;
+            let (mul_lo, mul_hi) = (product as u64, (product >> 64) as u64);
+            let mac = b as u128 * c as u128 + ((a as u128 + b as u128) >> 64);
+            let (addc_lo, addc_hi) = (mac as u64, (mac >> 64) as u64);
+            let product = a as u128 * c as u128;
+            let mulc_lo = product as u64;
+            let mulc_hi = (b as u128 * c as u128 + (product >> 64)) as u64;
+            add_lo
+                .wrapping_mul(3)
+                .wrapping_add(add_hi.wrapping_mul(5))
+                .wrapping_add(mul_lo.wrapping_mul(7))
+                .wrapping_add(mul_hi.wrapping_mul(11))
+                .wrapping_add(addc_lo.wrapping_mul(13))
+                .wrapping_add(addc_hi.wrapping_mul(17))
+                .wrapping_add(mulc_lo.wrapping_mul(19))
+                .wrapping_add(mulc_hi.wrapping_mul(23))
+        }
+        let expected = carry_chain_reference(a, b, c);
+        let actual: u64 =
+            postcard::from_bytes(&io_device.outputs).expect("guest output should decode as u64");
+        assert_eq!(
+            actual, expected,
+            "guest carry chains disagree with the u128 reference"
+        );
+
+        let (shared_preprocessing, _program_data) = test_shared_preprocessing(
+            bytecode,
+            init_memory_state,
+            e_entry,
+            io_device.memory_layout.clone(),
+            1 << 16,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, _debug_info) = prover
+            .prove()
+            .expect("prover should produce verifier-native proof");
+
+        // Tamper coverage across the distinct carry grounding paths: each
+        // mutation must be rejected.
+        let tamper =
+            |mutate: &dyn Fn(&mut jolt_verifier::proof::ClearProofClaims<jolt_field::Fr>)| {
+                let mut tampered = jolt_proof.clone();
+                let jolt_verifier::proof::JoltProofClaims::Clear(claims) = &mut tampered.claims
+                else {
+                    panic!("clear proofs carry clear claims");
+                };
+                mutate(claims);
+                tampered
+            };
+        let one = <jolt_field::Fr as jolt_field::FromPrimitiveInt>::from_u64(1);
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage1.outer.outer_remainder.next_carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered outer NextCarry claim must be rejected"
+        );
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage2.batch_outputs.product_remainder.uses_carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered product-remainder UsesCarry claim must be rejected"
+        );
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage2.batch_outputs.product_remainder.carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered product-remainder committed Carry claim must be rejected"
+        );
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage3.shift.carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered shift Carry claim must be rejected"
+        );
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage6b.carry_claim_reduction.carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered reduced Carry final claim must be rejected"
+        );
+
+        verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
+    }
+
     #[test]
     #[serial]
     fn muldiv_e2e_dory() {
