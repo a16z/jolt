@@ -59,12 +59,16 @@ impl<'a, F: Field> R1csSource<'a, F> {
 
         let compute_cycle = |(c, chunk): (usize, &mut [F])| {
             let w_base = c * v_pad;
-            for (k, row) in matrix.iter().enumerate() {
+            for (slot, row) in chunk.iter_mut().zip(matrix) {
                 let mut acc = F::zero();
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "witness covers num_cycles * v_pad entries and column indices are below num_vars <= v_pad by the ConstraintMatrices invariant"
+                )]
                 for &(j, coeff) in row {
                     acc += coeff * self.witness[w_base + j];
                 }
-                chunk[k] = acc;
+                *slot = acc;
             }
         };
 
@@ -120,6 +124,10 @@ impl<'a, F: Field> R1csSource<'a, F> {
                 );
                 let v_pad = self.key.num_vars_padded;
                 let mut out = Vec::with_capacity(self.key.num_cycles);
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "var_idx < num_vars <= v_pad is asserted above and witness covers num_cycles * v_pad entries"
+                )]
                 let fill = |dst: &mut [F]| {
                     #[cfg(feature = "parallel")]
                     {
@@ -144,6 +152,7 @@ impl<'a, F: Field> R1csSource<'a, F> {
 }
 
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;

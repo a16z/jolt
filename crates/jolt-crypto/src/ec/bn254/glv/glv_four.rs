@@ -48,6 +48,10 @@ pub(crate) fn shamir_glv_mul_4d(
     for bit_idx in (0..max_bits).rev() {
         result = result.double();
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "i < 4 from enumerating fixed-size-4 arrays; signs is also [bool; 4]"
+        )]
         for (i, (coeff, &base)) in coeffs.iter().zip(bases.iter()).enumerate() {
             if coeff.get_bit(bit_idx) {
                 if signs[i] {

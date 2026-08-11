@@ -55,7 +55,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
+    let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = TraceDimensions::new(log_t);
 
     // The shift/register relations evaluate their `EqPlusOne`/`EqSpartan` publics

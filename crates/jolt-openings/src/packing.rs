@@ -301,7 +301,12 @@ where
                 self.packed_num_vars
             )));
         }
-        Ok(packed_point[slot.prefix.len()..].to_vec())
+        packed_point
+            .get(slot.prefix.len()..)
+            .map(<[F]>::to_vec)
+            .ok_or_else(|| {
+                OpeningsError::InvalidBatch("slot prefix exceeds the packed point arity".to_owned())
+            })
     }
 
     pub fn prepare_statement<'a, F, C>(
@@ -375,6 +380,10 @@ where
 {
     type Output = PrefixSlot;
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "Index forwards the BTreeMap panic-on-missing-key contract"
+    )]
     fn index(&self, id: &Id) -> &Self::Output {
         &self.slots[id]
     }
@@ -434,24 +443,36 @@ where
         for ((evaluation, slot), alpha_i) in self.ordered_claims.iter().zip(alpha) {
             let offset = slot.packed_index(0);
             let evals = EqPolynomial::evals(evaluation.point.as_slice(), Some(*alpha_i));
-            table[offset..offset + evals.len()].copy_from_slice(&evals);
+            // The zip write would silently truncate an oversized subcube;
+            // keep that structurally impossible case loud.
+            debug_assert!(
+                evals.len() <= table.len().saturating_sub(offset),
+                "slot subcube exceeds the packed selector table"
+            );
+            for (cell, eval) in table.iter_mut().skip(offset).zip(evals) {
+                *cell = eval;
+            }
         }
         table
     }
 
     /// Evaluates the batched selector `E` at an arbitrary packed point.
-    pub fn selector_eval(&self, alpha: &[F], packed_point: &[F]) -> F {
+    pub fn selector_eval(&self, alpha: &[F], packed_point: &[F]) -> Result<F, OpeningsError> {
         debug_assert_eq!(self.ordered_claims.len(), alpha.len());
-        self.ordered_claims.iter().zip(alpha).fold(
+        self.ordered_claims.iter().zip(alpha).try_fold(
             F::zero(),
             |acc, ((evaluation, slot), alpha_i)| {
-                let prefix_len = slot.prefix.len();
-                acc + *alpha_i
-                    * eq_index_msb(&packed_point[..prefix_len], slot.prefix_index() as u128)
-                    * EqPolynomial::<F>::mle(
-                        &packed_point[prefix_len..],
-                        evaluation.point.as_slice(),
-                    )
+                let (prefix_part, logical_part) = packed_point
+                    .split_at_checked(slot.prefix.len())
+                    .ok_or_else(|| {
+                        OpeningsError::InvalidBatch(
+                            "slot prefix exceeds the packed point arity".to_owned(),
+                        )
+                    })?;
+                Ok(acc
+                    + *alpha_i
+                        * eq_index_msb(prefix_part, slot.prefix_index() as u128)
+                        * EqPolynomial::<F>::mle(logical_part, evaluation.point.as_slice()))
             },
         )
     }
@@ -560,17 +581,30 @@ impl<'a, F: Field> SparseSelectorSlot<'a, F> {
             (block, self.point)
         } else {
             debug_assert_eq!(self.prefix.len() + self.point.len() - bound, remaining_vars);
-            (0, &self.point[bound - self.prefix.len()..])
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "bound stays below prefix.len() + point.len(): one bind per round of a (prefix + point)-variable sumcheck"
+            )]
+            let tail = &self.point[bound - self.prefix.len()..];
+            (0, tail)
         }
     }
 
     fn bind(&mut self, bound: usize, r: F) {
-        if bound < self.prefix.len() {
-            self.scalar *= if self.prefix[bound] { r } else { F::one() - r };
+        self.scalar *= if let Some(&bit) = self.prefix.get(bound) {
+            if bit {
+                r
+            } else {
+                F::one() - r
+            }
         } else {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "bound stays below prefix.len() + point.len(): one bind per round of a (prefix + point)-variable sumcheck"
+            )]
             let gamma = self.point[bound - self.prefix.len()];
-            self.scalar *= (F::one() - r) * (F::one() - gamma) + r * gamma;
-        }
+            (F::one() - r) * (F::one() - gamma) + r * gamma
+        };
     }
 }
 
@@ -589,13 +623,13 @@ impl<F: Field> RoundSelectorSlot<F> {
     fn new(slot: &SparseSelectorSlot<'_, F>, bound: usize, remaining_vars: usize) -> Self {
         let (block, point) = slot.remaining(bound, remaining_vars);
         let low_vars = point.len() / 2;
-        let split = point.len() - low_vars;
+        let (high_point, low_point) = point.split_at(point.len() - low_vars);
         Self {
             block,
             logical_vars: point.len(),
             low_vars,
-            high: EqPolynomial::evals(&point[..split], Some(slot.scalar)),
-            low: EqPolynomial::evals(&point[split..], None),
+            high: EqPolynomial::evals(high_point, Some(slot.scalar)),
+            low: EqPolynomial::evals(low_point, None),
         }
     }
 }
@@ -625,12 +659,20 @@ impl<'a, F: Field> GroupedRoundSelector<'a, F> {
                     ));
                     groups.len() - 1
                 });
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "the group at `position` was just found or pushed, and slot.block < 2^(remaining − logical) per SparseSelectorSlot::remaining"
+            )]
             groups[position].1[slot.block].push(slot_index as u32);
         }
         Self { groups, slots }
     }
 
     #[inline]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "hot probe: index < 2^remaining, each group table has 2^(remaining − logical) buckets holding indices into `slots`, and the eq half-tables are sized to the slot's split"
+    )]
     fn value_at(&self, index: usize) -> F {
         let mut acc = F::zero();
         for (logical_vars, table) in &self.groups {
@@ -668,7 +710,13 @@ fn materialize_remaining<F: Field>(
         .for_each(|(index, cell)| *cell = grouped.value_at(index));
     let mut witness: Vec<F> = unsafe_allocate_zero_vec(size);
     for &index in positions {
-        witness[index & (size - 1)] += bound_weights[index >> remaining_vars];
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "index & (size − 1) < size by masking, and index >> remaining_vars < 2^bound = bound_weights.len() since index < 2^(bound + remaining_vars)"
+        )]
+        {
+            witness[index & (size - 1)] += bound_weights[index >> remaining_vars];
+        }
     }
     (selector, witness)
 }
@@ -780,6 +828,10 @@ impl<'a, F: Field> SparseReductionInstance<'a, F> {
             .fold(
                 || [F::zero(); 3],
                 |mut acc, &index| {
+                    #[expect(
+                        clippy::indexing_slicing,
+                        reason = "hot per-position fold: index >> remaining_vars < 2^bound = bound_weights.len() since index < 2^num_vars"
+                    )]
                     let weight = bound_weights[index >> weight_shift];
                     let low_index = index & (half - 1);
                     let selector_low = selector.value_at(low_index);
@@ -818,6 +870,10 @@ impl<'a, F: Field> SparseReductionInstance<'a, F> {
     }
 
     /// The packed witness's evaluation at the fully bound point.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fully bound: the dense table has exactly one evaluation and every position indexes the complete 2^num_vars weight table"
+    )]
     fn final_eval(&self) -> F {
         debug_assert_eq!(self.bound, self.num_vars, "instance is not fully bound");
         if let Some((_, witness)) = &self.dense {
@@ -1109,52 +1165,74 @@ where
     let evaluations: Vec<PCS::Field> = tables
         .iter()
         .map(|table| match &table.state {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "a fully bound polynomial has exactly one evaluation"
+            )]
             ObjectState::Dense { witness, .. } => witness.evaluations()[0],
             ObjectState::Sparse(instance) => instance.final_eval(),
         })
         .collect();
     for (table, evaluation) in tables.iter().zip(&evaluations) {
-        let suffix = &point[table.padding_rounds..];
+        let suffix = point.get(table.padding_rounds..).ok_or_else(|| {
+            OpeningsError::InvalidBatch(
+                "object padding exceeds the reduction point arity".to_owned(),
+            )
+        })?;
         EvaluationClaim::new(suffix.to_vec(), *evaluation).append_to_transcript(transcript);
     }
+    let group_range_error = || {
+        OpeningsError::InvalidBatch("packed object group extends past the object list".to_owned())
+    };
     let mut openings = Vec::with_capacity(groups.len());
     for group in groups {
         let members = group.start..group.start + group.len;
-        if group.len == 1 {
-            let object = &objects[group.start];
+        let group_objects = objects.get(members.clone()).ok_or_else(group_range_error)?;
+        let group_tables = tables.get(members.clone()).ok_or_else(group_range_error)?;
+        let group_evaluations = evaluations.get(members).ok_or_else(group_range_error)?;
+        let (Some(first_object), Some(first_table)) = (group_objects.first(), group_tables.first())
+        else {
+            return Err(group_range_error());
+        };
+        let padding = first_table.padding_rounds;
+        if group_tables
+            .iter()
+            .any(|table| table.padding_rounds != padding)
+        {
+            return Err(OpeningsError::InvalidBatch(
+                "packed object group members must share one opening point arity".to_owned(),
+            ));
+        }
+        let suffix = point.get(padding..).ok_or_else(|| {
+            OpeningsError::InvalidBatch(
+                "object padding exceeds the reduction point arity".to_owned(),
+            )
+        })?;
+        if let ([object], [evaluation]) = (group_objects, group_evaluations) {
             openings.push(PCS::open(
                 object.polynomial,
-                &point[tables[group.start].padding_rounds..],
-                evaluations[group.start],
+                suffix,
+                *evaluation,
                 object.setup,
                 group.hint,
                 transcript,
             )?);
             continue;
         }
-        let padding = tables[group.start].padding_rounds;
-        if members
-            .clone()
-            .any(|index| tables[index].padding_rounds != padding)
-        {
-            return Err(OpeningsError::InvalidBatch(
-                "packed object group members must share one opening point arity".to_owned(),
-            ));
-        }
         let hint = group.hint.ok_or_else(|| {
             OpeningsError::InvalidBatch(
                 "packed object group is missing its group commit hint".to_owned(),
             )
         })?;
-        let polynomials: Vec<&dyn MultilinearPoly<PCS::Field>> = members
-            .clone()
-            .map(|index| objects[index].polynomial)
+        let polynomials: Vec<&dyn MultilinearPoly<PCS::Field>> = group_objects
+            .iter()
+            .map(|object| object.polynomial)
             .collect();
         openings.push(PCS::open_batch(
             &polynomials,
-            &point[padding..],
-            &evaluations[members.clone()],
-            objects[group.start].setup,
+            suffix,
+            group_evaluations,
+            first_object.setup,
             hint,
             transcript,
         )?);
@@ -1236,41 +1314,64 @@ where
         .zip(&coefficients)
         .zip(objects.iter().zip(&proof.evaluations))
     {
-        let suffix = &point[max_num_vars - object.packing.packed_num_vars..];
+        let suffix = point
+            .get(max_num_vars - object.packing.packed_num_vars..)
+            .ok_or_else(|| {
+                OpeningsError::InvalidBatch(
+                    "object padding exceeds the reduction point arity".to_owned(),
+                )
+            })?;
         EvaluationClaim::new(suffix.to_vec(), *evaluation).append_to_transcript(transcript);
-        expected_final_claim += *coefficient * statement.selector_eval(alpha, suffix) * *evaluation;
+        expected_final_claim +=
+            *coefficient * statement.selector_eval(alpha, suffix)? * *evaluation;
     }
     if final_claim != expected_final_claim {
         return Err(OpeningsError::VerificationFailed);
     }
 
+    let group_range_error = || {
+        OpeningsError::InvalidBatch("packed object group extends past the object list".to_owned())
+    };
     for (group, opening) in groups.iter().zip(&proof.openings) {
         let members = group.start..group.start + group.len;
-        let first = &objects[group.start];
-        let suffix = &point[max_num_vars - first.packing.packed_num_vars..];
-        if group.len == 1 {
-            PCS::verify(
-                &first.statement.commitment,
-                suffix,
-                proof.evaluations[group.start],
-                opening,
-                first.setup,
-                transcript,
-            )?;
-            continue;
-        }
-        if members
-            .clone()
-            .any(|index| objects[index].packing.packed_num_vars != first.packing.packed_num_vars)
+        let group_objects = objects.get(members.clone()).ok_or_else(group_range_error)?;
+        let group_evaluations = proof
+            .evaluations
+            .get(members)
+            .ok_or_else(group_range_error)?;
+        let Some(first) = group_objects.first() else {
+            return Err(group_range_error());
+        };
+        if group_objects
+            .iter()
+            .any(|object| object.packing.packed_num_vars != first.packing.packed_num_vars)
         {
             return Err(OpeningsError::InvalidBatch(
                 "packed object group members must share one opening point arity".to_owned(),
             ));
         }
+        let suffix = point
+            .get(max_num_vars - first.packing.packed_num_vars..)
+            .ok_or_else(|| {
+                OpeningsError::InvalidBatch(
+                    "object padding exceeds the reduction point arity".to_owned(),
+                )
+            })?;
+        if let ([object], [evaluation]) = (group_objects, group_evaluations) {
+            PCS::verify(
+                &object.statement.commitment,
+                suffix,
+                *evaluation,
+                opening,
+                object.setup,
+                transcript,
+            )?;
+            continue;
+        }
         PCS::verify_batch(
             &first.statement.commitment,
             suffix,
-            &proof.evaluations[members],
+            group_evaluations,
             opening,
             first.setup,
             transcript,
@@ -1337,6 +1438,7 @@ fn coefficient_count(num_vars: usize) -> Result<usize, OpeningsError> {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};

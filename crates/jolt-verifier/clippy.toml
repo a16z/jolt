@@ -1,0 +1,51 @@
+# Numeric discipline for the verifier crate (specs/verifier-closure-lints.md,
+# tier 4). Field-element and verifier-expression arithmetic is side-effect
+# free (modular, no overflow), so it is exempted from
+# `clippy::arithmetic_side_effects`; primitive integer arithmetic is not.
+arithmetic-side-effects-allowed = ["F", "jolt_field::Fr", "jolt_claims::Expr"]
+
+disallowed-methods = [
+  { path = "u32::wrapping_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u32::wrapping_sub", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u32::wrapping_mul", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u32::wrapping_neg", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u32::wrapping_shl", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u32::wrapping_shr", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u32::unchecked_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u32::unchecked_sub", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u32::unchecked_mul", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::wrapping_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::wrapping_sub", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::wrapping_mul", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::wrapping_neg", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::wrapping_shl", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::wrapping_shr", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::unchecked_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::unchecked_sub", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "u64::unchecked_mul", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::wrapping_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::wrapping_sub", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::wrapping_mul", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::wrapping_neg", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::wrapping_shl", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::wrapping_shr", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::unchecked_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::unchecked_sub", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "usize::unchecked_mul", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::wrapping_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::wrapping_sub", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::wrapping_mul", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::wrapping_neg", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::wrapping_shl", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::wrapping_shr", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::unchecked_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::unchecked_sub", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+  { path = "i64::unchecked_mul", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },
+]
+
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "verification must be a deterministic pure function" },
+  { path = "std::collections::HashSet", reason = "verification must be a deterministic pure function" },
+  { path = "std::time::SystemTime", reason = "verification must be a deterministic pure function" },
+  { path = "std::time::Instant", reason = "verification must be a deterministic pure function" },
+]

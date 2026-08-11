@@ -202,7 +202,12 @@ impl ReadWriteDimensions {
         Ok(address)
     }
 
-    const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
+    /// Rejects a phase split exceeding the trace/address geometry. Callers
+    /// building dimensions from prover-chosen `rw_config` values must run
+    /// this eagerly: the round-count accessors above subtract
+    /// `phase1_num_rounds` without their own guard, so an unvalidated split
+    /// underflows them before the lazy check in point derivation runs.
+    pub const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
         if self.phase1_num_rounds > self.log_t || self.phase2_num_rounds > self.log_k {
             return Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
                 phase1_num_rounds: self.phase1_num_rounds,
@@ -476,6 +481,10 @@ fn ceil_log_2(value: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::super::claim_reductions::advice::AdviceClaimReductionLayout;

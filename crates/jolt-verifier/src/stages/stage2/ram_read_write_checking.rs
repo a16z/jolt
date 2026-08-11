@@ -109,7 +109,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
             // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the
             // cycle sub-point is the suffix past the address bits.
             RamReadWritePublic::EqCycle => {
-                let r_cycle = &output_points.val()[self.ram_log_k..];
+                let r_cycle = output_points.val().get(self.ram_log_k..).ok_or_else(|| {
+                    public_input_failed(format!(
+                        "RAM read-write opening point is too short: expected at least {}, got {}",
+                        self.ram_log_k,
+                        output_points.val().len()
+                    ))
+                })?;
                 try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)
             }
         }
