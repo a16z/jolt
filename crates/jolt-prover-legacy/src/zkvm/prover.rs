@@ -2158,6 +2158,18 @@ impl<
         polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * rd_inc_lagrange));
         scaling_factors.push(rd_inc_lagrange);
 
+        #[cfg(feature = "implicit-carry")]
+        {
+            let (carry_point, carry_claim) =
+                self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::Carry,
+                    SumcheckId::CarryClaimReduction,
+                );
+            let carry_lagrange = compute_lagrange_factor::<F>(&opening_point.r, &carry_point.r);
+            polynomial_claims.push((CommittedPolynomial::Carry, carry_claim * carry_lagrange));
+            scaling_factors.push(carry_lagrange);
+        }
+
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         // These are at (r_address_stage7, r_cycle_stage6)
         for i in 0..self.one_hot_params.instruction_d {
