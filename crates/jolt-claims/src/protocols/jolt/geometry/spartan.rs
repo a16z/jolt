@@ -577,7 +577,11 @@ mod tests {
     #[test]
     fn outer_remainder_plan_computes_group_row_weights() {
         let plan = SpartanOuterRemainderPlan::from_dimensions(&outer_dimensions());
-        let r0 = Fr::from_i64(-4);
+        // The first node of the centered uniskip domain, so the Lagrange weight
+        // lands on the first row of each group.
+        let r0 = Fr::from_i64(
+            jolt_poly::lagrange::centered_domain_start(OUTER_UNISKIP_DOMAIN_SIZE).unwrap(),
+        );
 
         let first_group = plan.row_weights(r0, Fr::from_u64(0)).unwrap();
         assert_eq!(first_group[1], Fr::from_u64(1));

@@ -152,12 +152,14 @@ where
         &sumchecks,
         &stage6a.output_values,
         &stage2.output_values,
+        &stage3.output_values,
         stage4,
         &stage5.output_values,
     )?;
     let input_points = stage6b_input_points_from_upstream(
         &sumchecks,
         &stage2.output_points,
+        &stage3.output_points,
         &stage4.output_points,
         &stage5.output_points,
     );

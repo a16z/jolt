@@ -47,6 +47,8 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
     let rows = vec![
         TraceRow {
             instruction,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
             registers: RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,

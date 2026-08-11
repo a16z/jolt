@@ -2249,6 +2249,7 @@ impl<F: JoltField> BytecodeReadRafSumcheckParams<F> {
             SumcheckId::SpartanProductVirtualization,
         );
 
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
         let mut claims = vec![
             jump_claim,
             branch_claim,

@@ -464,17 +464,33 @@ mod tests {
     #[test]
     fn default_spartan_outer_geometry_matches_rv64() {
         assert_eq!(SPARTAN_OUTER_ROW_COUNT, rv64::NUM_EQ_CONSTRAINTS);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 10);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 27);
         assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
-        assert_eq!(
-            SPARTAN_OUTER_FIRST_GROUP_ROWS,
-            [1, 2, 3, 4, 5, 6, 11, 14, 17, 18]
-        );
-        assert_eq!(
-            SPARTAN_OUTER_SECOND_GROUP_ROWS,
-            [0, 7, 8, 9, 10, 12, 13, 15, 16]
-        );
+        #[cfg(not(feature = "implicit-carry"))]
+        {
+            assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 10);
+            assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 27);
+            assert_eq!(
+                SPARTAN_OUTER_FIRST_GROUP_ROWS,
+                [1, 2, 3, 4, 5, 6, 11, 14, 17, 18]
+            );
+            assert_eq!(
+                SPARTAN_OUTER_SECOND_GROUP_ROWS,
+                [0, 7, 8, 9, 10, 12, 13, 15, 16]
+            );
+        }
+        #[cfg(feature = "implicit-carry")]
+        {
+            assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 11);
+            assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 30);
+            assert_eq!(
+                SPARTAN_OUTER_FIRST_GROUP_ROWS,
+                [1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 20]
+            );
+            assert_eq!(
+                SPARTAN_OUTER_SECOND_GROUP_ROWS,
+                [0, 7, 8, 9, 10, 12, 13, 15, 16, 19]
+            );
+        }
         assert_eq!(
             spartan_outer_row_weights(Fr::from_u64(2), Fr::from_u64(3))
                 .map(|weights| weights.len()),
