@@ -14,7 +14,7 @@ akita = []
 # Heap flamegraph visitation of the relation claim structs (profile harness).
 allocative = ["dep:allocative"]
 field-inline = []
-implicit-carry = []
+implicit-carry = ["jolt-lookup-tables/implicit-carry", "jolt-riscv/implicit-carry"]
 test-utils = []
 
 [dependencies]
