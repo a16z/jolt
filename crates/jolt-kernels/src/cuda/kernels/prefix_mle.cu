@@ -1131,3 +1131,431 @@ extern "C" __global__ void pfx_mle_batch_kernel(const u64 *__restrict__ checkpoi
     }
     store4(out + (unsigned long long)i * LIMBS, value);
 }
+
+__device__ __forceinline__ void pml_default(unsigned int prefix, u64 *out) {
+    switch (prefix) {
+        case PFX_EQ:
+        case PFX_LEFT_IS_ZERO:
+        case PFX_RIGHT_IS_ZERO:
+        case PFX_DIV_BY_ZERO:
+        case PFX_POS_REM_EQ_DIV:
+        case PFX_NEG_DIV_ZERO_REM:
+        case PFX_NEG_DIV_EQ_REM:
+        case PFX_LSB:
+        case PFX_POW2:
+        case PFX_POW2W:
+        case PFX_LEFT_SHIFT_HELPER:
+        case PFX_TWO_LSB:
+        case PFX_SIGN_EXT_UPPER_HALF:
+        case PFX_LEFT_SHIFT_W_HELPER:
+        case PFX_OVERFLOW_BITS_ZERO:
+            pfx_one(out);
+            return;
+        case PFX_CHANGE_DIVISOR: {
+            u64 two[LIMBS], big[LIMBS];
+            pfx_from_u64(2ULL, two);
+            pfx_from_u128((u128)1 << PFX_XLEN, big);
+            fr_sub(two, big, out);
+            return;
+        }
+        default:
+            pfx_zero(out);
+            return;
+    }
+}
+
+__device__ __forceinline__ void pml_eq_rxry(const u64 *r_x, const u64 *r_y, u64 *out) {
+    pml_eq_pair(r_x, r_y, out);
+}
+
+__device__ void pml_update(unsigned int prefix,
+                           const u64 *__restrict__ checkpoints,
+                           const u64 *r_x,
+                           const u64 *r_y,
+                           unsigned int j,
+                           unsigned int suffix_len,
+                           u64 *out) {
+    u64 current[LIMBS];
+    pfx_load(checkpoints, prefix, current);
+    u64 one[LIMBS];
+    load4(FR_ONE, one);
+    u64 nrx[LIMBS], nry[LIMBS];
+    pml_one_minus(r_x, nrx);
+    pml_one_minus(r_y, nry);
+
+    switch (prefix) {
+        case PFX_LOWER_WORD:
+        case PFX_LOWER_HALF_WORD: {
+            unsigned int floor = prefix == PFX_LOWER_WORD ? PFX_XLEN
+                                                          : PFX_XLEN + PFX_XLEN / 2u;
+            if (j < floor) { pml_default(prefix, out); return; }
+            u64 term[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pfx_from_u128((u128)1 << (2u * PFX_XLEN - j), term);
+            fr_mul(term, r_x, scaled);
+            fr_add(current, scaled, sum);
+            store4(current, sum);
+            pfx_from_u128((u128)1 << (2u * PFX_XLEN - j - 1u), term);
+            fr_mul(term, r_y, scaled);
+            fr_add(current, scaled, sum);
+            store4(out, sum);
+            return;
+        }
+        case PFX_UPPER_WORD: {
+            if (j >= PFX_XLEN) { store4(out, current); return; }
+            u64 term[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pfx_from_u64(1ULL << (PFX_XLEN - j), term);
+            fr_mul(term, r_x, scaled);
+            fr_add(current, scaled, sum);
+            store4(current, sum);
+            pfx_from_u64(1ULL << (PFX_XLEN - j - 1u), term);
+            fr_mul(term, r_y, scaled);
+            fr_add(current, scaled, sum);
+            store4(out, sum);
+            return;
+        }
+        case PFX_EQ:
+        case PFX_POS_REM_EQ_DIV:
+        case PFX_NEG_DIV_EQ_REM: {
+            if (prefix != PFX_EQ && j == 1u) {
+                if (prefix == PFX_POS_REM_EQ_DIV) {
+                    fr_mul(nrx, nry, out);
+                } else {
+                    fr_mul(r_x, r_y, out);
+                }
+                return;
+            }
+            u64 factor[LIMBS], product[LIMBS];
+            pml_eq_rxry(r_x, r_y, factor);
+            fr_mul(current, factor, product);
+            store4(out, product);
+            return;
+        }
+        case PFX_AND:
+        case PFX_ANDN:
+        case PFX_OR:
+        case PFX_XOR: {
+            unsigned int shift = PFX_XLEN - 1u - j / 2u;
+            u64 bit[LIMBS];
+            if (prefix == PFX_AND) {
+                fr_mul(r_x, r_y, bit);
+            } else if (prefix == PFX_ANDN) {
+                fr_mul(r_x, nry, bit);
+            } else if (prefix == PFX_OR) {
+                u64 prod[LIMBS], sum[LIMBS];
+                fr_mul(r_x, r_y, prod);
+                fr_add(r_x, r_y, sum);
+                fr_sub(sum, prod, bit);
+            } else {
+                pml_xor_pair(r_x, r_y, bit);
+            }
+            u64 pow[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pfx_from_u64(1ULL << shift, pow);
+            fr_mul(pow, bit, scaled);
+            fr_add(current, scaled, sum);
+            store4(out, sum);
+            return;
+        }
+        case PFX_LESS_THAN: {
+            u64 eq[LIMBS], term[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pfx_load(checkpoints, PFX_EQ, eq);
+            fr_mul(nrx, r_y, term);
+            fr_mul(eq, term, scaled);
+            fr_add(current, scaled, sum);
+            store4(out, sum);
+            return;
+        }
+        case PFX_LEFT_IS_ZERO: {
+            u64 product[LIMBS];
+            fr_mul(current, nrx, product);
+            store4(out, product);
+            return;
+        }
+        case PFX_RIGHT_IS_ZERO: {
+            u64 product[LIMBS];
+            fr_mul(current, nry, product);
+            store4(out, product);
+            return;
+        }
+        case PFX_LEFT_MSB: {
+            if (j == 1u) { store4(out, r_x); } else { store4(out, current); }
+            return;
+        }
+        case PFX_RIGHT_MSB: {
+            if (j == 1u) { store4(out, r_y); } else { store4(out, current); }
+            return;
+        }
+        case PFX_DIV_BY_ZERO: {
+            u64 term[LIMBS], product[LIMBS];
+            fr_mul(nrx, r_y, term);
+            fr_mul(current, term, product);
+            store4(out, product);
+            return;
+        }
+        case PFX_POS_REM_LT_DIV:
+        case PFX_NEG_DIV_GT_REM: {
+            unsigned int negative = prefix == PFX_NEG_DIV_GT_REM;
+            unsigned int eq_index = negative ? PFX_NEG_DIV_EQ_REM : PFX_POS_REM_EQ_DIV;
+            if (j == 1u) {
+                if (negative) { fr_mul(r_x, r_y, out); } else { fr_mul(nrx, nry, out); }
+                return;
+            }
+            u64 factor[LIMBS];
+            if (negative) { fr_mul(r_x, nry, factor); } else { fr_mul(nrx, r_y, factor); }
+            if (j == 3u) {
+                u64 product[LIMBS];
+                fr_mul(current, factor, product);
+                store4(out, product);
+                return;
+            }
+            u64 eq[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pfx_load(checkpoints, eq_index, eq);
+            fr_mul(eq, factor, scaled);
+            fr_add(current, scaled, sum);
+            store4(out, sum);
+            return;
+        }
+        case PFX_NEG_DIV_ZERO_REM: {
+            if (j == 1u) {
+                fr_mul(nrx, r_y, out);
+                return;
+            }
+            u64 product[LIMBS];
+            fr_mul(current, nrx, product);
+            store4(out, product);
+            return;
+        }
+        case PFX_LSB: {
+            if (j == 2u * PFX_XLEN - 1u) { store4(out, r_y); } else { pfx_one(out); }
+            return;
+        }
+        case PFX_TWO_LSB: {
+            if (j == 2u * PFX_XLEN - 1u) {
+                fr_mul(nrx, nry, out);
+            } else {
+                store4(out, current);
+            }
+            return;
+        }
+        case PFX_POW2:
+        case PFX_POW2W: {
+            unsigned int bits_needed = prefix == PFX_POW2 ? 6u : 5u;
+            if (suffix_len != 0u) { pfx_one(out); return; }
+            if (j == 2u * PFX_XLEN - bits_needed) {
+                unsigned long long shift =
+                    prefix == PFX_POW2 ? (1ULL << (PFX_XLEN / 2u)) : (1ULL << 16);
+                u64 term[LIMBS], scaled[LIMBS], sum[LIMBS];
+                pfx_from_u64(shift - 1ULL, term);
+                fr_mul(term, r_y, scaled);
+                fr_add(one, scaled, sum);
+                store4(out, sum);
+                return;
+            }
+            if (2u * PFX_XLEN - j < bits_needed) {
+                u64 term[LIMBS], scaled[LIMBS], sum[LIMBS], product[LIMBS];
+                unsigned long long shift = 1ULL << (1ULL << (2u * PFX_XLEN - j));
+                pfx_from_u64(shift - 1ULL, term);
+                fr_mul(term, r_x, scaled);
+                fr_add(one, scaled, sum);
+                fr_mul(current, sum, product);
+                store4(current, product);
+                shift = 1ULL << (1ULL << (2u * PFX_XLEN - j - 1u));
+                pfx_from_u64(shift - 1ULL, term);
+                fr_mul(term, r_y, scaled);
+                fr_add(one, scaled, sum);
+                fr_mul(current, sum, product);
+                store4(out, product);
+                return;
+            }
+            pfx_one(out);
+            return;
+        }
+        case PFX_REV8W: {
+            u64 sum[LIMBS];
+            unsigned int r_y_bit_index = 2u * PFX_XLEN - 1u - j;
+            if (r_y_bit_index < 64u) {
+                u64 term[LIMBS], scaled[LIMBS];
+                pfx_from_u64(sfx_rev8w(1ULL << r_y_bit_index), term);
+                fr_mul(r_y, term, scaled);
+                fr_add(current, scaled, sum);
+                store4(current, sum);
+            }
+            if (r_y_bit_index + 1u < 64u) {
+                u64 term[LIMBS], scaled[LIMBS];
+                pfx_from_u64(sfx_rev8w(1ULL << (r_y_bit_index + 1u)), term);
+                fr_mul(r_x, term, scaled);
+                fr_add(current, scaled, sum);
+                store4(current, sum);
+            }
+            store4(out, current);
+            return;
+        }
+        case PFX_RIGHT_SHIFT:
+        case PFX_RIGHT_SHIFT_W: {
+            if (prefix == PFX_RIGHT_SHIFT_W && j < PFX_XLEN) { pfx_zero(out); return; }
+            u64 factor[LIMBS], scaled[LIMBS], addend[LIMBS], sum[LIMBS];
+            fr_add(one, r_y, factor);
+            fr_mul(current, factor, scaled);
+            fr_mul(r_x, r_y, addend);
+            fr_add(scaled, addend, sum);
+            store4(out, sum);
+            return;
+        }
+        case PFX_SIGN_EXTENSION: {
+            if (j == 1u) { pml_default(PFX_SIGN_EXTENSION, out); return; }
+            u64 term[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pfx_from_u64(1ULL << (j / 2u), term);
+            fr_mul(term, nry, scaled);
+            fr_add(current, scaled, sum);
+            store4(current, sum);
+            if (j == 2u * PFX_XLEN - 1u) {
+                u64 msb[LIMBS], product[LIMBS];
+                pfx_load(checkpoints, PFX_LEFT_MSB, msb);
+                fr_mul(current, msb, product);
+                store4(current, product);
+            }
+            store4(out, current);
+            return;
+        }
+        case PFX_SIGN_EXT_UPPER_HALF: {
+            unsigned int half = PFX_XLEN / 2u;
+            if (j == PFX_XLEN + half + 1u) {
+                u64 mask[LIMBS], product[LIMBS];
+                pfx_from_u128((((u128)1 << half) - 1) << half, mask);
+                fr_mul(mask, r_x, product);
+                store4(out, product);
+            } else {
+                store4(out, current);
+            }
+            return;
+        }
+        case PFX_SIGN_EXT_RIGHT_OPERAND: {
+            if (j == PFX_XLEN + 1u) {
+                u64 mask[LIMBS], product[LIMBS];
+                pfx_from_u128(((u128)1 << PFX_XLEN) - ((u128)1 << (PFX_XLEN / 2u)), mask);
+                fr_mul(mask, r_y, product);
+                store4(out, product);
+            } else {
+                store4(out, current);
+            }
+            return;
+        }
+        case PFX_LEFT_SHIFT:
+        case PFX_LEFT_SHIFT_W: {
+            unsigned int wide = prefix == PFX_LEFT_SHIFT_W;
+            if (wide && j < PFX_XLEN) { pfx_zero(out); return; }
+            unsigned int helper_index = wide ? PFX_LEFT_SHIFT_W_HELPER : PFX_LEFT_SHIFT_HELPER;
+            u64 helper[LIMBS];
+            pfx_load(checkpoints, helper_index, helper);
+            unsigned int bit_index = PFX_XLEN - 1u - j / 2u;
+            u64 term[LIMBS], scaled[LIMBS], pow[LIMBS], sum[LIMBS];
+            fr_mul(r_x, nry, term);
+            fr_mul(term, helper, scaled);
+            pfx_from_u64(bit_index >= 64u ? 0ULL : (1ULL << bit_index), pow);
+            fr_mul(scaled, pow, term);
+            fr_add(current, term, sum);
+            store4(out, sum);
+            return;
+        }
+        case PFX_LEFT_SHIFT_HELPER:
+        case PFX_LEFT_SHIFT_W_HELPER: {
+            if (prefix == PFX_LEFT_SHIFT_W_HELPER && j < PFX_XLEN) { pfx_one(out); return; }
+            u64 factor[LIMBS], product[LIMBS];
+            fr_add(one, r_y, factor);
+            fr_mul(current, factor, product);
+            store4(out, product);
+            return;
+        }
+        case PFX_CHANGE_DIVISOR: {
+            u64 factor[LIMBS], product[LIMBS];
+            if (j == 1u) { fr_mul(r_x, r_y, factor); } else { fr_mul(nrx, r_y, factor); }
+            fr_mul(current, factor, product);
+            store4(out, product);
+            return;
+        }
+        case PFX_CHANGE_DIVISOR_W: {
+            if (j < PFX_XLEN) { pfx_zero(out); return; }
+            u64 factor[LIMBS], product[LIMBS];
+            if (j == PFX_XLEN + 1u) {
+                u64 two[LIMBS], big[LIMBS], base[LIMBS];
+                pfx_from_u64(2ULL, two);
+                pfx_from_u128((u128)1 << PFX_XLEN, big);
+                fr_sub(two, big, base);
+                fr_mul(r_x, r_y, factor);
+                fr_mul(base, factor, product);
+            } else {
+                fr_mul(nrx, r_y, factor);
+                fr_mul(current, factor, product);
+            }
+            store4(out, product);
+            return;
+        }
+        case PFX_RIGHT_OPERAND:
+        case PFX_RIGHT_OPERAND_W: {
+            if (prefix == PFX_RIGHT_OPERAND_W && j <= PFX_XLEN) { store4(out, current); return; }
+            unsigned int shift = PFX_XLEN - 1u - j / 2u;
+            u64 pow[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pfx_from_u64(1ULL << shift, pow);
+            fr_mul(pow, r_y, scaled);
+            fr_add(current, scaled, sum);
+            store4(out, sum);
+            return;
+        }
+        case PFX_OVERFLOW_BITS_ZERO: {
+            if (j >= PFX_LOG_K - PFX_XLEN) { store4(out, current); return; }
+            u64 term[LIMBS], product[LIMBS];
+            fr_mul(nrx, nry, term);
+            fr_mul(current, term, product);
+            store4(out, product);
+            return;
+        }
+        case PFX_XOR_ROT16:
+        case PFX_XOR_ROT24:
+        case PFX_XOR_ROT32:
+        case PFX_XOR_ROT63:
+        case PFX_XOR_ROTW7:
+        case PFX_XOR_ROTW8:
+        case PFX_XOR_ROTW12:
+        case PFX_XOR_ROTW16: {
+            unsigned int wide = prefix >= PFX_XOR_ROTW7;
+            if (wide && j < PFX_XLEN) { pfx_zero(out); return; }
+            unsigned int rotation;
+            switch (prefix) {
+                case PFX_XOR_ROT16: rotation = 16u; break;
+                case PFX_XOR_ROT24: rotation = 24u; break;
+                case PFX_XOR_ROT32: rotation = 32u; break;
+                case PFX_XOR_ROT63: rotation = 63u; break;
+                case PFX_XOR_ROTW7: rotation = 7u; break;
+                case PFX_XOR_ROTW8: rotation = 8u; break;
+                case PFX_XOR_ROTW12: rotation = 12u; break;
+                default: rotation = 16u; break;
+            }
+            unsigned int width = wide ? 32u : PFX_XLEN;
+            unsigned int position = wide ? (j - PFX_XLEN) / 2u : j / 2u;
+            unsigned int shift = width - 1u - (position + rotation) % width;
+            u64 bit[LIMBS], pow[LIMBS], scaled[LIMBS], sum[LIMBS];
+            pml_xor_pair(r_x, r_y, bit);
+            pfx_from_u64(1ULL << shift, pow);
+            fr_mul(pow, bit, scaled);
+            fr_add(current, scaled, sum);
+            store4(out, sum);
+            return;
+        }
+        default:
+            store4(out, current);
+            return;
+    }
+}
+
+extern "C" __global__ void pfx_update_checkpoints_kernel(const u64 *__restrict__ checkpoints,
+                                                        const u64 *__restrict__ r_x,
+                                                        const u64 *__restrict__ r_y,
+                                                        unsigned int round,
+                                                        unsigned int suffix_len,
+                                                        u64 *__restrict__ out,
+                                                        unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    u64 value[LIMBS];
+    pml_update(i, checkpoints, r_x, r_y, round, suffix_len, value);
+    store4(out + (unsigned long long)i * LIMBS, value);
+}

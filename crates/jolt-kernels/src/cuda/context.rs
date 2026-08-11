@@ -82,6 +82,7 @@ pub struct CudaKernelContext {
     sfx_eval_batch: CudaFunction,
     pfx_eval_batch: CudaFunction,
     pfx_mle_batch: CudaFunction,
+    pfx_update_checkpoints: CudaFunction,
     pfx_default_checkpoints: CudaFunction,
     cmb_combine: CudaFunction,
     ap_raf_keys: CudaFunction,
@@ -150,6 +151,7 @@ impl CudaKernelContext {
             sfx_eval_batch: module.load_function("sfx_eval_batch_kernel")?,
             pfx_eval_batch: module.load_function("pfx_eval_batch_kernel")?,
             pfx_mle_batch: module.load_function("pfx_mle_batch_kernel")?,
+            pfx_update_checkpoints: module.load_function("pfx_update_checkpoints_kernel")?,
             pfx_default_checkpoints: module.load_function("pfx_default_checkpoints_kernel")?,
             cmb_combine: module.load_function("cmb_combine_kernel")?,
             ap_raf_keys: module.load_function("ap_raf_keys_kernel")?,
@@ -311,6 +313,10 @@ impl CudaKernelContext {
 
     pub(super) const fn sfx_eval_batch(&self) -> &CudaFunction {
         &self.sfx_eval_batch
+    }
+
+    pub(super) const fn pfx_update_checkpoints(&self) -> &CudaFunction {
+        &self.pfx_update_checkpoints
     }
 
     pub(super) const fn pfx_mle_batch(&self) -> &CudaFunction {

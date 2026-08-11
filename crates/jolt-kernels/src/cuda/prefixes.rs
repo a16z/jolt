@@ -14,6 +14,46 @@ use super::suffixes::upload_lookup_bits;
 pub const NUM_PREFIXES: usize = 46;
 const ADDRESS_BITS: usize = 128;
 
+pub fn update_checkpoints(
+    context: &CudaKernelContext,
+    checkpoints: &DeviceFrVec,
+    r_x: Fr,
+    r_y: Fr,
+    round: usize,
+    suffix_len: usize,
+) -> Result<DeviceFrVec, CudaError> {
+    if checkpoints.len() != NUM_PREFIXES {
+        return Err(CudaError::LengthMismatch {
+            expected: NUM_PREFIXES,
+            got: checkpoints.len(),
+        });
+    }
+    let challenge_x = context.upload(&[r_x])?;
+    let challenge_y = context.upload(&[r_y])?;
+    let mut out = context.alloc(NUM_PREFIXES)?;
+    let count = CudaKernelContext::count_of(NUM_PREFIXES)?;
+    let round_arg = CudaKernelContext::count_of(round)?;
+    let suffix_len_arg = CudaKernelContext::count_of(suffix_len)?;
+
+    let mut builder = context
+        .stream()
+        .launch_builder(context.pfx_update_checkpoints());
+    let _ = builder.arg(checkpoints.limbs());
+    let _ = builder.arg(challenge_x.limbs());
+    let _ = builder.arg(challenge_y.limbs());
+    let _ = builder.arg(&round_arg);
+    let _ = builder.arg(&suffix_len_arg);
+    let _ = builder.arg(out.limbs_mut());
+    let _ = builder.arg(&count);
+    // SAFETY: thread `i < NUM_PREFIXES` reads any of the `NUM_PREFIXES` input
+    // checkpoints (length-checked above) plus the two challenge elements, and
+    // writes only `out[i]`. `out` is a fresh allocation distinct from
+    // `checkpoints`, which is what lets a prefix read another's PRE-update value.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+    context.stream().synchronize()?;
+    Ok(out)
+}
+
 pub fn prefix_mle_batch<F: Field>(
     context: &CudaKernelContext,
     prefix: u32,
@@ -49,11 +89,12 @@ pub fn prefix_mle_batch<F: Field>(
                      every point in a batch must share it",
         });
     }
-    let suffix_len = ADDRESS_BITS
-        .checked_sub(round + b_len + 1)
-        .ok_or(CudaError::InvariantViolation {
-            reason: "the prefix MLE round and point width exceed the address width",
-        })?;
+    let suffix_len =
+        ADDRESS_BITS
+            .checked_sub(round + b_len + 1)
+            .ok_or(CudaError::InvariantViolation {
+                reason: "the prefix MLE round and point width exceed the address width",
+            })?;
 
     let mut out = context.alloc(bits.len())?;
     if bits.is_empty() {
@@ -181,7 +222,10 @@ mod tests {
 
     use super::super::context::shared_context;
     use super::super::testing::fr;
-    use super::{default_checkpoints, prefix_evaluate_batch, prefix_mle_batch, NUM_PREFIXES};
+    use super::{
+        default_checkpoints, prefix_evaluate_batch, prefix_mle_batch, update_checkpoints,
+        NUM_PREFIXES,
+    };
 
     const CHUNK_LEN: usize = 8;
     const ADDRESS_BITS: usize = 128;
@@ -339,6 +383,44 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn checkpoint_updates_match_legacy(
+            seed in 1u64..1_000_000,
+            pairs in 1usize..=(ADDRESS_BITS / 2),
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            let defaults = checkpoints(0);
+            let mut legacy: Vec<LegacyCheckpoint<LegacyFr>> =
+                vec![None.into(); LegacyPrefixes::COUNT];
+            let mut device = context.upload(&defaults).expect("upload defaults");
+
+            for pair in 0..pairs {
+                let round = 2 * pair + 1;
+                let suffix_len = ADDRESS_BITS - (round / CHUNK_LEN + 1) * CHUNK_LEN;
+                let r_x = fr(seed + 2 * pair as u64);
+                let r_y = fr(seed + 2 * pair as u64 + 1);
+
+                LegacyPrefixes::update_checkpoints::<RISCV_XLEN, LegacyFr, LegacyFr>(
+                    &mut legacy,
+                    LegacyFr::from(r_x),
+                    LegacyFr::from(r_y),
+                    round,
+                    suffix_len,
+                );
+                device = update_checkpoints(context, &device, r_x, r_y, round, suffix_len)
+                    .expect("device update_checkpoints");
+
+                let expected = device_checkpoints(&legacy, &defaults)?;
+                prop_assert_eq!(
+                    device.to_host().expect("download"),
+                    expected,
+                    "checkpoints diverged after pair {} (round {})",
+                    pair,
+                    round
+                );
+            }
+        }
+
         #[test]
         fn every_prefix_mle_matches_legacy(
             seed in 1u64..1_000_000,
