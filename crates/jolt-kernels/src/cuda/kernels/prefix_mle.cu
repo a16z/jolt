@@ -251,8 +251,8 @@ __device__ int pml_eval(unsigned int prefix, const pml_args *a, u64 *out) {
             u64 result[LIMBS];
             pfx_load(a->checkpoints, PFX_RIGHT_SHIFT, result);
             sfx_bits b = a->b;
-            u64 factor[LIMBS], scaled[LIMBS], addend[LIMBS], sum[LIMBS];
             if (a->has_r_x) {
+                u64 factor[LIMBS], scaled[LIMBS], addend[LIMBS], sum[LIMBS];
                 pml_from_u32(1u + a->c, factor);
                 fr_mul(result, factor, scaled);
                 fr_mul(a->r_x, c_f, addend);
@@ -260,6 +260,7 @@ __device__ int pml_eval(unsigned int prefix, const pml_args *a, u64 *out) {
                 store4(result, sum);
             } else {
                 unsigned int y_msb = pml_pop_msb(&b);
+                u64 factor[LIMBS], scaled[LIMBS], addend[LIMBS], sum[LIMBS];
                 pml_from_u32(1u + y_msb, factor);
                 fr_mul(result, factor, scaled);
                 pml_from_u32(a->c * y_msb, addend);
@@ -269,6 +270,7 @@ __device__ int pml_eval(unsigned int prefix, const pml_args *a, u64 *out) {
             sfx_bits x, y;
             sfx_uninterleave(b, &x, &y);
             unsigned int half = b.len / 2u;
+            u64 factor[LIMBS], scaled[LIMBS], addend[LIMBS], sum[LIMBS];
             pfx_from_u64(1ULL << pml_leading_ones(sfx_u64(y), half), factor);
             fr_mul(result, factor, scaled);
             pfx_from_u64(sfx_u64(x) >> pml_trailing_zeros(sfx_u64(y), half), addend);
@@ -979,9 +981,9 @@ __device__ int pml_eval(unsigned int prefix, const pml_args *a, u64 *out) {
             pfx_load(a->checkpoints, prefix, result);
             pfx_load(a->checkpoints, helper_index, helper);
 
-            unsigned int bit_index = PFX_XLEN - 1u - j / 2u;
             sfx_bits b = a->b;
             u64 pow[LIMBS], term[LIMBS], scaled[LIMBS], sum[LIMBS];
+            unsigned int bit_index = PFX_XLEN - 1u - j / 2u;
             pfx_from_u64(bit_index >= 64u ? 0ULL : (1ULL << bit_index), pow);
             if (a->has_r_x) {
                 u64 nc[LIMBS];

@@ -41,6 +41,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 ark-bn254.workspace = true
+rand.workspace = true
+tracer = { workspace = true, features = ["test-utils"] }
 common.workspace = true
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-program.workspace = true

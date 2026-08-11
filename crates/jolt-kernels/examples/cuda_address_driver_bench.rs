@@ -79,7 +79,9 @@ fn main() {
         let mut bind = std::time::Duration::ZERO;
         for round in 0..ADDRESS_BITS {
             let start = Instant::now();
-            let _ = phase.round_message(context, gamma).expect("message");
+            let _ = phase
+                .round_message_hinted(context, gamma, Fr::from_u64(0))
+                .expect("message");
             message += start.elapsed();
             let start = Instant::now();
             phase

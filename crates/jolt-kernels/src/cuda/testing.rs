@@ -15,12 +15,12 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
+use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{
     ChunkVisitor, FixedBackend, JoltWitnessOracle, JoltWitnessPlane, OneHotSource, ProgramSource,
     RowSource, Shape, WitnessError,
 };
-use jolt_witness::__private::TraceRow;
 use proptest::prelude::*;
 
 use crate::reference::ReferenceBackend;

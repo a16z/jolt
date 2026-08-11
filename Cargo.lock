@@ -3568,9 +3568,11 @@ dependencies = [
  "jolt-verifier",
  "jolt-witness",
  "proptest",
+ "rand 0.8.7",
  "rayon",
  "strum 0.28.0",
  "thiserror 2.0.18",
+ "tracer",
  "tracing",
 ]
 

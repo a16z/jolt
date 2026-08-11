@@ -94,10 +94,8 @@ pub struct CudaKernelContext {
     ap_suffix_reduce: CudaFunction,
     ap_scale_shift: CudaFunction,
     ap_condense: CudaFunction,
-    ap_prefix_tables: CudaFunction,
     ap_raf_prefix: CudaFunction,
     ap_bind_strided: CudaFunction,
-    ap_round_message: CudaFunction,
     ap_round_message_hinted: CudaFunction,
     ap_combined_val: CudaFunction,
     ap_ra: CudaFunction,
@@ -164,10 +162,8 @@ impl CudaKernelContext {
             ap_suffix_reduce: module.load_function("ap_suffix_reduce_kernel")?,
             ap_scale_shift: module.load_function("ap_scale_shift_kernel")?,
             ap_condense: module.load_function("ap_condense_kernel")?,
-            ap_prefix_tables: module.load_function("ap_prefix_tables_kernel")?,
             ap_raf_prefix: module.load_function("ap_raf_prefix_kernel")?,
             ap_bind_strided: module.load_function("ap_bind_strided_kernel")?,
-            ap_round_message: module.load_function("ap_round_message_kernel")?,
             ap_round_message_hinted: module.load_function("ap_round_message_hinted_kernel")?,
             ap_combined_val: module.load_function("ap_combined_val_kernel")?,
             ap_ra: module.load_function("ap_ra_kernel")?,
@@ -373,10 +369,6 @@ impl CudaKernelContext {
         &self.ap_condense
     }
 
-    pub(super) const fn ap_prefix_tables(&self) -> &CudaFunction {
-        &self.ap_prefix_tables
-    }
-
     pub(super) const fn ap_raf_prefix(&self) -> &CudaFunction {
         &self.ap_raf_prefix
     }
@@ -387,10 +379,6 @@ impl CudaKernelContext {
 
     pub(super) const fn ap_round_message_hinted(&self) -> &CudaFunction {
         &self.ap_round_message_hinted
-    }
-
-    pub(super) const fn ap_round_message(&self) -> &CudaFunction {
-        &self.ap_round_message
     }
 
     pub(super) const fn ap_combined_val(&self) -> &CudaFunction {
