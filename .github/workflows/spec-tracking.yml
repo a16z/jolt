@@ -113,7 +113,9 @@ jobs:
           # (pull_request_target), never code from the PR head.
           CODE_LINES=""
           if JSON=$(python3 scripts/ci/diff_classifier.py --base "$BASE" --head "$HEAD" --format json); then
-            CODE_LINES=$(printf '%s\n' "$JSON" | jq '.code.added + .code.removed')
+            # `|| true`-shaped fallback: a jq failure must reach the numstat
+            # fallback below, not fail the step under `set -e`.
+            CODE_LINES=$(printf '%s\n' "$JSON" | jq '.code.added + .code.removed') || CODE_LINES=""
           fi
           if ! [ "$CODE_LINES" -ge 0 ] 2>/dev/null; then
             # Classifier unavailable: fall back to counting all non-spec
