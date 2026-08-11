@@ -769,22 +769,6 @@ fn merge_bind<E: Cell, B>(
     }
 }
 
-/// Merge-bind into `out` (sized by [`merge_count`]).
-#[cfg(test)]
-fn merge_fill<E: Cell, B>(
-    evens: &[E],
-    odds: &[E],
-    bind: &(impl Fn(Option<&E>, Option<&E>) -> B + ?Sized),
-    out: &mut [core::mem::MaybeUninit<B>],
-) {
-    let mut k = 0;
-    merge_bind(evens, odds, bind, |entry| {
-        out[k] = core::mem::MaybeUninit::new(entry);
-        k += 1;
-    });
-    debug_assert_eq!(k, out.len());
-}
-
 /// Split a row-pair group (entries sharing `row / 2`) into its even and odd
 /// rows. Entries are sorted by `(row, col)`, so the evens form the prefix.
 fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
@@ -922,72 +906,6 @@ fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec<usize> {
     bounds
 }
 
-/// Bind one cycle variable of the sparse matrix into a fresh (layout-changing)
-/// output vector: merge every adjacent row pair, exact-sized by a dry-run
-/// count pass. Superseded by the SoA transition paths in non-test code; kept
-/// as the parity oracle the SoA machinery is pinned against.
-#[cfg(test)]
-pub(super) fn bind_sparse_entries<E, B>(
-    entries: &[E],
-    bind: impl Fn(Option<&E>, Option<&E>) -> B + Sync,
-) -> Vec<B>
-where
-    E: Cell,
-    B: Send,
-{
-    let pair_predicate = |a: &E, b: &E| a.row() / 2 == b.row() / 2;
-    let bounds = pair_aligned_bounds(entries, 1);
-    let blocks = bounds.len() - 1;
-
-    let count_block = |block: usize| -> usize {
-        entries[bounds[block]..bounds[block + 1]]
-            .chunk_by(pair_predicate)
-            .map(|group| {
-                let (evens, odds) = split_pair_group(group);
-                merge_count(evens, odds)
-            })
-            .sum()
-    };
-    #[cfg(feature = "parallel")]
-    let counts: Vec<usize> = (0..blocks).into_par_iter().map(count_block).collect();
-    #[cfg(not(feature = "parallel"))]
-    let counts: Vec<usize> = (0..blocks).map(count_block).collect();
-
-    let bound_length: usize = counts.iter().sum();
-    let mut bound: Vec<B> = Vec::with_capacity(bound_length);
-    let mut out_slices = Vec::with_capacity(blocks);
-    let mut out_rest = bound.spare_capacity_mut();
-    for &count in &counts {
-        let (out_slice, next_out) = out_rest.split_at_mut(count);
-        out_rest = next_out;
-        out_slices.push(out_slice);
-    }
-
-    let fill_block = |(block, out): (usize, &mut [core::mem::MaybeUninit<B>])| {
-        let mut written = 0usize;
-        for group in entries[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
-            let (evens, odds) = split_pair_group(group);
-            let take = merge_count(evens, odds);
-            merge_fill(evens, odds, &bind, &mut out[written..written + take]);
-            written += take;
-        }
-        debug_assert_eq!(written, out.len());
-    };
-    #[cfg(feature = "parallel")]
-    out_slices.into_par_iter().enumerate().for_each(fill_block);
-    #[cfg(not(feature = "parallel"))]
-    out_slices.into_iter().enumerate().for_each(fill_block);
-
-    // SAFETY: the count pass sized every block's output slice exactly (the
-    // fill pass re-derives the same per-group counts), the slices partition
-    // `bound`'s spare capacity up to `bound_length`, and `merge_fill`
-    // writes each slot of its slice exactly once.
-    unsafe {
-        bound.set_len(bound_length);
-    }
-    bound
-}
-
 /// Bind one cycle variable in place: same-layout rounds write each merge
 /// group's bound entries back into the input allocation at a write cursor,
 /// then compact the per-block runs left and truncate. The entry vector is
@@ -1077,88 +995,6 @@ pub(super) fn bind_sparse_entries_in_place<E>(
         total += counts[block];
     }
     entries.truncate(total);
-}
-
-/// The sequential (single-round) Seed → Indexed transition into the SoA
-/// columns: the exact merge-bind of [`bind_sparse_entries`] with the bound
-/// entries split across the two output columns. Superseded by
-/// [`bind_seed_entries_fused`] in non-test code; kept as the sequential
-/// oracle the fused transition is pinned against.
-#[cfg(test)]
-pub(super) fn bind_seed_entries_soa<F: Field>(
-    entries: &[SeedEntry],
-    ra_lut: &CoeffLut<F>,
-    wa_lut: &CoeffLut<F>,
-    r: F,
-) -> (Vec<F>, Vec<IndexedMeta>) {
-    use core::mem::MaybeUninit;
-    let pair_predicate = |a: &SeedEntry, b: &SeedEntry| a.row() / 2 == b.row() / 2;
-    let bounds = pair_aligned_bounds(entries, 1);
-    let blocks = bounds.len() - 1;
-
-    let count_block = |block: usize| -> usize {
-        entries[bounds[block]..bounds[block + 1]]
-            .chunk_by(pair_predicate)
-            .map(|group| {
-                let (evens, odds) = split_pair_group(group);
-                merge_count(evens, odds)
-            })
-            .sum()
-    };
-    #[cfg(feature = "parallel")]
-    let counts: Vec<usize> = (0..blocks).into_par_iter().map(count_block).collect();
-    #[cfg(not(feature = "parallel"))]
-    let counts: Vec<usize> = (0..blocks).map(count_block).collect();
-
-    let bound_length: usize = counts.iter().sum();
-    let mut vals: Vec<F> = Vec::with_capacity(bound_length);
-    let mut metas: Vec<IndexedMeta> = Vec::with_capacity(bound_length);
-    let mut out_slices = Vec::with_capacity(blocks);
-    let mut vals_rest = vals.spare_capacity_mut();
-    let mut metas_rest = metas.spare_capacity_mut();
-    for &count in &counts {
-        let (vals_slice, next_vals) = vals_rest.split_at_mut(count);
-        let (metas_slice, next_metas) = metas_rest.split_at_mut(count);
-        vals_rest = next_vals;
-        metas_rest = next_metas;
-        out_slices.push((vals_slice, metas_slice));
-    }
-
-    let fill_block = |(block, (vals_out, metas_out)): (usize, SoaSpareBlock<'_, F>)| {
-        let mut written = 0usize;
-        for group in entries[bounds[block]..bounds[block + 1]].chunk_by(pair_predicate) {
-            let (evens, odds) = split_pair_group(group);
-            merge_bind(
-                evens,
-                odds,
-                &|even, odd| {
-                    split_indexed(<SeedEntry as MatrixEntry<F>>::bind(
-                        even, odd, r, ra_lut, wa_lut,
-                    ))
-                },
-                |(val, meta)| {
-                    vals_out[written] = MaybeUninit::new(val);
-                    metas_out[written] = MaybeUninit::new(meta);
-                    written += 1;
-                },
-            );
-        }
-        debug_assert_eq!(written, vals_out.len());
-    };
-    #[cfg(feature = "parallel")]
-    out_slices.into_par_iter().enumerate().for_each(fill_block);
-    #[cfg(not(feature = "parallel"))]
-    out_slices.into_iter().enumerate().for_each(fill_block);
-
-    // SAFETY: the count pass sized every block's output span exactly (the
-    // fill pass re-derives the same per-group counts), the spans partition
-    // both spare capacities up to `bound_length`, and the merge writes each
-    // slot of both columns exactly once.
-    unsafe {
-        vals.set_len(bound_length);
-        metas.set_len(bound_length);
-    }
-    (vals, metas)
 }
 
 /// In-place cycle bind of the SoA indexed columns — the SoA twin of
