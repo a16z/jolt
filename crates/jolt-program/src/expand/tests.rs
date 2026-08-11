@@ -461,6 +461,8 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // A further 78 (all six loads, 12 each, plus LRW/SCW) were re-baselined
     // when VirtualAlignAddr fused the ADDI + ANDI pair and the window masks
     // began taking the immediate directly.
+    // A further 27 (SB/SH/SW, 8 each, plus 3 SCW) were re-baselined when the
+    // narrow stores moved to the window-mask + ANDN + shift-data sequences.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a
@@ -482,3 +484,4 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
 
     Ok(())
 }
+
