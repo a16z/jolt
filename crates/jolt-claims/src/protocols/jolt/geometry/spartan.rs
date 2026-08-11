@@ -388,6 +388,14 @@ pub fn carry_product() -> JoltOpeningId {
 }
 
 #[cfg(feature = "implicit-carry")]
+pub fn carry_reduced() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        crate::protocols::jolt::JoltCommittedPolynomial::Carry,
+        JoltRelationId::CarryClaimReduction,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
 pub fn carry_shift() -> JoltOpeningId {
     JoltOpeningId::committed(
         crate::protocols::jolt::JoltCommittedPolynomial::Carry,

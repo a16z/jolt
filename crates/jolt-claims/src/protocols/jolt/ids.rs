@@ -126,6 +126,23 @@ pub enum IncClaimReductionChallenge {
     Gamma,
 }
 
+/// Fiat-Shamir challenge drawn by the carry claim reduction (implicit-carry).
+#[cfg(feature = "implicit-carry")]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum CarryClaimReductionChallenge {
+    Gamma,
+}
+
+/// Public eq evaluations consumed by the carry claim reduction: the two
+/// producing points plus the all-zeros carry_init selector.
+#[cfg(feature = "implicit-carry")]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum CarryClaimReductionPublic {
+    EqCarryProduct,
+    EqCarryShift,
+    EqZeroSelector,
+}
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IncClaimReductionPublic {
     EqRamReadWrite,
@@ -370,6 +387,8 @@ pub enum JoltChallengeId {
     RamRaClaimReduction(RamRaClaimReductionChallenge),
     Booleanity(BooleanityChallenge),
     IncClaimReduction(IncClaimReductionChallenge),
+    #[cfg(feature = "implicit-carry")]
+    CarryClaimReduction(CarryClaimReductionChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
     BytecodeReadRaf(BytecodeReadRafChallenge),
     BytecodeClaimReduction(BytecodeClaimReductionChallenge),
@@ -594,6 +613,8 @@ pub enum JoltDerivedId {
     RamHammingBooleanity(RamHammingBooleanityPublic),
     Booleanity(BooleanityPublic),
     IncClaimReduction(IncClaimReductionPublic),
+    #[cfg(feature = "implicit-carry")]
+    CarryClaimReduction(CarryClaimReductionPublic),
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
     BytecodeReadRaf(BytecodeReadRafPublic),
     AdviceClaimReduction(AdviceClaimReductionPublic),

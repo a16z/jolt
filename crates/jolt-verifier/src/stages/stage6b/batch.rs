@@ -31,12 +31,14 @@ use super::bytecode_read_raf::{
     BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafTableFoldInputs,
     READ_RAF_CYCLE_STAGES,
 };
+#[cfg(not(feature = "akita"))]
+#[cfg(feature = "implicit-carry")]
+use super::carry_claim_reduction::{CarryClaimReduction, CarryClaimReductionChallenges};
 use super::committed_reduction_cycle_phase::{
     advice_reference_point_from_upstream, bytecode_reduction_weights, BytecodeReductionCyclePhase,
     BytecodeReductionCyclePhaseChallenges, ProgramImageReductionCyclePhase,
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
-#[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionChallenges};
 use super::instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
@@ -98,6 +100,10 @@ pub struct Stage6bDraws<F> {
     /// Base only: the packed batch has no inc claim-reduction member.
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
+    /// Drawn immediately after the inc gamma, matching the prover's
+    /// carry-reduction params sampling (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    pub carry_gamma: F,
     /// The bytecode claim-reduction eta, drawn exactly when the bytecode
     /// layout is committed.
     pub eta: Option<F>,
@@ -114,6 +120,8 @@ impl<F: Field> Stage6bDraws<F> {
             instruction_ra_gamma: transcript.challenge_scalar(),
             #[cfg(not(feature = "akita"))]
             inc_gamma: transcript.challenge_scalar(),
+            #[cfg(feature = "implicit-carry")]
+            carry_gamma: transcript.challenge_scalar(),
             eta: committed_bytecode.then(|| transcript.challenge_scalar()),
         }
     }
@@ -415,6 +423,12 @@ impl<F: Field> Stage6bSumchecks<F> {
             registers_read_write_cycle,
             registers_val_evaluation_cycle,
         );
+        #[cfg(feature = "implicit-carry")]
+        let carry_claim_reduction = CarryClaimReduction::new(
+            trace_dimensions,
+            stage2_points.product_remainder_point().to_vec(),
+            stage3_points.shift_opening_point().to_vec(),
+        );
 
         let trusted_advice = trusted_advice_layout
             .map(|layout| TrustedAdviceCyclePhase::new(layout, trusted_advice_reference_point));
@@ -435,6 +449,8 @@ impl<F: Field> Stage6bSumchecks<F> {
             instruction_ra_virtualization,
             #[cfg(not(feature = "akita"))]
             inc_claim_reduction,
+            #[cfg(feature = "implicit-carry")]
+            carry_claim_reduction,
             trusted_advice,
             untrusted_advice,
             bytecode_reduction,
@@ -468,6 +484,10 @@ impl<F: Field> Stage6bSumchecks<F> {
             #[cfg(not(feature = "akita"))]
             inc_claim_reduction: IncClaimReductionChallenges {
                 gamma: draws.inc_gamma,
+            },
+            #[cfg(feature = "implicit-carry")]
+            carry_claim_reduction: CarryClaimReductionChallenges {
+                gamma: draws.carry_gamma,
             },
             trusted_advice: self
                 .trusted_advice

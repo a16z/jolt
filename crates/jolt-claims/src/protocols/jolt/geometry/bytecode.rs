@@ -662,10 +662,19 @@ where
 {
     let beta = challenge(BytecodeReadRafChallenge::Stage2Gamma);
 
-    opening(op_flag_product(CircuitFlags::Jump))
+    let base = opening(op_flag_product(CircuitFlags::Jump))
         + beta.clone() * opening(instruction_flag_product(InstructionFlags::Branch))
         + beta.clone().pow(2) * opening(op_flag_product(CircuitFlags::WriteLookupOutputToRD))
-        + beta.pow(3) * opening(op_flag_product(CircuitFlags::VirtualInstruction))
+        + beta.clone().pow(3) * opening(op_flag_product(CircuitFlags::VirtualInstruction));
+    #[cfg(feature = "implicit-carry")]
+    {
+        base + beta.pow(4) * opening(op_flag_product(CircuitFlags::UsesCarry))
+    }
+    #[cfg(not(feature = "implicit-carry"))]
+    {
+        let _ = beta;
+        base
+    }
 }
 
 pub(crate) fn stage3_claim<F>() -> JoltExpr<F>
