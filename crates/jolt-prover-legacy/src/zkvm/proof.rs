@@ -378,7 +378,8 @@ fn commitments_from_proof_payload_order<C>(
     instruction_ra_count: usize,
     ram_ra_count: usize,
 ) -> Result<JoltCommitments<C>, VerifierError> {
-    let minimum = 2 + instruction_ra_count + ram_ra_count;
+    let minimum =
+        2 + instruction_ra_count + ram_ra_count + cfg!(feature = "implicit-carry") as usize;
     if commitments.len() < minimum {
         return Err(VerifierError::InvalidCommitmentCount {
             expected: minimum,
@@ -404,6 +405,21 @@ fn commitments_from_proof_payload_order<C>(
         .take(instruction_ra_count)
         .collect::<Vec<_>>();
     let ram_ra = commitments.by_ref().take(ram_ra_count).collect::<Vec<_>>();
+    // The Carry commitment is appended after the BytecodeRa family in
+    // `all_committed_polynomials`; pull it explicitly so the trailing collect
+    // cannot swallow it.
+    #[cfg(feature = "implicit-carry")]
+    let (bytecode_ra, carry) = {
+        let mut rest = commitments.collect::<Vec<_>>();
+        let Some(carry) = rest.pop() else {
+            return Err(VerifierError::InvalidCommitmentCount {
+                expected: minimum,
+                got: minimum - 1,
+            });
+        };
+        (rest, carry)
+    };
+    #[cfg(not(feature = "implicit-carry"))]
     let bytecode_ra = commitments.collect::<Vec<_>>();
 
     Ok(JoltCommitments::new(
@@ -412,6 +428,8 @@ fn commitments_from_proof_payload_order<C>(
         instruction_ra,
         ram_ra,
         bytecode_ra,
+        #[cfg(feature = "implicit-carry")]
+        carry,
     ))
 }
 

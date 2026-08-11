@@ -569,6 +569,10 @@ where
     if circuit_flags[CircuitFlags::VirtualInstruction] {
         stage2 += stage2_gammas[3];
     }
+    #[cfg(feature = "implicit-carry")]
+    if circuit_flags[CircuitFlags::UsesCarry] {
+        stage2 += stage2_gammas[4];
+    }
 
     let mut stage3 = F::from_i128(instruction.operands.imm);
     stage3 += stage3_gammas[1].mul_u64(instruction.address as u64);
