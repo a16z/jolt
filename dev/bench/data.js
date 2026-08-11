@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786393197690,
+  "lastUpdate": 1786466265811,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -134446,6 +134446,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 860840,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "centelles.alberto@gmail.com",
+            "name": "Alberto Centelles",
+            "username": "Acentelles"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5135a31081b51937d4a7441832d742d78aba83bd",
+          "message": "feat(jolt-tracer-x86): experimental AOT x86-64 tracer backend (x86-tracer slices 2-5) (#1729)\n\n* feat(jolt-tracer-x86): AOT x86-64 backend bring-up — fast mode, base ISA (x86-tracer slice 2)\n\nNew crate implementing the AOT-transpiled execution backend from\nspecs/x86-tracer-backend.md, informed by a source-level study of SP1's\nsp1-jit (in-process dynasm, whole-program AOT, jump-table dispatch,\ndifferential-testing model) and ZisK's ASM emulator (value-only read\nlogs, countdown chunking, cold-section layout):\n\n- NativeBackend alias: X86TracerBackend on x86_64-linux, the reference\n  interpreter elsewhere; crate compiles on all targets with codegen\n  cfg'd out (AC12 aarch64 cross-check passes).\n- Whole-program AOT via dynasm-rs (3.2, the SP1-proven major): one\n  straight-line template per expanded-bytecode row, halfword-granular\n  jump table doubling as JALR dispatch and branch-label source,\n  PC-stall termination (direct self-jumps compiled statically, JALR\n  compared at runtime), fail-fast TraceError on unsupported kinds.\n- Guest state plane (128 registers + control fields, offsets asserted),\n  mmap'd RAM plane with explicit bounds checks (in-process safety;\n  deliberate departure from sp1-jit's no-checks/child-process model),\n  device/unaligned/OOB accesses funneled to sysv64 Rust helpers with an\n  exit-flag error protocol; VirtualHostIO (advice-write, prints, cycle\n  markers) reproduced from the interpreter's handlers.\n- Fast (non-recording) pass covering the ~40 kinds in the fibonacci and\n  muldiv expanded bytecode, semantics extracted from the tracer's exec\n  impls (PC pre-increment link values, relative branch targets,\n  trailing_zeros shift decoding, exact Ld/Sd immediate cast chains);\n  BMI1 gated at compile time (tzcnt vs bsf silent degradation).\n- Tests: whole-guest fast-run equivalence vs the reference backend\n  (linux-x86_64 only) and a portable kind-inventory dev tool.\n\nRecord mode, per-instruction differential tests, iai benches, and the\nchunked pass follow in slices 3-4.\n\n(cherry picked from commit 6500e759a4f756e3b894639e2768c88413baf891)\n\n* test(jolt-tracer-x86): per-instruction differential tests + iai microbenchmarks (x86-tracer slice 2 completion)\n\nCompletes AC3 for the implemented base-ISA kinds:\n\n- Synthetic single-row harness (hidden module): terminals are\n  always-taken self-branches with no register effects, placed around the\n  row under test so every generated control transfer lands on a\n  compiled group; scratch RAM seeded identically on both sides.\n- 39 per-kind differential tests, 1000 random operand/state instances\n  each, comparing all 128 registers, PC, scratch memory, and the advice\n  tape against the reference interpreter Cpu (driven with the\n  tick_operate PC pre-increment semantics). Generators respect format\n  invariants (12-bit immediates, one-hot shift bitmasks incl. the\n  trailing_zeros(0)=64 edge, pinned bases for memory ops, both branch\n  outcomes, rd/rs1 aliasing for Jalr).\n- Compile-time exhaustiveness: classify() matches every\n  JoltInstructionKind variant with no wildcard (via\n  for_each_jolt_instruction_kind!), so a new kind fails compilation\n  until classified; classification_matches_compiler pins the\n  classification to what the transpiler actually accepts (fail-fast on\n  everything else).\n- Per-kind iai-callgrind benches over 4096-copy straight-line programs\n  (Prepared keeps compilation outside the measured region); Jal as a +4\n  chain, Jalr as a single dispatch. Behind the new 'iai' feature\n  (required-features) so non-linux --all-targets builds skip it.\n- field-inline declared as a passthrough feature (transpiler fail-fasts\n  on FIELD_* rows per the spec's Non-Goals).\n\nAll 41 tests pass on x86-64 Linux (Rosetta container), alongside the\nwhole-guest fibonacci equivalence test.\n\n(cherry picked from commit c681b7b22e58a0ea51ba1e330d220f4e593ad715)\n\n* test(jolt-tracer-x86): phase-3 cross-engine baseline harness\n\nOne platform, one harness, three engines: reference serial through the\nmodular seam, reference fast pass (ChunkedExecutionBackend::execute,\npost-#1717 execute mode), and the AOT x86 fast pass. Provisional\nnumbers (x86-64 Linux container under Rosetta, median of 3):\n\n| guest            | rows  | ref serial | ref fast pass | x86 fast pass |\n|------------------|-------|-----------:|--------------:|--------------:|\n| fibonacci_400000 | 4.40M | 10.8 MHz   | 64.7 MHz      | 361.1 MHz     |\n| sha2_chain_4446  | 13.6M | 11.2 MHz   | 141.3 MHz     | n/a (slice 3) |\n\nTwo findings: the AOT fast pass beats the optimized interpreter's\nexecute mode 5.6x on the same platform in unoptimized slice-2 form\n(registers in memory, Rosetta-translated); and the modular seam's\nCycle-to-TraceRow conversion dominates serial seam throughput once the\nraw tracer runs at 100+ MHz, making the conversion pass a first-class\noptimization target. Gate-platform numbers (real linux-x86_64) still\npending.\n\n(cherry picked from commit 3759826745521d21913cdf2a32234040f3922684)\n\n* test(jolt-tracer-x86): pin TRACER_PARALLEL in the equivalence test\n\nThe reference side must be measured and compared in serial mode\nregardless of ambient environment.\n\n* feat(jolt-tracer-x86): fast-pass coverage for the remaining non-advice kinds (slice 3a)\n\nExtends the AOT fast pass from the base ISA to every final-bytecode kind\nexcept VirtualAdvice. The tranche is smaller than the spec's slice-3\nscope suggests because most of what looked missing is source-only:\nshifts, W-arithmetic, the M and A extensions, CSR ops, ECALL, and the\nadvice-load kinds all expand into final rows the backend already had\n(finality per expand/grammar.rs is_source_only).\n\n27 templates, each specced against the tracer's exec body:\n- Slt, Andn, Pow2I/W/IW, MovSign, VirtualRev8W (bswap + ror 32 reverses\n  each 32-bit half), Rotri/Rotriw (bitmask-encoded shift via\n  trailing_zeros; the W form zero-extends, unlike Zbb), ShiftRightBitmaskI,\n  VirtualSra (tzcnt + sar, BMI1 as for VirtualSrl).\n- The eight XOR-rotates: 64-bit forms rotate the xor; the W forms operate\n  on 32-bit halves and zero-extend.\n- Four asserts (AssertEQ incl. its warn-and-continue spoil mode when\n  imm != 0, ValidDiv0, ValidUnsignedRemainder, MulUNoOverflow via the\n  unsigned-mul high half), routed to the fatal-helper path.\n- ChangeDivisor/W (the RISC-V MIN/-1 guard; the W form sign-extends the\n  low 32 bits of the divisor).\n- VirtualAdviceLen / VirtualAdviceLoad with advice-tape helpers and a\n  read cursor on the host context; tape exhaustion is a TraceError where\n  the interpreter panics (invariant 7 asymmetry).\n\nGates: 68/68 per-instruction differential tests (27k random\noperand/state instances for the new kinds; generators respect each\nkind's preconditions and exercise the trailing_zeros(0) and MIN/-1\nedges), and whole-guest fast-pass equivalence now covers four guests —\nfibonacci plus sha2-chain, sha3-chain and btreemap, which this tranche\nmakes reachable (rows, device outputs, panic flag, final memory, advice\ntape all bit-exact vs the post-#1717 reference). clippy clean for\nx86_64-linux and the portable fallback.\n\n* test(jolt-tracer-x86): measure the sha2-chain AOT fast pass (slice 3a)\n\nsha2-chain is reachable now that the XOR-rotate / rev8w / rotriw\ntemplates exist, so the phase-3 harness measures both arms:\n\n| guest            | rows  | ref serial | ref fast pass | AOT fast pass |\n|------------------|-------|-----------:|--------------:|--------------:|\n| fibonacci_400000 | 4.40M | 9.9 MHz    | 59.7 MHz      | 324.4 MHz     |\n| sha2_chain_4446  | 13.6M | 12.0 MHz   | 132.1 MHz     | 801.1 MHz     |\n\nProvisional (x86-64 container under Rosetta, median of 3). The\ninline-heavy guest is the better case for AOT, not the worse one: 6.1x\nover the interpreter's execute mode vs 5.4x on fibonacci, because the\ninline expansions are long straight-line runs of exactly the arithmetic\nrows the transpiler emits without dispatch.\n\n* feat(jolt-tracer-x86): per-group runtime advice — VirtualAdvice, DIV/REM, inlines (slice 3b)\n\nCompletes fast-pass coverage: every final-bytecode kind now has a\ntemplate. Runtime advice is a per-source-instruction-group concern, so\nthe backend recovers what the expanded bytecode erases.\n\n- Source-row recovery: the ELF is re-decoded at compile time and source\n  instructions are keyed by address (JoltInstructionRow carries neither\n  source kind nor inline key). Programs assembled directly from rows\n  (the test/bench harness) have no ELF and get an empty map.\n- Advice jobs: each group needing advice resolves at compile time to a\n  job in a per-program table; generated code calls one helper with the\n  job index at the group's entry, before any of its rows execute (the\n  interpreter computes advice from the same pre-group register state).\n  Values land in GuestState::advice_slots; VirtualAdvice rows read their\n  slot in row order.\n- DIV/REM advice mirrors the tracer's four variant formulas exactly:\n  [quotient, |remainder|] for DIV/REM, the i32 forms with a\n  sign-extended quotient for DIVW/REMW, and the single-quotient\n  unsigned/word variants. LR/SC needs no computation — the success bit\n  is derivable from row state.\n- Inline advice reuses the registered build_advice functions unchanged\n  through InlineAdviceContext, implemented here over the guest register\n  array and memory plane. This is what that seam was introduced for:\n  one advice implementation, two backends. Requires a public\n  find_inline_registration in the tracer (the existing lookup was\n  private and panicking).\n- Fail-fast placement: a VirtualAdvice row in a group with no advice\n  computation is a compile-time error, rather than reading a stale slot\n  (invariant 7).\n\nGates: 68/68 differential tests and whole-guest fast-pass equivalence\nover five guests — fibonacci, sha2-chain, sha3-chain, btreemap and now\nmuldiv, whose DIV/REM groups exercise this path. clippy reports the\nfail-fast match arm reaches only Noop, i.e. the coverage goal is met.\n\n* refactor(jolt-tracer-x86): isolate code generation behind the RowEmitter seam\n\nPer the updated spec (#1713): emission lives behind a small internal\nseam so an alternate emitter — the copy-and-patch stencil route of\nAlternative 11 — can be compared against the dynasm templates per row\nkind, without touching the compile driver, tests, or benches.\n\n- RowEmitter (compile/emitter.rs) emits one row; DynasmEmitter is the\n  production implementor, unchanged templates behind a thin impl.\n- Emitters report EmitOutcome::Unsupported rather than erroring, so an\n  EmitterSet can try the next one and a hybrid (stencils for some\n  kinds, templates for the rest) needs no extra plumbing. The\n  fail-fast invariant-7 error moves to the set, which is the only\n  layer that knows no emitter claimed a kind — and this keeps the\n  authoritative supported-kind list in the emitter's own match rather\n  than duplicating it in a predicate that could drift.\n- compile_with(program, &EmitterSet) is the A/B entry point;\n  compile() delegates with the production set. Both, plus the seam\n  types and the Emitter context, are re-exported through the\n  doc-hidden harness module so experiments can live outside the crate.\n- Deliberately not in the trait: prologue, dispatch stubs, jump table,\n  and group/chunk accounting. Those are properties of the execution\n  model, not of how a row is encoded; a stencil emitter would only\n  reimplement them identically.\n\nTests: a declining emitter ahead of the templates must fall through,\nand a set where no emitter claims a kind must fail compilation. Full\nsuite unchanged — 68 differential tests and five whole-guest gates\ngreen, confirming the refactor is behavior-preserving.\n\n* feat(jolt-tracer-x86,jolt-eval): ACT4 runner and the backend-equivalence invariant\n\nTwo of slice 3's acceptance criteria.\n\njolt-emu-x86 (AC4) — the x86 counterpart of the tracer's jolt-emu.\nThe arch tests halt by storing to the tohost symbol and then spinning\nin 'j .' (tests/arch-tests/jolt/rvmodel_macros.h), so the backend's\nPC-stall termination ends the run and both the result word and the\nsignature region are read out of final memory; no mid-execution HTIF\nhook is needed. Matches run.sh's contract (single positional ELF,\njudged by exit status) and reproduces jolt-emu's signature format\nbyte-for-byte. Note final memory carries only nonzero bytes, so absent\noffsets read as zero — a passing test writes tohost = 1, whose other\nseven bytes are simply absent.\n\nTwo deliberate departures from the reference runner: a PC stall with\nno tohost write exits non-zero (jolt-emu reports success there, which\nfor an arch test is a silent pass), and pipeline/transpiler rejection\ngets its own exit code 3, distinct from a genuine failure, so the x86\nskip list can be regenerated mechanically per AC4's 'skipped and\nlisted' requirement. The binary builds on every target (refusing\npolitely off-platform) so build scripts need no per-target branches.\n\ntracer_backend_equivalence (AC5) — registered in JoltInvariants with\nTest, Fuzz and RedTeam targets over a five-guest corpus (arithmetic\nloop, two inline-heavy chains, allocator traffic, and the DIV/REM\nadvice groups), with bounded fuzzable parameters so guest inputs stay\nwell-formed: muldiv's divisor is forced nonzero, since a divide-by-zero\npanic ends the guest before the DIV rows it is meant to exercise.\n\nScope is the fast pass, which is what the backend implements today:\nrow count, device outputs and panic flag, final memory, advice tape.\nFull TraceRow-stream equality joins with record mode; row count\nalready catches control-flow divergence and final memory catches value\ndivergence reaching RAM. The reference backend's eager trace is also\ncompared against its own chunked fast pass on every platform, so the\ninvariant is not vacuous where NativeBackend is the interpreter.\n\nAlso links jolt-inlines-keccak256 into jolt-eval: the crate already\nforce-links sha2 and secp256k1 registrations against dead-stripping,\nand the sha3-chain corpus guest needs the same.\n\n* feat(jolt-tracer-x86): record mode — bit-exact TraceRow streams (slice 3c)\n\nThe backend can now produce a trace, not just execute. This is what\nmakes it consumable by a prover and what unblocks proof byte-equality\n(AC7).\n\nDesign: generated code writes a fixed 64-byte Observation per row (row\nindex plus the dynamic values) rather than constructing TraceRow\ndirectly, because TraceRow's Option fields have no guaranteed layout\nand hand-written assembly must not depend on rustc's niche choices. A\nRust pass then joins each observation with\nexpanded_bytecode[row_index] to recover the static half. Which RAM\naccess a row records is likewise static per kind (only Ld and Sd touch\nRAM in final bytecode), so that is decided in Rust, not emitted.\n\nTwo code bodies are compiled from the same templates, as the spec\ncalls for, but as separate assemblies: branch targets are dynamic\nlabels per guest address, and a branch in the record body must land on\nthe record body's copy of its target.\n\nTwo subtleties that would otherwise corrupt traces silently:\n- Rows that transfer control never reach code emitted after their\n  template, so their observation is written up front. Sound because\n  branches have no destination and Jal/Jalr post-values are the\n  statically known link.\n- Every capture site reloads the observation cursor from GuestState\n  rather than keeping it in a register: helper calls clobber\n  caller-saved registers, and the cursor only advances at row end, so\n  the reload always lands on the same slot.\n\ntrace() runs the fast pass first to size the observation buffer\nexactly, then the record body. That costs about 12% (the fast pass runs\nat several hundred MHz) and buys a free cross-check: a row-count\nmismatch between the two bodies means they diverged, caught here\nrather than as an unprovable trace. Buffer overflow has its own exit\nreason for the same reason.\n\nDevice-region stores capture their pre-value in the helper, since those\nbytes live in JoltDevice rather than the RAM plane.\n\nGate: new row-stream tests compare every TraceRow field for field\nagainst the reference interpreter on fibonacci, muldiv (DIV/REM advice\ngroups) and sha2-chain (inline path); 8/8 equivalence tests green\nalongside the five fast-pass gates. clippy clean for x86_64-linux and\nthe portable fallback.\n\n* test(jolt-tracer-x86): production-scale row-stream equality\n\nThe small-guest record tests pin semantics; these exercise the same\nfield-for-field comparison over millions of rows with realistic memory\nand control-flow patterns: 4.4M rows (fibonacci n=400000) and ~800k\n(sha2-chain, 256 iterations), both identical to the reference.\n\nThis is deliberately not AC7 as written. AC7 asks for two proofs\ncompared byte-for-byte; a proof is a deterministic function of\npreprocessing, config, trace and device state, so byte-identical rows\nimply byte-identical proofs, and scale is the substance AC7 would add\nover the small-guest tests. What it does not establish is that the rows\nare *acceptable* to the prover, only that they equal rows the prover\nalready accepts; that gap closes as soon as the existing pipeline is run\nwith NativeBackend selected, which needs no new code.\n\nLiteral AC7 needs byte_diff.rs's preprocessing and config helpers\nextracted from a test file into a shared module — a worthwhile refactor\nof shared prover test infrastructure, but one a reviewer should weigh in\non rather than have it land inside this stack.\n\n* test(jolt-tracer-x86): safety properties of generated code (AC11)\n\nThree assertions for a backend that executes guest-controlled data\nin-process:\n\n- The finalized code mapping is executable and not writable, checked by\n  locating the generated code's address in /proc/self/maps in the\n  running process rather than trusting dynasm's RW-then-RX contract.\n  The artifact has to stay alive across the check: an earlier version\n  of this test dropped it first and so inspected an unmapped address,\n  which is a good sign the assertion is looking at something real.\n- An out-of-bounds load and an out-of-bounds store each surface the\n  defined out-of-bounds exit with the faulting guest address, rather\n  than a host segfault. Both use an address inside the RAM region (so\n  the device helpers do not claim it), leaving the emitted bounds check\n  as the only thing that can catch them.\n\nThis is the AC11 pair the spec asks for; the SAFETY-comment half is\nalready enforced by the workspace's undocumented_unsafe_blocks deny.\n\n* feat(jolt-tracer-x86): chunked execution — checkpoints and parallel replay (slice 4)\n\nImplements ChunkedExecutionBackend for the AOT backend, so it can serve\nas an alternative fast first pass feeding per-chunk replay.\n\nPausing is the crux. Generated code deliberately does not maintain PC in\nstraight-line rows, so it can only stop where a resumable PC is\nstatically known: a group boundary. A row-limit field in GuestState plus\na two-instruction check at each group start gives that, and the exit\npublishes the group's address as the resume PC — calling the body again\ncontinues the execution. This is why the spec's skip_rows design exists,\nand it is what makes chunk size 1 work at all: a boundary may precede\nthe requested mark, so the replay discards the leading rows.\n\nTwo bugs found by running it, both worth recording:\n- One image per chunk exhausts memory (chunk size 1 wants one plane copy\n  per row). Boundaries are now shared behind an Arc with only\n  skip_rows/take_rows per chunk, so memory is bounded by boundaries\n  (spaced at least 2^16 rows apart) rather than by chunk count.\n- Replay can overshoot its window by up to one group, since it stops at\n  the next boundary. The observation buffer now carries exactly that\n  slack, computed as the program's longest run of rows sharing a source\n  address. The record-mode overflow tripwire caught this, which is what\n  it was added for.\n\nDeparture from the spec, deliberate: checkpoints carry a memory image\nrather than an access-value log. That is the tradeoff #1717's parallel\nmachinery also makes — correct by construction, at the cost of a plane\ncopy per boundary — and the Checkpoint associated type is opaque, so\nswitching to logs later is invisible to consumers.\n\nGate: chunk composition over sizes 1, 7, 100 and 2^18 (fibonacci) and 1,\n13, 1000 (muldiv, whose DIV/REM advice groups straddle boundaries),\nreplayed in reverse order and compared row for row against the eager\ntrace.\n\n* perf(jolt-tracer-x86): fold register loads into ALU operands (slice 5, no measured gain)\n\nALU rows loaded both operands into scratch registers before operating;\nthe second operand now comes straight from the state plane as a memory\noperand (add rax, [state+off]), removing one instruction and one\nregister per row. x0 folds to the identity or annihilator instead of\ntouching memory. This is the most frequent row shape in the bytecode,\nso it is the broadest safe specialization available.\n\nMeasured effect under Rosetta: none. Fibonacci 324.4 -> 337.4 MHz,\nsha2-chain 801.1 -> 784.4 MHz; one up 4%, one down 2%, i.e. noise. The\ninstruction-count reduction is real and the 68 differential tests\nconfirm semantics are unchanged, so the change is kept, but it does not\nearn a performance claim.\n\nThe finding that matters more than the change: throughput tuning cannot\nbe evaluated in a Rosetta-translated container. Further slice-5 work\n(register pinning into XMM lanes, fused fast-mode groups) is\nimplementable but would be guesswork without native measurement, so it\nshould wait for a bare-metal linux-x86_64 run rather than accumulate\nunmeasurable micro-optimizations.\n\n* perf(jolt-tracer-x86): keep the chunk-boundary check out of the eager paths\n\nSlice 4 emitted the group-boundary pause check into both code bodies, so\nevery eager trace paid two instructions per source instruction for a\nfeature only chunked execution uses. Pausability is now its own compile\naxis: four bodies, {execute, record} x {eager, pausable}. Compilation is\nabout 13ms per body (now reported as a tracked column in the baseline\ntable, per the spec's treatment of it as amortized rather than gated),\nso the duplication is cheap.\n\nAlso adds the x86 and x86_fast Criterion ids to the jolt-eval trace_gen\ntargets, cfg-gated: off x86_64 Linux, NativeBackend is the interpreter\nand those arms would duplicate the reference id.\n\nMeasurement honesty, correcting the previous commit's claim: the\n324.4 -> 337.4 / 801.1 -> 784.4 MHz comparison there spanned record\nmode, slice 4 and the ALU change, not the ALU change alone, and slice\n4's pause check pushed the opposite way. So that data supports 'the net\nof several changes is within noise', not 'the ALU specialization did\nnothing'. Run-to-run variance on an unchanged binary here is up to 30%\n(the reference fast pass reads 60 to 79 MHz across runs), which is why\nno performance claim should rest on this environment. Isolating one\nvariable is now straightforward via the RowEmitter seam (two EmitterSets\ndiffering in one template family, same process), but it still wants\nbare metal to mean anything.\n\n* chore(jolt-eval): normalise the fuzz manifest trailing newline\n\n`taplo fmt --check` rejects the trailing blank line left by the\ntracer_backend_equivalence fuzz target entry.\n\n* test(jolt-tracer-x86): share the guest-build helper, skip without the jolt CLI\n\nFour integration tests carried near-identical copies of the guest ELF\nbuild helper, each of which panicked when the `jolt` CLI is absent. The\nmodular-crates CI job does not install the CLI, so those tests failed\nthere rather than being skipped.\n\nExtract one `tests/common/mod.rs` helper returning `Option`: a spawn that\nfails with `NotFound` means the CLI is unavailable and the caller skips\nwith a message, while a build that starts and then fails still panics.\nThe distinction matters — only the first is an environment gap.\n\nVerified on a native x86-64 linux runner with the CLI installed: 83 tests\nrun, 83 passed, so no test skips vacuously.\n\n* ci: run the x86 tracer backend suite on native x86-64\n\nThe guest-dependent tests skip themselves without the `jolt` CLI, so\ninstalling it here makes this job the backend's real coverage: the only\nplace the differential, chunk-composition and safety tests execute\nagainst native x86-64 hardware rather than a Rosetta container.\n\nFirst run: 83 tests, 83 passed.\n\n* chore: regenerate Cargo.lock after rebase onto main\n\n* fix(jolt-tracer-x86): adapt to main's post-rebase APIs\n\nTraceOutput::new now takes advice_tape as a required parameter (the\nwith_advice_tape builder is gone), and InlineRegistration::build_advice\nis fallible — surface InlineAdviceError as a helper error per its\ndocumented backend contract.\n\n* refactor(jolt-tracer-x86): clarify AOT compiler ownership\n\nMove compiler operations onto their owning types. Correct the bad-jump stub offset and add regression coverage for unmapped in-range targets.\n\n* fix(jolt-tracer-x86): enforce advice_ready — bare VirtualAdvice is a compile error\n\nThe PR description promised that a VirtualAdvice row in a group without\nan advice computation is a compile-time error, but advice_ready was\nwritten and never read: such a row compiled into a read of whatever the\nprevious group left in the advice slots — a silently wrong trace.\n\nCheck advice_ready in the VirtualAdvice arm and refuse with a dedicated\nerror. Classification follows: VirtualAdvice moves out of SUPPORTED into\na RequiresAdviceGroup class (bare rows must fail), and a regression test\npins the specific error.\n\n* fix(jolt-tracer-x86): key the compile cache on program identity, not ELF bytes alone\n\nThe compiled artifact is a function of the expanded bytecode, which is\nderived from the ELF *and* the instruction profile (plus the link-time\ninline registry). Keying the cache on ELF bytes alone meant one backend\ninstance fed the same ELF under two profiles would silently reuse the\nfirst profile's code — wrong bytecode, no error.\n\nFold the profile (domain-separated) and two cheap bytecode guards\n(length, entry address) into the fingerprint; hashing the rows\nthemselves would cost more per trace call than the compile it saves.\nUnit tests pin the recompile-on-profile-change behavior (Arc identity)\nand the guards.\n\n* fix(jolt-eval): keep the AOT compile out of the x86 bench arms' measured region\n\nrun_x86/run_x86_fast constructed a fresh X86TracerBackend inside\nb.iter, so every iteration recompiled the program (~13ms/body) — for\nthe small guests that is on the order of the fast pass itself, and the\nx86/x86_fast ids are the tracked AC8/AC9 numbers. Take the backend as a\nparameter, construct it once per group, and warm the cache with one\nun-timed run (the phase3_baseline pattern).\n\n* test(jolt-tracer-x86): exercise the pause/resume path with dense checkpoints\n\nEvery in-tree execute() test used guests far below the 2^16-row\ncheckpoint spacing, so run_pausable never paused: boundaries held only\nthe initial state, every chunk replayed from row zero, and the Paused\nexit, multi-boundary selection, and boundary-restore paths shipped with\nzero coverage.\n\nMake the spacing a backend field with a doc(hidden) test setter, size it\nfrom the measured trace (len/8) in two new dense-boundary composition\ntests (fibonacci, and muldiv for advice-group resume), and assert via\nthe new skip_rows accessor that checkpoints actually resume from nearby\npaused boundaries rather than the program start.\n\n* refactor(jolt-tracer-x86): drop dead unsafe impls, harden the emitter and advice seams\n\n- X86Checkpoint's unsafe Send/Sync impls asserted what the auto traits\n  already prove (every field is owned data or an Arc to an immutable\n  artifact) while silently vouching for any future non-thread-safe\n  field; replace them with a compile-time Send + Sync assertion.\n- EmitterSet now rejects an emitter that emits bytes and then declines\n  (a stray prelude would double-count rows once a later emitter claims\n  the kind), and the dynasm emitter declines Noop before emitting its\n  row prelude accordingly.\n- Advice jobs record how many VirtualAdvice rows their group consumes;\n  the runtime helper checks the computed value count against it, so a\n  short advice vector fails loudly instead of leaving stale slots to be\n  read (the interpreter panics on the same mismatch). Div groups\n  over-consuming is a compile-time error.\n- Refuse programs whose text span exceeds i32::MAX: the dispatch\n  sequence compares byte deltas against the span as an i32 immediate,\n  which would sign-extend and pass vacuously.\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-08-11T11:46:49-04:00",
+          "tree_id": "85b8cd381364d5b182c0a745b41599e961eb1896",
+          "url": "https://github.com/a16z/jolt/commit/5135a31081b51937d4a7441832d742d78aba83bd"
+        },
+        "date": 1786466261524,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.0049,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.8816,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 511380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 509464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 504024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.4896,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 503068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.4006,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500752,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.253,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.2872,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 190252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.0149,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864164,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.3803,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500432,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3108,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 14.1176,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 504316,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.1586,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 502376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 21.3261,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1094300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 9.6595,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 647356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 67.1812,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2110308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 0.9911,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.1927,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 9.6823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864676,
             "unit": "KB",
             "extra": ""
           }
