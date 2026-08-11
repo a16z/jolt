@@ -556,8 +556,10 @@ reserves no sentinel (it returns `None` only for raw address 0). RAF closes
 both: fabricating an access puts `lowest_address` on the left while row 1
 forces `RamAddress = 0`; suppressing a genuine access to remapped word 0 puts 0
 on the left while row 0 forces `RamAddress = lowest_address`. **This argument
-depends on `unmap(0) = lowest_address ≠ 0`**, which is currently asserted only
-prover-side (`UnmapRamAddressPolynomial::new`). A zero-based remap would make
+depends on `unmap(0) = lowest_address ≠ 0`**, enforced fail-closed by the
+verifier's `validate_inputs` (`validate_ram_remap_base`, mirroring the
+prover-side `UnmapRamAddressPolynomial::new` assertion) before any stage
+runs. Without that guard a zero-based remap would make
 RAF blind to lane 0 and re-open both forgeries.
 
 - **Auxiliary prefix-packed objects** (advice bytes, precommitted bytecode

@@ -360,6 +360,7 @@ where
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
     }
+    validate_ram_remap_base(memory_layout)?;
 
     let max_input_size = memory_layout.max_input_size as usize;
     if public_io.inputs.len() > max_input_size {
@@ -858,6 +859,27 @@ pub fn absorb_transcript_preamble<T>(
     );
 }
 
+/// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
+/// `8k + lowest_address`, and the lattice lane-zero reconstruction relies on
+/// `unmap(0) = lowest_address ≠ 0` to distinguish "no RAM access" from an
+/// access at remapped word zero (see "Where the RAM activation is pinned" in
+/// `specs/lattice-claims.md`). Mirrors the prover-side
+/// `UnmapRamAddressPolynomial::new` assertion (`start_address > 8`).
+fn validate_ram_remap_base(
+    memory_layout: &common::jolt_device::MemoryLayout,
+) -> Result<(), VerifierError> {
+    let lowest_address = memory_layout.get_lowest_address();
+    if lowest_address <= 8 {
+        return Err(VerifierError::InvalidMemoryLayout {
+            reason: format!(
+                "lowest remapped RAM address {lowest_address:#x} must exceed 8 so the RAF \
+                 unmap constant stays clear of the null-address range"
+            ),
+        });
+    }
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Mirrors the proof-derived inputs validate_inputs threads through; bundling them would obscure the FS-critical parameter set."
@@ -881,6 +903,7 @@ where
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
     }
+    validate_ram_remap_base(memory_layout)?;
 
     let max_input_size = memory_layout.max_input_size as usize;
     if public_io.inputs.len() > max_input_size {
@@ -1242,6 +1265,27 @@ mod tests {
         assert!(matches!(
             validate_inputs(&preprocessing, &public_io, &proof, false),
             Err(VerifierError::MemoryLayoutMismatch)
+        ));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_zero_based_ram_remap() {
+        let mut memory_layout = test_memory_layout();
+        // A layout whose remap is zero-based: `unmap(0) = lowest_address = 0`
+        // would make the RAF identity blind to address-lane zero.
+        memory_layout.trusted_advice_start = 0;
+        memory_layout.untrusted_advice_start = 0;
+        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidMemoryLayout { reason })
+                if reason.contains("lowest remapped RAM address")
         ));
     }
 
@@ -1647,8 +1691,8 @@ mod tests {
         }
     }
 
-    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
+    fn test_memory_layout() -> common::jolt_device::MemoryLayout {
+        common::jolt_device::MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: 0,
             max_untrusted_advice_size: 0,
@@ -1656,7 +1700,16 @@ mod tests {
             max_output_size: 8,
             stack_size: 8,
             heap_size: 8,
-        });
+        })
+    }
+
+    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        test_preprocessing_with_layout(test_memory_layout())
+    }
+
+    fn test_preprocessing_with_layout(
+        memory_layout: common::jolt_device::MemoryLayout,
+    ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
         #[cfg(feature = "zk")]
         let vc_setup = Some(PedersenSetup::new(
             vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],
