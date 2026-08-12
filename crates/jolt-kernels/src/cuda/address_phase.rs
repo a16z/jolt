@@ -52,10 +52,26 @@ impl DeviceRows {
             .map(|slot| slot.map_or(NO_TABLE, |index| index as u32))
             .collect();
         let flags: Vec<u8> = raf_flag.iter().map(|&flag| u8::from(flag)).collect();
+        Self::from_encoded(context, &bits, &tables, &flags)
+    }
+
+    pub fn from_encoded(
+        context: &CudaKernelContext,
+        bits: &[u64],
+        tables: &[u32],
+        flags: &[u8],
+    ) -> Result<Self, CudaError> {
+        let cycles = tables.len();
+        if bits.len() != cycles * 2 || flags.len() != cycles {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: (bits.len() / 2).min(flags.len()),
+            });
+        }
         Ok(Self {
-            lookup_index: context.upload_u64_slice(&bits)?,
-            table_index: context.upload_u32_slice(&tables)?,
-            raf_flag: context.upload_u8_slice(&flags)?,
+            lookup_index: context.upload_u64_slice(bits)?,
+            table_index: context.upload_u32_slice(tables)?,
+            raf_flag: context.upload_u8_slice(flags)?,
             cycles,
         })
     }

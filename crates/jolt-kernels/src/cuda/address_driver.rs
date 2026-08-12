@@ -11,7 +11,7 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 
 use super::address_phase::{
     condense_u_evals, init_raf_buckets, init_suffix_buckets, DeviceRows, RafBuckets, CHUNK_LEN,
-    CHUNK_SIZE,
+    CHUNK_SIZE, NO_TABLE,
 };
 use super::combine::{combine_terms, CombineTerm};
 use super::context::{CudaKernelContext, BLOCK};
@@ -26,7 +26,7 @@ const RAF_CHECKPOINTS: usize = 4;
 const NO_PREFIX: u32 = u32::MAX;
 
 pub struct DeviceAddressPhase {
-    rows: DeviceRows,
+    rows: std::sync::Arc<DeviceRows>,
     u_evals: DeviceFrVec,
     present: Vec<LookupTableKind<RISCV_XLEN>>,
     layout: TermLayout,
@@ -93,12 +93,31 @@ impl DeviceAddressPhase {
         r_reduction: &[F],
         address_bits: usize,
     ) -> Result<Self, CudaError> {
+        let rows = std::sync::Arc::new(DeviceRows::new(
+            context,
+            lookup_index,
+            table_index,
+            raf_flag,
+        )?);
+        let tables: Vec<u32> = table_index
+            .iter()
+            .map(|slot| slot.map_or(NO_TABLE, |index| index as u32))
+            .collect();
+        Self::with_rows(context, rows, &tables, r_reduction, address_bits)
+    }
+
+    pub fn with_rows<F: Field>(
+        context: &CudaKernelContext,
+        rows: std::sync::Arc<DeviceRows>,
+        table_index: &[u32],
+        r_reduction: &[F],
+        address_bits: usize,
+    ) -> Result<Self, CudaError> {
         if !address_bits.is_multiple_of(CHUNK_LEN) {
             return Err(CudaError::InvariantViolation {
                 reason: "the device address phase supports only whole 8-variable phases",
             });
         }
-        let rows = DeviceRows::new(context, lookup_index, table_index, raf_flag)?;
         let u_evals = context.eq_evals(require_fr_slice(r_reduction)?)?;
         if u_evals.len() != rows.cycles() {
             return Err(CudaError::LengthMismatch {
@@ -108,10 +127,15 @@ impl DeviceAddressPhase {
         }
 
         let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
-        for &index in table_index.iter().flatten() {
-            *used.get_mut(index).ok_or(CudaError::InvariantViolation {
-                reason: "a stage-5 row selects an unknown lookup table",
-            })? = true;
+        for &index in table_index {
+            if index == NO_TABLE {
+                continue;
+            }
+            *used
+                .get_mut(index as usize)
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a stage-5 row selects an unknown lookup table",
+                })? = true;
         }
         let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
             .filter(|table| used[table.index()])
@@ -401,7 +425,7 @@ impl DeviceAddressPhase {
         self.raf_checkpoints.to_host()
     }
 
-    pub const fn rows(&self) -> &DeviceRows {
+    pub fn rows(&self) -> &DeviceRows {
         &self.rows
     }
 

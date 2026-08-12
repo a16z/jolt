@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
@@ -14,7 +16,7 @@ use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::address_driver::DeviceAddressPhase;
-use super::address_phase::{flag_claims, DeviceRows};
+use super::address_phase::{flag_claims, DeviceRows, NO_TABLE};
 use super::context::CudaKernelContext;
 use super::cycle_handoff::{build_cycle_tables, HandoffInputs};
 use super::cycle_rounds::DeviceCycleRounds;
@@ -41,7 +43,7 @@ fn raf_initial_checkpoints<F: Field>() -> [F; RAF_CHECKPOINTS] {
 pub struct DeviceInstructionReadRaf<F: Field> {
     device: Option<DeviceAddressPhase>,
     cycle: Option<DeviceCycleRounds>,
-    rows: DeviceRows,
+    rows: Arc<DeviceRows>,
     r_reduction: Vec<Fr>,
     cycle_challenges: Vec<Fr>,
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -86,18 +88,8 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
             *slot = Self::field(value)?;
         }
 
-        let mut v_tables = Vec::with_capacity(device.v_tables().len());
-        for table in device.v_tables() {
-            let host: Vec<F> = table
-                .to_host()
-                .map_err(|_| failed())?
-                .into_iter()
-                .map(Self::field)
-                .collect::<Result<_, _>>()?;
-            v_tables.push(host);
-        }
         if prefix_checkpoints.len() != self.prefix_checkpoints.len()
-            || v_tables.len() != ADDRESS_BITS / CHUNK_LEN
+            || device.v_tables().len() != ADDRESS_BITS / CHUNK_LEN
         {
             return Err(failed());
         }
@@ -107,7 +99,6 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
             .map(PrefixEval::from)
             .collect();
         self.raf_checkpoints = raf_checkpoints;
-        let _ = v_tables;
 
         let gamma_sqr = self.gamma * self.gamma;
         let empty = LookupBits::new(0, 0);
@@ -176,18 +167,30 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
         let rows: Vec<InstructionReadRafWitness> =
             collect_bundles(witness, 1 << dimensions.log_t())?;
 
-        let lookup_index: Vec<u128> = rows.iter().map(|row| row.lookup_index.0).collect();
-        let table_index: Vec<Option<usize>> = rows.iter().map(|row| row.table_index.0).collect();
-        let raf_flag: Vec<bool> = rows.iter().map(|row| row.raf_flag.0).collect();
+        let mut bits = Vec::with_capacity(rows.len() * 2);
+        let mut table_index = Vec::with_capacity(rows.len());
+        let mut raf_flag = Vec::with_capacity(rows.len());
+        for row in &rows {
+            bits.push(row.lookup_index.0 as u64);
+            bits.push((row.lookup_index.0 >> 64) as u64);
+            table_index.push(row.table_index.0.map_or(NO_TABLE, |index| index as u32));
+            raf_flag.push(u8::from(row.raf_flag.0));
+        }
+        drop(rows);
 
         let unsupported = || KernelError::Unsupported {
             reason: "the CUDA instruction read-RAF kernel supports only the BN254 scalar field",
         };
-        let device = DeviceAddressPhase::new(
+        let device_rows = Arc::new(
+            DeviceRows::from_encoded(context, &bits, &table_index, &raf_flag)
+                .map_err(|_| unsupported())?,
+        );
+        drop(bits);
+
+        let device = DeviceAddressPhase::with_rows(
             context,
-            &lookup_index,
+            Arc::clone(&device_rows),
             &table_index,
-            &raf_flag,
             &inputs.points.lookup_output,
             ADDRESS_BITS,
         )
@@ -196,8 +199,6 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
         let r_reduction = require_fr_slice(&inputs.points.lookup_output)
             .map_err(|_| unsupported())?
             .to_vec();
-        let device_rows = DeviceRows::new(context, &lookup_index, &table_index, &raf_flag)
-            .map_err(|_| unsupported())?;
         Ok(Box::new(DeviceInstructionReadRaf {
             device: Some(device),
             cycle: None,

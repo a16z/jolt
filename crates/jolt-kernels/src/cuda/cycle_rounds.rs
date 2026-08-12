@@ -1,6 +1,6 @@
 #![expect(
     dead_code,
-    reason = "implementation target: the quotient kernel lands in phase 2"
+    reason = "the host-table constructor and round counters are exercised only by the tests"
 )]
 
 use cudarc::driver::{LaunchConfig, PushKernelArg};
@@ -48,11 +48,7 @@ impl DeviceCycleRounds {
         Self::assemble(require_fr_slice(point)?, factors, rounds)
     }
 
-    fn assemble(
-        point: &[Fr],
-        factors: Vec<DeviceFrVec>,
-        rounds: usize,
-    ) -> Result<Self, CudaError> {
+    fn assemble(point: &[Fr], factors: Vec<DeviceFrVec>, rounds: usize) -> Result<Self, CudaError> {
         if point.len() != rounds {
             return Err(CudaError::LengthMismatch {
                 expected: rounds,
@@ -281,13 +277,9 @@ mod tests {
             ADDRESS_BITS,
             NonZeroUsize::new(RA_COUNT).unwrap(),
         );
-        let mut kernel = InstructionReadRafKernel::new(
-            dimensions,
-            r_reduction,
-            rows(log_t, seed),
-            fr(seed + 1),
-        )
-        .expect("reference kernel");
+        let mut kernel =
+            InstructionReadRafKernel::new(dimensions, r_reduction, rows(log_t, seed), fr(seed + 1))
+                .expect("reference kernel");
         for round in 0..ADDRESS_BITS {
             kernel
                 .bind(fr(seed + round as u64 + 71))
