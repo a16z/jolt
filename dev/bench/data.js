@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786560369913,
+  "lastUpdate": 1786563495275,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -135958,6 +135958,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 860788,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ea53223e85fbd48d4f4fe12a955db30df45df248",
+          "message": "perf(instructions): fuse RV64 word arithmetic into single lookups — ADDW/ADDIW/SUBW/MULW/SLLIW 2→1 rows, SLLW 3→2 (#1750)\n\n* feat: fuse RV64 word arithmetic lookups\n\n* refactor(zkvm): lower SLLIW through VirtualMULIW\n\n* test(z3): cover fused word instruction expansions\n\nHarness fixes authored by the #1750 adversarial-audit reviewer.\n\n* test(zkvm): exercise fused word ops end to end\n\n* refactor(zkvm): strip bespoke review scaffolding\n\n* refactor(zkvm): rename SignExtendHalfWord table to SignExtendWord\n\nThe name is a holdover from RV32, where the 32-bit value being\nsign-extended was half of a word. Under RV64 the table sign-extends a\n32-bit word to 64 bits, so SignExtendWord is the accurate name. Pure\nrename: enum variants, table structs, and module files in\njolt-lookup-tables and the legacy prover; no behavioral change.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(jolt-tracer-x86): emit fused RV64 word ops in the x86 AOT backend\n\nMain's new exhaustive emit match (#1729) predates this branch's fused\nword-op variants; cover AddW/AddiW/SubW/MulW/MulIW with sign-extended\n32-bit ALU templates.\n\n* test(jolt-tracer-x86): enroll the fused word ops in the differential suite\n\nThe emit fix alone trips classification_matches_compiler: the transpiler\nnow accepts AddW/AddiW/SubW/MulW/MulIW rows but they still classified\nNotYetSupported. Add them to SUPPORTED, give each a per-instruction\ndifferential test against the interpreter, and bump the count pin.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* ci(arch-tests): retry the network-fetching installs in bootstrap\n\nThe udb gem's native extension downloads an artifact over the network at\ninstall time, and the framework runs that `bundle install` mid-job with\nno retry — transient registry/CDN failures (2 of the last 3 runs here,\nplus main) surface as arch-tests reds. Pre-warm the bundle in\nscripts/bootstrap with 5 backoff attempts so the framework's\ninstall-on-demand degrades to a no-op `bundle check`, give the three\ncurl downloads (mise, xpack toolchain, sail) the same --retry\ntreatment, and add scripts/bootstrap to the workflow's path filter so\nbootstrap changes re-run the suite.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>\nCo-authored-by: Michael Zhu <8365992+moodlezoup@users.noreply.github.com>",
+          "timestamp": "2026-08-12T11:32:44-07:00",
+          "tree_id": "b9d80cea2203668505cecb4561efa11623384b66",
+          "url": "https://github.com/a16z/jolt/commit/ea53223e85fbd48d4f4fe12a955db30df45df248"
+        },
+        "date": 1786563490634,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9108,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 873344,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3395,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 493076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 497008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 496896,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7168,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 501460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5901,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 501024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8615,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 493632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.877,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 194856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4315,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5712,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 495188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4562,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 499376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.3506,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 497476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7644,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 499264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.221,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1107208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.4694,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 623832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 95.2157,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2126160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4883,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 497460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.532,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.4317,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 867200,
             "unit": "KB",
             "extra": ""
           }
