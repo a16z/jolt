@@ -143,6 +143,7 @@ impl<F: Field> LtPolynomial<F> {
 /// Time: O(n·2^n). Space: O(2^n).
 fn lt_evals<F: Field>(r: &[F]) -> Vec<F> {
     let n = r.len();
+    jolt_utils::math::assert_shiftable_dim(n);
     let mut evals = jolt_utils::unsafe_allocate_zero_vec(1usize << n);
     for (i, &ri) in r.iter().rev().enumerate() {
         let (left, right) = evals.split_at_mut(1 << i);
@@ -365,6 +366,13 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds usize shift width")]
+    fn evaluations_rejects_shift_overflowing_dimension() {
+        let r = vec![Fr::one(); usize::BITS as usize];
+        let _ = LtPolynomial::evaluations(&r);
     }
 
     #[test]

@@ -160,21 +160,24 @@ impl DoryScheme {
         DoryVerifierSetup(prover_setup.0.to_verifier_setup())
     }
 
-    fn commit_with_mode<P, M>(poly: &P, setup: &DoryProverSetup) -> (DoryCommitment, DoryHint)
+    fn commit_with_mode<P, M>(
+        poly: &P,
+        setup: &DoryProverSetup,
+    ) -> Result<(DoryCommitment, DoryHint), OpeningsError>
     where
         P: MultilinearPoly<Fr> + ?Sized,
         M: Mode,
     {
-        let row_commitments = compute_row_commitments(poly, setup);
+        let row_commitments = compute_row_commitments(poly, setup)?;
         let (tier_2, commit_blind) = commit_rows_tier_2::<M>(&row_commitments, setup);
 
-        (
+        Ok((
             DoryCommitment(ark_to_jolt_gt(&tier_2)),
             DoryHint::new(
                 ark_to_jolt_g1_vec(row_commitments),
                 ark_to_jolt_fr(&commit_blind),
             ),
-        )
+        ))
     }
 }
 
@@ -222,7 +225,7 @@ impl CommitmentScheme for DoryScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Ok(Self::commit_with_mode::<P, Transparent>(poly, setup))
+        Self::commit_with_mode::<P, Transparent>(poly, setup)
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
@@ -242,7 +245,7 @@ impl CommitmentScheme for DoryScheme {
         let (row_commitments, commit_blind) = match hint {
             Some(h) => h.into_ark_parts(),
             None => (
-                compute_row_commitments(poly, setup),
+                compute_row_commitments(poly, setup)?,
                 <ArkFr as DoryField>::zero(),
             ),
         };
@@ -365,7 +368,7 @@ impl ZkOpeningScheme for DoryScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Ok(Self::commit_with_mode::<P, dory::ZK>(poly, setup))
+        Self::commit_with_mode::<P, dory::ZK>(poly, setup)
     }
 
     #[expect(
@@ -511,17 +514,30 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
 fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     setup: &DoryProverSetup,
-) -> Vec<ArkG1> {
+) -> Result<Vec<ArkG1>, OpeningsError> {
     let num_vars = poly.num_vars();
     let sigma = num_vars.div_ceil(2);
+    let max_cols = setup.0.g1_vec.len();
+    let max_rows = setup.0.g2_vec.len();
+    // An oversized polynomial must surface as the commit API's Err, not as an
+    // out-of-bounds slice panic on the SRS below.
+    let fits = sigma < usize::BITS as usize
+        && (1usize << sigma) <= max_cols
+        && (1usize << (num_vars - sigma)) <= max_rows;
+    if !fits {
+        return Err(OpeningsError::PolynomialTooLarge {
+            poly_size: num_vars,
+            setup_max: max_cols.ilog2() as usize + max_rows.ilog2() as usize,
+        });
+    }
     let num_cols = 1usize << sigma;
     let num_rows = 1usize << (num_vars - sigma);
 
-    if poly.is_one_hot() {
+    Ok(if poly.is_one_hot() {
         commit_rows_one_hot(poly, num_rows, num_cols, &setup.0)
     } else {
         commit_rows_dense(poly, sigma, &setup.0)
-    }
+    })
 }
 
 pub(crate) fn commit_rows_tier_2<M: Mode>(
@@ -649,6 +665,19 @@ mod tests {
             &mut verify_transcript,
         );
         assert!(result.is_ok(), "Verification failed: {result:?}");
+    }
+
+    #[test]
+    fn commit_rejects_polynomial_exceeding_setup_capacity() {
+        let mut rng = ChaCha20Rng::seed_from_u64(700);
+        let prover_setup = DoryScheme::setup_prover(2);
+        // 6-variable poly: 8 columns > the 2-var setup's SRS width.
+        let poly = Polynomial::<Fr>::random(6, &mut rng);
+        let err = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap_err();
+        assert!(
+            matches!(err, OpeningsError::PolynomialTooLarge { .. }),
+            "{err}"
+        );
     }
 
     #[test]
