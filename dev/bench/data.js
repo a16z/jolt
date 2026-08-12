@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786482335059,
+  "lastUpdate": 1786558781933,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -135202,6 +135202,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865380,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "db96792957df88688da3942a8bd3f9da9660d4d3",
+          "message": "fix: address v12 security audit findings (#1730)\n\n* fix(jolt-poly): guard degenerate layouts and zero-repr in unsafe_allocate_zero_vec (v12 #116266, #116324)\n\nalloc_zeroed requires a nonzero layout size, so size == 0 and zero-sized T\nnow take a safe construction path instead of UB. The T::zero() all-zero-bytes\nassertion now runs in all builds (one small compare per call), closing the\nrelease-mode window where a non-zero-repr Zero impl produced invalid values.\n\n* fix(jolt-poly): assert point dimension below usize shift width in eq+1/LT builders (v12 #113900)\n\n1usize << r.len() silently wraps (release) or panics on shift overflow (debug)\nat r.len() >= 64, then misindexes the truncated table. One assert at each\ntable-builder entry (evals, lt_evals, EqPlusOnePrefixSuffix::new) — no\nper-element cost.\n\n* fix(jolt-poly): validate one-hot indices and k*rows product at construction (v12 #113898, #113906)\n\nHot columns >= k address positions outside the declared (T x k) grid,\ncorrupting folds/commitments; checked at the constructor boundary as a\ndebug_assert since production witness gen masks indices and a release scan\nwould add an O(T) pass per committed polynomial. k * indices.len() now uses\nchecked_mul so a wrapped product cannot pass the power-of-two check.\n\n* fix(jolt-poly): enforce Lagrange const-generic N bounds at compile time (v12 #114899)\n\ndebug_assert! bounds on const-generic N were erased in release; inline\nconst { assert!() } blocks make out-of-contract instantiations (N = 0,\nN > 20, den_row_i64 N > 21) monomorphization-time errors at zero runtime\ncost. Enforcement propagates to evaluate_many and the centered_* wrappers.\n\n* fix(jolt-poly): guard degenerate univariate interpolation and division inputs (v12 #116382, #116386)\n\nfrom_evals_and_hint/from_evals_toom now reject empty slices with the same\ndocumented assert pattern as interpolate. divide_with_remainder divides by\nthe divisor's effective degree, so trailing zero coefficients no longer\nreach the leading-coefficient inversion and panic; length-as-degree-bound\nrepresentation elsewhere is deliberate (sumcheck round-poly shape) and kept.\n\n* fix(jolt-poly): document and assert the non-empty CompressedPoly contract (v12 #116388)\n\nrecover_linear_term (reached by evaluate_with_hint/eval_from_hint/decompress)\nindexed [0] and panicked opaquely on empty deserialized polys. One assert at\nthe shared entry replaces the implicit bounds check; # Panics docs point\nuntrusted-data callers at is_empty, matching the jolt-sumcheck verifier guard.\n\n* fix(inlines-sha2): eliminate aliased buffer views and unaligned digest stores (v12 #115563, #116420)\n\nupdate/finalize held a long-lived &mut [u8] over self.buffer across\n&mut self calls (buffer_as_u32_mut, sha256_compress) and kept using it\nafterwards — aliasing UB. Byte-level access now derives a fresh pointer\ninside each unsafe block.\n\nfinalize serialized the digest through a &mut [u32] view of a [u8; 32]\nlocal (align 1 vs 4) — replaced with a [u32; 8] array transmuted by\nvalue. The 8-byte alignment invariant of the length store at buffer\noffset 56 is now documented (repr(C, align(8))).\n\n* fix(inlines-keccak256): align rate buffers for u64-word absorption (v12 #116421)\n\nabsorb_buffer and absorb_final dereferenced *const u64 cast from\n[u8; 136] storage (alignment 1) — UB on strict-alignment targets and\nunsound per the aliasing/alignment rules. Both now use a repr(align(8))\nAlignedBlock wrapper so the word loads stay aligned; keeps single-LD\nabsorption on the guest (read_unaligned would lower to byte loads on\nRISC-V).\n\n* fix(inlines-secp256k1,inlines-p256): store division result after dividend checks (v12 #115878)\n\nThe Div expansion stored each advised quotient limb to [rs3 + 8i] in the\noperand-load loop, before the VirtualAssertEQ chain reloads the dividend\nfrom [rs1 + 8k]. When rs3 aliases rs1 the store clobbers the dividend, so\ncb + wp == 2^256 w + a degenerates into comparing the advised result with\nitself (b = 1, w = 0 accepts any 256-bit c).\n\nThe four SD instructions now run after every assertion, just before the\na[] registers are released: same instructions, same registers, unchanged\nrow count (194/240/272/260 in the expansion fixture) — only their\nposition moves, and no instruction between the advice and the new store\nsite reads [rs3].\n\nRegression tests execute DIVQ/DIVR with rs3 == rs1; pre-fix they trip the\ndividend assert, post-fix they yield the correct quotient.\n\n* fix(inlines-sdk): always handle the 2P+Q=O case in double_and_add (v12 #116340)\n\ndouble_and_add divides by `divisor = x_P - x_{P+Q}`, which is zero exactly\nwhen Q = -2P and the result is the point at infinity. The guard was opt-in\nvia CurveParams::DOUBLE_AND_ADD_DIVISOR_CHECK; secp256k1 left it at the\ndefault false, so ECDSA verification (secp256k1_4x128_inner_scalar_mul feeds\nattacker-influenced table/accumulator pairs to double_and_add) could reach\ndiv_assume_nonzero(0): a host advice panic while tracing, and an\nunsatisfiable constraint in-guest.\n\nThe condition is curve-independent, so the flag is removed and the branch is\nunconditional — one is_zero() against two field divisions in the same\nfunction. secp256k1 ECDSA now returns Err(RxMismatch) for the infinity case\ninstead of crashing (x=0 of infinity never equals a nonzero r).\n\nAdds the 2G + (-2G) = O regression test that p256 and grumpkin already had.\n\n* fix(inlines-grumpkin): emit zero advice for a zero divisor instead of panicking (v12 #116411)\n\nGrumpkinDivAdv::advice called inverse().expect(...), so a zero divisor\naborted the host tracer during advice generation. The grumpkin division\ninline carries no in-sequence assertion — correctness is checked guest-side\nin div_assume_nonzero, which calls spoil_proof() on mismatch — so emitting\nc = 0 reaches exactly that path: tracing completes and the proof is spoiled\ninstead of the prover dying. (0/0 -> 0 stays sound: the proven relation\nb * c == a holds.)\n\n* docs(inlines-sdk): document unchecked-constructor invariants, restrict grumpkin's (v12 #117715, #116333, #116335)\n\nECField::from_u64_arr_unchecked, AffinePoint::new_unchecked and\nAffinePoint::from_u64_arr_unchecked now state the canonical-limb / on-curve\nobligation and point untrusted input at the checked constructors.\nGrumpkinField::from_u64_arr_unchecked drops to pub(crate), matching the p256\nand secp256k1 field types (all callers are in-crate).\n\nAlso records why mulq_division_advice lets a zero divisor panic: no advice\nsatisfies b*c == a mod q, so the in-sequence VirtualAssertEQ would abort\ntracing regardless — the explicit expect keeps the better diagnostic.\n\nNote: the curve crates still need cross-crate access to the unchecked point\nconstructors (generators, endomorphism constants, fake-GLV), so ECField's\nunchecked method stays reachable from outside; closing that fully needs a\ncrate restructure.\n\n* fix(jolt-r1cs): validate R1csKey dimensions at construction and deserialization (v12 #114567, #117011)\n\nR1csKey derived Deserialize with pub dimensional fields and no\npost-deserialization validation: a malformed key could carry zero or\nnon-power-of-two num_cycles (num_cycle_vars() = 64 via trailing_zeros),\npadded dimensions inconsistent with the embedded matrices (OOB chunk\nwrites in compute_matvec/combined_row), or products that overflow\ntotal_rows()/total_cols() (undersized allocations followed by OOB\nindexing).\n\nRoute deserialization through a validated RawR1csKey (same pattern as\nConstraintMatrices), share the invariant check with R1csKey::new, make\nfields pub(crate) with read accessors so the validated constructors are\nthe only way to build a key, and use checked_mul at the single place\ndimensions are established so the hot accessors stay branch-free.\n\n* fix(jolt-r1cs): enforce MLE point dimensions in release builds (v12 #116362)\n\nevaluate_local_mles, evaluate_matrix_mles, and evaluate_sparse_matvec\nguarded point/witness dimensions with debug_assert only, and\ncombined_row split r_x with no length check at all. In release, a\ntoo-short point panicked deep in eq-table indexing while a too-long\npoint silently produced a wrong evaluation (the eq expansion is built\nfrom the full slice but only the leading entries are consumed).\n\nThese checks run once per call at API entry — outside all sumcheck\ninner loops — so promoting them to release asserts is free relative to\nthe O(2^n) eq-table work behind them.\n\n* fix(jolt-r1cs): validate witness length at R1csSource construction (v12 #116364)\n\nR1csSource::new stored the caller's witness slice unchecked;\ncompute_matvec and the Variable column path then indexed it via padded\ncycle offsets, so a short witness panicked mid-computation and an\noversized one was silently truncated to its prefix. One assert at\nconstruction covers both read paths.\n\n* docs(jolt-r1cs): warn that field-inline bridge rows lack range binding (v12 #116366)\n\nThe finding's mechanism is real for the composed matrices: IsFieldStoreToX\npins RdWriteValue to an unconstrained field element and nothing locally\nbounds it to 64 bits. It is not a live vulnerability — nothing enables\njolt-verifier/field-inline, no prover emits field-inline proofs, and the\ncanonical encode/decode semantics are explicitly staged as implementation\nstep 5 of the draft spec. Make the module header state the soundness\nconsequence so the gap cannot silently ship with a future verifier slice.\n\n* fix(jolt-field): wrap raw Montgomery limbs in Fq::from_bigint_unchecked (v12 #116375)\n\nThe method was documented as unchecked but called the checked\nInnerFq::from_bigint: limbs >= p aborted via unreachable!, and feeding\ninner_limbs() (Montgomery form) back in silently re-encoded them as a\ncanonical integer, corrupting the value (a*R -> a*R^2). Wrap raw limbs\nwith Fp::new_unchecked to match the Fr sibling, and add the same\nroundtrip test Fr has. No current callers, so no behavior change at any\ncall site.\n\n* fix(jolt-field): enforce limb-width preconditions at compile time (v12 #116379, #116426)\n\nfrom_u128/from_i128 (N >= 2), both zero_extend_from variants (M <= N),\nand the SignedBigIntHi32 general multiplication path (2*(N+1) <= 16\nproduct buffer) guarded their width preconditions with debug_assert\nonly; release builds fell through to bounds-check panics with no\ncontext (never UB - array indexing stays checked). Replace the\ndebug_asserts with inline const asserts so an unsupported width fails\nat monomorphization instead of at runtime, at zero runtime cost in\nthese hot conversion paths. All in-tree instantiations (SignedBigInt\nN=1..4, SignedBigIntHi32 N=1..3) satisfy the bounds.\n\n* fix(jolt-crypto): enforce MSM bases/scalars length equality in all builds (v12 #114608)\n\nArkworks' msm_bigint (and GT's zip fold) silently truncate to the shorter\nslice, so a release-build length mismatch produced a wrong group element\ninstead of failing. Replace the debug_assert with a real assert (one usize\ncompare ahead of an MSM - no measurable cost) and document the panic on\nJoltGroup::msm.\n\n* fix(jolt-crypto): cheap pre-filters before the expensive GT subgroup check (v12 #114616)\n\nBn254GT deserialization ran a full 254-bit Fq12 exponentiation (x^r == 1)\non every untrusted input before it could reject. Reachable per-element via\nDoryCommitment deserialization. Two cheap gates now run first:\n\n- exact-size check on the byte buffer (also makes the encoding canonical -\n  trailing bytes are rejected);\n- unitarity pre-filter conj(x)*x == 1: every GT element is unitary and a\n  random non-GT Fq12 element is unitary with probability ~q^-6, so one\n  conjugation + multiplication rejects virtually all malformed input.\n\nThe exact x^r check is unchanged and still decides membership - unitarity\nis necessary, not sufficient. Honest-path cost: +1 Fq12 mul.\n\n* docs(jolt-crypto): document the unchecked From<projective> wrapper contract (v12 #114599)\n\nTriage: FALSE POSITIVE as a security defect. Every untrusted-bytes path\ninto Bn254G2 goes through serde Deserialize -> arkworks deserialize_compressed\nwith Validate::Yes (on-curve + subgroup check). From<G2Projective> wraps\nalready-constructed arkworks values held only by trusted internal code\n(setup generation, GLV internals, generators); it is not a deserialization\nboundary. Document that contract on the macro and pin the validated\nboundary with a regression test: an on-curve, non-subgroup G2 point must be\nrejected by deserialization (guards against a future arkworks bump or a\nswitch to *_unchecked dropping the subgroup check).\n\n* docs(jolt-crypto): warn about release-mode modular reduction in field_to_fr (v12 #116311)\n\nTriage: WONTFIX for a release-mode range check. field_to_fr is not a trust\nboundary - the scalar type F is fixed at compile time by internal callers,\nand untrusted scalars enter as canonical Fr through validated\ndeserialization. jolt_field::Fq (larger modulus) does implement Field, so\ndocument the hazard prominently instead: a per-element range check would\nland in MSM/GLV hot loops. The debug_assert still catches type confusion in\ntests/e2e. Proper long-term fix is an associated ScalarField type on\nJoltGroup (API redesign outside this crate's scope).\n\n* docs(jolt-crypto): make the Default == identity accumulator contract explicit (v12 #116309)\n\ncombine_commitments seeds its serial fold and parallel reduction with\nC::default(), but neither JoltGroup nor HomomorphicCommitment stated that\nDefault must be the additive identity. All current impls satisfy it\n(arkworks Projective zero, Bn254GT = Fq12::ONE, DoryCommitment wrapping GT)\nand existing default_is_identity tests pin G1/G2/GT. State the invariant on\nboth traits so future implementors cannot miss it.\n\n* fix(jolt-dory): bound proof and verifier-setup deserialization before parsing (v12 #116253, #116391)\n\nProof path (#116253): cap the byte buffer at MAX_SERIALIZED_PROOF_BYTES\n(512 KiB, ~4.7 KiB/round * 64 max rounds) before any parsing, and reject\nencodings with trailing bytes so a parse must consume the whole buffer.\nThe round-count pre-scan now parses its prefix elements with Validate::No -\nit only needs wire widths, and the real parse that follows re-validates,\nso untrusted input no longer triggers the expensive GT subgroup\nexponentiation twice.\n\nVerifier-setup path (#116391): upstream dory-pcs Vec deserialization reads\na u64 length prefix and calls Vec::with_capacity(len) before reading any\nelement, so a crafted length near u64::MAX aborts or OOMs regardless of\nbuffer size. Pre-scan the five GT-vector length prefixes (fixed-width\nelement encodings make offsets computable without allocation), cap each at\nMAX_SERIALIZED_PROOF_ROUNDS+1, and require the exact structural byte\nlength. Replaces the generic unvalidated canonical_deserialize helper.\n\n* fix(jolt-dory): reject polynomials exceeding prover setup capacity (v12 #116347)\n\ncompute_row_commitments derived num_cols/num_rows from poly.num_vars() and\nsliced setup.g1_vec/g2_vec without a capacity check, so an oversized\npolynomial hit an out-of-bounds slice panic instead of the structured\nOpeningsError the commit API promises. Validate the geometry (including\nthe shift-overflow edge) and return PolynomialTooLarge; commit, commit_zk,\nand hintless open all propagate it. The streaming paths already asserted\ncapacity explicitly. One usize comparison per commit - no cost.\n\n* fix(jolt-dory): log URS cache lock fallbacks instead of swallowing them (v12 #116390)\n\nlock_urs_cache discarded every failure via .ok()?, silently reintroducing\nthe unlocked-URS-write race it exists to prevent. Analysis of the failure\nmodes against dory-pcs: when the cache dir cannot be resolved or created,\ndory's own persistence fails identically (save_setup panics / load skips),\nso no unlocked write can race - fail-open is correct there and failing\nclosed would break read-only pre-populated cache deployments. The one\ngenuinely racy fallback (advisory lock failure on a writable cache, e.g.\nno-flock filesystems) is now surfaced with a tracing::warn, as are all\nother fallback branches. No behavior change beyond logging.\n\n* fix(jolt-claims): reject RA-virtualization dims whose sumcheck degree overflows (v12 #116243)\n\nInstructionRaVirtualizationDimensions::new checked the committed-RA product\nbut not the +1 in RaVirtualization::degree, so (1, usize::MAX) passed the\nconstructor and panicked (debug) or wrapped to 0 (release) at degree().\nValidate once at construction; degree() stays infallible.\n\n* test(jolt-transcript): pin no-prealloc rejection of oversized BytesMsg lengths (v12 #115469)\n\nThe audit flagged BytesMsg::deserialize_from_narg as an allocation DoS.\nFalse positive: the remaining-buffer bounds check precedes the payload\ncopy, so allocation is bounded by the caller-supplied NARG size (<=1x\namplification). Pin that ordering with a 2^40-length frame that would\nabort on a 1 TiB allocation if the copy ever moved first.\n\n* test(jolt-claims): pin bounded decode of forged claim-vector length prefixes (v12 #116236)\n\nThe audit flagged the Vec<C> claim fields as a decode-time memory-\nexhaustion vector. False positive on the workspace's bincode::serde\npath: serde caps Vec preallocation at 1 MiB and each Fr element costs\n32 input bytes, so decode memory tracks the supplied buffer, and stage\ndrivers exact-shape-validate the vectors before use. Pin the decode\ncontract with a 2^61-length forged prefix.\n\n* fix(jolt-verifier): exact-length-check stage6b RA/booleanity claim vectors (v12 #116402)\n\n* fix(jolt-prover-legacy): guard degenerate layouts and zero-repr in unsafe_allocate_zero_vec (v12 #116266, #116324 review)\n\nMirrors 594c46315 (jolt-poly) into the legacy monolith's identical copy,\nwhich the fix branch had left with the same zero-size-layout UB: size == 0\nor zero-sized T passed a zero-size Layout to alloc_zeroed from a safe pub\nfn. Both now take the safe repeat_with construction path, and the\nT::zero()-is-all-zero-bytes assertion runs in all builds instead of only\nunder cfg(test) (one small byte-compare per call, before an allocation).\n\nFound by the independent branch review: the legacy crate is exercised by\nthe muldiv e2e gate, so the UB-capable copy sat in the tested product path.\n\n* docs(inlines-sdk): correct zero-divisor and unchecked-limb contract claims (v12 #116333, #116335, #117715 review)\n\nTwo doc claims from a7b8aa459 were factually wrong (independent review):\n\n- mulq_division_advice's WARNING said no advice satisfies the division\n  identity for a zero divisor. That holds only for a nonzero dividend;\n  0 / 0 is satisfied by result = 0 (grumpkin's #116411 advice relies on\n  exactly that). The abort for 0 / 0 is a policy choice, now stated as one.\n\n- ECField::from_u64_arr_unchecked promised non-canonical limbs 'produce an\n  unsatisfiable proof'. On the multiply/square path they can instead abort\n  the host tracer: mulq_quotient_advice divides the product of two raw\n  unreduced 256-bit operands by q, so e.g. a = b = 2^256 - 1 yields a\n  5-limb quotient and trips nbiguint_to_field_limbs' assert. The doc now\n  names both outcomes. (This also corrects #116335's triage claim that the\n  assert is unreachable: it is guest-reachable, and the wontfix stands on\n  the malformed-guest => tracer-abort model of #116336 instead.)\n\n* refactor: consolidate swarm-introduced test scaffolding and guards\n\nDe-boilerplate pass over the audit-fix batch; no behavioral change:\n- jolt-poly: shared assert_shiftable_dim() replaces three identical\n  shift-width guards (eq+1 evals, eq+1 prefix-suffix, LT evals)\n- jolt-dory: assert_rejected_with::<T>() helper collapses five\n  malformed-input rejection tests\n- jolt-r1cs: drop unused R1csKey getters (no external consumers;\n  fields stay pub(crate) behind construction/deser validation),\n  shared two_cycle_key() fixture for the witness-length tests\n- inlines: aliased-division test layouts via struct-update over\n  InlineMemoryLayout::two_inputs instead of hand-written literals\n\n* chore: address v12 audit review feedback\n\n* fix: harden zero allocation and R1CS dimensions",
+          "timestamp": "2026-08-12T13:13:31-04:00",
+          "tree_id": "f2aa2c73763ac6cecad3a90c7b091d1135489bb1",
+          "url": "https://github.com/a16z/jolt/commit/db96792957df88688da3942a8bd3f9da9660d4d3"
+        },
+        "date": 1786558776804,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9114,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 860176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3193,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 493424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 493000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 497584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.709,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5717,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 493468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8396,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 495444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8032,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 188348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4493,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 857836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5475,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 495520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4479,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 501604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.8907,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 492120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.6955,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 495984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.8123,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1107980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.0984,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 634944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 94.3122,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2121896,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4309,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4856,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 495768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.1112,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 859320,
             "unit": "KB",
             "extra": ""
           }
