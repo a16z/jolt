@@ -300,7 +300,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstructionKind::MULW
             | JoltInstructionKind::VirtualMULIW
             | JoltInstruction::VirtualSignExtendWord(_) => {
-                LookupTables::SignExtendHalfWord(Default::default())
+                LookupTables::SignExtendWord(Default::default())
             }
             JoltInstructionKind::VirtualPow2 | JoltInstructionKind::VirtualPow2I => {
                 LookupTables::Pow2(Default::default())

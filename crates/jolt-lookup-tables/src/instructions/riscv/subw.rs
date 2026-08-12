@@ -1,7 +1,7 @@
 use crate::traits::{impl_lookup_table, LookupQuery};
 use jolt_riscv::{instructions::SubW, JoltCycle};
 
-impl_lookup_table!(SubW, Some(SignExtendHalfWord));
+impl_lookup_table!(SubW, Some(SignExtendWord));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for SubW<C> {
     fn to_lookup_operands(&self) -> (u64, u128) {

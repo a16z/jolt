@@ -3,7 +3,7 @@ use crate::traits::LookupQuery;
 use jolt_riscv::instructions::VirtualSignExtendWord;
 use jolt_riscv::JoltCycle;
 
-impl_lookup_table!(VirtualSignExtendWord, Some(SignExtendHalfWord));
+impl_lookup_table!(VirtualSignExtendWord, Some(SignExtendWord));
 
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualSignExtendWord<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {

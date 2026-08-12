@@ -1,6 +1,6 @@
 use tracer::instruction::{subw::SUBW, RISCVCycle};
 
-use crate::zkvm::lookup_table::{sign_extend_half_word::SignExtendHalfWordTable, LookupTables};
+use crate::zkvm::lookup_table::{sign_extend_word::SignExtendWordTable, LookupTables};
 
 use super::{
     CircuitFlags, Flags, InstructionFlags, InstructionLookup, LookupQuery, NUM_CIRCUIT_FLAGS,
@@ -9,7 +9,7 @@ use super::{
 
 impl<const XLEN: usize> InstructionLookup<XLEN> for SUBW {
     fn lookup_table(&self) -> Option<LookupTables<XLEN>> {
-        Some(SignExtendHalfWordTable.into())
+        Some(SignExtendWordTable.into())
     }
 }
 
