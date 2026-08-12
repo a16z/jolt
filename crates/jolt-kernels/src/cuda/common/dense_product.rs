@@ -299,14 +299,14 @@ impl DeviceDenseProduct {
 }
 
 pub struct DenseProductKernel<F: Field, R> {
-    pub(super) state: DeviceDenseProduct,
-    pub(super) relation: R,
-    pub(super) context: &'static CudaKernelContext,
-    pub(super) field: core::marker::PhantomData<F>,
+    pub(crate) state: DeviceDenseProduct,
+    pub(crate) relation: R,
+    pub(crate) context: &'static CudaKernelContext,
+    pub(crate) field: core::marker::PhantomData<F>,
 }
 
 impl<F: Field, R> DenseProductKernel<F, R> {
-    pub(super) fn finals(&self) -> Result<Vec<F>, CudaError> {
+    pub(crate) fn finals(&self) -> Result<Vec<F>, CudaError> {
         self.state.factor_finals(self.context)
     }
 }

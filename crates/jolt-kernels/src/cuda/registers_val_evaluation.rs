@@ -10,10 +10,10 @@ use jolt_field::Field;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
-use super::dense_product::{DenseProductKernel, DeviceDenseProduct};
-use super::lt_poly::DeviceLtPolynomial;
-use super::ra_poly::DeviceRaPolynomial;
 use super::{require_context, CudaBackend};
+use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
+use crate::cuda::common::lt_poly::DeviceLtPolynomial;
+use crate::cuda::common::ra_poly::DeviceRaPolynomial;
 use crate::reference::views::{dense_view, eq_table};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -113,9 +113,9 @@ mod tests {
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
     use proptest::prelude::*;
 
-    use super::super::context::shared_context;
-    use super::super::testing::{arb_point, drive, fr, reference_input_claim, FixedPlane};
     use super::CudaBackend;
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::{arb_point, drive, fr, reference_input_claim, FixedPlane};
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 

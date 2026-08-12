@@ -15,7 +15,7 @@ pub struct DeviceLtPolynomial {
     hi_vars: usize,
 }
 
-pub(super) struct SplitLtView<'a> {
+pub(crate) struct SplitLtView<'a> {
     pub(super) lt_lo: &'a DeviceFrVec,
     pub(super) lt_hi: &'a DeviceFrVec,
     pub(super) eq_hi: &'a DeviceFrVec,
@@ -65,7 +65,7 @@ impl DeviceLtPolynomial {
         self.hi_vars + self.lo_vars
     }
 
-    pub(super) fn view(&self) -> SplitLtView<'_> {
+    pub(crate) fn view(&self) -> SplitLtView<'_> {
         SplitLtView {
             lt_lo: &self.lt_lo,
             lt_hi: &self.lt_hi,

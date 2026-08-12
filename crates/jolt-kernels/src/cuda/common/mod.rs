@@ -1,0 +1,12 @@
+pub(crate) mod context;
+pub(crate) mod dense_product;
+pub(crate) mod device;
+pub(crate) mod error;
+pub(crate) mod lt_poly;
+pub(crate) mod primitives;
+pub(crate) mod ra_poly;
+pub(crate) mod staging;
+#[cfg(test)]
+pub(crate) mod testing;
+pub(crate) mod unreduced;
+pub mod xfer_stats;

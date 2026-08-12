@@ -6,9 +6,9 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr, MulPow2};
 
-use super::context::{CudaKernelContext, BLOCK};
-use super::device::{require_fr_slice, DeviceFrVec, LIMBS};
-use super::error::CudaError;
+use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::device::{require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::error::CudaError;
 
 pub const CHUNK_LEN: usize = 8;
 pub const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
@@ -165,9 +165,9 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
     use proptest::prelude::*;
 
-    use super::super::context::shared_context;
-    use super::super::testing::fr;
     use super::{init_q_raf, SuffixRow, CHUNK_SIZE};
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::fr;
 
     struct HostBuckets {
         shift_half: Vec<Fr>,

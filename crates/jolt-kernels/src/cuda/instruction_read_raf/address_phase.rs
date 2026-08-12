@@ -8,10 +8,10 @@ use jolt_field::{Fr, MulPow2};
 use jolt_lookup_tables::tables::LookupTableKind;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 
-use super::context::{CudaKernelContext, BLOCK};
-use super::device::{DeviceFrVec, LIMBS};
-use super::error::CudaError;
-use super::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
+use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::device::{DeviceFrVec, LIMBS};
+use crate::cuda::common::error::CudaError;
+use crate::cuda::common::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
 
 pub const CHUNK_LEN: usize = 8;
 pub const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
@@ -510,11 +510,11 @@ mod tests {
     use proptest::prelude::*;
     use std::num::NonZeroUsize;
 
-    use super::super::context::{shared_context, CudaKernelContext};
-    use super::super::testing::fr;
     use super::{
         condense_u_evals, init_raf_buckets, init_suffix_buckets, DeviceRows, CHUNK_LEN, CHUNK_SIZE,
     };
+    use crate::cuda::common::context::{shared_context, CudaKernelContext};
+    use crate::cuda::common::testing::fr;
     use crate::reference::instruction_read_raf::{
         InstructionReadRafKernel, InstructionReadRafWitness,
     };

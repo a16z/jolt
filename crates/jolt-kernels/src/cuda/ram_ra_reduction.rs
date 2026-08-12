@@ -2,10 +2,10 @@ use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 use jolt_poly::BindingOrder;
 
-use super::context::{CudaKernelContext, BLOCK};
-use super::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
-use super::error::CudaError;
-use super::ra_poly::COLD;
+use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::error::CudaError;
+use crate::cuda::common::ra_poly::COLD;
 
 pub const TERMS: usize = 3;
 
@@ -404,7 +404,7 @@ impl DeviceRamRaReduction {
             .to_host()?
             .into_iter()
             .map(|value| {
-                super::device::fr_into(value).ok_or(CudaError::NotImplemented {
+                crate::cuda::common::device::fr_into(value).ok_or(CudaError::NotImplemented {
                     kernel: "CUDA kernels support only the BN254 scalar field",
                 })
             })
@@ -474,9 +474,9 @@ mod tests {
     use jolt_poly::EqPolynomial;
     use proptest::prelude::*;
 
-    use super::super::context::shared_context;
-    use super::super::testing::arb_point;
     use super::{CyclePoints, DeviceRamRaReduction};
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::arb_point;
 
     const LOG_T: usize = 6;
     const LOG_K: usize = 3;

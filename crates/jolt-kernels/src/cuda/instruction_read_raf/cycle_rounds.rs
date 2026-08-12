@@ -7,9 +7,9 @@ use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 
-use super::context::{CudaKernelContext, BLOCK};
-use super::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
-use super::error::CudaError;
+use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::error::CudaError;
 
 const MAX_FACTORS: usize = 9;
 
@@ -235,9 +235,9 @@ mod tests {
     use proptest::prelude::*;
     use std::num::NonZeroUsize;
 
-    use super::super::context::shared_context;
-    use super::super::testing::fr;
     use super::DeviceCycleRounds;
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::fr;
     use crate::reference::instruction_read_raf::{
         InstructionReadRafKernel, InstructionReadRafWitness,
     };

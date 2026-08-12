@@ -5,8 +5,8 @@
 
 use cudarc::driver::{CudaSlice, PushKernelArg};
 
-use super::context::CudaKernelContext;
-use super::error::CudaError;
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::error::CudaError;
 
 pub const NUM_SUFFIXES: usize = 43;
 
@@ -73,8 +73,8 @@ mod tests {
     use proptest::prelude::*;
     use strum::EnumCount;
 
-    use super::super::context::shared_context;
     use super::{suffix_mle_batch, NUM_SUFFIXES};
+    use crate::cuda::common::context::shared_context;
 
     const RISCV_XLEN: usize = 64;
 

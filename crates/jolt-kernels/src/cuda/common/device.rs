@@ -27,7 +27,7 @@ pub struct DeviceFrVec {
 }
 
 impl DeviceFrVec {
-    pub(super) const fn from_parts(
+    pub(crate) const fn from_parts(
         stream: Arc<CudaStream>,
         buffer: CudaSlice<u64>,
         len: usize,
@@ -49,11 +49,11 @@ impl DeviceFrVec {
         self.len == 0
     }
 
-    pub(super) const fn limbs(&self) -> &CudaSlice<u64> {
+    pub(crate) const fn limbs(&self) -> &CudaSlice<u64> {
         &self.buffer
     }
 
-    pub(super) const fn limbs_mut(&mut self) -> &mut CudaSlice<u64> {
+    pub(crate) const fn limbs_mut(&mut self) -> &mut CudaSlice<u64> {
         &mut self.buffer
     }
 
@@ -91,7 +91,7 @@ impl DeviceFrVec {
         })
     }
 
-    pub(super) fn slice_elements(&self, offset: usize, len: usize) -> Result<Self, CudaError> {
+    pub(crate) fn slice_elements(&self, offset: usize, len: usize) -> Result<Self, CudaError> {
         if offset + len > self.len {
             return Err(CudaError::LengthMismatch {
                 expected: self.len,
@@ -124,19 +124,19 @@ impl DeviceFrVec {
     }
 }
 
-pub(super) fn fill_staging(staging: &mut [u64], values: &[Fr]) {
+pub(crate) fn fill_staging(staging: &mut [u64], values: &[Fr]) {
     for (slot, &value) in staging.chunks_exact_mut(LIMBS).zip(values) {
         slot.copy_from_slice(&fr_to_limbs(value));
     }
 }
 
-pub(super) fn require_fr_slice<F: jolt_field::Field>(values: &[F]) -> Result<&[Fr], CudaError> {
+pub(crate) fn require_fr_slice<F: jolt_field::Field>(values: &[F]) -> Result<&[Fr], CudaError> {
     as_fr_slice(values).ok_or(CudaError::NotImplemented {
         kernel: "CUDA kernels support only the BN254 scalar field",
     })
 }
 
-pub(super) fn require_fr<F: jolt_field::Field>(value: F) -> Result<Fr, CudaError> {
+pub(crate) fn require_fr<F: jolt_field::Field>(value: F) -> Result<Fr, CudaError> {
     require_fr_slice(std::slice::from_ref(&value))?
         .first()
         .copied()

@@ -14,11 +14,11 @@ use super::address_phase::{
     CHUNK_SIZE, NO_TABLE,
 };
 use super::combine::{combine_terms, CombineTerm};
-use super::context::{CudaKernelContext, BLOCK};
-use super::device::{require_fr_slice, DeviceFrVec};
-use super::error::CudaError;
 use super::prefixes::{default_checkpoints, update_checkpoints, NUM_PREFIXES};
-use super::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
+use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::device::{require_fr_slice, DeviceFrVec};
+use crate::cuda::common::error::CudaError;
+use crate::cuda::common::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
 
 const RAF_TERMS: usize = 3;
 const HINT_POINTS: usize = 2;

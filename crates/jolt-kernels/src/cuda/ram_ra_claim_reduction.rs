@@ -10,10 +10,10 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use super::context::CudaKernelContext;
-use super::device::fr_into;
 use super::ram_ra_reduction::{CyclePoints, DeviceRamRaReduction};
 use super::{require_context, CudaBackend};
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device::fr_into;
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -146,9 +146,9 @@ mod tests {
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
     use proptest::prelude::*;
 
-    use super::super::context::shared_context;
-    use super::super::testing::{arb_point, drive, fr, reference_input_claim, FixedPlane};
     use super::CudaBackend;
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::{arb_point, drive, fr, reference_input_claim, FixedPlane};
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 

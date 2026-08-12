@@ -11,14 +11,14 @@ use super::error::CudaError;
 
 pub const ACCUM_LIMBS: usize = 7;
 
-pub(super) fn alloc_slots(
+pub(crate) fn alloc_slots(
     context: &CudaKernelContext,
     count: usize,
 ) -> Result<cudarc::driver::CudaSlice<u64>, CudaError> {
     context.alloc_u64(count * 2 * ACCUM_LIMBS)
 }
 
-pub(super) fn finalize_slots(
+pub(crate) fn finalize_slots(
     context: &CudaKernelContext,
     slots: &cudarc::driver::CudaSlice<u64>,
     count: usize,

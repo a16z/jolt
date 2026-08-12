@@ -6,10 +6,10 @@
 use cudarc::driver::PushKernelArg;
 use jolt_field::{Field, Fr};
 
-use super::context::CudaKernelContext;
-use super::device::{require_fr, require_fr_slice, DeviceFrVec};
-use super::error::CudaError;
 use super::suffixes::upload_lookup_bits;
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec};
+use crate::cuda::common::error::CudaError;
 
 pub const NUM_PREFIXES: usize = 46;
 const ADDRESS_BITS: usize = 128;
@@ -220,12 +220,12 @@ mod tests {
     use proptest::prelude::*;
     use strum::EnumCount;
 
-    use super::super::context::shared_context;
-    use super::super::testing::fr;
     use super::{
         default_checkpoints, prefix_evaluate_batch, prefix_mle_batch, update_checkpoints,
         NUM_PREFIXES,
     };
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::fr;
 
     const CHUNK_LEN: usize = 8;
     const ADDRESS_BITS: usize = 128;

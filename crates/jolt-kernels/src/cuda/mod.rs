@@ -4,37 +4,19 @@ use jolt_openings::CommitmentScheme;
 use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
-mod address_driver;
-mod address_phase;
-mod combine;
-mod context;
-mod cycle_handoff;
-mod cycle_rounds;
-mod dense_product;
-mod device;
-mod error;
+mod common;
 mod instruction_read_raf;
-mod lt_poly;
-mod prefix_suffix;
-mod prefixes;
-mod primitives;
-mod ra_poly;
 mod ram_ra_claim_reduction;
 mod ram_ra_reduction;
 mod registers_val_evaluation;
-mod staging;
-mod suffixes;
-#[cfg(test)]
-mod testing;
-mod unreduced;
-pub mod xfer_stats;
 
-pub use address_driver::DeviceAddressPhase;
-pub use address_phase::{init_raf_buckets, init_suffix_buckets, DeviceRows};
-pub use context::{shared_context, CudaKernelContext};
-pub use device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
-pub use error::CudaError;
-pub use lt_poly::DeviceLtPolynomial;
+pub use common::context::{shared_context, CudaKernelContext};
+pub use common::device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
+pub use common::error::CudaError;
+pub use common::lt_poly::DeviceLtPolynomial;
+pub use common::xfer_stats;
+pub use instruction_read_raf::address_driver::DeviceAddressPhase;
+pub use instruction_read_raf::address_phase::{init_raf_buckets, init_suffix_buckets, DeviceRows};
 
 pub struct CudaBackend;
 

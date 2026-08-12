@@ -8,9 +8,9 @@ use jolt_lookup_tables::tables::prefixes::Prefixes;
 use jolt_lookup_tables::tables::suffixes::Suffixes;
 use jolt_lookup_tables::tables::LookupTableKind;
 
-use super::context::CudaKernelContext;
-use super::device::DeviceFrVec;
-use super::error::CudaError;
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device::DeviceFrVec;
+use crate::cuda::common::error::CudaError;
 
 pub const RISCV_XLEN: usize = 64;
 
@@ -313,9 +313,9 @@ mod tests {
     use jolt_lookup_tables::tables::LookupTableKind;
     use proptest::prelude::*;
 
-    use super::super::context::shared_context;
-    use super::super::testing::fr;
     use super::{combine_batch, combine_terms, CombineTerm, Scale, RISCV_XLEN};
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::fr;
 
     const NUM_PREFIXES: usize = 46;
 

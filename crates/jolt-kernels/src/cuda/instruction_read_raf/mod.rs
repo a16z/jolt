@@ -1,3 +1,12 @@
+pub(super) mod address_driver;
+pub(super) mod address_phase;
+mod combine;
+mod cycle_handoff;
+mod cycle_rounds;
+mod prefix_suffix;
+mod prefixes;
+mod suffixes;
+
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
@@ -15,13 +24,13 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use super::address_driver::DeviceAddressPhase;
-use super::address_phase::{flag_claims, DeviceRows, NO_TABLE};
-use super::context::CudaKernelContext;
-use super::cycle_handoff::{build_cycle_tables, HandoffInputs};
-use super::cycle_rounds::DeviceCycleRounds;
-use super::device::{fr_into, require_fr, require_fr_slice};
+use self::address_driver::DeviceAddressPhase;
+use self::address_phase::{flag_claims, DeviceRows, NO_TABLE};
+use self::cycle_handoff::{build_cycle_tables, HandoffInputs};
+use self::cycle_rounds::DeviceCycleRounds;
 use super::{require_context, CudaBackend};
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice};
 use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -420,8 +429,8 @@ mod legacy_oracle {
     use strum::IntoEnumIterator;
     use tracer::instruction::Cycle;
 
-    use super::super::address_driver::DeviceAddressPhase;
-    use super::super::context::shared_context;
+    use super::address_driver::DeviceAddressPhase;
+    use crate::cuda::common::context::shared_context;
 
     const LOG_T: usize = 8;
 

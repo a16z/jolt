@@ -15,39 +15,39 @@ use super::xfer_stats::{self, Phase};
 pub const BLOCK: u32 = 256;
 
 const KERNEL_SRC: &str = concat!(
-    include_str!("kernels/prelude.cu"),
+    include_str!("../kernels/prelude.cu"),
     "\n",
-    include_str!("kernels/probe.cu"),
+    include_str!("../kernels/probe.cu"),
     "\n",
-    include_str!("kernels/arith.cu"),
+    include_str!("../kernels/arith.cu"),
     "\n",
-    include_str!("kernels/tables.cu"),
+    include_str!("../kernels/tables.cu"),
     "\n",
-    include_str!("kernels/scan.cu"),
+    include_str!("../kernels/scan.cu"),
     "\n",
-    include_str!("kernels/lt_poly.cu"),
+    include_str!("../kernels/lt_poly.cu"),
     "\n",
-    include_str!("kernels/dense_product.cu"),
+    include_str!("../kernels/dense_product.cu"),
     "\n",
-    include_str!("kernels/ra_poly.cu"),
+    include_str!("../kernels/ra_poly.cu"),
     "\n",
-    include_str!("kernels/ram_ra_reduction.cu"),
+    include_str!("../kernels/ram_ra_reduction.cu"),
     "\n",
-    include_str!("kernels/prefix_suffix.cu"),
+    include_str!("../kernels/prefix_suffix.cu"),
     "\n",
-    include_str!("kernels/suffixes.cu"),
+    include_str!("../kernels/suffixes.cu"),
     "\n",
-    include_str!("kernels/prefixes.cu"),
+    include_str!("../kernels/prefixes.cu"),
     "\n",
-    include_str!("kernels/prefix_mle.cu"),
+    include_str!("../kernels/prefix_mle.cu"),
     "\n",
-    include_str!("kernels/combine.cu"),
+    include_str!("../kernels/combine.cu"),
     "\n",
-    include_str!("kernels/unreduced.cu"),
+    include_str!("../kernels/unreduced.cu"),
     "\n",
-    include_str!("kernels/address_phase.cu"),
+    include_str!("../kernels/address_phase.cu"),
     "\n",
-    include_str!("kernels/cycle_rounds.cu"),
+    include_str!("../kernels/cycle_rounds.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -218,11 +218,11 @@ impl CudaKernelContext {
         ))
     }
 
-    pub(super) const fn stream(&self) -> &Arc<CudaStream> {
+    pub(crate) const fn stream(&self) -> &Arc<CudaStream> {
         &self.stream
     }
 
-    pub(super) fn launch_config(count: u32) -> LaunchConfig {
+    pub(crate) fn launch_config(count: u32) -> LaunchConfig {
         LaunchConfig {
             grid_dim: (count.div_ceil(BLOCK), 1, 1),
             block_dim: (BLOCK, 1, 1),
@@ -230,194 +230,194 @@ impl CudaKernelContext {
         }
     }
 
-    pub(super) fn count_of(len: usize) -> Result<u32, CudaError> {
+    pub(crate) fn count_of(len: usize) -> Result<u32, CudaError> {
         u32::try_from(len).map_err(|_| CudaError::LengthMismatch {
             expected: u32::MAX as usize,
             got: len,
         })
     }
 
-    pub(super) fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
+    pub(crate) fn upload_u64_slice(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
         })
     }
 
-    pub(super) fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
+    pub(crate) fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
         })
     }
 
-    pub(super) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
+    pub(crate) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
         })
     }
 
-    pub(super) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
+    pub(crate) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u32>(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
         })
     }
 
-    pub(super) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
+    pub(crate) fn alloc_u32(&self, len: usize) -> Result<CudaSlice<u32>, CudaError> {
         Ok(self.stream.alloc_zeros::<u32>(len)?)
     }
 
-    pub(super) const fn dense_product_round(&self) -> &CudaFunction {
+    pub(crate) const fn dense_product_round(&self) -> &CudaFunction {
         &self.dense_product_round
     }
 
-    pub(super) const fn lane_sum_reduce(&self) -> &CudaFunction {
+    pub(crate) const fn lane_sum_reduce(&self) -> &CudaFunction {
         &self.lane_sum_reduce
     }
 
-    pub(super) const fn weighted_combine(&self) -> &CudaFunction {
+    pub(crate) const fn weighted_combine(&self) -> &CudaFunction {
         &self.weighted_combine
     }
 
-    pub(super) const fn ra_split_tables(&self) -> &CudaFunction {
+    pub(crate) const fn ra_split_tables(&self) -> &CudaFunction {
         &self.ra_split_tables
     }
 
-    pub(super) const fn ra_gather(&self) -> &CudaFunction {
+    pub(crate) const fn ra_gather(&self) -> &CudaFunction {
         &self.ra_gather
     }
 
-    pub(super) const fn lt_reconstruct(&self) -> &CudaFunction {
+    pub(crate) const fn lt_reconstruct(&self) -> &CudaFunction {
         &self.lt_reconstruct
     }
 
-    pub(super) const fn ram_ra_gather_h(&self) -> &CudaFunction {
+    pub(crate) const fn ram_ra_gather_h(&self) -> &CudaFunction {
         &self.ram_ra_gather_h
     }
 
-    pub(super) const fn ram_ra_fold_suffix(&self) -> &CudaFunction {
+    pub(crate) const fn ram_ra_fold_suffix(&self) -> &CudaFunction {
         &self.ram_ra_fold_suffix
     }
 
-    pub(super) const fn ram_ra_fold_prefix(&self) -> &CudaFunction {
+    pub(crate) const fn ram_ra_fold_prefix(&self) -> &CudaFunction {
         &self.ram_ra_fold_prefix
     }
 
-    pub(super) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
+    pub(crate) const fn ram_ra_phase1_round(&self) -> &CudaFunction {
         &self.ram_ra_phase1_round
     }
 
-    pub(super) const fn ps_init_q_raf(&self) -> &CudaFunction {
+    pub(crate) const fn ps_init_q_raf(&self) -> &CudaFunction {
         &self.ps_init_q_raf
     }
 
-    pub(super) const fn ps_scale_shift(&self) -> &CudaFunction {
+    pub(crate) const fn ps_scale_shift(&self) -> &CudaFunction {
         &self.ps_scale_shift
     }
 
-    pub(super) const fn sfx_eval_batch(&self) -> &CudaFunction {
+    pub(crate) const fn sfx_eval_batch(&self) -> &CudaFunction {
         &self.sfx_eval_batch
     }
 
-    pub(super) const fn pfx_mle_round(&self) -> &CudaFunction {
+    pub(crate) const fn pfx_mle_round(&self) -> &CudaFunction {
         &self.pfx_mle_round
     }
 
-    pub(super) const fn pfx_update_checkpoints(&self) -> &CudaFunction {
+    pub(crate) const fn pfx_update_checkpoints(&self) -> &CudaFunction {
         &self.pfx_update_checkpoints
     }
 
-    pub(super) const fn pfx_mle_batch(&self) -> &CudaFunction {
+    pub(crate) const fn pfx_mle_batch(&self) -> &CudaFunction {
         &self.pfx_mle_batch
     }
 
-    pub(super) const fn pfx_eval_batch(&self) -> &CudaFunction {
+    pub(crate) const fn pfx_eval_batch(&self) -> &CudaFunction {
         &self.pfx_eval_batch
     }
 
-    pub(super) const fn pfx_default_checkpoints(&self) -> &CudaFunction {
+    pub(crate) const fn pfx_default_checkpoints(&self) -> &CudaFunction {
         &self.pfx_default_checkpoints
     }
 
-    pub(super) const fn cmb_combine(&self) -> &CudaFunction {
+    pub(crate) const fn cmb_combine(&self) -> &CudaFunction {
         &self.cmb_combine
     }
 
-    pub(super) const fn ap_raf_keys(&self) -> &CudaFunction {
+    pub(crate) const fn ap_raf_keys(&self) -> &CudaFunction {
         &self.ap_raf_keys
     }
 
-    pub(super) const fn ap_table_keys(&self) -> &CudaFunction {
+    pub(crate) const fn ap_table_keys(&self) -> &CudaFunction {
         &self.ap_table_keys
     }
 
-    pub(super) const fn ap_histogram(&self) -> &CudaFunction {
+    pub(crate) const fn ap_histogram(&self) -> &CudaFunction {
         &self.ap_histogram
     }
 
-    pub(super) const fn ap_scatter(&self) -> &CudaFunction {
+    pub(crate) const fn ap_scatter(&self) -> &CudaFunction {
         &self.ap_scatter
     }
 
-    pub(super) const fn ap_raf_reduce(&self) -> &CudaFunction {
+    pub(crate) const fn ap_raf_reduce(&self) -> &CudaFunction {
         &self.ap_raf_reduce
     }
 
-    pub(super) const fn ap_suffix_reduce(&self) -> &CudaFunction {
+    pub(crate) const fn ap_suffix_reduce(&self) -> &CudaFunction {
         &self.ap_suffix_reduce
     }
 
-    pub(super) const fn ap_scale_shift(&self) -> &CudaFunction {
+    pub(crate) const fn ap_scale_shift(&self) -> &CudaFunction {
         &self.ap_scale_shift
     }
 
-    pub(super) const fn ap_condense(&self) -> &CudaFunction {
+    pub(crate) const fn ap_condense(&self) -> &CudaFunction {
         &self.ap_condense
     }
 
-    pub(super) const fn ap_raf_prefix(&self) -> &CudaFunction {
+    pub(crate) const fn ap_raf_prefix(&self) -> &CudaFunction {
         &self.ap_raf_prefix
     }
 
-    pub(super) const fn ap_bind_strided(&self) -> &CudaFunction {
+    pub(crate) const fn ap_bind_strided(&self) -> &CudaFunction {
         &self.ap_bind_strided
     }
 
-    pub(super) const fn ap_round_message_hinted(&self) -> &CudaFunction {
+    pub(crate) const fn ap_round_message_hinted(&self) -> &CudaFunction {
         &self.ap_round_message_hinted
     }
 
-    pub(super) const fn ap_combined_val(&self) -> &CudaFunction {
+    pub(crate) const fn ap_combined_val(&self) -> &CudaFunction {
         &self.ap_combined_val
     }
 
-    pub(super) const fn ap_ra(&self) -> &CudaFunction {
+    pub(crate) const fn ap_ra(&self) -> &CudaFunction {
         &self.ap_ra
     }
 
-    pub(super) const fn ap_flag_keys(&self) -> &CudaFunction {
+    pub(crate) const fn ap_flag_keys(&self) -> &CudaFunction {
         &self.ap_flag_keys
     }
 
-    pub(super) const fn ap_flag_sums(&self) -> &CudaFunction {
+    pub(crate) const fn ap_flag_sums(&self) -> &CudaFunction {
         &self.ap_flag_sums
     }
 
-    pub(super) const fn ap_raf_flag_sum(&self) -> &CudaFunction {
+    pub(crate) const fn ap_raf_flag_sum(&self) -> &CudaFunction {
         &self.ap_raf_flag_sum
     }
 
-    pub(super) const fn unr_mul_scatter(&self) -> &CudaFunction {
+    pub(crate) const fn unr_mul_scatter(&self) -> &CudaFunction {
         &self.unr_mul_scatter
     }
 
-    pub(super) const fn cr_quotient(&self) -> &CudaFunction {
+    pub(crate) const fn cr_quotient(&self) -> &CudaFunction {
         &self.cr_quotient
     }
 
-    pub(super) const fn unr_reduce(&self) -> &CudaFunction {
+    pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
         &self.unr_reduce
     }
 
-    pub(super) fn copy_into(
+    pub(crate) fn copy_into(
         &self,
         destination: &mut DeviceFrVec,
         offset: usize,
@@ -443,17 +443,17 @@ impl CudaKernelContext {
         })
     }
 
-    pub(super) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
+    pub(crate) fn alloc_u64(&self, len: usize) -> Result<CudaSlice<u64>, CudaError> {
         Ok(self.stream.alloc_zeros::<u64>(len)?)
     }
 
-    pub(super) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
+    pub(crate) fn download_u64(&self, buffer: &CudaSlice<u64>) -> Result<Vec<u64>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u64>(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
         })
     }
 
-    pub(super) fn device_pointers(
+    pub(crate) fn device_pointers(
         &self,
         tables: &[&DeviceFrVec],
     ) -> Result<CudaSlice<u64>, CudaError> {

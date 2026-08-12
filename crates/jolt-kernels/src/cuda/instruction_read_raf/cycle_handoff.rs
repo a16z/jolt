@@ -7,9 +7,9 @@ use cudarc::driver::PushKernelArg;
 use jolt_field::Fr;
 
 use super::address_phase::{DeviceRows, CHUNK_LEN, CHUNK_SIZE};
-use super::context::CudaKernelContext;
-use super::device::DeviceFrVec;
-use super::error::CudaError;
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device::DeviceFrVec;
+use crate::cuda::common::error::CudaError;
 
 pub struct HandoffInputs<'a> {
     pub rows: &'a DeviceRows,
@@ -153,9 +153,9 @@ mod tests {
     use proptest::prelude::*;
 
     use super::super::address_phase::{DeviceRows, CHUNK_LEN};
-    use super::super::context::shared_context;
-    use super::super::testing::fr;
     use super::{build_cycle_tables, HandoffInputs};
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::fr;
     use crate::reference::instruction_read_raf::{
         InstructionReadRafKernel, InstructionReadRafWitness,
     };
