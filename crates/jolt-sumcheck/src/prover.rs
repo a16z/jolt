@@ -107,23 +107,11 @@ impl<F: Field> MemberFinish<'_, F> {
 /// activity, padding, fold, round-sum checks, and transcript stay in
 /// [`prove_batch`]. Leaving a handle's message unset is
 /// [`SumcheckError::MissingRoundMessage`].
+///
+/// Both methods default to declaration-order traversal, so an impl overrides
+/// only the half it changes — a backend that batches rounds into one crossing
+/// but has nothing to say about the terminal bind writes one method.
 pub trait RoundScheduler<F: Field> {
-    fn batch_prove_round(
-        &mut self,
-        work: &mut [MemberRound<'_, F>],
-    ) -> Result<(), SumcheckError<F>>;
-
-    fn batch_finish_rounds(
-        &mut self,
-        finishes: &mut [MemberFinish<'_, F>],
-    ) -> Result<(), SumcheckError<F>>;
-}
-
-/// Declaration-order traversal. Stateless.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SequentialRounds;
-
-impl<F: Field> RoundScheduler<F> for SequentialRounds {
     fn batch_prove_round(
         &mut self,
         work: &mut [MemberRound<'_, F>],
@@ -144,6 +132,12 @@ impl<F: Field> RoundScheduler<F> for SequentialRounds {
         Ok(())
     }
 }
+
+/// Declaration-order traversal: the trait's defaults, named. Stateless.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SequentialRounds;
+
+impl<F: Field> RoundScheduler<F> for SequentialRounds {}
 
 /// A proved batch: the round challenges (the batch opening point), the final
 /// combined running claim (what the verifier's `expected_final_claim` must

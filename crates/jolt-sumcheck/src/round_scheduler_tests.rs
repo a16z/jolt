@@ -132,13 +132,6 @@ fn skipping_an_active_member_is_reported_against_that_member() {
             }
             Ok(())
         }
-
-        fn batch_finish_rounds(
-            &mut self,
-            _finishes: &mut [MemberFinish<'_, F>],
-        ) -> Result<(), SumcheckError<F>> {
-            Ok(())
-        }
     }
 
     let (mut long, mut short, prelude, mut transcript, mut recorder) = traversal_fixture();
@@ -169,13 +162,6 @@ fn a_rewritten_member_index_is_rejected() {
                 item.run()?;
                 item.index = usize::MAX;
             }
-            Ok(())
-        }
-
-        fn batch_finish_rounds(
-            &mut self,
-            _finishes: &mut [MemberFinish<'_, F>],
-        ) -> Result<(), SumcheckError<F>> {
             Ok(())
         }
     }
