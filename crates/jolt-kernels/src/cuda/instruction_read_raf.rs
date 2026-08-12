@@ -143,13 +143,9 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
         )
         .map_err(|_| failed())?;
 
-        let eq_reduction = self
-            .context
-            .eq_evals(&self.r_reduction)
-            .map_err(|_| failed())?;
         self.cycle = Some(
             DeviceCycleRounds::from_device(
-                eq_reduction,
+                &self.r_reduction,
                 tables.combined_val,
                 tables.ra,
                 self.rounds - ADDRESS_BITS,
@@ -230,7 +226,7 @@ impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
     fn prove_round(
         &mut self,
         bind: Option<F>,
-        round: usize,
+        _round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
@@ -271,20 +267,11 @@ impl<F: Field> ProveRounds<F> for DeviceInstructionReadRaf<F> {
             .ok_or(SumcheckError::MissingEvaluationSource {
                 kind: "cuda cycle rounds",
             })?;
-        let evals = cycle.round_message(self.context).map_err(|_| {
-            SumcheckError::MissingEvaluationSource {
+        cycle
+            .round_message(self.context, previous_claim)
+            .map_err(|_| SumcheckError::MissingEvaluationSource {
                 kind: "cuda cycle round message",
-            }
-        })?;
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+            })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {

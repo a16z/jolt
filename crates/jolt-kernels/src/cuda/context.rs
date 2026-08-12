@@ -46,6 +46,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("kernels/unreduced.cu"),
     "\n",
     include_str!("kernels/address_phase.cu"),
+    "\n",
+    include_str!("kernels/cycle_rounds.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -104,6 +106,7 @@ pub struct CudaKernelContext {
     ap_raf_flag_sum: CudaFunction,
     unr_mul_scatter: CudaFunction,
     unr_reduce: CudaFunction,
+    cr_quotient: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -172,6 +175,7 @@ impl CudaKernelContext {
             ap_raf_flag_sum: module.load_function("ap_raf_flag_sum_kernel")?,
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             unr_reduce: module.load_function("unr_reduce_kernel")?,
+            cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
 
@@ -403,6 +407,10 @@ impl CudaKernelContext {
 
     pub(super) const fn unr_mul_scatter(&self) -> &CudaFunction {
         &self.unr_mul_scatter
+    }
+
+    pub(super) const fn cr_quotient(&self) -> &CudaFunction {
+        &self.cr_quotient
     }
 
     pub(super) const fn unr_reduce(&self) -> &CudaFunction {
