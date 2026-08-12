@@ -4,6 +4,7 @@ pub(crate) mod device;
 pub(crate) mod error;
 pub(crate) mod lt_poly;
 pub(crate) mod primitives;
+pub(crate) mod product_accum;
 pub(crate) mod ra_poly;
 pub(crate) mod staging;
 #[cfg(test)]

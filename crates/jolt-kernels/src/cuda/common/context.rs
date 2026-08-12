@@ -45,6 +45,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/unreduced.cu"),
     "\n",
+    include_str!("../kernels/product_accum.cu"),
+    "\n",
     include_str!("../kernels/address_phase.cu"),
     "\n",
     include_str!("../kernels/cycle_rounds.cu"),
@@ -106,6 +108,8 @@ pub struct CudaKernelContext {
     ap_raf_flag_sum: CudaFunction,
     unr_mul_scatter: CudaFunction,
     unr_reduce: CudaFunction,
+    pa_scatter: CudaFunction,
+    pa_reduce: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -175,6 +179,8 @@ impl CudaKernelContext {
             ap_raf_flag_sum: module.load_function("ap_raf_flag_sum_kernel")?,
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             unr_reduce: module.load_function("unr_reduce_kernel")?,
+            pa_scatter: module.load_function("pa_scatter_kernel")?,
+            pa_reduce: module.load_function("pa_reduce_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -411,6 +417,14 @@ impl CudaKernelContext {
 
     pub(crate) const fn cr_quotient(&self) -> &CudaFunction {
         &self.cr_quotient
+    }
+
+    pub(crate) const fn pa_scatter(&self) -> &CudaFunction {
+        &self.pa_scatter
+    }
+
+    pub(crate) const fn pa_reduce(&self) -> &CudaFunction {
+        &self.pa_reduce
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
