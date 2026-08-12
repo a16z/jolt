@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786558781933,
+  "lastUpdate": 1786559731466,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -135454,6 +135454,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 859320,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "075bc8fa23f4128c2dc08802ed2a31e48267a8e7",
+          "message": "test: remove old-vs-new parity relic tests; add testing guideline (#1769)\n\n* test: remove old-vs-new parity relic tests; add testing guideline\n\nRemove tests whose oracle is a re-implementation of since-deleted\nproduction logic — they validated one landed diff and now keep the old\ncode alive inside the suite:\n\n- jolt-r1cs: drop Rv64SpartanOuterRemainder{,Challenges,Error} (the\n  pre-composed stage-1 verifier formula, production-dead since the\n  JoltSpartanOuterRemainder switch) and its two tests; the live type is\n  pinned by jolt-verifier's expected_output_matches_factored_form_on_rv64_shape.\n- jolt-verifier stage2: the twin instance_point_offset tests restated the\n  pre-port phase-1 slicing formula inline (tautological with the live\n  helper); trimmed to the live contract (offset spans the batch tail,\n  short batches rejected).\n- jolt-prover-legacy advice_bytes: drop DenseReference (a test-local copy\n  of the pre-factored-rewrite prover kept as oracle) and its round-parity\n  test; round_loop_reduces_to_the_byte_column_opening pins the protocol\n  non-circularly.\n- jolt-crypto: drop cfg(test)-only batch_g1_additions_affine (single-set\n  mirror of the pre-split routine, zero production callers) and its three\n  tests; empty/singleton-set edge coverage now runs through the live\n  batch_g1_additions_multi_affine path.\n\nAdd a Testing Guidelines section to CLAUDE.md banning the pattern:\ntransition-validation belongs in the PR process, permanent tests assert\nagainst independent ground truth.\n\n* test: fold retired edge inputs into advice_bytes round-loop test; drop orphaned SpartanOuterRemainderPlan\n\nReview follow-ups for the parity-relic cleanup:\n\n- advice_bytes: loop round_loop_reduces_to_the_byte_column_opening over\n  the retired dense-parity cases (duplicate lanes, empty advice, implicit\n  padding rows past words.len()) so the edge shapes keep unit-level\n  exercise against the non-circular direct-decode oracle.\n- jolt-claims: remove SpartanOuterRemainderPlan — its last production\n  consumer was the Rv64SpartanOuterRemainder formula deleted earlier in\n  this PR, leaving zero callers outside its own unit tests. Same relic\n  family. Also removes the now-orphaned SpartanOuterLinearForms,\n  SpartanOuterClaimError, group-row consts, and private helpers only the\n  plan used.",
+          "timestamp": "2026-08-12T13:37:15-04:00",
+          "tree_id": "4ab773f8ba0d988a5b429fe5a8ab413650b519f6",
+          "url": "https://github.com/a16z/jolt/commit/075bc8fa23f4128c2dc08802ed2a31e48267a8e7"
+        },
+        "date": 1786559725019,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.6129,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.1567,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 496116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 496016,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 496596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6283,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 497224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5069,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 495992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.1977,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 493212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.359,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 197332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.2772,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 857764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4943,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 495312,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4001,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 495964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 18.6803,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 491240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.2338,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 497212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 27.0124,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1097760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 12.5928,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 620480,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 83.6539,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2121508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.2895,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 495148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.3404,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 13.3328,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 857948,
             "unit": "KB",
             "extra": ""
           }
