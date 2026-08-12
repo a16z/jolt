@@ -21,14 +21,18 @@ rand_core = { version = "0.6.4", default-features = false }
 regex = "1.11.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2.workspace = true
 strum.workspace = true
 build-fs-tree = "0.8.1"
 allocative.workspace = true
 num-bigint = "0.4"
 
 jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
+jolt-field.workspace = true
+jolt-lookup-tables.workspace = true
 common = { path = "../common" }
 tracer = { path = "../tracer" }
 
 [dev-dependencies]
 proptest = "1.11.0"
+tempfile = "3"

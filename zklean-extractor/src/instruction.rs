@@ -103,7 +103,7 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         let lookup_table = match jolt_prover_legacy::zkvm::instruction::InstructionLookup::<
             { common::constants::XLEN },
         >::lookup_table(&self.row)
-        .map(|t| ZkLeanLookupTable::from(t).name())
+        .map(|t| ZkLeanLookupTable::from(t).qualified_name())
         {
             None => String::from("sorry /-No lookup table for this instruction-/"),
             Some(t) => format!("{t} : Vector f {num_variables} -> f"),
@@ -160,7 +160,7 @@ impl<J: JoltParameterSet> ZkLeanInstructions<J> {
     }
 
     pub fn zklean_imports(&self) -> Vec<String> {
-        vec![String::from("zkLean"), String::from("Jolt.LookupTables")]
+        vec![String::from("Jolt.LookupTables"), String::from("zkLean")]
     }
 }
 

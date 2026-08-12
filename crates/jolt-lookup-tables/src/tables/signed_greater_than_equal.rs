@@ -25,7 +25,7 @@ impl<const XLEN: usize> LookupTable for SignedGreaterThanEqualTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         F::one() - SignedLessThanTable::<XLEN>.evaluate_mle(r)
     }

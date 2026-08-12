@@ -18,7 +18,7 @@ impl<const XLEN: usize> LookupTable for Pow2WTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: crate::LookupEval + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let log_half = (XLEN / 2).trailing_zeros() as usize;

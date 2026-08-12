@@ -1,4 +1,4 @@
-use jolt_prover_legacy::field::JoltField;
+use jolt_field::RandomSampling;
 use rand_core::RngCore;
 
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
 };
 
 // XXX Extract this? Or make it generic?
-type TestField = ark_bn254::Fr;
+type TestField = jolt_field::Fr;
 
 #[derive(Debug, Clone)]
 pub struct ZkLeanLookupTableTest<const XLEN: usize> {
@@ -19,7 +19,7 @@ pub struct ZkLeanLookupTableTest<const XLEN: usize> {
 impl<const XLEN: usize> ZkLeanLookupTableTest<XLEN> {
     fn extract(lookup_table: &ZkLeanLookupTable<XLEN>, input: &[TestField]) -> Self {
         Self {
-            lookup_table_ident: lookup_table.name(),
+            lookup_table_ident: lookup_table.qualified_name(),
             output: lookup_table.lookup_table.evaluate_mle(input),
         }
     }
@@ -34,7 +34,9 @@ pub struct ZkLeanTests<const XLEN: usize> {
 impl<const XLEN: usize> ZkLeanTests<XLEN> {
     pub fn extract(rng: &mut impl RngCore) -> Self {
         let num_variables = 2 * XLEN;
-        let input: Vec<_> = (0..num_variables).map(|_| TestField::random(rng)).collect();
+        let input: Vec<_> = (0..num_variables)
+            .map(|_| <TestField as RandomSampling>::random(rng))
+            .collect();
         let tests: Vec<_> = ZkLeanLookupTable::iter()
             .map(|table| ZkLeanLookupTableTest::extract(&table, &input))
             .collect();
@@ -51,10 +53,15 @@ impl<const XLEN: usize> ZkLeanTests<XLEN> {
         f: &mut impl std::io::Write,
         indent_level: usize,
     ) -> std::io::Result<()> {
-        // We need to set maxHeartbeats here because the Lean compiler times out when trying to run
-        // the guards otherwise.
+        // The generated lookup expressions are intentionally large. Give both elaboration and
+        // compilation enough room to reduce them in the guards below.
         let lean_max_heartbeats = 8_000_000;
         writeln!(f, "set_option maxHeartbeats {lean_max_heartbeats}")?;
+        let lean_max_recursive_specializations = 1024;
+        writeln!(
+            f,
+            "set_option compiler.maxRecSpecialize {lean_max_recursive_specializations}"
+        )?;
         writeln!(f)?;
 
         writeln!(f, "abbrev TestField := BN254.ScalarField")?;

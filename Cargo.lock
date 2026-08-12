@@ -8106,6 +8106,8 @@ dependencies = [
  "build-fs-tree",
  "clap",
  "common",
+ "jolt-field",
+ "jolt-lookup-tables",
  "jolt-prover-legacy",
  "num-bigint",
  "proptest",
@@ -8113,7 +8115,9 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "strum 0.28.0",
+ "tempfile",
  "tracer",
 ]
 

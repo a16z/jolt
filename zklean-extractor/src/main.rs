@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use zklean_extractor::constants::*;
 use zklean_extractor::instruction::*;
 use zklean_extractor::lean_tests::*;
+use zklean_extractor::lookup_artifact::{verify_checkout_revision, LookupArtifact};
 use zklean_extractor::lookup_table_flags::*;
 use zklean_extractor::lookups::*;
 use zklean_extractor::modules::*;
@@ -37,25 +38,41 @@ struct Args {
     /// Ignored if -p is not specified.
     #[arg(short, long, default_value_t = false)]
     overwrite: bool,
+
+    /// Write a standalone, provenance-bearing Lean lookup artifact
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["file", "package_path", "template_dir"])]
+    lookup_artifact_path: Option<PathBuf>,
+
+    /// Exact Jolt Git revision represented by a standalone lookup artifact
+    #[arg(long, value_name = "40_HEX", requires = "lookup_artifact_path")]
+    source_revision: Option<String>,
 }
 
 fn write_flat_file(
     f: &mut impl std::io::Write,
     modules: Vec<Box<dyn AsModule>>,
 ) -> std::io::Result<()> {
+    let modules = modules
+        .into_iter()
+        .map(|module| module.as_module())
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let generated_imports = modules
+        .iter()
+        .map(|module| format!("Jolt.{}", module.name))
+        .collect::<std::collections::HashSet<_>>();
     let mut import_set = std::collections::HashSet::new();
     let mut contents: Vec<u8> = vec![];
 
     for module in modules {
-        let mut module = module.as_module()?;
-
         for import in module.imports {
-            let _ = import_set.insert(import);
+            if !generated_imports.contains(&import) {
+                let _ = import_set.insert(import);
+            }
         }
 
         let mut separator = Vec::from(b"\n\n");
         contents.append(&mut separator);
-        contents.append(&mut module.contents);
+        contents.extend(module.contents);
     }
 
     for i in import_set {
@@ -72,18 +89,40 @@ type ParameterSet = RV64IParameterSet;
 fn extract_modules<const XLEN: usize>() -> Vec<Box<dyn AsModule>> {
     let mut rng = rand_core::OsRng;
 
-    vec![
+    let mut modules: Vec<Box<dyn AsModule>> = vec![
         Box::new(ZkLeanR1CSConstraints::<ParameterSet>::extract()),
         Box::new(ZkLeanInstructions::<ParameterSet>::extract()),
         Box::new(ZkLeanSumchecks::<ark_bn254::Fr>::extract::<XLEN>()),
-        Box::new(ZkLeanLookupTables::<XLEN>::extract()),
-        Box::new(ZkLeanLookupTableFlags::<XLEN>::extract()),
-        Box::new(ZkLeanTests::<XLEN>::extract(&mut rng)),
-    ]
+    ];
+    let lookup_tables = ZkLeanLookupTables::<XLEN>::extract().expect("lookup extraction failed");
+    modules.extend(
+        lookup_tables
+            .as_modules()
+            .expect("lookup module generation failed")
+            .into_iter()
+            .map(|module| Box::new(module) as Box<dyn AsModule>),
+    );
+    modules.push(Box::new(ZkLeanLookupTableFlags::<XLEN>::extract()));
+    modules.push(Box::new(ZkLeanTests::<XLEN>::extract(&mut rng)));
+    modules
 }
 
 fn main() -> Result<(), FSError> {
     let args = Args::parse();
+
+    if let Some(artifact_path) = args.lookup_artifact_path {
+        let source_revision = args.source_revision.ok_or_else(|| {
+            FSError::TemplateError(
+                "--source-revision is required with --lookup-artifact-path".to_string(),
+            )
+        })?;
+        verify_checkout_revision(&source_revision).map_err(FSError::TemplateError)?;
+        let artifact =
+            LookupArtifact::extract::<64>(&source_revision).map_err(FSError::TemplateError)?;
+        artifact.write_to(&artifact_path, args.overwrite)?;
+        println!("Created Lean lookup artifact at {artifact_path:?}");
+        return Ok(());
+    }
 
     let modules = match ParameterSet::XLEN {
         32 => extract_modules::<32>(),

@@ -11,7 +11,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Quang Dao
 -/
 
-import MathLib
+import Mathlib.Algebra.Field.ZMod
 
 /-!
   # The BN254 scalar prime field

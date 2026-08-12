@@ -1,6 +1,5 @@
 //! Lookup-table-related traits.
 
-use jolt_field::Field;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
     FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
@@ -9,7 +8,7 @@ use jolt_riscv::instructions::{
 use jolt_riscv::{JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionRowData};
 use std::fmt::Debug;
 
-use crate::challenge_ops::{ChallengeOps, FieldOps};
+use crate::challenge_ops::{ChallengeOps, FieldOps, LookupEval};
 use crate::interleave::interleave_bits;
 use crate::tables::LookupTableKind;
 
@@ -20,7 +19,7 @@ pub trait LookupTable: Clone + Debug + Send + Sync {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>;
+        F: LookupEval + FieldOps<C>;
 }
 
 /// Maps an instruction to the lookup table it decomposes into for the proving system.

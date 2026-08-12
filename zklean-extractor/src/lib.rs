@@ -11,10 +11,14 @@
 
 // Lean extraction modules
 pub mod constants;
+mod correspondence;
 pub mod instruction;
 pub mod lean_tests;
+pub mod lookup_artifact;
+pub mod lookup_graph;
 pub mod lookup_table_flags;
 pub mod lookups;
+pub mod materializer_ast;
 pub mod modules;
 pub mod r1cs;
 pub mod sumchecks;
