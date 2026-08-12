@@ -207,9 +207,10 @@ Prover/verifier consistency (the load-bearing properties):
    `Expr` the verifier folds and BlindFold lowers, so a kernel cannot be "correct" against
    anything other than the protocol's own algebra.
 8. **Backend-invariant proof bytes.** Proof bytes are a function of (guest, inputs,
-   `ProverConfig`) alone: swapping any `JoltBackend` slot implementation or changing backend
-   configuration (pools, chunk sizes, thread/stream counts, devices) never changes them.
-   Field/group operations are exact, so this is achievable by contract — canonical value
+   `ProverConfig`) alone: swapping any `JoltBackend` slot implementation — including the
+   round-traversal (`rounds`) slot — or changing backend configuration (pools, chunk sizes,
+   thread/stream counts, devices) never changes them. Field/group operations are exact, so
+   this is achievable by contract — canonical value
    encodings at the seam — and enforced by running the byte-equality gates across backends.
 
 `jolt-eval` plan:
@@ -267,7 +268,8 @@ Prover/verifier consistency (the load-bearing properties):
 - [ ] Clear-mode proofs are **byte-identical** to `jolt-prover-legacy`'s on the e2e corpus
       (`muldiv`, `sha2-chain`, and an advice-exercising guest), verified by the
       `legacy_proof_byte_equality` invariant — and byte-invariant across backends
-      (`JoltBackend::reference()` vs the optimized CPU backend, invariant 8).
+      (`JoltBackend::reference()` vs a reordering `rounds` traversal vs the optimized
+      CPU backend, invariant 8).
 - [ ] Per-stage prover↔verifier consistency tests exist and pass for stages 1–8 (each stage's
       component accepted by the corresponding verifier stage; transcript states equal at every
       stage boundary).
@@ -590,11 +592,38 @@ re-enters it, with the phase transition a method on the instance trait.
 shapes) determines proof bytes; backend config (pools, chunk sizes, stream counts, spill
 thresholds, device ids) must be proof-invariant — invariant 8 makes the distinction testable.
 
-**Known engine extension, deferred.** `prove_batch` iterates members host-side — one readback
-per member per round on a device backend. When one lands, the engine grows a *member group*: one
-`ProveRounds` serving N co-located members and returning the pre-folded round polynomial given
-the batch coefficients. Nothing in the seam blocks this; recorded here so per-member iteration
-is not contracted as seam law.
+**Round traversal is a policy, not seam law.** `prove_batch` builds each round's
+active-member work list (`MemberRound` handles: local round, pending bind, claim,
+message slot) and hands it to a `RoundScheduler`. Fold, running claim, round-sum
+check, inactive-member padding, and transcript ops stay in the engine — so visit
+order and transport are free, and proof bytes are invariant across traversals
+(invariant 8). A handle left unfilled is `SumcheckError::MissingRoundMessage`
+against that member (not silent `claim / 2` padding); the borrowed work slice
+cannot add or drop members, so the Fiat-Shamir-critical set stays engine law.
+
+The traversal is chosen like every other kernel: `JoltBackend::round_scheduler`
+holds a `BuildRoundScheduler` factory; each stage front mints one with
+`backend.round_scheduler.build(session)` and passes it to the generated driver.
+`build` takes the session so device traversals share the carry their kernels park
+in `prepare`, and so per-proof state cannot leak onto the long-lived backend.
+Uni-skip rounds stay outside this seam (single kernel, not a batch). Concrete
+transports (GPU, RPC, threads) are backend `RoundScheduler` impls — a
+fixed-cost-per-crossing device backend issues every member's work, crosses once,
+and collects inside `batch_prove_round`, dropping crossings from `members × rounds`
+to `rounds`.
+
+This supersedes the deferred *member group* sketch (one `ProveRounds` serving N
+co-located members and returning a pre-folded round poly). Rejected: it moves
+batching coefficients across the seam and still needs per-member claims back
+while reshaping the Fiat-Shamir-critical member list. A backend that wants
+two-phase rounds owns both ends via the same `JoltBackend` value.
+
+**Deferred: no `Send` bound.** Intra-round parallelism needs
+`&mut [&mut dyn ProveRounds<F> + Send]` on `prove_batch`, which propagates to
+`PrepareKernel::prepare` and the generated driver — a future signature change,
+not taken here (would constrain ~30 kernels for an unused traversal). The bound
+belongs on the minted kernel, never on a `Box<dyn PrepareKernel<..>>` slot field
+(`#[derive(KernelSlots)]` matches single-bound and silently skips extras).
 
 ### Alternatives Considered
 

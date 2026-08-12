@@ -19,6 +19,7 @@
 //! | [`proof`] | [`ClearProof`], [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`prover`] | [`ProveRounds`], [`prove_batch`], and the uni-skip provers — the prove-side engine |
+//! | [`prover`] | [`RoundScheduler`] / [`SequentialRounds`] — the per-round member-traversal seam |
 //! | [`recorder`] | [`SumcheckRecorder`] — the clear/ZK proof-recording seam |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
@@ -96,6 +97,8 @@ pub mod scalar;
 pub mod verifier;
 
 #[cfg(test)]
+mod round_scheduler_tests;
+#[cfg(test)]
 mod tests;
 
 /// Transcript label used for ordinary sumcheck round polynomials.
@@ -127,8 +130,9 @@ pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, Sumche
 pub use error::SumcheckError;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 pub use prover::{
-    prove_batch, prove_uniskip_clear, prove_uniskip_committed, ProveRounds, ProvedBatch,
-    ProvedUniskip, ProvedUniskipCommitted,
+    prove_batch, prove_uniskip_clear, prove_uniskip_committed, MemberFinish, MemberRound,
+    ProveRounds, ProvedBatch, ProvedUniskip, ProvedUniskipCommitted, RoundScheduler,
+    SequentialRounds,
 };
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
