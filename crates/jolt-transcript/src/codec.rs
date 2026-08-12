@@ -95,6 +95,22 @@ mod tests {
     }
 
     #[test]
+    // A representable length that survives `checked_add` but exceeds the
+    // remaining buffer must be rejected by the bounds check BEFORE the payload
+    // copy — the allocation is bounded by the caller-supplied NARG size. If the
+    // copy ever moves ahead of the bounds check, this test attempts a 1 TiB
+    // allocation and aborts.
+    fn rejects_huge_representable_length_without_allocating() {
+        let mut narg = Vec::new();
+        narg.extend_from_slice(&(1u64 << 40).to_le_bytes());
+        narg.extend_from_slice(&[0u8; 16]);
+        let mut cursor: &[u8] = &narg;
+        let before = cursor.len();
+        assert!(BytesMsg::deserialize_from_narg(&mut cursor).is_err());
+        assert_eq!(cursor.len(), before, "cursor must not advance on error");
+    }
+
+    #[test]
     // On 32-bit this exercises the usize::try_from rejection path.
     // On 64-bit it exercises the length-vs-remaining rejection with a
     // length near usize::MAX.

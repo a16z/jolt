@@ -539,7 +539,6 @@ mod muldiv {
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
-
         let program_preprocessing = verifier_preprocessing
             .program
             .as_full_arc()
