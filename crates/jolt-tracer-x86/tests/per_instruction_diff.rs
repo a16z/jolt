@@ -110,6 +110,12 @@ const SUPPORTED: &[&str] = &[
     "VirtualChangeDivisorW",
     "VirtualAdviceLen",
     "VirtualAdviceLoad",
+    // Fused RV64 word arithmetic (single-lookup W ops):
+    "AddW",
+    "AddiW",
+    "SubW",
+    "MulW",
+    "MulIW",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -713,6 +719,11 @@ difftests! {
     diff_change_divisor_w => |r| change_divisor(r, "VirtualChangeDivisorW", false);
     diff_advice_len => advice_len;
     diff_advice_load => advice_load;
+    diff_addw => |r| alu_rr(r, K::ADDW);
+    diff_subw => |r| alu_rr(r, K::SUBW);
+    diff_mulw => |r| alu_rr(r, K::MULW);
+    diff_addiw => |r| alu_ri(r, K::ADDIW, false);
+    diff_muliw => |r| alu_ri(r, K::VirtualMULIW, true);
 }
 
 /// Every supported kind has a differential test above; this pins the count
@@ -721,5 +732,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 66);
+    assert_eq!(SUPPORTED.len(), 71);
 }

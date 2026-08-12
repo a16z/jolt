@@ -241,6 +241,14 @@ impl DynasmEmitter {
         e.store_rd(RAX, row.operands.rd);
     }
 
+    /// Word (RV64 `*W`) variant: the 64-bit op's low 32 bits, sign-extended.
+    fn emit_alu_rr_w(e: &mut Emitter, row: &JoltInstructionRow, op: AluRR) {
+        e.load_reg(RAX, row.operands.rs1);
+        e.alu_reg_operand(op, RAX, row.operands.rs2);
+        dynasm!(e.ops ; .arch x64 ; movsxd rax, eax);
+        e.store_rd(RAX, row.operands.rd);
+    }
+
     fn emit_alu_ri(e: &mut Emitter, row: &JoltInstructionRow, op: AluRR) {
         e.load_reg(RAX, row.operands.rs1);
         e.load_imm(RCX, row.operands.imm as i64);
@@ -252,6 +260,21 @@ impl DynasmEmitter {
             AluRR::Mul => dynasm!(e.ops ; .arch x64 ; imul rax, rcx),
             AluRR::Sub => unreachable!("no reg-imm subtract in the row set"),
         }
+        e.store_rd(RAX, row.operands.rd);
+    }
+
+    /// Word (RV64 `*W`) variant: the 64-bit op's low 32 bits, sign-extended.
+    fn emit_alu_ri_w(e: &mut Emitter, row: &JoltInstructionRow, op: AluRR) {
+        e.load_reg(RAX, row.operands.rs1);
+        e.load_imm(RCX, row.operands.imm as i64);
+        match op {
+            AluRR::Add => dynasm!(e.ops ; .arch x64 ; add rax, rcx),
+            AluRR::Mul => dynasm!(e.ops ; .arch x64 ; imul rax, rcx),
+            AluRR::And | AluRR::Or | AluRR::Xor | AluRR::Sub => {
+                unreachable!("no reg-imm word variant in the row set")
+            }
+        }
+        dynasm!(e.ops ; .arch x64 ; movsxd rax, eax);
         e.store_rd(RAX, row.operands.rd);
     }
 }
@@ -612,6 +635,11 @@ impl DynasmEmitter {
             K::Or(_) => Self::emit_alu_rr(e, row, AluRR::Or),
             K::Xor(_) => Self::emit_alu_rr(e, row, AluRR::Xor),
             K::Mul(_) => Self::emit_alu_rr(e, row, AluRR::Mul),
+            K::AddW(_) => Self::emit_alu_rr_w(e, row, AluRR::Add),
+            K::SubW(_) => Self::emit_alu_rr_w(e, row, AluRR::Sub),
+            K::MulW(_) => Self::emit_alu_rr_w(e, row, AluRR::Mul),
+            K::AddiW(_) => Self::emit_alu_ri_w(e, row, AluRR::Add),
+            K::MulIW(_) => Self::emit_alu_ri_w(e, row, AluRR::Mul),
             K::Addi(_) => Self::emit_alu_ri(e, row, AluRR::Add),
             K::AndI(_) => Self::emit_alu_ri(e, row, AluRR::And),
             K::OrI(_) => Self::emit_alu_ri(e, row, AluRR::Or),
