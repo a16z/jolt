@@ -239,6 +239,10 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 - Codebase uses `non_snake_case` convention for math variables: `log_T`, `ram_K`, `log_K`, etc.
 - Import types and structs, then reference them by short names; use fully qualified paths only to resolve ambiguity.
 
+### Testing Guidelines
+
+- Do not add old-vs-new equivalence tests that reimplement the pre-change logic as the oracle. Transition-validation belongs in the PR process (byte-parity CI vs a living reference, one-off scripts), not the permanent suite. Permanent tests must assert against independent ground truth: spec vectors, golden fixtures, live reference paths (e.g. `jolt-kernels`' reference tier, the legacy-prover byte-parity suites), or properties. If the old code is deleted, its reimplementation in a test is dead weight — delete the test rather than keep the old logic alive inside it. A `#[cfg(test)]` copy of superseded production code "kept as the oracle" is the same anti-pattern.
+
 ### Lint Policy
 
 - Workspace enforces `allow_attributes = "deny"` — use `#[expect(...)]` instead of `#[allow(...)]`

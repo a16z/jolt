@@ -402,7 +402,10 @@ fn remap_field_inline_column(column: usize) -> usize {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests may unwind via panic")]
+#[cfg_attr(
+    feature = "field-inline",
+    expect(clippy::expect_used, reason = "tests may unwind via panic")
+)]
 mod tests {
     use super::*;
     #[cfg(feature = "field-inline")]
@@ -412,10 +415,6 @@ mod tests {
             FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
         },
         FieldInlineOpFlag, FieldInlineVirtualPolynomial,
-    };
-    #[cfg(not(feature = "field-inline"))]
-    use jolt_claims::protocols::jolt::{
-        geometry::spartan::SpartanOuterDimensions, SpartanOuterPublic,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     #[cfg(feature = "field-inline")]
@@ -458,86 +457,6 @@ mod tests {
             spartan_outer_opening_columns(),
             (rv64::V_LEFT_INSTRUCTION_INPUT..=rv64::NUM_R1CS_INPUTS).collect::<Vec<_>>()
         );
-    }
-
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn default_spartan_outer_remainder_matches_rv64() {
-        let dimensions = SpartanOuterDimensions::rv64(3);
-        let tau = [
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(4),
-            Fr::from_u64(5),
-            Fr::from_u64(6),
-        ];
-        let remainder = [
-            Fr::from_u64(7),
-            Fr::from_u64(8),
-            Fr::from_u64(9),
-            Fr::from_u64(10),
-        ];
-        let openings = (1..=rv64::NUM_R1CS_INPUTS as u64)
-            .map(Fr::from_u64)
-            .collect::<Vec<_>>();
-
-        let rv64_remainder = rv64::Rv64SpartanOuterRemainder::new(
-            &dimensions,
-            rv64::Rv64SpartanOuterRemainderChallenges {
-                tau: &tau,
-                uniskip: Fr::from_u64(11),
-                remainder: &remainder,
-            },
-        )
-        .expect("RV64 remainder derives");
-        let composed_remainder =
-            JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-                tau: &tau,
-                uniskip: Fr::from_u64(11),
-                remainder: &remainder,
-            })
-            .expect("composed remainder derives");
-
-        assert_eq!(
-            composed_remainder
-                .expected_output_claim(&openings)
-                .expect("composed output claim evaluates"),
-            rv64_remainder
-                .expected_output_claim(&openings)
-                .expect("RV64 output claim evaluates")
-        );
-
-        let composed_public = composed_remainder.public_coefficients();
-        let rv64_public = rv64_remainder
-            .public_claims(&dimensions)
-            .expect("RV64 public coefficients derive");
-        assert_eq!(composed_public.len(), rv64_public.len());
-        for ((composed_id, composed_value), (rv64_id, rv64_value)) in
-            composed_public.into_iter().zip(rv64_public)
-        {
-            let ids_match = match (composed_id, rv64_id) {
-                (JoltSpartanOuterPublic::TauKernel, SpartanOuterPublic::TauKernel) => true,
-                (
-                    JoltSpartanOuterPublic::AzWeight(index),
-                    SpartanOuterPublic::AzWeight(rv64_index),
-                ) => {
-                    assert_eq!(index, rv64_index);
-                    true
-                }
-                (
-                    JoltSpartanOuterPublic::BzWeight(index),
-                    SpartanOuterPublic::BzWeight(rv64_index),
-                ) => {
-                    assert_eq!(index, rv64_index);
-                    true
-                }
-                (JoltSpartanOuterPublic::AzConstant, SpartanOuterPublic::AzConstant) => true,
-                (JoltSpartanOuterPublic::BzConstant, SpartanOuterPublic::BzConstant) => true,
-                _ => false,
-            };
-            assert!(ids_match, "public coefficient kind mismatch");
-            assert_eq!(composed_value, rv64_value);
-        }
     }
 
     #[cfg(feature = "field-inline")]
