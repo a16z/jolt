@@ -136,6 +136,7 @@ use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder
 use virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use virtual_movsign::VirtualMovsign;
 use virtual_muli::VirtualMULI;
+use virtual_muliw::VirtualMULIW;
 use virtual_negate_if::VirtualNegateIf;
 use virtual_pow2::VirtualPow2;
 use virtual_pow2_w::VirtualPow2W;
@@ -321,6 +322,7 @@ pub mod virtual_assert_word_alignment;
 pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_muliw;
 pub mod virtual_negate_if;
 pub mod virtual_pow2;
 pub mod virtual_pow2_w;
@@ -2081,7 +2083,7 @@ mod tests {
     #[test]
     fn source_only_tracer_conversion_does_not_fabricate_final_kind() {
         let source = SourceInstruction::new(
-            SourceInstructionKind::ADDW,
+            SourceInstructionKind::MULH,
             SourceInstructionRow {
                 address: 0x1234,
                 operands: NormalizedOperands {
@@ -2097,13 +2099,13 @@ mod tests {
 
         let instruction = Instruction::try_from_source_instruction(source).unwrap();
         assert!(instruction.try_jolt_instruction_row().is_err());
-        let Instruction::ADDW(addw) = instruction else {
-            panic!("expected ADDW tracer instruction");
+        let Instruction::MULH(mulh) = instruction else {
+            panic!("expected MULH tracer instruction");
         };
-        assert_eq!(addw.address, 0x1234);
-        assert_eq!(addw.virtual_sequence_remaining, None);
-        assert!(!addw.is_first_in_sequence);
-        assert!(addw.is_compressed);
+        assert_eq!(mulh.address, 0x1234);
+        assert_eq!(mulh.virtual_sequence_remaining, None);
+        assert!(!mulh.is_first_in_sequence);
+        assert!(mulh.is_compressed);
     }
 
     #[test]

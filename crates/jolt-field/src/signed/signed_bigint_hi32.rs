@@ -208,12 +208,14 @@ impl<const N: usize> SignedBigIntHi32<N> {
 
         // General path — reads limbs inline to avoid heap allocation.
         // Stack buffer covers up to N=7 (2*(7+1) = 16 entries).
+        const {
+            assert!(
+                2 * (N + 1) <= 16,
+                "N too large for stack-allocated product buffer"
+            );
+        }
         let num_limbs = N + 1;
         let mut prod = [0u64; 16];
-        debug_assert!(
-            2 * num_limbs <= prod.len(),
-            "N too large for stack-allocated product buffer"
-        );
 
         let limb_a = |i: usize| -> u64 {
             if i < N {
@@ -300,10 +302,12 @@ impl<const N: usize> SignedBigIntHi32<N> {
 
     #[inline]
     pub fn zero_extend_from<const M: usize>(smaller: &SignedBigIntHi32<M>) -> SignedBigIntHi32<N> {
-        debug_assert!(
-            M <= N,
-            "cannot zero-extend: source has more limbs than destination"
-        );
+        const {
+            assert!(
+                M <= N,
+                "cannot zero-extend: source has more limbs than destination"
+            );
+        }
         if N == M {
             let mut lo = [0u64; N];
             if N > 0 {

@@ -29,7 +29,7 @@ pub mod prefixes;
 pub mod range_check;
 pub mod range_check_aligned;
 pub mod shift_right_bitmask;
-pub mod sign_extend_half_word;
+pub mod sign_extend_word;
 pub mod sign_mask;
 pub mod signed_greater_than_equal;
 pub mod signed_less_than;
@@ -67,7 +67,7 @@ use pow2_w::Pow2WTable;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
-use sign_extend_half_word::SignExtendHalfWordTable;
+use sign_extend_word::SignExtendWordTable;
 use sign_mask::SignMaskTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
@@ -131,7 +131,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
     WordAlignment(WordAlignmentTable<XLEN>),
     LowerHalfWord(LowerHalfWordTable<XLEN>),
-    SignExtendHalfWord(SignExtendHalfWordTable<XLEN>),
+    SignExtendWord(SignExtendWordTable<XLEN>),
     Pow2(Pow2Table<XLEN>),
     Pow2W(Pow2WTable<XLEN>),
     ShiftRightBitmask(ShiftRightBitmaskTable<XLEN>),
@@ -179,7 +179,7 @@ macro_rules! dispatch {
             Self::HalfwordAlignment($t) => $expr,
             Self::WordAlignment($t) => $expr,
             Self::LowerHalfWord($t) => $expr,
-            Self::SignExtendHalfWord($t) => $expr,
+            Self::SignExtendWord($t) => $expr,
             Self::Pow2($t) => $expr,
             Self::Pow2W($t) => $expr,
             Self::ShiftRightBitmask($t) => $expr,

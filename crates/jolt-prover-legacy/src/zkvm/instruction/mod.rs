@@ -294,8 +294,13 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstruction::VirtualZeroExtendWord(_) => {
                 LookupTables::LowerHalfWord(Default::default())
             }
-            JoltInstruction::VirtualSignExtendWord(_) => {
-                LookupTables::SignExtendHalfWord(Default::default())
+            JoltInstructionKind::ADDW
+            | JoltInstructionKind::ADDIW
+            | JoltInstructionKind::SUBW
+            | JoltInstructionKind::MULW
+            | JoltInstructionKind::VirtualMULIW
+            | JoltInstruction::VirtualSignExtendWord(_) => {
+                LookupTables::SignExtendWord(Default::default())
             }
             JoltInstructionKind::VirtualPow2 | JoltInstructionKind::VirtualPow2I => {
                 LookupTables::Pow2(Default::default())
@@ -482,16 +487,16 @@ macro_rules! define_rv64imac_trait_impls {
 
 define_rv64imac_trait_impls! {
     instructions: [
-        ADD, ADDI, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
+        ADD, ADDI, ADDIW, ADDW, AND, ANDI, ANDN, AUIPC, BEQ, BGE, BGEU, BLT, BLTU, BNE,
         EBREAK, ECALL, FENCE, JAL, JALR, LUI, LD, MUL, MULHU, OR, ORI,
-        SLT, SLTI, SLTIU, SLTU, SUB, SD, XOR, XORI,
+        MULW, SLT, SLTI, SLTIU, SLTU, SUB, SUBW, SD, XOR, XORI,
         VirtualAdvice, VirtualAdviceLen, VirtualAdviceLoad,
         VirtualAssertEQ, VirtualAssertHalfwordAlignment,
         VirtualAssertWordAlignment, VirtualAssertLTE, VirtualHostIO,
         VirtualAssertValidDiv0, VirtualAssertValidUnsignedRemainder,
         VirtualNegateIf, VirtualAssertMulUNoOverflow,
-        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualPow2,
-        VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
+        VirtualZeroExtendWord, VirtualSignExtendWord, VirtualMovsign, VirtualMULI, VirtualMULIW,
+        VirtualPow2, VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
@@ -501,6 +506,8 @@ define_rv64imac_trait_impls! {
 
 pub mod add;
 pub mod addi;
+pub mod addiw;
+pub mod addw;
 pub mod and;
 pub mod andi;
 pub mod andn;
@@ -520,6 +527,7 @@ pub mod ld;
 pub mod lui;
 pub mod mul;
 pub mod mulhu;
+pub mod mulw;
 pub mod or;
 pub mod ori;
 pub mod sd;
@@ -528,6 +536,7 @@ pub mod slti;
 pub mod sltiu;
 pub mod sltu;
 pub mod sub;
+pub mod subw;
 pub mod virtual_advice;
 pub mod virtual_advice_len;
 pub mod virtual_advice_load;
@@ -541,6 +550,7 @@ pub mod virtual_assert_word_alignment;
 pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_muliw;
 pub mod virtual_negate_if;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;

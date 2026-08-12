@@ -212,6 +212,43 @@ jobs:
       - name: Serial/parallel trace equivalence
         run: cargo run --profile ci -p tracer --example trace_equivalence
 
+  x86-tracer:
+    runs-on: ubuntu-latest
+    name: x86 AOT tracer backend (native x86-64)
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      # Guest ELFs link ZeroOS, so building them needs its musl toolchain.
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      # The guest-dependent tests skip themselves without the CLI, so this
+      # install is what makes this job the backend's real coverage: it is the
+      # only place the differential and chunk-composition tests execute
+      # against native x86-64 hardware.
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Test jolt-tracer-x86
+        run: cargo nextest run --cargo-profile ci -p jolt-tracer-x86
+
   test-prover-zk:
     runs-on: ubuntu-latest
     name: Test jolt-prover-legacy (zk)

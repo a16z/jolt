@@ -195,3 +195,13 @@ fn gt_msm_matches_naive() {
 fn gt_default_is_identity() {
     assert_eq!(Bn254GT::default(), Bn254GT::identity());
 }
+
+#[test]
+#[should_panic(expected = "msm: bases/scalars length mismatch")]
+fn gt_msm_length_mismatch_panics() {
+    let g1 = Bn254::g1_generator();
+    let g2 = Bn254::g2_generator();
+    let gt = Bn254::pairing(&g1, &g2);
+    let s = Fr::from_u64(3);
+    let _ = Bn254GT::msm(&[gt, gt], &[s]);
+}

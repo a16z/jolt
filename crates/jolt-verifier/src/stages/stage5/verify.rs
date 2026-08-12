@@ -77,7 +77,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_k = checked.ram_K.ilog2() as usize;
+    let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = formula_dimensions.trace;
 
     let sumchecks = Stage5Sumchecks {

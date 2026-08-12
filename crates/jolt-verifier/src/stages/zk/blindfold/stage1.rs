@@ -1,16 +1,20 @@
 use super::*;
 
-pub(super) fn add_stage1<PCS, VC, ZkProof>(
+// Binding the scalar field to a bare `F` parameter (rather than spelling
+// `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
+// recognize the side-effect-free field arithmetic in the body.
+pub(super) fn add_stage1<F, PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-    mut builder: Builder<PCS::Field, VC::Output>,
-    values: &mut SourceValues<PCS::Field>,
-) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
+    mut builder: Builder<F, VC::Output>,
+    values: &mut SourceValues<F>,
+) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
     VC::Output: Clone,
 {
-    let log_t = input.checked.trace_length.ilog2() as usize;
+    let log_t = crate::num::ilog2(input.checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let uniskip_rounds = 1;
     let uniskip_degree = SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
@@ -47,6 +51,10 @@ where
         values.public(VerifierPublicId::SpartanOuter(id), value)?;
     }
 
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "log_t is an ilog2 result (< 64); 1 + log_t cannot overflow usize"
+    )]
     let remainder_rounds = 1 + log_t;
     let remainder_domain = SumcheckDomain::BooleanHypercube;
     let [remainder_batching_coefficient] = input
@@ -59,10 +67,20 @@ where
             reason: "stage1.outer_remainder: expected one batching coefficient".to_string(),
         });
     };
+    let remainder_extra_vars = input
+        .stage1
+        .remainder_consistency
+        .max_num_vars
+        .checked_sub(remainder_rounds)
+        .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
+            reason: format!(
+                "stage1.outer_remainder: {remainder_rounds} rounds exceed the batch's {} variables",
+                input.stage1.remainder_consistency.max_num_vars
+            ),
+        })?;
     let input_claim = scale_expr(
         opening(outer_uniskip_opening()),
-        *remainder_batching_coefficient
-            * PCS::Field::pow2(input.stage1.remainder_consistency.max_num_vars - remainder_rounds),
+        *remainder_batching_coefficient * F::pow2(remainder_extra_vars),
     );
     let output_claim = scale_expr(
         stage1_spartan_outer_output_expr(&opening_order),

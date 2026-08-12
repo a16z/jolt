@@ -13,6 +13,7 @@ pub mod assert_word_alignment;
 pub mod host_io;
 pub mod movsign;
 pub mod muli;
+pub mod muliw;
 pub mod negate_if;
 pub mod pow2;
 pub mod pow2i;
