@@ -975,11 +975,11 @@ mod muldiv {
         assert_backend_matches_legacy(&JoltBackend::optimized());
 
         // Invariant 8: reorder/defer via the rounds slot still matches legacy.
-        let mut chaos_backend = JoltBackend::reference();
-        chaos_backend.round_scheduler = Box::new(chaos_traversal::ChaosTraversal);
-        assert_backend_matches_legacy(&chaos_backend);
+        let mut reverse_backend = JoltBackend::reference();
+        reverse_backend.round_scheduler = Box::new(reverse_traversal::ReverseTraversal);
+        assert_backend_matches_legacy(&reverse_backend);
         assert!(
-            chaos_traversal::rounds_driven() > 0,
+            reverse_traversal::rounds_driven() > 0,
             "the rounds slot never reached prove_batch, so invariance was not exercised",
         );
 
@@ -1001,27 +1001,27 @@ mod muldiv {
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
         }
 
-        let chaos_proof =
+        let reverse_proof =
             jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                &chaos_backend,
+                &reverse_backend,
                 &prover_preprocessing,
                 &config,
                 None,
                 Arc::clone(&witness),
                 &public_io,
             )
-            .expect("top-level prove under chaos traversal");
+            .expect("top-level prove under a reversed traversal");
         assert_eq!(
-            chaos_proof, legacy_proof,
+            reverse_proof, legacy_proof,
             "assembled proof diverged under a reordering traversal"
         );
         assert!(
-            chaos_traversal::rounds_driven() > 0,
+            reverse_traversal::rounds_driven() > 0,
             "the rounds slot never reached prove_batch, so invariance was not exercised",
         );
     }
 
-    mod chaos_traversal {
+    mod reverse_traversal {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         use jolt_field::Fr;
@@ -1035,9 +1035,9 @@ mod muldiv {
             ROUNDS_DRIVEN.swap(0, Ordering::Relaxed)
         }
 
-        struct ChaosRounds;
+        struct ReverseRounds;
 
-        impl RoundScheduler<Fr> for ChaosRounds {
+        impl RoundScheduler<Fr> for ReverseRounds {
             fn batch_prove_round(
                 &mut self,
                 work: &mut [MemberRound<'_, Fr>],
@@ -1061,11 +1061,11 @@ mod muldiv {
             }
         }
 
-        pub struct ChaosTraversal;
+        pub struct ReverseTraversal;
 
-        impl BuildRoundScheduler<Fr> for ChaosTraversal {
+        impl BuildRoundScheduler<Fr> for ReverseTraversal {
             fn build(&self, _session: &mut ProofSession) -> Box<dyn RoundScheduler<Fr>> {
-                Box::new(ChaosRounds)
+                Box::new(ReverseRounds)
             }
         }
     }

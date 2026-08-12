@@ -20,9 +20,9 @@ use crate::tests::DenseMember;
 
 type F = Fr;
 
-struct ChaosRounds;
+struct ReverseRounds;
 
-impl RoundScheduler<F> for ChaosRounds {
+impl RoundScheduler<F> for ReverseRounds {
     fn batch_prove_round(
         &mut self,
         work: &mut [MemberRound<'_, F>],
@@ -89,13 +89,16 @@ fn traversal_fixture() -> (
 
 #[test]
 fn proof_is_invariant_under_a_reordering_traversal() {
-    let prove = |chaos: bool| {
+    let prove = |reversed: bool| {
         let (mut long, mut short, prelude, mut transcript, mut recorder) = traversal_fixture();
         let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
         let mut sequential = SequentialRounds;
-        let mut chaotic = ChaosRounds;
-        let scheduler: &mut dyn RoundScheduler<F> =
-            if chaos { &mut chaotic } else { &mut sequential };
+        let mut reverse = ReverseRounds;
+        let scheduler: &mut dyn RoundScheduler<F> = if reversed {
+            &mut reverse
+        } else {
+            &mut sequential
+        };
         let proved = prove_batch(
             &prelude,
             &mut members,
@@ -111,12 +114,12 @@ fn proof_is_invariant_under_a_reordering_traversal() {
     };
 
     let (sequential, sequential_proof, sequential_state) = prove(false);
-    let (chaotic, chaotic_proof, chaotic_state) = prove(true);
-    assert_eq!(sequential.challenges, chaotic.challenges);
-    assert_eq!(sequential.final_claim, chaotic.final_claim);
-    assert_eq!(sequential.member_claims, chaotic.member_claims);
-    assert_eq!(sequential_proof, chaotic_proof);
-    assert_eq!(sequential_state, chaotic_state);
+    let (reversed, reversed_proof, reversed_state) = prove(true);
+    assert_eq!(sequential.challenges, reversed.challenges);
+    assert_eq!(sequential.final_claim, reversed.final_claim);
+    assert_eq!(sequential.member_claims, reversed.member_claims);
+    assert_eq!(sequential_proof, reversed_proof);
+    assert_eq!(sequential_state, reversed_state);
 }
 
 #[test]
