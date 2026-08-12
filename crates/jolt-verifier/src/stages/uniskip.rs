@@ -95,6 +95,10 @@ where
     F: Field,
     T: Transcript<Challenge = F>,
 {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "log_t is an ilog2 result (< 64); log_t + 2 cannot overflow usize"
+    )]
     transcript.challenge_vector(log_t + 2)
 }
 

@@ -37,6 +37,10 @@ fn decompose_scalar_table_based(scalar: &BigInt) -> ([u128; 4], [bool; 4]) {
 
     while temp_scalar > BigInt::from(0) && bit_position < POWER_OF_2_DECOMPOSITIONS.len() {
         if &temp_scalar & BigInt::from(1) == BigInt::from(1) {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "the while condition bounds bit_position below the table length"
+            )]
             let (decomp_k0, decomp_k1, decomp_k2, decomp_k3, neg0, neg1, neg2, neg3) =
                 POWER_OF_2_DECOMPOSITIONS[bit_position];
 

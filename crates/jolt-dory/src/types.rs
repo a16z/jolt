@@ -172,6 +172,7 @@ fn validate_proof_round_count(buf: &[u8]) -> Result<(), String> {
     clippy::unwrap_used,
     reason = "tests may panic on assertion failures"
 )]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use jolt_field::RandomSampling;

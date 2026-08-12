@@ -1688,6 +1688,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1731,7 +1740,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2291,6 +2300,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "dynasm"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f7d4c414c94bc830797115b8e5f434d58e7e80cb42ba88508c14bc6ea270625"
+dependencies = [
+ "bitflags 2.11.0",
+ "byteorder",
+ "lazy_static",
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "dynasmrt"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "602f7458a3859195fb840e6e0cce5f4330dd9dfbfece0edaf31fe427af346f55"
+dependencies = [
+ "byteorder",
+ "dynasm",
+ "fnv",
+ "memmap2",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2468,7 +2504,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3090,7 +3126,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3347,6 +3383,7 @@ dependencies = [
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-riscv",
+ "jolt-tracer-x86",
  "jolt-transcript",
  "jolt-verifier",
  "libc",
@@ -3722,6 +3759,7 @@ dependencies = [
  "jolt-profiling",
  "jolt-program",
  "jolt-prover-legacy",
+ "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
@@ -3880,6 +3918,25 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "jolt-tracer-x86"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "dynasm",
+ "dynasmrt",
+ "iai-callgrind",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-platform",
+ "jolt-program",
+ "jolt-riscv",
+ "libc",
+ "postcard",
+ "rand 0.8.7",
+ "tracer",
 ]
 
 [[package]]
@@ -5994,7 +6051,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6851,7 +6908,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7490,7 +7547,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7807,12 +7864,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "z3-src"
+version = "416.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2af0c6527de39877cf55cb87f233016573eeeb7cf77afdc1469e4b32faef832"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "z3-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c18b0a91a13522d21b3414847667de2b2056a721a3edcb5b6ee6858352d58db4"
 dependencies = [
  "pkg-config",
+ "z3-src",
 ]
 
 [[package]]
@@ -7824,6 +7891,7 @@ dependencies = [
  "paste",
  "tracer",
  "z3",
+ "z3-src",
 ]
 
 [[package]]

@@ -102,36 +102,21 @@ impl<F: Field> R1csKey<F> {
         let mut b_eval = F::zero();
         let mut c_eval = F::zero();
 
-        for (k, ((a_row, b_row), c_row)) in self
+        for (((a_row, b_row), c_row), &w) in self
             .matrices
             .a
             .iter()
             .zip(&self.matrices.b)
             .zip(&self.matrices.c)
-            .enumerate()
+            .zip(&eq_con)
         {
-            let w = eq_con[k];
             if w.is_zero() {
                 continue;
             }
 
-            let mut a_row_eval = F::zero();
-            for &(j, coeff) in a_row {
-                a_row_eval += coeff * eq_var[j];
-            }
-            a_eval += w * a_row_eval;
-
-            let mut b_row_eval = F::zero();
-            for &(j, coeff) in b_row {
-                b_row_eval += coeff * eq_var[j];
-            }
-            b_eval += w * b_row_eval;
-
-            let mut c_row_eval = F::zero();
-            for &(j, coeff) in c_row {
-                c_row_eval += coeff * eq_var[j];
-            }
-            c_eval += w * c_row_eval;
+            a_eval += w * sparse_row_dot(a_row, &eq_var);
+            b_eval += w * sparse_row_dot(b_row, &eq_var);
+            c_eval += w * sparse_row_dot(c_row, &eq_var);
         }
 
         (a_eval, b_eval, c_eval)
@@ -170,37 +155,21 @@ impl<F: Field> R1csKey<F> {
         let mut bz = F::zero();
         let mut cz = F::zero();
 
-        for (k, ((a_row, b_row), c_row)) in self
+        for (((a_row, b_row), c_row), &w) in self
             .matrices
             .a
             .iter()
             .zip(&self.matrices.b)
             .zip(&self.matrices.c)
-            .enumerate()
+            .zip(&eq_con)
         {
-            let w = eq_con[k];
             if w.is_zero() {
                 continue;
             }
 
-            let mut a_dot = F::zero();
-            for &(j, coeff) in a_row {
-                a_dot += coeff * witness_evals[j];
-            }
-
-            let mut b_dot = F::zero();
-            for &(j, coeff) in b_row {
-                b_dot += coeff * witness_evals[j];
-            }
-
-            let mut c_dot = F::zero();
-            for &(j, coeff) in c_row {
-                c_dot += coeff * witness_evals[j];
-            }
-
-            az += w * a_dot;
-            bz += w * b_dot;
-            cz += w * c_dot;
+            az += w * sparse_row_dot(a_row, witness_evals);
+            bz += w * sparse_row_dot(b_row, witness_evals);
+            cz += w * sparse_row_dot(c_row, witness_evals);
         }
 
         (az, bz, cz)
@@ -221,15 +190,18 @@ impl<F: Field> R1csKey<F> {
 
         // Build combined local row: M_local(r_con, v) for each variable v
         let mut local_row = vec![F::zero(); self.num_vars_padded];
-        for (k, ((a_row, b_row), c_row)) in self
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "column indices are below num_vars <= num_vars_padded = local_row.len() by the ConstraintMatrices invariant"
+        )]
+        for (((a_row, b_row), c_row), &w) in self
             .matrices
             .a
             .iter()
             .zip(&self.matrices.b)
             .zip(&self.matrices.c)
-            .enumerate()
+            .zip(&eq_con)
         {
-            let w = eq_con[k];
             if w.is_zero() {
                 continue;
             }
@@ -247,14 +219,13 @@ impl<F: Field> R1csKey<F> {
         let v_pad = self.num_vars_padded;
         let mut combined = vec![F::zero(); self.total_cols()];
 
-        let fill_cycle = |(c, chunk): (usize, &mut [F])| {
-            let eq_c = eq_cycle[c];
+        let fill_cycle = |(chunk, eq_c): (&mut [F], &F)| {
             if eq_c.is_zero() {
                 return;
             }
-            for (v, &local_val) in local_row.iter().enumerate() {
+            for (slot, &local_val) in chunk.iter_mut().zip(&local_row) {
                 if !local_val.is_zero() {
-                    chunk[v] = eq_c * local_val;
+                    *slot = *eq_c * local_val;
                 }
             }
         };
@@ -264,19 +235,39 @@ impl<F: Field> R1csKey<F> {
             use rayon::prelude::*;
             combined
                 .par_chunks_mut(v_pad)
-                .enumerate()
+                .zip(eq_cycle.par_iter())
                 .for_each(fill_cycle);
         }
         #[cfg(not(feature = "parallel"))]
         {
-            combined.chunks_mut(v_pad).enumerate().for_each(fill_cycle);
+            combined
+                .chunks_mut(v_pad)
+                .zip(eq_cycle.iter())
+                .for_each(fill_cycle);
         }
 
         combined
     }
 }
 
+/// Dot product of a sparse row with a dense evaluation table.
+///
+/// Callers guarantee the table covers `num_vars` entries; every column index
+/// is below `num_vars` by the [`ConstraintMatrices`] invariant.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "column indices are below num_vars by the ConstraintMatrices invariant and tables cover num_vars"
+)]
+fn sparse_row_dot<F: Field>(row: &[(usize, F)], table: &[F]) -> F {
+    let mut acc = F::zero();
+    for &(j, coeff) in row {
+        acc += coeff * table[j];
+    }
+    acc
+}
+
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;

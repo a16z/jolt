@@ -41,23 +41,22 @@ impl Encoding<[u8]> for BytesMsg {
 
 impl NargDeserialize for BytesMsg {
     fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        if buf.len() < 8 {
+        let data = *buf;
+        let Some((len_bytes, rest)) = data.split_first_chunk::<8>() else {
+            return Err(VerificationError);
+        };
+        let len = usize::try_from(u64::from_le_bytes(*len_bytes)).map_err(|_| VerificationError)?;
+        if rest.len() < len {
             return Err(VerificationError);
         }
-        let mut len_bytes = [0u8; 8];
-        len_bytes.copy_from_slice(&buf[..8]);
-        let len = usize::try_from(u64::from_le_bytes(len_bytes)).map_err(|_| VerificationError)?;
-        let total = 8usize.checked_add(len).ok_or(VerificationError)?;
-        if buf.len() < total {
-            return Err(VerificationError);
-        }
-        let body = buf[8..total].to_vec();
-        *buf = &buf[total..];
-        Ok(BytesMsg(body))
+        let (body, remainder) = rest.split_at(len);
+        *buf = remainder;
+        Ok(BytesMsg(body.to_vec()))
     }
 }
 
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
 
@@ -97,7 +96,8 @@ mod tests {
 
     #[test]
     // On 32-bit this exercises the usize::try_from rejection path.
-    // On 64-bit it exercises the checked_add overflow path.
+    // On 64-bit it exercises the length-vs-remaining rejection with a
+    // length near usize::MAX.
     fn rejects_non_representable_lengths() {
         #[cfg(target_pointer_width = "32")]
         let len: u64 = (u32::MAX as u64) + 1;

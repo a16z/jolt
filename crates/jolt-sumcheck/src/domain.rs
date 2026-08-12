@@ -75,9 +75,9 @@ where
     F: SumcheckScalar,
 {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
-        let mut coefficients = vec![F::one(); degree + 1];
-        coefficients[0] = F::from_u64(2);
-        Ok(coefficients)
+        Ok(core::iter::once(F::from_u64(2))
+            .chain(core::iter::repeat_n(F::one(), degree))
+            .collect())
     }
 }
 

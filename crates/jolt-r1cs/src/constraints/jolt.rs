@@ -143,13 +143,27 @@ pub fn spartan_outer_row_weights<F: Field>(
     stream: F,
 ) -> Result<Vec<F>, CenteredIntegerDomainError> {
     let lagrange_weights = centered_lagrange_evals(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, uniskip)?;
+    // The row-group arrays are typed to the domain size, so only a short
+    // weight vector could make the zips below drop rows silently.
+    debug_assert_eq!(lagrange_weights.len(), SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
     let mut weights = vec![F::zero(); SPARTAN_OUTER_ROW_COUNT];
 
-    for (index, &row) in SPARTAN_OUTER_FIRST_GROUP_ROWS.iter().enumerate() {
-        weights[row] += (F::one() - stream) * lagrange_weights[index];
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "SPARTAN_OUTER_FIRST_GROUP_ROWS entries are compile-time constants below SPARTAN_OUTER_ROW_COUNT"
+    )]
+    for (&row, &lagrange_weight) in SPARTAN_OUTER_FIRST_GROUP_ROWS.iter().zip(&lagrange_weights) {
+        weights[row] += (F::one() - stream) * lagrange_weight;
     }
-    for (index, &row) in SPARTAN_OUTER_SECOND_GROUP_ROWS.iter().enumerate() {
-        weights[row] += stream * lagrange_weights[index];
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "SPARTAN_OUTER_SECOND_GROUP_ROWS entries are compile-time constants below SPARTAN_OUTER_ROW_COUNT"
+    )]
+    for (&row, &lagrange_weight) in SPARTAN_OUTER_SECOND_GROUP_ROWS
+        .iter()
+        .zip(&lagrange_weights)
+    {
+        weights[row] += stream * lagrange_weight;
     }
 
     Ok(weights)
@@ -295,12 +309,15 @@ fn spartan_outer_tau_kernel<F: Field>(
         });
     }
 
-    let tau_high = tau[tau.len() - 1];
+    // `tau` is non-empty: `tau.len() == expected >= 1` is checked above.
+    let Some((&tau_high, tau_low)) = tau.split_last() else {
+        return Err(JoltSpartanOuterRemainderError::ChallengeLengthMismatch { expected, got: 0 });
+    };
     let tau_high_bound_r0 =
         centered_lagrange_kernel(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, tau_high, uniskip)?;
     let mut reversed_challenges = remainder_challenges.to_vec();
     reversed_challenges.reverse();
-    Ok(tau_high_bound_r0 * EqPolynomial::<F>::mle(&tau[..tau.len() - 1], &reversed_challenges))
+    Ok(tau_high_bound_r0 * EqPolynomial::<F>::mle(tau_low, &reversed_challenges))
 }
 
 fn eval_linear_form<F: Field>(coefficients: &[F], constant: F, inputs: &[F]) -> F {
@@ -586,6 +603,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
     fn field_inline_spartan_openings_match_appended_column_order() {
         assert_eq!(
             FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
@@ -680,6 +698,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
     fn field_inline_composed_constraints_share_constant_column() {
         let composed = trace_constraints::<Fr>();
         let mut witness = vec![Fr::zero(); composed.num_vars];

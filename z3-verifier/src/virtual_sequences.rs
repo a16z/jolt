@@ -75,8 +75,8 @@ use z3::{
     Params, SatResult, Solver,
 };
 
-const _Z3_TIMEOUT_MS: u32 = 30_000;
-const Z3_RANDOM_SEED: u32 = 42;
+use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
+
 const DEFAULT_BV_BITS: u32 = 64;
 const BV_BITS_ENV: &str = "Z3_VERIFIER_BV_BITS";
 
@@ -480,7 +480,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     RISCVCycle<I>: Into<Cycle>,
 {
     let mut solver_params = Params::default();
-    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();
@@ -545,7 +545,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
 
 fn test_consistency(instr: &Instruction) {
     let mut solver_params = Params::default();
-    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();

@@ -43,6 +43,7 @@ members = [
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
+  "crates/jolt-tracer-x86",
   "crates/jolt-transcript",
   "crates/jolt-utils",
   "crates/jolt-profiling",
@@ -443,6 +444,7 @@ jolt-utils = { path = "./crates/jolt-utils" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
 jolt-program = { path = "./crates/jolt-program", default-features = false }
+jolt-tracer-x86 = { path = "./crates/jolt-tracer-x86" }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }

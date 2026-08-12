@@ -190,6 +190,10 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// output claims. ZK-only, hence base-only (no zk protocol exists over the
     /// packed axis).
     #[cfg(not(feature = "akita"))]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "a sum of in-memory vector lengths and small constants cannot overflow usize"
+    )]
     pub fn point_count(&self) -> usize {
         self.bytecode_read_raf.bytecode_ra.len()
             + self.booleanity.instruction_ra.len()
