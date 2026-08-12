@@ -100,9 +100,13 @@ pub struct BytecodePCMapper {
 
 impl BytecodePCMapper {
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
-        let mut indices = vec![Vec::new(); Self::index_count(bytecode)?];
         let mut last_pc = 0;
-        indices[0].push((0, last_pc));
+        // One allocation at the final size; the no-op sentinel lives in the
+        // first bucket (`index_count` is always >= 1).
+        let mut indices = vec![Vec::new(); Self::index_count(bytecode)?];
+        if let Some(first) = indices.first_mut() {
+            first.push((0, last_pc));
+        }
 
         for instruction in bytecode {
             if instruction.address == 0 {
@@ -111,7 +115,11 @@ impl BytecodePCMapper {
 
             last_pc += 1;
             let bytecode_index = Self::try_get_index(instruction.address)?;
-            indices[bytecode_index]
+            indices
+                .get_mut(bytecode_index)
+                .ok_or(PreprocessingError::InvalidBytecodeAddress(
+                    instruction.address,
+                ))?
                 .push((instruction.virtual_sequence_remaining.unwrap_or(0), last_pc));
         }
 
@@ -166,10 +174,9 @@ impl BytecodePCMapper {
         bytecode_index: usize,
         entries: &[(u16, usize)],
     ) -> Result<(), PreprocessingError> {
-        for window in entries.windows(2) {
-            let [(previous_sequence, _), (new_sequence, _)] = window else {
-                unreachable!("windows(2) always yields two entries");
-            };
+        for ((previous_sequence, _), (new_sequence, _)) in
+            entries.iter().zip(entries.iter().skip(1))
+        {
             let Some(expected_sequence) = previous_sequence.checked_sub(1) else {
                 return Err(PreprocessingError::InvalidInlineSequence {
                     bytecode_index,
@@ -246,6 +253,7 @@ const fn noop_instruction() -> JoltInstructionRow {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,

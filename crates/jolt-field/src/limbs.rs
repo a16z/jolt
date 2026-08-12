@@ -221,7 +221,7 @@ impl<const N: usize> Ord for Limbs<N> {
             i -= 1;
             match self.0[i].cmp(&other.0[i]) {
                 Ordering::Equal => {}
-                ord => return ord,
+                ord @ (Ordering::Less | Ordering::Greater) => return ord,
             }
         }
         Ordering::Equal

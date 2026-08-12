@@ -6,6 +6,7 @@ mod p256_tests {
     };
     use crate::{P256_CURVE_B, P256_GENERATOR_X, P256_GENERATOR_Y, P256_MODULUS, P256_ORDER};
     use num_bigint::BigUint;
+    use tracer::emulator::mmu::DRAM_BASE;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     // Helper: convert [u64; 4] little-endian limbs to BigUint
@@ -102,6 +103,50 @@ mod p256_tests {
         let mut result = [0u64; 4];
         result.copy_from_slice(&result_vec);
         assert_eq!(result, expected, "p256_divq result mismatch");
+    }
+
+    /// Division with the result buffer aliasing the dividend (`rs3 == rs1`).
+    /// The advised quotient must be stored only after every `VirtualAssertEQ`
+    /// against the dividend has run, otherwise the checks compare the stored
+    /// result against itself and any value would be accepted.
+    fn assert_div_trace_equiv_aliased(funct3: u32, a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) {
+        let expected = bigint_divmod(a, b, modulus);
+        // rs1 == rs3: dividend and result share one 32-byte region
+        let layout = InlineMemoryLayout {
+            output_base: DRAM_BASE,
+            ..InlineMemoryLayout::two_inputs(32, 32, 32)
+        };
+        let mut harness = InlineTestHarness::new(layout);
+        harness.setup_registers();
+        harness.load_input64(a);
+        harness.load_input2_64(b);
+        harness.execute_inline(InlineTestHarness::create_default_instruction(
+            INLINE_OPCODE,
+            funct3,
+            P256_FUNCT7,
+        ));
+        let result_vec = harness.read_output64(4);
+        let mut result = [0u64; 4];
+        result.copy_from_slice(&result_vec);
+        assert_eq!(result, expected, "aliased div result mismatch");
+    }
+
+    #[test]
+    fn test_p256_div_aliased_dividend_and_result() {
+        let a = [
+            0x123456789ABCDEF0,
+            0x0FEDCBA987654321,
+            0x1111111111111111,
+            0x2222222222222222,
+        ];
+        let b = [
+            0x0FEDCBA987654321,
+            0x123456789ABCDEF0,
+            0x3333333333333333,
+            0x4444444444444444,
+        ];
+        assert_div_trace_equiv_aliased(P256_DIVQ_FUNCT3, &a, &b, &P256_MODULUS);
+        assert_div_trace_equiv_aliased(P256_DIVR_FUNCT3, &a, &b, &P256_ORDER);
     }
 
     fn assert_mulr_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {

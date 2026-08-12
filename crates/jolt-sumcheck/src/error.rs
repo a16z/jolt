@@ -31,6 +31,15 @@ pub enum SumcheckError<F: FieldCore> {
         max: usize,
     },
 
+    /// A batch with rounds to prove declared a maximum degree of zero. A
+    /// sumcheck round polynomial must have degree at least 1 — the same
+    /// invariant `SumcheckClaim::new` enforces on the verify side.
+    #[error("batch declares max degree 0 with {max_num_vars} rounds to prove")]
+    ZeroBatchDegree {
+        /// Number of rounds that would need round polynomials.
+        max_num_vars: usize,
+    },
+
     /// A round polynomial encoded in compressed form had fewer than two
     /// coefficients, so there is no linear term to omit. Any valid
     /// compressed sumcheck round polynomial has degree ≥ 1.

@@ -126,6 +126,17 @@ pub struct HyperKZGVerifierSetup<P: PairingGroup> {
 }
 
 impl<P: PairingGroup> From<&HyperKZGProverSetup<P>> for HyperKZGVerifierSetup<P> {
+    /// # Panics
+    ///
+    /// Panics on a hand-built setup with empty power vectors. The fields are
+    /// public, so the type cannot enforce the invariant itself; every
+    /// generation path (`setup_from_secret`, SRS loading) produces at least
+    /// one G1 power and exactly two G2 powers, and conversion happens at
+    /// setup time, never on the proof-verification path.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "setup-time conversion; all generation paths produce >= 1 G1 and exactly 2 G2 powers (see Panics)"
+    )]
     fn from(prover: &HyperKZGProverSetup<P>) -> Self {
         Self {
             g1: prover.g1_powers[0],

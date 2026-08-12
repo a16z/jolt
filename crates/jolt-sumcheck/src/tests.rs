@@ -3,7 +3,10 @@
 #![expect(
     clippy::unwrap_used,
     clippy::panic,
-    reason = "tests may panic on assertion failures"
+    clippy::panic_in_result_fn,
+    clippy::wildcard_enum_match_arm,
+    clippy::indexing_slicing,
+    reason = "tests may panic on assertion failures, index directly, and match errors with catch-all arms"
 )]
 
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
@@ -1285,6 +1288,37 @@ fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
         .map(|k| generator.scalar_mul(&F::from_u64(k)))
         .collect();
     PedersenSetup::new(generators, generator.scalar_mul(&F::from_u64(99)))
+}
+
+/// A batch that declares `max_degree == 0` while having rounds to prove must
+/// be rejected with `ZeroBatchDegree`, not proved (a degree-0 round polynomial
+/// cannot carry a sumcheck round) and not panic.
+#[test]
+fn prove_batch_rejects_zero_max_degree() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds};
+    use crate::recorder::ClearSumcheckRecorder;
+
+    let sum = F::from_u64(42);
+    let mut member = DenseMember::with_sum(2, sum, 7);
+    let prelude = BatchPrelude::new(
+        vec![BatchMember {
+            input_claim: sum,
+            coefficient: F::from_u64(1),
+            rounds: 2,
+            offset: 0,
+        }],
+        2,
+        0,
+    );
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
+    let mut transcript = Blake2bTranscript::new(b"zero-degree-batch");
+    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    let result = prove_batch(&prelude, &mut members, &mut recorder, &mut transcript);
+    assert!(matches!(
+        result,
+        Err(SumcheckError::ZeroBatchDegree { max_num_vars: 2 })
+    ));
 }
 
 /// Twin-transcript lock for the batched engine, padding included: a

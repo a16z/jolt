@@ -497,6 +497,11 @@ pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
+
     use jolt_riscv::{NormalizedOperands, SourceInstructionRow};
 
     use super::*;
