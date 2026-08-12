@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786559731466,
+  "lastUpdate": 1786560369913,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -135706,6 +135706,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 857948,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e2cf00c141adf9e88def5d87ef6e354a0ba3ebc7",
+          "message": "ci: PR diff classification comment (#1765)\n\n* ci: PR diff classification comment\n\nAdd a non-blocking workflow that maintains one sticky comment per PR\nsplitting the diff into actual code / tests / docs / fixtures, with\nline-level cfg(test)-region and doc-comment awareness for mixed Rust\nfiles. Classification lives in scripts/ci/diff_classifier.py\n(stdlib-only, unit-tested via scripts/ci/test_diff_classifier.py);\nfork PRs degrade to the job summary and classification errors never\nfail the job.\n\n* ci: classify test-named source files in any language as tests\n\n* ci: helper-scripts category, diff-table comment, drop classifier tests\n\n\"Actual code\" now means Rust/jolt code only (.rs line-level, Cargo.toml,\nnative guest sources); a fifth \"helper scripts\" category absorbs scripts/,\nCI workflows, and other non-Rust tooling (tests still beat helper scripts,\nscripts/ beats code). The sticky comment renders as an aligned table in a\n```diff fence so additions color green and removals red. The classifier's\nown test suite is removed from the PR.\n\n* ci: gate the spec-size nudge on actual-code lines\n\nThe large-PR spec warning now counts only the diff classifier's \"code\"\ncategory (added + removed) instead of all non-spec lines, so test-, doc-,\nfixture-, or tooling-heavy PRs no longer trip the 500-line spec threshold.\nBelow the threshold the job passes with a \"spec not required\" summary\nnote; classifier failure falls back to the previous all-lines count.\n\n* ci: terminate cfg(test) regions at comma-terminated non-item targets\n\nA #[cfg(test)] attribute on a struct field, struct-literal field, enum\nvariant, or brace-less match arm never hit the item terminator (those\ntargets end with ',' not ';'), so the region tracker swallowed following\nlines until the next brace-balanced line — often the entire next struct\nor impl (57 such sites in-repo, e.g. ProverOpeningAccumulator's test-only\nfields leaked the following struct into 'tests').\n\nThe item tracker now records whether the target's first code line starts\nwith an item-declaration keyword: keyword items keep brace/semicolon\ntracking (multiline fn signatures unaffected), everything else also\nterminates at a trailing comma at zero paren/bracket depth, or when the\nenclosing block closes first. Semicolon termination now also respects\nbracket depth ('[0u64;' no longer ends an item mid-array-repeat).\n\nAlso documents the -U0 vs default-context shortstat drift (git can pick\na slightly different hunk alignment; categories still exactly partition\nthe -U0 diff the classifier parses).\n\nRe-validated: PR#1748/#1758 ranges unchanged; PR#1755 moves 28 leaked\nlines tests->code (+1933/-207 code, +716/-21 tests); totals for\nPR#1677/#1728/#1729 ranges still exactly partition.\n\n* ci: don't fail the spec nudge when jq fails; reach the numstat fallback\n\nCODE_LINES=$(... | jq ...) sat inside the if-body under set -e, so a jq\nfailure (missing binary, polluted stdout) failed the step instead of\nengaging the documented numstat fallback. || CODE_LINES=\"\" routes it to\nthe existing non-numeric guard.",
+          "timestamp": "2026-08-12T13:39:15-04:00",
+          "tree_id": "57434f0bcbd7fca3767acd245e5df5add237e5c0",
+          "url": "https://github.com/a16z/jolt/commit/e2cf00c141adf9e88def5d87ef6e354a0ba3ebc7"
+        },
+        "date": 1786560365013,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.9257,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3005,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 493600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 493164,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 493252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7007,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5773,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 497624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 501168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9909,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 191348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4705,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5636,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 497264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4492,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 501840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.0356,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 492640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7296,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 499300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.0453,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1093600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2998,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 632364,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 96.8157,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2124376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4878,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 497596,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5138,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 493308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.3892,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 860788,
             "unit": "KB",
             "extra": ""
           }
