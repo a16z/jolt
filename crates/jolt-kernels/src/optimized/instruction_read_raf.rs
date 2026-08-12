@@ -362,6 +362,9 @@ fn extension_pair<F: Field>(evals: &[F], b: usize, half: usize) -> (F, F) {
 struct CycleState<F: Field> {
     gruen: GruenSplitEqPolynomial<F>,
     tables: CycleTables<F>,
+    /// A/B benchmark variant: reused low-to-high binding buffer (swapped
+    /// through every bind), restoring the pre-PR ping-pong strategy.
+    bind_scratch: Vec<F>,
 }
 
 #[cfg(feature = "allocative")]
@@ -374,7 +377,7 @@ impl<F: Field> CycleState<F> {
                 poly_heap_bytes(combined_val) + polys_heap_bytes(ra)
             }
         };
-        self.gruen.heap_bytes() + tables
+        self.gruen.heap_bytes() + tables + vec_heap_bytes(&self.bind_scratch)
     }
 }
 
@@ -1084,6 +1087,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                 raf_interleaved,
                 raf_identity,
             }),
+            bind_scratch: Vec::new(),
         });
 
         // The address-phase state is dead past this point — except the
@@ -1200,13 +1204,13 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
                         },
                     )),
                     CycleTables::Dense { combined_val, ra } => {
-                        // Plain low-to-high binds (fresh half-size buffer,
-                        // old one freed): the tables' resident set decays
-                        // geometrically instead of pinning peak-size
-                        // capacity through the whole cycle phase.
-                        combined_val.bind_with_order(challenge, BindingOrder::LowToHigh);
+                        // A/B benchmark variant: ping-pong scratch binds
+                        // (the pre-PR strategy) instead of fresh half-size
+                        // buffers.
+                        combined_val
+                            .bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
                         for ra in ra {
-                            ra.bind_with_order(challenge, BindingOrder::LowToHigh);
+                            ra.bind_low_to_high_reusing_scratch(challenge, &mut cycle.bind_scratch);
                         }
                         None
                     }
