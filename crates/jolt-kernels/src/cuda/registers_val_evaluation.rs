@@ -5,7 +5,8 @@ use jolt_claims::protocols::jolt::geometry::registers::{
 use jolt_claims::protocols::jolt::relations::registers::{
     RegistersValEvaluationInputClaims, RegistersValEvaluationOutputClaims,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_witness::JoltWitnessPlane;
@@ -93,6 +94,30 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RegistersValEvaluatio
             rd_inc: *rd_inc,
             rd_wa: *rd_wa,
         })
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &RegistersValEvaluation<F>,
+        input_points: &RegistersValEvaluationInputClaims<Vec<F>>,
+        output_points: &RegistersValEvaluationOutputClaims<Vec<F>>,
+        challenges: &NoChallenges<F>,
+    ) -> Result<(), SumcheckKernelError<F>> {
+        let id = JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle);
+        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
+        let got = self
+            .state
+            .lt_final(self.context)
+            .map_err(|_| SumcheckKernelError::InvariantViolation {
+                reason: "CUDA registers value-evaluation split-LT readback failed",
+            })?
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA registers value-evaluation has no split-LT factor",
+            })?;
+        if got != expected {
+            return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+        }
+        Ok(())
     }
 }
 
