@@ -8,6 +8,7 @@ mod common;
 mod instruction_read_raf;
 mod ram_ra_claim_reduction;
 mod ram_ra_reduction;
+mod ram_val_check;
 mod registers_val_evaluation;
 
 pub use common::context::{shared_context, CudaKernelContext};
@@ -47,6 +48,7 @@ where
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
+        backend.ram_val_check = Box::new(CudaBackend);
         backend
     }
 }

@@ -162,15 +162,16 @@ impl DeviceDenseProduct {
             .as_ref()
             .map(super::lt_poly::DeviceLtPolynomial::view);
         let has_lt = u32::from(lt_view.is_some());
-        let (lt_lo, lt_hi, eq_hi, lo_bits, lo_mask) = match &lt_view {
+        let (lt_lo, lt_hi, eq_hi, lt_shift, lo_bits, lo_mask) = match &lt_view {
             Some(view) => (
                 view.lt_lo,
                 view.lt_hi,
                 view.eq_hi,
+                view.shift,
                 view.lo_bits,
                 view.lo_mask,
             ),
-            None => (&empty, &empty, &empty, 0, 0),
+            None => (&empty, &empty, &empty, &empty, 0, 0),
         };
 
         let mut builder = context
@@ -184,11 +185,13 @@ impl DeviceDenseProduct {
         let _ = builder.arg(lt_lo.limbs());
         let _ = builder.arg(lt_hi.limbs());
         let _ = builder.arg(eq_hi.limbs());
+        let _ = builder.arg(lt_shift.limbs());
         let _ = builder.arg(&lo_bits);
         let _ = builder.arg(&lo_mask);
         let _ = builder.arg(&has_lt);
         // SAFETY: reads, all in bounds — `table[2y]`/`table[2y+1]` for each of
-        // `table_count` tables of `2 * half` elements; the LT tables only when
+        // `table_count` tables of `2 * half` elements; the LT tables and the
+        // single-element `lt_shift` only when
         // `has_lt`, at indices masked below `2^lo_bits` and `2^(len-lo_bits)`.
         // Writes: `partials[c * gridDim.x + blockIdx.x]`, one slot per
         // (lane, block) of `lanes * blocks`. Shared memory is `BLOCK * LIMBS`
@@ -295,6 +298,18 @@ impl DeviceDenseProduct {
 
     pub const fn rounds_bound(&self) -> usize {
         self.rounds_bound
+    }
+
+    pub fn lt_final<F: Field>(&self, context: &CudaKernelContext) -> Result<Option<F>, CudaError> {
+        let Some(lt) = &self.lt else {
+            return Ok(None);
+        };
+        let value = lt.final_claim(context)?;
+        fr_into(value)
+            .ok_or(CudaError::NotImplemented {
+                kernel: "CUDA kernels support only the BN254 scalar field",
+            })
+            .map(Some)
     }
 }
 

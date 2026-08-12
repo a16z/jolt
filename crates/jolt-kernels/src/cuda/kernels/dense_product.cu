@@ -2,8 +2,8 @@ extern "C" __global__ void dense_product_round_kernel(
     const u64 *const *__restrict__ tables, unsigned int table_count,
     unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
     const u64 *__restrict__ lt_lo, const u64 *__restrict__ lt_hi,
-    const u64 *__restrict__ eq_hi, unsigned int lt_lo_bits,
-    unsigned int lt_lo_mask, unsigned int has_lt) {
+    const u64 *__restrict__ eq_hi, const u64 *__restrict__ lt_shift,
+    unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt) {
     extern __shared__ u64 scratch[];
     unsigned int tid = threadIdx.x;
     unsigned int y = blockIdx.x * blockDim.x + tid;
@@ -31,8 +31,8 @@ extern "C" __global__ void dense_product_round_kernel(
             }
             if (has_lt) {
                 u64 lo[LIMBS], hi[LIMBS], diff[LIMBS], scaled[LIMBS], value[LIMBS];
-                lt_split_get(lt_lo, lt_hi, eq_hi, lt_lo_bits, lt_lo_mask, 2 * y, lo);
-                lt_split_get(lt_lo, lt_hi, eq_hi, lt_lo_bits, lt_lo_mask, 2 * y + 1, hi);
+                lt_split_get(lt_lo, lt_hi, eq_hi, lt_shift, lt_lo_bits, lt_lo_mask, 2 * y, lo);
+                lt_split_get(lt_lo, lt_hi, eq_hi, lt_shift, lt_lo_bits, lt_lo_mask, 2 * y + 1, hi);
                 fr_sub(hi, lo, diff);
                 fr_mul(point, diff, scaled);
                 fr_add(lo, scaled, value);

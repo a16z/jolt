@@ -1,5 +1,5 @@
 use cudarc::driver::PushKernelArg;
-use jolt_field::{Field, Fr};
+use jolt_field::{Field, Fr, FromPrimitiveInt};
 use jolt_poly::BindingOrder;
 
 use super::context::CudaKernelContext;
@@ -10,17 +10,19 @@ pub struct DeviceLtPolynomial {
     lt_lo: DeviceFrVec,
     lt_hi: DeviceFrVec,
     eq_hi: DeviceFrVec,
+    shift: DeviceFrVec,
     order: BindingOrder,
     lo_vars: usize,
     hi_vars: usize,
 }
 
 pub(crate) struct SplitLtView<'a> {
-    pub(super) lt_lo: &'a DeviceFrVec,
-    pub(super) lt_hi: &'a DeviceFrVec,
-    pub(super) eq_hi: &'a DeviceFrVec,
-    pub(super) lo_bits: u32,
-    pub(super) lo_mask: u32,
+    pub(crate) lt_lo: &'a DeviceFrVec,
+    pub(crate) lt_hi: &'a DeviceFrVec,
+    pub(crate) eq_hi: &'a DeviceFrVec,
+    pub(crate) shift: &'a DeviceFrVec,
+    pub(crate) lo_bits: u32,
+    pub(crate) lo_mask: u32,
 }
 
 impl DeviceLtPolynomial {
@@ -28,6 +30,15 @@ impl DeviceLtPolynomial {
         context: &CudaKernelContext,
         point: &[F],
         order: BindingOrder,
+    ) -> Result<Self, CudaError> {
+        Self::shifted(context, point, order, None)
+    }
+
+    pub fn shifted<F: Field>(
+        context: &CudaKernelContext,
+        point: &[F],
+        order: BindingOrder,
+        shift: Option<F>,
     ) -> Result<Self, CudaError> {
         let mid = point.len() / 2;
         let (r_hi, r_lo) = point.split_at(point.len() - mid);
@@ -39,10 +50,15 @@ impl DeviceLtPolynomial {
         for &coordinate in r_lo {
             lo.push(require_fr(coordinate)?);
         }
+        let shift = match shift {
+            None => Fr::from_u64(0),
+            Some(value) => require_fr(value)?,
+        };
         Ok(Self {
             lt_lo: context.lt_evals(&lo)?,
             lt_hi: context.lt_evals(&hi)?,
             eq_hi: context.eq_evals(&hi)?,
+            shift: context.upload(&[shift])?,
             order,
             lo_vars: r_lo.len(),
             hi_vars: r_hi.len(),
@@ -70,6 +86,7 @@ impl DeviceLtPolynomial {
             lt_lo: &self.lt_lo,
             lt_hi: &self.lt_hi,
             eq_hi: &self.eq_hi,
+            shift: &self.shift,
             lo_bits: self.lo_vars as u32,
             lo_mask: ((1usize << self.lo_vars) - 1) as u32,
         }
@@ -84,12 +101,14 @@ impl DeviceLtPolynomial {
         let _ = builder.arg(view.lt_lo.limbs());
         let _ = builder.arg(view.lt_hi.limbs());
         let _ = builder.arg(view.eq_hi.limbs());
+        let _ = builder.arg(view.shift.limbs());
         let _ = builder.arg(&view.lo_bits);
         let _ = builder.arg(&view.lo_mask);
         let _ = builder.arg(output.limbs_mut());
         let _ = builder.arg(&count);
         // SAFETY: thread `j < len` writes only `out[j]` and reads
-        // `lt_hi[j >> lo_bits]`, `eq_hi[j >> lo_bits]`, `lt_lo[j & lo_mask]`.
+        // `lt_hi[j >> lo_bits]`, `eq_hi[j >> lo_bits]`, `lt_lo[j & lo_mask]`
+        // plus the single-element `shift`.
         // Since `len == 2^(hi_vars + lo_vars)` with `lo_bits == lo_vars`, those
         // indices are bounded by `2^hi_vars` and `2^lo_vars` — the three tables'
         // element counts. `out` is a distinct allocation.

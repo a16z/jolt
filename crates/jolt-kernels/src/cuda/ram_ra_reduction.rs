@@ -350,6 +350,7 @@ impl DeviceRamRaReduction {
         let _ = builder.arg(empty.limbs());
         let _ = builder.arg(empty.limbs());
         let _ = builder.arg(empty.limbs());
+        let _ = builder.arg(empty.limbs());
         let _ = builder.arg(&zero);
         let _ = builder.arg(&zero);
         let _ = builder.arg(&zero);
