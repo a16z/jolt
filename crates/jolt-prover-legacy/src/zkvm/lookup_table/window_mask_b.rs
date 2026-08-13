@@ -47,10 +47,14 @@ impl<const XLEN: usize> JoltLookupTable for WindowMaskBTable<XLEN> {
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskBTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
+        // The Pow2Offset prefix/suffix pair hardcodes the 8-bit lane
+        // granularity.
+        debug_assert_eq!(XLEN, 64);
         vec![Suffixes::Pow2OffsetB]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2_offset_b] = suffixes.try_into().unwrap();
         F::from_u128((1u128 << (XLEN / 8)) - 1) * prefixes[Prefixes::Pow2OffsetB] * pow2_offset_b

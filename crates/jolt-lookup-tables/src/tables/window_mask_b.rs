@@ -51,11 +51,15 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskBTable<XLE
     }
 
     fn suffixes(&self) -> &'static [Suffixes] {
+        // The Pow2Offset prefix/suffix pair hardcodes the 8-bit lane
+        // granularity.
+        debug_assert_eq!(XLEN, 64);
         &[Suffixes::Pow2OffsetB]
     }
 
     #[expect(clippy::unwrap_used)]
     fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2_offset_b] = suffixes.try_into().unwrap();
         F::from_u128((1u128 << (XLEN / 8)) - 1) * prefixes[Prefixes::Pow2OffsetB] * pow2_offset_b
