@@ -141,10 +141,20 @@ impl DeviceDenseProduct {
         Ok((handles, materialized))
     }
 
-    pub fn round_evals<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+    pub fn toom_evals<F: Field>(&self, context: &CudaKernelContext) -> Result<Vec<F>, CudaError> {
+        self.round_lanes(context, 1, true, self.degree)
+    }
+
+    fn round_lanes<F: Field>(
+        &self,
+        context: &CudaKernelContext,
+        first_point: u32,
+        infinity_lane: bool,
+        lane_count: usize,
+    ) -> Result<Vec<F>, CudaError> {
         let remaining = self.rounds - self.rounds_bound;
         let half = (1usize << remaining) / 2;
-        let lanes = CudaKernelContext::count_of(self.degree + 1)?;
+        let lanes = CudaKernelContext::count_of(lane_count)?;
         let half_count = CudaKernelContext::count_of(half)?;
 
         let (mut handles, materialized) = self.round_tables(context)?;
@@ -189,6 +199,9 @@ impl DeviceDenseProduct {
         let _ = builder.arg(&lo_bits);
         let _ = builder.arg(&lo_mask);
         let _ = builder.arg(&has_lt);
+        let _ = builder.arg(&first_point);
+        let infinity_flag = u32::from(infinity_lane);
+        let _ = builder.arg(&infinity_flag);
         // SAFETY: reads, all in bounds — `table[2y]`/`table[2y+1]` for each of
         // `table_count` tables of `2 * half` elements; the LT tables and the
         // single-element `lt_shift` only when
@@ -349,20 +362,17 @@ where
                 .bind(self.context, challenge)
                 .map_err(|_| SumcheckError::MissingEvaluationSource { kind: "cuda bind" })?;
         }
-        let evals: Vec<F> = self.state.round_evals(self.context).map_err(|_| {
+        let evals: Vec<F> = self.state.toom_evals(self.context).map_err(|_| {
             SumcheckError::MissingEvaluationSource {
                 kind: "cuda round_evals",
             }
         })?;
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        let _ = round;
+        let eval_at_0 = previous_claim - evals[0];
+        let mut toom = Vec::with_capacity(evals.len() + 1);
+        toom.push(eval_at_0);
+        toom.extend_from_slice(&evals);
+        Ok(UnivariatePoly::from_evals_toom(&toom))
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {

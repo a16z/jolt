@@ -53,11 +53,11 @@ pub struct RegistersCycleMajorEntry<F: JoltField, C: OneHotCoeff<F>> {
     /// `prev_val` contains the unbound coefficient before
     /// Val(k, j', 00...0) –– abusing notation, `prev_val` is
     /// Val(k, j'-1, 11...1)
-    pub(crate) prev_val: u64,
+    pub prev_val: u64,
     /// `next_val` contains the unbound coefficient after
     /// Val(k, j', 00...0) –– abusing notation, `next_val` is
     /// Val(k, j'+1, 00...0)
-    pub(crate) next_val: u64,
+    pub next_val: u64,
     /// Row index (cycle count, row \in [0, T)).
     row: usize,
     /// Coefficient for the combined ra polynomial, equal to

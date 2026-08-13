@@ -3,16 +3,18 @@ extern "C" __global__ void dense_product_round_kernel(
     unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
     const u64 *__restrict__ lt_lo, const u64 *__restrict__ lt_hi,
     const u64 *__restrict__ eq_hi, const u64 *__restrict__ lt_shift,
-    unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt) {
+    unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt,
+    unsigned int first_point, unsigned int infinity_lane) {
     extern __shared__ u64 scratch[];
     unsigned int tid = threadIdx.x;
     unsigned int y = blockIdx.x * blockDim.x + tid;
 
     for (unsigned int c = 0; c < lanes; c++) {
         u64 acc[LIMBS] = {0, 0, 0, 0};
+        bool at_infinity = infinity_lane && (c + 1 == lanes);
         if (y < half) {
             u64 point[LIMBS];
-            u64 raw[LIMBS] = {c, 0, 0, 0};
+            u64 raw[LIMBS] = {first_point + c, 0, 0, 0};
             fr_to_mont(raw, point);
 
             u64 product[LIMBS];
@@ -23,8 +25,12 @@ extern "C" __global__ void dense_product_round_kernel(
                 load4(table + (2 * y) * LIMBS, lo);
                 load4(table + (2 * y + 1) * LIMBS, hi);
                 fr_sub(hi, lo, diff);
-                fr_mul(point, diff, scaled);
-                fr_add(lo, scaled, value);
+                if (at_infinity) {
+                    for (int l = 0; l < LIMBS; l++) value[l] = diff[l];
+                } else {
+                    fr_mul(point, diff, scaled);
+                    fr_add(lo, scaled, value);
+                }
                 u64 next[LIMBS];
                 fr_mul(product, value, next);
                 for (int l = 0; l < LIMBS; l++) product[l] = next[l];
@@ -34,8 +40,12 @@ extern "C" __global__ void dense_product_round_kernel(
                 lt_split_get(lt_lo, lt_hi, eq_hi, lt_shift, lt_lo_bits, lt_lo_mask, 2 * y, lo);
                 lt_split_get(lt_lo, lt_hi, eq_hi, lt_shift, lt_lo_bits, lt_lo_mask, 2 * y + 1, hi);
                 fr_sub(hi, lo, diff);
-                fr_mul(point, diff, scaled);
-                fr_add(lo, scaled, value);
+                if (at_infinity) {
+                    for (int l = 0; l < LIMBS; l++) value[l] = diff[l];
+                } else {
+                    fr_mul(point, diff, scaled);
+                    fr_add(lo, scaled, value);
+                }
                 u64 next[LIMBS];
                 fr_mul(product, value, next);
                 for (int l = 0; l < LIMBS; l++) product[l] = next[l];

@@ -47,6 +47,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/product_accum.cu"),
     "\n",
+    include_str!("../kernels/read_write_matrix.cu"),
+    "\n",
     include_str!("../kernels/address_phase.cu"),
     "\n",
     include_str!("../kernels/cycle_rounds.cu"),
@@ -110,6 +112,10 @@ pub struct CudaKernelContext {
     unr_reduce: CudaFunction,
     pa_scatter: CudaFunction,
     pa_reduce: CudaFunction,
+    rwm_segment_flags: CudaFunction,
+    rwm_segment_bounds: CudaFunction,
+    rwm_count: CudaFunction,
+    rwm_merge: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -181,6 +187,10 @@ impl CudaKernelContext {
             unr_reduce: module.load_function("unr_reduce_kernel")?,
             pa_scatter: module.load_function("pa_scatter_kernel")?,
             pa_reduce: module.load_function("pa_reduce_kernel")?,
+            rwm_segment_flags: module.load_function("rwm_segment_flags_kernel")?,
+            rwm_segment_bounds: module.load_function("rwm_segment_bounds_kernel")?,
+            rwm_count: module.load_function("rwm_count_kernel")?,
+            rwm_merge: module.load_function("rwm_merge_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -425,6 +435,22 @@ impl CudaKernelContext {
 
     pub(crate) const fn pa_reduce(&self) -> &CudaFunction {
         &self.pa_reduce
+    }
+
+    pub(crate) const fn rwm_segment_flags(&self) -> &CudaFunction {
+        &self.rwm_segment_flags
+    }
+
+    pub(crate) const fn rwm_segment_bounds(&self) -> &CudaFunction {
+        &self.rwm_segment_bounds
+    }
+
+    pub(crate) const fn rwm_count(&self) -> &CudaFunction {
+        &self.rwm_count
+    }
+
+    pub(crate) const fn rwm_merge(&self) -> &CudaFunction {
+        &self.rwm_merge
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
