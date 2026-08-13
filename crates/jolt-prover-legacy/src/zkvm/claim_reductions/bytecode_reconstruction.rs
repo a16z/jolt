@@ -48,15 +48,19 @@ use crate::utils::math::Math;
 #[cfg(feature = "prover")]
 use crate::zkvm::bytecode::chunks::BYTECODE_LANE_LAYOUT;
 use crate::zkvm::bytecode::chunks::COMMITTED_BYTECODE_LANE_CAPACITY;
+// The flag counts must come from the legacy prover's own enums: the lane layout
+// authority is zkvm/bytecode/chunks.rs's BYTECODE_LANE_LAYOUT, which is sized by
+// these counts. jolt_riscv's counts are feature-dependent (implicit-carry grows
+// them to 16) and would alias lanes here.
 #[cfg(feature = "prover")]
-use crate::zkvm::instruction::{Flags, InstructionLookup, InterleavedBitsMarker};
+use crate::zkvm::instruction::{
+    Flags, InstructionLookup, InterleavedBitsMarker, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
+};
 #[cfg(feature = "prover")]
 use crate::zkvm::lookup_table::LookupTables;
 use crate::zkvm::witness::CommittedPolynomial;
 #[cfg(feature = "prover")]
 use common::constants::XLEN;
-#[cfg(feature = "prover")]
-use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
 
 const DEGREE_BOUND: usize = 2;
 
