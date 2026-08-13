@@ -51,6 +51,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/rs2_claim.cu"),
     "\n",
+    include_str!("../kernels/address_major_matrix.cu"),
+    "\n",
     include_str!("../kernels/address_phase.cu"),
     "\n",
     include_str!("../kernels/cycle_rounds.cu"),
@@ -120,6 +122,10 @@ pub struct CudaKernelContext {
     rwm_merge: CudaFunction,
     rwm_message: CudaFunction,
     rs2_claim: CudaFunction,
+    amm_segment_flags: CudaFunction,
+    amm_segment_bounds: CudaFunction,
+    amm_count: CudaFunction,
+    amm_merge: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -197,6 +203,10 @@ impl CudaKernelContext {
             rwm_merge: module.load_function("rwm_merge_kernel")?,
             rwm_message: module.load_function("rwm_message_kernel")?,
             rs2_claim: module.load_function("rs2_claim_kernel")?,
+            amm_segment_flags: module.load_function("amm_segment_flags_kernel")?,
+            amm_segment_bounds: module.load_function("amm_segment_bounds_kernel")?,
+            amm_count: module.load_function("amm_count_kernel")?,
+            amm_merge: module.load_function("amm_merge_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -465,6 +475,22 @@ impl CudaKernelContext {
 
     pub(crate) const fn rs2_claim(&self) -> &CudaFunction {
         &self.rs2_claim
+    }
+
+    pub(crate) const fn amm_segment_flags(&self) -> &CudaFunction {
+        &self.amm_segment_flags
+    }
+
+    pub(crate) const fn amm_segment_bounds(&self) -> &CudaFunction {
+        &self.amm_segment_bounds
+    }
+
+    pub(crate) const fn amm_count(&self) -> &CudaFunction {
+        &self.amm_count
+    }
+
+    pub(crate) const fn amm_merge(&self) -> &CudaFunction {
+        &self.amm_merge
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {

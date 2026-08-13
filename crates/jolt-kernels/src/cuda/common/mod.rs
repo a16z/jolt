@@ -1,3 +1,4 @@
+pub(crate) mod address_major_matrix;
 pub(crate) mod context;
 pub(crate) mod dense_product;
 pub(crate) mod device;
