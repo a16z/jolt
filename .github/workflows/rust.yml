@@ -155,6 +155,20 @@ jobs:
           --features field-inline,implicit-carry
           --
           -D warnings
+      # jolt-tracer-x86's native module is cfg-gated to x86_64-linux; pin the
+      # target so the implicit-carry lane covers it even if the runner
+      # architecture changes.
+      - name: cargo clippy -p jolt-tracer-x86 --features implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p jolt-tracer-x86
+          --all-targets
+          --features implicit-carry
+          --target x86_64-unknown-linux-gnu
+          --
+          -D warnings
 
   machete:
     runs-on: ubuntu-latest
