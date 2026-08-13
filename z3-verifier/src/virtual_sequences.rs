@@ -406,17 +406,29 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let ea = cpu.x[operands.rs1 as usize].clone();
             let bit2 = ea.extract(2, 2).zero_ext(cpu.bv_bits - 1);
             let shift = bit2 * cpu.bv_u64(cpu.word_bits as u64);
-            cpu.x[operands.rd as usize] = cpu.bv_u64(0xFFFF_FFFF).bvshl(shift);
+            let word_mask = cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
+            cpu.x[operands.rd as usize] = word_mask.bvshl(shift);
         }
         Instruction::VirtualPextSigned(VirtualPextSigned { operands, .. }) => {
-            // Faithful for contiguous nonzero masks (the only shape the
-            // window-mask instructions produce): sign-extending extract via
-            // shift-left then arithmetic shift-right.
+            // Sign-extending extract via shift-left then arithmetic
+            // shift-right: faithful for contiguous masks (including zero),
+            // the only shape the window-mask instructions produce. Any other
+            // mask havocs rd with a fresh unconstrained value, so a sequence
+            // relying on non-contiguous behavior fails verification instead
+            // of being certified against wrong semantics. (An assert would be
+            // wrong here: `cpu.asserts` are solver assumptions and would
+            // vacuously exclude exactly the misuse cases.)
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             let tz = trailing_zeros(&rs2, cpu.bv_bits);
             let lz = leading_zeros(&rs2, cpu.bv_bits);
-            cpu.x[operands.rd as usize] = rs1.bvshl(&lz).bvashr(lz + tz);
+            // Contiguous (or zero) mask: shifting out the trailing zeros
+            // leaves a value of the form 2^k − 1.
+            let normalized = rs2.bvlshr(&tz);
+            let extracted = rs1.bvshl(&lz).bvashr(lz + tz);
+            let contiguous = (normalized.clone() & (normalized + cpu.bv_u64(1))).eq(cpu.bv_zero());
+            let havoc = BV::fresh_const(&format!("{}_pext_nc", cpu.var_prefix), cpu.bv_bits);
+            cpu.x[operands.rd as usize] = contiguous.ite(&extracted, &havoc);
         }
         Instruction::VirtualSignExtendWord(VirtualSignExtendWord { operands, .. }) => {
             let val = cpu.x[operands.rs1 as usize].clone();
