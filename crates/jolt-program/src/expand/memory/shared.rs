@@ -134,6 +134,63 @@ pub(in crate::expand) fn expand_halfword_load(
     asm.finalize()
 }
 
+/// Lowers `LW`/`LWU` by loading the containing doubleword and extracting a word.
+///
+/// The word alignment assertion is required by the source semantics; it also
+/// guarantees the effective address's bits 0-1 are zero, which
+/// `VirtualWindowMaskW` relies on (it reads only bit 2). A fused
+/// parallel-extract lookup (signed or unsigned) pulls the word lane out of the
+/// loaded doubleword.
+pub(in crate::expand) fn expand_word_load(
+    instruction: &SourceInstructionRow,
+    signed: bool,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v0 = asm.allocate()?;
+    let v1 = asm.allocate()?;
+
+    asm.expand_address(
+        SourceInstructionKind::VirtualAssertWordAlignment,
+        reg(rs1(instruction)?),
+        instruction.operands.imm,
+    );
+    asm.expand_i(
+        SourceInstructionKind::ADDI,
+        v0.operand(),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
+    );
+    // v1 = containing doubleword address, v0 = effective (byte) address.
+    asm.expand_i(
+        SourceInstructionKind::ANDI,
+        v1.operand(),
+        v0.operand(),
+        format_i_imm(-8),
+    );
+    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    // v0 = byte mask of the word lane at offset `ea mod 8`.
+    asm.expand_i(
+        SourceInstructionKind::VirtualWindowMaskW,
+        v0.operand(),
+        v0.operand(),
+        0,
+    );
+    asm.expand_r(
+        if signed {
+            SourceInstructionKind::VirtualPextSigned
+        } else {
+            SourceInstructionKind::VirtualPext
+        },
+        reg(rd(instruction)?),
+        v1.operand(),
+        v0.operand(),
+    );
+    asm.release(v0);
+    asm.release(v1);
+
+    asm.finalize()
+}
+
 /// Lowers an advice load with byte length 1, 2, 4, or 8.
 ///
 /// `VirtualAdviceLoad` reads from the advice tape rather than RAM. Narrow
