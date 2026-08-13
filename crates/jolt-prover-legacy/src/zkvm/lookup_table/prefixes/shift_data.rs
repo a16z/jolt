@@ -17,25 +17,23 @@ pub enum ShiftDataPrefix<const XLEN: usize, const EIGHTHS: usize> {}
 
 impl<const XLEN: usize, const EIGHTHS: usize> ShiftDataPrefix<XLEN, EIGHTHS> {
     const LANE_BITS: usize = EIGHTHS * (XLEN / 8);
+    // `8 − EIGHTHS` clears the low log2(EIGHTHS) offset bits only because
+    // EIGHTHS ∈ {1, 2, 4} is a power of two.
     const OFFSET_MASK: u64 = (8 - EIGHTHS) as u64;
 
-    fn variant() -> Prefixes {
-        match EIGHTHS {
-            1 => Prefixes::ShiftDataB,
-            2 => Prefixes::ShiftDataH,
-            4 => Prefixes::ShiftDataW,
-            _ => unreachable!(),
-        }
-    }
+    const VARIANT: Prefixes = match EIGHTHS {
+        1 => Prefixes::ShiftDataB,
+        2 => Prefixes::ShiftDataH,
+        4 => Prefixes::ShiftDataW,
+        _ => panic!("unsupported EIGHTHS"),
+    };
 
-    fn offset_scale_variant() -> Prefixes {
-        match EIGHTHS {
-            1 => Prefixes::OffsetScaleB,
-            2 => Prefixes::OffsetScaleH,
-            4 => Prefixes::OffsetScaleW,
-            _ => unreachable!(),
-        }
-    }
+    const OFFSET_SCALE_VARIANT: Prefixes = match EIGHTHS {
+        1 => Prefixes::OffsetScaleB,
+        2 => Prefixes::OffsetScaleH,
+        4 => Prefixes::OffsetScaleW,
+        _ => panic!("unsupported EIGHTHS"),
+    };
 }
 
 impl<const XLEN: usize, const EIGHTHS: usize, F: JoltField> SparseDensePrefix<F>
@@ -53,6 +51,10 @@ impl<const XLEN: usize, const EIGHTHS: usize, F: JoltField> SparseDensePrefix<F>
         F: FieldChallengeOps<C>,
     {
         let suffix_len = LOG_K - j - b.len() - 1;
+        // The offset bits of y (interleaved index bits 0/2/4) stay in the
+        // suffix until the final phase, and `x_lo` below assumes even phase
+        // cuts; both pair with the OffsetScale suffix's `b.len() < 6` guard.
+        debug_assert!(suffix_len == 0 || suffix_len >= 6);
         let (xb, yb) = b.uninterleave();
         let x_val = u64::from(xb);
 
@@ -81,8 +83,8 @@ impl<const XLEN: usize, const EIGHTHS: usize, F: JoltField> SparseDensePrefix<F>
         }
 
         // (L_bound + ΔL)·P_bound = checkpoint + ΔL·(OffsetScale checkpoint)
-        let offset_scale = checkpoints[Self::offset_scale_variant()].unwrap_or(F::one());
-        let mut value = checkpoints[Self::variant()].unwrap_or(F::zero()) + lane * offset_scale;
+        let offset_scale = checkpoints[Self::OFFSET_SCALE_VARIANT].unwrap_or(F::one());
+        let mut value = checkpoints[Self::VARIANT].unwrap_or(F::zero()) + lane * offset_scale;
 
         // In the final phase, fold in the offset scale of the unbound and
         // current offset bits of y (bound ones live in the checkpoints).
@@ -112,13 +114,14 @@ impl<const XLEN: usize, const EIGHTHS: usize, F: JoltField> SparseDensePrefix<F>
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        let mut updated = checkpoints[Self::variant()].unwrap_or(F::zero());
+        debug_assert!(suffix_len == 0 || suffix_len >= 6);
+        let mut updated = checkpoints[Self::VARIANT].unwrap_or(F::zero());
         // r_x is x bit m; a lane bit's contribution is added scaled by the
         // offset-scale of the previously bound offset bits (1 until the
         // final phase).
         let m = XLEN - 1 - (j - 1) / 2;
         if m < Self::LANE_BITS {
-            let offset_scale = checkpoints[Self::offset_scale_variant()].unwrap_or(F::one());
+            let offset_scale = checkpoints[Self::OFFSET_SCALE_VARIANT].unwrap_or(F::one());
             updated += (r_x * F::from_u64(1u64 << m)) * offset_scale;
         }
         // r_y is y bit m; an offset bit's scale factor folds in
