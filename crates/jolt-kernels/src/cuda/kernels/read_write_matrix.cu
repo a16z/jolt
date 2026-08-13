@@ -201,9 +201,8 @@ extern "C" __global__ void rwm_message_kernel(
             fr_sub(inc_1, inc_0, inc_inf);
         }
 
-        u64 inner[2][LIMBS];
-        for (int lane = 0; lane < 2; lane++)
-            for (int l = 0; l < LIMBS; l++) inner[lane][l] = 0;
+        u64 inner[2][2 * PA_SLOTS];
+        for (int lane = 0; lane < 2; lane++) pa_zero(inner[lane]);
 
         while (i < even_end || j < odd_end) {
             bool take_even;
@@ -272,18 +271,14 @@ extern "C" __global__ void rwm_message_kernel(
                 load4(coeffs + ((unsigned long long)j * coeff_width + wa_lane) * LIMBS, wa_inf);
             }
 
-            u64 term[LIMBS], sum[LIMBS], scaled[LIMBS];
-            fr_mul(ra_0, val_0, term);
+            u64 sum[LIMBS];
+            pa_fold_mul_accum(ra_0, val_0, inner[0]);
             fr_add(val_0, inc_0, sum);
-            fr_mul(wa_0, sum, scaled);
-            fr_add(term, scaled, term);
-            fr_add(inner[0], term, inner[0]);
+            pa_fold_mul_accum(wa_0, sum, inner[0]);
 
-            fr_mul(ra_inf, val_inf, term);
+            pa_fold_mul_accum(ra_inf, val_inf, inner[1]);
             fr_add(val_inf, inc_inf, sum);
-            fr_mul(wa_inf, sum, scaled);
-            fr_add(term, scaled, term);
-            fr_add(inner[1], term, inner[1]);
+            pa_fold_mul_accum(wa_inf, sum, inner[1]);
 
             if (take_even) i++;
             if (take_odd) j++;
@@ -302,7 +297,9 @@ extern "C" __global__ void rwm_message_kernel(
         fr_mul(weight, e_out_eval, combined);
 
         for (int lane = 0; lane < 2; lane++) {
-            fr_mul(inner[lane], combined, acc[lane]);
+            u64 reduced[LIMBS];
+            pa_finalize(inner[lane], reduced);
+            fr_mul(reduced, combined, acc[lane]);
         }
     }
 
