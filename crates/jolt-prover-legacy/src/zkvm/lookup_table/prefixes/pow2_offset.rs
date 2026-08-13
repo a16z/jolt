@@ -45,6 +45,9 @@ impl<const XLEN: usize, const LOW_BIT: usize, F: JoltField> SparseDensePrefix<F>
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        // The 8-bit lane granularity below is what makes this the doubleword
+        // lane offset; other instantiations are a compile error.
+        const { assert!(XLEN == 64, "Pow2Offset hardcodes 8-bit lanes") };
         // Phase-boundary-agnostic split of the index around the low 3 offset
         // bits: the suffix owns bits [0, suffix_len), the unbound bits `b`
         // own [suffix_len, suffix_len + b.len()), the current variable `c`
