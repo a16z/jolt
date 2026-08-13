@@ -9,6 +9,8 @@
 **/*.rs.bk
 
 *.txt
+# Claim-graph golden snapshots are tracked test artifacts.
+!crates/jolt-claims/tests/claim_graph/snapshots/*.txt
 .DS_Store
 
 pprof/

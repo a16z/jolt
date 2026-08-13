@@ -40,6 +40,12 @@ impl<C> Default for BooleanityAddressPhaseInputClaims<C> {
     }
 }
 
+impl<C> crate::ClaimAdjacency for BooleanityAddressPhaseInputClaims<C> {
+    type Id = JoltOpeningId;
+    /// Consumes no openings (see the hand-written [`InputClaims`] above).
+    const EDGES: &'static [crate::ClaimEdge<JoltOpeningId>] = &[];
+}
+
 impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()

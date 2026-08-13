@@ -59,6 +59,33 @@ pub struct LatticeReadRafAddressPhaseInputClaims<C> {
     pub inc: IncClaimReductionInputClaims<C>,
 }
 
+impl<C> crate::ClaimAdjacency for LatticeReadRafAddressPhaseInputClaims<C> {
+    type Id = JoltOpeningId;
+    /// The concatenation of the component adjacencies, mirroring
+    /// `canonical_order` below; const-assembled so it cannot drift from the
+    /// components.
+    const EDGES: &'static [crate::ClaimEdge<JoltOpeningId>] = {
+        const BASE: &[crate::ClaimEdge<JoltOpeningId>] =
+            <BytecodeReadRafAddressPhaseInputClaims<()> as crate::ClaimAdjacency>::EDGES;
+        const INC: &[crate::ClaimEdge<JoltOpeningId>] =
+            <IncClaimReductionInputClaims<()> as crate::ClaimAdjacency>::EDGES;
+        const COMBINED: [crate::ClaimEdge<JoltOpeningId>; BASE.len() + INC.len()] = {
+            let mut out = [BASE[0]; BASE.len() + INC.len()];
+            let mut index = 0;
+            while index < BASE.len() {
+                out[index] = BASE[index];
+                index += 1;
+            }
+            while index < BASE.len() + INC.len() {
+                out[index] = INC[index - BASE.len()];
+                index += 1;
+            }
+            out
+        };
+        &COMBINED
+    };
+}
+
 impl<F: Field> InputClaims<F> for LatticeReadRafAddressPhaseInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         let mut order = self.base.canonical_order();

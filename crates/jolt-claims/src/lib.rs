@@ -23,6 +23,7 @@
 // this crate those paths only resolve via this self-alias.
 extern crate self as jolt_claims;
 
+mod adjacency;
 mod claim_data;
 mod claims;
 mod ops;
@@ -30,6 +31,7 @@ pub mod protocols;
 mod sumcheck;
 mod symbolic;
 
+pub use adjacency::{ClaimAdjacency, ClaimArity, ClaimEdge};
 pub use claim_data::{
     ChallengeDrawError, InputClaims, MissingOpeningValue, NoChallenges, NoInputs, NoOutputs,
     OutputClaims, SumcheckChallenges,

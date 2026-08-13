@@ -1,0 +1,700 @@
+ClaimGraph(Akita): 29 vertices, 189 consumption edges, 138 sinks
+generation 0:
+  OuterUniskip [SpartanOuter] rounds=1 degree=27
+    -> virt UnivariateSkip @ SpartanOuter
+  OutputCheck [RamOutputCheck] rounds=30 degree=3
+    -> virt RamValFinal @ RamOutputCheck
+  HammingBooleanity [RamHammingBooleanity] rounds=20 degree=3
+    -> virt RamHammingWeight @ RamHammingBooleanity
+  BooleanityAddressPhase [Booleanity] rounds=8 degree=3
+    -> virt BooleanityAddrClaim @ Booleanity
+generation 1:
+  OuterRemainder [SpartanOuter] rounds=21 degree=3
+    <- virt UnivariateSkip @ SpartanOuter
+    -> virt PC @ SpartanOuter
+    -> virt UnexpandedPC @ SpartanOuter
+    -> virt NextPC @ SpartanOuter
+    -> virt NextUnexpandedPC @ SpartanOuter
+    -> virt NextIsVirtual @ SpartanOuter
+    -> virt NextIsFirstInSequence @ SpartanOuter
+    -> virt LeftLookupOperand @ SpartanOuter
+    -> virt RightLookupOperand @ SpartanOuter
+    -> virt LeftInstructionInput @ SpartanOuter
+    -> virt RightInstructionInput @ SpartanOuter
+    -> virt Product @ SpartanOuter
+    -> virt ShouldJump @ SpartanOuter
+    -> virt ShouldBranch @ SpartanOuter
+    -> virt Imm @ SpartanOuter
+    -> virt Rs1Value @ SpartanOuter
+    -> virt Rs2Value @ SpartanOuter
+    -> virt RdWriteValue @ SpartanOuter
+    -> virt LookupOutput @ SpartanOuter
+    -> virt RamAddress @ SpartanOuter
+    -> virt RamReadValue @ SpartanOuter
+    -> virt RamWriteValue @ SpartanOuter
+    -> virt OpFlags(AddOperands) @ SpartanOuter
+    -> virt OpFlags(SubtractOperands) @ SpartanOuter
+    -> virt OpFlags(MultiplyOperands) @ SpartanOuter
+    -> virt OpFlags(Load) @ SpartanOuter
+    -> virt OpFlags(Store) @ SpartanOuter
+    -> virt OpFlags(Jump) @ SpartanOuter
+    -> virt OpFlags(WriteLookupOutputToRD) @ SpartanOuter
+    -> virt OpFlags(VirtualInstruction) @ SpartanOuter
+    -> virt OpFlags(Assert) @ SpartanOuter
+    -> virt OpFlags(DoNotUpdateUnexpandedPC) @ SpartanOuter
+    -> virt OpFlags(Advice) @ SpartanOuter
+    -> virt OpFlags(IsCompressed) @ SpartanOuter
+    -> virt OpFlags(IsFirstInSequence) @ SpartanOuter
+    -> virt OpFlags(IsLastInSequence) @ SpartanOuter
+  LatticeBooleanityCyclePhase [Booleanity] rounds=20 degree=3
+    <- virt BooleanityAddrClaim @ Booleanity
+    -> comm InstructionRa(0) @ Booleanity
+    -> comm InstructionRa(1) @ Booleanity
+    -> comm InstructionRa(2) @ Booleanity
+    -> comm InstructionRa(3) @ Booleanity
+    -> comm InstructionRa(4) @ Booleanity
+    -> comm InstructionRa(5) @ Booleanity
+    -> comm InstructionRa(6) @ Booleanity
+    -> comm InstructionRa(7) @ Booleanity
+    -> comm InstructionRa(8) @ Booleanity
+    -> comm InstructionRa(9) @ Booleanity
+    -> comm InstructionRa(10) @ Booleanity
+    -> comm InstructionRa(11) @ Booleanity
+    -> comm InstructionRa(12) @ Booleanity
+    -> comm InstructionRa(13) @ Booleanity
+    -> comm InstructionRa(14) @ Booleanity
+    -> comm InstructionRa(15) @ Booleanity
+    -> comm BytecodeRa(0) @ Booleanity
+    -> comm BytecodeRa(1) @ Booleanity
+    -> comm RamRa(0) @ Booleanity
+    -> comm RamRa(1) @ Booleanity
+    -> comm UnsignedIncChunk(0) @ Booleanity
+    -> comm UnsignedIncChunk(1) @ Booleanity
+    -> comm UnsignedIncChunk(2) @ Booleanity
+    -> comm UnsignedIncChunk(3) @ Booleanity
+    -> comm UnsignedIncChunk(4) @ Booleanity
+    -> comm UnsignedIncChunk(5) @ Booleanity
+    -> comm UnsignedIncChunk(6) @ Booleanity
+    -> comm UnsignedIncChunk(7) @ Booleanity
+    -> comm UnsignedIncMsb @ Booleanity
+generation 2:
+  ProductUniskip [SpartanProductVirtualization] rounds=1 degree=6
+    <- virt Product @ SpartanOuter
+    <- virt ShouldJump @ SpartanOuter
+    <- virt ShouldBranch @ SpartanOuter
+    -> virt UnivariateSkip @ SpartanProductVirtualization
+  ClaimReduction [InstructionClaimReduction] rounds=20 degree=2
+    <- virt LeftLookupOperand @ SpartanOuter
+    <- virt RightLookupOperand @ SpartanOuter
+    <- virt LeftInstructionInput @ SpartanOuter
+    <- virt RightInstructionInput @ SpartanOuter
+    <- virt LookupOutput @ SpartanOuter
+    -> virt LeftLookupOperand @ InstructionClaimReduction
+    -> virt RightLookupOperand @ InstructionClaimReduction
+    -> virt LeftInstructionInput @ InstructionClaimReduction
+    -> virt RightInstructionInput @ InstructionClaimReduction
+    -> virt LookupOutput @ InstructionClaimReduction
+  ReadWriteChecking [RamReadWriteChecking] rounds=32 degree=3
+    <- virt RamReadValue @ SpartanOuter
+    <- virt RamWriteValue @ SpartanOuter
+    -> comm RamInc @ RamReadWriteChecking
+    -> virt RamRa @ RamReadWriteChecking
+    -> virt RamVal @ RamReadWriteChecking
+  RafEvaluation [RamRafEvaluation] rounds=30 degree=2
+    <- virt RamAddress @ SpartanOuter
+    -> virt RamRa @ RamRafEvaluation
+  ClaimReduction [RegistersClaimReduction] rounds=20 degree=2
+    <- virt Rs1Value @ SpartanOuter
+    <- virt Rs2Value @ SpartanOuter
+    <- virt RdWriteValue @ SpartanOuter
+    -> virt Rs1Value @ RegistersClaimReduction
+    -> virt Rs2Value @ RegistersClaimReduction
+    -> virt RdWriteValue @ RegistersClaimReduction
+generation 3:
+  ProductRemainder [SpartanProductVirtualization] rounds=20 degree=3
+    <- virt UnivariateSkip @ SpartanProductVirtualization
+    -> virt NextIsNoop @ SpartanProductVirtualization
+    -> virt LeftInstructionInput @ SpartanProductVirtualization
+    -> virt RightInstructionInput @ SpartanProductVirtualization
+    -> virt LookupOutput @ SpartanProductVirtualization
+    -> virt OpFlags(Jump) @ SpartanProductVirtualization
+    -> virt OpFlags(WriteLookupOutputToRD) @ SpartanProductVirtualization
+    -> virt OpFlags(VirtualInstruction) @ SpartanProductVirtualization
+    -> virt InstructionFlags(Branch) @ SpartanProductVirtualization
+  ReadRaf [InstructionReadRaf] rounds=148 degree=6
+    <- virt LeftLookupOperand @ InstructionClaimReduction
+    <- virt RightLookupOperand @ InstructionClaimReduction
+    <- virt LookupOutput @ InstructionClaimReduction
+    -> virt InstructionRafFlag @ InstructionReadRaf
+    -> virt InstructionRa(0) @ InstructionReadRaf
+    -> virt InstructionRa(1) @ InstructionReadRaf
+    -> virt InstructionRa(2) @ InstructionReadRaf
+    -> virt InstructionRa(3) @ InstructionReadRaf
+    -> virt LookupTableFlag(0) @ InstructionReadRaf
+    -> virt LookupTableFlag(1) @ InstructionReadRaf
+    -> virt LookupTableFlag(2) @ InstructionReadRaf
+    -> virt LookupTableFlag(3) @ InstructionReadRaf
+    -> virt LookupTableFlag(4) @ InstructionReadRaf
+    -> virt LookupTableFlag(5) @ InstructionReadRaf
+    -> virt LookupTableFlag(6) @ InstructionReadRaf
+    -> virt LookupTableFlag(7) @ InstructionReadRaf
+    -> virt LookupTableFlag(8) @ InstructionReadRaf
+    -> virt LookupTableFlag(9) @ InstructionReadRaf
+    -> virt LookupTableFlag(10) @ InstructionReadRaf
+    -> virt LookupTableFlag(11) @ InstructionReadRaf
+    -> virt LookupTableFlag(12) @ InstructionReadRaf
+    -> virt LookupTableFlag(13) @ InstructionReadRaf
+    -> virt LookupTableFlag(14) @ InstructionReadRaf
+    -> virt LookupTableFlag(15) @ InstructionReadRaf
+    -> virt LookupTableFlag(16) @ InstructionReadRaf
+    -> virt LookupTableFlag(17) @ InstructionReadRaf
+    -> virt LookupTableFlag(18) @ InstructionReadRaf
+    -> virt LookupTableFlag(19) @ InstructionReadRaf
+    -> virt LookupTableFlag(20) @ InstructionReadRaf
+    -> virt LookupTableFlag(21) @ InstructionReadRaf
+    -> virt LookupTableFlag(22) @ InstructionReadRaf
+    -> virt LookupTableFlag(23) @ InstructionReadRaf
+    -> virt LookupTableFlag(24) @ InstructionReadRaf
+    -> virt LookupTableFlag(25) @ InstructionReadRaf
+    -> virt LookupTableFlag(26) @ InstructionReadRaf
+    -> virt LookupTableFlag(27) @ InstructionReadRaf
+    -> virt LookupTableFlag(28) @ InstructionReadRaf
+    -> virt LookupTableFlag(29) @ InstructionReadRaf
+    -> virt LookupTableFlag(30) @ InstructionReadRaf
+    -> virt LookupTableFlag(31) @ InstructionReadRaf
+    -> virt LookupTableFlag(32) @ InstructionReadRaf
+    -> virt LookupTableFlag(33) @ InstructionReadRaf
+    -> virt LookupTableFlag(34) @ InstructionReadRaf
+    -> virt LookupTableFlag(35) @ InstructionReadRaf
+    -> virt LookupTableFlag(36) @ InstructionReadRaf
+    -> virt LookupTableFlag(37) @ InstructionReadRaf
+    -> virt LookupTableFlag(38) @ InstructionReadRaf
+    -> virt LookupTableFlag(39) @ InstructionReadRaf
+  RamValCheck [RamValCheck] rounds=20 degree=3
+    <- virt RamVal @ RamReadWriteChecking
+    <- virt RamValFinal @ RamOutputCheck
+    <- virt ProgramImageInitContributionRw @ RamValCheck
+    <- untrusted-advice @ RamValCheck
+    <- trusted-advice @ RamValCheck
+    -> comm RamInc @ RamValCheck
+    -> virt RamRa @ RamValCheck
+    -> virt ProgramImageInitContributionRw @ RamValCheck
+    -> untrusted-advice @ RamValCheck
+    -> trusted-advice @ RamValCheck
+  ReadWriteChecking [RegistersReadWriteChecking] rounds=27 degree=3
+    <- virt Rs1Value @ RegistersClaimReduction
+    <- virt Rs2Value @ RegistersClaimReduction
+    <- virt RdWriteValue @ RegistersClaimReduction
+    -> comm RdInc @ RegistersReadWriteChecking
+    -> virt Rs1Ra @ RegistersReadWriteChecking
+    -> virt Rs2Ra @ RegistersReadWriteChecking
+    -> virt RdWa @ RegistersReadWriteChecking
+    -> virt RegistersVal @ RegistersReadWriteChecking
+generation 4:
+  Shift [SpartanShift] rounds=20 degree=2
+    <- virt NextPC @ SpartanOuter
+    <- virt NextUnexpandedPC @ SpartanOuter
+    <- virt NextIsNoop @ SpartanProductVirtualization
+    <- virt NextIsVirtual @ SpartanOuter
+    <- virt NextIsFirstInSequence @ SpartanOuter
+    -> virt PC @ SpartanShift
+    -> virt UnexpandedPC @ SpartanShift
+    -> virt OpFlags(VirtualInstruction) @ SpartanShift
+    -> virt OpFlags(IsFirstInSequence) @ SpartanShift
+    -> virt InstructionFlags(IsNoop) @ SpartanShift
+  InputVirtualization [InstructionInputVirtualization] rounds=20 degree=3
+    <- virt LeftInstructionInput @ SpartanProductVirtualization
+    <- virt RightInstructionInput @ SpartanProductVirtualization
+    -> virt UnexpandedPC @ InstructionInputVirtualization
+    -> virt Imm @ InstructionInputVirtualization
+    -> virt Rs1Value @ InstructionInputVirtualization
+    -> virt Rs2Value @ InstructionInputVirtualization
+    -> virt InstructionFlags(LeftOperandIsPC) @ InstructionInputVirtualization
+    -> virt InstructionFlags(RightOperandIsImm) @ InstructionInputVirtualization
+    -> virt InstructionFlags(LeftOperandIsRs1Value) @ InstructionInputVirtualization
+    -> virt InstructionFlags(RightOperandIsRs2Value) @ InstructionInputVirtualization
+  RaVirtualization [InstructionRaVirtualization] rounds=20 degree=5
+    <- virt InstructionRa(0) @ InstructionReadRaf
+    <- virt InstructionRa(1) @ InstructionReadRaf
+    <- virt InstructionRa(2) @ InstructionReadRaf
+    <- virt InstructionRa(3) @ InstructionReadRaf
+    -> comm InstructionRa(0) @ InstructionRaVirtualization
+    -> comm InstructionRa(1) @ InstructionRaVirtualization
+    -> comm InstructionRa(2) @ InstructionRaVirtualization
+    -> comm InstructionRa(3) @ InstructionRaVirtualization
+    -> comm InstructionRa(4) @ InstructionRaVirtualization
+    -> comm InstructionRa(5) @ InstructionRaVirtualization
+    -> comm InstructionRa(6) @ InstructionRaVirtualization
+    -> comm InstructionRa(7) @ InstructionRaVirtualization
+    -> comm InstructionRa(8) @ InstructionRaVirtualization
+    -> comm InstructionRa(9) @ InstructionRaVirtualization
+    -> comm InstructionRa(10) @ InstructionRaVirtualization
+    -> comm InstructionRa(11) @ InstructionRaVirtualization
+    -> comm InstructionRa(12) @ InstructionRaVirtualization
+    -> comm InstructionRa(13) @ InstructionRaVirtualization
+    -> comm InstructionRa(14) @ InstructionRaVirtualization
+    -> comm InstructionRa(15) @ InstructionRaVirtualization
+  RaClaimReduction [RamRaClaimReduction] rounds=20 degree=2
+    <- virt RamRa @ RamReadWriteChecking
+    <- virt RamRa @ RamRafEvaluation
+    <- virt RamRa @ RamValCheck
+    -> virt RamRa @ RamRaClaimReduction
+  CyclePhase [ProgramImageClaimReductionCyclePhase] rounds=20 degree=2
+    <- virt ProgramImageInitContributionRw @ RamValCheck
+    -> comm ProgramImageInit @ ProgramImageClaimReduction
+  ValEvaluation [RegistersValEvaluation] rounds=20 degree=3
+    <- virt RegistersVal @ RegistersReadWriteChecking
+    -> comm RdInc @ RegistersValEvaluation
+    -> virt RdWa @ RegistersValEvaluation
+generation 5:
+  RaVirtualization [RamRaVirtualization] rounds=20 degree=3
+    <- virt RamRa @ RamRaClaimReduction
+    -> comm RamRa(0) @ RamRaVirtualization
+    -> comm RamRa(1) @ RamRaVirtualization
+  ProgramImageReconstruction [ProgramImageReconstruction] rounds=11 degree=2
+    <- comm ProgramImageInit @ ProgramImageClaimReduction
+    -> comm ProgramImageBytes @ ProgramImageReconstruction  [PackedOpened]
+  LatticeReadRafAddressPhase [BytecodeReadRaf] rounds=10 degree=3
+    <- comm RdInc @ RegistersReadWriteChecking
+    <- comm RdInc @ RegistersValEvaluation
+    <- comm RamInc @ RamReadWriteChecking
+    <- comm RamInc @ RamValCheck
+    <- virt PC @ SpartanOuter
+    <- virt PC @ SpartanShift
+    <- virt UnexpandedPC @ SpartanOuter
+    <- virt UnexpandedPC @ SpartanShift
+    <- virt Imm @ SpartanOuter
+    <- virt Imm @ InstructionInputVirtualization
+    <- virt Rs1Ra @ RegistersReadWriteChecking
+    <- virt Rs2Ra @ RegistersReadWriteChecking
+    <- virt RdWa @ RegistersReadWriteChecking
+    <- virt RdWa @ RegistersValEvaluation
+    <- virt InstructionRafFlag @ InstructionReadRaf
+    <- virt OpFlags(AddOperands) @ SpartanOuter
+    <- virt OpFlags(SubtractOperands) @ SpartanOuter
+    <- virt OpFlags(MultiplyOperands) @ SpartanOuter
+    <- virt OpFlags(Load) @ SpartanOuter
+    <- virt OpFlags(Store) @ SpartanOuter
+    <- virt OpFlags(Jump) @ SpartanOuter
+    <- virt OpFlags(Jump) @ SpartanProductVirtualization
+    <- virt OpFlags(WriteLookupOutputToRD) @ SpartanOuter
+    <- virt OpFlags(WriteLookupOutputToRD) @ SpartanProductVirtualization
+    <- virt OpFlags(VirtualInstruction) @ SpartanOuter
+    <- virt OpFlags(VirtualInstruction) @ SpartanProductVirtualization
+    <- virt OpFlags(VirtualInstruction) @ SpartanShift
+    <- virt OpFlags(Assert) @ SpartanOuter
+    <- virt OpFlags(DoNotUpdateUnexpandedPC) @ SpartanOuter
+    <- virt OpFlags(Advice) @ SpartanOuter
+    <- virt OpFlags(IsCompressed) @ SpartanOuter
+    <- virt OpFlags(IsFirstInSequence) @ SpartanOuter
+    <- virt OpFlags(IsFirstInSequence) @ SpartanShift
+    <- virt OpFlags(IsLastInSequence) @ SpartanOuter
+    <- virt InstructionFlags(LeftOperandIsPC) @ InstructionInputVirtualization
+    <- virt InstructionFlags(RightOperandIsImm) @ InstructionInputVirtualization
+    <- virt InstructionFlags(LeftOperandIsRs1Value) @ InstructionInputVirtualization
+    <- virt InstructionFlags(RightOperandIsRs2Value) @ InstructionInputVirtualization
+    <- virt InstructionFlags(Branch) @ SpartanProductVirtualization
+    <- virt InstructionFlags(IsNoop) @ SpartanShift
+    <- virt LookupTableFlag(0) @ InstructionReadRaf
+    <- virt LookupTableFlag(1) @ InstructionReadRaf
+    <- virt LookupTableFlag(2) @ InstructionReadRaf
+    <- virt LookupTableFlag(3) @ InstructionReadRaf
+    <- virt LookupTableFlag(4) @ InstructionReadRaf
+    <- virt LookupTableFlag(5) @ InstructionReadRaf
+    <- virt LookupTableFlag(6) @ InstructionReadRaf
+    <- virt LookupTableFlag(7) @ InstructionReadRaf
+    <- virt LookupTableFlag(8) @ InstructionReadRaf
+    <- virt LookupTableFlag(9) @ InstructionReadRaf
+    <- virt LookupTableFlag(10) @ InstructionReadRaf
+    <- virt LookupTableFlag(11) @ InstructionReadRaf
+    <- virt LookupTableFlag(12) @ InstructionReadRaf
+    <- virt LookupTableFlag(13) @ InstructionReadRaf
+    <- virt LookupTableFlag(14) @ InstructionReadRaf
+    <- virt LookupTableFlag(15) @ InstructionReadRaf
+    <- virt LookupTableFlag(16) @ InstructionReadRaf
+    <- virt LookupTableFlag(17) @ InstructionReadRaf
+    <- virt LookupTableFlag(18) @ InstructionReadRaf
+    <- virt LookupTableFlag(19) @ InstructionReadRaf
+    <- virt LookupTableFlag(20) @ InstructionReadRaf
+    <- virt LookupTableFlag(21) @ InstructionReadRaf
+    <- virt LookupTableFlag(22) @ InstructionReadRaf
+    <- virt LookupTableFlag(23) @ InstructionReadRaf
+    <- virt LookupTableFlag(24) @ InstructionReadRaf
+    <- virt LookupTableFlag(25) @ InstructionReadRaf
+    <- virt LookupTableFlag(26) @ InstructionReadRaf
+    <- virt LookupTableFlag(27) @ InstructionReadRaf
+    <- virt LookupTableFlag(28) @ InstructionReadRaf
+    <- virt LookupTableFlag(29) @ InstructionReadRaf
+    <- virt LookupTableFlag(30) @ InstructionReadRaf
+    <- virt LookupTableFlag(31) @ InstructionReadRaf
+    <- virt LookupTableFlag(32) @ InstructionReadRaf
+    <- virt LookupTableFlag(33) @ InstructionReadRaf
+    <- virt LookupTableFlag(34) @ InstructionReadRaf
+    <- virt LookupTableFlag(35) @ InstructionReadRaf
+    <- virt LookupTableFlag(36) @ InstructionReadRaf
+    <- virt LookupTableFlag(37) @ InstructionReadRaf
+    <- virt LookupTableFlag(38) @ InstructionReadRaf
+    <- virt LookupTableFlag(39) @ InstructionReadRaf
+    -> virt BytecodeReadRafAddrClaim @ BytecodeReadRaf
+generation 6:
+  LatticeReadRafCyclePhaseCommitted [BytecodeReadRaf] rounds=20 degree=4
+    <- virt BytecodeReadRafAddrClaim @ BytecodeReadRaf
+    -> comm BytecodeRa(0) @ BytecodeReadRaf
+    -> comm BytecodeRa(1) @ BytecodeReadRaf
+    -> virt BytecodeValClaim(0) @ BytecodeReadRaf
+    -> virt BytecodeValClaim(1) @ BytecodeReadRaf
+    -> virt BytecodeValClaim(2) @ BytecodeReadRaf
+    -> virt BytecodeValClaim(3) @ BytecodeReadRaf
+    -> virt BytecodeValClaim(4) @ BytecodeReadRaf
+    -> virt BytecodeValClaim(5) @ BytecodeReadRaf
+    -> virt FusedInc @ BytecodeReadRaf
+generation 7:
+  CyclePhase [BytecodeClaimReductionCyclePhase] rounds=20 degree=2
+    <- virt BytecodeValClaim(0) @ BytecodeReadRaf
+    <- virt BytecodeValClaim(1) @ BytecodeReadRaf
+    <- virt BytecodeValClaim(2) @ BytecodeReadRaf
+    <- virt BytecodeValClaim(3) @ BytecodeReadRaf
+    <- virt BytecodeValClaim(4) @ BytecodeReadRaf
+    <- virt BytecodeValClaim(5) @ BytecodeReadRaf
+    -> virt BytecodeClaimReductionIntermediate @ BytecodeClaimReductionCyclePhase
+  LatticeHammingWeightClaimReduction [HammingWeightClaimReduction] rounds=8 degree=2
+    <- comm InstructionRa(0) @ InstructionRaVirtualization
+    <- comm InstructionRa(0) @ Booleanity
+    <- comm InstructionRa(1) @ InstructionRaVirtualization
+    <- comm InstructionRa(1) @ Booleanity
+    <- comm InstructionRa(2) @ InstructionRaVirtualization
+    <- comm InstructionRa(2) @ Booleanity
+    <- comm InstructionRa(3) @ InstructionRaVirtualization
+    <- comm InstructionRa(3) @ Booleanity
+    <- comm InstructionRa(4) @ InstructionRaVirtualization
+    <- comm InstructionRa(4) @ Booleanity
+    <- comm InstructionRa(5) @ InstructionRaVirtualization
+    <- comm InstructionRa(5) @ Booleanity
+    <- comm InstructionRa(6) @ InstructionRaVirtualization
+    <- comm InstructionRa(6) @ Booleanity
+    <- comm InstructionRa(7) @ InstructionRaVirtualization
+    <- comm InstructionRa(7) @ Booleanity
+    <- comm InstructionRa(8) @ InstructionRaVirtualization
+    <- comm InstructionRa(8) @ Booleanity
+    <- comm InstructionRa(9) @ InstructionRaVirtualization
+    <- comm InstructionRa(9) @ Booleanity
+    <- comm InstructionRa(10) @ InstructionRaVirtualization
+    <- comm InstructionRa(10) @ Booleanity
+    <- comm InstructionRa(11) @ InstructionRaVirtualization
+    <- comm InstructionRa(11) @ Booleanity
+    <- comm InstructionRa(12) @ InstructionRaVirtualization
+    <- comm InstructionRa(12) @ Booleanity
+    <- comm InstructionRa(13) @ InstructionRaVirtualization
+    <- comm InstructionRa(13) @ Booleanity
+    <- comm InstructionRa(14) @ InstructionRaVirtualization
+    <- comm InstructionRa(14) @ Booleanity
+    <- comm InstructionRa(15) @ InstructionRaVirtualization
+    <- comm InstructionRa(15) @ Booleanity
+    <- comm BytecodeRa(0) @ BytecodeReadRaf
+    <- comm BytecodeRa(0) @ Booleanity
+    <- comm BytecodeRa(1) @ BytecodeReadRaf
+    <- comm BytecodeRa(1) @ Booleanity
+    <- comm RamRa(0) @ RamRaVirtualization
+    <- comm RamRa(0) @ Booleanity
+    <- comm RamRa(1) @ RamRaVirtualization
+    <- comm RamRa(1) @ Booleanity
+    <- comm UnsignedIncChunk(0) @ Booleanity
+    <- comm UnsignedIncChunk(1) @ Booleanity
+    <- comm UnsignedIncChunk(2) @ Booleanity
+    <- comm UnsignedIncChunk(3) @ Booleanity
+    <- comm UnsignedIncChunk(4) @ Booleanity
+    <- comm UnsignedIncChunk(5) @ Booleanity
+    <- comm UnsignedIncChunk(6) @ Booleanity
+    <- comm UnsignedIncChunk(7) @ Booleanity
+    <- comm UnsignedIncMsb @ Booleanity
+    <- virt RamHammingWeight @ RamHammingBooleanity
+    <- virt FusedInc @ BytecodeReadRaf
+    -> comm InstructionRa(0) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(1) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(2) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(3) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(4) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(5) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(6) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(7) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(8) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(9) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(10) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(11) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(12) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(13) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(14) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm InstructionRa(15) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm BytecodeRa(0) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm BytecodeRa(1) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm RamRa(0) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm RamRa(1) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncChunk(0) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncChunk(1) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncChunk(2) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncChunk(3) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncChunk(4) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncChunk(5) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncChunk(6) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncChunk(7) @ HammingWeightClaimReduction  [PackedOpened]
+    -> comm UnsignedIncMsb @ HammingWeightClaimReduction  [PackedOpened]
+generation 8:
+  AddressPhase [BytecodeClaimReduction] rounds=8 degree=2
+    <- virt BytecodeClaimReductionIntermediate @ BytecodeClaimReductionCyclePhase
+    -> comm BytecodeChunk(0) @ BytecodeClaimReduction
+    -> comm BytecodeChunk(1) @ BytecodeClaimReduction
+    -> comm BytecodeChunk(2) @ BytecodeClaimReduction
+    -> comm BytecodeChunk(3) @ BytecodeClaimReduction
+generation 9:
+  BytecodeChunkReconstruction [BytecodeChunkReconstruction] rounds=13 degree=2
+    <- comm BytecodeChunk(0) @ BytecodeClaimReduction
+    <- comm BytecodeChunk(1) @ BytecodeClaimReduction
+    <- comm BytecodeChunk(2) @ BytecodeClaimReduction
+    <- comm BytecodeChunk(3) @ BytecodeClaimReduction
+    -> comm BytecodeRegisterSelector { chunk: 0, lane: Rs1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 0, lane: Rs2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 0, lane: Rd } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 1, lane: Rs1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 1, lane: Rs2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 1, lane: Rd } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 2, lane: Rs1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 2, lane: Rs2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 2, lane: Rd } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 3, lane: Rs1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 3, lane: Rs2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRegisterSelector { chunk: 3, lane: Rd } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 4 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 5 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 6 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 7 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 8 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 9 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 10 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 11 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 12 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 0, flag: 13 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 4 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 5 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 6 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 7 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 8 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 9 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 10 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 11 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 12 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 1, flag: 13 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 4 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 5 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 6 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 7 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 8 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 9 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 10 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 11 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 12 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 2, flag: 13 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 4 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 5 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 6 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 7 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 8 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 9 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 10 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 11 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 12 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeCircuitFlag { chunk: 3, flag: 13 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 0, flag: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 0, flag: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 0, flag: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 0, flag: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 0, flag: 4 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 0, flag: 5 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 1, flag: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 1, flag: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 1, flag: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 1, flag: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 1, flag: 4 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 1, flag: 5 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 2, flag: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 2, flag: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 2, flag: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 2, flag: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 2, flag: 4 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 2, flag: 5 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 3, flag: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 3, flag: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 3, flag: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 3, flag: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 3, flag: 4 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeInstructionFlag { chunk: 3, flag: 5 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeLookupSelector { chunk: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeLookupSelector { chunk: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeLookupSelector { chunk: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeLookupSelector { chunk: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRafFlag { chunk: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRafFlag { chunk: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRafFlag { chunk: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeRafFlag { chunk: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeUnexpandedPcBytes { chunk: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeUnexpandedPcBytes { chunk: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeUnexpandedPcBytes { chunk: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeUnexpandedPcBytes { chunk: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeImmBytes { chunk: 0 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeImmBytes { chunk: 1 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeImmBytes { chunk: 2 } @ BytecodeChunkReconstruction  [PackedOpened]
+    -> comm BytecodeImmBytes { chunk: 3 } @ BytecodeChunkReconstruction  [PackedOpened]
+sinks:
+  comm InstructionRa(0) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(1) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(2) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(3) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(4) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(5) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(6) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(7) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(8) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(9) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(10) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(11) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(12) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(13) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(14) @ HammingWeightClaimReduction [PackedOpened]
+  comm InstructionRa(15) @ HammingWeightClaimReduction [PackedOpened]
+  comm BytecodeRa(0) @ HammingWeightClaimReduction [PackedOpened]
+  comm BytecodeRa(1) @ HammingWeightClaimReduction [PackedOpened]
+  comm RamRa(0) @ HammingWeightClaimReduction [PackedOpened]
+  comm RamRa(1) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncChunk(0) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncChunk(1) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncChunk(2) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncChunk(3) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncChunk(4) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncChunk(5) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncChunk(6) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncChunk(7) @ HammingWeightClaimReduction [PackedOpened]
+  comm UnsignedIncMsb @ HammingWeightClaimReduction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 0, lane: Rs1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 0, lane: Rs2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 0, lane: Rd } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 1, lane: Rs1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 1, lane: Rs2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 1, lane: Rd } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 2, lane: Rs1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 2, lane: Rs2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 2, lane: Rd } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 3, lane: Rs1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 3, lane: Rs2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRegisterSelector { chunk: 3, lane: Rd } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 4 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 5 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 6 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 7 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 8 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 9 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 10 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 11 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 12 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 0, flag: 13 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 4 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 5 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 6 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 7 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 8 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 9 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 10 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 11 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 12 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 1, flag: 13 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 4 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 5 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 6 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 7 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 8 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 9 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 10 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 11 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 12 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 2, flag: 13 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 4 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 5 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 6 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 7 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 8 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 9 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 10 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 11 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 12 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeCircuitFlag { chunk: 3, flag: 13 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 0, flag: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 0, flag: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 0, flag: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 0, flag: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 0, flag: 4 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 0, flag: 5 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 1, flag: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 1, flag: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 1, flag: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 1, flag: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 1, flag: 4 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 1, flag: 5 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 2, flag: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 2, flag: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 2, flag: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 2, flag: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 2, flag: 4 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 2, flag: 5 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 3, flag: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 3, flag: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 3, flag: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 3, flag: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 3, flag: 4 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeInstructionFlag { chunk: 3, flag: 5 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeLookupSelector { chunk: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeLookupSelector { chunk: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeLookupSelector { chunk: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeLookupSelector { chunk: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRafFlag { chunk: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRafFlag { chunk: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRafFlag { chunk: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeRafFlag { chunk: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeUnexpandedPcBytes { chunk: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeUnexpandedPcBytes { chunk: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeUnexpandedPcBytes { chunk: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeUnexpandedPcBytes { chunk: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeImmBytes { chunk: 0 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeImmBytes { chunk: 1 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeImmBytes { chunk: 2 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm BytecodeImmBytes { chunk: 3 } @ BytecodeChunkReconstruction [PackedOpened]
+  comm ProgramImageBytes @ ProgramImageReconstruction [PackedOpened]
