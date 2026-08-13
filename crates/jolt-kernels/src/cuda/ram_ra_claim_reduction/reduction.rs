@@ -354,6 +354,8 @@ impl DeviceRamRaReduction {
         let _ = builder.arg(&zero);
         let _ = builder.arg(&zero);
         let _ = builder.arg(&zero);
+        let _ = builder.arg(&zero);
+        let _ = builder.arg(&zero);
         // SAFETY: as `dense_product::round_evals` — two tables of `2 * half`
         // elements read at `2y`/`2y+1`, one `partials` slot per (lane, block),
         // shared memory matching `shared_mem_bytes`. `has_lt` is 0, so the LT

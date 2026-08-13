@@ -10,7 +10,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use super::ram_ra_reduction::{CyclePoints, DeviceRamRaReduction};
+use self::reduction::{CyclePoints, DeviceRamRaReduction};
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::fr_into;
@@ -18,6 +18,8 @@ use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+mod reduction;
 
 pub struct RamRaReductionKernel<F: Field> {
     state: DeviceRamRaReduction,
