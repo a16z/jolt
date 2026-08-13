@@ -1120,13 +1120,13 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
 /// A minimal dense multilinear [`ProveRounds`](crate::prover::ProveRounds)
 /// member (HighToLow binding), constructible with a prescribed total sum —
 /// the engine tests' stand-in for a real kernel-backed batch member.
-struct DenseMember {
+pub(crate) struct DenseMember {
     evals: Vec<F>,
     num_rounds: usize,
 }
 
 impl DenseMember {
-    fn with_sum(num_rounds: usize, sum: F, seed: u64) -> Self {
+    pub(crate) fn with_sum(num_rounds: usize, sum: F, seed: u64) -> Self {
         let size = 1u64 << num_rounds;
         let mut evals: Vec<F> = (0..size).map(|i| F::from_u64(seed + 31 * i + 11)).collect();
         let current: F = evals.iter().copied().sum();
@@ -1240,7 +1240,7 @@ impl crate::prover::ProveRounds<F> for FusedDenseMember {
 #[test]
 fn fused_bind_eval_member_byte_matches_separate_passes() {
     use crate::batch::{BatchMember, BatchPrelude};
-    use crate::prover::{prove_batch, ProveRounds};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
 
     let num_rounds = 4;
@@ -1261,7 +1261,14 @@ fn fused_bind_eval_member_byte_matches_separate_passes() {
             1,
         );
         let mut members: Vec<&mut dyn ProveRounds<F>> = vec![member];
-        let proved = prove_batch(&prelude, &mut members, &mut recorder, &mut transcript).unwrap();
+        let proved = prove_batch(
+            &prelude,
+            &mut members,
+            &mut SequentialRounds,
+            &mut recorder,
+            &mut transcript,
+        )
+        .unwrap();
         let recorded = recorder
             .finish(&proved.member_claims, &mut transcript)
             .unwrap();
@@ -1296,7 +1303,7 @@ fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
 #[test]
 fn prove_batch_rejects_zero_max_degree() {
     use crate::batch::{BatchMember, BatchPrelude};
-    use crate::prover::{prove_batch, ProveRounds};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
     use crate::recorder::ClearSumcheckRecorder;
 
     let sum = F::from_u64(42);
@@ -1314,7 +1321,13 @@ fn prove_batch_rejects_zero_max_degree() {
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
     let mut transcript = Blake2bTranscript::new(b"zero-degree-batch");
     let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
-    let result = prove_batch(&prelude, &mut members, &mut recorder, &mut transcript);
+    let result = prove_batch(
+        &prelude,
+        &mut members,
+        &mut SequentialRounds,
+        &mut recorder,
+        &mut transcript,
+    );
     assert!(matches!(
         result,
         Err(SumcheckError::ZeroBatchDegree { max_num_vars: 2 })
@@ -1329,7 +1342,7 @@ fn prove_batch_rejects_zero_max_degree() {
 #[test]
 fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     use crate::batch::{BatchMember, BatchPrelude};
-    use crate::prover::{prove_batch, ProveRounds};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
     use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
     use jolt_field::MulPow2;
@@ -1367,6 +1380,7 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     let proved = prove_batch(
         &prelude,
         &mut members,
+        &mut SequentialRounds,
         &mut recorder,
         &mut prover_transcript,
     )
@@ -1415,7 +1429,7 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
 #[test]
 fn prove_batch_clear_twin_head_aligned_member() {
     use crate::batch::{BatchMember, BatchPrelude};
-    use crate::prover::{prove_batch, ProveRounds};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
     use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
     use jolt_field::{Invertible, MulPow2};
@@ -1453,6 +1467,7 @@ fn prove_batch_clear_twin_head_aligned_member() {
     let proved = prove_batch(
         &prelude,
         &mut members,
+        &mut SequentialRounds,
         &mut recorder,
         &mut prover_transcript,
     )
@@ -1498,7 +1513,7 @@ fn prove_batch_clear_twin_head_aligned_member() {
 #[test]
 fn prove_batch_committed_twin_matches_committed_consistency() {
     use crate::batch::{BatchMember, BatchPrelude};
-    use crate::prover::{prove_batch, ProveRounds};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
     use crate::recorder::{CommittedSumcheckRecorder, SumcheckRecorder};
 
     type VC = Pedersen<Bn254G1>;
@@ -1537,6 +1552,7 @@ fn prove_batch_committed_twin_matches_committed_consistency() {
     let proved = prove_batch(
         &prelude,
         &mut members,
+        &mut SequentialRounds,
         &mut recorder,
         &mut prover_transcript,
     )
