@@ -64,6 +64,7 @@ mod test {
     use super::WindowMaskBTable;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
+        prefix_suffix_test_with_phase_size,
     };
     use common::constants::XLEN;
 
@@ -80,5 +81,13 @@ mod test {
     #[test]
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, WindowMaskBTable<XLEN>>();
+    }
+
+    /// Two-round phases put a phase boundary inside the low three index bits
+    /// (suffix_len hits 2), exercising every placement of bits 2-0 relative
+    /// to the phase window in the Pow2OffsetB prefix/suffix pair.
+    #[test]
+    fn prefix_suffix_small_phases() {
+        prefix_suffix_test_with_phase_size::<XLEN, Fr, WindowMaskBTable<XLEN>>(2, 20);
     }
 }

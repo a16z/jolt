@@ -65,7 +65,10 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskBTable<XLE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
+    use crate::tables::test_utils::{
+        mle_full_hypercube_test, mle_random_test, prefix_suffix_materialization_test,
+        prefix_suffix_test,
+    };
     use crate::XLEN;
     use jolt_field::Fr;
 
@@ -77,6 +80,14 @@ mod tests {
     #[test]
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, WindowMaskBTable<XLEN>>();
+    }
+
+    /// Two-round phases put a phase boundary inside the low three index bits
+    /// (suffix_len hits 2), exercising every placement of bits 2-0 relative
+    /// to the phase window in the Pow2OffsetB prefix/suffix pair.
+    #[test]
+    fn prefix_suffix_small_phases() {
+        prefix_suffix_materialization_test::<XLEN, Fr, WindowMaskBTable<XLEN>>(2, 3);
     }
 
     #[test]
