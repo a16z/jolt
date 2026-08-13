@@ -5,19 +5,10 @@ macro_rules! declare_riscv_instr {
       mask    = $mask:expr,
       match   = $match_:expr,
       format  = $format:ty,
-      ram     = $ram:ty $(,)?
+      ram     = $ram:ty
+      $(, produces_carry = $produces_carry:literal)? $(,)?
   ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram, false);
-    };
-    (
-      name    = $name:ident,
-      mask    = $mask:expr,
-      match   = $match_:expr,
-      format  = $format:ty,
-      ram     = $ram:ty,
-      produces_carry = true $(,)?
-  ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram, true);
+        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram, (false $(|| $produces_carry)?));
     };
     (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty, $produces_carry:expr) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
@@ -88,14 +79,6 @@ macro_rules! declare_riscv_instr {
 
             fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RAMAccess) {
                 self.exec(cpu, ram);
-                // Non-carry-producing instructions clobber the implicit carry
-                // to zero; producers set `cpu.carry` inside `exec`. Living in
-                // `execute` (not `RISCVTrace::trace`) keeps trace and
-                // execute-only modes in lockstep for chunked replay.
-                #[cfg(feature = "implicit-carry")]
-                if !Self::PRODUCES_CARRY {
-                    cpu.carry = 0;
-                }
             }
         }
 

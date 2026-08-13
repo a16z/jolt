@@ -16,9 +16,9 @@ pub const FUNCT7_ADVICE_LW: u32 = 0x02; // Load word from advice tape
 pub const FUNCT7_ADVICE_LD: u32 = 0x03; // Load doubleword from advice tape
 pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get remaining bytes in advice tape
 pub const FUNCT7_VIRTUAL_REV8W: u32 = 0x05; // Reverse bytes in a word
-#[cfg(feature = "implicit-carry")]
+                                            // The ADDC/MULC funct7 slots are allocated even when the `implicit-carry`
+                                            // feature (which compiles the instructions) is off.
 pub const FUNCT7_ADDC: u32 = 0x06; // Add with implicit carry-in
-#[cfg(feature = "implicit-carry")]
 pub const FUNCT7_MULC: u32 = 0x07; // Multiply with implicit carry-in
 
 use add::ADD;
@@ -422,8 +422,9 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
 
     /// Whether this instruction writes the implicit carry (`ADD`, `MUL`,
     /// `ADDC`, `MULC`). Every other instruction clobbers the carry to zero;
-    /// see `declare_riscv_instr!`'s generated `execute`. Only consulted under
-    /// the `implicit-carry` feature.
+    /// enforced once for all impls in `RISCVTrace::trace`, the single point
+    /// every executed row passes through. Only consulted under the
+    /// `implicit-carry` feature.
     const PRODUCES_CARRY: bool = false;
 
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
@@ -450,6 +451,14 @@ where
         self.operands()
             .capture_pre_execution_state(&mut cycle.register_state, cpu);
         self.execute(cpu, &mut cycle.ram_access);
+        // Non-producers clobber the implicit carry to zero; producers set
+        // `cpu.carry` inside `execute`. Clobbering here (rather than in each
+        // `execute` impl) covers manual `RISCVInstruction` impls too — both
+        // trace and execute-only modes dispatch through this method.
+        #[cfg(feature = "implicit-carry")]
+        if !Self::PRODUCES_CARRY {
+            cpu.carry = 0;
+        }
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
         match trace {
@@ -2061,11 +2070,25 @@ mod tests {
             | (funct7 << 25)
     }
 
+    /// Operand bits on top of an instruction's `MATCH` constant, like
+    /// `MULHSU::with_regs`.
+    #[cfg(feature = "implicit-carry")]
+    fn r_word_from_match(match_: u32, rd: u8, rs1: u8, rs2: u8) -> u32 {
+        match_ | (u32::from(rd) << 7) | (u32::from(rs1) << 15) | (u32::from(rs2) << 20)
+    }
+
     #[cfg(not(feature = "implicit-carry"))]
     #[test]
     fn addc_mulc_opcodes_are_unknown_without_feature() {
-        for funct7 in [0x06, 0x07] {
-            let word = r_type_word(0x5b, 0b000, funct7, 5, 6, 7);
+        for funct7 in [FUNCT7_ADDC, FUNCT7_MULC] {
+            let word = r_type_word(
+                u32::from(CUSTOM_OPCODE),
+                u32::from(FUNCT3_VIRTUAL_R),
+                funct7,
+                5,
+                6,
+                7,
+            );
             assert!(Instruction::decode(word, 0x8000_0000, false).is_err());
         }
     }
@@ -2076,13 +2099,32 @@ mod tests {
         use crate::emulator::default_terminal::DefaultTerminal;
 
         const ADD_WORD: fn(u8, u8, u8) -> u32 =
-            |rd, rs1, rs2| super::r_type_word(0x33, 0b000, 0x00, rd, rs1, rs2);
+            |rd, rs1, rs2| super::r_word_from_match(ADD::MATCH, rd, rs1, rs2);
         const MUL_WORD: fn(u8, u8, u8) -> u32 =
-            |rd, rs1, rs2| super::r_type_word(0x33, 0b000, 0x01, rd, rs1, rs2);
-        const ADDC_WORD: fn(u8, u8, u8) -> u32 =
-            |rd, rs1, rs2| super::r_type_word(0x5b, 0b000, 0x06, rd, rs1, rs2);
-        const MULC_WORD: fn(u8, u8, u8) -> u32 =
-            |rd, rs1, rs2| super::r_type_word(0x5b, 0b000, 0x07, rd, rs1, rs2);
+            |rd, rs1, rs2| super::r_word_from_match(MUL::MATCH, rd, rs1, rs2);
+        // ADDC/MULC have `mask = match = 0` (decoded via the custom-opcode
+        // switch), so their words are built from the named encoding constants
+        // rather than `MATCH`.
+        const ADDC_WORD: fn(u8, u8, u8) -> u32 = |rd, rs1, rs2| {
+            super::r_type_word(
+                u32::from(CUSTOM_OPCODE),
+                u32::from(FUNCT3_VIRTUAL_R),
+                FUNCT7_ADDC,
+                rd,
+                rs1,
+                rs2,
+            )
+        };
+        const MULC_WORD: fn(u8, u8, u8) -> u32 = |rd, rs1, rs2| {
+            super::r_type_word(
+                u32::from(CUSTOM_OPCODE),
+                u32::from(FUNCT3_VIRTUAL_R),
+                FUNCT7_MULC,
+                rd,
+                rs1,
+                rs2,
+            )
+        };
 
         fn trace_one(cpu: &mut Cpu, word: u32) -> Cycle {
             let instruction = Instruction::decode(word, 0x8000_0000, false).unwrap();
@@ -2178,7 +2220,7 @@ mod tests {
             assert_eq!(cpu.carry, 1);
 
             // XOR is not carry-producing: clobbers carry to 0.
-            trace_one(&mut cpu, super::r_type_word(0x33, 0b100, 0x00, 12, 5, 6));
+            trace_one(&mut cpu, super::r_word_from_match(XOR::MATCH, 12, 5, 6));
             assert_eq!(cpu.carry, 0);
 
             // ADDC after the clobber consumes 0.
@@ -2196,6 +2238,38 @@ mod tests {
             assert_eq!(cycle.carry(), 0);
             assert_eq!(cpu.x[10], 7);
             assert_eq!(cpu.carry, 0);
+        }
+
+        #[test]
+        fn expanding_non_producers_clobber_carry_to_zero() {
+            // MULH and SLL lower to virtual sequences whose interiors use
+            // ADD/MUL; at the guest level they are still non-producers, so
+            // their expansions must leave carry = 0 (the expansion boundary
+            // appends a non-producing noop row when needed).
+            for word in [
+                super::r_word_from_match(MULH::MATCH, 12, 5, 6),
+                super::r_word_from_match(SLL::MATCH, 12, 5, 6),
+            ] {
+                let mut cpu = fresh_cpu();
+                cpu.write_register(5, u64::MAX as i64);
+                cpu.write_register(6, 2);
+                cpu.write_register(7, 1);
+
+                // Seed a nonzero carry: u64::MAX * 2 has carry-out 1.
+                trace_one(&mut cpu, MUL_WORD(10, 5, 6));
+                assert_eq!(cpu.carry, 1);
+
+                let instruction = Instruction::decode(word, 0x8000_0000, false).unwrap();
+                let mut rows = Vec::new();
+                instruction.trace(&mut cpu, Some(&mut rows));
+                assert!(rows.len() > 1, "expected a virtual expansion");
+                assert_eq!(cpu.carry, 0, "expansion leaked a nonzero carry");
+
+                // A following ADDC consumes 0, not expansion-internal state.
+                let cycle = trace_one(&mut cpu, ADDC_WORD(11, 5, 7));
+                assert_eq!(cycle.carry(), 0);
+                assert_eq!(cpu.x[11] as u64, u64::MAX.wrapping_add(1));
+            }
         }
 
         #[test]

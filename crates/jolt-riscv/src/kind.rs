@@ -632,7 +632,10 @@ macro_rules! source_side_effects_for_marker {
         true
     };
     (Add) => {
-        false
+        // Feature-on, the carry-out is observable state: rd=x0 ADD must stay
+        // a real row (like AddC/MulC) rather than be noop-rewritten, which
+        // would clobber the carry it produces.
+        cfg!(feature = "implicit-carry")
     };
     (Addi) => {
         false
@@ -674,7 +677,8 @@ macro_rules! source_side_effects_for_marker {
         false
     };
     (Mul) => {
-        false
+        // See the Add arm: carry-out makes rd=x0 MUL observable feature-on.
+        cfg!(feature = "implicit-carry")
     };
     (MulH) => {
         false
@@ -1211,7 +1215,10 @@ macro_rules! jolt_side_effects_for_marker {
         true
     };
     (Add) => {
-        false
+        // Feature-on, the carry-out is observable state: rd=x0 ADD must stay
+        // a real row (like AddC/MulC) rather than be noop-rewritten, which
+        // would clobber the carry it produces.
+        cfg!(feature = "implicit-carry")
     };
     (Addi) => {
         false
@@ -1232,7 +1239,8 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (Mul) => {
-        false
+        // See the Add arm: carry-out makes rd=x0 MUL observable feature-on.
+        cfg!(feature = "implicit-carry")
     };
     (MulHU) => {
         false

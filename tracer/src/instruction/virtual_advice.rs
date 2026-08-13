@@ -60,10 +60,6 @@ impl RISCVInstruction for VirtualAdvice {
 
     fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
         cpu.write_register(self.operands.rd as usize, self.advice as i64);
-        #[cfg(feature = "implicit-carry")]
-        {
-            cpu.carry = 0;
-        }
     }
 }
 

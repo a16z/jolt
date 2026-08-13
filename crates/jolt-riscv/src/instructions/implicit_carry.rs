@@ -4,7 +4,7 @@
 //! `Carry` column) and, like `ADD` and `MUL`, export the high 64 bits of the
 //! true arithmetic result as the next row's carry. The carry is
 //! non-architectural: it is not part of the memory-checked register file.
-//! See `specs/implicit-carry-handling.md`.
+//! See the implicit-carry spec in <https://github.com/a16z/jolt/issues/1710>.
 
 use crate::jolt_instruction;
 
