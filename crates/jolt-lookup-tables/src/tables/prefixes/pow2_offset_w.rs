@@ -14,7 +14,10 @@ impl<F: Field> SparseDensePrefix<F> for Pow2OffsetWPrefix {
     }
 
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
-        // Bit 2 of the raw index stays in the suffix until the final phase.
+        // Bit 2 of the raw index stays in the suffix until the final phase;
+        // this pairing with the suffix's `b.len() < 3` guard assumes phase
+        // boundaries never fall inside the low three index bits.
+        debug_assert!(suffix_len == 0 || suffix_len >= 3);
         if suffix_len != 0 {
             return F::one();
         }

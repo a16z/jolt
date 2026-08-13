@@ -45,11 +45,14 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskWTable<XLE
     }
 
     fn suffixes(&self) -> &'static [Suffixes] {
+        // The Pow2OffsetW prefix/suffix pair hardcodes the 32-bit lane width.
+        debug_assert_eq!(XLEN, 64);
         &[Suffixes::Pow2OffsetW]
     }
 
     #[expect(clippy::unwrap_used)]
     fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2_offset_w] = suffixes.try_into().unwrap();
         F::from_u128((1u128 << (XLEN / 2)) - 1) * prefixes[Prefixes::Pow2OffsetW] * pow2_offset_w
