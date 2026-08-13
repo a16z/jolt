@@ -14,16 +14,16 @@ pub enum ShiftDataPrefix<const EIGHTHS: usize> {}
 
 impl<const EIGHTHS: usize> ShiftDataPrefix<EIGHTHS> {
     const LANE_BITS: usize = EIGHTHS * (XLEN / 8);
+    // `8 − EIGHTHS` clears the low log2(EIGHTHS) offset bits only because
+    // EIGHTHS ∈ {1, 2, 4} is a power of two.
     const OFFSET_MASK: u64 = (8 - EIGHTHS) as u64;
 
-    fn variant() -> Prefixes {
-        match EIGHTHS {
-            1 => Prefixes::ShiftDataB,
-            2 => Prefixes::ShiftDataH,
-            4 => Prefixes::ShiftDataW,
-            _ => unreachable!(),
-        }
-    }
+    const VARIANT: Prefixes = match EIGHTHS {
+        1 => Prefixes::ShiftDataB,
+        2 => Prefixes::ShiftDataH,
+        4 => Prefixes::ShiftDataW,
+        _ => panic!("unsupported EIGHTHS"),
+    };
 }
 
 impl<F: Field, const EIGHTHS: usize> SparseDensePrefix<F> for ShiftDataPrefix<EIGHTHS> {
@@ -32,6 +32,10 @@ impl<F: Field, const EIGHTHS: usize> SparseDensePrefix<F> for ShiftDataPrefix<EI
     }
 
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
+        // The offset bits of y (interleaved index bits 0/2/4) stay in the
+        // suffix until the final phase, and `x_lo` below assumes even phase
+        // cuts; both pair with the OffsetScale suffix's `b.len() < 6` guard.
+        debug_assert!(suffix_len == 0 || suffix_len >= 6);
         let (xb, yb) = b.uninterleave();
         let (x_val, y_val) = (u64::from(xb), u64::from(yb));
         // b covers index bits [suffix_len, suffix_len + b.len()); its x part
@@ -43,7 +47,7 @@ impl<F: Field, const EIGHTHS: usize> SparseDensePrefix<F> for ShiftDataPrefix<EI
                 lane += F::from_u64(1u64 << k);
             }
         }
-        let value = checkpoints[Self::variant()] + lane;
+        let value = checkpoints[Self::VARIANT] + lane;
         if suffix_len == 0 {
             let offset = y_val & Self::OFFSET_MASK;
             value * F::from_u64(1u64 << ((XLEN / 8) as u64 * offset))

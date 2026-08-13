@@ -10,6 +10,10 @@ impl<const XLEN: usize, const EIGHTHS: usize> SparseDenseSuffix
     for OffsetScaleSuffix<XLEN, EIGHTHS>
 {
     fn suffix_mle(b: LookupBits) -> u64 {
+        // WARNING: assumes suffix windows are empty or at least 6 bits (the
+        // offset bits of y sit at interleaved index bits 0/2/4); the
+        // ShiftData and OffsetScale prefixes assert the matching phase-cut
+        // invariant.
         if b.len() < 6 {
             return 1;
         }
