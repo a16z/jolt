@@ -54,11 +54,15 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ShiftDataHTable<XLEN
     }
 
     fn suffixes(&self) -> &'static [Suffixes] {
+        // The ShiftData/OffsetScale prefix-suffix pairs hardcode the crate
+        // XLEN.
+        debug_assert_eq!(XLEN, 64);
         &[Suffixes::OffsetScaleH, Suffixes::ShiftDataH]
     }
 
     #[expect(clippy::unwrap_used)]
     fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+        debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [offset_scale, shift_data] = suffixes.try_into().unwrap();
         prefixes[Prefixes::ShiftDataH] * offset_scale
