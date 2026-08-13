@@ -721,7 +721,7 @@ impl<F: JoltField> RegistersReadWriteCheckingProver<F> {
         skip_all,
         name = "RegistersReadWriteCheckingProver::compute_rs2_ra_claim"
     )]
-    fn compute_rs2_ra_claim(
+    pub fn compute_rs2_ra_claim(
         trace: &[Cycle],
         r_address: &[F::Challenge],
         r_cycle: &[F::Challenge],

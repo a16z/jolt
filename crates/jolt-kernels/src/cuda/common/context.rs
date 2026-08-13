@@ -49,6 +49,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/read_write_matrix.cu"),
     "\n",
+    include_str!("../kernels/rs2_claim.cu"),
+    "\n",
     include_str!("../kernels/address_phase.cu"),
     "\n",
     include_str!("../kernels/cycle_rounds.cu"),
@@ -117,6 +119,7 @@ pub struct CudaKernelContext {
     rwm_count: CudaFunction,
     rwm_merge: CudaFunction,
     rwm_message: CudaFunction,
+    rs2_claim: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -193,6 +196,7 @@ impl CudaKernelContext {
             rwm_count: module.load_function("rwm_count_kernel")?,
             rwm_merge: module.load_function("rwm_merge_kernel")?,
             rwm_message: module.load_function("rwm_message_kernel")?,
+            rs2_claim: module.load_function("rs2_claim_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -457,6 +461,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn rwm_message(&self) -> &CudaFunction {
         &self.rwm_message
+    }
+
+    pub(crate) const fn rs2_claim(&self) -> &CudaFunction {
+        &self.rs2_claim
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {

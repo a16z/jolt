@@ -8,6 +8,7 @@ mod common;
 mod instruction_read_raf;
 mod ram_ra_claim_reduction;
 mod ram_val_check;
+mod registers_read_write;
 mod registers_val_evaluation;
 
 pub use common::context::{shared_context, CudaKernelContext};
