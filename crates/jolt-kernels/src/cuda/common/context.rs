@@ -116,6 +116,7 @@ pub struct CudaKernelContext {
     rwm_segment_bounds: CudaFunction,
     rwm_count: CudaFunction,
     rwm_merge: CudaFunction,
+    rwm_message: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -191,6 +192,7 @@ impl CudaKernelContext {
             rwm_segment_bounds: module.load_function("rwm_segment_bounds_kernel")?,
             rwm_count: module.load_function("rwm_count_kernel")?,
             rwm_merge: module.load_function("rwm_merge_kernel")?,
+            rwm_message: module.load_function("rwm_message_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -451,6 +453,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn rwm_merge(&self) -> &CudaFunction {
         &self.rwm_merge
+    }
+
+    pub(crate) const fn rwm_message(&self) -> &CudaFunction {
+        &self.rwm_message
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {

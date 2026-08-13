@@ -232,7 +232,7 @@ impl DeviceDenseProduct {
             .collect()
     }
 
-    fn reduce_lanes(
+    pub(crate) fn reduce_lanes(
         context: &CudaKernelContext,
         mut partials: DeviceFrVec,
         lanes: u32,
