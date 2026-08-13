@@ -974,6 +974,15 @@ mod muldiv {
         // stage (its RAM kernels replace the naive grid materialization).
         assert_backend_matches_legacy(&JoltBackend::optimized());
 
+        // Invariant 8: reorder/defer via the rounds slot still matches legacy.
+        let mut chaos_backend = JoltBackend::reference();
+        chaos_backend.round_scheduler = Box::new(chaos_traversal::ChaosTraversal);
+        assert_backend_matches_legacy(&chaos_backend);
+        assert!(
+            chaos_traversal::rounds_driven() > 0,
+            "the rounds slot never reached prove_batch, so invariance was not exercised",
+        );
+
         // The full-proof ratchet: the top-level prove() runs the same stage
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.
@@ -990,6 +999,74 @@ mod muldiv {
                 .expect("top-level prove");
             assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+        }
+
+        let chaos_proof =
+            jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &chaos_backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove under chaos traversal");
+        assert_eq!(
+            chaos_proof, legacy_proof,
+            "assembled proof diverged under a reordering traversal"
+        );
+        assert!(
+            chaos_traversal::rounds_driven() > 0,
+            "the rounds slot never reached prove_batch, so invariance was not exercised",
+        );
+    }
+
+    mod chaos_traversal {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use jolt_field::Fr;
+        use jolt_kernels::{BuildRoundScheduler, ProofSession};
+        use jolt_sumcheck::{MemberFinish, MemberRound, RoundScheduler, SumcheckError};
+
+        // Without this counter the ratchet passes vacuously via SequentialRounds.
+        static ROUNDS_DRIVEN: AtomicUsize = AtomicUsize::new(0);
+
+        pub fn rounds_driven() -> usize {
+            ROUNDS_DRIVEN.swap(0, Ordering::Relaxed)
+        }
+
+        struct ChaosRounds;
+
+        impl RoundScheduler<Fr> for ChaosRounds {
+            fn batch_prove_round(
+                &mut self,
+                work: &mut [MemberRound<'_, Fr>],
+            ) -> Result<(), SumcheckError<Fr>> {
+                let _ = ROUNDS_DRIVEN.fetch_add(1, Ordering::Relaxed);
+                work.reverse();
+                for item in work.iter_mut() {
+                    item.run()?;
+                }
+                Ok(())
+            }
+
+            fn batch_finish_rounds(
+                &mut self,
+                finishes: &mut [MemberFinish<'_, Fr>],
+            ) -> Result<(), SumcheckError<Fr>> {
+                for item in finishes.iter_mut().rev() {
+                    item.run()?;
+                }
+                Ok(())
+            }
+        }
+
+        pub struct ChaosTraversal;
+
+        impl BuildRoundScheduler<Fr> for ChaosTraversal {
+            fn build(&self, _session: &mut ProofSession) -> Box<dyn RoundScheduler<Fr>> {
+                Box::new(ChaosRounds)
+            }
         }
     }
 }
