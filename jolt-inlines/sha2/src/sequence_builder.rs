@@ -27,7 +27,7 @@ pub const K: [u64; 64] = [
 
 /// Builds assembly sequence for SHA256 compression
 /// Expects A..H to be in RAM at location rs1..rs1+8 (also where output is written)
-/// Expects input words to be in RAM at location rs2..rs2+16
+/// Expects a big-endian input block in RAM at location rs2..rs2+64
 /// Output will be written to rs1..rs1+8
 struct Sha256SequenceBuilder {
     asm: InlineExpansionBuilder,
@@ -43,8 +43,6 @@ struct Sha256SequenceBuilder {
     operands: InlineOperands,
     /// Whether this is the initial compression (use BLOCK constants)
     initial: bool,
-    /// Whether message words are stored as big-endian bytes in memory.
-    big_endian_input: bool,
 }
 
 impl Sha256SequenceBuilder {
@@ -52,7 +50,6 @@ impl Sha256SequenceBuilder {
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
         initial: bool,
-        big_endian_input: bool,
     ) -> Result<Self, ExpansionError> {
         let state = asm.allocate_inline_array::<8>()?;
         let message = asm.allocate_inline_array::<16>()?;
@@ -70,7 +67,6 @@ impl Sha256SequenceBuilder {
             iv,
             operands,
             initial,
-            big_endian_input,
         })
     }
 
@@ -92,17 +88,12 @@ impl Sha256SequenceBuilder {
         for i in 0..8 {
             let lo = *self.message[i * 2];
             let hi = *self.message[i * 2 + 1];
-            if self.big_endian_input {
-                self.asm
-                    .emit_ld::<LD>(lo, self.operands.rs2, (i as i64) * 8);
-                // VirtualRev8W is FormatT (rd, rs1, no rs2): emit an I-shaped row so the
-                // bytecode operands (rs2 = None, imm = 0) match the tracer's format.
-                self.asm.emit_i::<VirtualRev8W>(lo, lo, 0);
-                self.asm.emit_i::<SRLI>(hi, lo, 32);
-            } else {
-                self.asm
-                    .load_paired_u32_dirty(self.operands.rs2, (i as i64) * 8, lo, hi);
-            }
+            self.asm
+                .emit_ld::<LD>(lo, self.operands.rs2, (i as i64) * 8);
+            // VirtualRev8W is FormatT (rd, rs1, no rs2): emit an I-shaped row so the
+            // bytecode operands (rs2 = None, imm = 0) match the tracer's format.
+            self.asm.emit_i::<VirtualRev8W>(lo, lo, 0);
+            self.asm.emit_i::<SRLI>(hi, lo, 32);
         }
         // Run 64 rounds
         for _ in 0..64 {
@@ -352,7 +343,7 @@ impl InlineOp for Sha256Compression {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Sha256SequenceBuilder::new(asm, operands, false, false)?.build()
+        Sha256SequenceBuilder::new(asm, operands, false)?.build()
     }
 }
 
@@ -370,42 +361,6 @@ impl InlineOp for Sha256CompressionInitial {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Sha256SequenceBuilder::new(asm, operands, true, false)?.build()
-    }
-}
-
-pub struct Sha256CompressionBigEndian;
-
-impl InlineOp for Sha256CompressionBigEndian {
-    type Advice = NoAdvice;
-
-    const OPCODE: u32 = crate::INLINE_OPCODE;
-    const FUNCT3: u32 = crate::SHA256_BE_FUNCT3;
-    const FUNCT7: u32 = crate::SHA256_BE_FUNCT7;
-    const NAME: &'static str = crate::SHA256_BE_NAME;
-
-    fn build_sequence(
-        asm: InlineExpansionBuilder,
-        operands: InlineOperands,
-    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Sha256SequenceBuilder::new(asm, operands, false, true)?.build()
-    }
-}
-
-pub struct Sha256CompressionInitialBigEndian;
-
-impl InlineOp for Sha256CompressionInitialBigEndian {
-    type Advice = NoAdvice;
-
-    const OPCODE: u32 = crate::INLINE_OPCODE;
-    const FUNCT3: u32 = crate::SHA256_INIT_BE_FUNCT3;
-    const FUNCT7: u32 = crate::SHA256_INIT_BE_FUNCT7;
-    const NAME: &'static str = crate::SHA256_INIT_BE_NAME;
-
-    fn build_sequence(
-        asm: InlineExpansionBuilder,
-        operands: InlineOperands,
-    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Sha256SequenceBuilder::new(asm, operands, true, true)?.build()
+        Sha256SequenceBuilder::new(asm, operands, true)?.build()
     }
 }

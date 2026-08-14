@@ -2,14 +2,8 @@ use jolt_inlines_sdk::{InlineReference, InlineSpec};
 use rand::RngCore;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
-use crate::exec::{
-    execute_sha256_compression, execute_sha256_compression_big_endian,
-    execute_sha256_compression_initial, execute_sha256_compression_initial_big_endian,
-};
-use crate::sequence_builder::{
-    Sha256Compression, Sha256CompressionBigEndian, Sha256CompressionInitial,
-    Sha256CompressionInitialBigEndian,
-};
+use crate::exec::{execute_sha256_compression, execute_sha256_compression_initial};
+use crate::sequence_builder::{Sha256Compression, Sha256CompressionInitial};
 use crate::test_constants::{Sha256Block, Sha256State, TestVectors};
 
 impl InlineReference for Sha256Compression {
@@ -40,7 +34,7 @@ impl InlineSpec for Sha256Compression {
     }
 
     fn load(harness: &mut InlineTestHarness, (state, block): &Self::Input) {
-        harness.load_input32(block);
+        harness.load_input32(&block.map(u32::to_be));
         harness.load_state32(state);
     }
 
@@ -59,76 +53,6 @@ impl InlineReference for Sha256CompressionInitial {
 }
 
 impl InlineSpec for Sha256CompressionInitial {
-    fn edge_cases() -> impl IntoIterator<Item = Self::Input> {
-        TestVectors::get_standard_test_vectors()
-            .into_iter()
-            .map(|(_, block, _, _)| block)
-    }
-
-    fn random(rng: &mut impl RngCore) -> Self::Input {
-        core::array::from_fn(|_| rng.next_u32())
-    }
-
-    fn harness() -> InlineTestHarness {
-        InlineTestHarness::new(InlineMemoryLayout::single_input(64, 32))
-    }
-
-    fn load(harness: &mut InlineTestHarness, block: &Self::Input) {
-        harness.load_input32(block);
-    }
-
-    fn read(harness: &mut InlineTestHarness) -> Self::Output {
-        harness.read_output32(8).try_into().unwrap()
-    }
-}
-
-impl InlineReference for Sha256CompressionBigEndian {
-    type Input = (Sha256State, Sha256Block);
-    type Output = Sha256State;
-
-    fn reference((state, block): &Self::Input) -> Self::Output {
-        execute_sha256_compression_big_endian(*state, block.map(u32::to_be))
-    }
-}
-
-impl InlineSpec for Sha256CompressionBigEndian {
-    fn edge_cases() -> impl IntoIterator<Item = Self::Input> {
-        TestVectors::get_standard_test_vectors()
-            .into_iter()
-            .map(|(_, block, state, _)| (state, block))
-    }
-
-    fn random(rng: &mut impl RngCore) -> Self::Input {
-        (
-            core::array::from_fn(|_| rng.next_u32()),
-            core::array::from_fn(|_| rng.next_u32()),
-        )
-    }
-
-    fn harness() -> InlineTestHarness {
-        InlineTestHarness::new(InlineMemoryLayout::single_input(64, 32))
-    }
-
-    fn load(harness: &mut InlineTestHarness, (state, block): &Self::Input) {
-        harness.load_input32(&block.map(u32::to_be));
-        harness.load_state32(state);
-    }
-
-    fn read(harness: &mut InlineTestHarness) -> Self::Output {
-        harness.read_output32(8).try_into().unwrap()
-    }
-}
-
-impl InlineReference for Sha256CompressionInitialBigEndian {
-    type Input = Sha256Block;
-    type Output = Sha256State;
-
-    fn reference(block: &Self::Input) -> Self::Output {
-        execute_sha256_compression_initial_big_endian(block.map(u32::to_be))
-    }
-}
-
-impl InlineSpec for Sha256CompressionInitialBigEndian {
     fn edge_cases() -> impl IntoIterator<Item = Self::Input> {
         TestVectors::get_standard_test_vectors()
             .into_iter()

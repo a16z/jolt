@@ -66,14 +66,3 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
 pub fn execute_sha256_compression_initial(input: [u32; 16]) -> [u32; 8] {
     execute_sha256_compression(BLOCK.map(|x| x as u32), input)
 }
-
-pub fn execute_sha256_compression_big_endian(
-    initial_state: [u32; 8],
-    input: [u32; 16],
-) -> [u32; 8] {
-    execute_sha256_compression(initial_state, input.map(u32::from_be))
-}
-
-pub fn execute_sha256_compression_initial_big_endian(input: [u32; 16]) -> [u32; 8] {
-    execute_sha256_compression_initial(input.map(u32::from_be))
-}

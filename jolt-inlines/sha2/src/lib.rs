@@ -16,14 +16,6 @@ pub const SHA256_INIT_FUNCT3: u32 = 0x01;
 pub const SHA256_INIT_FUNCT7: u32 = 0x00;
 pub const SHA256_INIT_NAME: &str = "SHA256_INIT_INLINE";
 
-pub const SHA256_BE_FUNCT3: u32 = 0x02;
-pub const SHA256_BE_FUNCT7: u32 = 0x00;
-pub const SHA256_BE_NAME: &str = "SHA256_BE_INLINE";
-
-pub const SHA256_INIT_BE_FUNCT3: u32 = 0x03;
-pub const SHA256_INIT_BE_FUNCT7: u32 = 0x00;
-pub const SHA256_INIT_BE_NAME: &str = "SHA256_INIT_BE_INLINE";
-
 pub mod sdk;
 pub use sdk::*;
 

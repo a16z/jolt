@@ -197,7 +197,7 @@ impl Sha256 {
             self.buffer[15].write((bit_len as u32).to_be());
 
             unsafe {
-                sha256_compression_big_endian(
+                sha256_compression(
                     self.buffer.as_ptr() as *const u32,
                     self.state.as_mut_ptr() as *mut u32,
                 );
@@ -242,13 +242,13 @@ impl Sha256 {
     #[inline(always)]
     unsafe fn sha256_compress(&mut self) {
         if self.initial {
-            sha256_compression_initial_big_endian(
+            sha256_compression_initial(
                 self.buffer.as_ptr() as *const u32,
                 self.state.as_mut_ptr() as *mut u32,
             );
             self.initial = false;
         } else {
-            sha256_compression_big_endian(
+            sha256_compression(
                 self.buffer.as_ptr() as *const u32,
                 self.state.as_mut_ptr() as *mut u32,
             );
@@ -266,7 +266,7 @@ impl Default for Sha256 {
 /// Calls the SHA256 compression custom instruction
 ///
 /// # Arguments
-/// * `input` - Pointer to 16 u32 words (64 bytes) of input data
+/// * `input` - Pointer to a 64-byte block in big-endian byte order
 /// * `state` - Pointer to 8 u32 words (32 bytes) of initial state - will be overwritten by result
 ///
 /// # Safety
@@ -278,7 +278,7 @@ impl Default for Sha256 {
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
-pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
+pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     use crate::{INLINE_OPCODE, SHA256_FUNCT3, SHA256_FUNCT7};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
@@ -293,7 +293,7 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// Calls the SHA256 compression custom instruction
 ///
 /// # Arguments
-/// * `input` - Pointer to 16 u32 words (64 bytes) of input data
+/// * `input` - Pointer to a 64-byte block in big-endian byte order
 /// * `state` - Pointer to 8 u32 words (32 bytes) of initial state - will be overwritten by result
 ///
 /// # Safety
@@ -302,10 +302,10 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// - Both pointers must be 8-byte aligned (required for doubleword loads on 64-bit targets)
 /// - The memory regions must not overlap
 #[cfg(feature = "host")]
-pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
+pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     use crate::exec;
 
-    let input_array = *(input as *const [u32; 16]);
+    let input_array = (*(input as *const [u32; 16])).map(u32::from_be);
     let state_array = *(state as *const [u32; 8]);
     let result = exec::execute_sha256_compression(state_array, input_array);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
@@ -315,50 +315,14 @@ pub unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     not(feature = "host"),
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
-pub unsafe fn sha256_compression(_input: *const u32, _state: *mut u32) {
+pub(crate) unsafe fn sha256_compression(_input: *const u32, _state: *mut u32) {
     panic!("sha256_compression requires RISC-V target or host feature");
-}
-
-/// Compresses a block stored as big-endian bytes.
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
-pub(crate) unsafe fn sha256_compression_big_endian(input: *const u32, state: *mut u32) {
-    use crate::{INLINE_OPCODE, SHA256_BE_FUNCT3, SHA256_BE_FUNCT7};
-    core::arch::asm!(
-        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
-        opcode = const INLINE_OPCODE,
-        funct3 = const SHA256_BE_FUNCT3,
-        funct7 = const SHA256_BE_FUNCT7,
-        rs1 = in(reg) state,
-        rs2 = in(reg) input,
-        options(nostack)
-    );
-}
-
-#[cfg(feature = "host")]
-pub(crate) unsafe fn sha256_compression_big_endian(input: *const u32, state: *mut u32) {
-    use crate::exec;
-
-    let input_array = *(input as *const [u32; 16]);
-    let state_array = *(state as *const [u32; 8]);
-    let result = exec::execute_sha256_compression_big_endian(state_array, input_array);
-    std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
-}
-
-#[cfg(all(
-    not(feature = "host"),
-    not(any(target_arch = "riscv32", target_arch = "riscv64"))
-))]
-pub(crate) unsafe fn sha256_compression_big_endian(_input: *const u32, _state: *mut u32) {
-    panic!("sha256_compression_big_endian requires RISC-V target or host feature");
 }
 
 /// Calls the SHA256 compression custom instruction with initial block
 ///
 /// # Arguments
-/// * `input` - Pointer to 16 u32 words (64 bytes) of input data
+/// * `input` - Pointer to a 64-byte block in big-endian byte order
 /// * `state` - Pointer to 8 u32 words (32 bytes) - result will be written here
 ///
 /// Uses the SHA256 initial state constants internally
@@ -372,7 +336,7 @@ pub(crate) unsafe fn sha256_compression_big_endian(_input: *const u32, _state: *
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
-pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
+pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     use crate::{INLINE_OPCODE, SHA256_INIT_FUNCT3, SHA256_INIT_FUNCT7};
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
@@ -388,7 +352,7 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
 /// Calls the SHA256 compression custom instruction with initial block
 ///
 /// # Arguments
-/// * `input` - Pointer to 16 u32 words (64 bytes) of input data
+/// * `input` - Pointer to a 64-byte block in big-endian byte order
 /// * `state` - Pointer to 8 u32 words (32 bytes) - result will be written here
 ///
 /// Uses the SHA256 initial state constants internally
@@ -399,10 +363,10 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
 /// - Both pointers must be 8-byte aligned (required for doubleword loads on 64-bit targets)
 /// - The memory regions must not overlap
 #[cfg(feature = "host")]
-pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
+pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     use crate::exec;
 
-    let input = *(input as *const [u32; 16]);
+    let input = (*(input as *const [u32; 16])).map(u32::from_be);
     let result = exec::execute_sha256_compression_initial(input);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
@@ -411,43 +375,8 @@ pub unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     not(feature = "host"),
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
-pub unsafe fn sha256_compression_initial(_input: *const u32, _state: *mut u32) {
+pub(crate) unsafe fn sha256_compression_initial(_input: *const u32, _state: *mut u32) {
     panic!("sha256_compression_initial requires RISC-V target or host feature");
-}
-
-/// Compresses an initial block stored as big-endian bytes.
-#[cfg(all(
-    not(feature = "host"),
-    any(target_arch = "riscv32", target_arch = "riscv64")
-))]
-pub(crate) unsafe fn sha256_compression_initial_big_endian(input: *const u32, state: *mut u32) {
-    use crate::{INLINE_OPCODE, SHA256_INIT_BE_FUNCT3, SHA256_INIT_BE_FUNCT7};
-    core::arch::asm!(
-        ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
-        opcode = const INLINE_OPCODE,
-        funct3 = const SHA256_INIT_BE_FUNCT3,
-        funct7 = const SHA256_INIT_BE_FUNCT7,
-        rs1 = in(reg) state,
-        rs2 = in(reg) input,
-        options(nostack)
-    );
-}
-
-#[cfg(feature = "host")]
-pub(crate) unsafe fn sha256_compression_initial_big_endian(input: *const u32, state: *mut u32) {
-    use crate::exec;
-
-    let input = *(input as *const [u32; 16]);
-    let result = exec::execute_sha256_compression_initial_big_endian(input);
-    std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
-}
-
-#[cfg(all(
-    not(feature = "host"),
-    not(any(target_arch = "riscv32", target_arch = "riscv64"))
-))]
-pub(crate) unsafe fn sha256_compression_initial_big_endian(_input: *const u32, _state: *mut u32) {
-    panic!("sha256_compression_initial_big_endian requires RISC-V target or host feature");
 }
 
 /// Swap bytes of a u32 - uses virtual instruction on RISC-V, fallback on host

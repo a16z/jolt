@@ -1,8 +1,5 @@
 mod exec_functions {
-    use crate::exec::{
-        execute_sha256_compression, execute_sha256_compression_big_endian,
-        execute_sha256_compression_initial,
-    };
+    use crate::exec::{execute_sha256_compression, execute_sha256_compression_initial};
     use crate::sequence_builder::BLOCK;
     use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -99,14 +96,6 @@ mod exec_functions {
                 u32::from_be_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap())
             });
             assert_eq!(execute_sha256_compression(state, words), expected);
-
-            let raw_words = core::array::from_fn(|i| {
-                u32::from_ne_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap())
-            });
-            assert_eq!(
-                execute_sha256_compression_big_endian(state, raw_words),
-                expected
-            );
         }
     }
 }
@@ -114,10 +103,7 @@ mod exec_functions {
 mod sequence_tests {
     use std::collections::BTreeMap;
 
-    use crate::sequence_builder::{
-        Sha256Compression, Sha256CompressionBigEndian, Sha256CompressionInitial,
-        Sha256CompressionInitialBigEndian,
-    };
+    use crate::sequence_builder::{Sha256Compression, Sha256CompressionInitial};
     use jolt_inlines_sdk::host::InlineOp;
     use jolt_inlines_sdk::{
         assert_edge_cases_match_reference, assert_random_cases_match_reference,
@@ -159,42 +145,17 @@ mod sequence_tests {
     }
 
     #[test]
-    fn test_sha256_big_endian_direct_execution() {
-        assert_edge_cases_match_reference::<Sha256CompressionBigEndian>();
-    }
-
-    #[test]
-    fn test_sha256init_big_endian_direct_execution() {
-        assert_edge_cases_match_reference::<Sha256CompressionInitialBigEndian>();
-    }
-
-    #[test]
-    fn test_sha256_big_endian_random_direct_execution() {
-        assert_random_cases_match_reference::<Sha256CompressionBigEndian>(0xBE256, 100);
-    }
-
-    #[test]
-    fn test_sha256init_big_endian_random_direct_execution() {
-        assert_random_cases_match_reference::<Sha256CompressionInitialBigEndian>(0x1BE256, 100);
-    }
-
-    #[test]
     fn sha2_row_count_ratchet() {
         // Custom IV: ADD 536 + ADDI 100 + AND 192 + ANDI 96 + ANDN 64 + LD 12 + OR 4
         // + SD 4 + VirtualMULI 4 + VirtualROTRIW 624 + VirtualSRLI 12
-        // + VirtualXORROTW7 48 + VirtualZeroExtendWord 4 + XOR 592 = 2,292.
+        // + VirtualRev8W 8 + VirtualXORROTW7 48 + VirtualZeroExtendWord 4 + XOR 592 = 2,300.
         let (custom, _) = inline_histogram::<Sha256Compression>();
-        assert_eq!(custom, 2_292);
+        assert_eq!(custom, 2_300);
         // Fixed IV: ADD 516 + ADDI 105 + AND 185 + ANDI 101 + ANDN 61 + LD 8 + OR 4
         // + SD 4 + VirtualMULI 4 + VirtualROTRIW 618 + VirtualSRLI 8
-        // + VirtualXORROTW7 48 + VirtualZeroExtendWord 4 + XOR 582 + XORI 4 = 2,252.
-        assert_eq!(inline_histogram::<Sha256CompressionInitial>().0, 2_252);
-        // Big-endian ingest adds eight VirtualRev8W rows to either entry.
-        assert_eq!(inline_histogram::<Sha256CompressionBigEndian>().0, 2_300);
-        assert_eq!(
-            inline_histogram::<Sha256CompressionInitialBigEndian>().0,
-            2_260
-        );
+        // + VirtualRev8W 8 + VirtualXORROTW7 48 + VirtualZeroExtendWord 4 + XOR 582
+        // + XORI 4 = 2,260.
+        assert_eq!(inline_histogram::<Sha256CompressionInitial>().0, 2_260);
     }
 }
 

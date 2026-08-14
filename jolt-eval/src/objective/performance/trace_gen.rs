@@ -188,6 +188,6 @@ mod tests {
             eprintln!("{mnemonic}: {count}");
         }
 
-        assert_eq!(rows_per_digest, 2_635);
+        assert_eq!(rows_per_digest, 2_643);
     }
 }
