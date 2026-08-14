@@ -8,6 +8,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::backend::MetalBackend;
+use super::solinas::registers_claim_reduction::{
+    RegistersClaimAliasSnapshot, RegistersClaimDenseOutputs, RegistersClaimGeometry,
+    RegistersClaimKernelConfig, RegistersClaimPartialQHandoff, RegistersClaimResidentRdPlane,
+};
+use super::solinas::{
+    OuterRegistersClaimCarrier, OuterRegistersClaimCarrierJoinStats,
+    OuterRegistersClaimCarrierReceipt, OuterRegistersClaimCarrierSubmission,
+    PendingOuterRegistersClaimCarrier, SolinasMetal,
+};
+use crate::optimized::registers_claim_reduction::OptimizedRegistersClaimReduction;
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersClaimReductionPublic};
 use jolt_field::{AdditiveAccumulator, AkitaField, RingAccumulator, WithAccumulator};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
@@ -20,33 +34,11 @@ use jolt_verifier::stages::stage3::registers_claim_reduction::{
     RegistersClaimReduction, RegistersClaimReductionOutputClaims,
 };
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
-use super::backend::MetalBackend;
-use super::solinas::registers_claim_reduction::{
-    RegistersClaimAliasSnapshot, RegistersClaimDenseOutputs, RegistersClaimGeometry,
-    RegistersClaimKernelConfig, RegistersClaimPartialQHandoff, RegistersClaimResidentPlanes,
-    RegistersClaimResidentRdPlane,
-};
-use super::solinas::{
-    OuterRegistersClaimCarrier, OuterRegistersClaimCarrierJoinStats,
-    OuterRegistersClaimCarrierReceipt, OuterRegistersClaimCarrierSubmission,
-    PendingOuterRegistersClaimCarrier, SolinasMetal,
-};
-use crate::optimized::registers_claim_reduction::{
-    OptimizedRegistersClaimReduction, RegisterValuesRow,
-};
-use crate::optimized::support::collect_rows;
-use crate::{
-    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
-};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RegistersClaimReductionImplementation {
     #[default]
     Cpu,
-    DirectHybrid,
     OuterCarrierAliasHybrid,
 }
 
@@ -54,7 +46,6 @@ impl RegistersClaimReductionImplementation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Cpu => "cpu",
-            Self::DirectHybrid => "direct_hybrid",
             Self::OuterCarrierAliasHybrid => "outer_carrier_alias_hybrid",
         }
     }
@@ -239,7 +230,7 @@ impl MetalRegistersClaimStage1Carry {
     pub(super) fn from_outer(
         carrier: OuterRegistersClaimCarrier,
         source: MetalRegistersClaimOuterSource<'_>,
-    ) -> Result<Self, super::solinas::registers_claim_reduction::RegistersClaimLinearQError> {
+    ) -> Result<Self, super::solinas::registers_claim_reduction::RegistersClaimError> {
         let (receipt, components, rd_buffer) = carrier.into_parts();
         let geometry = RegistersClaimGeometry::new(source.rows)?;
         let identities = [
@@ -263,7 +254,7 @@ impl MetalRegistersClaimStage1Carry {
                 .any(|(index, identity)| identities[..index].contains(identity))
         {
             return Err(
-                super::solinas::registers_claim_reduction::RegistersClaimLinearQError::InvalidState(
+                super::solinas::registers_claim_reduction::RegistersClaimError::InvalidState(
                     "Outer registers-claim carrier provenance is inconsistent",
                 ),
             );
@@ -275,7 +266,7 @@ impl MetalRegistersClaimStage1Carry {
             components,
         )
         .map_err(|_| {
-            super::solinas::registers_claim_reduction::RegistersClaimLinearQError::InvalidState(
+            super::solinas::registers_claim_reduction::RegistersClaimError::InvalidState(
                 "Outer registers-claim component handoff is invalid",
             )
         })?;
@@ -562,45 +553,6 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
             RegistersClaimReductionImplementation::Cpu => {
                 unreachable!("CPU registers claim-reduction returns before Metal preparation")
             }
-            RegistersClaimReductionImplementation::DirectHybrid => {
-                let (resident, q) = match self.prepare_direct_hybrid(
-                    witness,
-                    cycles,
-                    tau,
-                    inputs.challenges.gamma,
-                    config,
-                ) {
-                    Ok(prepared) => prepared,
-                    Err(error) => {
-                        let _ = route_span.record("realized_route", "optimized_cpu");
-                        let _ = route_span.record("fallback_reason", "direct_prepare_failed");
-                        let _ = prepare_span.record("realized_route", "optimized_cpu");
-                        let _ = prepare_span.record("fallback_reason", "direct_prepare_failed");
-                        tracing::warn!(
-                            target: "jolt::metal",
-                            error = %error,
-                            "registers claim-reduction Metal preparation failed; using optimized CPU"
-                        );
-                        return OptimizedRegistersClaimReduction.prepare(session, witness, inputs);
-                    }
-                };
-                let _ = route_span.record("realized_route", "direct_hybrid");
-                let _ = route_span.record("fallback_reason", "none");
-                let _ = prepare_span.record("realized_route", "direct_hybrid");
-                let _ = prepare_span.record("fallback_reason", "none");
-                let _ = prepare_span.record("resident_bytes", resident.resident_bytes());
-                let _ = prepare_span.record("source_allocations", 3_u64);
-                let _ = prepare_span.record("source_upload_bytes", 0_u64);
-                let _ = prepare_span.record("source_host_write_bytes", resident.resident_bytes());
-                let (_, tau_lo) = tau.split_at(log_t / 2);
-                (
-                    RegistersClaimMidpointSource::Direct(resident),
-                    super::solinas::registers_claim_reduction::RegistersClaimPrefixTables {
-                        p: EqPolynomial::<AkitaField>::evals(tau_lo, None),
-                        q,
-                    },
-                )
-            }
             RegistersClaimReductionImplementation::OuterCarrierAliasHybrid => {
                 let carry = session.take::<MetalRegistersClaimStage1Carry>();
                 let pending = session.take::<MetalRegistersClaimAsyncStage1Carry>();
@@ -721,70 +673,6 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
     }
 }
 
-impl MetalBackend {
-    fn prepare_direct_hybrid(
-        &self,
-        witness: &dyn JoltWitnessPlane<AkitaField>,
-        cycles: usize,
-        tau: &[AkitaField],
-        gamma: AkitaField,
-        config: RegistersClaimReductionMetalConfig,
-    ) -> Result<
-        (RegistersClaimResidentPlanes, Vec<AkitaField>),
-        super::solinas::registers_claim_reduction::RegistersClaimLinearQError,
-    > {
-        let values: Vec<RegisterValuesRow> = collect_rows(witness, cycles).map_err(|_| {
-            super::solinas::registers_claim_reduction::RegistersClaimLinearQError::InvalidState(
-                "register witness extraction failed",
-            )
-        })?;
-        let resident = self
-            .context
-            .prepare_registers_claim_resident_planes_with_fill(
-                cycles,
-                |rd_write_value, rs1_value, rs2_value| {
-                    #[cfg(feature = "parallel")]
-                    rd_write_value
-                        .par_iter_mut()
-                        .zip(rs1_value.par_iter_mut())
-                        .zip(rs2_value.par_iter_mut())
-                        .zip(values.par_iter())
-                        .for_each(|(((rd, rs1), rs2), row)| {
-                            *rd = row.0[0];
-                            *rs1 = row.0[1];
-                            *rs2 = row.0[2];
-                        });
-                    #[cfg(not(feature = "parallel"))]
-                    for (((rd, rs1), rs2), row) in rd_write_value
-                        .iter_mut()
-                        .zip(rs1_value)
-                        .zip(rs2_value)
-                        .zip(&values)
-                    {
-                        *rd = row.0[0];
-                        *rs1 = row.0[1];
-                        *rs2 = row.0[2];
-                    }
-                },
-            )?;
-        let invocation = self.context.prepare_registers_claim_linear_q(
-            &resident,
-            tau,
-            gamma,
-            config.dispatch,
-        )?;
-        let observation = invocation.execute_timed()?;
-        tracing::info!(
-            target: "jolt::metal",
-            gpu_active_ns = duration_nanos(observation.gpu_active),
-            resident_wall_ns = duration_nanos(observation.resident_wall),
-            useful_half_width_terms = observation.useful_half_width_terms,
-            "completed registers claim-reduction q projection"
-        );
-        Ok((resident, observation.q))
-    }
-}
-
 enum RegistersClaimPhase {
     Prefix {
         p: Vec<AkitaField>,
@@ -807,7 +695,6 @@ type DenseTables<'a> = (
 );
 
 enum RegistersClaimMidpointSource {
-    Direct(RegistersClaimResidentPlanes),
     OuterCarrier {
         rd: RegistersClaimResidentRdPlane,
         aliases: RegistersClaimAliasReceiver,
@@ -844,7 +731,6 @@ impl allocative::Allocative for MetalRegistersClaimReductionKernel {
         );
         if let Some(source) = &self.midpoint_source {
             let bytes = match source {
-                RegistersClaimMidpointSource::Direct(resident) => resident.resident_bytes(),
                 RegistersClaimMidpointSource::OuterCarrier { rd, .. } => rd.resident_bytes(),
             };
             visitor.visit_simple(allocative::Key::new("device_rows"), bytes as usize);
@@ -913,26 +799,6 @@ impl MetalRegistersClaimReductionKernel {
             round_state_error("registers claim-reduction lost its midpoint source")
         })?;
         let outputs = match source {
-            RegistersClaimMidpointSource::Direct(resident) => {
-                let invocation = self
-                    .context
-                    .prepare_registers_claim_direct_fold(
-                        &resident,
-                        &self.bound_challenges,
-                        self.config,
-                    )
-                    .map_err(metal_round_error)?;
-                let observation = invocation.execute_timed().map_err(metal_round_error)?;
-                tracing::info!(
-                    target: "jolt::metal",
-                    source = "direct",
-                    gpu_active_ns = duration_nanos(observation.gpu_active),
-                    resident_wall_ns = duration_nanos(observation.resident_wall),
-                    useful_half_width_terms = observation.useful_half_width_terms,
-                    "completed registers claim-reduction midpoint projection"
-                );
-                observation.outputs
-            }
             RegistersClaimMidpointSource::OuterCarrier {
                 rd,
                 aliases,
@@ -1240,137 +1106,4 @@ fn round_state_error(reason: &'static str) -> SumcheckError<AkitaField> {
 
 fn duration_nanos(duration: std::time::Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
-}
-
-#[cfg(test)]
-#[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
-mod tests {
-    use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::AkitaField;
-    use jolt_poly::Polynomial;
-    use jolt_verifier::stages::relations::ConcreteSumcheck;
-    use jolt_verifier::stages::stage3::registers_claim_reduction::{
-        RegistersClaimReduction, RegistersClaimReductionChallenges,
-        RegistersClaimReductionInputClaims,
-    };
-    use jolt_witness::JoltWitnessOracle;
-
-    use super::{
-        MetalBackend, OptimizedRegistersClaimReduction, RegistersClaimReductionImplementation,
-        RegistersClaimReductionMetalConfig,
-    };
-    use crate::metal::solinas::MetalError;
-    use crate::metal::MetalConfig;
-    use crate::optimized::registers_read_write::test_support::structured_fixture;
-    use crate::{PrepareKernel, ProofSession, ProverInputs};
-
-    fn point(len: usize, seed: u64) -> Vec<AkitaField> {
-        let mut state = seed;
-        (0..len)
-            .map(|_| {
-                state = state
-                    .wrapping_mul(6_364_136_223_846_793_005)
-                    .wrapping_add(1_442_695_040_888_963_407);
-                AkitaField::from_u64(state | 1)
-            })
-            .collect()
-    }
-
-    #[test]
-    fn direct_hybrid_matches_the_optimized_complete_sumcheck() {
-        let metal = match MetalBackend::new(MetalConfig {
-            registers_claim_reduction: RegistersClaimReductionMetalConfig {
-                implementation: RegistersClaimReductionImplementation::DirectHybrid,
-                trace_cutoff_elements: 2,
-                ..RegistersClaimReductionMetalConfig::default()
-            },
-            ..MetalConfig::default()
-        }) {
-            Ok(metal) => metal,
-            Err(MetalError::DeviceUnavailable) => return,
-            Err(error) => panic!("Akita Metal backend failed to compile: {error:?}"),
-        };
-        for log_t in [11, 12] {
-            structured_fixture(1 << log_t).with_plane(log_t, |witness| {
-                let tau = point(log_t, 0x7e7e);
-                let relation = RegistersClaimReduction::<AkitaField>::new(
-                    jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions::new(log_t),
-                    tau.clone(),
-                );
-                let evaluate = |polynomial: JoltVirtualPolynomial| {
-                    let table = JoltWitnessOracle::<AkitaField>::oracle_table(
-                        witness,
-                        JoltPolynomialId::Virtual(polynomial),
-                    )
-                    .unwrap();
-                    Polynomial::new(table).evaluate(&tau)
-                };
-                let gamma = AkitaField::from_u64(0x0ddb_a11c_0ffe_e123);
-                let claims = RegistersClaimReductionInputClaims {
-                    rd_write_value: evaluate(JoltVirtualPolynomial::RdWriteValue),
-                    rs1_value: evaluate(JoltVirtualPolynomial::Rs1Value),
-                    rs2_value: evaluate(JoltVirtualPolynomial::Rs2Value),
-                };
-                let points = RegistersClaimReductionInputClaims::default();
-                let relation_challenges = RegistersClaimReductionChallenges { gamma };
-                let inputs = || ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &relation_challenges,
-                };
-
-                let mut cpu = OptimizedRegistersClaimReduction
-                    .prepare(&mut ProofSession::default(), witness, inputs())
-                    .unwrap();
-                let mut gpu = <MetalBackend as PrepareKernel<
-                    AkitaField,
-                    RegistersClaimReduction<AkitaField>,
-                >>::prepare(
-                    &metal, &mut ProofSession::default(), witness, inputs()
-                )
-                .unwrap();
-
-                let input_claim = claims.rd_write_value
-                    + gamma * claims.rs1_value
-                    + gamma * gamma * claims.rs2_value;
-                let round_challenges = point(log_t, 0x5151);
-                let mut claim = input_claim;
-                for round in 0..log_t {
-                    let bind = round
-                        .checked_sub(1)
-                        .map(|previous| round_challenges[previous]);
-                    let expected = cpu.prove_round(bind, round, claim).unwrap();
-                    let actual = gpu.prove_round(bind, round, claim).unwrap();
-                    assert_eq!(actual, expected, "round {round}");
-                    claim = expected.evaluate(round_challenges[round]);
-                }
-                let final_bind = round_challenges[log_t - 1];
-                cpu.finish_rounds(final_bind).unwrap();
-                gpu.finish_rounds(final_bind).unwrap();
-
-                let output_points = relation
-                    .derive_opening_points(&round_challenges, &points)
-                    .unwrap();
-                cpu.validate_derived_tables(
-                    &relation,
-                    &points,
-                    &output_points,
-                    &relation_challenges,
-                )
-                .unwrap();
-                gpu.validate_derived_tables(
-                    &relation,
-                    &points,
-                    &output_points,
-                    &relation_challenges,
-                )
-                .unwrap();
-                assert_eq!(
-                    gpu.output_claims(&claims).unwrap(),
-                    cpu.output_claims(&claims).unwrap()
-                );
-            });
-        }
-    }
 }

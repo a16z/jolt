@@ -30,9 +30,7 @@ macro_rules! copy_field_getters {
 }
 
 mod address_raf;
-mod address_raf_direct;
 mod address_sequence;
-mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
 mod booleanity_address;
@@ -43,9 +41,7 @@ mod bytecode_row;
 pub mod instruction_claim_reduction;
 mod instruction_claim_reduction_successor;
 mod instruction_input;
-pub mod instruction_input_successor;
 mod instruction_ra_sequence;
-mod instruction_ra_virtualization;
 mod instruction_read_raf;
 mod outer_remainder;
 mod product5;
@@ -69,17 +65,10 @@ pub use runtime::SolinasMetalCompilationStats;
 use runtime::{buffer_from_slice, command_buffer_timestamp};
 pub use runtime::{DeviceInfo, PipelineLimits, SolinasMetal};
 
-pub use address_raf::{
-    AddressRafScanConfig, AddressRafScanInvocation, AddressRafScanRow, AddressRafSums,
-    ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
-};
-pub use address_raf_direct::AddressRafDirectInvocation;
+pub use address_raf::{AddressRafScanRow, AddressRafSums, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES};
 pub(crate) use address_sequence::ResidentLookupIndexPlane;
 pub use address_sequence::{AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums};
-pub use address_suffix::{
-    AddressSuffixOneInvocation, AddressSuffixOneSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
-};
-pub use address_suffix_full::{AddressSuffixFullInvocation, AddressSuffixFullSums};
+pub use address_suffix_full::{AddressSuffixFullSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES};
 pub use booleanity::BooleanityRows;
 pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
@@ -103,20 +92,15 @@ pub(crate) use instruction_input::{
     INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
 };
 pub use instruction_input::{
-    InstructionInputFirstTransition, InstructionInputPrimerStats, InstructionInputRow,
-    InstructionInputRows, InstructionInputSequence, InstructionInputSequenceConfig,
+    InstructionInputPrimerStats, InstructionInputRow, InstructionInputRows,
+    InstructionInputSequence, InstructionInputSequenceConfig,
     InstructionInputStorageInitialization, InstructionInputStorageInitializationStats,
-    InstructionInputSuccessorDenseMessageStats, InstructionInputSuccessorMaterializeStats,
-    InstructionInputSuccessorTransitionStats, INSTRUCTION_INPUT_COEFFICIENTS,
-    INSTRUCTION_INPUT_TABLES,
+    INSTRUCTION_INPUT_COEFFICIENTS, INSTRUCTION_INPUT_TABLES,
 };
 pub(crate) use instruction_ra_sequence::InstructionRaSequenceStorage;
 pub use instruction_ra_sequence::{
     InstructionRaLookupPlane, InstructionRaMaterializeWidth, InstructionRaSequence,
     InstructionRaSequenceConfig, InstructionRaSequenceScratchLayout,
-};
-pub use instruction_ra_virtualization::{
-    InstructionRaFirstMessageConfig, InstructionRaFirstMessageInvocation,
 };
 #[cfg(test)]
 pub(crate) use instruction_read_raf::validate_bytecode_topology_admission;
@@ -147,9 +131,7 @@ pub use outer_remainder::{
     OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
     OuterRemainderStorageInitializationStats, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
-pub use product5::{
-    Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
-};
+pub use product5::{Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS};
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;
 pub(crate) use product_remainder::{
@@ -164,10 +146,9 @@ pub use product_remainder::{
 #[cfg(feature = "test-utils")]
 pub use product_uniskip::reference as product_uniskip_reference;
 pub use product_uniskip::{
-    evaluate_product_uniskip_extensions_cpu, ProductUniskipConfig, ProductUniskipExtendedNodes,
-    ProductUniskipInvocation, ProductUniskipKnownNodes, ProductUniskipShapeError,
-    ProductUniskipStorageLayout, PRODUCT_UNISKIP_EXTENDED_NODES,
-    PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS, PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
+    evaluate_product_uniskip_extensions_cpu, ProductUniskipExtendedNodes, ProductUniskipShapeError,
+    PRODUCT_UNISKIP_EXTENDED_NODES, PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS,
+    PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
 };
 pub use ram_raf_evaluation::{
     address_opening_point as ram_raf_address_opening_point, dense_pushforward_oracle,
@@ -392,8 +373,6 @@ pub enum MetalError {
     InvalidAddressRafSuffixLength(u32),
     #[error("address RAF condensation requires a suffix length in 0..=112, got {0}")]
     InvalidAddressRafCondensationSuffixLength(u32),
-    #[error("address RAF rows per threadgroup must be nonzero, got {0}")]
-    InvalidAddressRafRowsPerThreadgroup(usize),
     #[error("direct address RAF rows per threadgroup must be in 1..=65536, got {0}")]
     InvalidAddressRafDirectRowsPerThreadgroup(usize),
     #[error(
@@ -586,12 +565,6 @@ pub enum MetalError {
         requested: u64,
         maximum: u64,
     },
-    #[error(transparent)]
-    InstructionInputSuccessor(#[from] instruction_input_successor::InstructionInputSuccessorError),
-    #[error(
-        "InstructionInput successor dense message needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
-    )]
-    InstructionInputSuccessorThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(transparent)]
     RamValCheckShape(#[from] ram_val_check::RamValCheckShapeError),
     #[error(transparent)]
@@ -1086,14 +1059,10 @@ impl Invocation<'_> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test module")]
 mod tests {
     use std::mem::{align_of, size_of};
 
-    use super::{
-        validate_working_set, AddressRafScanConfig, AddressRafScanRow, Fp128, MetalError,
-        SolinasMetal, OFFSET_275,
-    };
+    use super::{validate_working_set, Fp128, MetalError, OFFSET_275};
 
     #[test]
     fn working_set_admission_is_exact_and_overflow_safe() {
@@ -1157,40 +1126,5 @@ mod tests {
         assert!(largest.is_canonical(OFFSET_275));
         assert!(!modulus.is_canonical(OFFSET_275));
         assert!(!Fp128::ZERO.is_canonical(0));
-    }
-
-    #[test]
-    fn address_raf_scan_reduces_exact_field_bins() {
-        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
-        let rows = vec![AddressRafScanRow::new(0, false); 64];
-        let weights: Vec<Fp128> = (1..=64).map(Fp128::from_u128).collect();
-        let invocation = context
-            .prepare_address_raf_scan(
-                &rows,
-                &weights,
-                AddressRafScanConfig {
-                    suffix_len: 120,
-                    ..AddressRafScanConfig::default()
-                },
-            )
-            .expect("address RAF scan should prepare");
-        assert_eq!(
-            invocation.intermediate_contribution_bytes(),
-            rows.len() as u64 * 32
-        );
-
-        invocation
-            .execute()
-            .expect("address RAF scan should execute");
-        let sums = invocation
-            .read_output()
-            .expect("address RAF output should be readable");
-        let expected = (1u128..=64).sum();
-        assert_eq!(sums.shift_half()[0], Fp128::from_u128(expected));
-        assert!(sums
-            .as_flat_slice()
-            .iter()
-            .enumerate()
-            .all(|(index, value)| index == 0 || *value == Fp128::ZERO));
     }
 }

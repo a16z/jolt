@@ -10,9 +10,7 @@ const SPARTAN_OUTER_COMMON_SOURCE: &str = include_str!("spartan_outer_common.met
 const BOOLEANITY_COMMON_SOURCE: &str = include_str!("booleanity_common.metal");
 const INSTRUCTION_RA_COMMON_SOURCE: &str = include_str!("instruction_ra_common.metal");
 const INSTRUCTION_CLAIM_REDUCTION_SOURCE: &str = super::instruction_claim_reduction::SOURCE;
-const ADDRESS_RAF_SOURCE: &str = include_str!("address_raf/shader.metal");
 const ADDRESS_RAF_DIRECT_SOURCE: &str = include_str!("address_raf_direct/shader.metal");
-const ADDRESS_SUFFIX_SOURCE: &str = include_str!("address_suffix/shader.metal");
 const ADDRESS_SUFFIX_FULL_SOURCE: &str = include_str!("address_suffix_full/shader.metal");
 const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_sequence/shader.metal");
 const PROBE_SOURCE: &str = include_str!("probes.metal");
@@ -26,10 +24,8 @@ const RAM_VAL_CHECK_SOURCE: &str = super::ram_val_check::SOURCE;
 const REGISTERS_VAL_SOURCE: &str = include_str!("registers_val/shader.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity/shader.metal");
 const BOOLEANITY_ADDRESS_SOURCE: &str = include_str!("booleanity_address/shader.metal");
-const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization/shader.metal");
 const INSTRUCTION_RA_SEQUENCE_SOURCE: &str = include_str!("instruction_ra_sequence/shader.metal");
 const INSTRUCTION_INPUT_SOURCE: &str = include_str!("instruction_input/shader.metal");
-const INSTRUCTION_INPUT_DENSE_SOURCE: &str = super::instruction_input_successor::SOURCE;
 const BYTECODE_CYCLE_SOURCE: &str = include_str!("bytecode_cycle/shader.metal");
 const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row/shader.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip/shader.metal");
@@ -106,9 +102,7 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
         "instruction_claim_reduction",
         INSTRUCTION_CLAIM_REDUCTION_SOURCE,
     ),
-    SourceFragment::new("address_raf", ADDRESS_RAF_SOURCE),
     SourceFragment::new("address_raf_direct", ADDRESS_RAF_DIRECT_SOURCE),
-    SourceFragment::new("address_suffix", ADDRESS_SUFFIX_SOURCE),
     SourceFragment::new("address_suffix_full", ADDRESS_SUFFIX_FULL_SOURCE),
     SourceFragment::diagnostic("probes", PROBE_SOURCE),
     SourceFragment::new("product5", PRODUCT5_SOURCE),
@@ -123,14 +117,12 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("registers_val", REGISTERS_VAL_SOURCE),
     SourceFragment::new("booleanity", BOOLEANITY_SOURCE),
     SourceFragment::new("booleanity_address", BOOLEANITY_ADDRESS_SOURCE),
-    SourceFragment::new("instruction_ra_virtualization", INSTRUCTION_RA_SOURCE),
     SourceFragment::new("instruction_ra_sequence", INSTRUCTION_RA_SEQUENCE_SOURCE),
     SourceFragment::new("bytecode_cycle", BYTECODE_CYCLE_SOURCE),
     SourceFragment::new("bytecode_row", BYTECODE_ROW_SOURCE),
     SourceFragment::new("spartan_outer_uniskip", SPARTAN_OUTER_UNISKIP_SOURCE),
     SourceFragment::new("spartan_shift", SPARTAN_SHIFT_SOURCE),
     SourceFragment::new("instruction_input", INSTRUCTION_INPUT_SOURCE),
-    SourceFragment::new("instruction_input_dense", INSTRUCTION_INPUT_DENSE_SOURCE),
     SourceFragment::new("address_cycle", ADDRESS_CYCLE_SOURCE),
     SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
     SourceFragment::new(
@@ -193,7 +185,16 @@ mod tests {
         let source = production_library_source(AKITA_OFFSET_FFFFA7F7);
 
         assert!(!source.contains(PROBE_SOURCE));
-        assert!(!source.contains("solinas_ram_output_check_"));
+        for rejected in [
+            "solinas_ram_output_check_",
+            "solinas_address_raf_histogram",
+            "solinas_address_suffix_one_tile",
+            "solinas_product_uniskip_reduce2",
+            "solinas_registers_claim_build_linear_q",
+            "solinas_registers_claim_fold_direct",
+        ] {
+            assert!(!source.contains(rejected), "rejected kernel {rejected}");
+        }
         for required in [
             PRODUCT_REMAINDER_SOURCE,
             PRODUCT_INSTRUCTION_SERVICE_SOURCE,

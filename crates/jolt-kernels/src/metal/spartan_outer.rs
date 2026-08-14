@@ -64,15 +64,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-#[cfg(feature = "test-utils")]
-mod evaluation;
-
-#[cfg(feature = "test-utils")]
-pub use evaluation::{
-    OuterRemainderEvalError, OuterRemainderEvalFixture, OuterRemainderEvalResult,
-    OuterRemainderEvalSample,
-};
-
 const OUTER_DOMAIN: usize = OUTER_UNISKIP_DOMAIN_SIZE;
 const OUTER_VARIABLES: usize = 35;
 const STAGE1_SOURCE_PRIMER_CUTOFF_ELEMENTS: usize = 1 << 28;

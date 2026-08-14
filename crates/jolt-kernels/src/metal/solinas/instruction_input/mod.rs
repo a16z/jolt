@@ -13,11 +13,6 @@ use metal::{
     ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
-use super::instruction_input_successor::{
-    model::{checked_dense_message_shape, checked_materialize_shape},
-    DENSE_MESSAGE_PIPELINE as SUCCESSOR_DENSE_MESSAGE_PIPELINE,
-    INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH, MATERIALIZE_PIPELINE as SUCCESSOR_MATERIALIZE_PIPELINE,
-};
 use super::{
     command_buffer_timestamp, spartan_outer_uniskip_residual_row_bytes, Fp128, MetalError,
     OuterResidualArenaKey, OuterResidualReleaseReceipt, PipelineLimits, SolinasMetal,
@@ -28,15 +23,6 @@ pub const INSTRUCTION_INPUT_TABLES: usize = 8;
 pub const INSTRUCTION_INPUT_COEFFICIENTS: usize = 3;
 const INSTRUCTION_INPUT_DEVICE_BUFFERS: usize = 6;
 const INSTRUCTION_INPUT_ROW_WORDS: usize = 6;
-const INSTRUCTION_INPUT_SUCCESSOR_MATERIALIZE_THREADS: usize = 256;
-const INSTRUCTION_INPUT_SUCCESSOR_DENSE_MESSAGE_THREADS: usize = 128;
-const INSTRUCTION_INPUT_SUCCESSOR_PRIMER_SOURCE_ELEMENTS: usize = 64;
-const INSTRUCTION_INPUT_SUCCESSOR_PRIMER_BOUND_ELEMENTS: usize =
-    INSTRUCTION_INPUT_SUCCESSOR_PRIMER_SOURCE_ELEMENTS / 2;
-const INSTRUCTION_INPUT_SUCCESSOR_PRIMER_E_IN_ELEMENTS: usize = 1;
-const INSTRUCTION_INPUT_SUCCESSOR_PRIMER_E_OUT_ELEMENTS: usize =
-    INSTRUCTION_INPUT_SUCCESSOR_PRIMER_BOUND_ELEMENTS / 2;
-
 const ROW_RS1: usize = 0;
 const ROW_UNEXPANDED_PC: usize = 1;
 const ROW_RS2: usize = 2;
@@ -234,44 +220,6 @@ pub struct InstructionInputPrimerStats {
     pub storage_buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InstructionInputSuccessorMaterializeStats {
-    pub source_elements: usize,
-    pub bound_elements: usize,
-    pub wall: Duration,
-    pub gpu_active: Duration,
-    pub resident_row_identity: usize,
-    pub dense_buffer_identity: usize,
-    pub pipeline_limits: PipelineLimits,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InstructionInputSuccessorDenseMessageStats {
-    pub table_elements: usize,
-    pub e_in_elements: usize,
-    pub e_out_elements: usize,
-    pub wall: Duration,
-    pub gpu_active: Duration,
-    pub dense_buffer_identity: usize,
-    pub dynamic_threadgroup_memory_length: usize,
-    pub pipeline_limits: PipelineLimits,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InstructionInputSuccessorTransitionStats {
-    pub source_elements: usize,
-    pub table_elements: usize,
-    pub e_in_elements: usize,
-    pub e_out_elements: usize,
-    pub wall: Duration,
-    pub gpu_active: Duration,
-    pub resident_row_identity: usize,
-    pub dense_buffer_identity: usize,
-    pub dynamic_threadgroup_memory_length: usize,
-    pub materialize_pipeline_limits: PipelineLimits,
-    pub dense_message_pipeline_limits: PipelineLimits,
-}
-
 struct InstructionInputNativePrimerCommand {
     command_buffer: CommandBuffer,
     submitted_at: Instant,
@@ -362,24 +310,7 @@ pub struct InstructionInputSequenceConfig {
     pub native_message_threads_per_threadgroup: Option<usize>,
     pub native_transition_threads_per_threadgroup: Option<usize>,
     pub dense_transition_threads_per_threadgroup: Option<usize>,
-    pub first_transition: InstructionInputFirstTransition,
     pub storage_initialization: InstructionInputStorageInitialization,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum InstructionInputFirstTransition {
-    #[default]
-    Compact,
-    Successor,
-}
-
-impl InstructionInputFirstTransition {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Compact => "compact",
-            Self::Successor => "successor",
-        }
-    }
 }
 
 impl Default for InstructionInputSequenceConfig {
@@ -388,7 +319,6 @@ impl Default for InstructionInputSequenceConfig {
             native_message_threads_per_threadgroup: Some(256),
             native_transition_threads_per_threadgroup: Some(128),
             dense_transition_threads_per_threadgroup: Some(128),
-            first_transition: InstructionInputFirstTransition::Compact,
             storage_initialization: InstructionInputStorageInitialization::Lazy,
         }
     }
@@ -427,15 +357,6 @@ struct Pipelines {
     native_transition: ComputePipelineState,
     dense_transition: ComputePipelineState,
     reduction: ComputePipelineState,
-}
-
-struct SuccessorPipelines {
-    materialize: ComputePipelineState,
-    dense_message: ComputePipelineState,
-    materialize_limits: PipelineLimits,
-    dense_message_limits: PipelineLimits,
-    materialize_threads: usize,
-    dense_message_threads: usize,
 }
 
 struct BufferRegion {
@@ -636,7 +557,6 @@ pub(crate) struct InstructionInputSequenceStorage {
     native_transition_limits: PipelineLimits,
     dense_transition_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
-    successor: Option<SuccessorPipelines>,
     buffers: Buffers,
     dense_arena: DenseArenaState,
     rows: usize,
@@ -682,7 +602,6 @@ pub struct InstructionInputSequence {
     phase: SequencePhase,
     dense_elements: usize,
     dense_in_a: bool,
-    successor_materialized: bool,
     gpu_active_time: Duration,
 }
 
@@ -841,41 +760,6 @@ impl SolinasMetal {
             config.dense_transition_threads_per_threadgroup,
             dense_transition_limits,
         )?;
-        let successor = if config.first_transition == InstructionInputFirstTransition::Successor {
-            let materialize = self.compile_named_pipeline(SUCCESSOR_MATERIALIZE_PIPELINE)?;
-            let dense_message = self.compile_named_pipeline(SUCCESSOR_DENSE_MESSAGE_PIPELINE)?;
-            let materialize_limits = Self::limits(&materialize);
-            let dense_message_limits = Self::limits(&dense_message);
-            for (pipeline, limits) in [
-                (SUCCESSOR_MATERIALIZE_PIPELINE, materialize_limits),
-                (SUCCESSOR_DENSE_MESSAGE_PIPELINE, dense_message_limits),
-            ] {
-                if limits.thread_execution_width != INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH {
-                    return Err(MetalError::UnsupportedInstructionInputExecutionWidth {
-                        pipeline,
-                        expected: INSTRUCTION_INPUT_SUCCESSOR_SIMD_WIDTH,
-                        got: limits.thread_execution_width,
-                    });
-                }
-            }
-            Some(SuccessorPipelines {
-                materialize,
-                dense_message,
-                materialize_limits,
-                dense_message_limits,
-                materialize_threads: Self::resolve_threadgroup_width(
-                    Some(INSTRUCTION_INPUT_SUCCESSOR_MATERIALIZE_THREADS),
-                    materialize_limits,
-                )?,
-                dense_message_threads: Self::resolve_threadgroup_width(
-                    Some(INSTRUCTION_INPUT_SUCCESSOR_DENSE_MESSAGE_THREADS),
-                    dense_message_limits,
-                )?,
-            })
-        } else {
-            None
-        };
-
         let borrowed_dense_bytes = layout.buffer_bytes[0]
             .checked_add(layout.buffer_bytes[1])
             .ok_or(MetalError::InvalidInstructionInputState(
@@ -968,7 +852,6 @@ impl SolinasMetal {
             native_transition_limits,
             dense_transition_limits,
             reduction_limits,
-            successor,
             buffers,
             dense_arena,
             rows,
@@ -985,14 +868,6 @@ impl SolinasMetal {
 }
 
 impl InstructionInputSequenceStorage {
-    fn successor_pipelines(&self) -> Result<&SuccessorPipelines, MetalError> {
-        self.successor
-            .as_ref()
-            .ok_or(MetalError::InvalidInstructionInputState(
-                "the InstructionInput successor was not selected during preparation",
-            ))
-    }
-
     pub(crate) fn matches(
         &self,
         context: &SolinasMetal,
@@ -1083,31 +958,6 @@ impl InstructionInputSequenceStorage {
             reserved: [0; 2],
         };
         let gamma = Fp128::from_jolt_field(&AkitaField::zero());
-        let successor_primer = self
-            .successor
-            .as_ref()
-            .map(|successor| -> Result<_, MetalError> {
-                Ok((
-                    successor,
-                    checked_materialize_shape(
-                        INSTRUCTION_INPUT_SUCCESSOR_PRIMER_SOURCE_ELEMENTS,
-                        self.context.device.max_buffer_length(),
-                    )?,
-                    checked_dense_message_shape(
-                        INSTRUCTION_INPUT_SUCCESSOR_PRIMER_BOUND_ELEMENTS,
-                        INSTRUCTION_INPUT_SUCCESSOR_PRIMER_E_IN_ELEMENTS,
-                        INSTRUCTION_INPUT_SUCCESSOR_PRIMER_E_OUT_ELEMENTS,
-                        successor.dense_message_threads,
-                        self.context.device.max_buffer_length(),
-                    )?,
-                    ReductionParams {
-                        input_count: INSTRUCTION_INPUT_SUCCESSOR_PRIMER_E_OUT_ELEMENTS as u32,
-                        output_count: 1,
-                        reserved: [0; 2],
-                    },
-                ))
-            })
-            .transpose()?;
         let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
@@ -1152,75 +1002,7 @@ impl InstructionInputSequenceStorage {
                     depth: 1,
                 },
             );
-            if let Some((successor, successor_shape, _, _)) = successor_primer {
-                encoder.set_compute_pipeline_state(&successor.materialize);
-                encoder.set_buffer(0, Some(resident_rows.buffer()), 0);
-                self.buffers.dense_a.bind(encoder, 1);
-                set_inline_bytes(encoder, 2, &gamma);
-                set_inline_bytes(encoder, 3, &successor_shape.params());
-                encoder.set_threadgroup_memory_length(0, 0);
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: successor_shape
-                            .grid_threads()
-                            .div_ceil(successor.materialize_threads)
-                            as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: successor.materialize_threads as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-            }
             encoder.end_encoding();
-            if let Some((successor, _, successor_dense_shape, successor_reduction_params)) =
-                successor_primer
-            {
-                let encoder = command_buffer.new_compute_command_encoder();
-                encoder.set_compute_pipeline_state(&successor.dense_message);
-                self.buffers.dense_a.bind(encoder, 0);
-                self.buffers.e_in.bind(encoder, 1);
-                self.buffers.e_out.bind(encoder, 2);
-                self.buffers.partial_a.bind(encoder, 3);
-                set_inline_bytes(encoder, 4, &gamma);
-                set_inline_bytes(encoder, 5, &successor_dense_shape.params());
-                encoder.set_threadgroup_memory_length(
-                    0,
-                    successor_dense_shape.threadgroup_bytes() as u64,
-                );
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: successor_dense_shape.grid_threadgroups() as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: successor.dense_message_threads as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-                encoder.set_compute_pipeline_state(&self.pipelines.reduction);
-                self.buffers.partial_a.bind(encoder, 0);
-                self.buffers.partial_b.bind(encoder, 1);
-                set_inline_bytes(encoder, 2, &successor_reduction_params);
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: 1,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: self.reduction_limits.thread_execution_width as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-                encoder.end_encoding();
-            }
             command_buffer.commit();
         });
         Ok(InstructionInputNativePrimerCommand {
@@ -1281,20 +1063,6 @@ impl InstructionInputSequenceStorage {
                 "instruction input pipeline primer produced a nonzero message",
             ));
         }
-        if self.successor.is_some() {
-            let successor_values =
-                INSTRUCTION_INPUT_TABLES * INSTRUCTION_INPUT_SUCCESSOR_PRIMER_BOUND_ELEMENTS;
-            // SAFETY: the completed successor primer initialized the compact
-            // 64-row fixture at the start of dense A.
-            let output = unsafe {
-                slice::from_raw_parts(
-                    self.buffers.dense_a.contents().cast::<Fp128>(),
-                    successor_values,
-                )
-            };
-            self.context
-                .validate_inputs("instruction input successor primer", output)?;
-        }
         let join_wall = join_started.elapsed();
         Ok(InstructionInputPrimerStats {
             source_elements: INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
@@ -1335,7 +1103,6 @@ impl InstructionInputSequenceStorage {
             phase: SequencePhase::BeforeMessage,
             dense_elements: 0,
             dense_in_a: true,
-            successor_materialized: false,
             gpu_active_time: Duration::ZERO,
         })
     }
@@ -1351,7 +1118,6 @@ impl InstructionInputSequence {
         self.phase = SequencePhase::BeforeMessage;
         self.dense_elements = 0;
         self.dense_in_a = true;
-        self.successor_materialized = false;
         self.gpu_active_time = Duration::ZERO;
     }
 
@@ -1408,13 +1174,6 @@ impl InstructionInputSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; INSTRUCTION_INPUT_COEFFICIENTS], MetalError> {
-        if self.phase == SequencePhase::Native
-            && self.storage.config.first_transition == InstructionInputFirstTransition::Successor
-        {
-            return self
-                .run_successor_transition(challenge, gamma, e_in, e_out)
-                .map(|(descriptors, _)| descriptors);
-        }
         let kind = match self.phase {
             SequencePhase::BeforeMessage => {
                 return Err(MetalError::InvalidInstructionInputState(
@@ -1455,421 +1214,6 @@ impl InstructionInputSequence {
         Ok(())
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn probe_successor_materialize(
-        &mut self,
-        challenge: AkitaField,
-        output: &mut [AkitaField],
-    ) -> Result<InstructionInputSuccessorMaterializeStats, MetalError> {
-        let stats = self.run_successor_materialize(challenge)?;
-        self.read_successor_materialized_tables(output)?;
-        Ok(stats)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn run_successor_materialize(
-        &mut self,
-        challenge: AkitaField,
-    ) -> Result<InstructionInputSuccessorMaterializeStats, MetalError> {
-        if self.phase != SequencePhase::BeforeMessage {
-            return Err(MetalError::InvalidInstructionInputState(
-                "the successor materializer probe requires unbound resident rows",
-            ));
-        }
-        self.successor_materialized = false;
-        let shape = checked_materialize_shape(
-            self.storage.rows,
-            self.storage.context.device.max_buffer_length(),
-        )?;
-        if self.storage.buffers.dense_a.length() != shape.dense_table_bytes() {
-            return Err(MetalError::InvalidInstructionInputState(
-                "the successor materializer target differs from dense A",
-            ));
-        }
-        let successor = self.storage.successor_pipelines()?;
-        let materialize_threads = successor.materialize_threads;
-        let pipeline_limits = successor.materialize_limits;
-
-        let started = Instant::now();
-        let challenge = Fp128::from_jolt_field(&challenge);
-        self.storage
-            .context
-            .validate_inputs("instruction input successor challenge", &[challenge])?;
-        let command_buffer = self.storage.context.queue.new_command_buffer();
-        autoreleasepool(|| {
-            let encoder = command_buffer.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&successor.materialize);
-            encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-            self.storage.buffers.dense_a.bind(encoder, 1);
-            set_inline_bytes(encoder, 2, &challenge);
-            set_inline_bytes(encoder, 3, &shape.params());
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: shape.grid_threads().div_ceil(materialize_threads) as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: materialize_threads as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            encoder.end_encoding();
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-        });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let gpu_start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let gpu_end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
-        {
-            return Err(MetalError::InvalidGpuTimestamps {
-                start: gpu_start,
-                end: gpu_end,
-            });
-        }
-        self.successor_materialized = true;
-        Ok(InstructionInputSuccessorMaterializeStats {
-            source_elements: self.storage.rows,
-            bound_elements: shape.grid_threads(),
-            wall: started.elapsed(),
-            gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
-            resident_row_identity: self.resident_rows.allocation_identity(),
-            dense_buffer_identity: self.storage.buffers.dense_a.allocation_identity(),
-            pipeline_limits,
-        })
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn read_successor_materialized_tables(
-        &self,
-        output: &mut [AkitaField],
-    ) -> Result<(), MetalError> {
-        if self.phase != SequencePhase::BeforeMessage || !self.successor_materialized {
-            return Err(MetalError::InvalidInstructionInputState(
-                "the successor materializer read requires a completed diagnostic dispatch",
-            ));
-        }
-        let expected = INSTRUCTION_INPUT_TABLES
-            .checked_mul(self.storage.rows / 2)
-            .ok_or(MetalError::InputTooLong(self.storage.rows))?;
-        if output.len() != expected {
-            return Err(MetalError::InstructionInputStorageLength {
-                expected,
-                got: output.len(),
-            });
-        }
-        // SAFETY: a completed successor materializer initializes exactly
-        // `expected` fields at the front of dense A.
-        let values = unsafe {
-            slice::from_raw_parts(
-                self.storage.buffers.dense_a.contents().cast::<Fp128>(),
-                expected,
-            )
-        };
-        self.storage
-            .context
-            .validate_inputs("instruction input successor tables", values)?;
-        for (output, value) in output.iter_mut().zip(values) {
-            *output = value.into_jolt_field();
-        }
-        Ok(())
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn run_successor_dense_message(
-        &mut self,
-        gamma: AkitaField,
-        e_in: &[AkitaField],
-        e_out: &[AkitaField],
-    ) -> Result<
-        (
-            [AkitaField; INSTRUCTION_INPUT_COEFFICIENTS],
-            InstructionInputSuccessorDenseMessageStats,
-        ),
-        MetalError,
-    > {
-        if self.phase != SequencePhase::BeforeMessage || !self.successor_materialized {
-            return Err(MetalError::InvalidInstructionInputState(
-                "the successor dense-message probe requires materialized tables",
-            ));
-        }
-        let successor = self.storage.successor_pipelines()?;
-        let dense_message_threads = successor.dense_message_threads;
-        let pipeline_limits = successor.dense_message_limits;
-        let table_elements = self.storage.rows / 2;
-        let shape = checked_dense_message_shape(
-            table_elements,
-            e_in.len(),
-            e_out.len(),
-            dense_message_threads,
-            self.storage.context.device.max_buffer_length(),
-        )?;
-        if self.storage.buffers.dense_a.length() != shape.table_bytes() {
-            return Err(MetalError::InvalidInstructionInputState(
-                "the successor dense-message source differs from dense A",
-            ));
-        }
-        let requested_threadgroup_bytes = u64::try_from(shape.threadgroup_bytes())
-            .map_err(|_| MetalError::InputTooLong(shape.threadgroup_bytes()))?
-            .checked_add(pipeline_limits.static_threadgroup_memory_length)
-            .ok_or(MetalError::InputTooLong(shape.threadgroup_bytes()))?;
-        let maximum_threadgroup_bytes = self.storage.context.device.max_threadgroup_memory_length();
-        if requested_threadgroup_bytes > maximum_threadgroup_bytes {
-            return Err(MetalError::InstructionInputSuccessorThreadgroupMemory {
-                requested: requested_threadgroup_bytes,
-                maximum: maximum_threadgroup_bytes,
-            });
-        }
-
-        let started = Instant::now();
-        write_fields(&self.storage.buffers.e_in, self.storage.e_in_capacity, e_in)?;
-        write_fields(
-            &self.storage.buffers.e_out,
-            self.storage.e_out_capacity,
-            e_out,
-        )?;
-        let gamma = Fp128::from_jolt_field(&gamma);
-        self.storage
-            .context
-            .validate_inputs("instruction input successor gamma", &[gamma])?;
-        let command_buffer = self.storage.context.queue.new_command_buffer();
-        autoreleasepool(|| {
-            let encoder = command_buffer.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&successor.dense_message);
-            self.storage.buffers.dense_a.bind(encoder, 0);
-            self.storage.buffers.e_in.bind(encoder, 1);
-            self.storage.buffers.e_out.bind(encoder, 2);
-            self.storage.buffers.partial_a.bind(encoder, 3);
-            set_inline_bytes(encoder, 4, &gamma);
-            set_inline_bytes(encoder, 5, &shape.params());
-            encoder.set_threadgroup_memory_length(0, shape.threadgroup_bytes() as u64);
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: shape.grid_threadgroups() as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: dense_message_threads as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            self.encode_reductions(encoder, e_out.len());
-            encoder.end_encoding();
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-        });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let gpu_start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let gpu_end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
-        {
-            return Err(MetalError::InvalidGpuTimestamps {
-                start: gpu_start,
-                end: gpu_end,
-            });
-        }
-        let final_buffer = self.final_partial_buffer(e_out.len());
-        // SAFETY: the completed recursive reduction leaves three canonical
-        // fields at the start of the selected partial buffer.
-        let values = unsafe {
-            slice::from_raw_parts(
-                final_buffer.contents().cast::<Fp128>(),
-                INSTRUCTION_INPUT_COEFFICIENTS,
-            )
-        };
-        self.storage
-            .context
-            .validate_inputs("instruction input successor dense message", values)?;
-        let descriptors = std::array::from_fn(|index| values[index].into_jolt_field());
-        Ok((
-            descriptors,
-            InstructionInputSuccessorDenseMessageStats {
-                table_elements,
-                e_in_elements: e_in.len(),
-                e_out_elements: e_out.len(),
-                wall: started.elapsed(),
-                gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
-                dense_buffer_identity: self.storage.buffers.dense_a.allocation_identity(),
-                dynamic_threadgroup_memory_length: shape.threadgroup_bytes(),
-                pipeline_limits,
-            },
-        ))
-    }
-
-    pub fn run_successor_transition(
-        &mut self,
-        challenge: AkitaField,
-        gamma: AkitaField,
-        e_in: &[AkitaField],
-        e_out: &[AkitaField],
-    ) -> Result<
-        (
-            [AkitaField; INSTRUCTION_INPUT_COEFFICIENTS],
-            InstructionInputSuccessorTransitionStats,
-        ),
-        MetalError,
-    > {
-        if self.phase != SequencePhase::Native {
-            return Err(MetalError::InvalidInstructionInputState(
-                "the successor transition requires the completed native message",
-            ));
-        }
-        let successor = self.storage.successor_pipelines()?;
-        let materialize_threads = successor.materialize_threads;
-        let dense_message_threads = successor.dense_message_threads;
-        let materialize_pipeline_limits = successor.materialize_limits;
-        let dense_message_pipeline_limits = successor.dense_message_limits;
-        let materialize_shape = checked_materialize_shape(
-            self.storage.rows,
-            self.storage.context.device.max_buffer_length(),
-        )?;
-        let table_elements = materialize_shape.grid_threads();
-        let dense_shape = checked_dense_message_shape(
-            table_elements,
-            e_in.len(),
-            e_out.len(),
-            dense_message_threads,
-            self.storage.context.device.max_buffer_length(),
-        )?;
-        if self.storage.buffers.dense_a.length() != materialize_shape.dense_table_bytes()
-            || self.storage.buffers.dense_a.length() != dense_shape.table_bytes()
-        {
-            return Err(MetalError::InvalidInstructionInputState(
-                "the successor transition storage differs from dense A",
-            ));
-        }
-        let requested_threadgroup_bytes = u64::try_from(dense_shape.threadgroup_bytes())
-            .map_err(|_| MetalError::InputTooLong(dense_shape.threadgroup_bytes()))?
-            .checked_add(dense_message_pipeline_limits.static_threadgroup_memory_length)
-            .ok_or(MetalError::InputTooLong(dense_shape.threadgroup_bytes()))?;
-        let maximum_threadgroup_bytes = self.storage.context.device.max_threadgroup_memory_length();
-        if requested_threadgroup_bytes > maximum_threadgroup_bytes {
-            return Err(MetalError::InstructionInputSuccessorThreadgroupMemory {
-                requested: requested_threadgroup_bytes,
-                maximum: maximum_threadgroup_bytes,
-            });
-        }
-
-        let started = Instant::now();
-        write_fields(&self.storage.buffers.e_in, self.storage.e_in_capacity, e_in)?;
-        write_fields(
-            &self.storage.buffers.e_out,
-            self.storage.e_out_capacity,
-            e_out,
-        )?;
-        let challenge = Fp128::from_jolt_field(&challenge);
-        let gamma = Fp128::from_jolt_field(&gamma);
-        self.storage.context.validate_inputs(
-            "instruction input successor transition scalars",
-            &[challenge, gamma],
-        )?;
-        let command_buffer = self.storage.context.queue.new_command_buffer();
-        autoreleasepool(|| {
-            let materialize = command_buffer.new_compute_command_encoder();
-            materialize.set_compute_pipeline_state(&successor.materialize);
-            materialize.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-            self.storage.buffers.dense_a.bind(materialize, 1);
-            set_inline_bytes(materialize, 2, &challenge);
-            set_inline_bytes(materialize, 3, &materialize_shape.params());
-            materialize.dispatch_thread_groups(
-                MTLSize {
-                    width: materialize_shape
-                        .grid_threads()
-                        .div_ceil(materialize_threads) as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: materialize_threads as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            materialize.end_encoding();
-
-            let message = command_buffer.new_compute_command_encoder();
-            message.set_compute_pipeline_state(&successor.dense_message);
-            self.storage.buffers.dense_a.bind(message, 0);
-            self.storage.buffers.e_in.bind(message, 1);
-            self.storage.buffers.e_out.bind(message, 2);
-            self.storage.buffers.partial_a.bind(message, 3);
-            set_inline_bytes(message, 4, &gamma);
-            set_inline_bytes(message, 5, &dense_shape.params());
-            message.set_threadgroup_memory_length(0, dense_shape.threadgroup_bytes() as u64);
-            message.dispatch_thread_groups(
-                MTLSize {
-                    width: dense_shape.grid_threadgroups() as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: dense_message_threads as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            self.encode_reductions(message, e_out.len());
-            message.end_encoding();
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-        });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let gpu_start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let gpu_end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
-        {
-            return Err(MetalError::InvalidGpuTimestamps {
-                start: gpu_start,
-                end: gpu_end,
-            });
-        }
-        let final_buffer = self.final_partial_buffer(e_out.len());
-        // SAFETY: the completed recursive reduction leaves three canonical
-        // fields at the start of the selected partial buffer.
-        let values = unsafe {
-            slice::from_raw_parts(
-                final_buffer.contents().cast::<Fp128>(),
-                INSTRUCTION_INPUT_COEFFICIENTS,
-            )
-        };
-        self.storage
-            .context
-            .validate_inputs("instruction input successor transition", values)?;
-        let descriptors = std::array::from_fn(|index| values[index].into_jolt_field());
-        let gpu_active = Duration::from_secs_f64(gpu_end - gpu_start);
-        self.phase = SequencePhase::Dense;
-        self.dense_elements = table_elements;
-        self.dense_in_a = true;
-        self.successor_materialized = false;
-        self.gpu_active_time += gpu_active;
-        Ok((
-            descriptors,
-            InstructionInputSuccessorTransitionStats {
-                source_elements: self.storage.rows,
-                table_elements,
-                e_in_elements: e_in.len(),
-                e_out_elements: e_out.len(),
-                wall: started.elapsed(),
-                gpu_active,
-                resident_row_identity: self.resident_rows.allocation_identity(),
-                dense_buffer_identity: self.storage.buffers.dense_a.allocation_identity(),
-                dynamic_threadgroup_memory_length: dense_shape.threadgroup_bytes(),
-                materialize_pipeline_limits,
-                dense_message_pipeline_limits,
-            },
-        ))
-    }
-
     pub const fn current_elements(&self) -> usize {
         match self.phase {
             SequencePhase::BeforeMessage | SequencePhase::Native => self.storage.rows,
@@ -1879,27 +1223,6 @@ impl InstructionInputSequence {
 
     pub const fn is_dense(&self) -> bool {
         matches!(self.phase, SequencePhase::Dense)
-    }
-
-    pub const fn first_transition(&self) -> InstructionInputFirstTransition {
-        self.storage.config.first_transition
-    }
-
-    #[cfg(feature = "test-utils")]
-    pub fn reset_with_first_transition(
-        &mut self,
-        first_transition: InstructionInputFirstTransition,
-    ) -> Result<(), MetalError> {
-        if first_transition == InstructionInputFirstTransition::Successor
-            && self.storage.successor.is_none()
-        {
-            return Err(MetalError::InvalidInstructionInputState(
-                "the InstructionInput successor was not selected during preparation",
-            ));
-        }
-        self.storage.config.first_transition = first_transition;
-        self.reset();
-        Ok(())
     }
 
     pub const fn gpu_active_time(&self) -> Duration {
@@ -1936,20 +1259,6 @@ impl InstructionInputSequence {
 
     pub const fn dense_transition_pipeline_limits(&self) -> PipelineLimits {
         self.storage.dense_transition_limits
-    }
-
-    pub fn successor_materialize_pipeline_limits(&self) -> Option<PipelineLimits> {
-        self.storage
-            .successor
-            .as_ref()
-            .map(|successor| successor.materialize_limits)
-    }
-
-    pub fn successor_dense_message_pipeline_limits(&self) -> Option<PipelineLimits> {
-        self.storage
-            .successor
-            .as_ref()
-            .map(|successor| successor.dense_message_limits)
     }
 
     fn execute(
@@ -2353,11 +1662,7 @@ fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, va
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, reason = "test module")]
 mod tests {
-    use std::{
-        mem::{align_of, size_of},
-        slice,
-        time::Duration,
-    };
+    use std::{mem::size_of, slice, time::Duration};
 
     use jolt_field::AkitaField;
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
@@ -2366,16 +1671,11 @@ mod tests {
         initialize_storage, instruction_input_row_bytes,
         instruction_input_sequence_auxiliary_storage_bytes,
         instruction_input_sequence_storage_bytes, instruction_input_storage_layout,
-        instruction_input_weight_capacities, validate_u32_element_count,
-        InstructionInputFirstTransition, InstructionInputParams, InstructionInputRow,
-        InstructionInputSequenceConfig, InstructionInputStorageInitialization, ReductionParams,
-        INSTRUCTION_INPUT_DEVICE_BUFFERS, INSTRUCTION_INPUT_TABLES,
+        instruction_input_weight_capacities, validate_u32_element_count, InstructionInputParams,
+        InstructionInputRow, InstructionInputSequenceConfig, InstructionInputStorageInitialization,
+        ReductionParams, INSTRUCTION_INPUT_DEVICE_BUFFERS, INSTRUCTION_INPUT_TABLES,
     };
     use crate::metal::solinas::{
-        instruction_input_successor::{
-            oracle::{dense_message, materialize_first_bind, row_fields},
-            InstructionInputSuccessorRow,
-        },
         MetalError, OuterResidualReleaseReceipt, SolinasMetal, SpartanOuterUniskipRow,
     };
 
@@ -2700,168 +2000,16 @@ mod tests {
     fn compact_rows_preserve_all_instruction_input_fields() {
         for row in packed_rows(16) {
             let compact = InstructionInputRow::from_full_words(row.words());
-            let successor = InstructionInputSuccessorRow::from_words(compact.words());
             assert_eq!(
                 compact.fields::<AkitaField>(),
                 row.instruction_input_fields::<AkitaField>()
             );
-            assert_eq!(successor.words(), compact.words());
-            assert_eq!(
-                row_fields::<AkitaField>(successor).unwrap(),
-                compact.fields()
-            );
         }
-        assert_eq!(
-            size_of::<InstructionInputSuccessorRow>(),
-            size_of::<InstructionInputRow>()
-        );
-        assert_eq!(
-            align_of::<InstructionInputSuccessorRow>(),
-            align_of::<InstructionInputRow>()
-        );
         assert_eq!(instruction_input_row_bytes(1 << 26).unwrap(), 3_221_225_472);
         assert_eq!(
             instruction_input_row_bytes(1 << 28).unwrap(),
             12_884_901_888
         );
-    }
-
-    #[test]
-    fn successor_phases_and_fused_transition_match_production_rows() {
-        let rows = packed_rows(4096);
-        let successor_rows = rows
-            .iter()
-            .map(|row| {
-                InstructionInputSuccessorRow::from_words(
-                    InstructionInputRow::from_full_words(row.words()).words(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let initial_tables = (0..INSTRUCTION_INPUT_TABLES)
-            .flat_map(|table| {
-                rows.iter()
-                    .map(move |row| row.instruction_input_fields::<AkitaField>()[table])
-            })
-            .collect::<Vec<_>>();
-        let challenge = AkitaField::from_u64(0x1234_5678_9abc_def0);
-        let expected = materialize_first_bind(&successor_rows, challenge).unwrap();
-        let gamma = AkitaField::from_u64(0xC001_CAFE);
-        let r_product = (0..rows.len().ilog2())
-            .map(|index| AkitaField::from_u64(5 + 2 * u64::from(index)))
-            .collect::<Vec<_>>();
-        let gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
-        let mut bound_gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
-        bound_gruen.bind(challenge);
-        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
-        let mut sequence = context
-            .prepare_instruction_input_sequence(
-                &rows,
-                InstructionInputSequenceConfig {
-                    first_transition: InstructionInputFirstTransition::Successor,
-                    storage_initialization: InstructionInputStorageInitialization::Minimal,
-                    ..InstructionInputSequenceConfig::default()
-                },
-            )
-            .expect("sequence should prepare");
-        let resident_identity = sequence.resident_row_identity();
-        let buffer_identities = sequence.static_buffer_identity();
-        let mut actual = vec![AkitaField::zero(); expected.len()];
-
-        assert!(matches!(
-            sequence.run_successor_dense_message(
-                gamma,
-                bound_gruen.e_in_current(),
-                bound_gruen.e_out_current(),
-            ),
-            Err(MetalError::InvalidInstructionInputState(_))
-        ));
-
-        let stats = sequence
-            .probe_successor_materialize(challenge, &mut actual)
-            .expect("the successor materializer should execute");
-
-        assert_eq!(actual, expected);
-        assert_eq!(stats.source_elements, rows.len());
-        assert_eq!(stats.bound_elements, rows.len() / 2);
-        assert_eq!(stats.resident_row_identity, resident_identity);
-        assert_eq!(stats.dense_buffer_identity, buffer_identities[0]);
-        assert_eq!(stats.pipeline_limits.thread_execution_width, 32);
-        assert!(stats.pipeline_limits.max_total_threads_per_threadgroup >= 256);
-        assert!(stats.gpu_active > Duration::ZERO);
-        assert!(stats.gpu_active <= stats.wall);
-        assert_eq!(sequence.resident_row_identity(), resident_identity);
-        assert_eq!(sequence.static_buffer_identity(), buffer_identities);
-
-        let expected_dense_message = dense_message(
-            &expected,
-            rows.len() / 2,
-            bound_gruen.e_in_current(),
-            bound_gruen.e_out_current(),
-            gamma,
-        )
-        .unwrap()
-        .values();
-        let (actual_dense_message, dense_stats) = sequence
-            .run_successor_dense_message(
-                gamma,
-                bound_gruen.e_in_current(),
-                bound_gruen.e_out_current(),
-            )
-            .expect("the successor dense message should execute");
-        assert_eq!(actual_dense_message, expected_dense_message);
-        assert_eq!(dense_stats.table_elements, rows.len() / 2);
-        assert_eq!(dense_stats.dense_buffer_identity, buffer_identities[0]);
-        assert_eq!(dense_stats.dynamic_threadgroup_memory_length, 192);
-        assert_eq!(dense_stats.pipeline_limits.thread_execution_width, 32);
-        assert!(
-            dense_stats
-                .pipeline_limits
-                .max_total_threads_per_threadgroup
-                >= 128
-        );
-        assert!(dense_stats.gpu_active > Duration::ZERO);
-        assert!(dense_stats.gpu_active <= dense_stats.wall);
-        assert_eq!(sequence.resident_row_identity(), resident_identity);
-        assert_eq!(sequence.static_buffer_identity(), buffer_identities);
-
-        let expected_message = descriptors(
-            &initial_tables,
-            rows.len(),
-            gamma,
-            gruen.e_in_current(),
-            gruen.e_out_current(),
-        );
-        assert_eq!(
-            sequence
-                .message(gamma, gruen.e_in_current(), gruen.e_out_current())
-                .expect("the production message should still be first"),
-            expected_message
-        );
-        let (transition_message, transition_stats) = sequence
-            .run_successor_transition(
-                challenge,
-                gamma,
-                bound_gruen.e_in_current(),
-                bound_gruen.e_out_current(),
-            )
-            .expect("the fused successor transition should execute");
-        assert_eq!(transition_message, expected_dense_message);
-        assert_eq!(transition_stats.source_elements, rows.len());
-        assert_eq!(transition_stats.table_elements, rows.len() / 2);
-        assert_eq!(transition_stats.resident_row_identity, resident_identity);
-        assert_eq!(transition_stats.dense_buffer_identity, buffer_identities[0]);
-        assert_eq!(transition_stats.dynamic_threadgroup_memory_length, 192);
-        assert!(transition_stats.gpu_active > Duration::ZERO);
-        assert!(transition_stats.gpu_active <= transition_stats.wall);
-        assert!(sequence.is_dense());
-        assert_eq!(sequence.current_elements(), rows.len() / 2);
-        let mut transitioned_tables = vec![AkitaField::zero(); expected.len()];
-        sequence
-            .read_current_tables(&mut transitioned_tables)
-            .expect("the fused successor tables should remain resident");
-        assert_eq!(transitioned_tables, expected);
-        assert_eq!(sequence.resident_row_identity(), resident_identity);
-        assert_eq!(sequence.static_buffer_identity(), buffer_identities);
     }
 
     #[test]

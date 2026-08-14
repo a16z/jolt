@@ -354,8 +354,8 @@ impl SpartanOuterUniskipRow {
         ]
     }
 
-    #[cfg(feature = "test-utils")]
-    pub(crate) fn spartan_outer_fields<F: jolt_field::Field>(&self) -> [F; 35] {
+    #[cfg(test)]
+    fn spartan_outer_fields<F: jolt_field::Field>(&self) -> [F; 35] {
         let words = self.words;
         let flags = words[19];
         let flag = |bit| F::from_u64((flags >> bit) & 1);

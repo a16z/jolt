@@ -5,14 +5,6 @@ mod runtime;
 
 pub use runtime::*;
 
-#[cfg(test)]
-#[expect(
-    clippy::panic,
-    clippy::unwrap_used,
-    reason = "tests use fixed valid fixtures"
-)]
-mod tests;
-
 use std::mem::{align_of, size_of};
 
 use jolt_field::Field;
@@ -22,29 +14,10 @@ use thiserror::Error;
 pub(super) const SOURCE: &str = include_str!("shader.metal");
 
 pub const REGISTERS_CLAIM_SIMD_WIDTH: usize = 32;
-pub const REGISTERS_CLAIM_OUTPUT_COLUMNS: usize = 3;
-pub const REGISTERS_CLAIM_GAMMA_POWERS: usize = 2;
-pub const REGISTERS_CLAIM_TARGET_LOG_T: usize = 26;
 pub const REGISTERS_CLAIM_AKITA_OFFSET: u32 = 0xffff_a7f7;
 
 pub const INSTRUCTION_INPUT_RS1_TABLE: usize = 1;
 pub const INSTRUCTION_INPUT_RS2_TABLE: usize = 5;
-
-pub const LINEAR_Q_RD_WRITE_VALUE_SLOT: u64 = 0;
-pub const LINEAR_Q_RS1_VALUE_SLOT: u64 = 1;
-pub const LINEAR_Q_RS2_VALUE_SLOT: u64 = 2;
-pub const LINEAR_Q_GAMMA_POWERS_SLOT: u64 = 3;
-pub const LINEAR_Q_EQ_SUFFIX_SLOT: u64 = 4;
-pub const LINEAR_Q_OUTPUT_SLOT: u64 = 5;
-pub const LINEAR_Q_PARAMS_SLOT: u64 = 6;
-
-pub const DIRECT_FOLD_RD_WRITE_VALUE_SLOT: u64 = 0;
-pub const DIRECT_FOLD_RS1_VALUE_SLOT: u64 = 1;
-pub const DIRECT_FOLD_RS2_VALUE_SLOT: u64 = 2;
-pub const DIRECT_FOLD_EQ_PREFIX_SLOT: u64 = 3;
-pub const DIRECT_FOLD_OUTPUT_SLOT: u64 = 4;
-pub const DIRECT_FOLD_PARAMS_SLOT: u64 = 5;
-pub const DIRECT_FOLD_THREADGROUP_SLOT: u64 = 0;
 
 pub const ALIAS_FOLD_RD_WRITE_VALUE_SLOT: u64 = 0;
 pub const ALIAS_FOLD_EQ_PREFIX_SLOT: u64 = 1;
@@ -52,9 +25,6 @@ pub const ALIAS_FOLD_OUTPUT_SLOT: u64 = 2;
 pub const ALIAS_FOLD_PARAMS_SLOT: u64 = 3;
 pub const ALIAS_FOLD_THREADGROUP_SLOT: u64 = 0;
 
-pub(crate) const BUILD_LINEAR_CANONICAL_PIPELINE: &str =
-    "solinas_registers_claim_build_linear_q_canonical";
-pub(crate) const DIRECT_FOLD_PIPELINE: &str = "solinas_registers_claim_fold_direct";
 pub(crate) const ALIAS_FOLD_PIPELINE: &str = "solinas_registers_claim_fold_alias_rd";
 
 #[repr(C)]
@@ -71,14 +41,12 @@ const _: [(); 4] = [(); align_of::<RegistersClaimParams>()];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegistersClaimKernelConfig {
-    pub build_threads_per_threadgroup: usize,
     pub fold_threads_per_threadgroup: usize,
 }
 
 impl Default for RegistersClaimKernelConfig {
     fn default() -> Self {
         Self {
-            build_threads_per_threadgroup: 128,
             fold_threads_per_threadgroup: 128,
         }
     }
@@ -86,13 +54,12 @@ impl Default for RegistersClaimKernelConfig {
 
 impl RegistersClaimKernelConfig {
     pub fn validate(self) -> Result<Self, RegistersClaimPlanError> {
-        for (phase, width) in [
-            ("build", self.build_threads_per_threadgroup),
-            ("fold", self.fold_threads_per_threadgroup),
-        ] {
-            if width == 0 || !width.is_multiple_of(REGISTERS_CLAIM_SIMD_WIDTH) {
-                return Err(RegistersClaimPlanError::InvalidThreadgroupWidth { phase, width });
-            }
+        let width = self.fold_threads_per_threadgroup;
+        if width == 0 || !width.is_multiple_of(REGISTERS_CLAIM_SIMD_WIDTH) {
+            return Err(RegistersClaimPlanError::InvalidThreadgroupWidth {
+                phase: "fold",
+                width,
+            });
         }
         Ok(self)
     }
@@ -100,15 +67,6 @@ impl RegistersClaimKernelConfig {
     pub fn alias_fold_threadgroup_bytes(self) -> Result<usize, RegistersClaimPlanError> {
         let config = self.validate()?;
         threadgroup_bytes(1, config.fold_threads_per_threadgroup, "alias fold")
-    }
-
-    pub fn direct_fold_threadgroup_bytes(self) -> Result<usize, RegistersClaimPlanError> {
-        let config = self.validate()?;
-        threadgroup_bytes(
-            REGISTERS_CLAIM_OUTPUT_COLUMNS,
-            config.fold_threads_per_threadgroup,
-            "direct fold",
-        )
     }
 }
 
@@ -170,18 +128,6 @@ impl RegistersClaimGeometry {
         self.suffix_elements
     }
 
-    pub fn row_index(self, x_hi: usize, x_lo: usize) -> Result<usize, RegistersClaimPlanError> {
-        if x_hi >= self.suffix_elements || x_lo >= self.prefix_elements {
-            return Err(RegistersClaimPlanError::CoordinateOutOfRange {
-                x_hi,
-                x_lo,
-                suffix_elements: self.suffix_elements,
-                prefix_elements: self.prefix_elements,
-            });
-        }
-        Ok(x_hi * self.prefix_elements + x_lo)
-    }
-
     pub fn params(self) -> Result<RegistersClaimParams, RegistersClaimPlanError> {
         Ok(RegistersClaimParams {
             rows: abi_count("rows", self.rows)?,
@@ -190,340 +136,8 @@ impl RegistersClaimGeometry {
             reserved: 0,
         })
     }
-
-    pub fn linear_q_storage(self) -> Result<RegistersClaimLinearQStorage, RegistersClaimPlanError> {
-        let native_plane_bytes = checked_bytes("linear-q native plane", self.rows, 8)?;
-        let resident_input_bytes = checked_product(
-            "linear-q resident inputs",
-            native_plane_bytes,
-            REGISTERS_CLAIM_OUTPUT_COLUMNS,
-        )?;
-        let gamma_powers_bytes =
-            checked_bytes("linear-q gamma powers", REGISTERS_CLAIM_GAMMA_POWERS, 16)?;
-        let eq_suffix_bytes = checked_bytes("linear-q equality suffix", self.suffix_elements, 16)?;
-        let output_bytes = checked_bytes("linear-q output", self.prefix_elements, 16)?;
-        let private_bytes = checked_sum(
-            "linear-q private allocations",
-            &[gamma_powers_bytes, eq_suffix_bytes, output_bytes],
-        )?;
-        let total_resident_bytes = checked_sum(
-            "linear-q total resident bytes",
-            &[resident_input_bytes, private_bytes],
-        )?;
-        let roof_compulsory_bytes = checked_sum(
-            "linear-q compulsory bytes",
-            &[resident_input_bytes, eq_suffix_bytes, output_bytes],
-        )?;
-        let shader_issued_bytes = checked_sum(
-            "linear-q shader-issued bytes",
-            &[
-                resident_input_bytes,
-                checked_bytes("linear-q issued equality bytes", self.rows, 16)?,
-                output_bytes,
-            ],
-        )?;
-
-        Ok(RegistersClaimLinearQStorage {
-            native_plane_bytes,
-            resident_input_bytes,
-            gamma_powers_bytes,
-            eq_suffix_bytes,
-            output_bytes,
-            private_bytes,
-            total_resident_bytes,
-            roof_compulsory_bytes,
-            shader_issued_bytes,
-        })
-    }
-
-    pub fn storage(self) -> Result<RegistersClaimStorage, RegistersClaimPlanError> {
-        let native_plane_bytes = checked_bytes("native plane", self.rows, size_of::<u64>())?;
-        let native_planes_bytes = checked_product(
-            "native planes",
-            native_plane_bytes,
-            REGISTERS_CLAIM_OUTPUT_COLUMNS,
-        )?;
-        let prefix_field_bytes = checked_bytes("prefix field table", self.prefix_elements, 16)?;
-        let suffix_field_bytes = checked_bytes("suffix field table", self.suffix_elements, 16)?;
-        let partial_q_handoff_bytes = checked_product(
-            "partial-q handoff",
-            prefix_field_bytes,
-            REGISTERS_CLAIM_OUTPUT_COLUMNS,
-        )?;
-        let alias_snapshot_bytes = checked_product("alias snapshot", suffix_field_bytes, 2)?;
-        let direct_dense_bytes = checked_product(
-            "direct dense outputs",
-            suffix_field_bytes,
-            REGISTERS_CLAIM_OUTPUT_COLUMNS,
-        )?;
-
-        let alias_peak_bytes = checked_sum(
-            "alias peak",
-            &[
-                native_planes_bytes,
-                prefix_field_bytes,
-                suffix_field_bytes,
-                alias_snapshot_bytes,
-                REGISTERS_CLAIM_GAMMA_POWERS * 16,
-                size_of::<RegistersClaimParams>(),
-            ],
-        )?;
-        let direct_peak_bytes = checked_sum(
-            "direct peak",
-            &[
-                native_planes_bytes,
-                prefix_field_bytes,
-                suffix_field_bytes,
-                direct_dense_bytes,
-                REGISTERS_CLAIM_GAMMA_POWERS * 16,
-                size_of::<RegistersClaimParams>(),
-            ],
-        )?;
-        Ok(RegistersClaimStorage {
-            native_plane_bytes,
-            native_planes_bytes,
-            prefix_field_bytes,
-            suffix_field_bytes,
-            partial_q_handoff_bytes,
-            alias_snapshot_bytes,
-            direct_dense_bytes,
-            alias_peak_bytes,
-            direct_peak_bytes,
-        })
-    }
-
-    fn linear_q_work(self) -> Result<RegistersClaimPhaseWork, RegistersClaimPlanError> {
-        let rows = self.rows as u64;
-        let prefix = self.prefix_elements as u64;
-
-        Ok(RegistersClaimPhaseWork {
-            half_width_terms: checked_u64_product("linear build terms", 3, rows)?,
-            full_products: checked_u64_product("linear q combination", 2, prefix)?,
-        })
-    }
-
-    fn fold_work(
-        self,
-        strategy: RegistersClaimStrategy,
-    ) -> Result<RegistersClaimPhaseWork, RegistersClaimPlanError> {
-        let rows = self.rows as u64;
-        let half_width_terms = match strategy {
-            RegistersClaimStrategy::AliasLinear => rows,
-            RegistersClaimStrategy::DirectLinear => {
-                checked_u64_product("direct fold terms", 3, rows)?
-            }
-        };
-
-        Ok(RegistersClaimPhaseWork {
-            half_width_terms,
-            full_products: 0,
-        })
-    }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RegistersClaimLinearQStorage {
-    pub native_plane_bytes: usize,
-    pub resident_input_bytes: usize,
-    pub gamma_powers_bytes: usize,
-    pub eq_suffix_bytes: usize,
-    pub output_bytes: usize,
-    pub private_bytes: usize,
-    pub total_resident_bytes: usize,
-    pub roof_compulsory_bytes: usize,
-    pub shader_issued_bytes: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RegistersClaimLinearQPlan {
-    pub geometry: RegistersClaimGeometry,
-    pub config: RegistersClaimKernelConfig,
-    pub params: RegistersClaimParams,
-    pub storage: RegistersClaimLinearQStorage,
-}
-
-impl RegistersClaimLinearQPlan {
-    pub fn new(
-        rows: usize,
-        max_buffer_length: usize,
-        config: RegistersClaimKernelConfig,
-    ) -> Result<Self, RegistersClaimPlanError> {
-        let geometry = RegistersClaimGeometry::new(rows)?;
-        let config = config.validate()?;
-        let params = geometry.params()?;
-        let storage = geometry.linear_q_storage()?;
-        for (name, bytes) in [
-            ("linear-q native plane", storage.native_plane_bytes),
-            ("linear-q gamma powers", storage.gamma_powers_bytes),
-            ("linear-q equality suffix", storage.eq_suffix_bytes),
-            ("linear-q output", storage.output_bytes),
-        ] {
-            validate_buffer(name, bytes, max_buffer_length)?;
-        }
-
-        Ok(Self {
-            geometry,
-            config,
-            params,
-            storage,
-        })
-    }
-
-    pub const fn useful_threads(self) -> usize {
-        self.geometry.prefix_elements()
-    }
-
-    pub const fn threads_per_threadgroup(self) -> usize {
-        self.config.build_threads_per_threadgroup
-    }
-
-    pub fn threadgroups(self) -> usize {
-        self.useful_threads()
-            .div_ceil(self.threads_per_threadgroup())
-    }
-
-    pub fn dispatched_threads(self) -> Result<usize, RegistersClaimPlanError> {
-        checked_product(
-            "linear-q dispatched threads",
-            self.threadgroups(),
-            self.threads_per_threadgroup(),
-        )
-    }
-
-    pub fn work(self) -> Result<RegistersClaimPhaseWork, RegistersClaimPlanError> {
-        self.geometry.linear_q_work()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RegistersClaimStorage {
-    pub native_plane_bytes: usize,
-    pub native_planes_bytes: usize,
-    pub prefix_field_bytes: usize,
-    pub suffix_field_bytes: usize,
-    pub partial_q_handoff_bytes: usize,
-    pub alias_snapshot_bytes: usize,
-    pub direct_dense_bytes: usize,
-    pub alias_peak_bytes: usize,
-    pub direct_peak_bytes: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RegistersClaimStrategy {
-    AliasLinear,
-    DirectLinear,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RegistersClaimPlan {
-    pub geometry: RegistersClaimGeometry,
-    pub config: RegistersClaimKernelConfig,
-    pub params: RegistersClaimParams,
-    pub storage: RegistersClaimStorage,
-    pub strategy: RegistersClaimStrategy,
-}
-
-impl RegistersClaimPlan {
-    pub fn new(
-        rows: usize,
-        max_buffer_length: usize,
-        config: RegistersClaimKernelConfig,
-        strategy: RegistersClaimStrategy,
-    ) -> Result<Self, RegistersClaimPlanError> {
-        let geometry = RegistersClaimGeometry::new(rows)?;
-        let config = config.validate()?;
-        let params = geometry.params()?;
-        let storage = geometry.storage()?;
-
-        validate_buffer(
-            "native value plane",
-            storage.native_plane_bytes,
-            max_buffer_length,
-        )?;
-        match strategy {
-            RegistersClaimStrategy::AliasLinear => validate_buffer(
-                "alias dense snapshot",
-                storage.alias_snapshot_bytes,
-                max_buffer_length,
-            )?,
-            RegistersClaimStrategy::DirectLinear => validate_buffer(
-                "direct dense outputs",
-                storage.direct_dense_bytes,
-                max_buffer_length,
-            )?,
-        }
-
-        Ok(Self {
-            geometry,
-            config,
-            params,
-            storage,
-            strategy,
-        })
-    }
-
-    pub const fn build_threads(self) -> usize {
-        self.geometry.prefix_elements()
-    }
-
-    pub const fn fold_threadgroups(self) -> usize {
-        self.geometry.suffix_elements()
-    }
-
-    pub fn fold_threadgroup_bytes(self) -> Result<usize, RegistersClaimPlanError> {
-        match self.strategy {
-            RegistersClaimStrategy::AliasLinear => self.config.alias_fold_threadgroup_bytes(),
-            RegistersClaimStrategy::DirectLinear => self.config.direct_fold_threadgroup_bytes(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct RegistersClaimPhaseWork {
-    pub half_width_terms: u64,
-    pub full_products: u64,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RegisterValuePlanes<'a> {
-    rd_write: &'a [u64],
-    rs1: &'a [u64],
-    rs2: &'a [u64],
-}
-
-impl<'a> RegisterValuePlanes<'a> {
-    pub fn new(
-        geometry: RegistersClaimGeometry,
-        rd_write_value: &'a [u64],
-        rs1_value: &'a [u64],
-        rs2_value: &'a [u64],
-    ) -> Result<Self, RegistersClaimPlanError> {
-        for (name, values) in [
-            ("rd_write_value", rd_write_value),
-            ("rs1_value", rs1_value),
-            ("rs2_value", rs2_value),
-        ] {
-            if values.len() != geometry.rows() {
-                return Err(RegistersClaimPlanError::WrongPlaneLength {
-                    name,
-                    expected: geometry.rows(),
-                    actual: values.len(),
-                });
-            }
-        }
-        Ok(Self {
-            rd_write: rd_write_value,
-            rs1: rs1_value,
-            rs2: rs2_value,
-        })
-    }
-
-    pub fn row(self, index: usize) -> [u64; REGISTERS_CLAIM_OUTPUT_COLUMNS] {
-        [self.rd_write[index], self.rs1[index], self.rs2[index]]
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegistersClaimPrefixTables<F> {
     pub p: Vec<F>,
     pub q: Vec<F>,
@@ -697,57 +311,6 @@ impl<F: Field> RegistersClaimAliasSnapshot<F> {
     }
 }
 
-pub fn combined_value<F: Field>(values: [u64; 3], gamma: F) -> F {
-    let gamma_sq = gamma * gamma;
-    F::from_u64(values[0]) + gamma * F::from_u64(values[1]) + gamma_sq * F::from_u64(values[2])
-}
-
-pub fn dense_register_openings<F: Field>(
-    geometry: RegistersClaimGeometry,
-    planes: RegisterValuePlanes<'_>,
-    product_tau_low: &[F],
-) -> Result<RegistersClaimOutputs<F>, RegistersClaimOracleError> {
-    let _ = split_tau(geometry, product_tau_low)?;
-    let weights = EqPolynomial::<F>::evals(product_tau_low, None);
-    let mut outputs = RegistersClaimOutputs {
-        rd_write_value: F::zero(),
-        rs1_value: F::zero(),
-        rs2_value: F::zero(),
-    };
-    for (row, weight) in weights.into_iter().enumerate() {
-        let values = planes.row(row);
-        outputs.rd_write_value += weight * F::from_u64(values[0]);
-        outputs.rs1_value += weight * F::from_u64(values[1]);
-        outputs.rs2_value += weight * F::from_u64(values[2]);
-    }
-    Ok(outputs)
-}
-
-pub fn build_linear_components<F: Field>(
-    geometry: RegistersClaimGeometry,
-    planes: RegisterValuePlanes<'_>,
-    tau: &[F],
-) -> Result<RegistersClaimLinearComponents<F>, RegistersClaimOracleError> {
-    let (tau_hi, _) = split_tau(geometry, tau)?;
-    let eq_suffix = EqPolynomial::<F>::evals(tau_hi, None);
-    let mut components = RegistersClaimLinearComponents {
-        rd_write_value: vec![F::zero(); geometry.prefix_elements()],
-        rs1_value: vec![F::zero(); geometry.prefix_elements()],
-        rs2_value: vec![F::zero(); geometry.prefix_elements()],
-    };
-
-    for (x_hi, weight) in eq_suffix.into_iter().enumerate() {
-        for x_lo in 0..geometry.prefix_elements() {
-            let row = geometry.row_index(x_hi, x_lo)?;
-            let values = planes.row(row);
-            components.rd_write_value[x_lo] += weight * F::from_u64(values[0]);
-            components.rs1_value[x_lo] += weight * F::from_u64(values[1]);
-            components.rs2_value[x_lo] += weight * F::from_u64(values[2]);
-        }
-    }
-    Ok(components)
-}
-
 pub fn combine_linear_components<F: Field>(
     components: &RegistersClaimLinearComponents<F>,
     gamma: F,
@@ -766,68 +329,6 @@ pub fn combine_linear_components<F: Field>(
                 + gamma_sq * components.rs2_value[index]
         })
         .collect())
-}
-
-pub fn build_linear_q<F: Field>(
-    geometry: RegistersClaimGeometry,
-    planes: RegisterValuePlanes<'_>,
-    tau: &[F],
-    gamma: F,
-) -> Result<RegistersClaimPrefixTables<F>, RegistersClaimOracleError> {
-    let (_, tau_lo) = split_tau(geometry, tau)?;
-    let components = build_linear_components(geometry, planes, tau)?;
-    Ok(RegistersClaimPrefixTables {
-        p: EqPolynomial::<F>::evals(tau_lo, None),
-        q: combine_linear_components(&components, gamma)?,
-    })
-}
-
-pub fn build_dense_reference_q<F: Field>(
-    geometry: RegistersClaimGeometry,
-    planes: RegisterValuePlanes<'_>,
-    tau: &[F],
-    gamma: F,
-) -> Result<RegistersClaimPrefixTables<F>, RegistersClaimOracleError> {
-    let (tau_hi, tau_lo) = split_tau(geometry, tau)?;
-    let p = EqPolynomial::<F>::evals(tau_lo, None);
-    let eq_suffix = EqPolynomial::<F>::evals(tau_hi, None);
-    let gamma_sq = gamma * gamma;
-    let mut q = vec![F::zero(); geometry.prefix_elements()];
-    for (x_hi, weight) in eq_suffix.into_iter().enumerate() {
-        for (x_lo, q_value) in q.iter_mut().enumerate() {
-            let row = geometry.row_index(x_hi, x_lo)?;
-            let [rd_write_value, rs1_value, rs2_value] = planes.row(row);
-            let combined = F::from_u64(rd_write_value)
-                + gamma * F::from_u64(rs1_value)
-                + gamma_sq * F::from_u64(rs2_value);
-            *q_value += weight * combined;
-        }
-    }
-    Ok(RegistersClaimPrefixTables { p, q })
-}
-
-pub fn fold_direct<F: Field>(
-    geometry: RegistersClaimGeometry,
-    planes: RegisterValuePlanes<'_>,
-    prefix_challenges: &[F],
-) -> Result<RegistersClaimDenseOutputs<F>, RegistersClaimOracleError> {
-    let eq_prefix = prefix_equality(geometry, prefix_challenges)?;
-    let mut outputs = RegistersClaimDenseOutputs {
-        rd_write_value: vec![F::zero(); geometry.suffix_elements()],
-        rs1_value: vec![F::zero(); geometry.suffix_elements()],
-        rs2_value: vec![F::zero(); geometry.suffix_elements()],
-    };
-
-    for x_hi in 0..geometry.suffix_elements() {
-        let row_start = x_hi * geometry.prefix_elements();
-        for (x_lo, weight) in eq_prefix.iter().copied().enumerate() {
-            let values = planes.row(row_start + x_lo);
-            outputs.rd_write_value[x_hi] += weight * F::from_u64(values[0]);
-            outputs.rs1_value[x_hi] += weight * F::from_u64(values[1]);
-            outputs.rs2_value[x_hi] += weight * F::from_u64(values[2]);
-        }
-    }
-    Ok(outputs)
 }
 
 pub fn bind_table<F: Field>(
@@ -868,28 +369,6 @@ pub fn verifier_output_term<F: Field>(
     let output_point: Vec<F> = bound_challenges.iter().rev().copied().collect();
     let eq_spartan = EqPolynomial::<F>::mle(&output_point, tau);
     Ok(eq_spartan * output_combination(outputs, gamma))
-}
-
-fn prefix_equality<F: Field>(
-    geometry: RegistersClaimGeometry,
-    prefix_challenges: &[F],
-) -> Result<Vec<F>, RegistersClaimOracleError> {
-    let prefix_point = reversed_prefix_point(geometry, prefix_challenges)?;
-    Ok(EqPolynomial::<F>::evals(&prefix_point, None))
-}
-
-fn reversed_prefix_point<F: Field>(
-    geometry: RegistersClaimGeometry,
-    prefix_challenges: &[F],
-) -> Result<Vec<F>, RegistersClaimOracleError> {
-    if prefix_challenges.len() != geometry.prefix_vars() {
-        return Err(RegistersClaimOracleError::WrongChallengeCount {
-            phase: "prefix",
-            expected: geometry.prefix_vars(),
-            actual: prefix_challenges.len(),
-        });
-    }
-    Ok(prefix_challenges.iter().rev().copied().collect())
 }
 
 fn split_tau<F>(
@@ -963,14 +442,6 @@ fn checked_power_of_two(
         .ok_or(RegistersClaimPlanError::SizeOverflow { name })
 }
 
-fn checked_bytes(
-    name: &'static str,
-    elements: usize,
-    element_bytes: usize,
-) -> Result<usize, RegistersClaimPlanError> {
-    checked_product(name, elements, element_bytes)
-}
-
 fn checked_product(
     name: &'static str,
     left: usize,
@@ -980,39 +451,8 @@ fn checked_product(
         .ok_or(RegistersClaimPlanError::SizeOverflow { name })
 }
 
-fn checked_sum(name: &'static str, terms: &[usize]) -> Result<usize, RegistersClaimPlanError> {
-    terms.iter().try_fold(0usize, |sum, term| {
-        sum.checked_add(*term)
-            .ok_or(RegistersClaimPlanError::SizeOverflow { name })
-    })
-}
-
-fn checked_u64_product(
-    name: &'static str,
-    left: u64,
-    right: u64,
-) -> Result<u64, RegistersClaimPlanError> {
-    left.checked_mul(right)
-        .ok_or(RegistersClaimPlanError::SizeOverflow { name })
-}
-
 fn abi_count(name: &'static str, value: usize) -> Result<u32, RegistersClaimPlanError> {
     u32::try_from(value).map_err(|_| RegistersClaimPlanError::AbiCountOverflow { name, value })
-}
-
-fn validate_buffer(
-    name: &'static str,
-    bytes: usize,
-    max_buffer_length: usize,
-) -> Result<(), RegistersClaimPlanError> {
-    if bytes > max_buffer_length {
-        return Err(RegistersClaimPlanError::BufferTooLarge {
-            name,
-            bytes,
-            max_buffer_length,
-        });
-    }
-    Ok(())
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -1025,29 +465,8 @@ pub enum RegistersClaimPlanError {
     AbiCountOverflow { name: &'static str, value: usize },
     #[error("{name} size overflow")]
     SizeOverflow { name: &'static str },
-    #[error("{name} buffer needs {bytes} bytes but maxBufferLength is {max_buffer_length}")]
-    BufferTooLarge {
-        name: &'static str,
-        bytes: usize,
-        max_buffer_length: usize,
-    },
     #[error("{phase} threadgroup width {width} is not a nonzero multiple of 32")]
     InvalidThreadgroupWidth { phase: &'static str, width: usize },
-    #[error(
-        "row coordinate ({x_hi}, {x_lo}) exceeds geometry ({suffix_elements}, {prefix_elements})"
-    )]
-    CoordinateOutOfRange {
-        x_hi: usize,
-        x_lo: usize,
-        suffix_elements: usize,
-        prefix_elements: usize,
-    },
-    #[error("{name} plane has length {actual}, expected {expected}")]
-    WrongPlaneLength {
-        name: &'static str,
-        expected: usize,
-        actual: usize,
-    },
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]

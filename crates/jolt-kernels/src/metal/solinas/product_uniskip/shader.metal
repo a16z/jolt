@@ -9,13 +9,6 @@ struct ProductUniskipBlockParams {
     uint reserved;
 };
 
-struct ProductUniskipReductionParams {
-    uint input_count;
-    uint output_count;
-    uint columns;
-    uint reserved;
-};
-
 inline SolinasFp128 product_uniskip_triple(SolinasFp128 value) {
     return solinas_add(value, solinas_add(value, value));
 }
@@ -168,22 +161,4 @@ kernel void solinas_product_uniskip_stage1_extended_blocks2(
         lane,
         simdgroup,
         threads / 32u);
-}
-
-kernel void solinas_product_uniskip_reduce2(
-    device const SolinasFp128* input [[buffer(0)]],
-    device SolinasFp128* output [[buffer(1)]],
-    constant ProductUniskipReductionParams& params [[buffer(2)]],
-    uint gid [[thread_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]])
-{
-    for (uint column = 0u; column < PRODUCT_UNISKIP_EXTENDED_NODES; column++) {
-        SolinasFp128 value = gid < params.input_count
-            ? input[column * params.input_count + gid]
-            : solinas_zero();
-        value = solinas_simd_sum_32(value);
-        if (lane == 0u) {
-            output[column * params.output_count + gid / 32u] = value;
-        }
-    }
 }

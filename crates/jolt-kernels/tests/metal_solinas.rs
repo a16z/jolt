@@ -3,17 +3,15 @@
 
 use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
-    dense_pushforward_oracle, product_remainder_reference, product_uniskip_reference,
-    ram_raf_split_equality, ram_val_check_oracle, split_pushforward_oracle,
+    dense_pushforward_oracle, product_remainder_reference, ram_raf_split_equality,
+    ram_val_check_oracle, split_pushforward_oracle,
 };
 use jolt_kernels::metal::solinas::{
-    evaluate_product_uniskip_extensions_cpu, BooleanityRow, BooleanitySelector,
-    BooleanitySequenceConfig, DispatchConfig, Fp128, InstructionRaFirstMessageConfig, MetalError,
-    Probe, Product5Config, Product5SequenceConfig, ProductRemainderRow,
-    ProductRemainderSequenceConfig, ProductUniskipConfig, RamRafConfig, RamValCheckConfig,
-    RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan, RegistersValDenseConfig,
-    RegistersValFirstMessageConfig, RegistersValTransitionConfig, SolinasMetal,
-    AKITA_OFFSET_FFFFA7F7, OFFSET_275, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
+    BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128, MetalError,
+    Probe, Product5SequenceConfig, ProductRemainderRow, ProductRemainderSequenceConfig,
+    RamRafConfig, RamValCheckConfig, RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan,
+    RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValTransitionConfig,
+    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
@@ -77,105 +75,6 @@ fn product_remainder_sequence_matches_cpu_at_every_boundary() {
     for rows in [1 << 8, 1 << 9] {
         assert_product_remainder_sequence(rows);
     }
-}
-
-#[test]
-fn product_uniskip_matches_cpu_and_reuses_product_rows() {
-    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
-    let row_count = 1 << 10;
-    let modulus_minus_one = AkitaField::from_u128(u128::MAX - AKITA_OFFSET_FFFFA7F7 as u128);
-    let rows = (0..row_count)
-        .map(|index| {
-            let right_input = match index % 5 {
-                0 => i128::MIN,
-                1 => i128::MAX,
-                2 => -1,
-                3 => 0,
-                _ => index as i128 * 0x1_0000_0001 - 0x1234_5678,
-            };
-            ProductRemainderRow::new(
-                (index as u64)
-                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
-                    .rotate_left((index % 63) as u32),
-                right_input,
-                index & 1 != 0,
-                index % 3 == 0,
-                (!(index as u64)).wrapping_mul(0xbf58_476d_1ce4_e5b9),
-                index % 5 == 0,
-                index % 7 == 0,
-                index % 11 == 0,
-            )
-        })
-        .collect::<Vec<_>>();
-    let weights = |length: usize, salt: usize| {
-        (0..length)
-            .map(|index| match (index + salt) % 4 {
-                0 => AkitaField::from_u64(0),
-                1 => AkitaField::from_u64(1),
-                2 => modulus_minus_one,
-                _ => AkitaField::from_u64(
-                    (index as u64)
-                        .wrapping_mul(0x94d0_49bb_1331_11eb)
-                        .wrapping_add(salt as u64),
-                ),
-            })
-            .collect::<Vec<_>>()
-    };
-    let e_in = weights(32, 7);
-    let e_out = weights(32, 11);
-    let expected = product_uniskip_reference::extended_node_values(&rows, &e_in, &e_out)
-        .expect("CPU uni-skip should be well-shaped");
-    assert_eq!(
-        evaluate_product_uniskip_extensions_cpu(&rows, &e_in, &e_out)
-            .expect("optimized CPU uni-skip should be well-shaped"),
-        expected
-    );
-    let resident_rows = context
-        .prepare_product_remainder_rows(&rows)
-        .expect("product rows should prepare once");
-
-    for threads_per_threadgroup in [32, 128] {
-        let invocation = context
-            .prepare_product_uniskip(
-                &resident_rows,
-                &e_in,
-                &e_out,
-                ProductUniskipConfig {
-                    threads_per_threadgroup: Some(threads_per_threadgroup),
-                },
-            )
-            .expect("product uni-skip should prepare");
-        assert_eq!(
-            invocation.row_allocation_identity(),
-            resident_rows.allocation_identity()
-        );
-        assert_eq!(invocation.execute_device_buffer_allocations(), 0);
-        assert_eq!(
-            invocation.execute().expect("uni-skip should execute"),
-            expected
-        );
-        assert_eq!(
-            invocation
-                .execute_timed()
-                .expect("uni-skip should replay")
-                .0,
-            expected
-        );
-    }
-
-    let sequence = context
-        .prepare_product_remainder_sequence_with_rows(
-            resident_rows.clone(),
-            [AkitaField::from_u64(0); 3],
-            32,
-            32,
-            ProductRemainderSequenceConfig::default(),
-        )
-        .expect("product remainder should consume the resident rows");
-    assert_eq!(
-        sequence.row_allocation_identity(),
-        resident_rows.allocation_identity()
-    );
 }
 
 #[test]
@@ -996,159 +895,6 @@ fn product5_sequence_reuses_resident_buffers_across_rounds() {
 }
 
 #[test]
-fn instruction_ra_first_message_matches_cpu() {
-    const LOG_T: usize = 12;
-    const ROWS: usize = 1 << LOG_T;
-    const FACTORS: usize = 16;
-    const BINS: usize = 256;
-
-    let mut cycle_lookups = (0..ROWS)
-        .map(|row| {
-            let lo = (row as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-            let hi = (!(row as u64)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            u128::from(lo) | (u128::from(hi) << 64)
-        })
-        .collect::<Vec<_>>();
-    cycle_lookups[0] = 0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f;
-    cycle_lookups[1] = 0xf0e1_d2c3_b4a5_9687_7869_5a4b_3c2d_1e0f;
-    cycle_lookups[2] = 0xff00_aa55_cc33_9966_1234_5678_9abc_def0;
-
-    let mut table_major_lookups = vec![0u128; ROWS];
-    let mut cycle_to_table_major = vec![0u32; ROWS];
-    for (cycle, &lookup) in cycle_lookups.iter().enumerate() {
-        let slot = (5 * cycle + 3) & (ROWS - 1);
-        table_major_lookups[slot] = lookup;
-        cycle_to_table_major[cycle] = slot as u32;
-    }
-    let chunk_tables = (0..FACTORS)
-        .flat_map(|factor| {
-            (0..BINS).map(move |bin| AkitaField::from_u64((2 + 17 * factor + 31 * bin) as u64))
-        })
-        .collect::<Vec<_>>();
-    let point = (0..LOG_T)
-        .map(|round| AkitaField::from_u64((1009 + 37 * round) as u64))
-        .collect::<Vec<_>>();
-    let gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
-    let expected = instruction_ra_message_cpu(
-        &cycle_lookups,
-        &chunk_tables,
-        gruen.e_in_current(),
-        gruen.e_out_current(),
-    );
-
-    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
-    let invocation = context
-        .prepare_instruction_ra_first_message(
-            &table_major_lookups,
-            &cycle_to_table_major,
-            &chunk_tables,
-            gruen.e_in_current(),
-            gruen.e_out_current(),
-            InstructionRaFirstMessageConfig::default(),
-        )
-        .expect("Instruction RA pipelines should compile");
-    assert_eq!(invocation.threads_per_threadgroup(), 128);
-    assert_eq!(invocation.dynamic_threadgroup_memory_bytes(), 256);
-    assert_eq!(
-        invocation.useful_multiplications(),
-        44 * (ROWS / 2) as u64 + 4 * gruen.e_out_current().len() as u64
-    );
-    assert_eq!(invocation.logical_lookup_plane_bytes(), 20 * ROWS as u64);
-    assert_eq!(invocation.logical_branch_bytes(), 256 * ROWS as u64);
-    assert_eq!(
-        invocation.logical_weight_bytes(),
-        8 * ROWS as u64 + 16 * gruen.e_out_current().len() as u64
-    );
-    assert!(matches!(
-        invocation.read_message(),
-        Err(MetalError::NotExecuted)
-    ));
-
-    invocation
-        .execute()
-        .expect("Instruction RA first message should execute");
-    assert_eq!(
-        invocation
-            .read_message()
-            .expect("Instruction RA message should read"),
-        expected
-    );
-}
-
-#[test]
-fn product5_message_matches_biguint() {
-    let context = SolinasMetal::for_offset_275().expect("Metal context should compile");
-    let elements = 256;
-    let tables = values(PRODUCT5_FACTORS * elements);
-    let (e_in, _) = inputs(8);
-    let (e_out, _) = inputs(elements / 2 / e_in.len());
-    let invocation = context
-        .prepare_product5_message(&tables, elements, &e_in, &e_out, Product5Config::default())
-        .expect("product5 message pipeline should compile");
-    assert_eq!(invocation.threads_per_threadgroup(), 128);
-    assert_eq!(invocation.dynamic_threadgroup_memory_bytes(), 320);
-    assert_eq!(invocation.useful_multiplications(), 11 * 256 + 5 * 16);
-    assert_eq!(invocation.logical_factor_bytes(), 80 * 256);
-
-    invocation
-        .execute()
-        .expect("product5 message should execute");
-    assert_eq!(
-        invocation
-            .read_message()
-            .expect("product5 message should read"),
-        product5_message(&tables, elements, &e_in, &e_out, OFFSET_275)
-    );
-    assert!(invocation
-        .read_bound_tables()
-        .expect("message-only bound output should read")
-        .is_none());
-}
-
-#[test]
-fn product5_fused_transition_matches_biguint() {
-    let context = SolinasMetal::for_offset_275().expect("Metal context should compile");
-    let elements = 256;
-    let tables = values(PRODUCT5_FACTORS * elements);
-    let (e_in, _) = inputs(8);
-    let (e_out, _) = inputs(elements / 4 / e_in.len());
-    let challenge = Fp128::from_u128(0x1234_5678_9abc_def0);
-    let (expected_bound, expected_message) =
-        product5_fused_transition(&tables, elements, challenge, &e_in, &e_out, OFFSET_275);
-    let invocation = context
-        .prepare_product5_fused_transition(
-            &tables,
-            elements,
-            challenge,
-            &e_in,
-            &e_out,
-            Product5Config::default(),
-        )
-        .expect("product5 transition pipeline should compile");
-    assert_eq!(invocation.threads_per_threadgroup(), 64);
-    assert_eq!(invocation.dynamic_threadgroup_memory_bytes(), 160);
-    assert_eq!(invocation.useful_multiplications(), 8 * 256 + 5 * 8);
-    assert_eq!(invocation.logical_factor_bytes(), 120 * 256);
-
-    invocation
-        .execute()
-        .expect("product5 transition should execute");
-    assert_eq!(
-        invocation
-            .read_message()
-            .expect("product5 message should read"),
-        expected_message
-    );
-    assert_eq!(
-        invocation
-            .read_bound_tables()
-            .expect("product5 bound output should read")
-            .expect("fused transition should have bound output"),
-        expected_bound
-    );
-}
-
-#[test]
 fn gpu_field_probes_match_biguint() {
     let context = SolinasMetal::for_offset_275().expect("Metal context should compile");
     let (chain_lhs, chain_rhs) = inputs(4096);
@@ -1217,35 +963,6 @@ fn rust_bindings_reject_invalid_dispatches() {
         .expect("copy pipeline should compile");
     assert!(matches!(
         invocation.read_output(),
-        Err(MetalError::NotExecuted)
-    ));
-
-    let tables = values(PRODUCT5_FACTORS * 8);
-    let e_in = [Fp128::ONE];
-    let e_out = [Fp128::ONE; 4];
-    assert!(matches!(
-        context.prepare_product5_message(&tables, 6, &e_in, &e_out, Product5Config::default()),
-        Err(MetalError::InvalidProduct5TableLength { .. })
-    ));
-    assert!(matches!(
-        context.prepare_product5_message(
-            &tables[..tables.len() - 1],
-            8,
-            &e_in,
-            &e_out,
-            Product5Config::default()
-        ),
-        Err(MetalError::Product5StorageLength { .. })
-    ));
-    assert!(matches!(
-        context.prepare_product5_message(&tables, 8, &e_in, &e_out[..3], Product5Config::default()),
-        Err(MetalError::Product5WeightShape { .. })
-    ));
-    let product5 = context
-        .prepare_product5_message(&tables, 8, &e_in, &e_out, Product5Config::default())
-        .expect("product5 pipeline should compile");
-    assert!(matches!(
-        product5.read_message(),
         Err(MetalError::NotExecuted)
     ));
 }
@@ -1509,58 +1226,6 @@ fn bind_dense_tables(tables: &mut [Vec<AkitaField>], challenge: AkitaField) {
 
 fn flatten_tables(tables: &[Vec<AkitaField>]) -> Vec<AkitaField> {
     tables.iter().flatten().copied().collect()
-}
-
-fn instruction_ra_message_cpu(
-    lookups: &[u128],
-    chunk_tables: &[AkitaField],
-    e_in: &[AkitaField],
-    e_out: &[AkitaField],
-) -> [AkitaField; 4] {
-    const GROUPS: usize = 4;
-    const FACTORS_PER_GROUP: usize = 4;
-    const FACTORS: usize = GROUPS * FACTORS_PER_GROUP;
-    const BINS: usize = 256;
-
-    assert_eq!(lookups.len() / 2, e_in.len() * e_out.len());
-    assert_eq!(chunk_tables.len(), FACTORS * BINS);
-    let zero = AkitaField::from_u64(0);
-    let mut output = [zero; 4];
-    for (x_out, &outer_weight) in e_out.iter().enumerate() {
-        let mut outer = [zero; 4];
-        for (x_in, &inner_weight) in e_in.iter().enumerate() {
-            let pair = x_out * e_in.len() + x_in;
-            let mut groups = [zero; 4];
-            for group in 0..GROUPS {
-                let mut finite = [AkitaField::from_u64(1); 3];
-                let mut infinity = AkitaField::from_u64(1);
-                for offset in 0..FACTORS_PER_GROUP {
-                    let factor = group * FACTORS_PER_GROUP + offset;
-                    let shift = 8 * (FACTORS - 1 - factor);
-                    let lo_index = ((lookups[2 * pair] >> shift) & 0xff) as usize;
-                    let hi_index = ((lookups[2 * pair + 1] >> shift) & 0xff) as usize;
-                    let lo = chunk_tables[factor * BINS + lo_index];
-                    let hi = chunk_tables[factor * BINS + hi_index];
-                    let step = hi - lo;
-                    for (sample, value) in finite.iter_mut().enumerate() {
-                        *value *= lo + AkitaField::from_u64((sample + 1) as u64) * step;
-                    }
-                    infinity *= step;
-                }
-                for sample in 0..3 {
-                    groups[sample] += finite[sample];
-                }
-                groups[3] += infinity;
-            }
-            for (outer, group) in outer.iter_mut().zip(groups) {
-                *outer += inner_weight * group;
-            }
-        }
-        for (output, outer) in output.iter_mut().zip(outer) {
-            *output += outer_weight * outer;
-        }
-    }
-    output
 }
 
 fn assert_probe(
