@@ -67,7 +67,7 @@ pub enum LatticeGeometryError {
 /// every digit centered in `[-2^(chunk_width-1), 2^(chunk_width-1))` so that
 /// `Σ_j 2^(chunk_width·j)·digit_j + 2^FUSED_INC_BITS·carry` is the signed
 /// increment itself — no unsigned shift. See [`balanced_inc_value`] for the
-/// lane-to-value map, which sends lane zero to zero and therefore lets a
+/// value map, which sends digit zero to zero and therefore lets a
 /// zero increment sit entirely on the lane the commitment omits.
 ///
 /// The chunk width is fixed to the shared one-hot chunk size (`log_k_chunk`)

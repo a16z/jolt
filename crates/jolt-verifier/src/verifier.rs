@@ -860,7 +860,7 @@ pub fn absorb_transcript_preamble<T>(
 }
 
 /// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
-/// `8k + lowest_address`, and the lattice lane-zero reconstruction relies on
+/// `8k + lowest_address`, and the lattice digit-zero reconstruction relies on
 /// `unmap(0) = lowest_address ≠ 0` to distinguish "no RAM access" from an
 /// access at remapped word zero (see "Where the RAM activation is pinned" in
 /// `specs/lattice-claims.md`). Mirrors the prover-side
@@ -1272,7 +1272,7 @@ mod tests {
     fn validate_inputs_rejects_zero_based_ram_remap() {
         let mut memory_layout = test_memory_layout();
         // A layout whose remap is zero-based: `unmap(0) = lowest_address = 0`
-        // would make the RAF identity blind to address-lane zero.
+        // would make the RAF identity blind to digit zero.
         memory_layout.trusted_advice_start = 0;
         memory_layout.untrusted_advice_start = 0;
         let preprocessing = test_preprocessing_with_layout(memory_layout);
@@ -1539,8 +1539,14 @@ mod tests {
                         balanced_inc_digits: Vec::new(),
                         balanced_inc_carry: zero,
                     },
+                #[cfg(not(feature = "akita"))]
                 ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
+                },
+                #[cfg(feature = "akita")]
+                ram_activation_booleanity: stage6b::outputs::RamActivationBooleanityOutputClaims {
+                    load: zero,
+                    store: zero,
                 },
                 ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                     ram_ra: Vec::new(),

@@ -156,9 +156,9 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     #[cfg(feature = "akita")]
-    use jolt_claims::protocols::jolt::lattice::relations::hamming_weight::{
-        LatticeHammingWeightClaimReductionDimensions as HammingWeightClaimReductionDimensions,
-        LatticeHammingWeightClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
+    use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
+        LatticeDigitZeroClaimReductionDimensions as HammingWeightClaimReductionDimensions,
+        LatticeDigitZeroClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
     };
     use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,

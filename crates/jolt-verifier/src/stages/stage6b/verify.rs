@@ -15,6 +15,10 @@ use super::inc_claim_reduction::{
 };
 #[cfg(not(feature = "akita"))]
 use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
+#[cfg(feature = "akita")]
+use super::ram_activation_booleanity::RamActivationBooleanityInputClaims;
+#[cfg(not(feature = "akita"))]
+use super::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
 use super::{
     batch::Stage6bDraws,
     booleanity::BooleanityInputClaims,
@@ -33,7 +37,6 @@ use super::{
         Stage6bClearOutput, Stage6bInputClaims, Stage6bInputPoints, Stage6bOutput,
         Stage6bOutputClaims, Stage6bSumchecks,
     },
-    ram_hamming_booleanity::RamHammingBooleanityInputClaims,
     ram_ra_virtualization::{
         ram_ra_virtualization_input_points_from_upstream,
         ram_ra_virtualization_input_values_from_upstream,
@@ -336,7 +339,10 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
         booleanity: BooleanityInputClaims {
             address_phase: address_claims.booleanity.intermediate,
         },
+        #[cfg(not(feature = "akita"))]
         ram_hamming_booleanity: RamHammingBooleanityInputClaims::default(),
+        #[cfg(feature = "akita")]
+        ram_activation_booleanity: RamActivationBooleanityInputClaims::default(),
         ram_ra_virtualization: ram_ra_virtualization_input_values_from_upstream(stage5),
         instruction_ra_virtualization: instruction_ra_virtualization_input_values_from_upstream(
             stage5,
@@ -430,7 +436,10 @@ pub fn stage6b_opening_values<F: Field>(
         values.extend(&claims.booleanity.balanced_inc_digits);
         values.push(claims.booleanity.balanced_inc_carry);
     }
+    #[cfg(not(feature = "akita"))]
     values.extend(claims.ram_hamming_booleanity.opening_values());
+    #[cfg(feature = "akita")]
+    values.extend(claims.ram_activation_booleanity.opening_values());
     values.extend(claims.ram_ra_virtualization.opening_values());
     values.extend(claims.instruction_ra_virtualization.opening_values());
     #[cfg(not(feature = "akita"))]
@@ -488,7 +497,10 @@ fn append_opening_claims<F, T>(
         }
         transcript.append_labeled(b"opening_claim", &claims.booleanity.balanced_inc_carry);
     }
+    #[cfg(not(feature = "akita"))]
     claims.ram_hamming_booleanity.append_openings(transcript);
+    #[cfg(feature = "akita")]
+    claims.ram_activation_booleanity.append_openings(transcript);
     claims.ram_ra_virtualization.append_openings(transcript);
     claims
         .instruction_ra_virtualization
@@ -523,6 +535,9 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
+    #[cfg(feature = "akita")]
+    use super::super::ram_activation_booleanity::RamActivationBooleanityOutputClaims;
+    #[cfg(not(feature = "akita"))]
     use super::super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
@@ -563,19 +578,22 @@ mod tests {
                 balanced_inc_digits: vec![fr(7)],
                 balanced_inc_carry: fr(8),
             },
-            11,
+            12,
         );
         #[cfg(not(feature = "akita"))]
         let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7), fr(8));
         #[cfg(feature = "akita")]
-        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(9), fr(10), fr(11));
+        let (load, store, ram_ra_virt, instruction_ra_virt) = (fr(9), fr(10), fr(11), fr(12));
         (
             Stage6bOutputClaims {
                 bytecode_read_raf,
                 booleanity,
+                #[cfg(not(feature = "akita"))]
                 ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: hamming,
                 },
+                #[cfg(feature = "akita")]
+                ram_activation_booleanity: RamActivationBooleanityOutputClaims { load, store },
                 ram_ra_virtualization: RamRaVirtualizationOutputClaims {
                     ram_ra: vec![ram_ra_virt],
                 },

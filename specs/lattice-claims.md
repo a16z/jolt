@@ -51,8 +51,8 @@ balanced radix-2^b one-hot digit decomposition + one-hot signed-carry column
 four fused-inc consumer val stages inside the bytecode read-RAF, discharging
     the reduced inc claims and producing the FusedInc opening at the shared
     stage-6b cycle point
-booleanity + hamming-weight coverage of the new one-hot columns
-fused-increment decode folded into stage 7 HammingWeightClaimReduction
+booleanity coverage of the new one-hot columns (digit-zero virtualized)
+fused-increment decode folded into the stage-7 digit-zero claim reduction
 store-selector binding to the bytecode Store circuit flag
 advice byte one-hot decomposition + its reconstruction relations (untrusted:
     validity + word-decode legs; trusted: word-decode leg)
@@ -120,7 +120,8 @@ crates/jolt-claims/src/protocols/jolt/lattice/
     ├── read_raf.rs                      lattice bytecode read-RAF (address
     │                                    fold over the four inc claims; cycle
     │                                    phases carrying the FusedInc factor)
-    ├── hamming_weight.rs                stage-7 fused increment reduction
+    ├── digit_zero.rs                    stage-7 digit-zero claim reduction
+    │                                    (+ fused increment decode)
     ├── booleanity.rs                    lattice-mode Booleanity (same id)
     ├── advice_reconstruction.rs         untrusted (validity + decode legs)
     │                                    and trusted (decode leg) advice
@@ -176,7 +177,7 @@ ProgramImageBytes,
 // JoltVirtualPolynomial — appended variant
 FusedInc,                  // gamma-batched RamInc/RdInc stream; opened once,
                            // by the read-raf cycle phase at the shared 6b
-                           // cycle point; the stage-7 hamming reduction
+                           // cycle point; the stage-7 digit-zero reduction
                            // decodes the balanced digits against it
 ```
 
@@ -191,11 +192,12 @@ relation's (house convention) and are aggregated as appended
 ```rust
 BytecodeReadRafPublic::{StageValue, StageCycleEq} index the relation's val
     stages 0..READ_RAF_CYCLE_STAGES (9 in lattice mode; see relation 1)
-HammingWeightClaimReductionPublic additionally includes EqBooleanityAtDefault,
-    EqVirtualizationAtDefault(i), and BalancedIncValueAtAddress — the
-    implicit-zero recentering publics. The `*AtDefault` weights appear in both
-    expressions: the input claim folds in each leg's lane-zero baseline, the
+HammingWeightClaimReductionPublic additionally includes EqBooleanityAtDigitZero,
+    EqVirtualizationAtDigitZero(i), and BalancedIncValueAtAddress — the
+    digit-zero virtualization publics. The `*AtDigitZero` weights appear in both
+    expressions: the input claim folds in each leg's digit-zero baseline, the
     output coefficients are the sparse `w(ρ) − w(0)` remainders
+    (`specs/digit-zero-virtualization.md`)
 ```
 
 There is **no** `JoltOpeningId::Lattice { relation, index }` variant. Every
@@ -209,7 +211,7 @@ Every semantic column is identified by `JoltCommittedPolynomial`; the earlier
 draft's separate `LatticeColumn` family is gone. `OneHotTrace` has one
 relation-produced claim per column at a shared logical point. Those columns
 occupy explicit slots of one physical polynomial, with unused capacity fixed
-to zero and logical address lane zero virtualized out of the witness.
+to zero and the logical digit-zero row virtualized out of the witness.
 
 ```rust
 /// Canonical per-proof OneHotTrace column order.
@@ -373,28 +375,31 @@ relations enforce only one-hotness over all K lanes, so the carry is pinned to
 the same `[-K/2, K/2)` alphabet as the digits. See "Increment range" below for
 why that slack is safe.
 
-### 3. Lattice `HammingWeightClaimReduction` (Stage 7)
+### 3. Lattice digit-zero claim reduction (Stage 7)
 
-The existing RA hamming-weight claim reduction is extended, on the Akita path
-only, with the increment columns. One sumcheck over the `b = log_K` address
-bits batches:
+The stage-7 reduction slot (`LatticeDigitZeroClaimReduction`, keeping base
+mode's `HammingWeightClaimReduction` relation id) batches, in one sumcheck
+over the `b = log_K` address bits:
 
-- **claim reduction**: reduces the chunk openings produced by lattice
-  Booleanity to Stage 7's bound address point (there are no hamming-weight
-  legs: with lane zero defined as `A − Σ_{k≠0} Q`, per-row one-hotness follows
-  from booleanity of the reconstruction plus the definitional column sum, so
-  the legs would pair `A` against `A`; their γ powers are left unused to keep
-  the layout aligned with base mode), and
+- **claim reduction**: reduces the Booleanity/virtualization openings of every
+  one-hot column to Stage 7's bound address point, recentering each around the
+  omitted digit-zero row (there is no Hamming-weight leg of any kind: with the
+  digit-zero row defined as `ra_i(0,·) := M_µ − Σ_{k≠0} ra_i(k,·)` the weight
+  identity holds by construction — `specs/digit-zero-virtualization.md`; the γ
+  layout is two powers per RA polynomial, one per increment column, then the
+  decode power), and
 - **value reconstruction**:
   `Σ_j 2^(b*j) * value(digit_j) + 2^64 * value(carry) = FusedInc`, where
-   `value(lane) = lane` for `lane < K/2` and `lane - K` otherwise.
+   `value(k) = k` for `k < K/2` and `k - K` otherwise.
 
 - **Inputs**: `FusedInc@BytecodeReadRaf` (the read-raf cycle phase's own
-  output, already at the shared 6b cycle point), `BalancedIncCarry@Booleanity`,
-  `BalancedIncDigit(j)@Booleanity`.
+  output, already at the shared 6b cycle point),
+  `OpFlags(Load)/OpFlags(Store)@RamActivationBooleanity` (the RAM activation
+  `M_RAM = Load + Store`, entering the two RamRa baselines),
+  `BalancedIncCarry@Booleanity`, `BalancedIncDigit(j)@Booleanity`.
 - **Outputs**: every RA, increment digit, and carry opening at the same full
   `(r_address, r_cycle)` point.
-- degree 2, `b` rounds, using the existing hamming batching challenge.
+- degree 2, `b` rounds, using the existing stage-7 batching challenge.
 
 **Increment range.** The decomposition is *not* a 64-bit range check on
 `FusedInc`, and nothing else range-checks it either. One-hotness pins every
@@ -518,49 +523,34 @@ shorter claims into that domain by multiplying their value by
 `eq(missing_prefix, 0)`. Truly independent points are separate objects; there
 is no generic arbitrary-point reduction sumcheck.
 
-**Padding invariant**: the hamming legs claim "exactly one hot cell per row"
-of the *semantic* column, summed over the full Boolean hypercube, so every row
-— padding included — must carry a hot lane. Which cells that puts in the
-commitment differs by object:
+**Padding invariant**: every row of a *semantic* column — padding included —
+must sum to its activation over the full Boolean hypercube (the digit-zero
+definition makes this an identity; Booleanity makes it one-hot-or-zero). Which
+cells that puts in the commitment differs by object:
 
-- **OneHotTrace columns** omit lane zero: it is reconstructed from the
-  column's activation, so a row whose semantic hot lane is zero is physically
-  empty and the hamming leg is discharged by the reconstruction rather than by
-  committed cells. The balanced digit encoding is chosen so that a zero fused
-  increment lands every digit and the carry on lane zero, making padding rows
-  free. The prover must not invent a nonzero lane for them.
-**Where the RAM activation is pinned.** `RamRa` is the one OneHotTrace family
-whose activation `A` is a prover-supplied claim (`RamHammingWeight`) rather
-than the constant 1. Its hamming leg is *omitted* here, because
-`Σ_k L(k,t) = A(t)` holds by construction and the leg would only pair `A`
-against `A`; base mode keeps it, since there it is the direct tie
-`Σ_k ra(k, r_cycle) = A` against committed data.
+- **OneHotTrace columns** omit the digit-zero row: it is reconstructed from
+  the column's activation, so a row whose semantic hot cell is digit zero is
+  physically empty and the weight identity is discharged by the reconstruction
+  rather than by committed cells. The balanced digit encoding is chosen so
+  that a zero fused increment lands every digit and the carry on digit zero,
+  making padding rows free. The prover must not invent a nonzero digit for
+  them.
 
-`A` is still consumed by this relation, as an ordinary input opening: each
-`RamRa` leg's lane-zero baseline `w(0)·A` is folded into the input claim
-(`γ^(3i+1)·(c_bool − eq(0, r_bool)·A) + γ^(3i+2)·(c_virt − eq(0, r_virt)·A)`),
-so the relation reduces `{c_bool_i, c_virt_i, A}` to the committed opening
-`V_i`. What the direct tie bought on top of that was redundancy: it pinned `A`
-locally against the column's own row sum. Without it, `A`'s remaining tie to
-the rest of the execution runs through a cross-stage chain — the `γ^(3i+2)`
-leg → the
-`RamRaVirtualization` product → the stage-5 `RamRaClaimReduction` → the
-`RamRafEvaluation` identity `Σ_k (8k + lowest_address)·ra(k,t) = RamAddress(t)`
-→ Spartan's `RamAddress`, pinned by rv64 rows 0/1 (`RamAddrEqRs1PlusImmIfLoadStore`
-and `RamAddrEqZeroIfNotLoadStore`).
-
-Booleanity on the reconstruction plus `A² = A` leave exactly one free bit per
-cycle, and only on cycles where every RAM chunk column is physically empty —
-which is `{no access} ∪ {access at remapped word 0}`, since `remap_word_address`
-reserves no sentinel (it returns `None` only for raw address 0). RAF closes
-both: fabricating an access puts `lowest_address` on the left while row 1
-forces `RamAddress = 0`; suppressing a genuine access to remapped word 0 puts 0
-on the left while row 0 forces `RamAddress = lowest_address`. **This argument
-depends on `unmap(0) = lowest_address ≠ 0`**, enforced fail-closed by the
-verifier's `validate_inputs` (`validate_ram_remap_base`, mirroring the
-prover-side `UnmapRamAddressPolynomial::new` assertion) before any stage
-runs. Without that guard a zero-based remap would make
-RAF blind to lane 0 and re-open both forgeries.
+**The RAM activation.** `RamRa` is the one OneHotTrace family whose activation
+is not the constant 1: `M_RAM = Load + Store`, the two flag openings the
+stage-6b `RamActivationBooleanity` member produces (binding the flag columns
+and proving the activation sum Boolean — deliberately a single booleanity on
+the sum, never a γ-batch of per-flag legs, because the columns are virtual and
+chosen after the draws). Each `RamRa` leg's digit-zero baseline
+`w(0)·M̃_RAM` is folded into the input claim
+(`γ^(2i)·(c_bool − eq(0, r_bool)·M̃) + γ^(2i+1)·(c_virt − eq(0, r_virt)·M̃)`),
+so the relation reduces `{c_bool_i, c_virt_i, Load, Store}` to the committed
+opening. The full soundness accounting — weights equal the activation,
+unit-or-zero tensors, the RAF/rv64-rows-0/1 pinning of the activation to the
+true access pattern, and why `validate_ram_remap_base` (`unmap(0) =
+lowest_address > 8`, fail-closed in `validate_inputs`) is load-bearing in the
+fabrication direction — lives in `specs/digit-zero-virtualization.md` §5,
+which supersedes the earlier five-hop-chain / one-free-bit argument here.
 
 - **Auxiliary prefix-packed objects** (advice bytes, precommitted bytecode
   lanes) still commit lane zero, so their padding rows must be hot-lane-zero
@@ -614,8 +604,9 @@ base stage-8 RLC order for lattice mode.
 - Stage 6a/6b runs lattice Booleanity; Stage 6b's read-raf cycle phase carries
   the `FusedInc` factor and produces its opening at the shared cycle point —
   there is no separate fused-inc member.
-- Stage 7 extends `HammingWeightClaimReduction` with hamming, Booleanity, and
-  balanced-decode terms for all increment one-hot columns.
+- Stage 7 runs the digit-zero claim reduction (base's stage-7 slot) with
+  Booleanity and balanced-decode terms for all increment one-hot columns;
+  Stage 6b's `RamActivationBooleanity` member supplies the RAM activation.
 - Stage 8 selector-reduces `OneHotTrace` and every present auxiliary object,
   then runs one direct Akita opening per physical polynomial.
 - The Dory build instantiates the original Booleanity, increment claim

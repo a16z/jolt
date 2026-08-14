@@ -979,12 +979,24 @@ fn stage6_formula_output_openings(
             ),
         ));
     }
+    #[cfg(not(feature = "akita"))]
     openings.extend([ram::ram_hamming_weight()].into_iter().map(|id| {
         (
             "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
             id,
         )
     }));
+    #[cfg(feature = "akita")]
+    openings.extend([
+        (
+            "stage6.claims.ram_activation_booleanity.load",
+            ram::ram_activation_load(),
+        ),
+        (
+            "stage6.claims.ram_activation_booleanity.store",
+            ram::ram_activation_store(),
+        ),
+    ]);
     openings.extend(
         relations::ram::RamRaVirtualizationOutputClaims::<Fr> {
             ram_ra: vec![Fr::zero(); dimensions.ram_ra_virtualization.num_committed_ra_polys()],

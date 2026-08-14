@@ -8,7 +8,7 @@
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
 #[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::relations::hamming_weight as lattice_hamming;
+use jolt_claims::protocols::jolt::lattice::relations::digit_zero as lattice_digit_zero;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
 #[cfg(feature = "akita")]
@@ -30,9 +30,9 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
 #[cfg(feature = "akita")]
-pub use lattice_hamming::{
-    LatticeHammingWeightClaimReductionInputClaims as HammingWeightClaimReductionInputClaims,
-    LatticeHammingWeightClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
+pub use lattice_digit_zero::{
+    LatticeDigitZeroClaimReductionInputClaims as HammingWeightClaimReductionInputClaims,
+    LatticeDigitZeroClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
 };
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -46,7 +46,12 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> HammingWeightClaimReductionInputClaims<F> {
     HammingWeightClaimReductionInputClaims {
+        #[cfg(not(feature = "akita"))]
         ram_hamming_weight: cycle_phase.ram_hamming_booleanity.ram_hamming_weight,
+        #[cfg(feature = "akita")]
+        ram_activation_load: cycle_phase.ram_activation_booleanity.load,
+        #[cfg(feature = "akita")]
+        ram_activation_store: cycle_phase.ram_activation_booleanity.store,
         instruction_booleanity: cycle_phase.booleanity.instruction_ra.clone(),
         bytecode_booleanity: cycle_phase.booleanity.bytecode_ra.clone(),
         ram_booleanity: cycle_phase.booleanity.ram_ra.clone(),
@@ -187,10 +192,10 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-/// `eq(point, 0) = Π (1 − point_j)` — the lane-zero weight of an `eq` leg, the
-/// `w(0)` baseline the input claim folds in under Akita's implicit-zero
-/// recentering.
-fn eq_at_default<F: Field>(point: &[F]) -> F {
+/// `eq(point, 0) = Π (1 − point_j)` — the digit-zero weight of an `eq` leg,
+/// the `w(0)` baseline the input claim folds in under digit-zero
+/// virtualization (`specs/digit-zero-virtualization.md`).
+fn eq_at_digit_zero<F: Field>(point: &[F]) -> F {
     point.iter().fold(F::one(), |accumulator, value| {
         accumulator * (F::one() - *value)
     })
@@ -247,8 +252,8 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
             HammingWeightClaimReductionPublic::EqBooleanity => {
                 try_eq_mle(rho_rev, &self.r_address).map_err(public_input_failed)
             }
-            HammingWeightClaimReductionPublic::EqBooleanityAtDefault => {
-                Ok(eq_at_default(&self.r_address))
+            HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero => {
+                Ok(eq_at_digit_zero(&self.r_address))
             }
             HammingWeightClaimReductionPublic::EqVirtualization(index) => {
                 let point = self.virtualization_points.get(*index).ok_or_else(|| {
@@ -258,13 +263,13 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 })?;
                 try_eq_mle(rho_rev, point).map_err(public_input_failed)
             }
-            HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(index) => {
+            HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(index) => {
                 let point = self.virtualization_points.get(*index).ok_or_else(|| {
                     public_input_failed(format!(
                         "missing HammingWeight virtualization point for index {index}"
                     ))
                 })?;
-                Ok(eq_at_default(point))
+                Ok(eq_at_digit_zero(point))
             }
             HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
                 #[cfg(feature = "akita")]
@@ -279,8 +284,8 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         }
     }
 
-    /// The lattice input expression folds each leg's lane-zero baseline into the
-    /// input claim, so the `*AtDefault` weights are input publics too. They are
+    /// The lattice input expression folds each leg's digit-zero baseline into the
+    /// input claim, so the `*AtDigitZero` weights are input publics too. They are
     /// pure functions of the (transcript-fixed) stage-6 points — no bound point
     /// is needed.
     fn derive_input_term(
@@ -292,16 +297,16 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
         match public_id {
-            HammingWeightClaimReductionPublic::EqBooleanityAtDefault => {
-                Ok(eq_at_default(&self.r_address))
+            HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero => {
+                Ok(eq_at_digit_zero(&self.r_address))
             }
-            HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(index) => {
+            HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(index) => {
                 let point = self.virtualization_points.get(*index).ok_or_else(|| {
                     public_input_failed(format!(
                         "missing HammingWeight virtualization point for index {index}"
                     ))
                 })?;
-                Ok(eq_at_default(point))
+                Ok(eq_at_digit_zero(point))
             }
             // Output publics — resolved in `derive_output_term`, never in the
             // input expression.
@@ -321,9 +326,9 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
 pub type HammingDimensions =
     jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
 #[cfg(feature = "akita")]
-pub type HammingDimensions = lattice_hamming::LatticeHammingWeightClaimReductionDimensions;
+pub type HammingDimensions = lattice_digit_zero::LatticeDigitZeroClaimReductionDimensions;
 
 #[cfg(not(feature = "akita"))]
 type HammingSymbolic = relations::claim_reductions::hamming_weight::ClaimReduction;
 #[cfg(feature = "akita")]
-type HammingSymbolic = lattice_hamming::LatticeHammingWeightClaimReduction;
+type HammingSymbolic = lattice_digit_zero::LatticeDigitZeroClaimReduction;

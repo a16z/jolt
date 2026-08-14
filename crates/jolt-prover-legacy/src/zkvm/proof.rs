@@ -839,6 +839,9 @@ pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelatio
         prover_opening::SumcheckId::RamValCheck => JoltRelationId::RamValCheck,
         prover_opening::SumcheckId::RamRaClaimReduction => JoltRelationId::RamRaClaimReduction,
         prover_opening::SumcheckId::RamHammingBooleanity => JoltRelationId::RamHammingBooleanity,
+        prover_opening::SumcheckId::RamActivationBooleanity => {
+            JoltRelationId::RamActivationBooleanity
+        }
         prover_opening::SumcheckId::RamRaVirtualization => JoltRelationId::RamRaVirtualization,
         prover_opening::SumcheckId::RegistersClaimReduction => {
             JoltRelationId::RegistersClaimReduction

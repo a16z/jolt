@@ -660,8 +660,9 @@ pub struct FusedIncColumns {
     /// `0`, `1`, or `K - 1`, though the protocol enforces only one-hotness
     /// over all `K`) — the batching order of
     /// [`lattice_booleanity_params`]. Lanes are never
-    /// `None`: Booleanity must see the lane-zero-*inclusive* columns, unlike
-    /// the commitment, which omits lane zero and lets Stage 7 reconstruct it.
+    /// `None`: Booleanity must see the digit-zero-*inclusive* columns, unlike
+    /// the commitment, which omits the digit-zero row and lets Stage 7
+    /// reconstruct it (`specs/digit-zero-virtualization.md`).
     /// The `Option` is the [`RaPolynomial`] index encoding.
     pub one_hot: Vec<Arc<Vec<Option<u8>>>>,
     /// The signed fused delta per cycle.
@@ -719,10 +720,11 @@ pub struct LatticeBooleanityCycleInput<F: JoltField> {
     one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
 }
 
-/// Lattice booleanity address phase: the base prover with the chunk columns'
-/// pushforward tables appended to `G` (built with the same split-eq cycle
-/// convention as `compute_all_G`). The carry column is absent by construction —
-/// see [`lattice_booleanity_params`].
+/// Lattice booleanity address phase: the base prover with the increment
+/// columns' pushforward tables appended to `G` (built with the same split-eq
+/// cycle convention as `compute_all_G`). `one_hot_columns` includes the carry
+/// column — [`lattice_booleanity_params`] pushes `BalancedIncCarry` into the
+/// polynomial types, and the fused columns carry it last.
 #[cfg(all(feature = "prover", feature = "akita"))]
 #[derive(Allocative)]
 pub struct LatticeBooleanityAddressSumcheckProver<F: JoltField> {
@@ -1173,7 +1175,7 @@ mod tests {
         let num_base =
             one_hot_params.instruction_d + one_hot_params.bytecode_d + one_hot_params.ram_d;
 
-        // Fused deltas exercising padding (0 => every column on lane zero),
+        // Fused deltas exercising padding (0 => every column on digit zero),
         // negatives, and extremes.
         let fused: Vec<i128> = vec![5, -7, 0, (1 << 63) - 1, -(1 << 63), 123, -456, 0];
         let inc = |delta: i128| crate::zkvm::packed_witness::FusedIncValue { delta };

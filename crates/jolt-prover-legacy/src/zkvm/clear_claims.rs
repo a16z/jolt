@@ -29,7 +29,7 @@ use jolt_verifier::{
         stage1::outputs::Stage1OutputClaims,
         stage6b::outputs::{
             BooleanityOutputClaims, BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
-            Stage6bOutputClaims,
+            RamHammingBooleanityOutputClaims, Stage6bOutputClaims,
         },
         stage7::{
             advice_address_phase::{
@@ -63,9 +63,8 @@ use jolt_verifier::{
         },
         stage6b::outputs::{
             BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
-            ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
-            RamRaVirtualizationOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
-            UntrustedAdviceCyclePhaseOutputClaims,
+            ProgramImageReductionCyclePhaseOutputClaims, RamRaVirtualizationOutputClaims,
+            TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
         },
         stage7::committed_reduction_address_phase::{
             BytecodeReductionAddressPhaseOutputClaims,
@@ -639,7 +638,7 @@ mod packed {
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
         self, BytecodeChunkReconstructionOutputClaims,
     };
-    use jolt_claims::protocols::jolt::lattice::relations::hamming_weight as lattice_hamming;
+    use jolt_claims::protocols::jolt::lattice::relations::digit_zero as lattice_digit_zero;
     use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::{
         self, ProgramImageReconstructionOutputClaims,
     };
@@ -650,7 +649,9 @@ mod packed {
     use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
     use jolt_verifier::proof::ClearProofClaims;
     use jolt_verifier::stages::stage1::outputs::Stage1OutputClaims;
-    use jolt_verifier::stages::stage6b::outputs::Stage6bOutputClaims;
+    use jolt_verifier::stages::stage6b::outputs::{
+        RamActivationBooleanityOutputClaims, Stage6bOutputClaims,
+    };
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
     };
@@ -777,8 +778,9 @@ mod packed {
                 balanced_inc_digits,
                 balanced_inc_carry,
             },
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
-                ram_hamming_weight: claims.require(ram::ram_hamming_weight())?,
+            ram_activation_booleanity: RamActivationBooleanityOutputClaims {
+                load: claims.require(ram::ram_activation_load())?,
+                store: claims.require(ram::ram_activation_store())?,
             },
             ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
             instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
@@ -824,10 +826,13 @@ mod packed {
             });
         }
 
-        let chunks = indexed_family(claims, lattice_hamming::reduced_balanced_inc_digit_opening);
+        let chunks = indexed_family(
+            claims,
+            lattice_digit_zero::reduced_balanced_inc_digit_opening,
+        );
         if chunks.is_empty() {
             return Err(VerifierError::MissingOpeningClaim {
-                id: lattice_hamming::reduced_balanced_inc_digit_opening(0),
+                id: lattice_digit_zero::reduced_balanced_inc_digit_opening(0),
             });
         }
 
@@ -838,7 +843,7 @@ mod packed {
                 ram_ra,
                 balanced_inc_digits: chunks,
                 balanced_inc_carry: claims
-                    .require(lattice_hamming::reduced_balanced_inc_carry_opening())?,
+                    .require(lattice_digit_zero::reduced_balanced_inc_carry_opening())?,
             },
             trusted_advice: advice_address_phase_claim_from_openings(
                 claims,

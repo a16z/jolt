@@ -18,7 +18,7 @@ use crate::zkvm::lookup_table::LookupTables;
 use common::constants::XLEN;
 
 /// Packs equal-length semantic columns into prefix slots and pads unused
-/// slots with zero rows. Logical lane zero is virtual and therefore omitted
+/// slots with zero rows. The logical digit-zero row is virtual and therefore omitted
 /// from the physical one-hot polynomial.
 pub fn pack_one_hot_columns(
     k: usize,
