@@ -23,7 +23,7 @@ use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
     absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
 };
-use jolt_witness::{validate_servable, JoltWitnessOracle, RowSource, WitnessBundle};
+use jolt_witness::{validate_servable, JoltWitnessOracle, JoltWitnessPlane, WitnessBundle};
 
 use crate::config::advice_total_vars;
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
@@ -58,6 +58,7 @@ where
 /// (main, untrusted advice, trusted advice, then the preprocessing-held
 /// committed-program chunk/image commitments — the verifier's own absorb
 /// order).
+#[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
@@ -73,7 +74,7 @@ where
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessOracle<F> + RowSource,
+    W: JoltWitnessPlane<F>,
 {
     // Committed-program mode needs the prover-retained full program + hints;
     // require presence to agree with the verifier preprocessing's mode.
@@ -108,7 +109,10 @@ where
         });
     }
     // The verifier's own input validation doubles as the prover's self-check
-    // and produces the normalized `CheckedInputs` the preamble absorbs.
+    // and produces the normalized `CheckedInputs` the preamble absorbs. The
+    // zk axis is the compiled feature — the co-compiled verifier's
+    // `SELECTED_ZK_CONFIG` flips with the same feature, so both sides always
+    // agree.
     let checked = validate_inputs_from_parts(
         &preprocessing.verifier,
         public_io,
@@ -118,7 +122,7 @@ where
         config.one_hot_config,
         trusted_advice.is_some(),
         untrusted_advice_present,
-        false,
+        cfg!(feature = "zk"),
     )?;
 
     // The dominant-advice regime (an advice grid wider than every other
@@ -188,13 +192,23 @@ where
         log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         order: config.trace_polynomial_order,
     };
-    let committed = backend.commit.commit_witness(
-        session,
-        witness as &dyn RowSource,
-        &ids,
-        grid,
-        &preprocessing.pcs_setup,
-    )?;
+    // The `commit_witness` kernel-seam span sits at this call boundary, not
+    // on any one backend impl, so every `CommitWitness` backend inherits it
+    // (the taxonomy advertises it as backend-neutral).
+    let committed = tracing::info_span!(
+        "commit_witness",
+        columns = ids.len(),
+        total_vars = grid.total_vars
+    )
+    .in_scope(|| {
+        backend.commit.commit_witness(
+            session,
+            witness as &dyn JoltWitnessPlane<F>,
+            &ids,
+            grid,
+            &preprocessing.pcs_setup,
+        )
+    })?;
     let (commitments, mut hints) = assemble_commitments::<PCS>(committed)?;
 
     // The untrusted advice polynomial is committed at prove time in its OWN
@@ -209,13 +223,20 @@ where
             // Advice grids always place cycle-major — see `CommitmentGrid`.
             order: TracePolynomialOrder::CycleMajor,
         };
-        let advice = backend.commit.commit_advice(
-            session,
-            witness as &dyn JoltWitnessOracle<F>,
-            JoltCommittedPolynomial::UntrustedAdvice,
-            advice_grid,
-            &preprocessing.pcs_setup,
-        )?;
+        // Backend-neutral seam span, like `commit_witness` above.
+        let advice = tracing::info_span!(
+            "commit_advice",
+            id = ?JoltCommittedPolynomial::UntrustedAdvice
+        )
+        .in_scope(|| {
+            backend.commit.commit_advice(
+                session,
+                witness as &dyn JoltWitnessOracle<F>,
+                JoltCommittedPolynomial::UntrustedAdvice,
+                advice_grid,
+                &preprocessing.pcs_setup,
+            )
+        })?;
         hints.push((advice.id, advice.hint));
         Some(advice.commitment)
     } else {

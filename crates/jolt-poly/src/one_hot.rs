@@ -38,9 +38,12 @@ pub enum OneHotIndexOrder {
 impl OneHotPolynomial {
     /// Creates a one-hot polynomial from column indices.
     ///
+    /// Every hot index must satisfy `col < k` (checked in debug builds only).
+    ///
     /// # Panics
     ///
-    /// Panics if `k * indices.len()` is not a power of two.
+    /// Panics if `k > 256`, if `k * indices.len()` overflows or is not a
+    /// power of two, or (debug builds) if a hot index is `>= k`.
     pub fn new(k: usize, indices: Vec<Option<u8>>) -> Self {
         Self::new_with_index_order(k, indices, OneHotIndexOrder::RowMajor)
     }
@@ -51,9 +54,13 @@ impl OneHotPolynomial {
     /// `ColumnMajor` stores each column contiguously as `column * T + cycle`,
     /// matching the legacy core Dory cycle-major RA commitment layout.
     ///
+    /// Every hot index must satisfy `col < k` (checked in debug builds only).
+    ///
     /// # Panics
     ///
-    /// Panics if `k * indices.len()` is not a power of two.
+    /// Panics if `k > 256`, if `k * indices.len()` overflows or is not a
+    /// power of two, or (debug builds) if a hot index is `>= k`.
+    #[expect(clippy::expect_used)]
     pub fn new_with_index_order(
         k: usize,
         indices: Vec<Option<u8>>,
@@ -63,7 +70,17 @@ impl OneHotPolynomial {
             k <= u8::MAX as usize + 1,
             "k exceeds u8 index range ({k} > 256)"
         );
-        let total = k * indices.len();
+        // WARNING: hot indices >= k address positions outside the declared
+        // (T × k) grid, silently corrupting fold/commitment results. Debug-only:
+        // production witness generation masks indices below k, and a release
+        // scan would add an O(T) pass per committed polynomial.
+        debug_assert!(
+            indices.iter().flatten().all(|&col| (col as usize) < k),
+            "one-hot column index out of range (must be < k = {k})"
+        );
+        let total = k
+            .checked_mul(indices.len())
+            .expect("k * num_rows overflows usize");
         assert!(
             total.is_power_of_two(),
             "k * num_rows must be a power of two, got {total}"
@@ -153,7 +170,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
             }
         }
 
-        let mut buf = crate::thread::unsafe_allocate_zero_vec(num_cols);
+        let mut buf = jolt_utils::unsafe_allocate_zero_vec(num_cols);
         for (row_idx, cols) in row_hot_cols.into_iter().enumerate() {
             buf.fill(F::zero());
             for c in cols {
@@ -167,7 +184,7 @@ impl<F: Field> MultilinearPoly<F> for OneHotPolynomial {
     /// nonzero positions, avoiding the O(T × K) dense iteration.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
-        let mut result = crate::thread::unsafe_allocate_zero_vec(num_cols);
+        let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);
         for (cycle, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
                 let flat = self.flat_index(cycle, col);
@@ -320,6 +337,14 @@ mod tests {
     fn is_one_hot_returns_true() {
         let oh = make_one_hot(4, &[Some(0), Some(1), Some(2), Some(3)]);
         assert!(MultilinearPoly::<Fr>::is_one_hot(&oh));
+    }
+
+    #[test]
+    #[cfg_attr(not(debug_assertions), ignore = "index validation is debug-only")]
+    #[should_panic(expected = "one-hot column index out of range")]
+    fn out_of_range_column_rejected_in_debug() {
+        // k = 4 but a hot index of 7 is representable in u8.
+        let _ = OneHotPolynomial::new(4, vec![Some(7), None, Some(1), Some(0)]);
     }
 
     #[test]

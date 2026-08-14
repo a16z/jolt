@@ -174,7 +174,8 @@ mod twin_tests {
     };
     use jolt_poly::UnivariatePoly;
     use jolt_sumcheck::{
-        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, SumcheckError,
+        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, RoundScheduler,
+        SequentialRounds, SumcheckError,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
@@ -212,6 +213,10 @@ mod twin_tests {
                 serde::Serialize,
                 serde::Deserialize,
             )]
+            // The SumcheckBatch derive's aggregates require Allocative of
+            // every member's outputs under the expanding crate's
+            // `allocative` feature (the profile harness's flamegraphs).
+            #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
             #[relation($rel)]
             struct $outputs<C> {
                 #[opening($output)]
@@ -555,6 +560,37 @@ mod twin_tests {
     /// missing carry is a proof-time `KernelError`.
     struct ParkedToyGamma(DenseKernel<ToyGamma<Fr>>);
 
+    // Session-inserted test state must be `MaybeAllocative`; self-sized
+    // visitation is plenty for twin-lock scaffolding.
+    #[cfg(feature = "allocative")]
+    mod carry_visitation {
+        use super::*;
+
+        macro_rules! impl_self_sized_allocative {
+            ($($ty:ty),+ $(,)?) => {$(
+                impl allocative::Allocative for $ty {
+                    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+                        visitor.enter_self_sized::<Self>().exit();
+                    }
+                }
+            )+};
+        }
+        impl_self_sized_allocative!(PrepareCallLog, ResidueCallLog, ParkedToyGamma);
+
+        // The toy kernel is a `SumcheckKernel`, so the mid-stage snapshot's
+        // `MaybeAllocative` supertrait reaches it too.
+        impl<R> allocative::Allocative for DenseKernel<R> {
+            fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+                let mut visitor = visitor.enter_self_sized::<Self>();
+                visitor.visit_simple(
+                    allocative::Key::new("evals"),
+                    self.evals.capacity() * size_of::<Fr>(),
+                );
+                visitor.exit();
+            }
+        }
+    }
+
     struct SessionCarriedToyGamma;
 
     impl PrepareKernel<Fr, ToyGamma<Fr>> for SessionCarriedToyGamma {
@@ -722,6 +758,7 @@ mod twin_tests {
             .prove(
                 &kernels,
                 &mut session,
+                &mut SequentialRounds,
                 &NoWitness,
                 &inputs,
                 &input_points,
@@ -826,6 +863,7 @@ mod twin_tests {
             .prove(
                 &kernels,
                 &mut session,
+                &mut SequentialRounds,
                 &NoWitness,
                 &inputs,
                 &input_points,
@@ -888,6 +926,7 @@ mod twin_tests {
         let result = sumchecks.prove(
             &kernels,
             &mut session,
+            &mut SequentialRounds,
             &NoWitness,
             &inputs,
             &input_points,
@@ -941,6 +980,7 @@ mod twin_tests {
         sumchecks: &ToyDriverSumchecks<Fr>,
         kernels: &ToyKernels,
         session: &mut ProofSession,
+        scheduler: &mut dyn RoundScheduler<Fr>,
         inputs: &ToyDriverInputClaims<Fr>,
         input_points: &ToyDriverInputPoints<Fr>,
         challenges: &ToyDriverChallenges<Fr>,
@@ -955,6 +995,7 @@ mod twin_tests {
         sumchecks.prove(
             kernels,
             session,
+            scheduler,
             &NoWitness,
             inputs,
             input_points,

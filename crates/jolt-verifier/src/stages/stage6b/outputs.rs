@@ -190,6 +190,10 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// output claims. ZK-only, hence base-only (no zk protocol exists over the
     /// packed axis).
     #[cfg(not(feature = "akita"))]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "a sum of in-memory vector lengths and small constants cannot overflow usize"
+    )]
     pub fn point_count(&self) -> usize {
         self.bytecode_read_raf.bytecode_ra.len()
             + self.booleanity.instruction_ra.len()
@@ -248,6 +252,7 @@ pub struct Stage6bCarriedChallenges<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage6bClearOutput<F: Field> {
     /// The produced opening *values* (wire form); read by later stages and the
     /// Fiat-Shamir opening-claim encoder.
@@ -314,6 +319,7 @@ impl<F: Field, C> Stage6bOutput<F, C> {
 /// phases: the per-chunk weights over dropped address bits, the chunk-local
 /// cycle point, and the gamma-folded lane weights.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReductionWeights<F: Field> {
     pub r_bc: Vec<F>,
     pub chunk_rbc_weights: Vec<F>,

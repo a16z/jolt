@@ -2,6 +2,7 @@
 /// is the address in main memory.
 pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
+use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
 use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
@@ -17,11 +18,14 @@ use super::terminal::Terminal;
 /// @TODO: Memory protection is not implemented yet. We should support.
 #[derive(Clone, Debug)]
 pub struct Mmu {
-    clock: u64,
     ppn: u64,
     addressing_mode: AddressingMode,
     privilege_mode: PrivilegeMode,
     pub memory: MemoryWrapper,
+
+    /// Pre-decoded instruction cache. Lives on the Mmu so the store paths can
+    /// invalidate it directly when the executable range is written.
+    pub decode_cache: DecodeCache,
 
     pub jolt_device: Option<JoltDevice>,
 
@@ -60,14 +64,20 @@ impl Mmu {
     /// * `tracer`
     pub fn new(_terminal: Box<dyn Terminal>) -> Self {
         Mmu {
-            clock: 0,
             ppn: 0,
             addressing_mode: AddressingMode::None,
             privilege_mode: PrivilegeMode::Machine,
             memory: MemoryWrapper::new(),
+            decode_cache: DecodeCache::empty(),
             jolt_device: None,
             mstatus: 0,
         }
+    }
+
+    /// Set the executable address range covered by the pre-decoded
+    /// instruction cache.
+    pub fn init_decode_cache(&mut self, text_base: u64, text_end: u64) {
+        self.decode_cache.init(text_base, text_end);
     }
 
     /// Initializes Main memory. This method is expected to be called only once.
@@ -76,11 +86,6 @@ impl Mmu {
     /// * `capacity`
     pub fn init_memory(&mut self, capacity: u64) {
         self.memory.init(capacity);
-    }
-
-    /// Runs one cycle of MMU and peripheral devices.
-    pub fn tick(&mut self) {
-        self.clock = self.clock.wrapping_add(1);
     }
 
     /// Updates addressing mode
@@ -516,30 +521,28 @@ impl Mmu {
     /// state is used in Jolt to construct the witnesses in `read_write_memory.rs`.
     fn trace_load(&mut self, effective_address: u64) -> RAMRead {
         let word_address = (effective_address >> 2) << 2;
-        let bytes = 8;
         if word_address < DRAM_BASE {
-            let mut value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                value_bytes[i as usize] = self
-                    .jolt_device
-                    .as_ref()
-                    .expect("JoltDevice not set")
-                    .load(word_address + i);
-            }
             RAMRead {
                 address: word_address,
-                value: u64::from_le_bytes(value_bytes),
+                value: self.device_doubleword(word_address),
             }
         } else {
-            let mut value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                value_bytes[i as usize] = self.memory.read_byte(word_address + i);
-            }
             RAMRead {
                 address: word_address,
-                value: u64::from_le_bytes(value_bytes),
+                value: self.memory.read_doubleword(word_address),
             }
         }
+    }
+
+    /// Read a (4-byte-aligned) doubleword from the memory-mapped device region.
+    #[expect(clippy::expect_used)]
+    fn device_doubleword(&self, address: u64) -> u64 {
+        let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");
+        let mut value_bytes = [0u8; 8];
+        for (i, byte) in value_bytes.iter_mut().enumerate() {
+            *byte = jolt_device.load(address + i as u64);
+        }
+        u64::from_le_bytes(value_bytes)
     }
 
     /// Records the state of the memory word containing the accessed byte
@@ -547,25 +550,12 @@ impl Mmu {
     /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = 8;
         let word_address = (effective_address >> 2) << 2;
 
         let pre_value = if effective_address < DRAM_BASE {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self
-                    .jolt_device
-                    .as_ref()
-                    .expect("JoltDevice not set")
-                    .load(word_address + i);
-            }
-            u64::from_le_bytes(pre_value_bytes)
+            self.device_doubleword(word_address)
         } else {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.memory.read_byte(word_address + i);
-            }
-            u64::from_le_bytes(pre_value_bytes)
+            self.memory.read_doubleword(word_address)
         };
 
         // Mask the value into the word
@@ -589,25 +579,12 @@ impl Mmu {
     /// construct the witnesses in `read_write_memory.rs`.
     fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = 8;
         let word_address = (effective_address >> 2) << 2;
 
         let pre_value = if effective_address < DRAM_BASE {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self
-                    .jolt_device
-                    .as_ref()
-                    .expect("JoltDevice not set")
-                    .load(word_address + i);
-            }
-            u64::from_le_bytes(pre_value_bytes)
+            self.device_doubleword(word_address)
         } else {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.memory.read_byte(word_address + i);
-            }
-            u64::from_le_bytes(pre_value_bytes)
+            self.memory.read_doubleword(word_address)
         };
 
         // Mask the value into the word
@@ -631,34 +608,16 @@ impl Mmu {
     /// in `read_write_memory.rs`.
     fn trace_store(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
-        let bytes = 8;
 
-        if effective_address < DRAM_BASE {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self
-                    .jolt_device
-                    .as_ref()
-                    .expect("JoltDevice not set")
-                    .load(effective_address + i);
-            }
-            let pre_value = u64::from_le_bytes(pre_value_bytes);
-            RAMWrite {
-                address: effective_address,
-                pre_value,
-                post_value: value,
-            }
+        let pre_value = if effective_address < DRAM_BASE {
+            self.device_doubleword(effective_address)
         } else {
-            let mut pre_value_bytes = [0u8; 8];
-            for i in 0..bytes {
-                pre_value_bytes[i as usize] = self.memory.read_byte(effective_address + i);
-            }
-            let pre_value = u64::from_le_bytes(pre_value_bytes);
-            RAMWrite {
-                address: effective_address,
-                pre_value,
-                post_value: value,
-            }
+            self.memory.read_doubleword(effective_address)
+        };
+        RAMWrite {
+            address: effective_address,
+            pre_value,
+            post_value: value,
         }
     }
 
@@ -745,6 +704,7 @@ impl Mmu {
     /// * `value` data written
     pub fn store_raw(&mut self, p_address: u64, value: u8) {
         let effective_address = self.get_effective_address(p_address);
+        self.decode_cache.invalidate_store(effective_address, 1);
         // @TODO: Mapping should be configurable with dtb
         match effective_address >= DRAM_BASE {
             true => {
@@ -794,6 +754,7 @@ impl Mmu {
     /// * `value` data written
     fn store_halfword_raw(&mut self, p_address: u64, value: u16) {
         let effective_address = self.get_effective_address(p_address);
+        self.decode_cache.invalidate_store(effective_address, 2);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(1) > effective_address
         {
@@ -821,6 +782,7 @@ impl Mmu {
     /// * `value` data written
     fn store_word_raw(&mut self, p_address: u64, value: u32) {
         let effective_address = self.get_effective_address(p_address);
+        self.decode_cache.invalidate_store(effective_address, 4);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(3) > effective_address
         {
@@ -848,6 +810,7 @@ impl Mmu {
     /// * `value` data written
     fn store_doubleword_raw(&mut self, p_address: u64, value: u64) {
         let effective_address = self.get_effective_address(p_address);
+        self.decode_cache.invalidate_store(effective_address, 8);
         match effective_address >= DRAM_BASE
             && effective_address.wrapping_add(7) > effective_address
         {
@@ -1020,17 +983,56 @@ impl Mmu {
 impl Mmu {
     pub fn save_state_with_empty_memory(&self) -> Mmu {
         Mmu {
-            clock: self.clock,
             ppn: self.ppn,
             addressing_mode: self.addressing_mode,
             privilege_mode: self.privilege_mode,
             memory: MemoryWrapper {
                 memory: Memory::empty(),
             },
+            decode_cache: self.decode_cache.snapshot_with_empty_entries(),
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
         }
     }
+
+    /// Capture chunk-replay MMU translation state. Static for Jolt guests
+    /// (no virtual addressing) but tiny; the destructure is exhaustive so
+    /// new fields must be classified.
+    pub(crate) fn capture_chunk_state(&self) -> ChunkMmuState {
+        let Mmu {
+            ppn,
+            addressing_mode,
+            privilege_mode,
+            // Snapshotted separately (pooled image / checkpoint layer).
+            memory: _,
+            decode_cache: _,
+            jolt_device: _,
+            mstatus,
+        } = self;
+        ChunkMmuState {
+            ppn: *ppn,
+            addressing_mode: *addressing_mode,
+            privilege_mode: *privilege_mode,
+            mstatus: *mstatus,
+        }
+    }
+
+    /// Counterpart of [`Mmu::capture_chunk_state`].
+    pub(crate) fn install_chunk_state(&mut self, state: &ChunkMmuState) {
+        self.ppn = state.ppn;
+        self.addressing_mode = state.addressing_mode;
+        self.privilege_mode = state.privilege_mode;
+        self.mstatus = state.mstatus;
+    }
+}
+
+/// MMU translation state captured with a chunk checkpoint.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ChunkMmuState {
+    ppn: u64,
+    addressing_mode: AddressingMode,
+    privilege_mode: PrivilegeMode,
+    mstatus: u64,
 }
 
 /// [`Memory`](../memory/struct.Memory.html) wrapper. Converts physical address to the one in memory

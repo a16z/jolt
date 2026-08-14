@@ -44,6 +44,7 @@ impl<F: Field> Stage3OutputPoints<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage3ClearOutput<F: Field> {
     /// The produced stage-3 opening *values* (wire form); read by later stages and
     /// the Fiat-Shamir opening-claim encoder.
@@ -95,6 +96,10 @@ impl<F: Field, C> Stage3Output<F, C> {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::ConcreteSumcheck;

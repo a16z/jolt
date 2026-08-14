@@ -84,6 +84,7 @@ impl<F: Field> Stage2BatchOutputPoints<F> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage2ClearOutput<F: Field> {
     /// The produced batch opening *values* (wire form); later stages read each
     /// opening's value directly off these fields.
@@ -167,6 +168,10 @@ impl<F: Field, C> Stage2Output<F, C> {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
