@@ -175,7 +175,7 @@ extern "C" __global__ void rwm_message_kernel(
     const unsigned int *__restrict__ seg_end, const unsigned int *__restrict__ seg_pair,
     unsigned int segments, const u64 *__restrict__ inc, const u64 *__restrict__ e_in,
     unsigned int e_in_len, const u64 *__restrict__ e_out, unsigned int num_x_in_bits,
-    u64 *__restrict__ partials) {
+    const u64 *__restrict__ wa_scale, u64 *__restrict__ partials) {
     extern __shared__ u64 scratch[];
     unsigned int tid = threadIdx.x;
     unsigned int seg = blockIdx.x * blockDim.x + tid;
@@ -200,6 +200,9 @@ extern "C" __global__ void rwm_message_kernel(
             load4(inc + (unsigned long long)(2 * pair + 1) * LIMBS, inc_1);
             fr_sub(inc_1, inc_0, inc_inf);
         }
+
+        u64 scale[LIMBS];
+        load4(wa_scale, scale);
 
         u64 inner[2][2 * PA_SLOTS];
         for (int lane = 0; lane < 2; lane++) pa_zero(inner[lane]);
@@ -269,6 +272,14 @@ extern "C" __global__ void rwm_message_kernel(
                 }
                 load4(coeffs + ((unsigned long long)j * coeff_width + ra_lane) * LIMBS, ra_inf);
                 load4(coeffs + ((unsigned long long)j * coeff_width + wa_lane) * LIMBS, wa_inf);
+            }
+
+            if (coeff_width == 1) {
+                u64 scaled[LIMBS];
+                fr_mul(scale, wa_0, scaled);
+                for (int l = 0; l < LIMBS; l++) wa_0[l] = scaled[l];
+                fr_mul(scale, wa_inf, scaled);
+                for (int l = 0; l < LIMBS; l++) wa_inf[l] = scaled[l];
             }
 
             u64 sum[LIMBS];

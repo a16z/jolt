@@ -4,7 +4,7 @@
 )]
 
 use cudarc::driver::{CudaSlice, PushKernelArg};
-use jolt_field::Fr;
+use jolt_field::{Fr, FromPrimitiveInt};
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{DeviceFrVec, LIMBS};
@@ -36,6 +36,7 @@ pub struct DeviceReadWriteMatrix {
     prev_val: CudaSlice<u64>,
     next_val: CudaSlice<u64>,
     coeffs: DeviceFrVec,
+    wa_scale: DeviceFrVec,
     coeff_width: usize,
     entries: usize,
     rounds_bound: usize,
@@ -46,10 +47,16 @@ impl DeviceReadWriteMatrix {
         context: &CudaKernelContext,
         entries: &[MatrixEntry],
         coeff_width: usize,
+        wa_scale: Option<Fr>,
     ) -> Result<Self, CudaError> {
         if coeff_width == 0 || coeff_width > MAX_COEFFS {
             return Err(CudaError::InvariantViolation {
                 reason: "a read-write matrix carries one or two one-hot coefficients per entry",
+            });
+        }
+        if wa_scale.is_some() != (coeff_width == 1) {
+            return Err(CudaError::InvariantViolation {
+                reason: "a single-coefficient matrix derives its write lane by scaling its read lane, and only such a matrix may",
             });
         }
         let count = entries.len();
@@ -74,6 +81,7 @@ impl DeviceReadWriteMatrix {
             prev_val: context.upload_u64_slice(&prev_val)?,
             next_val: context.upload_u64_slice(&next_val)?,
             coeffs: context.upload(&coeffs)?,
+            wa_scale: context.upload(&[wa_scale.unwrap_or(Fr::from_u64(0))])?,
             coeff_width,
             entries: count,
             rounds_bound: 0,
@@ -187,6 +195,7 @@ impl DeviceReadWriteMatrix {
             &self.next_val,
             &self.coeffs,
             val_init,
+            &self.wa_scale,
             self.coeff_width,
             self.entries,
         )
@@ -232,6 +241,7 @@ impl DeviceReadWriteMatrix {
         let _ = builder.arg(&e_in_len);
         let _ = builder.arg(e_out.limbs());
         let _ = builder.arg(&num_x_in_bits);
+        let _ = builder.arg(self.wa_scale.limbs());
         let _ = builder.arg(partials.limbs_mut());
         // SAFETY: thread `seg < segments` reads matrix data only between
         // `seg_start[seg]` and `seg_end[seg]` (confined to `entries` by the
@@ -472,8 +482,9 @@ mod tests {
             RegistersCycleMajorEntry<LegacyFr, _>,
         >::new(&trace(7), gamma)
         .deref_coeffs();
-        let mut device = DeviceReadWriteMatrix::new(context, &seed_from(&legacy), COEFF_WIDTH)
-            .expect("device matrix");
+        let mut device =
+            DeviceReadWriteMatrix::new(context, &seed_from(&legacy), COEFF_WIDTH, None)
+                .expect("device matrix");
 
         let inc_host: Vec<Fr> = (0..1usize << LOG_T)
             .map(|j| crate::cuda::common::testing::fr(j as u64 * 5 + 3))
@@ -539,6 +550,150 @@ mod tests {
         }
     }
 
+    fn legacy_ram_quadratic_coeffs(
+        matrix: &ReadWriteMatrixCycleMajor<
+            LegacyFr,
+            jolt_prover_legacy::subprotocols::read_write_matrix::RamCycleMajorEntry<LegacyFr>,
+        >,
+        inc: &LegacyMultilinear<LegacyFr>,
+        eq: &LegacyGruen<LegacyFr>,
+        gamma: LegacyFr,
+    ) -> [LegacyFr; 2] {
+        use jolt_prover_legacy::field::OptimizedMul;
+
+        let e_in = eq.E_in_current();
+        let e_in_len = e_in.len();
+        let num_x_in_bits = e_in_len.max(1).ilog2() as usize;
+        let x_bitmask = (1usize << num_x_in_bits) - 1;
+        let zero = <LegacyFr as LegacyJoltField>::from_u64(0);
+        let mut total = [zero; 2];
+
+        for outer in matrix.entries.chunk_by(|a, b| {
+            (CycleMajorMatrixEntry::row(a) / 2) >> num_x_in_bits
+                == (CycleMajorMatrixEntry::row(b) / 2) >> num_x_in_bits
+        }) {
+            let x_out = (CycleMajorMatrixEntry::row(&outer[0]) / 2) >> num_x_in_bits;
+            let e_out_eval = eq.E_out_current()[x_out];
+            let mut outer_sum = [zero; 2];
+
+            for pair in outer.chunk_by(|a, b| {
+                CycleMajorMatrixEntry::row(a) / 2 == CycleMajorMatrixEntry::row(b) / 2
+            }) {
+                let odd_start =
+                    pair.partition_point(|entry| CycleMajorMatrixEntry::row(entry) % 2 == 0);
+                let (even_row, odd_row) = pair.split_at(odd_start);
+                let j_prime = 2 * (CycleMajorMatrixEntry::row(&pair[0]) / 2);
+                let e_in_eval = if e_in_len <= 1 {
+                    <LegacyFr as LegacyJoltField>::from_u64(1)
+                } else {
+                    e_in[(j_prime / 2) & x_bitmask]
+                };
+                let inc_0 = inc.get_bound_coeff(j_prime);
+                let inc_1 = inc.get_bound_coeff(j_prime + 1);
+                let inner = matrix.prover_message_contribution(
+                    even_row,
+                    odd_row,
+                    [inc_0, inc_1 - inc_0],
+                    gamma,
+                );
+                outer_sum[0] += e_in_eval.mul_0_optimized(inner[0]);
+                outer_sum[1] += e_in_eval.mul_0_optimized(inner[1]);
+            }
+
+            total[0] += e_out_eval.mul_0_optimized(outer_sum[0]);
+            total[1] += e_out_eval.mul_0_optimized(outer_sum[1]);
+        }
+        total
+    }
+
+    #[test]
+    fn device_ram_quadratic_coeffs_match_legacy_round_for_round() {
+        use jolt_prover_legacy::subprotocols::read_write_matrix::RamCycleMajorEntry;
+
+        let Some(context) = shared_context() else {
+            return;
+        };
+        const RAM_K: usize = 32;
+        let layout = common::jolt_device::MemoryLayout::default();
+        let ram_trace = crate::cuda::common::testing::ram_trace(LOG_T, RAM_K);
+        let gamma_raw = 103u64;
+        let gamma = <LegacyFr as LegacyJoltField>::from_u64(gamma_raw);
+        let val_init = vec![<LegacyFr as LegacyJoltField>::from_u64(0); RAM_K];
+        let mut legacy = ReadWriteMatrixCycleMajor::<LegacyFr, RamCycleMajorEntry<LegacyFr>>::new(
+            &ram_trace, val_init, &layout,
+        );
+
+        let seeded: Vec<MatrixEntry> = legacy
+            .entries
+            .iter()
+            .map(|entry| MatrixEntry {
+                row: CycleMajorMatrixEntry::row(entry) as u32,
+                col: CycleMajorMatrixEntry::column(entry) as u32,
+                val_coeff: Fr::from(entry.val_coeff),
+                prev_val: entry.prev_val,
+                next_val: entry.next_val,
+                coeffs: [Fr::from(entry.ra_coeff), Fr::from_u64(0)],
+            })
+            .collect();
+        let mut device = DeviceReadWriteMatrix::new(context, &seeded, 1, Some(Fr::from(gamma)))
+            .expect("device RAM matrix");
+
+        let inc_host: Vec<Fr> = (0..1usize << LOG_T)
+            .map(|j| crate::cuda::common::testing::fr(j as u64 * 5 + 3))
+            .collect();
+        let mut legacy_inc = LegacyMultilinear::from(
+            inc_host
+                .iter()
+                .map(|value| LegacyFr::from(*value))
+                .collect::<Vec<_>>(),
+        );
+        let mut device_inc = context.upload(&inc_host).expect("upload inc");
+
+        let legacy_point: Vec<LegacyChallenge<LegacyFr>> = (0..LOG_T)
+            .map(|i| LegacyChallenge::new(61 + i as u128))
+            .collect();
+        let mut legacy_eq =
+            LegacyGruen::<LegacyFr>::new(&legacy_point, LegacyBindingOrder::LowToHigh);
+        let mut device_eq = jolt_poly::GruenSplitEqPolynomial::<Fr>::new(
+            &legacy_point
+                .iter()
+                .map(|c| Fr::from(LegacyFr::from(*c)))
+                .collect::<Vec<_>>(),
+            jolt_poly::BindingOrder::LowToHigh,
+        );
+
+        for round in 0..LOG_T {
+            let expected = legacy_ram_quadratic_coeffs(&legacy, &legacy_inc, &legacy_eq, gamma);
+            let got: [Fr; 2] = device
+                .quadratic_coeffs(context, &device_inc, &device_eq)
+                .expect("device quadratic coeffs");
+            assert_eq!(
+                got.to_vec(),
+                expected
+                    .iter()
+                    .map(|value| Fr::from(*value))
+                    .collect::<Vec<_>>(),
+                "RAM quadratic coefficients diverged at round {round}",
+            );
+
+            let challenge = LegacyChallenge::new(19 + round as u128);
+            legacy.bind(challenge);
+            device
+                .bind(context, Fr::from(LegacyFr::from(challenge)))
+                .expect("device bind");
+            legacy_inc.bind_parallel(challenge, LegacyBindingOrder::LowToHigh);
+            device_inc = context
+                .bind(
+                    &device_inc,
+                    Fr::from(LegacyFr::from(challenge)),
+                    jolt_poly::BindingOrder::LowToHigh,
+                )
+                .expect("bind device inc");
+            legacy_eq.bind(challenge);
+            device_eq.bind(Fr::from(LegacyFr::from(challenge)));
+        }
+    }
+
     #[test]
     fn device_matrix_bind_matches_legacy_round_for_round() {
         let Some(context) = shared_context() else {
@@ -551,8 +706,9 @@ mod tests {
         >::new(&trace(7), gamma)
         .deref_coeffs();
 
-        let mut device = DeviceReadWriteMatrix::new(context, &seed_from(&legacy), COEFF_WIDTH)
-            .expect("device matrix");
+        let mut device =
+            DeviceReadWriteMatrix::new(context, &seed_from(&legacy), COEFF_WIDTH, None)
+                .expect("device matrix");
 
         assert_eq!(
             device_entries(&device.to_host(context).expect("download")),

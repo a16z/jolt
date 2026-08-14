@@ -219,6 +219,47 @@ impl RowSource for RowPlane {
     }
 }
 
+pub fn ram_read_cycle(address: u64, value: u64) -> tracer::instruction::Cycle {
+    tracer::instruction::Cycle::LW(
+        tracer::instruction::RISCVCycle::<tracer::instruction::lw::LW> {
+            ram_access: tracer::instruction::RAMRead { address, value },
+            ..Default::default()
+        },
+    )
+}
+
+pub fn ram_write_cycle(
+    address: u64,
+    pre_value: u64,
+    post_value: u64,
+) -> tracer::instruction::Cycle {
+    tracer::instruction::Cycle::SW(
+        tracer::instruction::RISCVCycle::<tracer::instruction::sw::SW> {
+            ram_access: tracer::instruction::RAMWrite {
+                address,
+                pre_value,
+                post_value,
+            },
+            ..Default::default()
+        },
+    )
+}
+
+pub fn ram_trace(log_t: usize, ram_k: usize) -> Vec<tracer::instruction::Cycle> {
+    (0..1usize << log_t)
+        .map(|cycle| {
+            let word = 1 + (cycle as u64 * 5) % (ram_k as u64 - 1);
+            let address = 8 * word;
+            match cycle % 4 {
+                0 => tracer::instruction::Cycle::NoOp,
+                1 => ram_read_cycle(address, 900 + cycle as u64),
+                2 => ram_write_cycle(address, 100 + cycle as u64, 700 + cycle as u64),
+                _ => ram_write_cycle(address, 400 + cycle as u64, 400 + cycle as u64),
+            }
+        })
+        .collect()
+}
+
 pub fn reference_input_claim<'a, R>(
     witness: &dyn JoltWitnessPlane<Fr>,
     make_inputs: impl Fn() -> ProverInputs<'a, Fr, R>,

@@ -246,7 +246,8 @@ extern "C" __global__ void amm_message_kernel(
     const unsigned int *__restrict__ seg_start, const unsigned int *__restrict__ seg_even_end,
     const unsigned int *__restrict__ seg_end, const unsigned int *__restrict__ seg_pair,
     unsigned int segments, const u64 *__restrict__ val_init, const u64 *__restrict__ inc,
-    const u64 *__restrict__ eq, u64 *__restrict__ partials) {
+    const u64 *__restrict__ eq, const u64 *__restrict__ wa_scale,
+    u64 *__restrict__ partials) {
     extern __shared__ u64 scratch[];
     unsigned int tid = threadIdx.x;
     unsigned int seg = blockIdx.x * blockDim.x + tid;
@@ -267,6 +268,9 @@ extern "C" __global__ void amm_message_kernel(
         u64 even_cp[LIMBS], odd_cp[LIMBS];
         load4(val_init + (unsigned long long)(2 * pair) * LIMBS, even_cp);
         load4(val_init + (unsigned long long)(2 * pair + 1) * LIMBS, odd_cp);
+
+        u64 scale[LIMBS];
+        load4(wa_scale, scale);
 
         u64 inner[2][2 * PA_SLOTS];
         for (int lane = 0; lane < 2; lane++) pa_zero(inner[lane]);
@@ -335,6 +339,14 @@ extern "C" __global__ void amm_message_kernel(
                 for (int l = 0; l < LIMBS; l++) val_0[l] = even_cp[l];
                 fr_add(o, o, twice);
                 fr_sub(twice, even_cp, val_2);
+            }
+
+            if (coeff_width == 1) {
+                u64 scaled[LIMBS];
+                fr_mul(scale, wa_0, scaled);
+                for (int l = 0; l < LIMBS; l++) wa_0[l] = scaled[l];
+                fr_mul(scale, wa_2, scaled);
+                for (int l = 0; l < LIMBS; l++) wa_2[l] = scaled[l];
             }
 
             u64 read[LIMBS], write[LIMBS], sum[LIMBS], bracket[LIMBS];

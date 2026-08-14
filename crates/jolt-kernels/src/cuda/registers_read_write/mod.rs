@@ -240,7 +240,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
                 reason: "CUDA kernels support only the BN254 scalar field",
             })?,
         );
-        let cycle = DeviceReadWriteMatrix::new(context, &entries, COEFF_WIDTH)?;
+        let cycle = DeviceReadWriteMatrix::new(context, &entries, COEFF_WIDTH, None)?;
         let inc = context.upload(require_fr_slice(&dense_view(
             witness,
             rd_inc_read_write(),
