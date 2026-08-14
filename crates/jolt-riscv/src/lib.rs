@@ -277,12 +277,12 @@ macro_rules! for_each_jolt_instruction_kind {
                 SUBW => SubW => (0x008b, "rv64.subw"),
                 MULW => MulW => (0x008c, "rv64.mulw"),
                 VirtualMULIW => MulIW => (0x008e, "jolt.virtual.muliw"),
-                VirtualAlignAddr => VirtualAlignAddr => (0x008f, "jolt.virtual.align_addr"),
-                VirtualLaneMaskB => VirtualLaneMaskB => (0x0090, "jolt.virtual.lane_mask_b"),
-                VirtualLaneMaskH => VirtualLaneMaskH => (0x0091, "jolt.virtual.lane_mask_h"),
-                VirtualLaneMaskW => VirtualLaneMaskW => (0x0092, "jolt.virtual.lane_mask_w"),
-                VirtualPow2Lane => VirtualPow2Lane => (0x0093, "jolt.virtual.pow2_lane"),
-                VirtualLaneExtractS => VirtualLaneExtractS => (0x0094, "jolt.virtual.lane_extract_s"),
+                VirtualAlignAddr => VirtualAlignAddr => (0x0091, "jolt.virtual.align_addr"),
+                VirtualLaneMaskB => VirtualLaneMaskB => (0x0092, "jolt.virtual.lane_mask_b"),
+                VirtualLaneMaskH => VirtualLaneMaskH => (0x0093, "jolt.virtual.lane_mask_h"),
+                VirtualLaneMaskW => VirtualLaneMaskW => (0x0094, "jolt.virtual.lane_mask_w"),
+                VirtualPow2Lane => VirtualPow2Lane => (0x0095, "jolt.virtual.pow2_lane"),
+                VirtualLaneExtractS => VirtualLaneExtractS => (0x0096, "jolt.virtual.lane_extract_s"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

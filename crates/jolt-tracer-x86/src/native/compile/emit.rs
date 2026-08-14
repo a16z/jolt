@@ -248,6 +248,19 @@ impl DynasmEmitter {
         e.store_rd(RAX, row.operands.rd);
     }
 
+    /// `rd = base << (8 * ((x[rs1] + imm) & align_mask))` — the lane-mask /
+    /// lane-weight family. `align_mask` keeps the byte offset lane-aligned
+    /// (7 for byte lanes, 6 for halfwords, 4 for words), so the shift count
+    /// is at most 56.
+    fn emit_lane_mask(e: &mut Emitter, row: &JoltInstructionRow, base: u64, align_mask: i32) {
+        e.load_reg(RCX, row.operands.rs1);
+        e.load_imm(RAX, row.operands.imm as i64);
+        dynasm!(e.ops ; .arch x64 ; add rcx, rax ; and rcx, align_mask ; shl rcx, 3);
+        e.load_imm(RAX, base as i64);
+        dynasm!(e.ops ; .arch x64 ; shl rax, cl);
+        e.store_rd(RAX, row.operands.rd);
+    }
+
     fn emit_alu_ri(e: &mut Emitter, row: &JoltInstructionRow, op: AluRR) {
         e.load_reg(RAX, row.operands.rs1);
         e.load_imm(RCX, row.operands.imm as i64);
@@ -724,6 +737,42 @@ impl DynasmEmitter {
                 e.load_reg(RCX, row.operands.rs2);
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr rax, cl);
+                e.store_rd(RAX, row.operands.rd);
+            }
+
+            K::VirtualAlignAddr(_) => {
+                // rd = (x[rs1] + imm) & !7 — the lane-aligned doubleword address.
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_imm(RCX, row.operands.imm as i64);
+                dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -8);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualLaneMaskB(_) => Self::emit_lane_mask(e, row, 0xff, 7),
+            K::VirtualLaneMaskH(_) => Self::emit_lane_mask(e, row, 0xffff, 6),
+            K::VirtualLaneMaskW(_) => Self::emit_lane_mask(e, row, 0xffff_ffff, 4),
+            K::VirtualPow2Lane(_) => Self::emit_lane_mask(e, row, 1, 7),
+            K::VirtualLaneExtractS(_) => {
+                // rd = the lane of x[rs1] selected by the contiguous mask
+                // x[rs2], right-aligned and sign-extended: packed =
+                // (x[rs1] & m) >> tz(m), then sign-extend from popcount(m)
+                // bits via shl/sar by 64 − w (counts act mod 64, so m = 0 and
+                // m = !0 both come out right). Matches the interpreter's
+                // signed_extract on every contiguous mask; like VirtualSrl
+                // above, expansion-produced operand shapes are assumed.
+                // Requires BMI1 + POPCNT (checked once).
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_reg(RDX, row.operands.rs2);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; and rax, rdx
+                    ; tzcnt rcx, rdx
+                    ; shr rax, cl
+                    ; popcnt rdx, rdx
+                    ; mov rcx, 64
+                    ; sub rcx, rdx
+                    ; shl rax, cl
+                    ; sar rax, cl
+                );
                 e.store_rd(RAX, row.operands.rd);
             }
 

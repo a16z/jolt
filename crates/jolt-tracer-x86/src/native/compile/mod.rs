@@ -59,9 +59,12 @@ impl CompiledProgram {
     pub fn compile_with(program: &JoltProgram, emitters: &EmitterSet) -> Result<Self, TraceError> {
         // VirtualSRL uses `tzcnt`; on pre-BMI1 CPUs it silently decodes as `bsf`
         // with different zero-input semantics, so refuse rather than mis-execute.
-        if !std::arch::is_x86_feature_detected!("bmi1") {
+        // VirtualLaneExtractS additionally uses `popcnt`.
+        if !std::arch::is_x86_feature_detected!("bmi1")
+            || !std::arch::is_x86_feature_detected!("popcnt")
+        {
             return Err(TraceError::Backend(
-                "jolt-tracer-x86 requires BMI1 (tzcnt) support",
+                "jolt-tracer-x86 requires BMI1 (tzcnt) and POPCNT support",
             ));
         }
         let rows = &program.expanded_bytecode;
