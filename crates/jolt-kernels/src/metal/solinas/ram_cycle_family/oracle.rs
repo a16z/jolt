@@ -22,7 +22,6 @@ impl<F: Field> DenseRamValCheckOracle<F> {
         r_cycle: &[F],
         gamma: F,
     ) -> Result<Self, RamValError> {
-        owner.verify_integrity()?;
         let receipt = owner.receipt();
         if r_address.len() != receipt.log_k() {
             return Err(RamValError::AddressPointLength {

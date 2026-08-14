@@ -8,21 +8,21 @@ use super::*;
     reason = "test fixtures should stop at the first violated invariant"
 )]
 fn fixture_owner() -> RamCycleFamilyOwner {
-    let config = OwnerConfig::new(3, 2, 17, 4, 16).unwrap();
-    let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-    for row in [
-        RamCycleRow::remapped(1, 5, 8, 3),
-        RamCycleRow::no_access(),
-        RamCycleRow::raw_address_zero(-2),
-        RamCycleRow::remapped(1, 8, 8, 0),
-        RamCycleRow::remapped(2, 0, 7, 7),
-        RamCycleRow::no_access(),
-        RamCycleRow::raw_address_zero(9),
-        RamCycleRow::remapped(2, 7, 3, -4),
-    ] {
-        builder.push_cycle(row).unwrap();
-    }
-    builder.finish(vec![0, 8, 3, 0]).unwrap()
+    let config = OwnerConfig::new(3, 2, 17, 16).unwrap();
+    let records = vec![
+        RamAccessRecord::new(0, 1, 5, 8),
+        RamAccessRecord::new(3, 1, 8, 8),
+        RamAccessRecord::new(4, 2, 0, 7),
+        RamAccessRecord::new(7, 2, 7, 3),
+    ];
+    let increments = vec![
+        RamIncrementRecord::new(0, 3),
+        RamIncrementRecord::new(2, -2),
+        RamIncrementRecord::new(4, 7),
+        RamIncrementRecord::new(6, 9),
+        RamIncrementRecord::new(7, -4),
+    ];
+    RamCycleFamilyOwner::from_sparse_records(config, records, increments, vec![0, 8, 3, 0]).unwrap()
 }
 
 fn field(value: u64) -> AkitaField {
@@ -72,7 +72,7 @@ fn sparse_records_reconstruct_the_checked_owner() {
     let expected = fixture_owner();
     let records = expected.access_records().to_vec();
     let increments = expected.increment_records().collect::<Vec<_>>();
-    let config = OwnerConfig::new(3, 2, 17, 4, 16).unwrap();
+    let config = OwnerConfig::new(3, 2, 17, 16).unwrap();
     let actual = RamCycleFamilyOwner::from_sparse_records(
         config,
         records,
@@ -134,15 +134,14 @@ fn sparse_value_check_matches_independent_dense_oracle() {
     reason = "test fixtures should stop at the first violated invariant"
 )]
 fn increment_only_raw_zero_survives_an_empty_access_topology() {
-    let config = OwnerConfig::new(2, 1, 3, 2, 4).unwrap();
-    let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-    builder.push_cycle(RamCycleRow::no_access()).unwrap();
-    builder
-        .push_cycle(RamCycleRow::raw_address_zero(12))
-        .unwrap();
-    builder.push_cycle(RamCycleRow::no_access()).unwrap();
-    builder.push_cycle(RamCycleRow::no_access()).unwrap();
-    let owner = builder.finish(vec![0, 0]).unwrap();
+    let config = OwnerConfig::new(2, 1, 3, 4).unwrap();
+    let owner = RamCycleFamilyOwner::from_sparse_records(
+        config,
+        Vec::new(),
+        vec![RamIncrementRecord::new(1, 12)],
+        vec![0, 0],
+    )
+    .unwrap();
     assert!(owner.access_records().is_empty());
     assert_eq!(owner.block_topology().leaf_cycles(), &[1]);
 
@@ -161,62 +160,4 @@ fn increment_only_raw_zero_survives_an_empty_access_topology() {
     assert_eq!(terminal, dense.terminal_factors().unwrap());
     assert_ne!(terminal.ram_increment(), AkitaField::from_u64(0));
     assert_eq!(terminal.ram_ra(), AkitaField::from_u64(0));
-}
-
-#[test]
-#[expect(
-    clippy::unwrap_used,
-    reason = "test fixtures should stop at the first violated invariant"
-)]
-fn builder_rejects_malformed_payloads_without_poisoning_the_cycle() {
-    let config = OwnerConfig::new(1, 1, 9, 2, 1).unwrap();
-    let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-    builder
-        .push_cycle(RamCycleRow::raw_address_zero(1))
-        .unwrap();
-    assert_eq!(
-        builder.push_cycle(RamCycleRow::remapped(1, 4, 5, 1)),
-        Err(OwnerError::SparseCapacityExceeded { maximum: 1 })
-    );
-    builder
-        .push_cycle(RamCycleRow::remapped(1, 4, 4, 0))
-        .unwrap();
-    let owner = builder.finish(vec![0, 4]).unwrap();
-    assert_eq!(owner.access_records().len(), 1);
-
-    let config = OwnerConfig::new(1, 1, 10, 2, 2).unwrap();
-    let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-    assert_eq!(
-        builder.push_cycle(RamCycleRow::remapped(0, 1, 3, 1)),
-        Err(OwnerError::IncrementMismatch {
-            cycle: 0,
-            expected: 2,
-            got: 1,
-        })
-    );
-    builder
-        .push_cycle(RamCycleRow::remapped(0, 1, 3, 2))
-        .unwrap();
-    assert_eq!(
-        builder.push_cycle(RamCycleRow::remapped(0, 4, 4, 0)),
-        Err(OwnerError::CheckpointDiscontinuity {
-            cycle: 1,
-            address: 0,
-        })
-    );
-
-    let config = OwnerConfig::new(1, 1, 11, 2, 2).unwrap();
-    let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-    builder
-        .push_cycle(RamCycleRow::remapped(1, 0, 6, 6))
-        .unwrap();
-    builder.push_cycle(RamCycleRow::no_access()).unwrap();
-    assert!(matches!(
-        builder.finish(vec![0, 5]),
-        Err(OwnerError::FinalMemoryMismatch {
-            address: 1,
-            expected: 6,
-            got: 5,
-        })
-    ));
 }

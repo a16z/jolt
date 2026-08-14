@@ -13,7 +13,6 @@ use crate::ram_access::{RamAccessTape, MAX_RETAINED_RAM_ACCESSES};
 use crate::reference::views::dense_view;
 use crate::{KernelError, ProofSession};
 
-const RAM_CYCLE_THREADGROUP_WIDTH: usize = 256;
 static NEXT_RAM_CYCLE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub(super) fn shared_ram_cycle_family_owner(
@@ -146,7 +145,6 @@ pub(super) fn shared_ram_cycle_family_owner(
         log_t,
         log_k,
         generation,
-        RAM_CYCLE_THREADGROUP_WIDTH,
         records.len().max(increments.len()).max(1),
     )
     .map_err(|error| owner_error(error.to_string()))?;

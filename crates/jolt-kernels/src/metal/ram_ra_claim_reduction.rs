@@ -211,7 +211,7 @@ impl PrepareKernel<AkitaField, RamRaClaimReduction<AkitaField>> for MetalBackend
             complete_sequence = true,
         );
         let _route_guard = route.enter();
-        let sequence = HostSparseRamRaClaimReduction::new_from_verified_owner(
+        let sequence = HostSparseRamRaClaimReduction::new(
             owner,
             r_address,
             cycle_points,

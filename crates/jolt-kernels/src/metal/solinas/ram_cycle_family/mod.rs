@@ -15,8 +15,8 @@ mod topology;
 #[cfg(test)]
 pub use oracle::DenseRamValCheckOracle;
 pub use owner::{
-    OwnerConfig, OwnerError, RamAccessRecord, RamCycleFamilyOwner, RamCycleFamilyOwnerBuilder,
-    RamCycleFamilyReceipt, RamCycleRow, RamIncrementRecord, RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+    OwnerConfig, OwnerError, RamAccessRecord, RamCycleFamilyOwner, RamCycleFamilyReceipt,
+    RamIncrementRecord, RAM_CYCLE_FAMILY_SCHEMA_VERSION,
 };
 pub use ram_hamming_booleanity::{
     estimated_ram_hamming_products, HostSparseRamHammingBooleanity, RamHammingError,

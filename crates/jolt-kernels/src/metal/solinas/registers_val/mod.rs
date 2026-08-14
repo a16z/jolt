@@ -1033,18 +1033,6 @@ impl RegistersValSequence {
         Ok((message, active_time))
     }
 
-    /// Replays the current dense transition without advancing the resident
-    /// sequence. This is intended for stable kernel microbenchmarks.
-    #[doc(hidden)]
-    pub fn replay_current_bind_and_message_timed(
-        &self,
-        challenge: AkitaField,
-        bound_lt_lo: &[AkitaField],
-    ) -> Result<([AkitaField; SAMPLES], Duration), MetalError> {
-        self.execute_current_bind_and_message(challenge, bound_lt_lo)
-            .map(|(message, active_time, _, _)| (message, active_time))
-    }
-
     fn execute_current_bind_and_message(
         &self,
         challenge: AkitaField,

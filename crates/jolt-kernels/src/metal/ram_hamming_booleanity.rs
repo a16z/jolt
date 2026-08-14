@@ -213,9 +213,6 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
                 reason: "RAM cycle-family owner has stale geometry",
             });
         }
-        owner
-            .verify_integrity()
-            .map_err(|error| prepare_error(error.to_string()))?;
         let prepare_span = tracing::info_span!(
             "MetalRamHammingBooleanity::sparse_prepare",
             selected = tracing::field::Empty,
@@ -243,8 +240,8 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
             complete_plan = tracing::field::Empty,
         );
         let _prepare_guard = prepare_span.enter();
-        let plan = RamHammingSparsePlan::new_from_verified_owner(&owner)
-            .map_err(|error| prepare_error(error.to_string()))?;
+        let plan =
+            RamHammingSparsePlan::new(&owner).map_err(|error| prepare_error(error.to_string()))?;
         let predicted = plan.estimated_products();
         let estimated_products = u64::try_from(predicted).map_err(|_| {
             prepare_error("RAM Hamming sparse product estimate does not fit telemetry")

@@ -9,21 +9,11 @@ const NONE: u32 = u32::MAX;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LevelCensus {
     entries: u64,
-    groups: u64,
-    tiles: u64,
 }
 
 impl LevelCensus {
     pub const fn entries(self) -> u64 {
         self.entries
-    }
-
-    pub const fn groups(self) -> u64 {
-        self.groups
-    }
-
-    pub const fn tiles(self) -> u64 {
-        self.tiles
     }
 }
 
@@ -107,11 +97,7 @@ impl RamBlockTopology {
         log_t: usize,
         records: &[RamAccessRecord],
         increment_cycles: &[u64],
-        threadgroup_width: usize,
     ) -> Result<Self, TopologyError> {
-        if threadgroup_width == 0 {
-            return Err(TopologyError::ZeroThreadgroupWidth);
-        }
         let leaf_cycles = union_cycles(records, increment_cycles)?;
         let mut current = leaf_cycles
             .iter()
@@ -126,7 +112,7 @@ impl RamBlockTopology {
         let mut merges = Vec::new();
         let mut levels = Vec::with_capacity(log_t);
         let mut census = Vec::with_capacity(log_t.checked_add(1).ok_or(TopologyError::Overflow)?);
-        census.push(block_census(current.len(), threadgroup_width)?);
+        census.push(block_census(current.len())?);
 
         for _ in 0..log_t {
             let level_start = checked_u32(merges.len())?;
@@ -171,7 +157,7 @@ impl RamBlockTopology {
                     .checked_sub(level_start)
                     .ok_or(TopologyError::Overflow)?,
             });
-            census.push(block_census(next.len(), threadgroup_width)?);
+            census.push(block_census(next.len())?);
             current = next;
         }
 
@@ -238,11 +224,9 @@ fn union_cycles(
     Ok(output)
 }
 
-fn block_census(entries: usize, threadgroup_width: usize) -> Result<LevelCensus, TopologyError> {
+fn block_census(entries: usize) -> Result<LevelCensus, TopologyError> {
     Ok(LevelCensus {
         entries: checked_u64(entries)?,
-        groups: checked_u64(entries)?,
-        tiles: checked_u64(entries.div_ceil(threadgroup_width))?,
     })
 }
 
@@ -264,8 +248,6 @@ fn checked_u64(value: usize) -> Result<u64, TopologyError> {
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum TopologyError {
-    #[error("RAM topology requires a nonzero threadgroup width")]
-    ZeroThreadgroupWidth,
     #[error("RAM topology arithmetic overflowed")]
     Overflow,
     #[error("RAM topology index exceeds the u32 ABI")]

@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks
 use jolt_field::Field;
 use thiserror::Error;
 
-use super::owner::{OwnerError, RamCycleFamilyOwner};
+use super::owner::RamCycleFamilyOwner;
 use super::topology::{BlockMerge, TopologyError};
 
 pub const MAX_RAM_RA_VIRTUALIZATION_FACTORS: usize = u32::BITS as usize;
@@ -70,16 +70,6 @@ pub struct HostSparseRamRaVirtualization<F> {
 
 impl<F: Field> HostSparseRamRaVirtualization<F> {
     pub fn new(
-        owner: Arc<RamCycleFamilyOwner>,
-        r_address: &[F],
-        committed_chunk_bits: usize,
-        r_cycle: &[F],
-    ) -> Result<Self, RamRaVirtualizationError> {
-        owner.verify_integrity()?;
-        Self::new_from_verified_owner(owner, r_address, committed_chunk_bits, r_cycle)
-    }
-
-    pub(crate) fn new_from_verified_owner(
         owner: Arc<RamCycleFamilyOwner>,
         r_address: &[F],
         committed_chunk_bits: usize,
@@ -622,8 +612,6 @@ fn merge_parent_block(
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum RamRaVirtualizationError {
     #[error(transparent)]
-    Owner(#[from] OwnerError),
-    #[error(transparent)]
     Topology(#[from] TopologyError),
     #[error("RAM RA virtualization address point has length {got}, expected {expected}")]
     AddressPointLength { expected: usize, got: usize },
@@ -697,7 +685,7 @@ pub enum RamRaVirtualizationError {
 mod tests {
     use jolt_field::AkitaField;
 
-    use super::super::owner::{OwnerConfig, RamCycleFamilyOwnerBuilder, RamCycleRow};
+    use super::super::owner::{OwnerConfig, RamAccessRecord, RamIncrementRecord};
     use super::*;
 
     fn field(value: u64) -> AkitaField {
@@ -705,21 +693,27 @@ mod tests {
     }
 
     fn fixture_owner() -> RamCycleFamilyOwner {
-        let config = OwnerConfig::new(3, 3, 41, 4, 16).unwrap();
-        let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-        for row in [
-            RamCycleRow::remapped(1, 0, 2, 2),
-            RamCycleRow::no_access(),
-            RamCycleRow::raw_address_zero(-3),
-            RamCycleRow::remapped(5, 0, 3, 3),
-            RamCycleRow::remapped(1, 2, 2, 0),
-            RamCycleRow::no_access(),
-            RamCycleRow::raw_address_zero(4),
-            RamCycleRow::remapped(5, 3, 1, -2),
-        ] {
-            builder.push_cycle(row).unwrap();
-        }
-        builder.finish(vec![0, 2, 0, 0, 0, 1, 0, 0]).unwrap()
+        let config = OwnerConfig::new(3, 3, 41, 16).unwrap();
+        let records = vec![
+            RamAccessRecord::new(0, 1, 0, 2),
+            RamAccessRecord::new(3, 5, 0, 3),
+            RamAccessRecord::new(4, 1, 2, 2),
+            RamAccessRecord::new(7, 5, 3, 1),
+        ];
+        let increments = vec![
+            RamIncrementRecord::new(0, 2),
+            RamIncrementRecord::new(2, -3),
+            RamIncrementRecord::new(3, 3),
+            RamIncrementRecord::new(6, 4),
+            RamIncrementRecord::new(7, -2),
+        ];
+        RamCycleFamilyOwner::from_sparse_records(
+            config,
+            records,
+            increments,
+            vec![0, 2, 0, 0, 0, 1, 0, 0],
+        )
+        .unwrap()
     }
 
     struct DenseOracle<F> {
@@ -835,15 +829,16 @@ mod tests {
 
     #[test]
     fn increment_only_leaf_seeds_zero_ra_factors() {
-        let config = OwnerConfig::new(2, 1, 43, 2, 4).unwrap();
-        let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-        builder.push_cycle(RamCycleRow::no_access()).unwrap();
-        builder
-            .push_cycle(RamCycleRow::raw_address_zero(9))
-            .unwrap();
-        builder.push_cycle(RamCycleRow::no_access()).unwrap();
-        builder.push_cycle(RamCycleRow::no_access()).unwrap();
-        let owner = Arc::new(builder.finish(vec![0, 0]).unwrap());
+        let config = OwnerConfig::new(2, 1, 43, 4).unwrap();
+        let owner = Arc::new(
+            RamCycleFamilyOwner::from_sparse_records(
+                config,
+                Vec::new(),
+                vec![RamIncrementRecord::new(1, 9)],
+                vec![0, 0],
+            )
+            .unwrap(),
+        );
         let mut sparse =
             HostSparseRamRaVirtualization::new(owner, &[field(3)], 1, &[field(5), field(7)])
                 .unwrap();

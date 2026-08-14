@@ -3,7 +3,7 @@ use std::sync::Arc;
 use jolt_field::Field;
 use thiserror::Error;
 
-use super::owner::{OwnerError, RamCycleFamilyOwner};
+use super::owner::RamCycleFamilyOwner;
 use super::topology::{BlockMerge, TopologyError};
 
 const TERMS: usize = 3;
@@ -64,16 +64,6 @@ pub struct HostSparseRamRaClaimReduction<F> {
 
 impl<F: Field> HostSparseRamRaClaimReduction<F> {
     pub fn new(
-        owner: Arc<RamCycleFamilyOwner>,
-        r_address: &[F],
-        cycle_points: [&[F]; TERMS],
-        gamma: F,
-    ) -> Result<Self, RamRaClaimError> {
-        owner.verify_integrity()?;
-        Self::new_from_verified_owner(owner, r_address, cycle_points, gamma)
-    }
-
-    pub(crate) fn new_from_verified_owner(
         owner: Arc<RamCycleFamilyOwner>,
         r_address: &[F],
         cycle_points: [&[F]; TERMS],
@@ -454,8 +444,6 @@ fn merge_children<F>(
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum RamRaClaimError {
-    #[error(transparent)]
-    Owner(#[from] OwnerError),
     #[error(transparent)]
     Topology(#[from] TopologyError),
     #[error("RAM RA claim address point has length {got}, expected {expected}")]

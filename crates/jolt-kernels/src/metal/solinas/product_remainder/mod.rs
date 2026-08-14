@@ -1378,24 +1378,6 @@ impl ProductRemainderSequence {
         Ok((message, active_time))
     }
 
-    /// Replays materialization without advancing the resident sequence.
-    #[doc(hidden)]
-    pub fn replay_materialize_message_timed(
-        &self,
-        e_in: &[AkitaField],
-        e_out: &[AkitaField],
-    ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
-        if self.phase != ProductRemainderPhase::Materialized
-            || self.current_elements != self.layout.rows()
-            || !self.source_in_a
-        {
-            return Err(MetalError::InvalidProductRemainderState(
-                "materialization replay requires the unbound resident state",
-            ));
-        }
-        self.execute_materialize_message(e_in, e_out)
-    }
-
     /// Materializes the initial protocol state in the existing buffers.
     #[doc(hidden)]
     pub fn restart_message_timed(
@@ -1611,17 +1593,6 @@ impl ProductRemainderSequence {
         Ok((message, active_time))
     }
 
-    /// Replays the current transition without advancing the resident sequence.
-    #[doc(hidden)]
-    pub fn replay_current_bind_and_message_timed(
-        &self,
-        challenge: AkitaField,
-        e_in: &[AkitaField],
-        e_out: &[AkitaField],
-    ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
-        self.execute_current_bind_and_message(challenge, e_in, e_out)
-    }
-
     fn execute_current_bind_and_message(
         &self,
         challenge: AkitaField,
@@ -1726,16 +1697,6 @@ impl ProductRemainderSequence {
         let (openings, active_time) = self.execute_openings(e_in, e_out)?;
         self.gpu_active_time += active_time;
         Ok((openings, active_time))
-    }
-
-    /// Replays the opening scan without changing sequence telemetry.
-    #[doc(hidden)]
-    pub fn replay_openings_timed(
-        &self,
-        e_in: &[AkitaField],
-        e_out: &[AkitaField],
-    ) -> Result<([AkitaField; PRODUCT_REMAINDER_OPENINGS], Duration), MetalError> {
-        self.execute_openings(e_in, e_out)
     }
 
     fn execute_openings(

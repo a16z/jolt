@@ -174,13 +174,6 @@ fn assert_product_remainder_sequence(row_count: usize) {
             .expect("product remainder first message should execute"),
         expected.endpoints
     );
-    assert_eq!(
-        sequence
-            .replay_materialize_message_timed(&materialize_e_in, &materialize_e_out)
-            .expect("product remainder first message should replay")
-            .0,
-        expected.endpoints
-    );
     let (actual_left, actual_right) = sequence
         .read_current_state()
         .expect("materialized state should read");
@@ -215,16 +208,11 @@ fn assert_product_remainder_sequence(row_count: usize) {
             &e_out,
         )
         .expect("CPU transition should be well-shaped");
-        let replay = sequence
-            .replay_current_bind_and_message_timed(challenge, &e_in, &e_out)
-            .expect("product remainder transition should replay")
-            .0;
-        assert_eq!(replay, next.endpoints, "replay round {round}");
         assert_eq!(
             sequence
                 .bind_and_message(challenge, &e_in, &e_out)
                 .expect("product remainder transition should execute"),
-            replay,
+            next.endpoints,
             "round {round}"
         );
         let (actual_left, actual_right) = sequence

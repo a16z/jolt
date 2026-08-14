@@ -215,13 +215,9 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
             complete_sequence = true,
         );
         let _route_guard = route.enter();
-        let sequence = HostSparseRamRaVirtualization::new_from_verified_owner(
-            Arc::clone(&owner),
-            r_address,
-            chunk_bits,
-            r_cycle,
-        )
-        .map_err(|error| prepare_error(error.to_string()))?;
+        let sequence =
+            HostSparseRamRaVirtualization::new(Arc::clone(&owner), r_address, chunk_bits, r_cycle)
+                .map_err(|error| prepare_error(error.to_string()))?;
         terminal_take_ram_cycle_family(session, &owner, "host_sparse_v1", "none", true)?;
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self

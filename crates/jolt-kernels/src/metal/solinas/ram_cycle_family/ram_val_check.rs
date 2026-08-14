@@ -3,7 +3,7 @@ use std::sync::Arc;
 use jolt_field::Field;
 use thiserror::Error;
 
-use super::owner::{OwnerError, RamCycleFamilyOwner};
+use super::owner::RamCycleFamilyOwner;
 use super::topology::{BlockMerge, TopologyError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -122,7 +122,6 @@ impl<F: Field> HostSparseRamValCheck<F> {
         r_cycle: &[F],
         gamma: F,
     ) -> Result<Self, RamValError> {
-        owner.verify_integrity()?;
         let receipt = owner.receipt();
         let rounds = receipt.log_t();
         if r_address.len() != receipt.log_k() {
@@ -625,8 +624,6 @@ fn u64_to_usize(value: u64) -> Result<usize, RamValError> {
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum RamValError {
-    #[error(transparent)]
-    Owner(#[from] OwnerError),
     #[error(transparent)]
     Topology(#[from] TopologyError),
     #[error("RAM value-check address point has length {got}, expected {expected}")]

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use jolt_field::Field;
 use thiserror::Error;
 
-use super::owner::{OwnerError, RamCycleFamilyOwner};
+use super::owner::RamCycleFamilyOwner;
 use super::topology::{BlockMerge, RamBlockTopology, TopologyError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,20 +39,8 @@ pub struct RamHammingSparsePlan {
 
 impl RamHammingSparsePlan {
     pub fn new(owner: &RamCycleFamilyOwner) -> Result<Self, RamHammingError> {
-        owner.verify_integrity()?;
-        Self::new_from_verified_owner(owner)
-    }
-
-    pub(crate) fn new_from_verified_owner(
-        owner: &RamCycleFamilyOwner,
-    ) -> Result<Self, RamHammingError> {
         let receipt = owner.receipt();
-        let topology = RamBlockTopology::build(
-            receipt.log_t(),
-            owner.access_records(),
-            &[],
-            receipt.threadgroup_width(),
-        )?;
+        let topology = RamBlockTopology::build(receipt.log_t(), owner.access_records(), &[])?;
         let access_leaves = topology.leaf_cycles().len();
         let parent_nodes = topology
             .census()
@@ -161,15 +149,7 @@ impl<F: Field> HostSparseRamHammingBooleanity<F> {
         owner: Arc<RamCycleFamilyOwner>,
         stage1_cycle_binding: &[F],
     ) -> Result<Self, RamHammingError> {
-        owner.verify_integrity()?;
-        Self::new_from_verified_owner(owner, stage1_cycle_binding)
-    }
-
-    pub(crate) fn new_from_verified_owner(
-        owner: Arc<RamCycleFamilyOwner>,
-        stage1_cycle_binding: &[F],
-    ) -> Result<Self, RamHammingError> {
-        let plan = RamHammingSparsePlan::new_from_verified_owner(&owner)?;
+        let plan = RamHammingSparsePlan::new(&owner)?;
         Self::new_from_plan(owner, stage1_cycle_binding, plan)
     }
 
@@ -506,8 +486,6 @@ fn merge_parent_block(
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum RamHammingError {
     #[error(transparent)]
-    Owner(#[from] OwnerError),
-    #[error(transparent)]
     Topology(#[from] TopologyError),
     #[error("RAM Hamming cycle point has length {got}, expected {expected}")]
     CyclePointLength { expected: usize, got: usize },
@@ -568,7 +546,7 @@ pub enum RamHammingError {
 mod tests {
     use jolt_field::AkitaField;
 
-    use super::super::owner::{OwnerConfig, RamCycleFamilyOwnerBuilder, RamCycleRow};
+    use super::super::owner::{OwnerConfig, RamAccessRecord, RamIncrementRecord};
     use super::*;
 
     fn field(value: u64) -> AkitaField {
@@ -576,21 +554,27 @@ mod tests {
     }
 
     fn fixture_owner() -> RamCycleFamilyOwner {
-        let config = OwnerConfig::new(3, 3, 47, 4, 16).unwrap();
-        let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-        for row in [
-            RamCycleRow::remapped(1, 0, 2, 2),
-            RamCycleRow::no_access(),
-            RamCycleRow::raw_address_zero(-3),
-            RamCycleRow::remapped(5, 0, 3, 3),
-            RamCycleRow::remapped(1, 2, 2, 0),
-            RamCycleRow::no_access(),
-            RamCycleRow::raw_address_zero(4),
-            RamCycleRow::remapped(5, 3, 1, -2),
-        ] {
-            builder.push_cycle(row).unwrap();
-        }
-        builder.finish(vec![0, 2, 0, 0, 0, 1, 0, 0]).unwrap()
+        let config = OwnerConfig::new(3, 3, 47, 16).unwrap();
+        let records = vec![
+            RamAccessRecord::new(0, 1, 0, 2),
+            RamAccessRecord::new(3, 5, 0, 3),
+            RamAccessRecord::new(4, 1, 2, 2),
+            RamAccessRecord::new(7, 5, 3, 1),
+        ];
+        let increments = vec![
+            RamIncrementRecord::new(0, 2),
+            RamIncrementRecord::new(2, -3),
+            RamIncrementRecord::new(3, 3),
+            RamIncrementRecord::new(6, 4),
+            RamIncrementRecord::new(7, -2),
+        ];
+        RamCycleFamilyOwner::from_sparse_records(
+            config,
+            records,
+            increments,
+            vec![0, 2, 0, 0, 0, 1, 0, 0],
+        )
+        .unwrap()
     }
 
     fn dense_eq(binding: &[AkitaField]) -> Vec<AkitaField> {
@@ -680,7 +664,7 @@ mod tests {
         assert_eq!(plan.parent_nodes(), 7);
         assert_eq!(plan.middle_nodes(), 6);
         assert_eq!(plan.estimated_products(), 85);
-        assert_eq!(plan.topology_bytes(), 192);
+        assert_eq!(plan.topology_bytes(), 128);
         let topology_bytes = plan.topology_bytes();
 
         let sequence = HostSparseRamHammingBooleanity::new_from_plan(
@@ -695,12 +679,11 @@ mod tests {
 
     #[test]
     fn empty_support_remains_zero_without_dense_storage() {
-        let config = OwnerConfig::new(3, 2, 53, 4, 8).unwrap();
-        let mut builder = RamCycleFamilyOwnerBuilder::new(config).unwrap();
-        for _ in 0..8 {
-            builder.push_cycle(RamCycleRow::no_access()).unwrap();
-        }
-        let owner = Arc::new(builder.finish(vec![0; 4]).unwrap());
+        let config = OwnerConfig::new(3, 2, 53, 8).unwrap();
+        let owner = Arc::new(
+            RamCycleFamilyOwner::from_sparse_records(config, Vec::new(), Vec::new(), vec![0; 4])
+                .unwrap(),
+        );
         let mut sparse =
             HostSparseRamHammingBooleanity::new(owner, &[field(3), field(5), field(7)]).unwrap();
         for challenge in [field(11), field(13), field(17)] {

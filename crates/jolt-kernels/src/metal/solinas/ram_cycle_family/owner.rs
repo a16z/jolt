@@ -65,60 +65,10 @@ impl RamIncrementRecord {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AddressKind {
-    NoAccess,
-    RawZero,
-    Remapped(u32),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RamCycleRow {
-    address: AddressKind,
-    pre_value: u64,
-    post_value: u64,
-    ram_increment: i128,
-}
-
-impl RamCycleRow {
-    pub const fn no_access() -> Self {
-        Self {
-            address: AddressKind::NoAccess,
-            pre_value: 0,
-            post_value: 0,
-            ram_increment: 0,
-        }
-    }
-
-    pub const fn raw_address_zero(ram_increment: i128) -> Self {
-        Self {
-            address: AddressKind::RawZero,
-            pre_value: 0,
-            post_value: 0,
-            ram_increment,
-        }
-    }
-
-    pub const fn remapped(
-        address: u32,
-        pre_value: u64,
-        post_value: u64,
-        ram_increment: i128,
-    ) -> Self {
-        Self {
-            address: AddressKind::Remapped(address),
-            pre_value,
-            post_value,
-            ram_increment,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OwnerConfig {
     log_t: usize,
     log_k: usize,
     source_generation: u64,
-    threadgroup_width: usize,
     max_sparse_records: usize,
 }
 
@@ -127,7 +77,6 @@ impl OwnerConfig {
         log_t: usize,
         log_k: usize,
         source_generation: u64,
-        threadgroup_width: usize,
         max_sparse_records: usize,
     ) -> Result<Self, OwnerError> {
         if log_t == 0 || log_t > u32::BITS as usize {
@@ -139,9 +88,6 @@ impl OwnerConfig {
         if source_generation == 0 {
             return Err(OwnerError::ZeroSourceGeneration);
         }
-        if threadgroup_width == 0 {
-            return Err(OwnerError::ZeroThreadgroupWidth);
-        }
         if max_sparse_records == 0 {
             return Err(OwnerError::ZeroSparseCapacity);
         }
@@ -151,7 +97,6 @@ impl OwnerConfig {
             log_t,
             log_k,
             source_generation,
-            threadgroup_width,
             max_sparse_records,
         })
     }
@@ -168,194 +113,8 @@ impl OwnerConfig {
         self.source_generation
     }
 
-    pub const fn threadgroup_width(self) -> usize {
-        self.threadgroup_width
-    }
-
     pub const fn max_sparse_records(self) -> usize {
         self.max_sparse_records
-    }
-}
-
-pub struct RamCycleFamilyOwnerBuilder {
-    config: OwnerConfig,
-    cycles: usize,
-    address_domain: usize,
-    next_cycle: usize,
-    records: Vec<RamAccessRecord>,
-    increment_cycles: Vec<u64>,
-    increments: Vec<i128>,
-    last_post: Vec<Option<u64>>,
-}
-
-impl RamCycleFamilyOwnerBuilder {
-    pub fn new(config: OwnerConfig) -> Result<Self, OwnerError> {
-        let cycles = domain_size(config.log_t)?;
-        let address_domain = domain_size(config.log_k)?;
-        Ok(Self {
-            config,
-            cycles,
-            address_domain,
-            next_cycle: 0,
-            records: Vec::new(),
-            increment_cycles: Vec::new(),
-            increments: Vec::new(),
-            last_post: vec![None; address_domain],
-        })
-    }
-
-    pub fn push_cycle(&mut self, row: RamCycleRow) -> Result<(), OwnerError> {
-        if self.next_cycle >= self.cycles {
-            return Err(OwnerError::TooManyCycles {
-                expected: self.cycles,
-            });
-        }
-        let cycle = self.next_cycle;
-        let next_cycle = cycle.checked_add(1).ok_or(OwnerError::Overflow)?;
-        let cycle_u32 = u32::try_from(cycle).map_err(|_| OwnerError::CycleIndexTooLarge)?;
-        let cycle_u64 = u64::try_from(cycle).map_err(|_| OwnerError::CycleIndexTooLarge)?;
-        let needs_access_record = matches!(row.address, AddressKind::Remapped(_));
-        let needs_increment_record = row.ram_increment != 0;
-        if needs_access_record && self.records.len() >= self.config.max_sparse_records {
-            return Err(OwnerError::SparseCapacityExceeded {
-                maximum: self.config.max_sparse_records,
-            });
-        }
-        if needs_increment_record && self.increments.len() >= self.config.max_sparse_records {
-            return Err(OwnerError::SparseCapacityExceeded {
-                maximum: self.config.max_sparse_records,
-            });
-        }
-        match row.address {
-            AddressKind::NoAccess => {
-                if row.ram_increment != 0 {
-                    return Err(OwnerError::NonzeroIncrementWithoutAccessKind { cycle });
-                }
-            }
-            AddressKind::RawZero => {}
-            AddressKind::Remapped(address) => {
-                let address_index = address as usize;
-                if address_index >= self.address_domain {
-                    return Err(OwnerError::AddressOutOfRange {
-                        cycle,
-                        address,
-                        address_domain: self.address_domain,
-                    });
-                }
-                let expected_increment = i128::from(row.post_value) - i128::from(row.pre_value);
-                if row.ram_increment != expected_increment {
-                    return Err(OwnerError::IncrementMismatch {
-                        cycle,
-                        expected: expected_increment,
-                        got: row.ram_increment,
-                    });
-                }
-                if self
-                    .last_post
-                    .get(address_index)
-                    .copied()
-                    .flatten()
-                    .is_some_and(|previous| previous != row.pre_value)
-                {
-                    return Err(OwnerError::CheckpointDiscontinuity { cycle, address });
-                }
-                let destination =
-                    self.last_post
-                        .get_mut(address_index)
-                        .ok_or(OwnerError::AddressOutOfRange {
-                            cycle,
-                            address,
-                            address_domain: self.address_domain,
-                        })?;
-                *destination = Some(row.post_value);
-                self.records.push(RamAccessRecord {
-                    cycle: cycle_u32,
-                    address,
-                    pre_value: row.pre_value,
-                    post_value: row.post_value,
-                });
-            }
-        }
-        if needs_increment_record {
-            self.increment_cycles.push(cycle_u64);
-            self.increments.push(row.ram_increment);
-        }
-        self.next_cycle = next_cycle;
-        Ok(())
-    }
-
-    pub fn finish(self, final_memory: Vec<u64>) -> Result<RamCycleFamilyOwner, OwnerError> {
-        if self.next_cycle != self.cycles {
-            return Err(OwnerError::CycleCountMismatch {
-                expected: self.cycles,
-                got: self.next_cycle,
-            });
-        }
-        if final_memory.len() != self.address_domain {
-            return Err(OwnerError::FinalMemoryLength {
-                expected: self.address_domain,
-                got: final_memory.len(),
-            });
-        }
-        for (address, expected) in self.last_post.iter().enumerate() {
-            if let Some(expected) = expected {
-                let got =
-                    final_memory
-                        .get(address)
-                        .copied()
-                        .ok_or(OwnerError::FinalMemoryLength {
-                            expected: self.address_domain,
-                            got: final_memory.len(),
-                        })?;
-                if got != *expected {
-                    return Err(OwnerError::FinalMemoryMismatch {
-                        address,
-                        expected: *expected,
-                        got,
-                    });
-                }
-            }
-        }
-
-        let block_topology = RamBlockTopology::build(
-            self.config.log_t,
-            &self.records,
-            &self.increment_cycles,
-            self.config.threadgroup_width,
-        )?;
-        let final_memory = final_memory.into_boxed_slice();
-        let records = self.records.into_boxed_slice();
-        let increment_cycles = self.increment_cycles.into_boxed_slice();
-        let increments = self.increments.into_boxed_slice();
-        let fingerprint = owner_fingerprint(
-            self.config,
-            &records,
-            &increment_cycles,
-            &increments,
-            &final_memory,
-            &block_topology,
-        );
-        let receipt = RamCycleFamilyReceipt {
-            schema_version: RAM_CYCLE_FAMILY_SCHEMA_VERSION,
-            source_generation: self.config.source_generation,
-            log_t: self.config.log_t,
-            log_k: self.config.log_k,
-            cycles: self.cycles,
-            address_domain: self.address_domain,
-            threadgroup_width: self.config.threadgroup_width,
-            access_count: records.len(),
-            increment_count: increments.len(),
-            block_census: block_topology.census().to_vec().into_boxed_slice(),
-            fingerprint,
-        };
-        Ok(RamCycleFamilyOwner {
-            receipt,
-            records,
-            increment_cycles,
-            increments,
-            final_memory,
-            block_topology,
-        })
     }
 }
 
@@ -366,7 +125,6 @@ pub struct RamCycleFamilyReceipt {
     log_k: usize,
     cycles: usize,
     address_domain: usize,
-    threadgroup_width: usize,
     access_count: usize,
     increment_count: usize,
     block_census: Box<[LevelCensus]>,
@@ -381,7 +139,6 @@ impl RamCycleFamilyReceipt {
         log_k: usize,
         cycles: usize,
         address_domain: usize,
-        threadgroup_width: usize,
         access_count: usize,
         increment_count: usize,
         fingerprint: u64,
@@ -579,6 +336,7 @@ impl RamCycleFamilyOwner {
             + std::mem::size_of_val(self.receipt.block_census.as_ref())
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn verify_integrity(&self) -> Result<(), OwnerError> {
         if self.receipt.schema_version != RAM_CYCLE_FAMILY_SCHEMA_VERSION {
             return Err(OwnerError::UnsupportedSchema {
@@ -594,7 +352,6 @@ impl RamCycleFamilyOwner {
             || self.increment_cycles.len() != self.increments.len()
             || self.final_memory.len() != address_domain
             || self.receipt.source_generation == 0
-            || self.receipt.threadgroup_width == 0
             || self.block_topology.log_t() != self.receipt.log_t
             || self.receipt.block_census.as_ref() != self.block_topology.census()
         {
@@ -645,7 +402,6 @@ impl RamCycleFamilyOwner {
             log_t: self.receipt.log_t,
             log_k: self.receipt.log_k,
             source_generation: self.receipt.source_generation,
-            threadgroup_width: self.receipt.threadgroup_width,
             max_sparse_records: self.records.len().max(self.increments.len()).max(1),
         };
         let fingerprint = owner_fingerprint(
@@ -676,12 +432,7 @@ fn build_owner(
     increments: Vec<i128>,
     final_memory: Vec<u64>,
 ) -> Result<RamCycleFamilyOwner, OwnerError> {
-    let block_topology = RamBlockTopology::build(
-        config.log_t,
-        &records,
-        &increment_cycles,
-        config.threadgroup_width,
-    )?;
+    let block_topology = RamBlockTopology::build(config.log_t, &records, &increment_cycles)?;
     let final_memory = final_memory.into_boxed_slice();
     let records = records.into_boxed_slice();
     let increment_cycles = increment_cycles.into_boxed_slice();
@@ -701,7 +452,6 @@ fn build_owner(
         log_k: config.log_k,
         cycles,
         address_domain,
-        threadgroup_width: config.threadgroup_width,
         access_count: records.len(),
         increment_count: increments.len(),
         block_census: block_topology.census().to_vec().into_boxed_slice(),
@@ -731,7 +481,6 @@ fn owner_fingerprint(
         config.source_generation,
         config.log_t as u64,
         config.log_k as u64,
-        config.threadgroup_width as u64,
         records.len() as u64,
         increments.len() as u64,
     ] {
@@ -756,7 +505,6 @@ fn owner_fingerprint(
     }
     for level in block_topology.census() {
         state = mix(state, level.entries());
-        state = mix(state, level.tiles());
     }
     state
 }
@@ -782,14 +530,8 @@ pub enum OwnerError {
     InvalidLogK { log_k: usize },
     #[error("RAM owner source generation must be nonzero")]
     ZeroSourceGeneration,
-    #[error("RAM owner threadgroup width must be nonzero")]
-    ZeroThreadgroupWidth,
     #[error("RAM owner sparse capacity must be nonzero")]
     ZeroSparseCapacity,
-    #[error("RAM owner expected {expected} cycles but received more")]
-    TooManyCycles { expected: usize },
-    #[error("RAM owner expected {expected} cycles but received {got}")]
-    CycleCountMismatch { expected: usize, got: usize },
     #[error("RAM owner cycle index exceeds the u32 ABI")]
     CycleIndexTooLarge,
     #[error("RAM owner access records are not strictly ordered at cycle {cycle}")]
@@ -806,8 +548,6 @@ pub enum OwnerError {
         address: u32,
         address_domain: usize,
     },
-    #[error("RAM owner no-access row at cycle {cycle} has a nonzero increment")]
-    NonzeroIncrementWithoutAccessKind { cycle: usize },
     #[error("RAM owner increment at cycle {cycle} is {got}, expected {expected}")]
     IncrementMismatch {
         cycle: usize,
