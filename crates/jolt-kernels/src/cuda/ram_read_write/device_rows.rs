@@ -109,7 +109,7 @@ impl DeviceRamRows {
     pub fn inc(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         let cycles = CudaKernelContext::count_of(self.cycles)?;
         let mut out = context.alloc(self.cycles)?;
-        let mut builder = context.stream().launch_builder(context.rrw_inc());
+        let mut builder = context.stream().launch_builder(context.fr_delta_u64());
         let _ = builder.arg(&self.read_value);
         let _ = builder.arg(&self.write_value);
         let _ = builder.arg(&cycles);

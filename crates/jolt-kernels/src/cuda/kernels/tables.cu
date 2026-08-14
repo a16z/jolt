@@ -74,3 +74,17 @@ extern "C" __global__ void lt_double_kernel(u64 *__restrict__ evals,
     store4(evals + (j + half) * LIMBS, y);
     store4(evals + j * LIMBS, nx);
 }
+
+extern "C" __global__ void fr_delta_u64_kernel(const u64 *__restrict__ lo,
+                                              const u64 *__restrict__ hi, unsigned int n,
+                                              u64 *__restrict__ out) {
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= n) return;
+    u64 lo_raw[LIMBS] = {lo[j], 0, 0, 0};
+    u64 hi_raw[LIMBS] = {hi[j], 0, 0, 0};
+    u64 lo_mont[LIMBS], hi_mont[LIMBS], delta[LIMBS];
+    fr_to_mont(lo_raw, lo_mont);
+    fr_to_mont(hi_raw, hi_mont);
+    fr_sub(hi_mont, lo_mont, delta);
+    store4(out + (unsigned long long)j * LIMBS, delta);
+}

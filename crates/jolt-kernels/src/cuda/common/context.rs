@@ -58,6 +58,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("../kernels/cycle_rounds.cu"),
     "\n",
     include_str!("../kernels/ram_read_write.cu"),
+    "\n",
+    include_str!("../kernels/registers_read_write.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -131,9 +133,11 @@ pub struct CudaKernelContext {
     amm_message: CudaFunction,
     amm_materialize: CudaFunction,
     amm_lift: CudaFunction,
+    fr_delta_u64: CudaFunction,
     rrw_flags: CudaFunction,
-    rrw_inc: CudaFunction,
     rrw_scatter: CudaFunction,
+    reg_count: CudaFunction,
+    reg_scatter: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -218,9 +222,11 @@ impl CudaKernelContext {
             amm_message: module.load_function("amm_message_kernel")?,
             amm_materialize: module.load_function("amm_materialize_kernel")?,
             amm_lift: module.load_function("amm_lift_kernel")?,
+            fr_delta_u64: module.load_function("fr_delta_u64_kernel")?,
             rrw_flags: module.load_function("rrw_flags_kernel")?,
-            rrw_inc: module.load_function("rrw_inc_kernel")?,
             rrw_scatter: module.load_function("rrw_scatter_kernel")?,
+            reg_count: module.load_function("reg_count_kernel")?,
+            reg_scatter: module.load_function("reg_scatter_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -537,16 +543,24 @@ impl CudaKernelContext {
         &self.amm_lift
     }
 
+    pub(crate) const fn fr_delta_u64(&self) -> &CudaFunction {
+        &self.fr_delta_u64
+    }
+
     pub(crate) const fn rrw_flags(&self) -> &CudaFunction {
         &self.rrw_flags
     }
 
-    pub(crate) const fn rrw_inc(&self) -> &CudaFunction {
-        &self.rrw_inc
-    }
-
     pub(crate) const fn rrw_scatter(&self) -> &CudaFunction {
         &self.rrw_scatter
+    }
+
+    pub(crate) const fn reg_count(&self) -> &CudaFunction {
+        &self.reg_count
+    }
+
+    pub(crate) const fn reg_scatter(&self) -> &CudaFunction {
+        &self.reg_scatter
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {

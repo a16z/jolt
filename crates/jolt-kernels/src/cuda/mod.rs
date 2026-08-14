@@ -80,6 +80,18 @@ mod tests {
     }
 
     #[test]
+    fn kernel_source_compiles_when_a_device_is_present() {
+        if cudarc::driver::CudaContext::new(0).is_err() {
+            return;
+        }
+        assert!(
+            shared_context().is_some(),
+            "a CUDA device is present but the kernel module failed to build; every \
+             device test would otherwise skip and report success",
+        );
+    }
+
+    #[test]
     fn upload_launch_download_round_trips() {
         let context = require_device!();
         for count in [1usize, 5, 256, 1000] {

@@ -56,6 +56,13 @@ pub struct RegistersReadWriteWitness {
     pub rd_post_value: RdWriteValue,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the host construction is retained as the oracle for the device-side one"
+    )
+)]
 pub fn matrix_entries(rows: &[RegistersReadWriteWitness], gamma: Fr) -> Vec<MatrixEntry> {
     let gamma_squared = gamma * gamma;
     let zero = Fr::from_u64(0);

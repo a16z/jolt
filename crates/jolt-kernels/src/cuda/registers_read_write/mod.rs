@@ -1,4 +1,4 @@
-use jolt_claims::protocols::jolt::geometry::registers::{rd_inc_read_write, rs2_ra_read_write};
+use jolt_claims::protocols::jolt::geometry::registers::rs2_ra_read_write;
 use jolt_claims::protocols::jolt::relations::registers::{
     RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
 };
@@ -13,18 +13,16 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane};
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
 use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
+use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec};
 use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
 use crate::cuda::common::split_eq::DeviceSplitEq;
-use crate::reference::views::dense_view;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+pub(crate) mod device_rows;
 pub(crate) mod rs2_claim;
 pub(crate) mod witness;
-
-const COEFF_WIDTH: usize = 2;
 
 pub struct RegistersReadWriteKernel<F: Field> {
     context: &'static CudaKernelContext,
@@ -233,17 +231,14 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
 
         let gamma = inputs.challenges.gamma;
         let rows = collect_bundles::<witness::RegistersReadWriteWitness>(witness, 1usize << log_t)?;
-        let entries = witness::matrix_entries(
-            &rows,
+        let rows = device_rows::DeviceRegisterRows::upload(context, &rows)?;
+        let cycle = rows.matrix(
+            context,
             require_fr(gamma).map_err(|_| KernelError::Unsupported {
                 reason: "CUDA kernels support only the BN254 scalar field",
             })?,
-        );
-        let cycle = DeviceReadWriteMatrix::new(context, &entries, COEFF_WIDTH, None)?;
-        let inc = context.upload(require_fr_slice(&dense_view(
-            witness,
-            rd_inc_read_write(),
-        )?)?)?;
+        )?;
+        let inc = rows.inc(context)?;
 
         Ok(Box::new(RegistersReadWriteKernel {
             context,
