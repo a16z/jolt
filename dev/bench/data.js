@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786646861908,
+  "lastUpdate": 1786734019123,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -137722,6 +137722,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 859160,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "andrew@tretyakov.xyz",
+            "name": "Michael Zhu",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "552ba61923e56acb77dd11bdb5b62b9bdfdb2bdc",
+          "message": "docs(specs): byte-addressable memory design exploration (#1725)\n\n* add byte-addressable memory spec\n\n* docs(specs): fold verification corrections into byte-addressable-memory spec\n\n- Three (not two) latent MMU trace-recording bugs; note the trace_store\n  8-byte-write-of-4-byte-store inconsistency alongside\n- Reword the misaligned-ldst-01 acceptance criterion: the README line is\n  sample output, not a known-failure registry\n- Name the common/ remapper correctly (remap_word_address) and note the\n  divergent below-lowest-address handling across the three copies\n- Tier 1 RAF input claim: record the mul_pow_2 renormalization and the\n  non-zk input_output_claims() path as sync obligations\n- Fix expand_byte_load line range\n\n* docs(specs): record Tier 0 as implemented\n\n- Tier 0 as-implemented block: the fused single-lookup extract was\n  rejected (intrinsic prefix rank >= 8 per width with binary offsets);\n  the implemented mask-form two-step (WindowMask + Pext/PextSigned,\n  ANDN + ShiftData for stores; Pdep rejected at prefix rank ~57),\n  realized cycle counts, measured trace deltas, and measured prover\n  wall-time behavior (parity at fixed padded size, -27% at a\n  padding-boundary crossing).\n- Open question 3 resolved with the rank argument; the AddressOffset\n  marker-table sub-question stays open for Tier 1.\n- Third hard budget recorded: legacy read_raf MAX_SUFFIXES (raised\n  4 -> 5 for PextSigned; debug-assert only, muldiv is the canary).\n- Projection table annotated with measured Tier 0 numbers.\n\n---------\n\nCo-authored-by: acentelles <centelles.alberto@gmail.com>",
+          "timestamp": "2026-08-14T13:55:44-04:00",
+          "tree_id": "01ecdada51ded4525fa600c9a756a3660f6de751",
+          "url": "https://github.com/a16z/jolt/commit/552ba61923e56acb77dd11bdb5b62b9bdfdb2bdc"
+        },
+        "date": 1786734014213,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.2341,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 872032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3245,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 502584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 497312,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 508796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7116,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 509312,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5867,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 508988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8714,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9554,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 198388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4341,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 867168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5578,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 496756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4591,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 507168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.4405,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 507060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7804,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 499892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.2241,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1083668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2079,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 630744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 95.2203,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2109220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4801,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498780,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5186,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.6336,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 868436,
             "unit": "KB",
             "extra": ""
           }
