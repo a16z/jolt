@@ -14,8 +14,11 @@ pub use jolt_program::expand::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
     InlineRegister, Value,
 };
-pub use jolt_riscv::instructions;
-pub use jolt_riscv::SourceInstructionKind;
+use jolt_riscv::kinds::{
+    VirtualAdvice, VirtualZeroExtendWord, ADD, LD, LW, MUL, MULHU, OR, SD, SLLI, SLTU, SRLI,
+};
+
+pub use jolt_riscv::{kinds, SourceInstructionKind};
 pub use tracer::instruction::format::format_inline::FormatInline;
 pub use tracer::instruction::inline::{InlineAdviceContext, InlineAdviceError, InlineRegistration};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
@@ -334,34 +337,19 @@ pub trait InlineBuilderExt {
 impl InlineBuilderExt for InlineExpansionBuilder {
     fn load_u64_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
         for (i, register) in registers.iter().enumerate() {
-            self.emit_ld(
-                SourceInstructionKind::LD,
-                **register,
-                base,
-                offset_start + i as i64 * 8,
-            );
+            self.emit_ld(LD, **register, base, offset_start + i as i64 * 8);
         }
     }
 
     fn store_u64_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
         for (i, register) in registers.iter().enumerate() {
-            self.emit_s(
-                SourceInstructionKind::SD,
-                base,
-                **register,
-                offset_start + i as i64 * 8,
-            );
+            self.emit_s(SD, base, **register, offset_start + i as i64 * 8);
         }
     }
 
     fn load_u32_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
         for (i, register) in registers.iter().enumerate() {
-            self.emit_ld(
-                SourceInstructionKind::LW,
-                **register,
-                base,
-                offset_start + i as i64 * 4,
-            );
+            self.emit_ld(LW, **register, base, offset_start + i as i64 * 4);
         }
     }
 
@@ -385,46 +373,32 @@ impl InlineBuilderExt for InlineExpansionBuilder {
     /// Clean extraction: `vr_lo` gets zero-extended low 32 bits; `vr_hi` gets high 32 bits.
     /// Clobbers `temp` for the intermediate 64-bit load.
     fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        self.emit_ld(SourceInstructionKind::LD, temp, base, offset);
-        self.emit_i(
-            SourceInstructionKind::VirtualZeroExtendWord(instructions::VirtualZeroExtendWord(())),
-            vr_lo,
-            temp,
-            0,
-        );
-        self.emit_i(SourceInstructionKind::SRLI, vr_hi, temp, 32);
+        self.emit_ld(LD, temp, base, offset);
+        self.emit_i(VirtualZeroExtendWord, vr_lo, temp, 0);
+        self.emit_i(SRLI, vr_hi, temp, 32);
     }
 
     /// Store two u32 values to 8-byte aligned `base+offset` as a single SD.
     /// WARNING: clobbers both `vr_lo` and `vr_hi`.
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        self.emit_i(
-            SourceInstructionKind::VirtualZeroExtendWord(instructions::VirtualZeroExtendWord(())),
-            vr_lo,
-            vr_lo,
-            0,
-        );
-        self.emit_i(SourceInstructionKind::SLLI, vr_hi, vr_hi, 32);
-        self.emit_r(SourceInstructionKind::OR, vr_lo, vr_hi, vr_lo);
-        self.emit_s(SourceInstructionKind::SD, base, vr_lo, offset);
+        self.emit_i(VirtualZeroExtendWord, vr_lo, vr_lo, 0);
+        self.emit_i(SLLI, vr_hi, vr_hi, 32);
+        self.emit_r(OR, vr_lo, vr_hi, vr_lo);
+        self.emit_s(SD, base, vr_lo, offset);
     }
 
     /// Load two packed u32 from 8-byte aligned `base+offset` into `vr_lo` and `vr_hi`.
     /// WARNING: leaves junk in upper 32 bits of `vr_lo`. Safe only when downstream ops
     /// preserve correctness independent of upper bits (e.g. SHA-256 32-bit arithmetic).
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        self.emit_ld(SourceInstructionKind::LD, vr_lo, base, offset);
-        self.emit_i(SourceInstructionKind::SRLI, vr_hi, vr_lo, 32);
+        self.emit_ld(LD, vr_lo, base, offset);
+        self.emit_i(SRLI, vr_hi, vr_lo, 32);
     }
 
     fn emit_advice_stores(&mut self, vr: u8, base_reg: u8, count: usize) {
         for i in 0..count {
-            self.emit_j(
-                SourceInstructionKind::VirtualAdvice(instructions::VirtualAdvice(())),
-                vr,
-                0,
-            );
-            self.emit_s(SourceInstructionKind::SD, base_reg, vr, i as i64 * 8);
+            self.emit_j(VirtualAdvice, vr, 0);
+            self.emit_s(SD, base_reg, vr, i as i64 * 8);
         }
     }
 }
@@ -466,29 +440,29 @@ pub trait MulAccExt {
 
 impl MulAccExt for InlineExpansionBuilder {
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(SourceInstructionKind::MUL, aux, a, b);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, c2, c1, aux);
+        self.emit_r(MUL, aux, a, b);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, c2, c1, aux);
     }
 
     fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(SourceInstructionKind::MULHU, aux, a, b);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, c2, c1, aux);
+        self.emit_r(MULHU, aux, a, b);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, c2, c1, aux);
     }
 
     fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(SourceInstructionKind::MUL, aux, a, b);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, aux, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux);
+        self.emit_r(MUL, aux, a, b);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, aux, c1, aux);
+        self.emit_r(ADD, c2, c2, aux);
     }
 
     fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(SourceInstructionKind::MULHU, aux, a, b);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, aux, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux);
+        self.emit_r(MULHU, aux, a, b);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, aux, c1, aux);
+        self.emit_r(ADD, c2, c2, aux);
     }
 
     fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
@@ -508,52 +482,52 @@ impl MulAccExt for InlineExpansionBuilder {
     }
 
     fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(SourceInstructionKind::MUL, aux, a, b);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, c2, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, aux, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux);
+        self.emit_r(MUL, aux, a, b);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, c2, c1, aux);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, aux, c1, aux);
+        self.emit_r(ADD, c2, c2, aux);
     }
 
     fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(SourceInstructionKind::MULHU, aux, a, b);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, c2, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, aux, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux);
+        self.emit_r(MULHU, aux, a, b);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, c2, c1, aux);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, aux, c1, aux);
+        self.emit_r(ADD, c2, c2, aux);
     }
 
     fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.emit_r(SourceInstructionKind::MUL, aux, a, b);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, aux2, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux2);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, aux2, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux2);
+        self.emit_r(MUL, aux, a, b);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, aux2, c1, aux);
+        self.emit_r(ADD, c2, c2, aux2);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, aux2, c1, aux);
+        self.emit_r(ADD, c2, c2, aux2);
     }
 
     fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.emit_r(SourceInstructionKind::MULHU, aux, a, b);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, aux2, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux2);
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, aux);
-        self.emit_r(SourceInstructionKind::SLTU, aux2, c1, aux);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux2);
+        self.emit_r(MULHU, aux, a, b);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, aux2, c1, aux);
+        self.emit_r(ADD, c2, c2, aux2);
+        self.emit_r(ADD, c1, c1, aux);
+        self.emit_r(SLTU, aux2, c1, aux);
+        self.emit_r(ADD, c2, c2, aux2);
     }
 
     fn adc(&mut self, c2: u8, c1: u8, val: u8) {
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, val);
-        self.emit_r(SourceInstructionKind::SLTU, c2, c1, val);
+        self.emit_r(ADD, c1, c1, val);
+        self.emit_r(SLTU, c2, c1, val);
     }
 
     fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8) {
-        self.emit_r(SourceInstructionKind::ADD, c1, c1, val);
-        self.emit_r(SourceInstructionKind::SLTU, aux, c1, val);
-        self.emit_r(SourceInstructionKind::ADD, c2, c2, aux);
+        self.emit_r(ADD, c1, c1, val);
+        self.emit_r(SLTU, aux, c1, val);
+        self.emit_r(ADD, c2, c2, aux);
     }
 
     fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8) {

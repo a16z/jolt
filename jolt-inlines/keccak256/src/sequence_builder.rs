@@ -15,8 +15,9 @@
 
 use crate::NUM_LANES;
 use jolt_inlines_sdk::host::{
+    kinds::ANDN,
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice, SourceInstructionKind,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{Imm, Reg},
 };
 
@@ -228,12 +229,7 @@ impl Keccak256SequenceBuilder {
 
                 // Implement A[x,y] ^= (~A[x+1,y] & A[x+2,y])
                 // 1. not_next_and_two_next = A[x+2,y] & ~A[x+1,y] using ANDN
-                self.asm.emit_r(
-                    SourceInstructionKind::ANDN,
-                    not_next_and_two_next,
-                    two_next,
-                    next,
-                );
+                self.asm.emit_r(ANDN, not_next_and_two_next, two_next, next);
                 // 2. A[x,y] ^= not_next_and_two_next
                 self.asm
                     .xor(Reg(current), Reg(not_next_and_two_next), dest_a_reg);

@@ -9,8 +9,9 @@
 
 use crate::{IV, SIGMA};
 use jolt_inlines_sdk::host::{
+    kinds::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63, LD, LUI, SUB},
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice, SourceInstructionKind,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice,
     Value::{Imm, Reg},
 };
 
@@ -90,13 +91,13 @@ impl Blake2SequenceBuilder {
 
     fn load_counter_and_is_final(&mut self) {
         self.asm.emit_ld(
-            SourceInstructionKind::LD,
+            LD,
             *self.vr[VR_T],
             self.operands.rs2,
             crate::MSG_BLOCK_LEN as i64 * 8,
         );
         self.asm.emit_ld(
-            SourceInstructionKind::LD,
+            LD,
             *self.vr[VR_IS_FINAL],
             self.operands.rs2,
             (crate::MSG_BLOCK_LEN as i64 + 1) * 8,
@@ -122,7 +123,7 @@ impl Blake2SequenceBuilder {
         {
             // Load BLAKE2b IV constants.
             let rd = *self.vr[VR_WORKING_STATE_START + crate::STATE_VECTOR_LEN + i];
-            self.asm.emit_u(SourceInstructionKind::LUI, rd, *value);
+            self.asm.emit_u(LUI, rd, *value);
         }
 
         // v[12] = v[12] ^ t (counter low)
@@ -140,12 +141,8 @@ impl Blake2SequenceBuilder {
         // Use the formula: mask = (0 - is_final) to convert 1 to 0xFFFFFFFFFFFFFFFF and 0 to 0
         // First, negate is_final (0 - is_final).
         // Using 0 as x0, which is always 0 in RISC-V.
-        self.asm.emit_r(
-            SourceInstructionKind::SUB,
-            *self.vr[VR_TEMP],
-            0,
-            *self.vr[VR_IS_FINAL],
-        );
+        self.asm
+            .emit_r(SUB, *self.vr[VR_TEMP], 0, *self.vr[VR_IS_FINAL]);
         // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0.
         self.asm.xor(
             Reg(*self.vr[VR_WORKING_STATE_START + 14]),
@@ -185,30 +182,26 @@ impl Blake2SequenceBuilder {
         self.asm.add(Reg(temp1), Reg(mx), va);
 
         // v[d] = rotr64(v[d] ^ v[a], 32)
-        self.asm
-            .emit_r(SourceInstructionKind::VirtualXORROT32, vd, vd, va);
+        self.asm.emit_r(VirtualXORROT32, vd, vd, va);
 
         // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr64(v[b] ^ v[c], 24)
-        self.asm
-            .emit_r(SourceInstructionKind::VirtualXORROT24, vb, vb, vc);
+        self.asm.emit_r(VirtualXORROT24, vb, vb, vc);
 
         // v[a] = v[a] + v[b] + m[y]
         self.asm.add(Reg(va), Reg(vb), temp1);
         self.asm.add(Reg(temp1), Reg(my), va);
 
         // v[d] = rotr64(v[d] ^ v[a], 16)
-        self.asm
-            .emit_r(SourceInstructionKind::VirtualXORROT16, vd, vd, va);
+        self.asm.emit_r(VirtualXORROT16, vd, vd, va);
 
         // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr64(v[b] ^ v[c], 63)
-        self.asm
-            .emit_r(SourceInstructionKind::VirtualXORROT63, vb, vb, vc);
+        self.asm.emit_r(VirtualXORROT63, vb, vb, vc);
     }
 
     fn finalize_state(&mut self) {

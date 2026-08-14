@@ -1579,6 +1579,27 @@ macro_rules! define_source_instruction_kind {
                 SourceInstruction::Noop(Noop(()))
             }
         }
+
+        /// Value-level source-kind constants, importable by name.
+        ///
+        /// The associated constants on [`SourceInstructionKind`] are shadowed by
+        /// the same-named enum variant constructors wherever the two spellings
+        /// coincide (e.g. `VirtualAdvice`), and associated constants cannot be
+        /// `use`-imported. This module carries the same constants as plain items
+        /// so call sites can `use jolt_riscv::kinds::ADD;` and write `ADD`.
+        #[expect(
+            non_upper_case_globals,
+            reason = "Kind constants preserve existing instruction spelling"
+        )]
+        pub mod kinds {
+            use super::SourceInstructionKind;
+
+            $(
+                $(#[$meta])*
+                pub const $instr: SourceInstructionKind =
+                    super::SourceInstruction::$marker(super::$marker(()));
+            )*
+        }
     };
 }
 
