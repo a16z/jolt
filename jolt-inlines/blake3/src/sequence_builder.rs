@@ -1,4 +1,11 @@
-//! BLAKE3 inline expansion.
+//! This file contains BLAKE3-specific logic to expand the inline instruction to a sequence of RISC-V instructions.
+//!
+//! Glossary:
+//!   - "Internal state" = 16-word state array (v[0..15]) used during compression
+//!   - "Chaining value" = 8-word state array (h[0..7]) that holds the current hash value
+//!   - "Message block" = 16-word input block (m[0..15]) to be compressed
+//!   - "Round" = single application of G function mixing to the working state
+//!   - "G function" = core mixing function that updates 4 state words using 2 message words
 
 use crate::{
     CHAINING_VALUE_LEN, FLAG_CHUNK_END, FLAG_CHUNK_START, FLAG_KEYED_HASH, FLAG_ROOT, IV,
@@ -14,9 +21,14 @@ use jolt_inlines_sdk::host::{
     Value::Reg,
 };
 
-/// Layout: v[0..15] + m[0..15].
+/// Layout: v[0..15] + m[0..15] only (no separate h/counter/flags banks, no temp regs):
+/// inputs load directly into their `v` slots and the chaining value is produced
+/// in place via `v[i] ^= v[i+8]`.
 pub const NEEDED_REGISTERS: usize = 32;
 
+/// Virtual register layout:
+/// - vr[0..15]:  Internal state `v`
+/// - vr[16..31]: Message block `m`
 const INTERNAL_STATE_VR_START: usize = 0;
 const MSG_BLOCK_START_VR: usize = 16;
 
@@ -43,13 +55,17 @@ impl Blake3SequenceBuilder {
 
     fn build_general(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         let output_register = self.operands.rs1;
+        // Compression mode:
+        // - Load chaining value (key) from rs1 directly into v[0..7]
         self.load_data_range_paired_dirty(
             self.operands.rs1,
             0,
             INTERNAL_STATE_VR_START,
             CHAINING_VALUE_LEN,
         );
+        // - Load message from rs2 into m[0..15]
         self.load_data_range_paired_dirty(self.operands.rs2, 0, MSG_BLOCK_START_VR, MSG_BLOCK_LEN);
+        // - Load counter, block_len, flags from rs2 tail directly into v[12..15]
         self.load_data_range_paired_dirty(
             self.operands.rs2,
             MSG_BLOCK_LEN * 4,
@@ -62,18 +78,21 @@ impl Blake3SequenceBuilder {
 
     fn build_keyed64(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         let output_register = self.operands.rs3;
+        // Load key from rs3/rd directly into v[0..7]
         self.load_data_range_paired_dirty(
             self.operands.rs3,
             0,
             INTERNAL_STATE_VR_START,
             CHAINING_VALUE_LEN,
         );
+        // Load left (32 bytes) from rs1 as message[0..7]
         self.load_data_range_paired_dirty(
             self.operands.rs1,
             0,
             MSG_BLOCK_START_VR,
             CHAINING_VALUE_LEN,
         );
+        // Load right (32 bytes) from rs2 as message[8..15]
         self.load_data_range_paired_dirty(
             self.operands.rs2,
             0,
@@ -82,7 +101,13 @@ impl Blake3SequenceBuilder {
         );
         self.initialize_internal_state();
 
-        // Inline register reset supplies counter = 0 in v[12..13].
+        // v[12..15] = counter, block_len, flags
+        // Keyed64: matches blake3::keyed_hash for 64-byte input
+        // counter = 0, block_len = 64, flags = CHUNK_START|CHUNK_END|ROOT|KEYED_HASH
+        //
+        // NOTE: We intentionally omit the two `LUI 0` initializations for v[12], v[13].
+        // Inline virtual registers are cleared by `finalize_inline`, so newly allocated
+        // inline registers start at 0 across inline calls.
         self.asm
             .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 14], 64);
         self.asm.emit_u::<LUI>(
@@ -94,6 +119,7 @@ impl Blake3SequenceBuilder {
     }
 
     fn initialize_internal_state(&mut self) {
+        // v[8..11] = IV[0..3]
         for (i, val) in IV.iter().enumerate().take(4) {
             self.asm
                 .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
@@ -109,12 +135,14 @@ impl Blake3SequenceBuilder {
             self.blake3_round();
         }
 
+        // Finalize: h[i] = v[i] ^ v[i+8], produced in place in v[0..7]
         for i in 0..CHAINING_VALUE_LEN {
             let vi = *self.vr[INTERNAL_STATE_VR_START + i];
             let vi8 = *self.vr[INTERNAL_STATE_VR_START + i + CHAINING_VALUE_LEN];
             self.asm.xor(Reg(vi), Reg(vi8), vi);
         }
 
+        // Store state
         for i in 0..CHAINING_VALUE_LEN / 2 {
             self.asm.store_paired_u32(
                 output_register,
@@ -128,14 +156,17 @@ impl Blake3SequenceBuilder {
         self.asm.finalize()
     }
 
+    /// Execute one round of BLAKE3 compression
     fn blake3_round(&mut self) {
         let msg_schedule_round = &MSG_SCHEDULE[self.round as usize];
 
+        // Column step: apply G function to columns
         self.g_function(0, 4, 8, 12, msg_schedule_round[0], msg_schedule_round[1]);
         self.g_function(1, 5, 9, 13, msg_schedule_round[2], msg_schedule_round[3]);
         self.g_function(2, 6, 10, 14, msg_schedule_round[4], msg_schedule_round[5]);
         self.g_function(3, 7, 11, 15, msg_schedule_round[6], msg_schedule_round[7]);
 
+        // Diagonal step: apply G function to diagonals
         self.g_function(0, 5, 10, 15, msg_schedule_round[8], msg_schedule_round[9]);
         self.g_function(1, 6, 11, 12, msg_schedule_round[10], msg_schedule_round[11]);
         self.g_function(2, 7, 8, 13, msg_schedule_round[12], msg_schedule_round[13]);
@@ -151,15 +182,30 @@ impl Blake3SequenceBuilder {
         let mx = *self.vr[MSG_BLOCK_START_VR + x];
         let my = *self.vr[MSG_BLOCK_START_VR + y];
 
+        // v[a] = v[a] + v[b] + m[x]
         self.asm.add(Reg(va), Reg(vb), va);
         self.asm.add(Reg(va), Reg(mx), va);
+
+        // v[d] = rotr32(v[d] ^ v[a], 16)
         self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
+
+        // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
+
+        // v[b] = rotr32(v[b] ^ v[c], 12)
         self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
+
+        // v[a] = v[a] + v[b] + m[y]
         self.asm.add(Reg(va), Reg(vb), va);
         self.asm.add(Reg(va), Reg(my), va);
+
+        // v[d] = rotr32(v[d] ^ v[a], 8)
         self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
+
+        // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
+
+        // v[b] = rotr32(v[b] ^ v[c], 7)
         self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
     }
 

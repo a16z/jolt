@@ -87,6 +87,8 @@ impl Blake2SequenceBuilder {
         );
     }
 
+    /// Load the counter `t` into v[12] and the final-block flag into v[14].
+    /// `initialize_working_state` folds the IV constants into those slots.
     fn load_tail_into_working_state(&mut self) {
         self.asm.emit_ld::<LD>(
             *self.vr[VR_WORKING_STATE_START + 12],
@@ -111,22 +113,33 @@ impl Blake2SequenceBuilder {
             );
         }
 
+        // v[8..15] = IV[0..7], loading the BLAKE2b IV constants. v[12] and v[14] are
+        // skipped: they already hold t / is_final and fold in IV[4] / IV[6] below.
         for i in [0, 1, 2, 3, 5, 7] {
             let rd = *self.vr[VR_WORKING_STATE_START + crate::STATE_VECTOR_LEN + i];
             self.asm.emit_u::<LUI>(rd, IV[i]);
         }
 
+        // v[12] = IV[4] ^ t (counter low)
         self.asm.xor(
             Reg(*self.vr[VR_WORKING_STATE_START + 12]),
             Imm(IV[4]),
             *self.vr[VR_WORKING_STATE_START + 12],
         );
 
+        // v[13] = IV[5] ^ (t >> 64) (counter high) - since we are using a 64-bit
+        // counter, the high part is always 0, so v[13] keeps the plain IV[5].
+
+        // Handle final block flag: if is_final != 0, invert all bits of v[14].
+        // Create a mask that is 0xFFFFFFFFFFFFFFFF if is_final != 0, or 0 if is_final == 0,
+        // using the formula: mask = (0 - is_final). v[14] holds is_final, and register 0
+        // is x0, which is always 0 in RISC-V.
         self.asm.emit_r::<SUB>(
             *self.vr[VR_WORKING_STATE_START + 14],
             0,
             *self.vr[VR_WORKING_STATE_START + 14],
         );
+        // XOR the mask with IV[6]: v[14] = IV[6], bits inverted iff is_final = 1.
         self.asm.xor(
             Reg(*self.vr[VR_WORKING_STATE_START + 14]),
             Imm(IV[6]),
@@ -191,7 +204,9 @@ impl Blake2SequenceBuilder {
             let vi = *self.vr[VR_WORKING_STATE_START + i];
             let vi8 = *self.vr[VR_WORKING_STATE_START + i + crate::STATE_VECTOR_LEN];
 
+            // v[i] = v[i] ^ v[i+8] (v[i] reused as the temporary)
             self.asm.xor(Reg(vi), Reg(vi8), vi);
+            // h[i] = h[i] ^ v[i]
             self.asm.xor(Reg(hi), Reg(vi), hi);
         }
     }
