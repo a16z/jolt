@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 use super::solinas::spartan_shift::{SpartanShiftGeometry, SpartanShiftResidentRows};
-use super::solinas::{ProductRemainderRow, ProductRemainderRows};
 
 static NEXT_PRODUCER_GENERATION: AtomicU64 = AtomicU64::new(1);
 
@@ -39,25 +38,6 @@ impl AllocationReceipt {
             });
         }
         Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum SpartanDenseProductSource {
-    #[expect(
-        dead_code,
-        reason = "the first owner slice attaches the existing product projection"
-    )]
-    CoProduced,
-    IndependentWitnessProjection,
-}
-
-impl SpartanDenseProductSource {
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::CoProduced => "co_produced",
-            Self::IndependentWitnessProjection => "independent_witness_projection",
-        }
     }
 }
 
@@ -157,68 +137,6 @@ impl ShiftReceipt {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ProductReceipt {
-    generation: u64,
-    rows: usize,
-    device_registry_id: u64,
-    allocation: AllocationReceipt,
-    source: SpartanDenseProductSource,
-}
-
-impl ProductReceipt {
-    fn new(
-        generation: u64,
-        rows: &ProductRemainderRows,
-        source: SpartanDenseProductSource,
-    ) -> Result<Self, SpartanDenseOwnerError> {
-        let bytes = rows
-            .len()
-            .checked_mul(size_of::<ProductRemainderRow>())
-            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
-        Ok(Self {
-            generation,
-            rows: rows.len(),
-            device_registry_id: rows.device_registry_id(),
-            allocation: AllocationReceipt::new(rows.allocation_identity(), bytes)?,
-            source,
-        })
-    }
-
-    fn validate(
-        self,
-        owner_generation: u64,
-        rows: &ProductRemainderRows,
-        expected_rows: usize,
-        expected_device_registry_id: u64,
-    ) -> Result<(), SpartanDenseOwnerError> {
-        if self.generation == 0 || self.generation != owner_generation {
-            return Err(SpartanDenseOwnerError::GenerationMismatch {
-                expected: owner_generation,
-                got: self.generation,
-            });
-        }
-        if self.rows != expected_rows || rows.len() != expected_rows {
-            return Err(SpartanDenseOwnerError::RowCountMismatch {
-                expected: expected_rows,
-                got: rows.len(),
-            });
-        }
-        if self.device_registry_id != expected_device_registry_id
-            || rows.device_registry_id() != expected_device_registry_id
-        {
-            return Err(SpartanDenseOwnerError::DeviceMismatch {
-                expected: expected_device_registry_id,
-                got: rows.device_registry_id(),
-            });
-        }
-        let bytes = expected_rows
-            .checked_mul(size_of::<ProductRemainderRow>())
-            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
-        self.allocation.validate(rows.allocation_identity(), bytes)
-    }
-}
-
 pub(super) struct SpartanDenseShiftLease {
     rows: SpartanShiftResidentRows,
     receipt: ShiftReceipt,
@@ -241,38 +159,10 @@ impl SpartanDenseShiftLease {
     }
 }
 
-pub(super) struct SpartanDenseProductLease {
-    rows: ProductRemainderRows,
-    receipt: ProductReceipt,
-    owner_generation: u64,
-}
-
-impl SpartanDenseProductLease {
-    pub(super) fn source(&self) -> SpartanDenseProductSource {
-        self.receipt.source
-    }
-
-    pub(super) fn into_rows(
-        self,
-        expected_rows: usize,
-        expected_device_registry_id: u64,
-    ) -> Result<ProductRemainderRows, SpartanDenseOwnerError> {
-        self.receipt.validate(
-            self.owner_generation,
-            &self.rows,
-            expected_rows,
-            expected_device_registry_id,
-        )?;
-        Ok(self.rows)
-    }
-}
-
 pub(super) struct SpartanDenseResidentOwner {
     generation: u64,
     shift_receipt: ShiftReceipt,
     shift_rows: Option<SpartanShiftResidentRows>,
-    product_receipt: Option<ProductReceipt>,
-    product_rows: Option<ProductRemainderRows>,
 }
 
 impl SpartanDenseResidentOwner {
@@ -285,8 +175,6 @@ impl SpartanDenseResidentOwner {
             generation,
             shift_receipt,
             shift_rows: Some(rows),
-            product_receipt: None,
-            product_rows: None,
         })
     }
 
@@ -313,66 +201,6 @@ impl SpartanDenseResidentOwner {
             owner_generation: self.generation,
         })
     }
-
-    pub(super) fn install_product_rows(
-        &mut self,
-        rows: ProductRemainderRows,
-        source: SpartanDenseProductSource,
-    ) -> Result<(), SpartanDenseOwnerError> {
-        if self.product_rows.is_some() || self.product_receipt.is_some() {
-            return Err(SpartanDenseOwnerError::ProductAlreadyInstalled);
-        }
-        if rows.len() != self.shift_receipt.rows {
-            return Err(SpartanDenseOwnerError::RowCountMismatch {
-                expected: self.shift_receipt.rows,
-                got: rows.len(),
-            });
-        }
-        if rows.device_registry_id() != self.shift_receipt.device_registry_id {
-            return Err(SpartanDenseOwnerError::DeviceMismatch {
-                expected: self.shift_receipt.device_registry_id,
-                got: rows.device_registry_id(),
-            });
-        }
-        let product_identity = rows.allocation_identity();
-        if self
-            .shift_receipt
-            .allocations
-            .iter()
-            .any(|allocation| allocation.identity == product_identity)
-        {
-            return Err(SpartanDenseOwnerError::DuplicateAllocationIdentity(
-                product_identity,
-            ));
-        }
-        let receipt = ProductReceipt::new(self.generation, &rows, source)?;
-        self.product_receipt = Some(receipt);
-        self.product_rows = Some(rows);
-        Ok(())
-    }
-
-    pub(super) fn take_product_lease(
-        &mut self,
-    ) -> Result<SpartanDenseProductLease, SpartanDenseOwnerError> {
-        let rows = self
-            .product_rows
-            .take()
-            .ok_or(SpartanDenseOwnerError::MissingProductRows)?;
-        let receipt = self
-            .product_receipt
-            .ok_or(SpartanDenseOwnerError::MissingProductReceipt)?;
-        if receipt.generation != self.generation {
-            return Err(SpartanDenseOwnerError::GenerationMismatch {
-                expected: self.generation,
-                got: receipt.generation,
-            });
-        }
-        Ok(SpartanDenseProductLease {
-            rows,
-            receipt,
-            owner_generation: self.generation,
-        })
-    }
 }
 
 #[cfg(feature = "allocative")]
@@ -384,9 +212,6 @@ impl allocative::Allocative for SpartanDenseResidentOwner {
                 allocative::Key::new("device_shift_rows"),
                 rows.resident_bytes(),
             );
-        }
-        if let Some(rows) = &self.product_rows {
-            visitor.visit_field(allocative::Key::new("product_rows"), rows);
         }
         visitor.exit();
     }
@@ -440,12 +265,6 @@ pub(super) enum SpartanDenseOwnerError {
     DeviceMismatch { expected: u64, got: u64 },
     #[error("Spartan dense shift receipt does not certify current noop")]
     UncertifiedCurrentNoop,
-    #[error("Spartan dense product rows were installed twice")]
-    ProductAlreadyInstalled,
-    #[error("Spartan dense product rows are missing")]
-    MissingProductRows,
-    #[error("Spartan dense product receipt is missing")]
-    MissingProductReceipt,
     #[error("Spartan dense size arithmetic overflowed")]
     SizeOverflow,
 }

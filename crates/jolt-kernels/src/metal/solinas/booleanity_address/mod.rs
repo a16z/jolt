@@ -9,8 +9,8 @@ use metal::{
 
 use super::booleanity::{balanced_bias, selector_abi, write_fields};
 use super::{
-    command_buffer_timestamp, BooleanityRows, BooleanitySelector, Fp128, MetalError,
-    PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
+    command_buffer_timestamp, set_inline_bytes, BooleanityRows, BooleanitySelector, Fp128,
+    MetalError, PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
 };
 
 const SIMD_WIDTH: usize = 32;
@@ -565,14 +565,6 @@ fn is_production_selector_schedule(selectors: &[BooleanitySelector]) -> bool {
             };
             selector == expected
         })
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
 
 fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {

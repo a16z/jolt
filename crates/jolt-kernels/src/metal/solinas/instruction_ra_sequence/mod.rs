@@ -12,7 +12,9 @@ use metal::{
     MTLCommandBufferStatus, MTLDataType, MTLResourceOptions, MTLSize,
 };
 
-use super::{Fp128, MetalError, PipelineLimits, ResidentLookupIndexPlane, SolinasMetal};
+use super::{
+    set_inline_bytes, Fp128, MetalError, PipelineLimits, ResidentLookupIndexPlane, SolinasMetal,
+};
 
 const FACTORS: usize = 16;
 const BINS: usize = 256;
@@ -1051,14 +1053,6 @@ fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
         .checked_mul(size_of::<T>())
         .and_then(|bytes| u64::try_from(bytes).ok())
         .ok_or(MetalError::InputTooLong(elements))
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
 
 const _: () = assert!(size_of::<MessageParams>() == 16);

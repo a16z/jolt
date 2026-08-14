@@ -9,6 +9,18 @@ use metal::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+pub(crate) fn set_inline_bytes<T>(
+    encoder: &metal::ComputeCommandEncoderRef,
+    index: u64,
+    value: &T,
+) {
+    encoder.set_bytes(
+        index,
+        std::mem::size_of::<T>() as u64,
+        std::ptr::from_ref(value).cast::<c_void>(),
+    );
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PipelineLimits {
     pub thread_execution_width: usize,

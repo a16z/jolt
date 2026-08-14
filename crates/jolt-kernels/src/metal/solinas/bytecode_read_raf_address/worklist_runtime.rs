@@ -18,7 +18,8 @@ use super::{
     worklist_owner::{BytecodeAddressSparseStage1Carrier, BytecodeAddressSparseStage1Receipt},
 };
 use crate::metal::solinas::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError,
+    PipelineLimits, SolinasMetal,
 };
 
 const WORKER_PIPELINE: &str = "solinas_bytecode_address_sparse_worker_packed_4_5_4";
@@ -659,12 +660,4 @@ fn shader_count(
 
 fn to_u64(name: &'static str, value: usize) -> Result<u64, BytecodeAddressSparseRuntimeError> {
     u64::try_from(value).map_err(|_| BytecodeAddressSparseRuntimeError::SizeOverflow(name))
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast(),
-    );
 }

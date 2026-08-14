@@ -19,7 +19,6 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
-use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -27,23 +26,15 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::VerifierError;
-use jolt_witness::witnesses::{
-    InstructionFlag, LeftInstructionInput, LeftLookupOperand, LookupOutput, NextIsNoop, OpFlag,
-    RightInstructionInput, RightLookupOperand,
-};
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
 use super::solinas::{
-    instruction_claim_reduction::{InstructionClaimLookupOperandRow, InstructionClaimLookupRows},
     MetalError, OuterRemainderSequenceStorage, PendingProductInstructionInitialMessage,
     PendingProductRemainderInitialMessage, ProductInstructionInitialMessageStats,
     ProductInstructionRoundService, ProductInstructionRoundStats, ProductRemainderRow,
     ProductRemainderRows, ProductRemainderSequence, ProductRemainderSequenceConfig,
     ProductRemainderWorkspacePrimerStats, SpartanOuterUniskipRows,
-};
-use super::spartan_dense::{
-    SpartanDenseOwnerError, SpartanDenseProductSource, SpartanDenseResidentOwner,
 };
 #[cfg(test)]
 use crate::optimized::spartan_product::SpartanProductRow;
@@ -53,62 +44,17 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, Stage2ProductInstructionPrefetch,
     SumcheckKernel, SumcheckKernelError,
 };
+#[cfg(test)]
+use jolt_witness::collect_bundles;
 
 const DOMAIN: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-struct Stage2ProductInstructionRow {
-    #[opening(LeftInstructionInput)]
-    left_instruction_input: LeftInstructionInput,
-    #[opening(RightInstructionInput)]
-    right_instruction_input: RightInstructionInput,
-    #[opening(OpFlags(CircuitFlags::Jump))]
-    jump_flag: OpFlag,
-    #[opening(OpFlags(CircuitFlags::WriteLookupOutputToRD))]
-    write_lookup_output_to_rd: OpFlag,
-    #[opening(LookupOutput)]
-    lookup_output: LookupOutput,
-    #[opening(InstructionFlags(InstructionFlags::Branch))]
-    branch_flag: InstructionFlag,
-    #[opening(NextIsNoop)]
-    next_is_noop: NextIsNoop,
-    #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
-    virtual_instruction: OpFlag,
-    #[opening(LeftLookupOperand)]
-    left_lookup_operand: LeftLookupOperand,
-    #[opening(RightLookupOperand)]
-    right_lookup_operand: RightLookupOperand,
-}
-
-impl Stage2ProductInstructionRow {
-    fn product(self) -> ProductRemainderRow {
-        ProductRemainderRow::new(
-            self.left_instruction_input.0,
-            self.right_instruction_input.0,
-            self.jump_flag.0,
-            self.write_lookup_output_to_rd.0,
-            self.lookup_output.0,
-            self.branch_flag.0,
-            self.next_is_noop.0,
-            self.virtual_instruction.0,
-        )
-    }
-
-    fn lookup(self) -> InstructionClaimLookupOperandRow {
-        InstructionClaimLookupOperandRow::new(
-            self.left_lookup_operand.0,
-            self.right_lookup_operand.0,
-        )
-    }
-}
-
 pub(super) struct MetalInstructionClaimResidentRows {
     pub(super) log_t: usize,
     pub(super) product: ProductRemainderRows,
-    pub(super) lookup: Option<InstructionClaimLookupRows>,
     pub(super) device_registry_id: u64,
 }
 
@@ -117,9 +63,6 @@ impl allocative::Allocative for MetalInstructionClaimResidentRows {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_field(allocative::Key::new("product"), &self.product);
-        if let Some(lookup) = &self.lookup {
-            visitor.visit_field(allocative::Key::new("lookup"), lookup);
-        }
         visitor.exit();
     }
 }
@@ -161,19 +104,11 @@ impl allocative::Allocative for MetalInstructionClaimHandoff {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum SpartanProductWitnessSource {
-    #[default]
-    IndependentProjection,
-    SpartanStage1,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanProductRemainderMetalConfig {
     pub trace_cutoff_elements: usize,
     pub cpu_tail_elements: usize,
     pub reuse_outer_state_a: bool,
-    pub witness_source: SpartanProductWitnessSource,
     pub dispatch: ProductRemainderSequenceConfig,
 }
 
@@ -183,7 +118,6 @@ impl Default for SpartanProductRemainderMetalConfig {
             trace_cutoff_elements: 1 << 18,
             cpu_tail_elements: 1 << 12,
             reuse_outer_state_a: false,
-            witness_source: SpartanProductWitnessSource::default(),
             dispatch: ProductRemainderSequenceConfig::default(),
         }
     }
@@ -194,7 +128,7 @@ impl MetalBackend {
         &self,
         session: &mut ProofSession,
         log_t: usize,
-        witness: &dyn JoltWitnessPlane<AkitaField>,
+        _witness: &dyn JoltWitnessPlane<AkitaField>,
     ) -> Result<(), KernelError<AkitaField>> {
         let cycles = 1usize
             .checked_shl(log_t as u32)
@@ -209,8 +143,7 @@ impl MetalBackend {
             "MetalProductRemainder::witness_prepare",
             cycles,
             row_bytes = cycles.saturating_mul(std::mem::size_of::<ProductRemainderRow>()),
-            lookup_companion_bytes =
-                cycles.saturating_mul(std::mem::size_of::<InstructionClaimLookupOperandRow>()),
+            lookup_companion_bytes = 0u64,
             residual_witness_scan_rows = tracing::field::Empty,
             additional_source_row_scans = tracing::field::Empty,
             source_upload_bytes = tracing::field::Empty,
@@ -241,124 +174,31 @@ impl MetalBackend {
             fallback_reason = tracing::field::Empty,
         );
         let _entered = span.enter();
-        let stage1_rows = if self.config.spartan_product_remainder.witness_source
-            == SpartanProductWitnessSource::SpartanStage1
-        {
-            session
-                .state::<SpartanOuterUniskipRows>()
-                .filter(|rows| {
-                    rows.len() == cycles
-                        && rows.device_registry_id() == self.context.device_registry_id()
-                })
-                .map(SpartanOuterUniskipRows::share_product_remainder_rows)
-                .transpose()
-                .map_err(metal_prepare_error)?
-        } else {
-            None
-        };
-        if self.config.spartan_product_remainder.witness_source
-            == SpartanProductWitnessSource::SpartanStage1
-            && stage1_rows.is_none()
-        {
+        let Some(rows) = session
+            .state::<SpartanOuterUniskipRows>()
+            .filter(|rows| {
+                rows.len() == cycles
+                    && rows.device_registry_id() == self.context.device_registry_id()
+            })
+            .map(SpartanOuterUniskipRows::share_product_remainder_rows)
+            .transpose()
+            .map_err(metal_prepare_error)?
+        else {
             let _ = span.record("admitted", false);
             let _ = span.record("fallback_reason", "stage1_source_missing");
             return Ok(());
-        }
-        let (rows, lookup) = if let Some(rows) = stage1_rows {
-            let identities = rows.allocation_identities();
-            let _ = span.record("residual_witness_scan_rows", 0u64);
-            let _ = span.record("additional_source_row_scans", 0u64);
-            let _ = span.record("source_upload_bytes", 0u64);
-            let _ = span.record("source_allocation_count", 0u64);
-            let _ = span.record("collect_wall_ns", 0u64);
-            let _ = span.record("upload_wall_ns", 0u64);
-            let _ = span.record("lookup_upload_wall_ns", 0u64);
-            let _ = span.record("source_compact_storage_id", identities[0] as u64);
-            let _ = span.record("source_residual_storage_id", identities[1] as u64);
-            let _ = span.record("row_source", rows.source_kind().as_str());
-            (rows, None)
-        } else {
-            let started = Instant::now();
-            let projected: Vec<Stage2ProductInstructionRow> = collect_bundles(witness, cycles)?;
-            let packed = projected
-                .iter()
-                .copied()
-                .map(Stage2ProductInstructionRow::product)
-                .collect::<Vec<_>>();
-            let lookup = projected
-                .iter()
-                .copied()
-                .map(Stage2ProductInstructionRow::lookup)
-                .collect::<Vec<_>>();
-            let _ = span.record("collect_wall_ns", duration_nanos(started.elapsed()));
-            let _ = span.record("residual_witness_scan_rows", cycles as u64);
-            let _ = span.record("additional_source_row_scans", 1u64);
-
-            let started = Instant::now();
-            let rows = match self.context.prepare_product_remainder_rows(&packed) {
-                Ok(rows) => rows,
-                Err(error) if error.is_capacity_error() => {
-                    let _ = span.record("upload_wall_ns", duration_nanos(started.elapsed()));
-                    let _ = span.record("admitted", false);
-                    let _ = span.record("fallback_reason", "capacity");
-                    tracing::warn!(
-                        target: "jolt::metal",
-                        error = %error,
-                        "product-remainder resident rows were not admitted; using optimized CPU"
-                    );
-                    return Ok(());
-                }
-                Err(error) => return Err(metal_prepare_error(error)),
-            };
-            let _ = span.record("upload_wall_ns", duration_nanos(started.elapsed()));
-            let rows = if let Some(mut owner) = session.take::<SpartanDenseResidentOwner>() {
-                let owner_generation = owner.generation();
-                owner
-                    .install_product_rows(
-                        rows,
-                        SpartanDenseProductSource::IndependentWitnessProjection,
-                    )
-                    .map_err(spartan_dense_prepare_error)?;
-                let lease = owner
-                    .take_product_lease()
-                    .map_err(spartan_dense_prepare_error)?;
-                let source = lease.source();
-                let rows = lease
-                    .into_rows(cycles, self.context.device_registry_id())
-                    .map_err(spartan_dense_prepare_error)?;
-                session.park(owner);
-                let _ = span.record("owner_generation", owner_generation);
-                let _ = span.record("row_source", source.as_str());
-                rows
-            } else {
-                let _ = span.record(
-                    "row_source",
-                    SpartanDenseProductSource::IndependentWitnessProjection.as_str(),
-                );
-                rows
-            };
-            let started = Instant::now();
-            let lookup = match self.context.prepare_instruction_claim_lookup_rows(&lookup) {
-                Ok(rows) => Some(rows),
-                Err(error) if error.is_capacity_error() => {
-                    tracing::warn!(
-                        target: "jolt::metal",
-                        error = %error,
-                        "instruction claim companion rows were not admitted; using optimized CPU for that member"
-                    );
-                    None
-                }
-                Err(error) => return Err(metal_prepare_error(error)),
-            };
-            let _ = span.record("lookup_upload_wall_ns", duration_nanos(started.elapsed()));
-            let source_upload_bytes = cycles.saturating_mul(
-                std::mem::size_of::<ProductRemainderRow>()
-                    + std::mem::size_of::<InstructionClaimLookupOperandRow>(),
-            );
-            let _ = span.record("source_upload_bytes", source_upload_bytes as u64);
-            let _ = span.record("source_allocation_count", 2u64);
-            (rows, lookup)
         };
+        let identities = rows.allocation_identities();
+        let _ = span.record("residual_witness_scan_rows", 0u64);
+        let _ = span.record("additional_source_row_scans", 0u64);
+        let _ = span.record("source_upload_bytes", 0u64);
+        let _ = span.record("source_allocation_count", 0u64);
+        let _ = span.record("collect_wall_ns", 0u64);
+        let _ = span.record("upload_wall_ns", 0u64);
+        let _ = span.record("lookup_upload_wall_ns", 0u64);
+        let _ = span.record("source_compact_storage_id", identities[0] as u64);
+        let _ = span.record("source_residual_storage_id", identities[1] as u64);
+        let _ = span.record("row_source", rows.source_kind().as_str());
         let row_storage_id = rows.allocation_identity();
         if let Some(source_generation) = rows.source_generation() {
             let _ = span.record("source_generation", source_generation);
@@ -430,14 +270,11 @@ impl MetalBackend {
         }
         let _ = span.record("admitted", true);
         let _ = span.record("fallback_reason", "none");
-        if lookup.is_some() || instruction_product_rows.stage1_buffers().is_some() {
-            session.park(MetalInstructionClaimResidentRows {
-                log_t,
-                product: instruction_product_rows,
-                lookup,
-                device_registry_id: self.context.device_registry_id(),
-            });
-        }
+        session.park(MetalInstructionClaimResidentRows {
+            log_t,
+            product: instruction_product_rows,
+            device_registry_id: self.context.device_registry_id(),
+        });
         session.park(sequence);
         Ok(())
     }
@@ -790,7 +627,6 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                     || rows.product.allocation_identity() != row_storage_id
                     || rows.product.source_kind()
                         != super::solinas::ProductRemainderSourceKind::SpartanStage1
-                    || rows.lookup.is_some()
                     || rows.device_registry_id != self.context.device_registry_id()
                 {
                     return Err(KernelError::InvariantViolation {
@@ -1182,14 +1018,6 @@ fn product_prepare_fallback_reason(error: &MetalError) -> Option<&'static str> {
 }
 
 fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-    .into()
-}
-
-fn spartan_dense_prepare_error(error: SpartanDenseOwnerError) -> KernelError<AkitaField> {
     SumcheckError::ComputeBackend {
         backend: "metal",
         message: error.to_string(),
@@ -1821,6 +1649,14 @@ mod tests {
                 config.spartan_product_remainder.trace_cutoff_elements = 2;
                 let metal = MetalBackend::new(config).unwrap();
                 let mut metal_session = ProofSession::default();
+                let stage1 =
+                    crate::optimized::spartan_outer::prepare_metal_spartan_outer_witness_rows(
+                        &metal.context,
+                        witness,
+                        1 << log_t,
+                    )
+                    .unwrap();
+                metal_session.park(stage1);
                 metal
                     .prepare_product_remainder_witness(&mut metal_session, log_t, witness)
                     .unwrap();

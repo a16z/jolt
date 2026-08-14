@@ -13,8 +13,8 @@ use metal::{
 };
 
 use super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, InstructionReadRafStage1Lease, MetalError,
-    PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128,
+    InstructionReadRafStage1Lease, MetalError, PipelineLimits, SolinasMetal,
 };
 
 mod stage1;
@@ -1272,14 +1272,6 @@ fn write_registers_val_fields(
         *output = Fp128::from_jolt_field(value);
     }
     Ok(())
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
 
 const _: () = assert!(size_of::<MessageParams>() == 16);

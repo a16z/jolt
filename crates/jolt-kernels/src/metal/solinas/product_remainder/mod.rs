@@ -19,8 +19,8 @@ use super::product_uniskip::{
     PRODUCT_UNISKIP_SIMD_WIDTH, STAGE1_BLOCKS_PIPELINE as PRODUCT_UNISKIP_STAGE1_PIPELINE,
 };
 use super::{
-    buffer_from_slice, command_buffer_timestamp, spartan_outer_uniskip_residual_row_bytes, Fp128,
-    InstructionInputRow, MetalError, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, set_inline_bytes,
+    spartan_outer_uniskip_residual_row_bytes, Fp128, InstructionInputRow, MetalError, SolinasMetal,
 };
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
@@ -1926,14 +1926,6 @@ fn write_product_remainder_fields(
         *output = Fp128::from_jolt_field(value);
     }
     Ok(())
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
 
 fn validate_rows(rows: usize) -> Result<(), ProductRemainderShapeError> {

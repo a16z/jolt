@@ -12,10 +12,10 @@ use rayon::prelude::*;
 use super::{
     address_raf::{AddressRafScanRow, AddressRafSums},
     address_suffix_full::AddressSuffixFullSums,
-    buffer_from_slice, Fp128, InstructionReadRafCountOrder, InstructionReadRafDenseGroupedPlanes,
-    MetalError, PipelineLimits, Product5Sequence, Product5SequenceConfig, SolinasMetal,
-    ADDRESS_RAF_BINS, ADDRESS_RAF_LANES, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
-    INSTRUCTION_READ_RAF_SEGMENTS, PRODUCT5_FACTORS,
+    buffer_from_slice, set_inline_bytes, Fp128, InstructionReadRafCountOrder,
+    InstructionReadRafDenseGroupedPlanes, MetalError, PipelineLimits, Product5Sequence,
+    Product5SequenceConfig, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES, ADDRESS_SUFFIX_BINS,
+    ADDRESS_SUFFIX_TABLES, INSTRUCTION_READ_RAF_SEGMENTS, PRODUCT5_FACTORS,
 };
 
 const RAF_KEYS: usize = 2 * ADDRESS_RAF_BINS;
@@ -1513,14 +1513,6 @@ fn write_akita_fields(buffer: &Buffer, values: &[AkitaField]) {
     for (output, value) in output.iter_mut().zip(values) {
         *output = Fp128::from_jolt_field(value);
     }
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
 
 fn write_buffer<T: Copy>(buffer: &Buffer, values: &[T]) {

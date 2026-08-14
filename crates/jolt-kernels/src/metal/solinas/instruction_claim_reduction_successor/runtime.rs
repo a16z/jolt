@@ -1,5 +1,4 @@
 use std::{
-    ffi::c_void,
     mem::size_of,
     slice,
     time::{Duration, Instant},
@@ -17,7 +16,7 @@ use super::super::{
     product_remainder::{
         ProductRemainderPhaseParams, ProductRemainderSequence, PRODUCT_REMAINDER_MESSAGE_COLUMNS,
     },
-    Fp128, MetalError, SolinasMetal,
+    set_inline_bytes, Fp128, MetalError, SolinasMetal,
 };
 
 const PIPELINE: &str = "solinas_product_instruction_materialize_stage1_message";
@@ -530,14 +529,6 @@ fn validate_matching_params(
         ));
     }
     Ok(())
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<c_void>(),
-    );
 }
 
 type ProductInstructionInitialResult = (

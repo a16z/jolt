@@ -12,8 +12,8 @@ use metal::{
 
 use super::super::spartan_outer_uniskip::OuterResidualReleaseReceipt;
 use super::super::{
-    command_buffer_timestamp, Fp128, InstructionInputRows, MetalError, SolinasMetal,
-    SpartanOuterUniskipRows,
+    command_buffer_timestamp, set_inline_bytes, Fp128, InstructionInputRows, MetalError,
+    SolinasMetal, SpartanOuterUniskipRows,
 };
 use super::{
     api::{
@@ -1275,14 +1275,6 @@ fn dispatch(encoder: &metal::ComputeCommandEncoderRef, groups: usize, threads: u
             height: 1,
             depth: 1,
         },
-    );
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
     );
 }
 

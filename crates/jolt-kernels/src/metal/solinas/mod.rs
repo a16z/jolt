@@ -52,8 +52,8 @@ mod source;
 mod spartan_outer_uniskip;
 pub mod spartan_shift;
 
-pub(crate) use runtime::validate_working_set;
 use runtime::{buffer_from_slice, command_buffer_timestamp};
+pub(crate) use runtime::{set_inline_bytes, validate_working_set};
 pub use runtime::{DeviceInfo, PipelineLimits, SolinasMetal};
 
 pub use address_raf::{AddressRafScanRow, AddressRafSums, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES};

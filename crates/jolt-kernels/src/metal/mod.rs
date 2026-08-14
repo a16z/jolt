@@ -53,5 +53,5 @@ pub use registers_val_evaluation::{
 #[doc(hidden)]
 pub use spartan_outer::OuterRemainderGpuActiveBreakdown;
 pub use spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
-pub use spartan_product::{SpartanProductRemainderMetalConfig, SpartanProductWitnessSource};
+pub use spartan_product::SpartanProductRemainderMetalConfig;
 pub use spartan_shift::SpartanShiftMetalConfig;

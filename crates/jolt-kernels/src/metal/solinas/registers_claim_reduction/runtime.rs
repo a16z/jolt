@@ -13,7 +13,8 @@ use metal::{
 use thiserror::Error;
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError,
+    PipelineLimits, SolinasMetal,
 };
 use super::{
     RegistersClaimGeometry, RegistersClaimKernelConfig, RegistersClaimPlanError,
@@ -406,14 +407,6 @@ fn validate_buffer_binding(
 
 fn encode_fields(values: &[AkitaField]) -> Vec<Fp128> {
     values.iter().map(Fp128::from_jolt_field).collect()
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
 
 fn to_u64(value: usize) -> Result<u64, MetalError> {

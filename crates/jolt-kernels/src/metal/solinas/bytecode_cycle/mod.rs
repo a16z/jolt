@@ -6,7 +6,9 @@ use metal::{
     MTLResourceOptions, MTLSize,
 };
 
-use super::{Fp128, MetalError, PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7};
+use super::{
+    set_inline_bytes, Fp128, MetalError, PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
+};
 
 pub const BYTECODE_CYCLE_TABLES: usize = 5;
 pub const BYTECODE_CYCLE_SAMPLES: usize = 4;
@@ -539,14 +541,6 @@ fn byte_length(elements: usize) -> Result<u64, MetalError> {
         .checked_mul(size_of::<Fp128>())
         .and_then(|bytes| u64::try_from(bytes).ok())
         .ok_or(MetalError::InputTooLong(elements))
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
 
 const _: () = assert!(size_of::<Params>() == 16);

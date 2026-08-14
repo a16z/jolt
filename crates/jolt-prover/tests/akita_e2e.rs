@@ -260,8 +260,6 @@ mod muldiv {
                 spartan_product_remainder:
                     jolt_kernels::metal::SpartanProductRemainderMetalConfig {
                         trace_cutoff_elements: 2,
-                        witness_source:
-                            jolt_kernels::metal::SpartanProductWitnessSource::SpartanStage1,
                         ..Default::default()
                     },
                 instruction_claim_reduction:

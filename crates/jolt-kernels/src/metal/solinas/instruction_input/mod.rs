@@ -14,8 +14,8 @@ use metal::{
 };
 
 use super::{
-    command_buffer_timestamp, spartan_outer_uniskip_residual_row_bytes, Fp128, MetalError,
-    OuterResidualArenaKey, OuterResidualReleaseReceipt, PipelineLimits, SolinasMetal,
+    command_buffer_timestamp, set_inline_bytes, spartan_outer_uniskip_residual_row_bytes, Fp128,
+    MetalError, OuterResidualArenaKey, OuterResidualReleaseReceipt, PipelineLimits, SolinasMetal,
     SpartanOuterUniskipRows,
 };
 
@@ -1590,14 +1590,6 @@ pub(crate) fn instruction_input_row_bytes(rows: usize) -> Result<u64, MetalError
 
 const _: () = assert!(size_of::<InstructionInputRow>() == 48);
 const _: () = assert!(std::mem::align_of::<InstructionInputRow>() == 16);
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
-}
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, reason = "test module")]

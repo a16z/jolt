@@ -721,9 +721,7 @@ mod tests {
     use super::*;
     use crate::metal::solinas::bytecode_read_raf_address::BytecodeAddressStage1TopologyOwner;
     use crate::metal::solinas::{InstructionReadRafPublicationKind, InstructionReadRafStage1Owner};
-    use crate::metal::spartan_product::{
-        SpartanProductRemainderMetalConfig, SpartanProductWitnessSource,
-    };
+    use crate::metal::spartan_product::SpartanProductRemainderMetalConfig;
     use crate::optimized::harness::{probe_input_claim, run_lockstep};
     use crate::optimized::instruction_read_raf::{
         collect_instruction_cycle_rows, InstructionCycleRow,
@@ -832,7 +830,6 @@ mod tests {
             let production = MetalBackend::new(super::super::MetalConfig {
                 spartan_product_remainder: SpartanProductRemainderMetalConfig {
                     trace_cutoff_elements: 1 << log_t,
-                    witness_source: SpartanProductWitnessSource::SpartanStage1,
                     ..Default::default()
                 },
                 instruction_read_raf: super::super::InstructionReadRafMetalConfig {

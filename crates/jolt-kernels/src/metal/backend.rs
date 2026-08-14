@@ -31,7 +31,7 @@ use super::solinas::{
     SolinasMetal,
 };
 use super::spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
-use super::spartan_product::{SpartanProductRemainderMetalConfig, SpartanProductWitnessSource};
+use super::spartan_product::SpartanProductRemainderMetalConfig;
 use super::spartan_shift::SpartanShiftMetalConfig;
 use crate::JoltBackend;
 
@@ -89,8 +89,6 @@ impl MetalConfig {
         config.bytecode_read_raf_address.implementation =
             BytecodeReadRafAddressImplementation::AddressMajor;
         config.bytecode_read_raf_address.trace_cutoff_elements = 1 << 26;
-        config.spartan_product_remainder.witness_source =
-            SpartanProductWitnessSource::SpartanStage1;
         config.spartan_product_remainder.reuse_outer_state_a = true;
         config.registers_claim_reduction.implementation =
             RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
@@ -442,10 +440,6 @@ mod tests {
         assert_eq!(
             config.registers_claim_reduction.implementation,
             RegistersClaimReductionImplementation::OuterCarrierAliasHybrid
-        );
-        assert_eq!(
-            config.spartan_product_remainder.witness_source,
-            SpartanProductWitnessSource::SpartanStage1
         );
         assert_eq!(
             config.registers_val_evaluation.source,

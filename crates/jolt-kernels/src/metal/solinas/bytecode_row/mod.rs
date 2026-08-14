@@ -10,9 +10,9 @@ use metal::{
 #[cfg(test)]
 use super::PipelineLimits;
 use super::{
-    buffer_from_slice, BooleanityRows, BytecodeCycleSequence, BytecodeCycleSequenceConfig,
-    BytecodeCycleTablesMut, Fp128, MetalError, SolinasMetal, BYTECODE_CYCLE_SAMPLES,
-    BYTECODE_CYCLE_TABLES,
+    buffer_from_slice, set_inline_bytes, BooleanityRows, BytecodeCycleSequence,
+    BytecodeCycleSequenceConfig, BytecodeCycleTablesMut, Fp128, MetalError, SolinasMetal,
+    BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 
 pub(crate) const BYTECODE_ROW_STAGES: usize = 9;
@@ -524,14 +524,6 @@ fn byte_length(elements: usize) -> Result<u64, MetalError> {
         .checked_mul(size_of::<Fp128>())
         .and_then(|bytes| u64::try_from(bytes).ok())
         .ok_or(MetalError::InputTooLong(elements))
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
 
 const _: () = assert!(size_of::<Params>() == 16);

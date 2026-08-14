@@ -10,7 +10,9 @@ use metal::{
     ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
-use super::super::{buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, SolinasMetal};
+use super::super::{
+    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError, SolinasMetal,
+};
 use super::{
     split_equality, RamRafAddress, RamRafConfig, RamRafCounters, RamRafDeviceLimits, RamRafError,
     RamRafFoldParams, RamRafShape, RamRafStoragePlan, ValidatedRamRafAddressPlane,
@@ -524,12 +526,4 @@ fn encode_fields(
         .collect::<Vec<_>>();
     context.validate_inputs(name, &encoded)?;
     Ok(encoded)
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }

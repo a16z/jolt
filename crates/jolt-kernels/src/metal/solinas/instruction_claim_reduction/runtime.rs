@@ -11,23 +11,20 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, ProductRemainderRows,
-    ProductRemainderSourceKind, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError,
+    ProductRemainderRows, ProductRemainderSourceKind, SolinasMetal,
 };
 use super::{
     finalize_openings, finish_bind, nontrivial_gamma_powers, InstructionClaimGeometry,
-    InstructionClaimKernelConfig, InstructionClaimLookupOperandRow, InstructionClaimOpeningMode,
-    InstructionClaimOpeningParams, InstructionClaimOpenings, InstructionClaimOperandPlanes,
-    InstructionClaimPhaseParams, InstructionClaimReductionParams, InstructionClaimReductionPlan,
-    InstructionClaimStorageLayout, ALIASED_OPENING_PIPELINE, INSTRUCTION_CLAIM_ALIASED_OPENINGS,
+    InstructionClaimKernelConfig, InstructionClaimOpeningMode, InstructionClaimOpeningParams,
+    InstructionClaimOpenings, InstructionClaimOperandPlanes, InstructionClaimPhaseParams,
+    InstructionClaimReductionParams, InstructionClaimReductionPlan, InstructionClaimStorageLayout,
+    ALIASED_OPENING_PIPELINE, INSTRUCTION_CLAIM_ALIASED_OPENINGS,
     INSTRUCTION_CLAIM_MESSAGE_COLUMNS, INSTRUCTION_CLAIM_SIMD_WIDTH, MATERIALIZE_PIPELINE,
     REDUCTION_PIPELINE, TRANSITION_PIPELINE,
 };
 
-const PRODUCT_ROWS_MATERIALIZE_PIPELINE: &str =
-    "solinas_instruction_claim_materialize_product_rows";
 const STAGE1_ROWS_MATERIALIZE_PIPELINE: &str = "solinas_instruction_claim_materialize_stage1_rows";
-const LOOKUP_COMPANION_OPENING_PIPELINE: &str = "solinas_instruction_claim_open_lookup_companion";
 const STAGE1_LOOKUP_OPENING_PIPELINE: &str =
     "solinas_instruction_claim_open_stage1_lookup_operands";
 
@@ -116,48 +113,6 @@ impl PendingInstructionClaimInitialMessage {
     }
 }
 
-#[derive(Clone)]
-pub struct InstructionClaimLookupRows {
-    buffer: Buffer,
-    len: usize,
-    device_registry_id: u64,
-}
-
-impl InstructionClaimLookupRows {
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    pub const fn device_registry_id(&self) -> u64 {
-        self.device_registry_id
-    }
-
-    pub fn allocation_identity(&self) -> usize {
-        self.buffer.as_ptr() as usize
-    }
-
-    pub const fn resident_bytes(&self) -> usize {
-        self.len * size_of::<InstructionClaimLookupOperandRow>()
-    }
-
-    fn buffer(&self) -> &Buffer {
-        &self.buffer
-    }
-}
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for InstructionClaimLookupRows {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("device_rows"), self.resident_bytes());
-        visitor.exit();
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InstructionClaimPhase {
     Raw,
@@ -182,34 +137,21 @@ enum InstructionClaimRows {
         left_instruction_input: Buffer,
         right_instruction_input: Buffer,
     },
-    ProductResident {
-        product: ProductRemainderRows,
-        lookup: Option<InstructionClaimLookupRows>,
-    },
+    Stage1(ProductRemainderRows),
 }
 
 impl InstructionClaimRows {
     fn materialize_pipeline(&self) -> &'static str {
         match self {
             Self::Standalone { .. } => MATERIALIZE_PIPELINE,
-            Self::ProductResident { product, .. }
-                if product.source_kind() == ProductRemainderSourceKind::SpartanStage1 =>
-            {
-                STAGE1_ROWS_MATERIALIZE_PIPELINE
-            }
-            Self::ProductResident { .. } => PRODUCT_ROWS_MATERIALIZE_PIPELINE,
+            Self::Stage1(_) => STAGE1_ROWS_MATERIALIZE_PIPELINE,
         }
     }
 
     fn aliased_opening_pipeline(&self) -> &'static str {
         match self {
             Self::Standalone { .. } => ALIASED_OPENING_PIPELINE,
-            Self::ProductResident { product, .. }
-                if product.source_kind() == ProductRemainderSourceKind::SpartanStage1 =>
-            {
-                STAGE1_LOOKUP_OPENING_PIPELINE
-            }
-            Self::ProductResident { .. } => LOOKUP_COMPANION_OPENING_PIPELINE,
+            Self::Stage1(_) => STAGE1_LOOKUP_OPENING_PIPELINE,
         }
     }
 
@@ -228,13 +170,7 @@ impl InstructionClaimRows {
                 left_instruction_input.as_ptr() as usize,
                 right_instruction_input.as_ptr() as usize,
             ],
-            Self::ProductResident { product, lookup } => {
-                let mut identities = product.allocation_identities();
-                if let Some(lookup) = lookup {
-                    identities.push(lookup.allocation_identity());
-                }
-                identities
-            }
+            Self::Stage1(product) => product.allocation_identities(),
         }
     }
 }
@@ -281,11 +217,7 @@ impl allocative::Allocative for InstructionClaimSequence {
                 allocative::Key::new("device_operand_rows"),
                 self.layout.resident_bytes() - self.layout.workspace_bytes(),
             ),
-            InstructionClaimRows::ProductResident { lookup, .. } => {
-                if let Some(lookup) = lookup {
-                    visitor.visit_field(allocative::Key::new("lookup_rows"), lookup);
-                }
-            }
+            InstructionClaimRows::Stage1(_) => {}
         }
         visitor.exit();
     }
@@ -302,25 +234,6 @@ pub struct InstructionClaimCpuTail {
 }
 
 impl SolinasMetal {
-    pub fn prepare_instruction_claim_lookup_rows(
-        &self,
-        rows: &[InstructionClaimLookupOperandRow],
-    ) -> Result<InstructionClaimLookupRows, MetalError> {
-        let _ = InstructionClaimGeometry::new(rows.len())?;
-        let bytes = rows
-            .len()
-            .checked_mul(size_of::<InstructionClaimLookupOperandRow>())
-            .and_then(|bytes| u64::try_from(bytes).ok())
-            .ok_or(MetalError::InputTooLong(rows.len()))?;
-        self.validate_buffer_length(bytes)?;
-        self.validate_additional_working_set(bytes)?;
-        Ok(InstructionClaimLookupRows {
-            buffer: buffer_from_slice(&self.device, rows),
-            len: rows.len(),
-            device_registry_id: self.device_registry_id(),
-        })
-    }
-
     pub fn prepare_instruction_claim_sequence(
         &self,
         planes: &InstructionClaimOperandPlanes,
@@ -343,39 +256,6 @@ impl SolinasMetal {
         self.prepare_instruction_claim_sequence_from_rows(rows, planes.len(), gamma, config, true)
     }
 
-    pub fn prepare_instruction_claim_sequence_with_product_rows(
-        &self,
-        product: ProductRemainderRows,
-        lookup: InstructionClaimLookupRows,
-        gamma: AkitaField,
-        config: InstructionClaimKernelConfig,
-    ) -> Result<InstructionClaimSequence, MetalError> {
-        if product.device_registry_id() != self.device_registry_id()
-            || lookup.device_registry_id() != self.device_registry_id()
-            || product.source_kind() != ProductRemainderSourceKind::Packed
-        {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "packed resident instruction rows have the wrong source or Metal device",
-            ));
-        }
-        if product.len() != lookup.len() {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "product and lookup-companion row counts differ",
-            ));
-        }
-        let len = product.len();
-        self.prepare_instruction_claim_sequence_from_rows(
-            InstructionClaimRows::ProductResident {
-                product,
-                lookup: Some(lookup),
-            },
-            len,
-            gamma,
-            config,
-            false,
-        )
-    }
-
     pub fn prepare_instruction_claim_sequence_with_stage1_rows(
         &self,
         product: ProductRemainderRows,
@@ -391,10 +271,7 @@ impl SolinasMetal {
         }
         let len = product.len();
         self.prepare_instruction_claim_sequence_from_rows(
-            InstructionClaimRows::ProductResident {
-                product,
-                lookup: None,
-            },
+            InstructionClaimRows::Stage1(product),
             len,
             gamma,
             config,
@@ -574,11 +451,7 @@ impl InstructionClaimSequence {
                 "joint materialization requires a raw instruction sequence",
             ));
         }
-        if !matches!(
-            &self.buffers.rows,
-            InstructionClaimRows::ProductResident { product, lookup: None }
-                if product.source_kind() == ProductRemainderSourceKind::SpartanStage1
-        ) {
+        if !matches!(&self.buffers.rows, InstructionClaimRows::Stage1(_)) {
             return Err(MetalError::InvalidInstructionClaimState(
                 "joint materialization requires resident Stage-1 rows",
             ));
@@ -703,11 +576,7 @@ impl InstructionClaimSequence {
     pub(in crate::metal::solinas) fn joint_stage1_allocation_identities(
         &self,
     ) -> Option<[usize; 2]> {
-        let InstructionClaimRows::ProductResident {
-            product,
-            lookup: None,
-        } = &self.buffers.rows
-        else {
+        let InstructionClaimRows::Stage1(product) = &self.buffers.rows else {
             return None;
         };
         let identities = product.allocation_identities();
@@ -804,30 +673,14 @@ impl InstructionClaimSequence {
                     encoder.set_buffer(9, Some(&self.buffers.partial_a), 0);
                     set_inline_bytes(encoder, 10, &params);
                 }
-                InstructionClaimRows::ProductResident { product, lookup } => {
-                    if let Some((compact, residual)) = product.stage1_buffers() {
-                        if lookup.is_some() {
-                            return Err(MetalError::InvalidInstructionClaimState(
-                                "Stage-1 instruction rows unexpectedly retained a packed companion",
-                            ));
-                        }
-                        encoder.set_buffer(0, Some(compact), 0);
-                        encoder.set_buffer(1, Some(residual), 0);
-                    } else {
-                        let product = product.packed_buffer().ok_or(
-                            MetalError::InvalidInstructionClaimState(
-                                "packed instruction rows lost their product allocation",
-                            ),
-                        )?;
-                        let lookup =
-                            lookup
-                                .as_ref()
-                                .ok_or(MetalError::InvalidInstructionClaimState(
-                                    "packed instruction rows lost their lookup companion",
-                                ))?;
-                        encoder.set_buffer(0, Some(product), 0);
-                        encoder.set_buffer(1, Some(lookup.buffer()), 0);
-                    }
+                InstructionClaimRows::Stage1(product) => {
+                    let (compact, residual) = product.stage1_buffers().ok_or(
+                        MetalError::InvalidInstructionClaimState(
+                            "resident instruction rows lost their Stage-1 allocations",
+                        ),
+                    )?;
+                    encoder.set_buffer(0, Some(compact), 0);
+                    encoder.set_buffer(1, Some(residual), 0);
                     encoder.set_buffer(2, Some(&self.buffers.gamma_powers), 0);
                     encoder.set_buffer(3, Some(&self.buffers.e_in), 0);
                     encoder.set_buffer(4, Some(&self.buffers.e_out), 0);
@@ -1217,32 +1070,18 @@ impl InstructionClaimSequence {
                     encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
                     set_inline_bytes(encoder, 5, &params);
                 }
-                InstructionClaimRows::ProductResident { product, lookup } => {
-                    if let Some((compact, residual)) = product.stage1_buffers() {
-                        if lookup.is_some() {
-                            return Err(MetalError::InvalidInstructionClaimState(
-                                "Stage-1 instruction openings retained a packed companion",
-                            ));
-                        }
-                        encoder.set_buffer(0, Some(compact), 0);
-                        encoder.set_buffer(1, Some(residual), 0);
-                        encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
-                        encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
-                        encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
-                        set_inline_bytes(encoder, 5, &params);
-                    } else {
-                        let lookup =
-                            lookup
-                                .as_ref()
-                                .ok_or(MetalError::InvalidInstructionClaimState(
-                                    "packed instruction openings lost their lookup companion",
-                                ))?;
-                        encoder.set_buffer(0, Some(lookup.buffer()), 0);
-                        encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
-                        encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
-                        encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
-                        set_inline_bytes(encoder, 4, &params);
-                    }
+                InstructionClaimRows::Stage1(product) => {
+                    let (compact, residual) = product.stage1_buffers().ok_or(
+                        MetalError::InvalidInstructionClaimState(
+                            "resident instruction openings lost their Stage-1 allocations",
+                        ),
+                    )?;
+                    encoder.set_buffer(0, Some(compact), 0);
+                    encoder.set_buffer(1, Some(residual), 0);
+                    encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+                    encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+                    encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+                    set_inline_bytes(encoder, 5, &params);
                 }
             }
             encoder.set_threadgroup_memory_length(
@@ -1632,12 +1471,4 @@ fn write_fields(
         *output = Fp128::from_jolt_field(value);
     }
     Ok(())
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }

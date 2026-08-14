@@ -76,24 +76,15 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
         let source_identities = handoff.rows.product.allocation_identities();
         if handoff.rows.log_t != rounds
             || handoff.rows.product.len() != cycles
-            || handoff
-                .rows
-                .lookup
-                .as_ref()
-                .is_some_and(|lookup| lookup.len() != cycles)
             || handoff.rows.device_registry_id != self.context.device_registry_id()
-            || source_identities.is_empty()
-            || (handoff.rows.lookup.is_none() && source_identities.len() != 2)
+            || source_identities.len() != 2
         {
             return Err(KernelError::InvariantViolation {
                 reason: "instruction claim handoff has the wrong shape or Metal device",
             });
         }
         let row_storage_id = handoff.rows.product.allocation_identity();
-        let lookup_storage_id = handoff.rows.lookup.as_ref().map_or_else(
-            || source_identities[1],
-            |lookup| lookup.allocation_identity(),
-        );
+        let lookup_storage_id = source_identities[1];
         let row_source = handoff.rows.product.source_kind();
         let host = MetalInstructionClaimHost::new(inputs.relation.tau_low());
         let joint_prefetched = handoff.prefetched_initial.is_some();
@@ -140,22 +131,13 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
                 Some(prefetched.stats),
             )
         } else {
-            let prepared = if let Some(lookup) = handoff.rows.lookup {
-                self.context
-                    .prepare_instruction_claim_sequence_with_product_rows(
-                        handoff.rows.product,
-                        lookup,
-                        inputs.challenges.gamma,
-                        self.config.instruction_claim_reduction.dispatch,
-                    )
-            } else {
-                self.context
-                    .prepare_instruction_claim_sequence_with_stage1_rows(
-                        handoff.rows.product,
-                        inputs.challenges.gamma,
-                        self.config.instruction_claim_reduction.dispatch,
-                    )
-            };
+            let prepared = self
+                .context
+                .prepare_instruction_claim_sequence_with_stage1_rows(
+                    handoff.rows.product,
+                    inputs.challenges.gamma,
+                    self.config.instruction_claim_reduction.dispatch,
+                );
             match prepared {
                 Ok(sequence) => (
                     MetalInstructionClaimState::Standalone(Box::new(sequence)),

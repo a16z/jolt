@@ -8,7 +8,7 @@ use metal::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{Fp128, MetalError, PipelineLimits, SolinasMetal};
+use super::{set_inline_bytes, Fp128, MetalError, PipelineLimits, SolinasMetal};
 
 pub const PRODUCT5_FACTORS: usize = 5;
 
@@ -608,12 +608,4 @@ fn write_akita_fields_from_fn(
     for (index, output) in output.iter_mut().enumerate() {
         *output = Fp128::from_jolt_field(&value(index));
     }
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }

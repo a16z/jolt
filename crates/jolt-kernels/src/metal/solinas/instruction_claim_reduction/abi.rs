@@ -12,7 +12,6 @@ use super::model::{validate_rows, InstructionClaimShapeError};
 
 pub const INSTRUCTION_CLAIM_AKITA_OFFSET: u32 = super::super::AKITA_OFFSET_FFFFA7F7;
 pub const INSTRUCTION_CLAIM_CORE_WORDS: usize = 5;
-pub const INSTRUCTION_CLAIM_UNIQUE_OPERAND_WORDS: usize = 3;
 pub const INSTRUCTION_CLAIM_RIGHT_INPUT_WORDS: usize = 2;
 pub const INSTRUCTION_CLAIM_NONTRIVIAL_GAMMA_POWERS: usize = 4;
 pub const INSTRUCTION_CLAIM_MESSAGE_COLUMNS: usize = 2;
@@ -58,21 +57,12 @@ pub struct InstructionClaimRightLookup {
     words: [u64; 2],
 }
 
-/// The two operands not already resident in ProductRemainder's shared row.
-#[repr(C, align(8))]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct InstructionClaimLookupOperandRow {
-    words: [u64; INSTRUCTION_CLAIM_UNIQUE_OPERAND_WORDS],
-}
-
 const _: [(); 40] = [(); size_of::<InstructionClaimCoreRow>()];
 const _: [(); 8] = [(); align_of::<InstructionClaimCoreRow>()];
 const _: [(); 16] = [(); size_of::<InstructionClaimRightInput>()];
 const _: [(); 8] = [(); align_of::<InstructionClaimRightInput>()];
 const _: [(); 16] = [(); size_of::<InstructionClaimRightLookup>()];
 const _: [(); 8] = [(); align_of::<InstructionClaimRightLookup>()];
-const _: [(); 24] = [(); size_of::<InstructionClaimLookupOperandRow>()];
-const _: [(); 8] = [(); align_of::<InstructionClaimLookupOperandRow>()];
 
 impl InstructionClaimCoreRow {
     pub const fn new(
@@ -180,30 +170,6 @@ impl InstructionClaimRightLookup {
 
     pub const fn value(self) -> u128 {
         self.words[0] as u128 | ((self.words[1] as u128) << 64)
-    }
-}
-
-impl InstructionClaimLookupOperandRow {
-    pub const fn new(left: u64, right: u128) -> Self {
-        Self {
-            words: [left, right as u64, (right >> 64) as u64],
-        }
-    }
-
-    pub const fn from_words(words: [u64; INSTRUCTION_CLAIM_UNIQUE_OPERAND_WORDS]) -> Self {
-        Self { words }
-    }
-
-    pub const fn words(self) -> [u64; INSTRUCTION_CLAIM_UNIQUE_OPERAND_WORDS] {
-        self.words
-    }
-
-    pub const fn left(self) -> u64 {
-        self.words[0]
-    }
-
-    pub const fn right(self) -> u128 {
-        self.words[1] as u128 | ((self.words[2] as u128) << 64)
     }
 }
 
@@ -319,20 +285,6 @@ pub fn split_operand_rows(
         left_instruction_input,
         right_instruction_input,
     )
-}
-
-/// Produces only the 24-byte companion needed beside ProductRemainder's row.
-pub fn lookup_operand_rows(
-    rows: &[InstructionOperandRow],
-) -> Vec<InstructionClaimLookupOperandRow> {
-    rows.iter()
-        .map(|row| {
-            InstructionClaimLookupOperandRow::new(
-                row.left_lookup_operand.0,
-                row.right_lookup_operand.0,
-            )
-        })
-        .collect()
 }
 
 pub fn nontrivial_gamma_powers<F: Field>(gamma: F) -> [F; 4] {

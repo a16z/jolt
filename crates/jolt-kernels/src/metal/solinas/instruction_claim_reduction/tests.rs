@@ -32,12 +32,10 @@ fn metal_entry_points_compile() {
     };
     for name in [
         MATERIALIZE_PIPELINE,
-        "solinas_instruction_claim_materialize_product_rows",
         "solinas_instruction_claim_materialize_stage1_rows",
         TRANSITION_PIPELINE,
         CORE_OPENING_PIPELINE,
         ALIASED_OPENING_PIPELINE,
-        "solinas_instruction_claim_open_lookup_companion",
         "solinas_instruction_claim_open_stage1_lookup_operands",
         ALL_OPENING_PIPELINE,
         REDUCTION_PIPELINE,
@@ -60,8 +58,6 @@ fn native_plane_abis_and_word_order_are_fixed() {
     assert_eq!(align_of::<InstructionClaimRightInput>(), 8);
     assert_eq!(size_of::<InstructionClaimRightLookup>(), 16);
     assert_eq!(align_of::<InstructionClaimRightLookup>(), 8);
-    assert_eq!(size_of::<InstructionClaimLookupOperandRow>(), 24);
-    assert_eq!(align_of::<InstructionClaimLookupOperandRow>(), 8);
     assert_eq!(size_of::<InstructionClaimPhaseParams>(), 16);
     assert_eq!(size_of::<InstructionClaimOpeningParams>(), 16);
     assert_eq!(size_of::<InstructionClaimReductionParams>(), 16);
@@ -124,13 +120,6 @@ fn optimized_rows_split_into_native_planes() {
         [
             InstructionClaimRightInput::new(-5),
             InstructionClaimRightInput::new(10),
-        ]
-    );
-    assert_eq!(
-        lookup_operand_rows(&rows),
-        [
-            InstructionClaimLookupOperandRow::new(2, u128::MAX - 3),
-            InstructionClaimLookupOperandRow::new(7, 8),
         ]
     );
 }
@@ -729,7 +718,7 @@ fn resident_sequence_gamma_zero_scans_the_signed_column() {
 }
 
 #[test]
-fn product_rows_sequence_matches_standalone_sequence() {
+fn stage1_sequence_matches_standalone_sequence() {
     let Ok(context) = super::super::SolinasMetal::for_akita() else {
         return;
     };
@@ -755,31 +744,6 @@ fn product_rows_sequence_matches_standalone_sequence() {
         })
         .collect::<Vec<_>>();
     let planes = operand_planes(&core, &right);
-    let product = core
-        .iter()
-        .zip(&right)
-        .map(|(core, right)| {
-            super::super::ProductRemainderRow::new(
-                core.left_instruction_input(),
-                right.value(),
-                false,
-                false,
-                core.lookup_output(),
-                false,
-                false,
-                false,
-            )
-        })
-        .collect::<Vec<_>>();
-    let lookup = core
-        .iter()
-        .map(|row| {
-            InstructionClaimLookupOperandRow::new(
-                row.left_lookup_operand(),
-                row.right_lookup_operand(),
-            )
-        })
-        .collect::<Vec<_>>();
     let stage1 = core
         .iter()
         .zip(&right)
@@ -810,25 +774,9 @@ fn product_rows_sequence_matches_standalone_sequence() {
             InstructionClaimKernelConfig::default(),
         )
         .expect("Stage-1 instruction sequence should prepare");
-    let product = context
-        .prepare_product_remainder_rows(&product)
-        .expect("product rows should prepare");
-    let product_storage_id = product.allocation_identity();
-    let lookup = context
-        .prepare_instruction_claim_lookup_rows(&lookup)
-        .expect("lookup rows should prepare");
-    let shared = context
-        .prepare_instruction_claim_sequence_with_product_rows(
-            product,
-            lookup,
-            gamma,
-            InstructionClaimKernelConfig::default(),
-        )
-        .expect("shared instruction sequence should prepare");
     let mut standalone = context
         .prepare_instruction_claim_sequence(&planes, gamma, InstructionClaimKernelConfig::default())
         .expect("standalone instruction sequence should prepare");
-    assert_eq!(shared.allocation_identities()[0], product_storage_id);
 
     let log_t = rows.trailing_zeros() as usize;
     let point = (0..log_t)
@@ -838,52 +786,39 @@ fn product_rows_sequence_matches_standalone_sequence() {
         .map(|index| AkitaField::from_u64(401 + 4 * index as u64))
         .collect::<Vec<_>>();
     let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
-    let pending = shared
-        .submit_initial_message(gruen.e_in_current(), gruen.e_out_current())
-        .unwrap();
     let direct_pending = direct
         .submit_initial_message(gruen.e_in_current(), gruen.e_out_current())
         .unwrap();
-    let (mut shared, shared_message, stats) = pending.join().unwrap();
-    let (mut direct, direct_message, _) = direct_pending.join().unwrap();
+    let (mut direct, direct_message, stats) = direct_pending.join().unwrap();
     assert!(stats.wall >= stats.submit_wall);
     assert!(stats.wall >= stats.join_wall);
     assert_eq!(
-        shared_message,
+        direct_message,
         standalone
             .message(gruen.e_in_current(), gruen.e_out_current())
             .unwrap()
     );
-    assert_eq!(direct_message, shared_message);
     for round in 1..log_t {
         let challenge = challenges[round - 1];
         gruen.bind(challenge);
-        let shared_message = shared
-            .bind_and_message(challenge, gruen.e_in_current(), gruen.e_out_current())
-            .unwrap();
         let direct_message = direct
             .bind_and_message(challenge, gruen.e_in_current(), gruen.e_out_current())
             .unwrap();
         let standalone_message = standalone
             .bind_and_message(challenge, gruen.e_in_current(), gruen.e_out_current())
             .unwrap();
-        assert_eq!(shared_message, standalone_message, "round {round}");
-        assert_eq!(direct_message, shared_message, "Stage-1 round {round}");
+        assert_eq!(direct_message, standalone_message, "round {round}");
     }
-    let shared_final = shared.finish(challenges[log_t - 1]).unwrap();
     let direct_final = direct.finish(challenges[log_t - 1]).unwrap();
     let standalone_final = standalone.finish(challenges[log_t - 1]).unwrap();
-    assert_eq!(shared_final, standalone_final);
-    assert_eq!(direct_final, shared_final);
+    assert_eq!(direct_final, standalone_final);
     let reversed = challenges.iter().rev().copied().collect::<Vec<_>>();
     let (r_hi, r_lo) = reversed.split_at(log_t / 2);
     let e_out = EqPolynomial::evals(r_hi, None);
     let e_in = EqPolynomial::evals(r_lo, None);
-    let shared_openings = shared.aliased_openings(&e_in, &e_out).unwrap();
     let direct_openings = direct.aliased_openings(&e_in, &e_out).unwrap();
     let standalone_openings = standalone.aliased_openings(&e_in, &e_out).unwrap();
-    assert_eq!(shared_openings, standalone_openings);
-    assert_eq!(direct_openings, shared_openings);
+    assert_eq!(direct_openings, standalone_openings);
 }
 
 #[test]

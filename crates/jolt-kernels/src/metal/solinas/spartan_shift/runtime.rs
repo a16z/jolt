@@ -7,7 +7,8 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError,
+    PipelineLimits, SolinasMetal,
 };
 use super::{
     mixed_gamma_multipliers, mixed_high_weights, prefix_fold_weights,
@@ -850,12 +851,4 @@ fn read_field_columns<const COLUMNS: usize>(
             .map(|&value| value.into_jolt_field())
             .collect()
     }))
-}
-
-fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
-    encoder.set_bytes(
-        index,
-        size_of::<T>() as u64,
-        std::ptr::from_ref(value).cast::<std::ffi::c_void>(),
-    );
 }
