@@ -108,7 +108,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 V::RegistersVal | V::Rs1Ra | V::Rs2Ra | V::RdWa => {
                     Ok(Shape::new(self.register_read_write_log_rows()?, Dense))
                 }
-                V::RamValFinal => Ok(Shape::new(self.ram_log_k()?, Dense)),
+                V::RamValFinal | V::RamValInit => Ok(Shape::new(self.ram_log_k()?, Dense)),
                 V::InstructionRa(index) => {
                     require_index(index, self.instruction_virtual_ra_count()?)?;
                     Ok(Shape::new(self.instruction_virtual_ra_log_rows()?, Dense))
@@ -143,7 +143,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
                 | V::RamHammingWeight
                 | V::OpFlags(_)
                 | V::InstructionFlags(_) => Ok(Shape::new(self.trace_log_rows(), Dense)),
-                V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
+                V::Rd | V::InstructionRaf => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)
                 | V::BytecodeReadRafAddrClaim
@@ -213,6 +213,7 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
                     self.materialize_register_read_write_virtual(virtual_id)
                 }
                 V::RamValFinal => self.materialize_ram_val_final(),
+                V::RamValInit => self.materialize_ram_val_init(),
                 V::InstructionRa(index) => self.materialize_one_hot::<F, InstructionRaChunk>(
                     index,
                     self.instruction_virtual_ra_count()?,
@@ -249,7 +250,7 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
                 V::LookupTableFlag(table) => {
                     self.materialize_cycle_indexed::<F, LookupTableFlag, _>(table)
                 }
-                V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
+                V::Rd | V::InstructionRaf => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)
                 | V::BytecodeReadRafAddrClaim

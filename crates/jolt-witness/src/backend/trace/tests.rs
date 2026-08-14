@@ -899,7 +899,6 @@ fn excluded_ids_report_their_classification() {
     for id in [
         JoltVirtualPolynomial::Rd,
         JoltVirtualPolynomial::InstructionRaf,
-        JoltVirtualPolynomial::RamValInit,
     ] {
         assert_reason(JoltPolynomialId::Virtual(id), UNSERVED_REASON);
     }

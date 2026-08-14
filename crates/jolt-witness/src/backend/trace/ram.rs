@@ -70,6 +70,11 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
         Ok(values)
     }
 
+    pub(crate) fn materialize_ram_val_init<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+        self.initial_ram_state()
+            .map(|state| state.into_iter().map(F::from_u64).collect())
+    }
+
     pub(crate) fn materialize_ram_val_final<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
         self.final_ram_state()
             .map(|state| state.into_iter().map(F::from_u64).collect())
