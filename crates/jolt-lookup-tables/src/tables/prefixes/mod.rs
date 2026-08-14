@@ -98,7 +98,11 @@ impl<F: Copy> PrefixEval<F> {
 impl<F> Index<Prefixes> for &[PrefixEval<F>] {
     type Output = F;
 
-    #[expect(clippy::unwrap_used)]
+    #[expect(
+        clippy::unwrap_used,
+        clippy::get_unwrap,
+        reason = "checkpoint slices are sized to Prefixes::COUNT, so every variant index is in range"
+    )]
     fn index(&self, prefix: Prefixes) -> &Self::Output {
         let index = prefix as usize;
         &self.get(index).unwrap().0

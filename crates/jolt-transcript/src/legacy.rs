@@ -84,11 +84,10 @@ pub trait Transcript: Default + Sync + Send + 'static {
         Self::Challenge: Field,
     {
         let gamma = self.challenge_scalar();
-        let mut powers = vec![Self::Challenge::from_u64(1); len];
-        for index in 1..len {
-            powers[index] = powers[index - 1] * gamma;
-        }
-        powers
+        let one = Self::Challenge::from_u64(1);
+        std::iter::successors(Some(one), |power| Some(*power * gamma))
+            .take(len)
+            .collect()
     }
 
     /// Current 256-bit transcript state. Peeked non-destructively by
@@ -157,7 +156,8 @@ impl AppendToTranscript for Label {
             core::str::from_utf8(self.0)
         );
         let mut padded = [0u8; 32];
-        padded[..self.0.len()].copy_from_slice(self.0);
+        let (head, _) = padded.split_at_mut(self.0.len());
+        head.copy_from_slice(self.0);
         transcript.append_bytes(&padded);
     }
 }
@@ -174,7 +174,8 @@ impl AppendToTranscript for LabelWithCount {
             core::str::from_utf8(self.0)
         );
         let mut packed = [0u8; 32];
-        packed[..self.0.len()].copy_from_slice(self.0);
+        let (head, _) = packed.split_at_mut(self.0.len());
+        head.copy_from_slice(self.0);
         packed[24..32].copy_from_slice(&self.1.to_be_bytes());
         transcript.append_bytes(&packed);
     }

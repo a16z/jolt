@@ -397,7 +397,7 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         append_sumcheck_claim, prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder,
-        ProveRounds, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+        ProveRounds, SequentialRounds, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -642,6 +642,7 @@ mod tests {
         let proved = prove_batch(
             &prelude,
             &mut members,
+            &mut SequentialRounds,
             &mut recorder,
             &mut prover_transcript,
         )
@@ -766,7 +767,14 @@ mod tests {
         )
         .unwrap();
         let mut members: Vec<&mut dyn ProveRounds<Fr>> = vec![&mut naive];
-        let proved = prove_batch(&prelude, &mut members, &mut recorder, &mut transcript).unwrap();
+        let proved = prove_batch(
+            &prelude,
+            &mut members,
+            &mut SequentialRounds,
+            &mut recorder,
+            &mut transcript,
+        )
+        .unwrap();
 
         let output_points = relation
             .derive_opening_points(&proved.challenges, &input_points)
