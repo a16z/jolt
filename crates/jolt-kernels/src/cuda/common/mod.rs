@@ -8,6 +8,7 @@ pub(crate) mod primitives;
 pub(crate) mod product_accum;
 pub(crate) mod ra_poly;
 pub(crate) mod read_write_matrix;
+pub(crate) mod split_eq;
 pub(crate) mod staging;
 #[cfg(test)]
 pub(crate) mod testing;

@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::relations::ram::{
 use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::{Field, Fr};
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
@@ -16,6 +16,7 @@ use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
+use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -31,7 +32,7 @@ pub struct RamReadWriteKernel<F: Field> {
     cycle: Option<DeviceReadWriteMatrix>,
     address: Option<DeviceAddressMajorMatrix>,
     inc: DeviceFrVec,
-    eq: GruenSplitEqPolynomial<F>,
+    eq: DeviceSplitEq<F>,
     merged_eq: Option<DeviceFrVec>,
     val_init: Vec<Fr>,
     finals: Option<[F; 2]>,
@@ -73,8 +74,7 @@ impl<F: Field> RamReadWriteKernel<F> {
     }
 
     fn transition(&mut self) -> Result<(), CudaError> {
-        let merged = self.eq.merge();
-        self.merged_eq = Some(self.context.upload(require_fr_slice(merged.evals())?)?);
+        self.merged_eq = Some(self.eq.merge(self.context)?);
         let cycle = self.cycle.take().ok_or(CudaError::InvariantViolation {
             reason: "RAM read-write phase 1 ended without a cycle-major matrix",
         })?;
@@ -213,7 +213,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
             cycle: Some(cycle),
             address: None,
             inc,
-            eq: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
+            eq: DeviceSplitEq::new(context, tau_low, BindingOrder::LowToHigh)?,
             merged_eq: None,
             val_init,
             finals: None,

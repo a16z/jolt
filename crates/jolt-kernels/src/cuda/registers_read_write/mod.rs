@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::relations::registers::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::{Field, Fr, FromPrimitiveInt};
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
@@ -15,6 +15,7 @@ use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
+use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::reference::views::dense_view;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -33,7 +34,7 @@ pub struct RegistersReadWriteKernel<F: Field> {
     cycle: Option<DeviceReadWriteMatrix>,
     address: Option<DeviceAddressMajorMatrix>,
     inc: DeviceFrVec,
-    eq: GruenSplitEqPolynomial<F>,
+    eq: DeviceSplitEq<F>,
     merged_eq: Option<DeviceFrVec>,
     val_init: Vec<Fr>,
     rs2_hot: Vec<Option<usize>>,
@@ -79,9 +80,7 @@ impl<F: Field> RegistersReadWriteKernel<F> {
     }
 
     fn transition(&mut self) -> Result<(), crate::cuda::common::error::CudaError> {
-        let merged = self.eq.merge();
-        let merged = require_fr_slice(merged.evals())?;
-        self.merged_eq = Some(self.context.upload(merged)?);
+        self.merged_eq = Some(self.eq.merge(self.context)?);
         let cycle =
             self.cycle
                 .take()
@@ -254,7 +253,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
             cycle: Some(cycle),
             address: None,
             inc,
-            eq: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
+            eq: DeviceSplitEq::new(context, r_cycle, BindingOrder::LowToHigh)?,
             merged_eq: None,
             val_init: vec![Fr::from_u64(0); 1usize << log_k],
             rs2_hot: witness.hot_indices(rs2_ra_read_write().polynomial_id())?,

@@ -227,7 +227,7 @@ impl DeviceReadWriteMatrix {
         &self,
         context: &CudaKernelContext,
         inc: &DeviceFrVec,
-        eq: &jolt_poly::GruenSplitEqPolynomial<F>,
+        eq: &super::split_eq::DeviceSplitEq<F>,
     ) -> Result<[F; 2], CudaError> {
         if self.entries == 0 {
             return Ok([F::from_u64(0), F::from_u64(0)]);
@@ -235,12 +235,10 @@ impl DeviceReadWriteMatrix {
         let (segment_count, seg) = self.segments(context)?;
         let segments = CudaKernelContext::count_of(segment_count)?;
 
-        let e_in_host = super::device::require_fr_slice(eq.e_in_current())?;
-        let e_out_host = super::device::require_fr_slice(eq.e_out_current())?;
-        let e_in_len = CudaKernelContext::count_of(e_in_host.len())?;
-        let num_x_in_bits = e_in_host.len().max(1).ilog2();
-        let e_in = context.upload(e_in_host)?;
-        let e_out = context.upload(e_out_host)?;
+        let e_in_len = CudaKernelContext::count_of(eq.e_in_len())?;
+        let num_x_in_bits = eq.e_in_len().max(1).ilog2();
+        let e_in = eq.e_in_current();
+        let e_out = eq.e_out_current();
 
         let blocks = segments.div_ceil(BLOCK).max(1);
         let mut partials = context.alloc(2 * blocks as usize)?;
@@ -518,13 +516,15 @@ mod tests {
             .collect();
         let mut legacy_eq =
             LegacyGruen::<LegacyFr>::new(&legacy_point, LegacyBindingOrder::LowToHigh);
-        let mut device_eq = jolt_poly::GruenSplitEqPolynomial::<Fr>::new(
+        let mut device_eq = crate::cuda::common::split_eq::DeviceSplitEq::<Fr>::new(
+            context,
             &legacy_point
                 .iter()
                 .map(|c| Fr::from(LegacyFr::from(*c)))
                 .collect::<Vec<_>>(),
             jolt_poly::BindingOrder::LowToHigh,
-        );
+        )
+        .expect("device split-eq");
         let _ = point;
 
         for round in 0..LOG_T {
@@ -667,13 +667,15 @@ mod tests {
             .collect();
         let mut legacy_eq =
             LegacyGruen::<LegacyFr>::new(&legacy_point, LegacyBindingOrder::LowToHigh);
-        let mut device_eq = jolt_poly::GruenSplitEqPolynomial::<Fr>::new(
+        let mut device_eq = crate::cuda::common::split_eq::DeviceSplitEq::<Fr>::new(
+            context,
             &legacy_point
                 .iter()
                 .map(|c| Fr::from(LegacyFr::from(*c)))
                 .collect::<Vec<_>>(),
             jolt_poly::BindingOrder::LowToHigh,
-        );
+        )
+        .expect("device split-eq");
 
         for round in 0..LOG_T {
             let expected = legacy_ram_quadratic_coeffs(&legacy, &legacy_inc, &legacy_eq, gamma);
