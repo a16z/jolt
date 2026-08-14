@@ -72,22 +72,22 @@ fn config() -> JoltVmWitnessConfig {
 }
 
 fn trace_output() -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), Default::default(), None)
+    TraceOutput::new(OwnedTrace::default(), Default::default(), None, None)
 }
 
 fn trace_output_with_rows(rows: Vec<TraceRow>) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::new(rows), Default::default(), None)
+    TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None)
 }
 
 fn trace_output_with_device(device: JoltDevice) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), device, None)
+    TraceOutput::new(OwnedTrace::default(), device, None, None)
 }
 
 fn trace_output_with_device_and_final_memory(
     device: JoltDevice,
     final_memory: MemoryImage,
 ) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), device, Some(final_memory))
+    TraceOutput::new(OwnedTrace::default(), device, Some(final_memory), None)
 }
 
 fn instruction(address: usize) -> JoltInstructionRow {
@@ -1001,6 +1001,7 @@ fn slice_fast_paths_match_the_sequential_fallback() {
         TraceOutput::new(
             IteratorOnlyTrace(OwnedTrace::new(rows)),
             Default::default(),
+            None,
             None,
         ),
     );

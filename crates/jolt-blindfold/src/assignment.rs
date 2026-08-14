@@ -249,6 +249,10 @@ impl<F: Field, Com> BlindFoldProtocol<F, Com> {
     /// row with its blind: retained round blinds, retained output-claim
     /// blinds, fresh blinds for auxiliary rows, zero for padding (padding
     /// rows are all-zero, so their Pedersen commitment is the identity).
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "the row-grid slice bounds derive from the same WitnessDimensions that sized the flat witness vector"
+    )]
     fn slice_rows<R: RngCore>(
         &self,
         witness: Vec<F>,
@@ -352,7 +356,13 @@ fn solve_products<F: Field>(
         else {
             return Err(ProverError::UnsolvableProduct { constraint });
         };
-        witness[*target] = Some(product);
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "the `witness.get(*target)` guard above skips out-of-bounds targets"
+        )]
+        {
+            witness[*target] = Some(product);
+        }
     }
     Ok(())
 }

@@ -14,9 +14,8 @@ pub use jolt_program::expand::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
     InlineRegister, Value,
 };
-pub use tracer::emulator::cpu::Cpu;
 pub use tracer::instruction::format::format_inline::FormatInline;
-pub use tracer::instruction::inline::InlineRegistration;
+pub use tracer::instruction::inline::{InlineAdviceContext, InlineAdviceError, InlineRegistration};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
 pub use tracer::InlineExtension;
 
@@ -99,13 +98,21 @@ pub enum MulqType {
     Div,
 }
 
-fn load_field_element_limbs(cpu: &mut Cpu, address: u64) -> FieldElementLimbs {
-    [
-        cpu.mmu.load_doubleword(address).unwrap().0,
-        cpu.mmu.load_doubleword(address + 8).unwrap().0,
-        cpu.mmu.load_doubleword(address + 16).unwrap().0,
-        cpu.mmu.load_doubleword(address + 24).unwrap().0,
-    ]
+/// Read four consecutive doublewords of guest memory (a 256-bit field
+/// element) starting at `address`, surfacing an invalid access as
+/// [`InlineAdviceError`] instead of panicking in the builder.
+pub fn load_field_element_limbs(
+    ctx: &mut dyn InlineAdviceContext,
+    address: u64,
+) -> Result<FieldElementLimbs, InlineAdviceError> {
+    let mut limbs = [0u64; 4];
+    for (i, limb) in limbs.iter_mut().enumerate() {
+        let address = address + 8 * i as u64;
+        *limb = ctx
+            .load_doubleword(address)
+            .ok_or(InlineAdviceError::InvalidLoad { address })?;
+    }
+    Ok(limbs)
 }
 
 fn nbiguint_to_field_limbs(n: &NBigUint) -> FieldElementLimbs {
@@ -118,17 +125,17 @@ fn nbiguint_to_field_limbs(n: &NBigUint) -> FieldElementLimbs {
 
 fn mulq_operands(
     operands: &FormatInline,
-    cpu: &mut Cpu,
+    ctx: &mut dyn InlineAdviceContext,
     op_type: &MulqType,
-) -> (FieldElementLimbs, FieldElementLimbs) {
-    let a_addr = cpu.x[operands.rs1 as usize] as u64;
-    let a = load_field_element_limbs(cpu, a_addr);
+) -> Result<(FieldElementLimbs, FieldElementLimbs), InlineAdviceError> {
+    let a_addr = ctx.register(operands.rs1 as usize);
+    let a = load_field_element_limbs(ctx, a_addr)?;
     let b_addr = match op_type {
         MulqType::Square => a_addr,
-        _ => cpu.x[operands.rs2 as usize] as u64,
+        _ => ctx.register(operands.rs2 as usize),
     };
-    let b = load_field_element_limbs(cpu, b_addr);
-    (a, b)
+    let b = load_field_element_limbs(ctx, b_addr)?;
+    Ok((a, b))
 }
 
 /// Shared quotient advice computation for modular multiply/square inlines.
@@ -137,20 +144,20 @@ fn mulq_operands(
 /// `w` such that `a * b = w * q + c`.
 pub fn mulq_quotient_advice(
     operands: &FormatInline,
-    cpu: &mut Cpu,
+    ctx: &mut dyn InlineAdviceContext,
     is_scalar_field: bool,
     op_type: &MulqType,
     modulus: impl Fn(bool) -> NBigUint,
-) -> QuotientAdvice {
+) -> Result<QuotientAdvice, InlineAdviceError> {
     assert!(
         !matches!(op_type, MulqType::Div),
         "division advice must use mulq_division_advice"
     );
-    let (a, b) = mulq_operands(operands, cpu, op_type);
+    let (a, b) = mulq_operands(operands, ctx, op_type)?;
     let quotient = (limbs_to_nbiguint(&a) * limbs_to_nbiguint(&b)) / modulus(is_scalar_field);
-    QuotientAdvice {
+    Ok(QuotientAdvice {
         quotient: nbiguint_to_field_limbs(&quotient),
-    }
+    })
 }
 
 /// Shared advice computation for modular division inlines.
@@ -158,20 +165,29 @@ pub fn mulq_quotient_advice(
 /// The returned `result` is `a / b`; `quotient` is `w` such that
 /// `b * result = w * q + a`. Runtime advice rows consume these values as
 /// `result[0], quotient[0], result[1], quotient[1], ...`.
+///
+/// WARNING: `field_inv_mul` is expected to panic when `b == 0`. For a nonzero
+/// dividend no advice satisfies `b * result == a mod q`, so the inline's
+/// `VirtualAssertEQ` rows would abort tracing anyway — panicking keeps the
+/// diagnostic. For `0 / 0` the identity IS satisfiable (`result = 0`, which is
+/// what the grumpkin advice returns); aborting there too is a deliberate
+/// policy, since a zero divisor is a guest bug either way. Callers must reject
+/// zero divisors before the inline (see `AffinePoint::double_and_add` and the
+/// `ecdsa_verify` input checks).
 pub fn mulq_division_advice(
     operands: &FormatInline,
-    cpu: &mut Cpu,
+    ctx: &mut dyn InlineAdviceContext,
     is_scalar_field: bool,
     modulus: impl Fn(bool) -> NBigUint,
     field_inv_mul: impl Fn(&FieldElementLimbs, &FieldElementLimbs) -> NBigUint,
-) -> ModularDivisionAdvice {
-    let (a, b) = mulq_operands(operands, cpu, &MulqType::Div);
+) -> Result<ModularDivisionAdvice, InlineAdviceError> {
+    let (a, b) = mulq_operands(operands, ctx, &MulqType::Div)?;
     let result = field_inv_mul(&b, &a);
     let quotient = (limbs_to_nbiguint(&b) * &result) / modulus(is_scalar_field);
-    ModularDivisionAdvice {
+    Ok(ModularDivisionAdvice {
         result: nbiguint_to_field_limbs(&result),
         quotient: nbiguint_to_field_limbs(&quotient),
-    }
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -302,13 +318,21 @@ pub trait InlineOp: Send + Sync {
     ///
     /// The returned values are consumed in order by `VirtualAdvice` rows emitted
     /// by `build_sequence`. Returning `NoAdvice` means the static recipe contains
-    /// no runtime-advice rows.
-    fn build_advice(_operands: FormatInline, _cpu: &mut Cpu) -> Self::Advice {
-        Self::Advice::default()
+    /// no runtime-advice rows. An error means the builder read invalid guest
+    /// state (advice builders dereference raw guest pointers from operand
+    /// registers); how it surfaces is the execution backend's choice.
+    fn build_advice(
+        _operands: FormatInline,
+        _ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Self::Advice, InlineAdviceError> {
+        Ok(Self::Advice::default())
     }
 
-    fn build_runtime_advice(operands: FormatInline, cpu: &mut Cpu) -> Option<VecDeque<u64>> {
-        Self::build_advice(operands, cpu).into_runtime_advice()
+    fn build_runtime_advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Option<VecDeque<u64>>, InlineAdviceError> {
+        Ok(Self::build_advice(operands, ctx)?.into_runtime_advice())
     }
 }
 

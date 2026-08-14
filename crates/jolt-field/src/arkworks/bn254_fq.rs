@@ -279,14 +279,13 @@ impl Fq {
         Fq(InnerFq::from_le_bytes_mod_order(bytes))
     }
 
-    /// Converts a limb array to a field element without checking that it is
-    /// less than the modulus.
+    /// Wraps raw Montgomery-form limbs as a field element without checking
+    /// that they are less than the modulus.
+    ///
+    /// Inverse of [`Fq::inner_limbs`]; same semantics as the `Fr` sibling.
     #[inline]
     pub fn from_bigint_unchecked(limbs: Limbs<4>) -> Self {
-        let Some(inner) = InnerFq::from_bigint(ark_ff::BigInt::new(limbs.0)) else {
-            unreachable!("unchecked BN254 Fq construction received non-canonical limbs")
-        };
-        Fq(inner)
+        Fq(InnerFq::new_unchecked(ark_ff::BigInt::new(limbs.0)))
     }
 
     /// Access the internal Montgomery-form limbs.
@@ -475,5 +474,13 @@ mod tests {
     fn to_u64_roundtrip() {
         let value = Fq::from_u64(12345);
         assert_eq!(value.to_canonical_u64_checked(), Some(12345));
+    }
+
+    #[test]
+    fn inner_limbs_roundtrip() {
+        let val = Fq::from_u64(42);
+        let limbs = val.inner_limbs();
+        let recovered = Fq::from_bigint_unchecked(limbs);
+        assert_eq!(val, recovered);
     }
 }
