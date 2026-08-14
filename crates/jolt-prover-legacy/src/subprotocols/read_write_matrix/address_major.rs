@@ -82,7 +82,7 @@ pub trait AddressMajorMatrixEntry<F: JoltField>: Send + Sync + Sized {
 #[derive(Allocative, Debug, Default, Clone)]
 pub struct ReadWriteMatrixAddressMajor<F: JoltField, E: AddressMajorMatrixEntry<F>> {
     pub entries: Vec<E>,
-    pub(crate) val_init: MultilinearPolynomial<F>,
+    pub val_init: MultilinearPolynomial<F>,
 }
 
 impl<F: JoltField, E1: CycleMajorMatrixEntry<F>> From<ReadWriteMatrixCycleMajor<F, E1>>

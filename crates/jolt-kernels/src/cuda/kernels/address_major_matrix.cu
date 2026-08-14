@@ -191,3 +191,148 @@ extern "C" __global__ void amm_merge_kernel(
         k++;
     }
 }
+
+extern "C" __global__ void amm_message_kernel(
+    const unsigned int *__restrict__ rows, const u64 *__restrict__ val_coeff,
+    const u64 *__restrict__ next_val, const u64 *__restrict__ coeffs, unsigned int coeff_width,
+    const unsigned int *__restrict__ seg_start, const unsigned int *__restrict__ seg_even_end,
+    const unsigned int *__restrict__ seg_end, const unsigned int *__restrict__ seg_pair,
+    unsigned int segments, const u64 *__restrict__ val_init, const u64 *__restrict__ inc,
+    const u64 *__restrict__ eq, u64 *__restrict__ partials) {
+    extern __shared__ u64 scratch[];
+    unsigned int tid = threadIdx.x;
+    unsigned int seg = blockIdx.x * blockDim.x + tid;
+
+    u64 acc[2][LIMBS];
+    for (int lane = 0; lane < 2; lane++)
+        for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
+
+    if (seg < segments) {
+        unsigned int i = seg_start[seg];
+        unsigned int even_end = seg_even_end[seg];
+        unsigned int j = even_end;
+        unsigned int odd_end = seg_end[seg];
+        unsigned int pair = seg_pair[seg];
+        unsigned int ra_lane = 0;
+        unsigned int wa_lane = (coeff_width > 1) ? 1 : 0;
+
+        u64 even_cp[LIMBS], odd_cp[LIMBS];
+        load4(val_init + (unsigned long long)(2 * pair) * LIMBS, even_cp);
+        load4(val_init + (unsigned long long)(2 * pair + 1) * LIMBS, odd_cp);
+
+        u64 inner[2][2 * PA_SLOTS];
+        for (int lane = 0; lane < 2; lane++) pa_zero(inner[lane]);
+
+        while (i < even_end || j < odd_end) {
+            bool in_main = (i < even_end) && (j < odd_end);
+            bool take_even;
+            bool take_odd;
+            if (in_main) {
+                unsigned int a = rows[i];
+                unsigned int b = rows[j];
+                take_even = a <= b;
+                take_odd = b <= a;
+            } else if (i < even_end) {
+                take_even = true;
+                take_odd = false;
+            } else {
+                take_even = false;
+                take_odd = true;
+            }
+
+            unsigned int row = take_even ? rows[i] : rows[j];
+            u64 inc_eval[LIMBS], eq_eval[LIMBS];
+            load4(inc + (unsigned long long)row * LIMBS, inc_eval);
+            load4(eq + (unsigned long long)row * LIMBS, eq_eval);
+
+            u64 ra_0[LIMBS], ra_2[LIMBS], wa_0[LIMBS], wa_2[LIMBS];
+            u64 val_0[LIMBS], val_2[LIMBS];
+
+            if (take_even && take_odd) {
+                u64 e[LIMBS], o[LIMBS], twice[LIMBS];
+                load4(coeffs + ((unsigned long long)i * coeff_width + ra_lane) * LIMBS, e);
+                load4(coeffs + ((unsigned long long)j * coeff_width + ra_lane) * LIMBS, o);
+                for (int l = 0; l < LIMBS; l++) ra_0[l] = e[l];
+                fr_add(o, o, twice);
+                fr_sub(twice, e, ra_2);
+                load4(coeffs + ((unsigned long long)i * coeff_width + wa_lane) * LIMBS, e);
+                load4(coeffs + ((unsigned long long)j * coeff_width + wa_lane) * LIMBS, o);
+                for (int l = 0; l < LIMBS; l++) wa_0[l] = e[l];
+                fr_add(o, o, twice);
+                fr_sub(twice, e, wa_2);
+                load4(val_coeff + (unsigned long long)i * LIMBS, e);
+                load4(val_coeff + (unsigned long long)j * LIMBS, o);
+                for (int l = 0; l < LIMBS; l++) val_0[l] = e[l];
+                fr_add(o, o, twice);
+                fr_sub(twice, e, val_2);
+            } else if (take_even) {
+                u64 e[LIMBS], zero[LIMBS] = {0, 0, 0, 0}, twice[LIMBS];
+                load4(coeffs + ((unsigned long long)i * coeff_width + ra_lane) * LIMBS, e);
+                for (int l = 0; l < LIMBS; l++) ra_0[l] = e[l];
+                fr_sub(zero, e, ra_2);
+                load4(coeffs + ((unsigned long long)i * coeff_width + wa_lane) * LIMBS, e);
+                for (int l = 0; l < LIMBS; l++) wa_0[l] = e[l];
+                fr_sub(zero, e, wa_2);
+                load4(val_coeff + (unsigned long long)i * LIMBS, e);
+                for (int l = 0; l < LIMBS; l++) val_0[l] = e[l];
+                fr_add(odd_cp, odd_cp, twice);
+                fr_sub(twice, e, val_2);
+            } else {
+                u64 o[LIMBS], twice[LIMBS];
+                load4(coeffs + ((unsigned long long)j * coeff_width + ra_lane) * LIMBS, o);
+                fr_add(o, o, ra_2);
+                load4(coeffs + ((unsigned long long)j * coeff_width + wa_lane) * LIMBS, o);
+                fr_add(o, o, wa_2);
+                load4(val_coeff + (unsigned long long)j * LIMBS, o);
+                for (int l = 0; l < LIMBS; l++) val_0[l] = even_cp[l];
+                fr_add(o, o, twice);
+                fr_sub(twice, even_cp, val_2);
+            }
+
+            u64 read[LIMBS], write[LIMBS], sum[LIMBS], bracket[LIMBS];
+            if (take_even) {
+                fr_mul(ra_0, val_0, read);
+                fr_add(val_0, inc_eval, sum);
+                fr_mul(wa_0, sum, write);
+                fr_add(read, write, bracket);
+                pa_fold_mul_accum(eq_eval, bracket, inner[0]);
+            }
+            fr_mul(ra_2, val_2, read);
+            fr_add(val_2, inc_eval, sum);
+            fr_mul(wa_2, sum, write);
+            fr_add(read, write, bracket);
+            pa_fold_mul_accum(eq_eval, bracket, inner[1]);
+
+            if (in_main) {
+                if (take_even) load4(next_val + (unsigned long long)i * LIMBS, even_cp);
+                if (take_odd) load4(next_val + (unsigned long long)j * LIMBS, odd_cp);
+            }
+
+            if (take_even) i++;
+            if (take_odd) j++;
+        }
+
+        for (int lane = 0; lane < 2; lane++) pa_finalize(inner[lane], acc[lane]);
+    }
+
+    for (int lane = 0; lane < 2; lane++) {
+        store4(scratch + tid * LIMBS, acc[lane]);
+        __syncthreads();
+        for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                u64 a[LIMBS], b[LIMBS], s[LIMBS];
+                load4(scratch + tid * LIMBS, a);
+                load4(scratch + (tid + stride) * LIMBS, b);
+                fr_add(a, b, s);
+                store4(scratch + tid * LIMBS, s);
+            }
+            __syncthreads();
+        }
+        if (tid == 0) {
+            u64 total[LIMBS];
+            load4(scratch, total);
+            store4(partials + ((unsigned long long)lane * gridDim.x + blockIdx.x) * LIMBS, total);
+        }
+        __syncthreads();
+    }
+}

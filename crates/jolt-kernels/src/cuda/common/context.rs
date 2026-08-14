@@ -126,6 +126,7 @@ pub struct CudaKernelContext {
     amm_segment_bounds: CudaFunction,
     amm_count: CudaFunction,
     amm_merge: CudaFunction,
+    amm_message: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -207,6 +208,7 @@ impl CudaKernelContext {
             amm_segment_bounds: module.load_function("amm_segment_bounds_kernel")?,
             amm_count: module.load_function("amm_count_kernel")?,
             amm_merge: module.load_function("amm_merge_kernel")?,
+            amm_message: module.load_function("amm_message_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -491,6 +493,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn amm_merge(&self) -> &CudaFunction {
         &self.amm_merge
+    }
+
+    pub(crate) const fn amm_message(&self) -> &CudaFunction {
+        &self.amm_message
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
