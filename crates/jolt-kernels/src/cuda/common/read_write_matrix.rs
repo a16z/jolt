@@ -516,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn device_matrix_binds_like_legacy_round_for_round() {
+    fn device_matrix_bind_matches_legacy_round_for_round() {
         let Some(context) = shared_context() else {
             return;
         };

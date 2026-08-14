@@ -481,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn address_major_binds_like_legacy_round_for_round() {
+    fn address_major_bind_matches_legacy_round_for_round() {
         let Some(context) = shared_context() else {
             return;
         };
