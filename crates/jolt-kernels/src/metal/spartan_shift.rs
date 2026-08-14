@@ -40,39 +40,6 @@ impl Default for SpartanShiftMetalConfig {
     }
 }
 
-struct PreparedSpartanShiftRows(SpartanShiftResidentRows);
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for PreparedSpartanShiftRows {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("device_rows"), self.0.resident_bytes());
-        visitor.exit();
-    }
-}
-
-impl MetalBackend {
-    /// Installs the three checked resident planes used by the measurement bridge.
-    ///
-    /// The production path carries these planes in [`SpartanDenseResidentOwner`].
-    /// This separate carry remains available for explicit projection measurements.
-    #[doc(hidden)]
-    pub fn install_spartan_shift_resident_rows(
-        &self,
-        session: &mut ProofSession,
-        rows: SpartanShiftResidentRows,
-    ) -> Result<(), KernelError<AkitaField>> {
-        if rows.device_registry_id() != self.context.device_registry_id() {
-            return Err(KernelError::InvariantViolation {
-                reason: "Spartan shift resident rows belong to another Metal device",
-            });
-        }
-        let _ = SpartanShiftGeometry::new(rows.len()).map_err(metal_prepare_error)?;
-        session.park(PreparedSpartanShiftRows(rows));
-        Ok(())
-    }
-}
-
 impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
     fn prepare(
         &self,
@@ -106,17 +73,12 @@ impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
             None
         };
         let (rows, resident_source) = if let Some(lease) = owner_lease {
-            drop(session.take::<PreparedSpartanShiftRows>());
             (
                 lease
                     .into_rows(cycles, self.context.device_registry_id())
                     .map_err(metal_prepare_error)?,
                 "spartan_dense_owner",
             )
-        } else if let Some(PreparedSpartanShiftRows(rows)) =
-            session.take::<PreparedSpartanShiftRows>()
-        {
-            (rows, "measurement_bridge")
         } else {
             return OptimizedSpartanShift.prepare(session, witness, inputs);
         };

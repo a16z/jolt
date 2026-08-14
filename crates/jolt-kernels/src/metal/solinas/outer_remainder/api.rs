@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use super::artifact::OuterBindingPlan;
-
 pub const OUTER_REMAINDER_OPENINGS: usize = 35;
 pub(super) const OUTER_REMAINDER_PRODUCT_ENDPOINTS: usize = 2;
 pub(super) const OUTER_REMAINDER_MAX_OUTPUTS: usize =
@@ -18,7 +16,6 @@ pub(super) const DEVICE_BUFFERS: usize = 9;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OuterRemainderSequenceConfig {
-    pub binding_plan: OuterBindingPlan,
     pub materialize_threads_per_threadgroup: Option<usize>,
     pub stream_bind_threads_per_threadgroup: Option<usize>,
     pub transition_threads_per_threadgroup: Option<usize>,
@@ -33,7 +30,6 @@ pub struct OuterRemainderSequenceConfig {
 impl Default for OuterRemainderSequenceConfig {
     fn default() -> Self {
         Self {
-            binding_plan: OuterBindingPlan::BOnlyV1,
             materialize_threads_per_threadgroup: Some(256),
             stream_bind_threads_per_threadgroup: Some(128),
             transition_threads_per_threadgroup: Some(128),

@@ -1,7 +1,6 @@
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use metal::{foreign_types::ForeignType, Buffer};
 use thiserror::Error;
 
 use super::solinas::spartan_shift::{SpartanShiftGeometry, SpartanShiftResidentRows};
@@ -220,103 +219,6 @@ impl ProductReceipt {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct SpartanDenseNativeRegisterContract {
-    generation: u64,
-    rows: usize,
-    device_registry_id: u64,
-    plane_bytes: usize,
-    total_bytes: usize,
-}
-
-impl SpartanDenseNativeRegisterContract {
-    fn new(
-        generation: u64,
-        rows: usize,
-        device_registry_id: u64,
-    ) -> Result<Self, SpartanDenseOwnerError> {
-        let plane_bytes = rows
-            .checked_mul(size_of::<u64>())
-            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
-        let total_bytes = plane_bytes
-            .checked_mul(3)
-            .ok_or(SpartanDenseOwnerError::SizeOverflow)?;
-        Ok(Self {
-            generation,
-            rows,
-            device_registry_id,
-            plane_bytes,
-            total_bytes,
-        })
-    }
-
-    pub(super) const fn total_bytes(self) -> usize {
-        self.total_bytes
-    }
-}
-
-#[derive(Clone)]
-#[expect(
-    dead_code,
-    reason = "the registers-claim consumer is wired in a separate implementation slice"
-)]
-pub(super) struct SpartanDenseNativeRegisterRows {
-    rd_write: Buffer,
-    rs1: Buffer,
-    rs2: Buffer,
-    contract: SpartanDenseNativeRegisterContract,
-    allocations: [AllocationReceipt; 3],
-}
-
-#[expect(
-    dead_code,
-    reason = "the registers-claim consumer is wired in a separate implementation slice"
-)]
-impl SpartanDenseNativeRegisterRows {
-    pub(super) fn from_buffers(
-        rd_write: Buffer,
-        rs1: Buffer,
-        rs2: Buffer,
-        contract: SpartanDenseNativeRegisterContract,
-    ) -> Result<Self, SpartanDenseOwnerError> {
-        let buffers = [&rd_write, &rs1, &rs2];
-        let mut allocations = [AllocationReceipt {
-            identity: 0,
-            bytes: 0,
-        }; 3];
-        for (index, buffer) in buffers.into_iter().enumerate() {
-            let got_device = buffer.device().registry_id();
-            if got_device != contract.device_registry_id {
-                return Err(SpartanDenseOwnerError::DeviceMismatch {
-                    expected: contract.device_registry_id,
-                    got: got_device,
-                });
-            }
-            let got_bytes = usize::try_from(buffer.length())
-                .map_err(|_| SpartanDenseOwnerError::SizeOverflow)?;
-            if got_bytes != contract.plane_bytes {
-                return Err(SpartanDenseOwnerError::AllocationLengthMismatch {
-                    expected: contract.plane_bytes,
-                    got: got_bytes,
-                });
-            }
-            allocations[index] = AllocationReceipt::new(buffer.as_ptr() as usize, got_bytes)?;
-        }
-        validate_unique_allocations(&allocations)?;
-        Ok(Self {
-            rd_write,
-            rs1,
-            rs2,
-            contract,
-            allocations,
-        })
-    }
-
-    pub(super) const fn resident_bytes(&self) -> usize {
-        self.contract.total_bytes
-    }
-}
-
 pub(super) struct SpartanDenseShiftLease {
     rows: SpartanShiftResidentRows,
     receipt: ShiftReceipt,
@@ -365,23 +267,12 @@ impl SpartanDenseProductLease {
     }
 }
 
-#[expect(
-    dead_code,
-    reason = "the registers-claim consumer is wired in a separate implementation slice"
-)]
-pub(super) struct SpartanDenseRegistersLease {
-    rows: SpartanDenseNativeRegisterRows,
-    owner_generation: u64,
-}
-
 pub(super) struct SpartanDenseResidentOwner {
     generation: u64,
     shift_receipt: ShiftReceipt,
     shift_rows: Option<SpartanShiftResidentRows>,
     product_receipt: Option<ProductReceipt>,
     product_rows: Option<ProductRemainderRows>,
-    register_contract: SpartanDenseNativeRegisterContract,
-    register_rows: Option<SpartanDenseNativeRegisterRows>,
 }
 
 impl SpartanDenseResidentOwner {
@@ -390,19 +281,12 @@ impl SpartanDenseResidentOwner {
     ) -> Result<Self, SpartanDenseOwnerError> {
         let generation = next_generation()?;
         let shift_receipt = ShiftReceipt::co_produced(generation, &rows)?;
-        let register_contract = SpartanDenseNativeRegisterContract::new(
-            generation,
-            rows.len(),
-            rows.device_registry_id(),
-        )?;
         Ok(Self {
             generation,
             shift_receipt,
             shift_rows: Some(rows),
             product_receipt: None,
             product_rows: None,
-            register_contract,
-            register_rows: None,
         })
     }
 
@@ -416,10 +300,6 @@ impl SpartanDenseResidentOwner {
 
     pub(super) const fn shift_late_copy_dispatches(&self) -> usize {
         self.shift_receipt.late_copy_dispatches
-    }
-
-    pub(super) const fn register_contract(&self) -> SpartanDenseNativeRegisterContract {
-        self.register_contract
     }
 
     pub(super) fn shift_rows(&self) -> Option<&SpartanShiftResidentRows> {
@@ -493,52 +373,6 @@ impl SpartanDenseResidentOwner {
             owner_generation: self.generation,
         })
     }
-
-    #[expect(
-        dead_code,
-        reason = "the registers-claim consumer is wired in a separate implementation slice"
-    )]
-    pub(super) fn install_register_rows(
-        &mut self,
-        rows: SpartanDenseNativeRegisterRows,
-    ) -> Result<(), SpartanDenseOwnerError> {
-        if rows.contract != self.register_contract {
-            return Err(SpartanDenseOwnerError::RegisterContractMismatch);
-        }
-        if self.register_rows.is_some() {
-            return Err(SpartanDenseOwnerError::RegistersAlreadyInstalled);
-        }
-        for allocation in rows.allocations {
-            let aliases_shift = self
-                .shift_receipt
-                .allocations
-                .iter()
-                .any(|shift| shift.identity == allocation.identity);
-            let aliases_product = self
-                .product_receipt
-                .is_some_and(|product| product.allocation.identity == allocation.identity);
-            if aliases_shift || aliases_product {
-                return Err(SpartanDenseOwnerError::DuplicateAllocationIdentity(
-                    allocation.identity,
-                ));
-            }
-        }
-        self.register_rows = Some(rows);
-        Ok(())
-    }
-
-    #[expect(
-        dead_code,
-        reason = "the registers-claim consumer is wired in a separate implementation slice"
-    )]
-    pub(super) fn take_registers_lease(&mut self) -> Option<SpartanDenseRegistersLease> {
-        self.register_rows
-            .take()
-            .map(|rows| SpartanDenseRegistersLease {
-                rows,
-                owner_generation: self.generation,
-            })
-    }
 }
 
 #[cfg(feature = "allocative")]
@@ -553,12 +387,6 @@ impl allocative::Allocative for SpartanDenseResidentOwner {
         }
         if let Some(rows) = &self.product_rows {
             visitor.visit_field(allocative::Key::new("product_rows"), rows);
-        }
-        if let Some(rows) = &self.register_rows {
-            visitor.visit_simple(
-                allocative::Key::new("device_register_rows"),
-                rows.resident_bytes(),
-            );
         }
         visitor.exit();
     }
@@ -618,10 +446,6 @@ pub(super) enum SpartanDenseOwnerError {
     MissingProductRows,
     #[error("Spartan dense product receipt is missing")]
     MissingProductReceipt,
-    #[error("Spartan dense native register contract does not match its owner")]
-    RegisterContractMismatch,
-    #[error("Spartan dense native register rows were installed twice")]
-    RegistersAlreadyInstalled,
     #[error("Spartan dense size arithmetic overflowed")]
     SizeOverflow,
 }
@@ -644,16 +468,6 @@ mod tests {
             receipt.validate(17, 32),
             Err(SpartanDenseOwnerError::AllocationLengthMismatch { .. })
         ));
-    }
-
-    #[test]
-    fn native_register_contract_prices_all_three_planes() {
-        let contract = SpartanDenseNativeRegisterContract::new(7, 1 << 26, 11).unwrap();
-        assert_eq!(contract.plane_bytes, 536_870_912);
-        assert_eq!(contract.total_bytes(), 1_610_612_736);
-        assert_eq!(contract.generation, 7);
-        assert_eq!(contract.rows, 1 << 26);
-        assert_eq!(contract.device_registry_id, 11);
     }
 
     #[test]

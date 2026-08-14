@@ -36,11 +36,9 @@ pub use hamming_weight_claim_reduction::HammingWeightMetalConfig;
 pub use instruction_claim_reduction::InstructionClaimReductionMetalConfig;
 pub use instruction_input::{InstructionInputDenseStorageMode, InstructionInputMetalConfig};
 pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
+pub use instruction_read_raf::InstructionReadRafMetalConfig;
 #[cfg(test)]
 pub(crate) use instruction_read_raf::MetalInstructionReadRafKernel;
-pub use instruction_read_raf::{
-    InstructionReadRafAddressImplementation, InstructionReadRafMetalConfig,
-};
 pub use ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
 pub use ram_ra_virtualization::RamRaVirtualizationMetalConfig;
 pub use ram_raf_evaluation::RamRafEvaluationMetalConfig;

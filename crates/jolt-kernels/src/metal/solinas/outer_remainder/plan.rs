@@ -5,7 +5,6 @@ use super::api::{
     OuterRemainderSequenceConfig, DEVICE_BUFFERS, OUTER_REMAINDER_A_LOOKUP_FIELDS,
     OUTER_REMAINDER_MAX_OUTPUTS, OUTER_REMAINDER_OPENINGS,
 };
-use super::artifact::OuterBindingPlan;
 use super::registers_claim::carrier_geometry;
 
 pub(super) const SIMD_WIDTH: usize = 32;
@@ -18,20 +17,12 @@ pub(super) struct OpeningLayout {
     pub(super) shard_sums: bool,
 }
 
-pub(super) const fn opening_layout(plan: OuterBindingPlan) -> OpeningLayout {
-    match plan {
-        OuterBindingPlan::BOnlyV1 => OpeningLayout {
-            tile_rows: 64,
-            source_row_words: 20,
-            row_stride_words: 20,
-            shard_sums: true,
-        },
-        OuterBindingPlan::BOnlyPadded56V1 => OpeningLayout {
-            tile_rows: 56,
-            source_row_words: 20,
-            row_stride_words: 21,
-            shard_sums: false,
-        },
+pub(super) const fn opening_layout() -> OpeningLayout {
+    OpeningLayout {
+        tile_rows: 64,
+        source_row_words: 20,
+        row_stride_words: 20,
+        shard_sums: true,
     }
 }
 
@@ -71,22 +62,15 @@ pub(crate) fn outer_remainder_sequence_max_buffer_bytes_with_config(
 pub(super) fn validate_opening_threadgroup_memory(
     context: &SolinasMetal,
     limits: PipelineLimits,
-    plan: OuterBindingPlan,
     threads: usize,
     product_uniskip_carrier: bool,
-    registers_claim_carrier: bool,
 ) -> Result<(), MetalError> {
-    let dynamic = opening_threadgroup_memory_lengths(
-        plan,
-        threads,
-        product_uniskip_carrier,
-        registers_claim_carrier,
-    )?
-    .into_iter()
-    .try_fold(0u64, |total, bytes| total.checked_add(bytes))
-    .ok_or(MetalError::InvalidOuterRemainderConfig(
-        "opening threadgroup byte count overflowed",
-    ))?;
+    let dynamic = opening_threadgroup_memory_lengths(threads, product_uniskip_carrier)?
+        .into_iter()
+        .try_fold(0u64, |total, bytes| total.checked_add(bytes))
+        .ok_or(MetalError::InvalidOuterRemainderConfig(
+            "opening threadgroup byte count overflowed",
+        ))?;
     let requested = limits
         .static_threadgroup_memory_length
         .checked_add(dynamic)
@@ -101,12 +85,10 @@ pub(super) fn validate_opening_threadgroup_memory(
 }
 
 pub(super) fn opening_threadgroup_memory_lengths(
-    plan: OuterBindingPlan,
     threads: usize,
     product_uniskip_carrier: bool,
-    _registers_claim_carrier: bool,
 ) -> Result<[u64; 3], MetalError> {
-    let layout = opening_layout(plan);
+    let layout = opening_layout();
     let row_words = layout
         .tile_rows
         .checked_mul(layout.row_stride_words)
@@ -156,11 +138,6 @@ pub(super) fn storage_geometry(
     if config.cpu_tail_elements < 2 || !config.cpu_tail_elements.is_power_of_two() {
         return Err(MetalError::InvalidOuterRemainderConfig(
             "cpu_tail_elements must be a power of two of at least two",
-        ));
-    }
-    if config.registers_claim_carrier && config.binding_plan != OuterBindingPlan::BOnlyV1 {
-        return Err(MetalError::InvalidOuterRemainderConfig(
-            "registers-claim carrier requires the B-only-v1 opening layout",
         ));
     }
     let current_elements = cycles

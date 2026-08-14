@@ -14,9 +14,7 @@ use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_claim_reduction::InstructionClaimReductionMetalConfig;
 use super::instruction_input::{InstructionInputDenseStorageMode, InstructionInputMetalConfig};
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
-use super::instruction_read_raf::{
-    InstructionReadRafAddressImplementation, InstructionReadRafMetalConfig,
-};
+use super::instruction_read_raf::InstructionReadRafMetalConfig;
 use super::ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
 use super::ram_ra_claim_reduction::RamRaClaimReductionMetalConfig;
 use super::ram_ra_virtualization::RamRaVirtualizationMetalConfig;
@@ -193,10 +191,8 @@ impl MetalBackend {
         }
         if config.bytecode_read_raf_address.implementation
             == BytecodeReadRafAddressImplementation::AddressMajor
-            && (config.instruction_read_raf.address_implementation
-                != InstructionReadRafAddressImplementation::Stage1Grouped
-                || config.instruction_read_raf.address_cutoff_elements
-                    > config.bytecode_read_raf_address.trace_cutoff_elements
+            && (config.instruction_read_raf.address_cutoff_elements
+                > config.bytecode_read_raf_address.trace_cutoff_elements
                 || config.bytecode_read_raf_address.trace_cutoff_elements < 1 << 15)
         {
             return Err(MetalError::InvalidBytecodeReadRafAddressConfig(
@@ -204,10 +200,8 @@ impl MetalBackend {
             ));
         }
         if config.registers_val_evaluation.source == RegistersValEvaluationSource::Stage1Resident
-            && (config.instruction_read_raf.address_implementation
-                != InstructionReadRafAddressImplementation::Stage1Grouped
-                || config.instruction_read_raf.address_cutoff_elements
-                    > config.registers_val_evaluation.trace_cutoff_elements
+            && (config.instruction_read_raf.address_cutoff_elements
+                > config.registers_val_evaluation.trace_cutoff_elements
                 || !(1 << 26..=1 << 28)
                     .contains(&config.registers_val_evaluation.trace_cutoff_elements)
                 || config.registers_val_evaluation.cutoff_elements
@@ -490,9 +484,6 @@ mod tests {
         let mut config = MetalConfig::default();
         config.registers_val_evaluation.source = RegistersValEvaluationSource::Stage1Resident;
         config.registers_val_evaluation.trace_cutoff_elements = 1 << 26;
-        config.instruction_read_raf.address_implementation =
-            InstructionReadRafAddressImplementation::Stage1Grouped;
-
         let validation = MetalBackend::validate_config(&config);
         assert!(validation.is_ok(), "{validation:?}");
 

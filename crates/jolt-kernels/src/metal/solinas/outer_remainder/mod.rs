@@ -1,5 +1,4 @@
 mod api;
-mod artifact;
 mod plan;
 mod registers_claim;
 mod sequence;
@@ -15,7 +14,6 @@ pub use api::{
     OuterRemainderStorageInitialization, OuterRemainderStorageInitializationStats,
     OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
-pub use artifact::OuterBindingPlan;
 pub(crate) use plan::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config,
@@ -26,5 +24,5 @@ pub(crate) use sequence::{
     OuterRegistersClaimCarrierJoinStats, OuterRegistersClaimCarrierSubmission,
     PendingOuterRegistersClaimCarrier,
 };
-pub(super) use shader::{PADDED_56_SOURCE, SOURCE};
+pub(super) use shader::SOURCE;
 pub(crate) use storage::OuterRemainderSequenceStorage;

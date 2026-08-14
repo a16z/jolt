@@ -25,7 +25,6 @@ use rayon::prelude::*;
 
 use super::backend::{MetalBackend, MetalConfig};
 use super::instruction_input::{InstructionInputDenseStorageMode, PreparedInstructionInput};
-use super::instruction_read_raf::InstructionReadRafAddressImplementation;
 use super::registers_claim_reduction::{
     MetalRegistersClaimAsyncStage1Carry, MetalRegistersClaimOuterSource,
     MetalRegistersClaimPendingStage1Carry, MetalRegistersClaimStage1Carry,
@@ -58,7 +57,6 @@ use crate::optimized::spartan_outer::{
     InstructionReadRafStage1Ready, MetalSpartanDenseRowsError, OptimizedOuterRemainder,
     OptimizedOuterUniskip,
 };
-use crate::optimized::spartan_shift::prepare_metal_spartan_shift_witness_rows;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -233,11 +231,6 @@ fn prepare_cpu_instruction_input_now(
     cpu_prepared: bool,
 ) -> bool {
     !metal_prepared && !stage1_rows_resident && !cpu_prepared
-}
-
-fn spartan_shift_measurement_bridge_enabled() -> bool {
-    std::env::var_os("JOLT_METAL_SPARTAN_SHIFT_MEASUREMENT_BRIDGE")
-        .is_some_and(|value| value == std::ffi::OsStr::new("1"))
 }
 
 impl Default for SpartanOuterUniskipMetalConfig {
@@ -483,13 +476,11 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let cycles = 1usize << log_t;
         let (mut stage1_eligible, instruction_input_eligible) =
             resident_row_consumers(cycles, &self.config);
-        let instruction_read_raf_owner_requested =
-            self.config.instruction_read_raf.address_implementation
-                == InstructionReadRafAddressImplementation::Stage1Grouped
-                && cycles >= self.config.instruction_read_raf.address_cutoff_elements
-                && witness
-                    .owned_rows()
-                    .is_some_and(|rows| cycles <= rows.cycles());
+        let instruction_read_raf_owner_requested = cycles
+            >= self.config.instruction_read_raf.address_cutoff_elements
+            && witness
+                .owned_rows()
+                .is_some_and(|rows| cycles <= rows.cycles());
         let register_val_owner_requested = self.config.registers_val_evaluation.source
             == RegistersValEvaluationSource::Stage1Resident
             && cycles >= self.config.registers_val_evaluation.trace_cutoff_elements;
@@ -723,10 +714,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 "shift_late_copy_dispatches",
                                 owner.shift_late_copy_dispatches(),
                             );
-                            let _ = span.record(
-                                "native_register_contract_bytes",
-                                owner.register_contract().total_bytes(),
-                            );
                             let _ = span.record("shift_resident_bytes", shift_resident_bytes);
                             let _ = span.record("admitted", true);
                             let _ = span.record("fallback_reason", "none");
@@ -803,38 +790,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             }
         }
         self.prepare_ram_raf_witness(session, log_t, witness)?;
-        if cycles >= self.config.spartan_shift.trace_cutoff_elements
-            && session.state::<SpartanDenseResidentOwner>().is_none()
-            && spartan_shift_measurement_bridge_enabled()
-        {
-            let span = tracing::info_span!(
-                "MetalSpartanShift::resident_rows_prepare",
-                cycles,
-                source = "measurement_bridge",
-                resident_bytes = tracing::field::Empty,
-                admitted = tracing::field::Empty,
-                fallback_reason = tracing::field::Empty,
-            );
-            let _entered = span.enter();
-            match prepare_metal_spartan_shift_witness_rows(&self.context, witness, cycles) {
-                Ok(rows) => {
-                    let _ = span.record("resident_bytes", rows.resident_bytes());
-                    let _ = span.record("admitted", true);
-                    let _ = span.record("fallback_reason", "none");
-                    self.install_spartan_shift_resident_rows(session, rows)?;
-                }
-                Err(error) if error.is_capacity_error() => {
-                    let _ = span.record("admitted", false);
-                    let _ = span.record("fallback_reason", "capacity");
-                    tracing::warn!(
-                        target: "jolt::metal",
-                        error = %error,
-                        "Spartan shift resident projection was not admitted"
-                    );
-                }
-                Err(error) => return Err(metal_prepare_error(error)),
-            }
-        }
         if self.config.spartan_product_remainder.reuse_outer_state_a {
             self.prepare_instruction_input_storage(session, cycles)?;
             self.prepare_outer_remainder_storage(session, cycles)?;
@@ -2064,7 +2019,6 @@ mod tests {
         MetalOuterRemainderHost, OuterRemainder, ResidentRowPlan, SpartanOuterDimensions,
         OUTER_DOMAIN, OUTER_VARIABLES,
     };
-    use crate::metal::solinas::OuterBindingPlan;
     use crate::metal::solinas::{
         MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
     };
@@ -2338,7 +2292,7 @@ mod tests {
         assert_eq!(factored, dense);
     }
 
-    fn adapter_parity_case(log_t: usize, cpu_tail_elements: usize, binding_plan: OuterBindingPlan) {
+    fn adapter_parity_case(log_t: usize, cpu_tail_elements: usize) {
         let cycles = 1usize << log_t;
         with_sample_backend_at_log_t(log_t, 4, |witness| {
             let tau = (0..log_t + 2)
@@ -2383,7 +2337,6 @@ mod tests {
                 spartan_outer_remainder: SpartanOuterRemainderMetalConfig {
                     trace_cutoff_elements: 4,
                     dispatch: OuterRemainderSequenceConfig {
-                        binding_plan,
                         max_threadgroups: 2,
                         cpu_tail_elements,
                         ..Default::default()
@@ -2466,17 +2419,12 @@ mod tests {
 
     #[test]
     fn outer_remainder_adapter_matches_optimized_cpu_all_rounds_and_openings() {
-        adapter_parity_case(5, 8, OuterBindingPlan::BOnlyV1);
-    }
-
-    #[test]
-    fn padded_56_outer_matches_cpu_across_a_full_tile_and_tail() {
-        adapter_parity_case(12, 8, OuterBindingPlan::BOnlyPadded56V1);
+        adapter_parity_case(5, 8);
     }
 
     #[test]
     fn outer_remainder_handoff_waits_for_the_stream_bind() {
-        adapter_parity_case(3, 16, OuterBindingPlan::BOnlyV1);
+        adapter_parity_case(3, 16);
     }
 
     #[test]

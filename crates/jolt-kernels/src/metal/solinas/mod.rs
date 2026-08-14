@@ -118,7 +118,7 @@ pub(crate) use outer_remainder::{
     PendingOuterRegistersClaimCarrier,
 };
 pub use outer_remainder::{
-    OuterBindingPlan, OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
+    OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
     OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
     OuterRemainderStorageInitializationStats, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };

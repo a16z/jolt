@@ -29,8 +29,7 @@
     "spartan_shift",
     "instruction_input",
     "address_cycle",
-    "outer_remainder",
-    "outer_remainder_padded_56"
+    "outer_remainder"
   ],
   "installed_slots": [
     "spartan_outer_uniskip",

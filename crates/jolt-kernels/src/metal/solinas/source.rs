@@ -28,7 +28,6 @@ const BYTECODE_ROW_SOURCE: &str = include_str!("bytecode_row/shader.metal");
 const SPARTAN_OUTER_UNISKIP_SOURCE: &str = include_str!("spartan_outer_uniskip/shader.metal");
 const SPARTAN_SHIFT_SOURCE: &str = super::spartan_shift::SOURCE;
 const OUTER_REMAINDER_SOURCE: &str = super::outer_remainder::SOURCE;
-const OUTER_REMAINDER_PADDED_56_SOURCE: &str = super::outer_remainder::PADDED_56_SOURCE;
 
 struct SourceFragment {
     #[cfg(test)]
@@ -106,10 +105,6 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("instruction_input", INSTRUCTION_INPUT_SOURCE),
     SourceFragment::new("address_cycle", ADDRESS_CYCLE_SOURCE),
     SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
-    SourceFragment::new(
-        "outer_remainder_padded_56",
-        OUTER_REMAINDER_PADDED_56_SOURCE,
-    ),
 ];
 
 pub(super) fn library_source(offset: u32) -> String {
@@ -146,11 +141,11 @@ mod tests {
     fn source_assembly_puts_the_outer_fragment_last() {
         let generic = library_source(275);
         assert!(!generic.contains(BYTECODE_READ_RAF_ADDRESS_SOURCE));
-        assert!(generic.ends_with(OUTER_REMAINDER_PADDED_56_SOURCE));
+        assert!(generic.ends_with(OUTER_REMAINDER_SOURCE));
 
         let akita = library_source(AKITA_OFFSET_FFFFA7F7);
         assert!(akita.contains(BYTECODE_READ_RAF_ADDRESS_SOURCE));
-        assert!(akita.ends_with(OUTER_REMAINDER_PADDED_56_SOURCE));
+        assert!(akita.ends_with(OUTER_REMAINDER_SOURCE));
     }
 
     #[test]

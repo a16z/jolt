@@ -36,8 +36,6 @@ use crate::{
 pub struct InstructionReadRafMetalConfig {
     /// First trace length whose address phases run on Metal.
     pub address_cutoff_elements: usize,
-    /// Address implementation selected before the first round is absorbed.
-    pub address_implementation: InstructionReadRafAddressImplementation,
     /// Threadgroup width for the Stage-1 compatibility scatter.
     pub stage1_scatter_threads_per_threadgroup: usize,
     /// Dispatch geometry for the resident address sequence.
@@ -52,19 +50,12 @@ impl Default for InstructionReadRafMetalConfig {
     fn default() -> Self {
         Self {
             address_cutoff_elements: 1 << 25,
-            address_implementation: InstructionReadRafAddressImplementation::Stage1Grouped,
             stage1_scatter_threads_per_threadgroup: 256,
             address_dispatch: AddressPhaseSequenceConfig::default(),
             cutoff_elements: 1 << 16,
             dispatch: Product5SequenceConfig::default(),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InstructionReadRafAddressImplementation {
-    GroupedRows,
-    Stage1Grouped,
 }
 
 const SOURCE_PRIMER_CUTOFF_ELEMENTS: usize = 1 << 28;
@@ -176,11 +167,9 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let fuse_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == crate::metal::BytecodeReadRafAddressImplementation::AddressMajor
             && rows >= self.config.bytecode_read_raf_address.trace_cutoff_elements;
-        let can_prefetch_scatter = self.config.instruction_read_raf.address_implementation
-            == InstructionReadRafAddressImplementation::Stage1Grouped
-            && session
-                .state::<Stage5InstructionReadRafPrefetch<AkitaField>>()
-                .is_some()
+        let can_prefetch_scatter = session
+            .state::<Stage5InstructionReadRafPrefetch<AkitaField>>()
+            .is_some()
             && (!fuse_bytecode_carrier
                 || session
                     .state::<BytecodeAddressStage1TopologyOwner>()
@@ -387,8 +376,6 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 .instruction_ra_virtualization
                 .trace_cutoff_elements;
         let stage1_owner = (use_metal_address
-            && self.config.instruction_read_raf.address_implementation
-                == InstructionReadRafAddressImplementation::Stage1Grouped
             && dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS)
             .then(|| session.take::<InstructionReadRafStage1Owner>())
             .flatten();
@@ -732,13 +719,6 @@ impl MetalInstructionReadRafKernel {
         };
         if use_metal_address {
             if let Some(input) = resident_grouped_input {
-                if config.address_implementation
-                    != InstructionReadRafAddressImplementation::Stage1Grouped
-                {
-                    return Err(backend_error(
-                        "Stage-1 grouped planes reached another address implementation",
-                    ));
-                }
                 let (mut sequence, initial_sums) = match input {
                     ResidentGroupedInput::Planes(planes) => {
                         let _span = tracing::info_span!(

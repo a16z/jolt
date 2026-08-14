@@ -21,7 +21,7 @@ use super::{
     },
     registers_claim::{carrier_geometry, RegistersClaimCarrierGeometry},
     shader::{
-        opening_pipeline_name, pipeline_names, REGISTERS_CLAIM_BUILD_PIPELINE,
+        pipeline_names, OPENING_PIPELINE, REGISTERS_CLAIM_BUILD_PIPELINE,
         REGISTERS_CLAIM_DOT_PIPELINE, REGISTERS_CLAIM_REDUCE_PIPELINE,
     },
 };
@@ -168,8 +168,8 @@ impl SolinasMetal {
         let weight_capacity = geometry.weight_capacity;
         let max_threadgroups = geometry.max_threadgroups;
 
-        let names = pipeline_names(config.binding_plan);
-        let opening_name = opening_pipeline_name(config.binding_plan);
+        let names = pipeline_names();
+        let opening_name = OPENING_PIPELINE;
         let pipelines = Pipelines {
             materialize: self.compile_named_pipeline(names.materialize)?,
             stream_bind: self.compile_named_pipeline(names.stream_bind)?,
@@ -276,10 +276,8 @@ impl SolinasMetal {
         validate_opening_threadgroup_memory(
             self,
             limits.opening,
-            config.binding_plan,
             threads.opening,
             config.product_uniskip_carrier,
-            config.registers_claim_carrier,
         )?;
 
         for elements in geometry.element_counts {

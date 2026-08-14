@@ -839,12 +839,8 @@ impl OuterRemainderSequence {
         let source_instruction_input = rows.instruction_input_buffer().clone();
         let source_residual = rows.residual_buffer().clone();
         let threads = self.storage.threads.opening;
-        let threadgroup_memory = opening_threadgroup_memory_lengths(
-            self.config.binding_plan,
-            threads,
-            self.config.product_uniskip_carrier,
-            self.config.registers_claim_carrier,
-        )?;
+        let threadgroup_memory =
+            opening_threadgroup_memory_lengths(threads, self.config.product_uniskip_carrier)?;
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer().to_owned();
         if self.storage.buffers.registers_claim.is_some()

@@ -8,7 +8,6 @@ use super::{
         outer_remainder_sequence_storage_bytes_with_config, storage_geometry,
     },
     sequence::{OpeningParams, PhaseParams, ReduceParams},
-    OuterBindingPlan,
 };
 
 #[test]
@@ -34,44 +33,18 @@ fn initial_log_26_gruen_shape_excludes_the_active_variable() {
 
 #[test]
 fn opening_layouts_close_their_dynamic_threadgroup_memory() {
-    let legacy_layout = opening_layout(OuterBindingPlan::BOnlyV1);
-    assert_eq!(legacy_layout.tile_rows, 64);
-    assert_eq!(legacy_layout.source_row_words, 20);
-    assert_eq!(legacy_layout.row_stride_words, 20);
-    assert!(legacy_layout.shard_sums);
+    let layout = opening_layout();
+    assert_eq!(layout.tile_rows, 64);
+    assert_eq!(layout.source_row_words, 20);
+    assert_eq!(layout.row_stride_words, 20);
+    assert!(layout.shard_sums);
 
-    let padded_layout = opening_layout(OuterBindingPlan::BOnlyPadded56V1);
-    assert_eq!(padded_layout.tile_rows, 56);
-    assert_eq!(padded_layout.source_row_words, 20);
-    assert_eq!(padded_layout.row_stride_words, 21);
-    assert!(!padded_layout.shard_sums);
+    let base = opening_threadgroup_memory_lengths(256, false).unwrap();
+    assert_eq!(base, [10_240, 1_024, 3_920]);
+    assert_eq!(base.into_iter().sum::<u64>(), 15_184);
 
-    let legacy =
-        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256, false, false).unwrap();
-    let padded =
-        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyPadded56V1, 256, false, false)
-            .unwrap();
-
-    assert_eq!(legacy, [10_240, 1_024, 3_920]);
-    assert_eq!(legacy.into_iter().sum::<u64>(), 15_184);
-    assert_eq!(padded, [9_408, 896, 0]);
-    assert_eq!(padded.into_iter().sum::<u64>(), 10_304);
-
-    let carrier =
-        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256, true, false).unwrap();
+    let carrier = opening_threadgroup_memory_lengths(256, true).unwrap();
     assert_eq!(carrier, [10_240, 1_024, 3_552]);
-
-    let registers =
-        opening_threadgroup_memory_lengths(OuterBindingPlan::BOnlyV1, 256, true, true).unwrap();
-    assert_eq!(registers, carrier);
-}
-
-#[test]
-fn default_sequence_keeps_the_legacy_binding_plan() {
-    assert_eq!(
-        OuterRemainderSequenceConfig::default().binding_plan,
-        OuterBindingPlan::BOnlyV1,
-    );
 }
 
 #[test]
