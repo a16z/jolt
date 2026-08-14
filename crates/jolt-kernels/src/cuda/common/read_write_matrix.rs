@@ -168,6 +168,30 @@ impl DeviceReadWriteMatrix {
         Ok((segment_count, seg))
     }
 
+    pub fn to_address_major(
+        &self,
+        context: &CudaKernelContext,
+        val_init: &[Fr],
+    ) -> Result<super::address_major_matrix::DeviceAddressMajorMatrix, CudaError> {
+        if self.entries > val_init.len() {
+            return Err(CudaError::InvariantViolation {
+                reason: "transposing a read-write matrix needs its cycle variables fully bound",
+            });
+        }
+        super::address_major_matrix::DeviceAddressMajorMatrix::from_parts(
+            context,
+            context.clone_u32(&self.rows)?,
+            context.clone_u32(&self.cols)?,
+            &self.val_coeff,
+            &self.prev_val,
+            &self.next_val,
+            &self.coeffs,
+            val_init,
+            self.coeff_width,
+            self.entries,
+        )
+    }
+
     pub fn quadratic_coeffs<F: jolt_field::Field>(
         &self,
         context: &CudaKernelContext,

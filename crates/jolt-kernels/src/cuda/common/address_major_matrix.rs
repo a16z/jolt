@@ -82,6 +82,58 @@ impl DeviceAddressMajorMatrix {
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the cycle-major transpose hands over one buffer per matrix column"
+    )]
+    pub(crate) fn from_parts(
+        context: &CudaKernelContext,
+        rows: CudaSlice<u32>,
+        cols: CudaSlice<u32>,
+        val_coeff: &DeviceFrVec,
+        prev_val: &CudaSlice<u64>,
+        next_val: &CudaSlice<u64>,
+        coeffs: &DeviceFrVec,
+        val_init: &[Fr],
+        coeff_width: usize,
+        entries: usize,
+    ) -> Result<Self, CudaError> {
+        Ok(Self {
+            rows,
+            cols,
+            val_coeff: val_coeff.try_clone()?,
+            prev_val: Self::lift(context, prev_val, entries)?,
+            next_val: Self::lift(context, next_val, entries)?,
+            coeffs: coeffs.try_clone()?,
+            val_init: context.upload(val_init)?,
+            coeff_width,
+            entries,
+            rounds_bound: 0,
+        })
+    }
+
+    fn lift(
+        context: &CudaKernelContext,
+        raw: &CudaSlice<u64>,
+        entries: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut out = context.alloc(entries)?;
+        if entries == 0 {
+            return Ok(out);
+        }
+        let count = CudaKernelContext::count_of(entries)?;
+        let mut builder = context.stream().launch_builder(context.amm_lift());
+        let _ = builder.arg(raw);
+        let _ = builder.arg(&count);
+        let _ = builder.arg(out.limbs_mut());
+        // SAFETY: thread `i < entries` reads `raw[i]` and writes the `LIMBS`
+        // field limbs at `out[i]`. `raw` holds `entries` u64s and `out` holds
+        // `entries` field elements; they are distinct allocations.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        context.stream().synchronize()?;
+        Ok(out)
+    }
+
     pub const fn len(&self) -> usize {
         self.entries
     }

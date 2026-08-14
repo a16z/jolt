@@ -15,6 +15,8 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
+use jolt_witness::__private::TraceRow;
+use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{
     ChunkVisitor, FixedBackend, JoltWitnessOracle, JoltWitnessPlane, OneHotSource, ProgramSource,
     RowSource, Shape, WitnessError,
@@ -138,6 +140,82 @@ impl FixedPlane {
                 reason: format!("{id:?} has fewer rows than the declared cycle count"),
             })?;
         Ok((log_k, 1usize << log_t))
+    }
+}
+
+pub struct RowPlane {
+    inner: FixedPlane,
+    rows: Vec<TraceRow>,
+}
+
+impl RowPlane {
+    pub fn new(
+        columns: FixedBackend<Fr>,
+        label: &'static str,
+        log_t: usize,
+        rows: Vec<TraceRow>,
+    ) -> Self {
+        Self {
+            inner: FixedPlane::with_log_t(columns, label, Some(log_t)),
+            rows,
+        }
+    }
+}
+
+impl JoltWitnessOracle<Fr> for RowPlane {
+    fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
+        self.inner.shape(id)
+    }
+
+    fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<Fr>, WitnessError> {
+        JoltWitnessOracle::<Fr>::oracle_table(&self.inner, id)
+    }
+
+    fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+        self.inner.committed_order()
+    }
+}
+
+impl ProgramSource for RowPlane {
+    fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
+        self.inner.program_preprocessing()
+    }
+}
+
+impl OneHotSource for RowPlane {
+    fn hot_indices(&self, id: JoltPolynomialId) -> Result<Vec<Option<usize>>, WitnessError> {
+        self.inner.hot_indices(id)
+    }
+
+    fn hot_address_bits(&self, id: JoltPolynomialId) -> Result<usize, WitnessError> {
+        self.inner.hot_address_bits(id)
+    }
+}
+
+impl RowSource for RowPlane {
+    fn visit_chunks(
+        &self,
+        range: std::ops::Range<usize>,
+        chunk_size: usize,
+        visitor: &mut ChunkVisitor<'_>,
+    ) -> Result<(), WitnessError> {
+        if range.end > self.rows.len() {
+            return Err(WitnessError::InvalidWitnessData {
+                label: "cuda row plane",
+                reason: format!(
+                    "requested cycles {range:?} exceed the {} fixture rows",
+                    self.rows.len()
+                ),
+            });
+        }
+        let env = WitnessEnv::new(self.inner.program_preprocessing());
+        let mut start = range.start;
+        while start < range.end {
+            let end = (start + chunk_size).min(range.end);
+            visitor(&self.rows[start..end], self.rows.get(end), &env)?;
+            start = end;
+        }
+        Ok(())
     }
 }
 

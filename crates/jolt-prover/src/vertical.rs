@@ -518,7 +518,11 @@ fn measure_registers_read_write(
     let rounds = jolt_claims::SymbolicSumcheck::rounds(
         jolt_verifier::stages::relations::ConcreteSumcheck::symbolic(&relation),
     );
-    drive_rounds(&mut *kernel, &claims, rounds, log_t, prepare, |_| {
-        RoundPhase::Cycle
+    drive_rounds(&mut *kernel, &claims, rounds, log_t, prepare, |round| {
+        if round < log_t {
+            RoundPhase::Cycle
+        } else {
+            RoundPhase::Address
+        }
     })
 }

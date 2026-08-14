@@ -49,6 +49,7 @@ where
         backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);
+        backend.registers_read_write = Box::new(CudaBackend);
         backend
     }
 }

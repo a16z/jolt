@@ -128,6 +128,7 @@ pub struct CudaKernelContext {
     amm_merge: CudaFunction,
     amm_message: CudaFunction,
     amm_materialize: CudaFunction,
+    amm_lift: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -211,6 +212,7 @@ impl CudaKernelContext {
             amm_merge: module.load_function("amm_merge_kernel")?,
             amm_message: module.load_function("amm_message_kernel")?,
             amm_materialize: module.load_function("amm_materialize_kernel")?,
+            amm_lift: module.load_function("amm_lift_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -288,6 +290,12 @@ impl CudaKernelContext {
     pub(crate) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    pub(crate) fn clone_u32(&self, buffer: &CudaSlice<u32>) -> Result<CudaSlice<u32>, CudaError> {
+        xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtod(buffer)?)
         })
     }
 
@@ -503,6 +511,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn amm_materialize(&self) -> &CudaFunction {
         &self.amm_materialize
+    }
+
+    pub(crate) const fn amm_lift(&self) -> &CudaFunction {
+        &self.amm_lift
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {

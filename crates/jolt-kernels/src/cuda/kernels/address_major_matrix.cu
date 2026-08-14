@@ -192,6 +192,16 @@ extern "C" __global__ void amm_merge_kernel(
     }
 }
 
+extern "C" __global__ void amm_lift_kernel(const u64 *__restrict__ raw, unsigned int n,
+                                          u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    u64 value[LIMBS] = {raw[i], 0, 0, 0};
+    u64 mont[LIMBS];
+    fr_to_mont(value, mont);
+    store4(out + (unsigned long long)i * LIMBS, mont);
+}
+
 extern "C" __global__ void amm_materialize_kernel(
     const unsigned int *__restrict__ rows, const unsigned int *__restrict__ cols,
     const u64 *__restrict__ val_coeff, const u64 *__restrict__ next_val,
