@@ -9,3 +9,18 @@ jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
 common = { path = "../common" }
 tracer = { path = "../tracer" }
 z3 = "0.20.0"
+# Never used from Rust — declared only to pin the Z3 that `vendored-z3` builds.
+# z3-sys asks for `z3-src = "416"`, which would let the solver change under the
+# nightly between runs and surface as a spurious soundness signal. 416.0.2 is
+# Z3 release 4.16.0. A future `z3` bump that needs a different z3-src major
+# fails resolution here rather than drifting silently.
+z3-src = { version = "=416.0.2", optional = true }
+
+[features]
+# Build Z3 from pinned vendored source instead of linking the runner's libz3.
+# Used by .github/workflows/z3-nightly.yml so nightly results depend only on
+# this repo, not on runner packages.
+vendored-z3 = ["z3/vendored", "dep:z3-src"]
+
+[package.metadata.cargo-machete]
+ignored = ["z3-src"]

@@ -156,10 +156,15 @@ impl InlineExpansionBuilder {
     /// be released before `finalize`; the materializer rejects leaked handles
     /// and appends reset rows for all handles that were allocated and released.
     pub fn allocate_for_inline(&mut self) -> Result<InlineRegister, ExpansionError> {
-        let Some(index) = self.inline_live.iter().position(|allocated| !allocated) else {
+        let Some((index, slot)) = self
+            .inline_live
+            .iter_mut()
+            .enumerate()
+            .find(|(_, allocated)| !**allocated)
+        else {
             return Err(ExpansionError::VirtualRegisterExhausted { pool: "inline" });
         };
-        self.inline_live[index] = true;
+        *slot = true;
         let temp = InlineTempId(index as u8);
         self.inner.allocate_inline(temp);
         Ok(InlineRegister::new(temp))
@@ -172,9 +177,8 @@ impl InlineExpansionBuilder {
     /// materialization when the symbolic release cannot be matched to a live
     /// allocation.
     pub fn release(&mut self, register: InlineRegister) {
-        let index = register.temp.index();
-        if index < self.inline_live.len() {
-            self.inline_live[index] = false;
+        if let Some(live) = self.inline_live.get_mut(register.temp.index()) {
+            *live = false;
         }
         self.inner.release_inline(register.temp);
     }
@@ -192,7 +196,9 @@ impl InlineExpansionBuilder {
         }
         match registers.try_into() {
             Ok(registers) => Ok(registers),
-            Err(_) => unreachable!("vector length is fixed by the loop"),
+            Err(_) => {
+                unreachable!("vector length is fixed by the loop")
+            }
         }
     }
 

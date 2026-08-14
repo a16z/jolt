@@ -382,6 +382,9 @@ macro_rules! source_extension_for_marker {
     (MulI) => {
         Some(SourceExtension::JoltCustom)
     };
+    (MulIW) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (Pow2) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -811,6 +814,9 @@ macro_rules! source_side_effects_for_marker {
     (MulI) => {
         false
     };
+    (MulIW) => {
+        false
+    };
     (Pow2) => {
         false
     };
@@ -901,6 +907,12 @@ macro_rules! jolt_target_extension_for_marker {
     (Addi) => {
         Some(JoltTargetExtension::IntegerCore)
     };
+    (AddiW) => {
+        Some(JoltTargetExtension::IntegerCore)
+    };
+    (AddW) => {
+        Some(JoltTargetExtension::IntegerCore)
+    };
     (And) => {
         Some(JoltTargetExtension::IntegerCore)
     };
@@ -934,6 +946,9 @@ macro_rules! jolt_target_extension_for_marker {
     (Sub) => {
         Some(JoltTargetExtension::IntegerCore)
     };
+    (SubW) => {
+        Some(JoltTargetExtension::IntegerCore)
+    };
     (Xor) => {
         Some(JoltTargetExtension::IntegerCore)
     };
@@ -941,6 +956,9 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::IntegerCore)
     };
     (Mul) => {
+        Some(JoltTargetExtension::IntegerMultiply)
+    };
+    (MulW) => {
         Some(JoltTargetExtension::IntegerMultiply)
     };
     (MulHU) => {
@@ -1034,6 +1052,9 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (MulI) => {
+        Some(JoltTargetExtension::VirtualArithmetic)
+    };
+    (MulIW) => {
         Some(JoltTargetExtension::VirtualArithmetic)
     };
     (Pow2) => {
@@ -1192,6 +1213,12 @@ macro_rules! jolt_side_effects_for_marker {
     (Addi) => {
         false
     };
+    (AddiW) => {
+        false
+    };
+    (AddW) => {
+        false
+    };
     (And) => {
         false
     };
@@ -1208,6 +1235,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (Mul) => {
+        false
+    };
+    (MulW) => {
         false
     };
     (MulHU) => {
@@ -1232,6 +1262,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (Sub) => {
+        false
+    };
+    (SubW) => {
         false
     };
     (Xor) => {
@@ -1289,6 +1322,9 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (MulI) => {
+        false
+    };
+    (MulIW) => {
         false
     };
     (Pow2) => {
@@ -1893,7 +1929,10 @@ mod tests {
             SourceInstruction::VirtualHostIO(VirtualHostIO(())).jolt_kind(),
             Some(JoltInstruction::VirtualHostIO(VirtualHostIO(())))
         );
-        assert_eq!(SourceInstructionKind::ADDW.jolt_kind(), None);
+        assert_eq!(
+            SourceInstructionKind::ADDW.jolt_kind(),
+            Some(JoltInstructionKind::ADDW)
+        );
         assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
         assert_eq!(SourceInstructionKind::Unimpl.jolt_kind(), None);
     }
@@ -1910,6 +1949,10 @@ mod tests {
 
     #[cfg(feature = "serialization")]
     #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside a Result-returning test"
+    )]
     fn serde_uses_source_names_and_final_tags() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             serde_json::to_string(&SourceInstructionKind::ADDW)?,

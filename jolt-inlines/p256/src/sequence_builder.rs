@@ -5,10 +5,11 @@ use jolt_inlines_sdk::host::{
         add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, virtual_advice::VirtualAdvice,
         virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
     },
-    limbs_to_nbiguint, mulq_division_advice, mulq_quotient_advice, Cpu,
+    limbs_to_nbiguint, load_field_element_limbs, mulq_division_advice, mulq_quotient_advice,
     ExpandedInstructionSequence, ExpansionError, FieldElementLimbs, FormatInline, InlineAdvice,
-    InlineBuilderExt, InlineExpansionBuilder, InlineOp, InlineOperands, InlineRegister,
-    ModularDivisionAdvice, MulAccExt, MulqType, QuotientAdvice, SignedU128Advice,
+    InlineAdviceContext, InlineAdviceError, InlineBuilderExt, InlineExpansionBuilder, InlineOp,
+    InlineOperands, InlineRegister, ModularDivisionAdvice, MulAccExt, MulqType, QuotientAdvice,
+    SignedU128Advice,
 };
 use num_bigint::BigInt as NBigInt;
 
@@ -126,19 +127,19 @@ impl P256Mulq {
 
     fn quotient_advice(
         operands: FormatInline,
-        cpu: &mut Cpu,
+        ctx: &mut dyn InlineAdviceContext,
         is_scalar_field: bool,
         op_type: &MulqType,
-    ) -> QuotientAdvice {
-        mulq_quotient_advice(&operands, cpu, is_scalar_field, op_type, p256_modulus)
+    ) -> Result<QuotientAdvice, InlineAdviceError> {
+        mulq_quotient_advice(&operands, ctx, is_scalar_field, op_type, p256_modulus)
     }
 
     fn division_advice(
         operands: FormatInline,
-        cpu: &mut Cpu,
+        ctx: &mut dyn InlineAdviceContext,
         is_scalar_field: bool,
-    ) -> ModularDivisionAdvice {
-        mulq_division_advice(&operands, cpu, is_scalar_field, p256_modulus, |b, a| {
+    ) -> Result<ModularDivisionAdvice, InlineAdviceError> {
+        mulq_division_advice(&operands, ctx, is_scalar_field, p256_modulus, |b, a| {
             limbs_to_nbiguint(
                 &if is_scalar_field {
                     (Fr::new(BigInt(*b))
@@ -185,11 +186,10 @@ impl P256Mulq {
                         self.operands.rs2,
                         i as i64 * 8,
                     );
-                    // load c into a, immediately copy it to memory
-                    // the inline will error out if a != b * c mod q later, ensuring correctness
+                    // load c into a; the inline errors out if a != b * c mod q
+                    // later, and only then is c stored to memory (see the store
+                    // loop at the end of this sequence)
                     self.asm.emit_j::<VirtualAdvice>(*self.a[i], 0);
-                    self.asm
-                        .emit_s::<SD>(self.operands.rs3, *self.a[i], i as i64 * 8);
                 }
             }
             self.asm.emit_j::<VirtualAdvice>(*self.w[i], 0);
@@ -564,6 +564,17 @@ impl P256Mulq {
         self.asm
             .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[1], 0);
 
+        // WARNING: the division result must be stored only after the checks
+        // above. `rs3` may alias `rs1`, in which case an earlier store would
+        // overwrite the dividend and reduce `cb + wp == 2^256 w + a` to a
+        // tautology, admitting an arbitrary quotient.
+        if let MulqType::Div = self.op_type {
+            for i in 0..4 {
+                self.asm
+                    .emit_s::<SD>(self.operands.rs3, *self.a[i], i as i64 * 8);
+            }
+        }
+
         // clean up inline
         self.asm.release_many(self.a);
         match self.op_type {
@@ -604,8 +615,11 @@ macro_rules! p256_mulq_op {
                 P256Mulq::new(asm, operands, MulqType::Div, $is_scalar)?.inline_sequence()
             }
 
-            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-                P256Mulq::division_advice(operands, cpu, $is_scalar)
+            fn build_advice(
+                operands: FormatInline,
+                ctx: &mut dyn InlineAdviceContext,
+            ) -> Result<Self::Advice, InlineAdviceError> {
+                P256Mulq::division_advice(operands, ctx, $is_scalar)
             }
         }
     };
@@ -627,8 +641,11 @@ macro_rules! p256_mulq_op {
                 P256Mulq::new(asm, operands, $mul_type, $is_scalar)?.inline_sequence()
             }
 
-            fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-                P256Mulq::quotient_advice(operands, cpu, $is_scalar, &$mul_type)
+            fn build_advice(
+                operands: FormatInline,
+                ctx: &mut dyn InlineAdviceContext,
+            ) -> Result<Self::Advice, InlineAdviceError> {
+                P256Mulq::quotient_advice(operands, ctx, $is_scalar, &$mul_type)
             }
         }
     };
@@ -687,30 +704,18 @@ impl FakeGlvAdvBuilder {
     /// Reads scalar s from rs1 and point P from rs2.
     /// Computes R = s*P via arkworks, then half-GCD decomposition.
     /// Computes the 14 advice words emitted by `P256FakeGlvAdvice`.
-    fn advice(operands: FormatInline, cpu: &mut Cpu) -> P256FakeGlvAdvice {
+    fn advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<P256FakeGlvAdvice, InlineAdviceError> {
         // Read scalar s from rs1
-        let s_addr = cpu.x[operands.rs1 as usize] as u64;
-        let s_limbs = [
-            cpu.mmu.load_doubleword(s_addr).unwrap().0,
-            cpu.mmu.load_doubleword(s_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(s_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(s_addr + 24).unwrap().0,
-        ];
+        let s_addr = ctx.register(operands.rs1 as usize);
+        let s_limbs = load_field_element_limbs(ctx, s_addr)?;
 
         // Read point P from rs2 (8 u64 limbs: x then y)
-        let p_addr = cpu.x[operands.rs2 as usize] as u64;
-        let px = [
-            cpu.mmu.load_doubleword(p_addr).unwrap().0,
-            cpu.mmu.load_doubleword(p_addr + 8).unwrap().0,
-            cpu.mmu.load_doubleword(p_addr + 16).unwrap().0,
-            cpu.mmu.load_doubleword(p_addr + 24).unwrap().0,
-        ];
-        let py = [
-            cpu.mmu.load_doubleword(p_addr + 32).unwrap().0,
-            cpu.mmu.load_doubleword(p_addr + 40).unwrap().0,
-            cpu.mmu.load_doubleword(p_addr + 48).unwrap().0,
-            cpu.mmu.load_doubleword(p_addr + 56).unwrap().0,
-        ];
+        let p_addr = ctx.register(operands.rs2 as usize);
+        let px = load_field_element_limbs(ctx, p_addr)?;
+        let py = load_field_element_limbs(ctx, p_addr + 32)?;
 
         // Compute R = s * P using arkworks
         use ark_ec::CurveGroup;
@@ -729,12 +734,12 @@ impl FakeGlvAdvBuilder {
         let s_big: NBigInt = Fr::new(BigInt(s_limbs)).into_bigint().into();
         let (a, a_negative, b, b_negative) = crate::fake_glv::decompose_to_u128s(&s_big);
 
-        P256FakeGlvAdvice {
+        Ok(P256FakeGlvAdvice {
             result_x: rx,
             result_y: ry,
             a: SignedU128Advice::from_u128(a, a_negative),
             b: SignedU128Advice::from_u128(b, b_negative),
-        }
+        })
     }
 
     fn inline_sequence(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -761,7 +766,10 @@ impl InlineOp for P256FakeGlvAdv {
         FakeGlvAdvBuilder::new(asm, operands)?.inline_sequence()
     }
 
-    fn build_advice(operands: FormatInline, cpu: &mut Cpu) -> Self::Advice {
-        FakeGlvAdvBuilder::advice(operands, cpu)
+    fn build_advice(
+        operands: FormatInline,
+        ctx: &mut dyn InlineAdviceContext,
+    ) -> Result<Self::Advice, InlineAdviceError> {
+        FakeGlvAdvBuilder::advice(operands, ctx)
     }
 }

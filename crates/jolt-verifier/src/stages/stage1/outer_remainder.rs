@@ -61,7 +61,13 @@ impl<F: Field> OuterRemainderCoefficients<F> {
     fn from_public_coefficients(
         variable_count: usize,
         coefficients: Vec<(JoltSpartanOuterPublic, F)>,
-    ) -> Self {
+    ) -> Result<Self, VerifierError> {
+        fn weight_index_failed(side: &str, index: usize, variable_count: usize) -> VerifierError {
+            public_input_failed(format!(
+                "Spartan outer {side} weight index {index} exceeds the variable count \
+                 {variable_count}"
+            ))
+        }
         let mut tau_kernel = F::zero();
         let mut az_weights = vec![F::zero(); variable_count];
         let mut bz_weights = vec![F::zero(); variable_count];
@@ -70,19 +76,27 @@ impl<F: Field> OuterRemainderCoefficients<F> {
         for (id, value) in coefficients {
             match id {
                 JoltSpartanOuterPublic::TauKernel => tau_kernel = value,
-                JoltSpartanOuterPublic::AzWeight(index) => az_weights[index] = value,
-                JoltSpartanOuterPublic::BzWeight(index) => bz_weights[index] = value,
+                JoltSpartanOuterPublic::AzWeight(index) => {
+                    *az_weights
+                        .get_mut(index)
+                        .ok_or_else(|| weight_index_failed("Az", index, variable_count))? = value;
+                }
+                JoltSpartanOuterPublic::BzWeight(index) => {
+                    *bz_weights
+                        .get_mut(index)
+                        .ok_or_else(|| weight_index_failed("Bz", index, variable_count))? = value;
+                }
                 JoltSpartanOuterPublic::AzConstant => az_constant = value,
                 JoltSpartanOuterPublic::BzConstant => bz_constant = value,
             }
         }
-        Self {
+        Ok(Self {
             tau_kernel,
             az_weights,
             bz_weights,
             az_constant,
             bz_constant,
-        }
+        })
     }
 
     fn resolve(&self, id: SpartanOuterPublic) -> Option<F> {
@@ -151,12 +165,13 @@ impl<F: Field> OuterRemainder<F> {
                 remainder: bound_point,
             })
             .map_err(public_input_failed)?;
-            let _ = self
-                .coefficients
-                .set(OuterRemainderCoefficients::from_public_coefficients(
-                    self.variable_count,
-                    formula.public_coefficients(),
-                ));
+            let coefficients = OuterRemainderCoefficients::from_public_coefficients(
+                self.variable_count,
+                formula.public_coefficients(),
+            )?;
+            // An already-set cell means another call initialized it from the
+            // same deterministic inputs; discarding the Err keeps first-write-wins.
+            drop(self.coefficients.set(coefficients));
         }
         self.coefficients
             .get()
@@ -252,6 +267,10 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::OutputClaims;

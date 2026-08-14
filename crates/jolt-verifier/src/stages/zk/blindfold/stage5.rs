@@ -1,17 +1,21 @@
 use super::*;
 
-pub(super) fn add_stage5<PCS, VC, ZkProof>(
+// Binding the scalar field to a bare `F` parameter (rather than spelling
+// `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
+// recognize the side-effect-free field arithmetic in the body.
+pub(super) fn add_stage5<F, PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-    builder: Builder<PCS::Field, VC::Output>,
-    values: &mut SourceValues<PCS::Field>,
-) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
+    builder: Builder<F, VC::Output>,
+    values: &mut SourceValues<F>,
+) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
     VC::Output: Clone,
 {
-    let log_t = input.checked.trace_length.ilog2() as usize;
-    let log_k = input.checked.ram_K.ilog2() as usize;
+    let log_t = crate::num::ilog2(input.checked.trace_length);
+    let log_k = crate::num::ilog2(input.checked.ram_K);
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
     let instruction_claims =
@@ -87,9 +91,21 @@ where
     let ram_cycle = trace_dimensions
         .cycle_opening_point(&ram_point)
         .map_err(|error| public_error(JoltRelationId::RamRaClaimReduction, error))?;
-    let ram_raf_cycle = &input.stage2.output_points.ram_raf_evaluation_point()[log_k..];
-    let ram_read_write_cycle = &input.stage2.output_points.ram_read_write_point()[log_k..];
-    let ram_val_cycle = &input.stage4.output_points.ram_val_check_point()[log_k..];
+    let ram_raf_cycle = point_suffix(
+        input.stage2.output_points.ram_raf_evaluation_point(),
+        log_k,
+        JoltRelationId::RamRaClaimReduction,
+    )?;
+    let ram_read_write_cycle = point_suffix(
+        input.stage2.output_points.ram_read_write_point(),
+        log_k,
+        JoltRelationId::RamRaClaimReduction,
+    )?;
+    let ram_val_cycle = point_suffix(
+        input.stage4.output_points.ram_val_check_point(),
+        log_k,
+        JoltRelationId::RamRaClaimReduction,
+    )?;
     values.public(
         JoltDerivedId::from(RamRaClaimReductionPublic::EqCycleRaf),
         try_eq_mle(&ram_cycle, ram_raf_cycle)
@@ -114,8 +130,11 @@ where
     let registers_cycle = trace_dimensions
         .cycle_opening_point(&registers_point)
         .map_err(|error| public_error(JoltRelationId::RegistersValEvaluation, error))?;
-    let registers_read_write_cycle =
-        &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
+    let registers_read_write_cycle = point_suffix(
+        input.stage4.output_points.registers_read_write_point(),
+        REGISTER_ADDRESS_BITS,
+        JoltRelationId::RegistersValEvaluation,
+    )?;
     values.public(
         JoltDerivedId::from(RegistersValEvaluationPublic::LtCycle),
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
