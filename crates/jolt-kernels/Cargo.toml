@@ -23,7 +23,7 @@ parallel = [
   "jolt-utils/parallel",
   "jolt-witness/parallel",
 ]
-test-utils = ["dep:jolt-transcript", "dep:serde", "dep:serde_json", "dep:sha2"]
+test-utils = ["dep:jolt-transcript", "dep:serde_json", "dep:sha2"]
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
@@ -45,7 +45,6 @@ jolt-utils.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
-serde = { workspace = true, features = ["derive", "std"], optional = true }
 serde_json = { workspace = true, features = ["std"], optional = true }
 sha2 = { workspace = true, optional = true }
 thiserror.workspace = true
