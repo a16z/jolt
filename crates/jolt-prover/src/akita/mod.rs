@@ -68,7 +68,7 @@ where
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        _source: &dyn jolt_witness::RowSource,
+        _source: &dyn jolt_witness::JoltWitnessPlane<F>,
         _ids: &[jolt_claims::protocols::jolt::JoltCommittedPolynomial],
         _grid: jolt_kernels::CommitmentGrid,
         _setup: &PCS::ProverSetup,
@@ -108,6 +108,7 @@ where
         Self {
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
+                round_scheduler: Box::new(ReferenceBackend),
                 spartan_outer_uniskip: Box::new(ReferenceBackend),
                 spartan_outer_remainder: Box::new(jolt_kernels::reference::spartan_outer::ReferenceOuterRemainder),
                 spartan_product_uniskip: Box::new(ReferenceBackend),

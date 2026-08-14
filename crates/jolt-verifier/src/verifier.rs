@@ -22,6 +22,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use crate::proof::JoltCommitments;
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG},
+    num,
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltProof, TracePolynomialOrder},
     stages::{
@@ -64,7 +65,7 @@ where
         proof,
         preprocessing,
         &checked,
-        checked.trace_length.ilog2() as usize,
+        num::ilog2(checked.trace_length),
         JoltRelationId::InstructionReadRaf,
     )?;
 
@@ -150,6 +151,8 @@ where
             .vc_setup
             .as_ref()
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
+        jolt_verifier_derive::fs_scope_guard!(BlindFold);
+
         transcript.append(&Label(b"BlindFold"));
         blindfold
             .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
@@ -200,7 +203,7 @@ where
         proof,
         preprocessing,
         &checked,
-        checked.trace_length.ilog2() as usize,
+        num::ilog2(checked.trace_length),
         JoltRelationId::InstructionReadRaf,
     )?;
 
@@ -359,19 +362,19 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
 
-    let max_input_size = memory_layout.max_input_size as usize;
-    if public_io.inputs.len() > max_input_size {
+    if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
             got: public_io.inputs.len(),
-            max: max_input_size,
+            // The failed comparison bounds the maximum below a usize length.
+            max: usize::try_from(memory_layout.max_input_size).unwrap_or(usize::MAX),
         });
     }
 
-    let max_output_size = memory_layout.max_output_size as usize;
-    if public_io.outputs.len() > max_output_size {
+    if num::u64_from_usize(public_io.outputs.len()) > memory_layout.max_output_size {
         return Err(VerifierError::OutputTooLarge {
             got: public_io.outputs.len(),
-            max: max_output_size,
+            // The failed comparison bounds the maximum below a usize length.
+            max: usize::try_from(memory_layout.max_output_size).unwrap_or(usize::MAX),
         });
     }
 
@@ -408,41 +411,53 @@ where
             .outputs
             .iter()
             .rposition(|&byte| byte != 0)
-            .map_or(0, |position| position + 1),
+            .map_or(0, |position| position.saturating_add(1)),
     );
 
-    let committed_program = program
-        .committed()
-        .map(|committed| {
-            let meta = &committed.meta;
-            let program_image_start_index = memory_layout
-                .remapped_word_address(meta.min_bytecode_address)
-                .map_err(|error| VerifierError::InvalidCommittedProgram {
-                    reason: error.to_string(),
-                })?;
-            if meta.entry_bytecode_index >= meta.bytecode_len {
-                return Err(VerifierError::InvalidCommittedProgram {
-                    reason: format!(
-                        "entry bytecode index {} is out of range for bytecode length {}",
-                        meta.entry_bytecode_index, meta.bytecode_len
+    let committed_program =
+        program
+            .committed()
+            .map(|committed| {
+                let meta = &committed.meta;
+                let program_image_start_index = memory_layout
+                    .remapped_word_address(meta.min_bytecode_address)
+                    .map_err(|error| VerifierError::InvalidCommittedProgram {
+                        reason: error.to_string(),
+                    })?;
+                if meta.entry_bytecode_index >= meta.bytecode_len {
+                    return Err(VerifierError::InvalidCommittedProgram {
+                        reason: format!(
+                            "entry bytecode index {} is out of range for bytecode length {}",
+                            meta.entry_bytecode_index, meta.bytecode_len
+                        ),
+                    });
+                }
+                let program_image_start_index = usize::try_from(program_image_start_index)
+                    .map_err(|_| VerifierError::InvalidCommittedProgram {
+                        reason: format!(
+                        "program image start index {program_image_start_index} does not fit usize"
                     ),
-                });
-            }
-            Ok(CommittedProgramSchedule {
-                bytecode_len: meta.bytecode_len,
-                bytecode_chunk_count: committed.bytecode_chunk_count(),
-                program_image_len_words: meta.program_image_len_words,
-                program_image_start_index: program_image_start_index as usize,
+                    })?;
+                Ok(CommittedProgramSchedule {
+                    bytecode_len: meta.bytecode_len,
+                    bytecode_chunk_count: committed.bytecode_chunk_count(),
+                    program_image_len_words: meta.program_image_len_words,
+                    program_image_start_index,
+                })
             })
-        })
+            .transpose()?;
+    let trusted_advice_size = trusted_advice_commitment_present
+        .then(|| advice_size_to_usize(memory_layout.max_trusted_advice_size, "trusted"))
+        .transpose()?;
+    let untrusted_advice_size = untrusted_advice_commitment_present
+        .then(|| advice_size_to_usize(memory_layout.max_untrusted_advice_size, "untrusted"))
         .transpose()?;
     let precommitted = PrecommittedSchedule::new(
         trace_polynomial_order,
-        trace_length.ilog2() as usize,
+        num::ilog2(trace_length),
         one_hot_config.committed_chunk_bits(),
-        trusted_advice_commitment_present.then_some(memory_layout.max_trusted_advice_size as usize),
-        untrusted_advice_commitment_present
-            .then_some(memory_layout.max_untrusted_advice_size as usize),
+        trusted_advice_size,
+        untrusted_advice_size,
         committed_program,
     )
     .map_err(|error| VerifierError::InvalidPrecommittedSchedule {
@@ -459,6 +474,12 @@ where
         trusted_advice_commitment_present,
         vc_capacity,
         precommitted,
+    })
+}
+
+fn advice_size_to_usize(value: u64, kind: &'static str) -> Result<usize, VerifierError> {
+    usize::try_from(value).map_err(|_| VerifierError::InvalidMemoryLayout {
+        reason: format!("maximum {kind} advice size {value} does not fit usize"),
     })
 }
 
@@ -558,6 +579,7 @@ where
 /// metadata, and the proof-derived structural parameters. WARNING: the byte
 /// order here is consensus-critical — the prover's preamble must absorb
 /// identically or the transcripts diverge.
+#[jolt_verifier_derive::fs_scope(Preamble)]
 pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -586,39 +608,43 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
     absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
     absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
-    absorb_labeled_u64(transcript, b"panic", public_io.panic as u64);
-    absorb_labeled_u64(transcript, b"ram_K", checked.ram_K as u64);
-    absorb_labeled_u64(transcript, b"trace_length", checked.trace_length as u64);
+    absorb_labeled_u64(transcript, b"panic", u64::from(public_io.panic));
+    absorb_labeled_u64(transcript, b"ram_K", num::u64_from_usize(checked.ram_K));
+    absorb_labeled_u64(
+        transcript,
+        b"trace_length",
+        num::u64_from_usize(checked.trace_length),
+    );
     absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase1_num_rounds",
-        proof.rw_config.ram_rw_phase1_num_rounds as u64,
+        u64::from(proof.rw_config.ram_rw_phase1_num_rounds),
     );
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase2_num_rounds",
-        proof.rw_config.ram_rw_phase2_num_rounds as u64,
+        u64::from(proof.rw_config.ram_rw_phase2_num_rounds),
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase1_num_rounds",
-        proof.rw_config.registers_rw_phase1_num_rounds as u64,
+        u64::from(proof.rw_config.registers_rw_phase1_num_rounds),
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase2_num_rounds",
-        proof.rw_config.registers_rw_phase2_num_rounds as u64,
+        u64::from(proof.rw_config.registers_rw_phase2_num_rounds),
     );
     absorb_labeled_u64(
         transcript,
         b"log_k_chunk",
-        proof.one_hot_config.log_k_chunk as u64,
+        u64::from(proof.one_hot_config.log_k_chunk),
     );
     absorb_labeled_u64(
         transcript,
         b"lookups_ra_virtual_log_k_chunk",
-        proof.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
+        u64::from(proof.one_hot_config.lookups_ra_virtual_log_k_chunk),
     );
     absorb_labeled_u64(
         transcript,
@@ -633,6 +659,7 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
 /// identically or the transcripts diverge. On the `akita` build the order is
 /// the canonical commitment-object order: `OneHotTrace`, untrusted advice, trusted
 /// advice, `ProgramOneHot`.
+#[jolt_verifier_derive::fs_scope(Commitments)]
 pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -836,39 +863,43 @@ pub fn absorb_transcript_preamble<T>(
     absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
     absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
     absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
-    absorb_labeled_u64(transcript, b"panic", public_io.panic as u64);
-    absorb_labeled_u64(transcript, b"ram_K", checked.ram_K as u64);
-    absorb_labeled_u64(transcript, b"trace_length", checked.trace_length as u64);
+    absorb_labeled_u64(transcript, b"panic", u64::from(public_io.panic));
+    absorb_labeled_u64(transcript, b"ram_K", num::u64_from_usize(checked.ram_K));
+    absorb_labeled_u64(
+        transcript,
+        b"trace_length",
+        num::u64_from_usize(checked.trace_length),
+    );
     absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase1_num_rounds",
-        config.rw_config.ram_rw_phase1_num_rounds as u64,
+        u64::from(config.rw_config.ram_rw_phase1_num_rounds),
     );
     absorb_labeled_u64(
         transcript,
         b"ram_rw_phase2_num_rounds",
-        config.rw_config.ram_rw_phase2_num_rounds as u64,
+        u64::from(config.rw_config.ram_rw_phase2_num_rounds),
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase1_num_rounds",
-        config.rw_config.registers_rw_phase1_num_rounds as u64,
+        u64::from(config.rw_config.registers_rw_phase1_num_rounds),
     );
     absorb_labeled_u64(
         transcript,
         b"registers_rw_phase2_num_rounds",
-        config.rw_config.registers_rw_phase2_num_rounds as u64,
+        u64::from(config.rw_config.registers_rw_phase2_num_rounds),
     );
     absorb_labeled_u64(
         transcript,
         b"log_k_chunk",
-        config.one_hot_config.log_k_chunk as u64,
+        u64::from(config.one_hot_config.log_k_chunk),
     );
     absorb_labeled_u64(
         transcript,
         b"lookups_ra_virtual_log_k_chunk",
-        config.one_hot_config.lookups_ra_virtual_log_k_chunk as u64,
+        u64::from(config.one_hot_config.lookups_ra_virtual_log_k_chunk),
     );
     absorb_labeled_u64(
         transcript,
@@ -901,19 +932,19 @@ where
         return Err(VerifierError::MemoryLayoutMismatch);
     }
 
-    let max_input_size = memory_layout.max_input_size as usize;
-    if public_io.inputs.len() > max_input_size {
+    if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
             got: public_io.inputs.len(),
-            max: max_input_size,
+            // The failed comparison bounds the maximum below a usize length.
+            max: usize::try_from(memory_layout.max_input_size).unwrap_or(usize::MAX),
         });
     }
 
-    let max_output_size = memory_layout.max_output_size as usize;
-    if public_io.outputs.len() > max_output_size {
+    if num::u64_from_usize(public_io.outputs.len()) > memory_layout.max_output_size {
         return Err(VerifierError::OutputTooLarge {
             got: public_io.outputs.len(),
-            max: max_output_size,
+            // The failed comparison bounds the maximum below a usize length.
+            max: usize::try_from(memory_layout.max_output_size).unwrap_or(usize::MAX),
         });
     }
 
@@ -960,41 +991,53 @@ where
             .outputs
             .iter()
             .rposition(|&byte| byte != 0)
-            .map_or(0, |position| position + 1),
+            .map_or(0, |position| position.saturating_add(1)),
     );
 
-    let committed_program = preprocessing
-        .program
-        .committed()
-        .map(|committed| {
-            let program_image_start_index = memory_layout
-                .remapped_word_address(committed.meta.min_bytecode_address)
-                .map_err(|error| VerifierError::InvalidCommittedProgram {
-                    reason: error.to_string(),
-                })?;
-            if committed.meta.entry_bytecode_index >= committed.meta.bytecode_len {
-                return Err(VerifierError::InvalidCommittedProgram {
-                    reason: format!(
-                        "entry bytecode index {} is out of range for bytecode length {}",
-                        committed.meta.entry_bytecode_index, committed.meta.bytecode_len
+    let committed_program =
+        preprocessing
+            .program
+            .committed()
+            .map(|committed| {
+                let program_image_start_index = memory_layout
+                    .remapped_word_address(committed.meta.min_bytecode_address)
+                    .map_err(|error| VerifierError::InvalidCommittedProgram {
+                        reason: error.to_string(),
+                    })?;
+                if committed.meta.entry_bytecode_index >= committed.meta.bytecode_len {
+                    return Err(VerifierError::InvalidCommittedProgram {
+                        reason: format!(
+                            "entry bytecode index {} is out of range for bytecode length {}",
+                            committed.meta.entry_bytecode_index, committed.meta.bytecode_len
+                        ),
+                    });
+                }
+                let program_image_start_index = usize::try_from(program_image_start_index)
+                    .map_err(|_| VerifierError::InvalidCommittedProgram {
+                        reason: format!(
+                        "program image start index {program_image_start_index} does not fit usize"
                     ),
-                });
-            }
-            Ok(CommittedProgramSchedule {
-                bytecode_len: committed.meta.bytecode_len,
-                bytecode_chunk_count: committed.bytecode_chunk_count(),
-                program_image_len_words: committed.meta.program_image_len_words,
-                program_image_start_index: program_image_start_index as usize,
+                    })?;
+                Ok(CommittedProgramSchedule {
+                    bytecode_len: committed.meta.bytecode_len,
+                    bytecode_chunk_count: committed.bytecode_chunk_count(),
+                    program_image_len_words: committed.meta.program_image_len_words,
+                    program_image_start_index,
+                })
             })
-        })
+            .transpose()?;
+    let trusted_advice_size = trusted_advice_commitment_present
+        .then(|| advice_size_to_usize(memory_layout.max_trusted_advice_size, "trusted"))
+        .transpose()?;
+    let untrusted_advice_size = untrusted_advice_commitment_present
+        .then(|| advice_size_to_usize(memory_layout.max_untrusted_advice_size, "untrusted"))
         .transpose()?;
     let precommitted = PrecommittedSchedule::new(
         trace_polynomial_order,
-        trace_length.ilog2() as usize,
+        num::ilog2(trace_length),
         one_hot_config.committed_chunk_bits(),
-        trusted_advice_commitment_present.then_some(memory_layout.max_trusted_advice_size as usize),
-        untrusted_advice_commitment_present
-            .then_some(memory_layout.max_untrusted_advice_size as usize),
+        trusted_advice_size,
+        untrusted_advice_size,
         committed_program,
     )
     .map_err(|error| VerifierError::InvalidPrecommittedSchedule {
@@ -1056,7 +1099,7 @@ where
 }
 
 fn absorb_labeled_bytes<T: Transcript>(transcript: &mut T, label: &'static [u8], bytes: &[u8]) {
-    transcript.append(&LabelWithCount(label, bytes.len() as u64));
+    transcript.append(&LabelWithCount(label, num::u64_from_usize(bytes.len())));
     transcript.append_bytes(bytes);
 }
 
@@ -1067,6 +1110,8 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryConfig};
@@ -1085,6 +1130,8 @@ mod tests {
     };
     use jolt_transcript::Transcript;
     use num_traits::Zero;
+
+    use crate::preprocessing::ProgramPreprocessing;
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
@@ -1299,7 +1346,8 @@ mod tests {
     #[cfg(feature = "zk")]
     #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
-        let preprocessing = test_preprocessing();
+        let mut preprocessing = test_preprocessing();
+        preprocessing.vc_setup = None;
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
@@ -1671,16 +1719,23 @@ mod tests {
             stack_size: 8,
             heap_size: 8,
         });
+        #[cfg(feature = "zk")]
+        let vc_setup = Some(PedersenSetup::new(
+            vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],
+            Bn254G1::default(),
+        ));
+        #[cfg(not(feature = "zk"))]
+        let vc_setup = None;
         JoltVerifierPreprocessing::new(
-            crate::preprocessing::ProgramPreprocessing::Full(JoltProgramPreprocessing {
+            ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::default(),
                 ram: RAMPreprocessing::default(),
                 memory_layout,
                 max_padded_trace_length: 16,
-            }),
+            })),
             [7; 32],
             (),
-            None,
+            vc_setup,
         )
     }
 }

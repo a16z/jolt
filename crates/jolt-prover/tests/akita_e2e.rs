@@ -91,6 +91,7 @@ mod support {
                     inputs: inputs.to_vec(),
                     untrusted_advice: untrusted_advice.to_vec(),
                     trusted_advice: trusted_advice.to_vec(),
+                    advice_tape: None,
                     memory_config,
                 },
             )
@@ -125,6 +126,7 @@ mod support {
             OwnedTrace::new(rows),
             trace_output.device,
             trace_output.final_memory,
+            trace_output.advice_tape,
         )
     }
 

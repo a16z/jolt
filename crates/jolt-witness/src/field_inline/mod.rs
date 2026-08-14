@@ -221,9 +221,7 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
         &self,
         value: impl Fn(&TraceRow, &WitnessEnv<'_>) -> Result<F, WitnessError> + Sync,
     ) -> Result<Vec<F>, WitnessError> {
-        let env = WitnessEnv {
-            preprocessing: self.preprocessing,
-        };
+        let env = WitnessEnv::new(&self.preprocessing);
         let mut values = vec![F::from_u64(0); self.rows];
         values
             .par_iter_mut()
@@ -346,7 +344,7 @@ impl<F: Field> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWit
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
         let env = WitnessEnv {
-            preprocessing: self.preprocessing,
+            preprocessing: &self.preprocessing,
         };
         (0..self.rows)
             .map(|index| {
@@ -629,6 +627,8 @@ fn invalid_row(index: usize, reason: &'static str) -> WitnessError {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use std::sync::Arc;
+
     use common::constants::RAM_START_ADDRESS;
     use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
     use jolt_claims::protocols::jolt::{
@@ -715,7 +715,7 @@ mod tests {
             JoltVmWitnessInputs::new(
                 program,
                 preprocessing,
-                TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+                TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
             ),
         )
     }
@@ -1134,7 +1134,7 @@ mod tests {
         let Some(data) = bad_rows[2].field_inline.as_mut() else {
             return;
         };
-        std::sync::Arc::make_mut(data).rs1 = Some(FieldRegisterRead {
+        Arc::make_mut(data).rs1 = Some(FieldRegisterRead {
             register: 2,
             value: enc(6),
         });

@@ -82,6 +82,7 @@ jolt-program.workspace = true
 jolt-riscv.workspace = true
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
+jolt-utils.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
@@ -111,6 +112,9 @@ clap.workspace = true
 jolt-dory.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+jolt-riscv.workspace = true
+# Subscriber stack for tests; the profiling smoke test's summary usage
+# arrives via the `profiling` feature's `jolt-profiling/summary`.
 jolt-profiling = { workspace = true, default-features = false }
 jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 postcard = { workspace = true, features = ["use-std"] }

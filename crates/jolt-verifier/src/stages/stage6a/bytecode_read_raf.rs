@@ -319,7 +319,11 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "test code indexes its own fixed-size fixtures"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};

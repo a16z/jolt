@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::MultilinearPoly;
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

@@ -33,9 +33,13 @@ use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCom
 use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, PrefixPackedClaims,
 };
+use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
-use jolt_verifier::preprocessing::JoltVerifierPreprocessing;
+use jolt_verifier::preprocessing::{
+    CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
+    JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
+};
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
 use jolt_verifier::VerifierError;
 
@@ -1673,37 +1677,33 @@ pub fn akita_verifier_preprocessing(
 ) -> JoltVerifierPreprocessing<AkitaScheme, AkitaVc> {
     let program = match &preprocessing.shared.program {
         crate::zkvm::program::ProgramPreprocessing::Full(full) => {
-            jolt_verifier::preprocessing::ProgramPreprocessing::Full(
-                jolt_program::preprocess::JoltProgramPreprocessing {
-                    bytecode: full.bytecode.as_ref().clone(),
-                    ram: full.ram.clone(),
-                    memory_layout: preprocessing.shared.memory_layout.clone(),
-                    max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                },
-            )
+            VerifierProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
+                bytecode: full.bytecode.as_ref().clone(),
+                ram: full.ram.clone(),
+                memory_layout: preprocessing.shared.memory_layout.clone(),
+                max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
+            }))
         }
         crate::zkvm::program::ProgramPreprocessing::Committed(committed) => {
             let program_one_hot = program_one_hot
                 .expect("committed-program mode requires ProgramOneHot preprocessing");
-            jolt_verifier::preprocessing::ProgramPreprocessing::Committed(
-                jolt_verifier::preprocessing::CommittedProgramPreprocessing {
-                    meta: jolt_program::preprocess::ProgramMetadata {
-                        entry_address: committed.meta.entry_address,
-                        min_bytecode_address: committed.meta.min_bytecode_address,
-                        entry_bytecode_index: committed.meta.entry_bytecode_index,
-                        program_image_len_words: committed.meta.program_image_len_words,
-                        bytecode_len: committed.meta.bytecode_len,
-                    },
-                    memory_layout: preprocessing.shared.memory_layout.clone(),
-                    max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                    program_one_hot_commitments: program_one_hot
-                        .objects
-                        .iter()
-                        .map(|object| object.commitment.clone())
-                        .collect(),
-                    bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
+            VerifierProgramPreprocessing::Committed(VerifierCommittedProgramPreprocessing {
+                meta: ProgramMetadata {
+                    entry_address: committed.meta.entry_address,
+                    min_bytecode_address: committed.meta.min_bytecode_address,
+                    entry_bytecode_index: committed.meta.entry_bytecode_index,
+                    program_image_len_words: committed.meta.program_image_len_words,
+                    bytecode_len: committed.meta.bytecode_len,
                 },
-            )
+                memory_layout: preprocessing.shared.memory_layout.clone(),
+                max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
+                program_one_hot_commitments: program_one_hot
+                    .objects
+                    .iter()
+                    .map(|object| object.commitment.clone())
+                    .collect(),
+                bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
+            })
         }
     };
     let committed_mode = preprocessing.shared.program.is_committed();

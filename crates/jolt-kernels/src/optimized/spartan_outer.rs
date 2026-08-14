@@ -57,12 +57,12 @@ use jolt_field::{
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use jolt_riscv::InterleavedBitsMarker;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
@@ -3308,7 +3308,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
         let witness = &backend as &dyn JoltWitnessPlane<jolt_field::AkitaField>;

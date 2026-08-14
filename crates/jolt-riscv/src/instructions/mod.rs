@@ -108,6 +108,7 @@ pub use m::RemUW;
 pub use m::RemW;
 pub use virt::MovSign;
 pub use virt::MulI;
+pub use virt::MulIW;
 pub use virt::Pow2;
 pub use virt::Pow2I;
 pub use virt::Pow2IW;
@@ -168,8 +169,6 @@ pub use virt::AdviceLb;
 pub use virt::AdviceLd;
 pub use virt::AdviceLh;
 pub use virt::AdviceLw;
-pub use virt::VirtualLw;
-pub use virt::VirtualSw;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
@@ -330,21 +329,24 @@ crate::for_each_instruction_kind!(define_source_instruction);
 ///
 /// Deliberately omitted instruction kinds (declared and re-exported above
 /// but not proven by Jolt): the Zicsr ops (`Csrrs`, `Csrrw`), `Mret`,
-/// the atomic family (`Amo*`, `Lr*`, `Sc*`),
-/// the advice-load helpers (`AdviceLb`/`Ld`/`Lh`/`Lw`), and `VirtualLw` /
-/// `VirtualSw`. These are intentionally absent from `JoltInstruction` and
-/// from the flag-exclusivity tests below.
+/// the atomic family (`Amo*`, `Lr*`, `Sc*`), and the advice-load helpers
+/// (`AdviceLb`/`Ld`/`Lh`/`Lw`). These are intentionally absent from
+/// `JoltInstruction` and from the flag-exclusivity tests below.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum JoltInstruction<T = JoltInstructionRow> {
     Noop(Noop<T>),
     Add(Add<T>),
     Addi(Addi<T>),
+    AddW(AddW<T>),
+    AddiW(AddiW<T>),
     Sub(Sub<T>),
+    SubW(SubW<T>),
     Lui(Lui<T>),
     Auipc(Auipc<T>),
     Mul(Mul<T>),
     MulHU(MulHU<T>),
+    MulW(MulW<T>),
     And(And<T>),
     AndI(AndI<T>),
     Or(Or<T>),
@@ -379,6 +381,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     Pow2W(Pow2W<T>),
     Pow2IW(Pow2IW<T>),
     MulI(MulI<T>),
+    MulIW(MulIW<T>),
     MovSign(MovSign<T>),
     VirtualRev8W(VirtualRev8W<T>),
     VirtualChangeDivisor(VirtualChangeDivisor<T>),
@@ -542,11 +545,15 @@ macro_rules! impl_jolt_instructions_flags {
 impl_jolt_instructions_flags! {
     Add => ADD,
     Addi => ADDI,
+    AddW => ADDW,
+    AddiW => ADDIW,
     Sub => SUB,
+    SubW => SUBW,
     Lui => LUI,
     Auipc => AUIPC,
     Mul => MUL,
     MulHU => MULHU,
+    MulW => MULW,
     And => AND,
     AndI => ANDI,
     Or => OR,
@@ -581,6 +588,7 @@ impl_jolt_instructions_flags! {
     Pow2W => VirtualPow2W,
     Pow2IW => VirtualPow2IW,
     MulI => VirtualMULI,
+    MulIW => VirtualMULIW,
     MovSign => VirtualMovsign,
     VirtualRev8W => VirtualRev8W,
     VirtualChangeDivisor => VirtualChangeDivisor,
@@ -763,13 +771,11 @@ mod tests {
             Ok(JoltInstruction::Add(..))
         ));
         for kind in [
-            SourceInstructionKind::ADDW,
             SourceInstructionKind::DIV,
             SourceInstructionKind::LW,
             SourceInstructionKind::SW,
             SourceInstructionKind::AMOADDW,
             SourceInstructionKind::CSRRS,
-            SourceInstructionKind::VirtualSW,
         ] {
             assert_eq!(
                 JoltInstructionRow::try_from(&SourceInstruction::new(
@@ -794,6 +800,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside a Result-returning test"
+    )]
     fn terminal_virtual_instruction_marks_last_in_sequence() -> Result<(), JoltInstructionKind> {
         fn flags_for(
             row: JoltInstructionRow,

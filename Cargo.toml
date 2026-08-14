@@ -43,7 +43,9 @@ members = [
   "crates/jolt-dory",
   "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
+  "crates/jolt-tracer-x86",
   "crates/jolt-transcript",
+  "crates/jolt-utils",
   "crates/jolt-profiling",
   "crates/jolt-field",
   "crates/jolt-kernels",
@@ -281,7 +283,7 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b
   "sha3",
 ] }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.4.0", features = [
+dory = { package = "dory-pcs", version = "0.4.1", features = [
   "backends",
   "cache",
   "disk-persistence",
@@ -320,7 +322,10 @@ rand_core = { version = "0.6.4", default-features = false }
 rand_distr = "0.4.3"
 
 # Serialization
-serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde = { version = "1.0", default-features = false, features = [
+  "derive",
+  "rc",
+] }
 serde_json = { version = "1.0.150", default-features = false }
 schemars = "1.2"
 rmp-serde = "1.3.0"
@@ -370,7 +375,7 @@ proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.39.1", features = [
+object = { version = "0.40.0", features = [
   "build_core",
   "elf",
 ], default-features = false }
@@ -438,9 +443,11 @@ jolt-witness-derive = { path = "./crates/jolt-witness-derive" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
 jolt-transcript = { path = "./crates/jolt-transcript" }
+jolt-utils = { path = "./crates/jolt-utils" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
 jolt-program = { path = "./crates/jolt-program", default-features = false }
+jolt-tracer-x86 = { path = "./crates/jolt-tracer-x86" }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }

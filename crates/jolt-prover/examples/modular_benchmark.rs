@@ -30,6 +30,7 @@ mod dory_benchmark {
 
     use std::fs;
     use std::io::Write as _;
+    use std::sync::Arc;
     use std::time::Instant;
 
     use clap::{Parser, ValueEnum};
@@ -257,14 +258,14 @@ mod dory_benchmark {
         )
         .expect("derive config");
         let public_io = trace_output.device.clone();
-        let witness = TraceBackend::new(
+        let witness = Arc::new(TraceBackend::new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
                 config.one_hot_config,
             ),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
-        );
+        ));
 
         // PCS setup sized like the byte-diff harness: the main one-hot matrix
         // maxed with both advice candidates (always included in setup sizing,
@@ -293,7 +294,7 @@ mod dory_benchmark {
                 &prover_preprocessing,
                 &config,
                 None,
-                &witness,
+                Arc::clone(&witness),
                 &public_io,
             )
             .expect("modular prove");
@@ -386,6 +387,7 @@ mod dory_benchmark {
                     inputs: inputs.to_vec(),
                     untrusted_advice: Vec::new(),
                     trusted_advice: Vec::new(),
+                    advice_tape: None,
                     memory_config,
                 },
             )
@@ -809,6 +811,7 @@ mod akita_benchmark {
                     inputs: inputs.to_vec(),
                     untrusted_advice: Vec::new(),
                     trusted_advice: Vec::new(),
+                    advice_tape: None,
                     memory_config,
                 },
             )

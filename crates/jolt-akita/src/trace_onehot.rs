@@ -1,3 +1,8 @@
+#![expect(
+    clippy::indexing_slicing,
+    reason = "fixed-shape hot loops validate their dimensions before entering the indexed kernels"
+)]
+
 //! Streaming kernels for Jolt's prefix-packed trace one-hot polynomial.
 //!
 //! A trace row produces each committed nonzero hot lane. Logical lane zero is

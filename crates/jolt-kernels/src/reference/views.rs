@@ -2,9 +2,9 @@
 
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_field::Field;
-#[cfg(feature = "parallel")]
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::EqPolynomial;
+#[cfg(feature = "parallel")]
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::JoltWitnessOracle;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

@@ -150,6 +150,7 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
             mut trace,
             device,
             final_memory,
+            advice_tape: _advice_tape,
         } = inputs.trace;
         let mut trace_rows = Vec::new();
         let mut trailing_padding = 0;
@@ -172,6 +173,7 @@ impl<'a, T: TraceSource> TraceBackend<'a, T> {
             jolt_program::execution::OwnedTrace::new(raw_rows),
             device.clone(),
             final_memory.clone(),
+            _advice_tape,
         );
         let backend = Self {
             config,

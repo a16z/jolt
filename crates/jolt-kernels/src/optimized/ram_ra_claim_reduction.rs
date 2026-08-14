@@ -23,10 +23,10 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaClaimReductionPublic};
 use jolt_field::Field;
-#[cfg(feature = "parallel")]
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "parallel")]
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputPoints,

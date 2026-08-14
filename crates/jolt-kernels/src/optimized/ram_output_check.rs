@@ -27,8 +27,6 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
-#[cfg(feature = "test-utils")]
-use jolt_field::AkitaField;
 use jolt_field::Field;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -343,66 +341,6 @@ fn low_binding_weights<F: Field>(challenges: &[F]) -> Vec<F> {
     weights
 }
 
-#[cfg(feature = "test-utils")]
-#[doc(hidden)]
-pub fn evaluate_deferred_output_check_cpu(
-    output_address_challenges: &[AkitaField],
-    mask_start: usize,
-    mask_end: usize,
-    val_io: &[AkitaField],
-    val_final: &[AkitaField],
-    round_challenges: &[AkitaField],
-) -> Result<AkitaField, SumcheckError<AkitaField>> {
-    let addresses = val_final.len();
-    if addresses == 0
-        || !addresses.is_power_of_two()
-        || val_io.len() != addresses
-        || output_address_challenges.len() != addresses.ilog2() as usize
-        || round_challenges.len() != output_address_challenges.len()
-        || mask_start >= mask_end
-        || mask_end > addresses
-    {
-        return Err(SumcheckError::ComputeBackend {
-            backend: "optimized",
-            message: "invalid deferred RAM output-check benchmark shape".to_owned(),
-        });
-    }
-    let io_mask = (0..addresses)
-        .map(|index| {
-            if index >= mask_start && index < mask_end {
-                AkitaField::one()
-            } else {
-                AkitaField::zero()
-            }
-        })
-        .collect();
-    let mut kernel = OutputCheckKernel::new(
-        output_address_challenges,
-        mask_start as u128,
-        mask_end as u128,
-        io_mask,
-        val_io.to_vec(),
-        val_final.to_vec(),
-    );
-    let mut claim = AkitaField::zero();
-    let mut bind = None;
-    for (round, &challenge) in round_challenges.iter().enumerate() {
-        let message = kernel.prove_round(bind, round, claim)?;
-        claim = message.evaluate(challenge);
-        bind = Some(challenge);
-    }
-    let final_bind =
-        round_challenges
-            .last()
-            .copied()
-            .ok_or_else(|| SumcheckError::ComputeBackend {
-                backend: "optimized",
-                message: "deferred RAM output check has no final challenge".to_owned(),
-            })?;
-    kernel.finish_rounds(final_bind)?;
-    Ok(kernel.val_final.evals()[0])
-}
-
 impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.ram_log_k
@@ -559,7 +497,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory)),
+            TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory), None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend, public_memory)

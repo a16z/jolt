@@ -277,7 +277,7 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
         }
     }
 
-    let mut lanes = jolt_poly::thread::unsafe_allocate_zero_vec(num_rows * num_columns);
+    let mut lanes = jolt_utils::unsafe_allocate_zero_vec(num_rows * num_columns);
     #[cfg(feature = "parallel")]
     if let Some(access) = witness.random_access() {
         if num_rows <= access.cycles() {

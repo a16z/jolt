@@ -20,7 +20,12 @@ metal = ["akita", "dep:metal", "dep:sha2"]
 # Test harnesses may inject a sealed OuterRemainder shader artifact instead of
 # compiling the checked-in production source.
 metal-runtime-artifact-only = []
-parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
+parallel = [
+  "dep:rayon",
+  "jolt-poly/parallel",
+  "jolt-utils/parallel",
+  "jolt-witness/parallel",
+]
 test-utils = ["dep:jolt-transcript", "dep:serde", "dep:serde_json", "dep:sha2"]
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
@@ -34,10 +39,12 @@ jolt-kernels-derive.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
+jolt-program.workspace = true
 jolt-riscv.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck.workspace = true
 jolt-transcript = { workspace = true, optional = true }
+jolt-utils.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }

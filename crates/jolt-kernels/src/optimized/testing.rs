@@ -270,7 +270,7 @@ fn with_ram_fixture_init_backend<R>(
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory)),
+        TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory), None),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)

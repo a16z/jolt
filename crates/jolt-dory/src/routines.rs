@@ -1,18 +1,20 @@
 //! Jolt-optimized [`DoryRoutines`] plugged into `dory::prove`/`dory::verify`.
 //!
-//! The stock `dory::backends::arkworks` routines run one full scalar
-//! multiplication per element in a serial loop (`fixed_scalar_mul_*`,
-//! `fixed_base_vector_scalar_mul`) and convert bases to affine one inversion
-//! at a time inside `msm` — the dominant wall-clock cost of the reduce-fold
-//! rounds. These implementations mirror the legacy prover's
-//! `JoltG1Routines`/`JoltG2Routines`: rayon-parallel GLV vector ops from
-//! `jolt-optimizations` and batch-normalized MSMs. Group results are exact,
-//! so proofs are byte-identical to the stock routines'.
+//! As of dory-pcs 0.4.1 the stock routines batch-normalize MSM bases and
+//! parallelize the vector ops behind the `parallel` feature (upstreamed from
+//! here in a16z/dory#27), so `msm` and `fold_field_vectors` just delegate —
+//! those wrappers only contribute the `JoltG1Routines::msm`/
+//! `JoltG2Routines::msm` span labels the profiling telemetry grammar
+//! addresses. The remaining overrides are the GLV kernels from
+//! `jolt-optimizations` (2D decomposition for G1, 4D Frobenius for G2),
+//! which replace the stock full-width scalar multiplications per element and
+//! have no crates.io home yet. These mirror the legacy prover's
+//! `JoltG1Routines`/`JoltG2Routines`. Group results are exact, so proofs are
+//! byte-identical to the stock routines'.
 
 use ark_bn254::{Fr as ArkworksFr, G1Projective, G2Projective};
-use ark_ec::{CurveGroup, VariableBaseMSM};
-use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};
-use dory::primitives::arithmetic::{DoryRoutines, Group};
+use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2, G1Routines, G2Routines};
+use dory::primitives::arithmetic::DoryRoutines;
 use rayon::prelude::*;
 
 // The transmutes below rely on ArkFr/ArkG1/ArkG2 being repr(transparent)
@@ -53,28 +55,12 @@ fn g2_slice_mut(points: &mut [ArkG2]) -> &mut [G2Projective] {
     }
 }
 
-/// left[i] = left[i] * scalar + right[i]
-fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
-    assert_eq!(left.len(), right.len(), "fold: lengths must match");
-    left.par_iter_mut()
-        .zip(right.par_iter())
-        .for_each(|(l, r)| {
-            *l = *l * *scalar + *r;
-        });
-}
-
 pub struct JoltG1Routines;
 
 impl DoryRoutines<ArkG1> for JoltG1Routines {
     #[tracing::instrument(skip_all, name = "JoltG1Routines::msm", fields(len = bases.len()))]
     fn msm(bases: &[ArkG1], scalars: &[ArkFr]) -> ArkG1 {
-        assert_eq!(bases.len(), scalars.len(), "MSM requires equal lengths");
-        if bases.is_empty() {
-            return ArkG1::identity();
-        }
-        // One batch inversion instead of the stock per-element into_affine.
-        let affines = G1Projective::normalize_batch(g1_slice(bases));
-        ArkG1(G1Projective::msm_unchecked(&affines, ark_fr_slice(scalars)))
+        G1Routines::msm(bases, scalars)
     }
 
     fn fixed_base_vector_scalar_mul(base: &ArkG1, scalars: &[ArkFr]) -> Vec<ArkG1> {
@@ -106,7 +92,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
     }
 
     fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
-        fold_field_vectors(left, right, scalar);
+        <G1Routines as DoryRoutines<ArkG1>>::fold_field_vectors(left, right, scalar);
     }
 }
 
@@ -115,12 +101,7 @@ pub struct JoltG2Routines;
 impl DoryRoutines<ArkG2> for JoltG2Routines {
     #[tracing::instrument(skip_all, name = "JoltG2Routines::msm", fields(len = bases.len()))]
     fn msm(bases: &[ArkG2], scalars: &[ArkFr]) -> ArkG2 {
-        assert_eq!(bases.len(), scalars.len(), "MSM requires equal lengths");
-        if bases.is_empty() {
-            return ArkG2::identity();
-        }
-        let affines = G2Projective::normalize_batch(g2_slice(bases));
-        ArkG2(G2Projective::msm_unchecked(&affines, ark_fr_slice(scalars)))
+        G2Routines::msm(bases, scalars)
     }
 
     fn fixed_base_vector_scalar_mul(base: &ArkG2, scalars: &[ArkFr]) -> Vec<ArkG2> {
@@ -131,6 +112,10 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         scalars
             .par_iter()
             .map(|scalar| {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "glv_four_scalar_mul_online returns one point per base and is passed exactly one base"
+                )]
                 ArkG2(jolt_optimizations::glv_four_scalar_mul_online(scalar.0, &[base_proj])[0])
             })
             .collect()
@@ -157,15 +142,16 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
     }
 
     fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
-        fold_field_vectors(left, right, scalar);
+        <G2Routines as DoryRoutines<ArkG2>>::fold_field_vectors(left, right, scalar);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+
     use super::*;
-    use dory::backends::arkworks::{G1Routines, G2Routines};
-    use dory::primitives::arithmetic::Field as DoryField;
+    use dory::primitives::arithmetic::{Field as DoryField, Group};
 
     fn random_fr() -> ArkFr {
         <ArkFr as DoryField>::random()

@@ -29,10 +29,10 @@ use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutput
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 use jolt_field::signed::{S192, S256, S64};
 use jolt_field::{Field, SignedProductAccumulator as _, WithSignedProductAccumulator};
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputPoints,

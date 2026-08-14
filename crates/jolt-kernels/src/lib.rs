@@ -49,8 +49,8 @@ pub mod reference;
 pub mod uniskip;
 
 pub use backend::{
-    JoltBackend, MaybeAllocative, PrepareKernel, ProofSession, Stage2ProductInstructionPrefetch,
-    Stage5InstructionReadRafPrefetch,
+    BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession,
+    Stage2ProductInstructionPrefetch, Stage5InstructionReadRafPrefetch,
 };
 pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment};
 pub use error::KernelError;

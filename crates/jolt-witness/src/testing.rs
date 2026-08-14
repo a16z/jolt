@@ -262,7 +262,7 @@ fn with_backend<R>(
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)
@@ -275,7 +275,7 @@ fn with_backend<R>(
 #[expect(clippy::unwrap_used, reason = "test assertion helper")]
 pub fn assert_bundle_column_matches<B>(id: JoltPolynomialId, value: impl Fn(&B) -> Fr)
 where
-    B: WitnessBundle + Clone + Send + Sync,
+    B: WitnessBundle + Copy + Send + Sync,
 {
     with_sample_backend(|backend| {
         assert!(

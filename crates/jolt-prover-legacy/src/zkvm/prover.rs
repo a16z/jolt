@@ -3815,10 +3815,13 @@ mod tests {
                     let mut rounds = Vec::with_capacity(num_rounds);
 
                     for (round_idx, commitment) in zk_proof.round_commitments.iter().enumerate() {
-                        transcript.append_commitment(b"sumcheck_commitment", commitment);
-                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
-
                         let degree = zk_proof.poly_degrees[round_idx];
+                        transcript.append_commitment_with_count(
+                            b"sumcheck_commitment",
+                            degree as u64,
+                            commitment,
+                        );
+                        let challenge: Fr = transcript.challenge_scalar_optimized::<Fr>().into();
 
                         // Create synthetic coefficients that satisfy sumcheck relation
                         // g(x) = c0 + c1*x + c2*x^2 + ... has degree+1 coefficients

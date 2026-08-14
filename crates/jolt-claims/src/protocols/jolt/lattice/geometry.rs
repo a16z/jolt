@@ -4,8 +4,8 @@
 //! [module doc](super).
 
 use jolt_field::{Field, RingCore};
-use jolt_poly::math::Math;
 use jolt_poly::{eq_index_msb, IdentityPolynomial, MultilinearEvaluation};
+use jolt_utils::Math;
 use thiserror::Error;
 
 use super::super::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;

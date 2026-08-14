@@ -23,7 +23,8 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 use jolt_witness::{
-    collect_range_into, stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer,
+    collect_range_into, stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, RowSource,
+    StreamConsumer,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -56,7 +57,7 @@ where
     fn commit_witness(
         &self,
         session: &mut ProofSession,
-        source: &dyn RowSource,
+        source: &dyn JoltWitnessPlane<F>,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
@@ -91,7 +92,7 @@ where
 /// it to force multi-delivery sequencing; production uses
 /// [`SUPERCHUNK_CYCLES`]).
 fn commit_streaming<F, PCS>(
-    source: &dyn RowSource,
+    source: &dyn JoltWitnessPlane<F>,
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
@@ -342,7 +343,7 @@ mod tests {
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_witness::RowSource;
+    use jolt_witness::JoltWitnessPlane;
 
     use super::{commit_streamed, commit_streaming};
     use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
@@ -412,7 +413,7 @@ mod tests {
                 "fixture must exercise the streaming path with multiple windows"
             );
             let setup = DoryScheme::setup_prover(grid.total_vars);
-            let source: &dyn RowSource = witness;
+            let source: &dyn JoltWitnessPlane<Fr> = witness;
 
             let reference = <ReferenceBackend as CommitWitness<Fr, DoryScheme>>::commit_witness(
                 &ReferenceBackend,

@@ -101,10 +101,12 @@ where
         ),
     };
 
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = tracing::info_span!("OuterRemainder::complete_member").in_scope(|| {
         sumchecks.prove(
             backend,
             session,
+            &mut *scheduler,
             witness,
             &inputs,
             &input_points,

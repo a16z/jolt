@@ -6,7 +6,8 @@ use jolt_poly::lagrange::centered_lagrange_kernel;
 use jolt_poly::{boolean_point_msb, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
 use jolt_sumcheck::{
-    prove_batch, ClearSumcheckRecorder, ProveRounds, SumcheckProof, SumcheckRecorder as _,
+    prove_batch, ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckProof,
+    SumcheckRecorder as _,
 };
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::stages::relations::ConcreteSumcheck as _;
@@ -212,8 +213,14 @@ impl OuterRemainderEvalFixture {
         .map_err(protocol_error)?;
         let mut member = CapturingRounds::new(kernel);
         let mut rounds: Vec<&mut dyn ProveRounds<AkitaField>> = vec![&mut member];
-        let proved = prove_batch(&prelude, &mut rounds, &mut recorder, &mut transcript)
-            .map_err(protocol_error)?;
+        let proved = prove_batch(
+            &prelude,
+            &mut rounds,
+            &mut SequentialRounds,
+            &mut recorder,
+            &mut transcript,
+        )
+        .map_err(protocol_error)?;
         let output_points = sumchecks
             .derive_opening_points(&proved.challenges, &input_points)
             .map_err(protocol_error)?;

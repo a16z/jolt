@@ -232,8 +232,12 @@ pub trait StreamingCommitment: CommitmentScheme {
         row_width: usize,
         setup: &Self::ProverSetup,
     ) {
-        let rows: Vec<i128> = (0..count).map(value).collect();
-        Self::feed_i128_rows(partial, &rows, row_width, setup);
+        let mut row = Vec::with_capacity(row_width);
+        for base in (0..count).step_by(row_width) {
+            row.clear();
+            row.extend((base..base + row_width).map(&value));
+            Self::feed_i128(partial, &row, setup);
+        }
     }
 
     fn begin_one_hot_column_major_stream(
@@ -279,8 +283,15 @@ pub trait StreamingCommitment: CommitmentScheme {
         count: usize,
         chunk_width: usize,
     ) -> Vec<Self::OneHotChunkCommitment> {
-        let chunks: Vec<Option<usize>> = (0..count).map(hot_address).collect();
-        Self::process_one_hot_chunks(context, setup, one_hot_k, &chunks, chunk_width)
+        let mut chunk = Vec::with_capacity(chunk_width);
+        (0..count)
+            .step_by(chunk_width)
+            .map(|base| {
+                chunk.clear();
+                chunk.extend((base..(base + chunk_width).min(count)).map(&hot_address));
+                Self::process_one_hot_chunk(context, setup, one_hot_k, &chunk)
+            })
+            .collect()
     }
 
     fn finish_with_hint(
@@ -594,11 +605,11 @@ where
     C: Clone,
 {
     fn new(claims: &'a [VerifierOpeningClaim<F, C>]) -> Result<Self, OpeningsError> {
-        let first = claims.first().ok_or_else(|| {
+        let (first, rest) = claims.split_first().ok_or_else(|| {
             OpeningsError::InvalidBatch("batch opening requires at least one claim".to_owned())
         })?;
         let point = first.evaluation.point.clone();
-        for claim in &claims[1..] {
+        for claim in rest {
             if claim.evaluation.point != point {
                 return Err(OpeningsError::InvalidBatch(
                     "batch opening claims must use one common point".to_owned(),

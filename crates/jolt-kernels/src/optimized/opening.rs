@@ -45,8 +45,8 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
-use jolt_poly::thread::unsafe_allocate_zero_vec;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
 #[cfg(feature = "parallel")]
