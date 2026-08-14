@@ -9,11 +9,11 @@
 
 use crate::{IV, SIGMA};
 use jolt_inlines_sdk::host::{
-    kinds::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63, LD, LUI, SUB},
+    kinds::{LUI, XORI},
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
     InlineOp, InlineOperands, InlineRegister, NoAdvice,
-    Value::{Imm, Reg},
 };
+use jolt_inlines_sdk::jolt_asm;
 
 pub const NEEDED_REGISTERS: usize = 43;
 
@@ -90,28 +90,21 @@ impl Blake2SequenceBuilder {
     }
 
     fn load_counter_and_is_final(&mut self) {
-        self.asm.emit_ld(
-            LD,
-            *self.vr[VR_T],
-            self.operands.rs2,
-            crate::MSG_BLOCK_LEN as i64 * 8,
-        );
-        self.asm.emit_ld(
-            LD,
-            *self.vr[VR_IS_FINAL],
-            self.operands.rs2,
-            (crate::MSG_BLOCK_LEN as i64 + 1) * 8,
-        );
+        jolt_asm!(self.asm, {
+            ld *self.vr[VR_T], self.operands.rs2, crate::MSG_BLOCK_LEN as i64 * 8;
+            ld *self.vr[VR_IS_FINAL], self.operands.rs2, (crate::MSG_BLOCK_LEN as i64 + 1) * 8;
+        });
     }
 
     // Initialize the working state v[0..15] according to the BLAKE2b specification.
     fn initialize_working_state(&mut self) {
         // v[0..7] = h[0..7]
         for i in 0..crate::STATE_VECTOR_LEN {
-            self.asm.xor(
-                Reg(*self.vr[VR_HASH_STATE_START + i]),
-                Imm(0),
+            self.asm.emit_i(
+                XORI,
                 *self.vr[VR_WORKING_STATE_START + i],
+                *self.vr[VR_HASH_STATE_START + i],
+                0,
             );
         }
 
@@ -126,29 +119,23 @@ impl Blake2SequenceBuilder {
             self.asm.emit_u(LUI, rd, *value);
         }
 
-        // v[12] = v[12] ^ t (counter low)
-        self.asm.xor(
-            Reg(*self.vr[VR_WORKING_STATE_START + 12]),
-            Reg(*self.vr[VR_T]),
-            *self.vr[VR_WORKING_STATE_START + 12],
-        );
+        let v12 = *self.vr[VR_WORKING_STATE_START + 12];
+        let v14 = *self.vr[VR_WORKING_STATE_START + 14];
+        let t = *self.vr[VR_T];
+        let temp = *self.vr[VR_TEMP];
+        let is_final = *self.vr[VR_IS_FINAL];
 
-        // Since we are using 64-bit counter, the high part is always 0, so v[13] remains unchanged
-        // v[13] = IV[5] ^ (t >> 64) (counter high) - for 64-bit counter, high part is 0.
+        jolt_asm!(self.asm, {
+            // v[12] = v[12] ^ t (counter low). The counter is 64-bit, so the
+            // high part is always 0 and v[13] remains unchanged.
+            xor v12, v12, t;
 
-        // Handle final block flag: if is_final != 0, invert all bits of v[14]
-        // Create a mask that is 0xFFFFFFFFFFFFFFFF if is_final != 0, or 0 if is_final == 0.
-        // Use the formula: mask = (0 - is_final) to convert 1 to 0xFFFFFFFFFFFFFFFF and 0 to 0
-        // First, negate is_final (0 - is_final).
-        // Using 0 as x0, which is always 0 in RISC-V.
-        self.asm
-            .emit_r(SUB, *self.vr[VR_TEMP], 0, *self.vr[VR_IS_FINAL]);
-        // XOR v[14] with the mask: inverts all bits if is_final=1, leaves unchanged if is_final=0.
-        self.asm.xor(
-            Reg(*self.vr[VR_WORKING_STATE_START + 14]),
-            Reg(*self.vr[VR_TEMP]),
-            *self.vr[VR_WORKING_STATE_START + 14],
-        );
+            // Handle the final block flag: if is_final != 0, invert all bits
+            // of v[14]. temp = (0 - is_final): all-ones if is_final=1, 0 if
+            // is_final=0 (register 0 is x0, which is always 0 in RISC-V).
+            sub temp, 0, is_final;
+            xor v14, v14, temp;
+        });
     }
 
     /// Execute one round of BLAKE2b compression
@@ -177,31 +164,26 @@ impl Blake2SequenceBuilder {
         let my = *self.vr[VR_MESSAGE_BLOCK_START + y];
         let temp1 = *self.vr[VR_TEMP];
 
-        // v[a] = v[a] + v[b] + m[x]
-        self.asm.add(Reg(va), Reg(vb), temp1);
-        self.asm.add(Reg(temp1), Reg(mx), va);
-
-        // v[d] = rotr64(v[d] ^ v[a], 32)
-        self.asm.emit_r(VirtualXORROT32, vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr64(v[b] ^ v[c], 24)
-        self.asm.emit_r(VirtualXORROT24, vb, vb, vc);
-
-        // v[a] = v[a] + v[b] + m[y]
-        self.asm.add(Reg(va), Reg(vb), temp1);
-        self.asm.add(Reg(temp1), Reg(my), va);
-
-        // v[d] = rotr64(v[d] ^ v[a], 16)
-        self.asm.emit_r(VirtualXORROT16, vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr64(v[b] ^ v[c], 63)
-        self.asm.emit_r(VirtualXORROT63, vb, vb, vc);
+        jolt_asm!(self.asm, {
+            // v[a] = v[a] + v[b] + m[x]
+            add temp1, va, vb;
+            add va, temp1, mx;
+            // v[d] = rotr64(v[d] ^ v[a], 32)
+            xorrot32 vd, vd, va;
+            // v[c] = v[c] + v[d]
+            add vc, vc, vd;
+            // v[b] = rotr64(v[b] ^ v[c], 24)
+            xorrot24 vb, vb, vc;
+            // v[a] = v[a] + v[b] + m[y]
+            add temp1, va, vb;
+            add va, temp1, my;
+            // v[d] = rotr64(v[d] ^ v[a], 16)
+            xorrot16 vd, vd, va;
+            // v[c] = v[c] + v[d]
+            add vc, vc, vd;
+            // v[b] = rotr64(v[b] ^ v[c], 63)
+            xorrot63 vb, vb, vc;
+        });
     }
 
     fn finalize_state(&mut self) {
@@ -212,10 +194,12 @@ impl Blake2SequenceBuilder {
             let vi = *self.vr[VR_WORKING_STATE_START + i];
             let vi8 = *self.vr[VR_WORKING_STATE_START + i + crate::STATE_VECTOR_LEN];
 
-            // temp = v[i] ^ v[i+8]
-            self.asm.xor(Reg(vi), Reg(vi8), temp);
-            // h[i] = h[i] ^ temp
-            self.asm.xor(Reg(hi), Reg(temp), hi);
+            jolt_asm!(self.asm, {
+                // temp = v[i] ^ v[i+8]
+                xor temp, vi, vi8;
+                // h[i] = h[i] ^ temp
+                xor hi, hi, temp;
+            });
         }
     }
 

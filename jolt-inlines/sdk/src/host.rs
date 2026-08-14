@@ -14,9 +14,7 @@ pub use jolt_program::expand::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
     InlineRegister, Value,
 };
-use jolt_riscv::kinds::{
-    VirtualAdvice, VirtualZeroExtendWord, ADD, LD, LW, MUL, MULHU, OR, SD, SLLI, SLTU, SRLI,
-};
+use jolt_riscv::kinds::{LD, LW, SD};
 
 pub use jolt_riscv::{kinds, SourceInstructionKind};
 pub use tracer::instruction::format::format_inline::FormatInline;
@@ -310,6 +308,158 @@ pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), Stri
     write_inline_trace(file, &inline_info, &inputs, &instructions, mode).map_err(|e| e.to_string())
 }
 
+/// Assembly-style sugar over [`InlineExpansionBuilder`].
+///
+/// Each statement is `mnemonic operands..;` with the **destination register
+/// first** (RISC-V operand order). Operands are ordinary Rust expressions —
+/// locals, `*self.vr[i]`, computed offsets — evaluating to `u8` register
+/// numbers or integer immediates. Every statement expands to exactly one
+/// builder call, so recipes written with the macro are byte-identical to
+/// hand-written `emit_*` calls. Statements that are not instruction-shaped
+/// (register allocation, range helpers, control flow) stay outside the block.
+///
+/// Operand shapes:
+///
+/// | statement                  | mnemonics                                  |
+/// |----------------------------|--------------------------------------------|
+/// | `op rd, rs1, rs2;`         | `add sub and or xor andn mul mulhu sltu`   |
+/// |                            | `xorrot16/24/32/63` `xorrotw7/8/12/16`     |
+/// | `op rd, rs1, imm;`         | `addi andi ori xori slli srli srliw`       |
+/// | `zextw rd, rs1;`           | zero-extend low 32 bits of `rs1` into `rd` |
+/// | `op rd, base, offset;`     | `ld lw` (loads; signed byte offset)        |
+/// | `sd base, src, offset;`    | store `src` to `base + offset`             |
+/// | `lui rd, imm;`             | load immediate                             |
+/// | `advice rd;`               | next runtime-advice value into `rd`        |
+/// | `assert_eq rs1, rs2;`      | `VirtualAssertEQ` (also `assert_lte`)      |
+/// | `rotl64 rd, rs1, amount;`  | 64-bit rotate-left by a constant amount    |
+///
+/// ```ignore
+/// jolt_asm!(self.asm, {
+///     add temp1, va, vb;       // temp1 = va + vb
+///     xorrot32 vd, vd, va;     // vd = rotr64(vd ^ va, 32)
+///     ld t, self.operands.rs2, 128;
+/// });
+/// ```
+#[macro_export]
+macro_rules! jolt_asm {
+    ($asm:expr, { $($mnemonic:ident $($operand:expr),* ;)* }) => {
+        $($crate::__jolt_asm_stmt!($asm, $mnemonic $($operand),*);)*
+    };
+}
+
+/// One statement of [`jolt_asm!`]: `mnemonic` dispatch to a builder call.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __jolt_asm_stmt {
+    // R-format: op rd, rs1, rs2
+    ($asm:expr, add $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::ADD, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, sub $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::SUB, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, and $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::AND, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, or $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::OR, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xor $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::XOR, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, andn $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::ANDN, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, mul $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::MUL, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, mulhu $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::MULHU, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, sltu $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::SLTU, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xorrot16 $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::VirtualXORROT16, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xorrot24 $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::VirtualXORROT24, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xorrot32 $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::VirtualXORROT32, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xorrot63 $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::VirtualXORROT63, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xorrotw7 $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::VirtualXORROTW7, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xorrotw8 $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::VirtualXORROTW8, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xorrotw12 $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::VirtualXORROTW12, $rd, $rs1, $rs2)
+    };
+    ($asm:expr, xorrotw16 $rd:expr, $rs1:expr, $rs2:expr) => {
+        $asm.emit_r($crate::host::kinds::VirtualXORROTW16, $rd, $rs1, $rs2)
+    };
+    // I-format: op rd, rs1, imm
+    ($asm:expr, addi $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_i($crate::host::kinds::ADDI, $rd, $rs1, $imm)
+    };
+    ($asm:expr, andi $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_i($crate::host::kinds::ANDI, $rd, $rs1, $imm)
+    };
+    ($asm:expr, ori $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_i($crate::host::kinds::ORI, $rd, $rs1, $imm)
+    };
+    ($asm:expr, xori $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_i($crate::host::kinds::XORI, $rd, $rs1, $imm)
+    };
+    ($asm:expr, slli $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_i($crate::host::kinds::SLLI, $rd, $rs1, $imm)
+    };
+    ($asm:expr, srli $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_i($crate::host::kinds::SRLI, $rd, $rs1, $imm)
+    };
+    ($asm:expr, srliw $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_i($crate::host::kinds::SRLIW, $rd, $rs1, $imm)
+    };
+    ($asm:expr, zextw $rd:expr, $rs1:expr) => {
+        $asm.emit_i($crate::host::kinds::VirtualZeroExtendWord, $rd, $rs1, 0)
+    };
+    // Loads: op rd, base, offset (signed byte offset)
+    ($asm:expr, ld $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_ld($crate::host::kinds::LD, $rd, $rs1, $imm)
+    };
+    ($asm:expr, lw $rd:expr, $rs1:expr, $imm:expr) => {
+        $asm.emit_ld($crate::host::kinds::LW, $rd, $rs1, $imm)
+    };
+    // Store: sd base, src, offset
+    ($asm:expr, sd $base:expr, $src:expr, $imm:expr) => {
+        $asm.emit_s($crate::host::kinds::SD, $base, $src, $imm)
+    };
+    // U-format: lui rd, imm
+    ($asm:expr, lui $rd:expr, $imm:expr) => {
+        $asm.emit_u($crate::host::kinds::LUI, $rd, $imm)
+    };
+    // Runtime advice: advice rd
+    ($asm:expr, advice $rd:expr) => {
+        $asm.emit_j($crate::host::kinds::VirtualAdvice, $rd, 0)
+    };
+    // Virtual asserts: op rs1, rs2
+    ($asm:expr, assert_eq $rs1:expr, $rs2:expr) => {
+        $asm.emit_b($crate::host::kinds::VirtualAssertEQ, $rs1, $rs2, 0)
+    };
+    ($asm:expr, assert_lte $rs1:expr, $rs2:expr) => {
+        $asm.emit_b($crate::host::kinds::VirtualAssertLTE, $rs1, $rs2, 0)
+    };
+    // Rotate helper: rotl64 rd, rs1, amount (constant amount, 0..=64)
+    ($asm:expr, rotl64 $rd:expr, $rs1:expr, $amount:expr) => {
+        let _ = $asm.rotl64($crate::host::Value::Reg($rs1), $amount, $rd);
+    };
+}
+
 /// Extension trait adding common load/store helpers to [`InlineExpansionBuilder`].
 ///
 /// Paired u32 helpers combine two adjacent u32 values into a single 64-bit
@@ -373,32 +523,40 @@ impl InlineBuilderExt for InlineExpansionBuilder {
     /// Clean extraction: `vr_lo` gets zero-extended low 32 bits; `vr_hi` gets high 32 bits.
     /// Clobbers `temp` for the intermediate 64-bit load.
     fn load_paired_u32(&mut self, temp: u8, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        self.emit_ld(LD, temp, base, offset);
-        self.emit_i(VirtualZeroExtendWord, vr_lo, temp, 0);
-        self.emit_i(SRLI, vr_hi, temp, 32);
+        jolt_asm!(self, {
+            ld temp, base, offset;
+            zextw vr_lo, temp;
+            srli vr_hi, temp, 32;
+        });
     }
 
     /// Store two u32 values to 8-byte aligned `base+offset` as a single SD.
     /// WARNING: clobbers both `vr_lo` and `vr_hi`.
     fn store_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        self.emit_i(VirtualZeroExtendWord, vr_lo, vr_lo, 0);
-        self.emit_i(SLLI, vr_hi, vr_hi, 32);
-        self.emit_r(OR, vr_lo, vr_hi, vr_lo);
-        self.emit_s(SD, base, vr_lo, offset);
+        jolt_asm!(self, {
+            zextw vr_lo, vr_lo;
+            slli vr_hi, vr_hi, 32;
+            or vr_lo, vr_hi, vr_lo;
+            sd base, vr_lo, offset;
+        });
     }
 
     /// Load two packed u32 from 8-byte aligned `base+offset` into `vr_lo` and `vr_hi`.
     /// WARNING: leaves junk in upper 32 bits of `vr_lo`. Safe only when downstream ops
     /// preserve correctness independent of upper bits (e.g. SHA-256 32-bit arithmetic).
     fn load_paired_u32_dirty(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
-        self.emit_ld(LD, vr_lo, base, offset);
-        self.emit_i(SRLI, vr_hi, vr_lo, 32);
+        jolt_asm!(self, {
+            ld vr_lo, base, offset;
+            srli vr_hi, vr_lo, 32;
+        });
     }
 
     fn emit_advice_stores(&mut self, vr: u8, base_reg: u8, count: usize) {
         for i in 0..count {
-            self.emit_j(VirtualAdvice, vr, 0);
-            self.emit_s(SD, base_reg, vr, i as i64 * 8);
+            jolt_asm!(self, {
+                advice vr;
+                sd base_reg, vr, i as i64 * 8;
+            });
         }
     }
 }
@@ -440,29 +598,37 @@ pub trait MulAccExt {
 
 impl MulAccExt for InlineExpansionBuilder {
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(MUL, aux, a, b);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, c2, c1, aux);
+        jolt_asm!(self, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+        });
     }
 
     fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(MULHU, aux, a, b);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, c2, c1, aux);
+        jolt_asm!(self, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+        });
     }
 
     fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(MUL, aux, a, b);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, aux, c1, aux);
-        self.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
 
     fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(MULHU, aux, a, b);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, aux, c1, aux);
-        self.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
 
     fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
@@ -482,52 +648,64 @@ impl MulAccExt for InlineExpansionBuilder {
     }
 
     fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(MUL, aux, a, b);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, c2, c1, aux);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, aux, c1, aux);
-        self.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
 
     fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.emit_r(MULHU, aux, a, b);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, c2, c1, aux);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, aux, c1, aux);
-        self.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
 
     fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.emit_r(MUL, aux, a, b);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, aux2, c1, aux);
-        self.emit_r(ADD, c2, c2, aux2);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, aux2, c1, aux);
-        self.emit_r(ADD, c2, c2, aux2);
+        jolt_asm!(self, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+        });
     }
 
     fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.emit_r(MULHU, aux, a, b);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, aux2, c1, aux);
-        self.emit_r(ADD, c2, c2, aux2);
-        self.emit_r(ADD, c1, c1, aux);
-        self.emit_r(SLTU, aux2, c1, aux);
-        self.emit_r(ADD, c2, c2, aux2);
+        jolt_asm!(self, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+        });
     }
 
     fn adc(&mut self, c2: u8, c1: u8, val: u8) {
-        self.emit_r(ADD, c1, c1, val);
-        self.emit_r(SLTU, c2, c1, val);
+        jolt_asm!(self, {
+            add c1, c1, val;
+            sltu c2, c1, val;
+        });
     }
 
     fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8) {
-        self.emit_r(ADD, c1, c1, val);
-        self.emit_r(SLTU, aux, c1, val);
-        self.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self, {
+            add c1, c1, val;
+            sltu aux, c1, val;
+            add c2, c2, aux;
+        });
     }
 
     fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8) {

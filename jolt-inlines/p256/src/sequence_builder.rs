@@ -1,13 +1,14 @@
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256r1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    kinds::{VirtualAdvice, VirtualAssertEQ, VirtualAssertLTE, ADD, LD, LUI, MUL, MULHU, SD},
+    kinds::{VirtualAdvice, VirtualAssertEQ, ADD, LD, LUI, MUL, MULHU, SD},
     limbs_to_nbiguint, load_field_element_limbs, mulq_division_advice, mulq_quotient_advice,
     ExpandedInstructionSequence, ExpansionError, FieldElementLimbs, FormatInline, InlineAdvice,
     InlineAdviceContext, InlineAdviceError, InlineBuilderExt, InlineExpansionBuilder, InlineOp,
     InlineOperands, InlineRegister, ModularDivisionAdvice, MulAccExt, MulqType, QuotientAdvice,
     SignedU128Advice,
 };
+use jolt_inlines_sdk::jolt_asm;
 use num_bigint::BigInt as NBigInt;
 
 // p = 2^256 - q for base field:
@@ -555,11 +556,13 @@ impl P256Mulq {
                     .emit_r(MULHU, *self.aux, *self.a[3], *self.b.as_ref().unwrap()[3]);
             }
         }
-        self.asm.emit_r(ADD, *self.r[1], *self.r[1], *self.aux);
-        // verify that w[3] matches top limb
-        self.asm.emit_b(VirtualAssertEQ, *self.r[1], *self.w[3], 0);
-        // ensure no overflow
-        self.asm.emit_b(VirtualAssertLTE, *self.aux, *self.r[1], 0);
+        jolt_asm!(self.asm, {
+            add *self.r[1], *self.r[1], *self.aux;
+            // verify that w[3] matches top limb
+            assert_eq *self.r[1], *self.w[3];
+            // ensure no overflow
+            assert_lte *self.aux, *self.r[1];
+        });
 
         // WARNING: the division result must be stored only after the checks
         // above. `rs3` may alias `rs1`, in which case an earlier store would

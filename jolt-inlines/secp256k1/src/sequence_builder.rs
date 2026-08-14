@@ -1,12 +1,13 @@
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256k1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    kinds::{VirtualAdvice, VirtualAssertEQ, VirtualAssertLTE, ADD, LD, LUI, MUL, MULHU, SD, SLTU},
+    kinds::{VirtualAdvice, VirtualAssertEQ, ADD, LD, LUI, MUL, MULHU, SD, SLTU},
     limbs_to_nbiguint, load_field_element_limbs, mulq_division_advice, mulq_quotient_advice,
     ExpandedInstructionSequence, ExpansionError, FormatInline, GlvDecompositionAdvice,
     InlineAdviceContext, InlineAdviceError, InlineBuilderExt, InlineExpansionBuilder, InlineOp,
     InlineOperands, InlineRegister, ModularDivisionAdvice, MulqType, QuotientAdvice,
 };
+use jolt_inlines_sdk::jolt_asm;
 
 /// inline constructor for GLV decomposition in secp256k1 scalar field
 struct GlvrAdvBuilder {
@@ -363,9 +364,11 @@ impl MulqBuilder {
                     .emit_r(MULHU, *self.aux, *self.a[3], *self.b.as_ref().unwrap()[3]);
             }
         }
-        self.asm.emit_r(ADD, *self.r[1], *self.r[1], *self.aux);
-        self.asm.emit_b(VirtualAssertEQ, *self.r[1], *self.w[3], 0);
-        self.asm.emit_b(VirtualAssertLTE, *self.aux, *self.r[1], 0);
+        jolt_asm!(self.asm, {
+            add *self.r[1], *self.r[1], *self.aux;
+            assert_eq *self.r[1], *self.w[3];
+            assert_lte *self.aux, *self.r[1];
+        });
         // WARNING: the division result must be stored only after the checks
         // above. `rs3` may alias `rs1`, in which case an earlier store would
         // overwrite the dividend and reduce `cb + wp == 2^256 w + a` to a
@@ -396,26 +399,34 @@ impl MulqBuilder {
         self.asm.finalize()
     }
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r(MUL, aux, a, b);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, c2, c1, aux);
+        jolt_asm!(self.asm, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+        });
     }
     fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r(MULHU, aux, a, b);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, c2, c1, aux);
+        jolt_asm!(self.asm, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+        });
     }
     fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r(MUL, aux, a, b);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, aux, c1, aux);
-        self.asm.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self.asm, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
     fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r(MULHU, aux, a, b);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, aux, c1, aux);
-        self.asm.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self.asm, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
     fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
         if carry_exists {
@@ -432,38 +443,46 @@ impl MulqBuilder {
         }
     }
     fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r(MUL, aux, a, b);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, c2, c1, aux);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, aux, c1, aux);
-        self.asm.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self.asm, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
     fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r(MULHU, aux, a, b);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, c2, c1, aux);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, aux, c1, aux);
-        self.asm.emit_r(ADD, c2, c2, aux);
+        jolt_asm!(self.asm, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
     fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.asm.emit_r(MUL, aux, a, b);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, aux2, c1, aux);
-        self.asm.emit_r(ADD, c2, c2, aux2);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, aux2, c1, aux);
-        self.asm.emit_r(ADD, c2, c2, aux2);
+        jolt_asm!(self.asm, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+        });
     }
     fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.asm.emit_r(MULHU, aux, a, b);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, aux2, c1, aux);
-        self.asm.emit_r(ADD, c2, c2, aux2);
-        self.asm.emit_r(ADD, c1, c1, aux);
-        self.asm.emit_r(SLTU, aux2, c1, aux);
-        self.asm.emit_r(ADD, c2, c2, aux2);
+        jolt_asm!(self.asm, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+        });
     }
 }
 
