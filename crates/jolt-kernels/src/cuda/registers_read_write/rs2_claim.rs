@@ -1,46 +1,24 @@
-use cudarc::driver::PushKernelArg;
+use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::Field;
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr_slice};
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::ra_poly::COLD;
 
 pub fn rs2_ra_claim<F: Field>(
     context: &CudaKernelContext,
-    hot_indices: &[Option<usize>],
+    indices: &CudaSlice<u32>,
+    cycles: usize,
     r_address: &[F],
     r_cycle: &[F],
 ) -> Result<F, CudaError> {
-    if hot_indices.len() != 1usize << r_cycle.len() {
+    if cycles != 1usize << r_cycle.len() {
         return Err(CudaError::LengthMismatch {
             expected: 1usize << r_cycle.len(),
-            got: hot_indices.len(),
+            got: cycles,
         });
     }
-    let cycles = hot_indices.len();
     let addresses = 1usize << r_address.len();
-    let mut raw = Vec::with_capacity(cycles);
-    for hot in hot_indices {
-        let encoded = match *hot {
-            None => COLD,
-            Some(address) if address < addresses => {
-                u32::try_from(address).map_err(|_| CudaError::LengthMismatch {
-                    expected: addresses,
-                    got: address,
-                })?
-            }
-            Some(address) => {
-                return Err(CudaError::LengthMismatch {
-                    expected: addresses,
-                    got: address,
-                })
-            }
-        };
-        raw.push(encoded);
-    }
-
-    let indices = context.upload_u32_slice(&raw)?;
     let eq_cycle = context.eq_evals(require_fr_slice(r_cycle)?)?;
     let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
     let mut terms = context.alloc(cycles)?;
@@ -48,7 +26,7 @@ pub fn rs2_ra_claim<F: Field>(
     let address_count = CudaKernelContext::count_of(addresses)?;
 
     let mut builder = context.stream().launch_builder(context.rs2_claim());
-    let _ = builder.arg(&indices);
+    let _ = builder.arg(indices);
     let _ = builder.arg(eq_cycle.limbs());
     let _ = builder.arg(eq_address.limbs());
     let _ = builder.arg(&cycle_count);
@@ -129,14 +107,24 @@ mod tests {
             ),
         );
 
-        let hot_indices: Vec<Option<usize>> = trace
+        let encoded: Vec<u32> = trace
             .iter()
-            .map(|cycle| cycle.rs2_read().map(|(rs2, _)| rs2 as usize))
+            .map(|cycle| {
+                cycle
+                    .rs2_read()
+                    .map_or(crate::cuda::common::ra_poly::COLD, |(rs2, _)| {
+                        u32::from(rs2)
+                    })
+            })
             .collect();
+        let indices = context
+            .upload_u32_slice(&encoded)
+            .expect("upload rs2 addresses");
         let to_fr = |c: &LegacyChallenge<LegacyFr>| Fr::from(LegacyFr::from(*c));
         let got: Fr = rs2_ra_claim(
             context,
-            &hot_indices,
+            &indices,
+            encoded.len(),
             &r_address.iter().map(to_fr).collect::<Vec<_>>(),
             &r_cycle.iter().map(to_fr).collect::<Vec<_>>(),
         )

@@ -55,6 +55,14 @@ impl DeviceRegisterRows {
         })
     }
 
+    pub fn cycles(&self) -> usize {
+        self.cycles
+    }
+
+    pub fn into_rs2_address(self) -> CudaSlice<u32> {
+        self.rs2_address
+    }
+
     pub fn matrix(
         &self,
         context: &CudaKernelContext,

@@ -1,4 +1,3 @@
-use jolt_claims::protocols::jolt::geometry::registers::rs2_ra_read_write;
 use jolt_claims::protocols::jolt::relations::registers::{
     RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
 };
@@ -35,7 +34,8 @@ pub struct RegistersReadWriteKernel<F: Field> {
     eq: DeviceSplitEq<F>,
     merged_eq: Option<DeviceFrVec>,
     val_init: Vec<Fr>,
-    rs2_hot: Vec<Option<usize>>,
+    rs2_address: cudarc::driver::CudaSlice<u32>,
+    cycles: usize,
     gamma: F,
     challenges: Vec<F>,
     finals: Option<[F; 3]>,
@@ -173,7 +173,8 @@ impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
             })?;
         let rs2_ra = rs2_claim::rs2_ra_claim(
             self.context,
-            &self.rs2_hot,
+            &self.rs2_address,
+            self.cycles,
             &point.r_address,
             &point.r_cycle,
         )
@@ -239,6 +240,8 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
             })?,
         )?;
         let inc = rows.inc(context)?;
+        let cycles = rows.cycles();
+        let rs2_address = rows.into_rs2_address();
 
         Ok(Box::new(RegistersReadWriteKernel {
             context,
@@ -251,7 +254,8 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
             eq: DeviceSplitEq::new(context, r_cycle, BindingOrder::LowToHigh)?,
             merged_eq: None,
             val_init: vec![Fr::from_u64(0); 1usize << log_k],
-            rs2_hot: witness.hot_indices(rs2_ra_read_write().polynomial_id())?,
+            rs2_address,
+            cycles,
             gamma,
             challenges: Vec::with_capacity(log_t + log_k),
             finals: None,
