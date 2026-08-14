@@ -1,7 +1,6 @@
 use jolt_inlines_sdk::host::{
-    instruction::andn::ANDN,
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice, SourceInstructionKind,
     Value::{self, Imm, Reg},
 };
 
@@ -275,7 +274,7 @@ impl Sha256SequenceBuilder {
         // ANDN computes rs1 & !rs2, so andn(G, E) gives G & !E = !E & G
         match (rs1, rs3) {
             (Reg(r1), Reg(r3)) => {
-                self.asm.emit_r::<ANDN>(rd, r3, r1);
+                self.asm.emit_r(SourceInstructionKind::ANDN, rd, r3, r1);
                 let neg_e_and_g = Reg(rd);
                 self.asm.xor(e_and_f, neg_e_and_g, rd)
             }

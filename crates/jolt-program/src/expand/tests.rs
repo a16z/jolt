@@ -200,7 +200,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
             let rd = row.operands.rd.ok_or(ExpansionError::MalformedInstruction(
                 "inline row missing rd",
             ))?;
-            builder.emit_i::<jolt_riscv::instructions::Addi>(rd, 0, 0);
+            builder.emit_i(SourceInstructionKind::ADDI, rd, 0, 0);
             builder.finalize()
         }
     }
@@ -292,7 +292,7 @@ fn inline_provider_output_is_validated_and_stamped() {
             _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<ExpandedInstructionSequence, ExpansionError> {
             let mut builder = InlineExpansionBuilder::new(*instruction.row());
-            builder.emit_r::<jolt_riscv::instructions::Mul>(1, 2, 3);
+            builder.emit_r(SourceInstructionKind::MUL, 1, 2, 3);
             builder.finalize()
         }
     }
@@ -321,7 +321,7 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
             let row = instruction.row();
             let mut builder = InlineExpansionBuilder::new(*row);
             let register = builder.allocate_for_inline()?;
-            builder.emit_i::<jolt_riscv::instructions::Addi>(*register, 0, 1);
+            builder.emit_i(SourceInstructionKind::ADDI, *register, 0, 1);
             builder.release(register);
             builder.finalize()
         }
@@ -362,7 +362,7 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
             let row = instruction.row();
             let mut builder = InlineExpansionBuilder::new(*row);
             for _ in 0..=materialize::MAX_FINAL_ROWS_PER_SOURCE {
-                builder.emit_i::<jolt_riscv::instructions::Addi>(0, 0, 0);
+                builder.emit_i(SourceInstructionKind::ADDI, 0, 0, 0);
             }
             builder.finalize()
         }

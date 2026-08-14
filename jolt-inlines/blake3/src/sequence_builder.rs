@@ -12,16 +12,9 @@ use crate::{
     IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
 };
 use jolt_inlines_sdk::host::{
-    instruction::{
-        ld::LD,
-        lui::LUI,
-        lw::LW,
-        srli::SRLI,
-        virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
-        virtual_zero_extend_word::VirtualZeroExtendWord,
-    },
+    instructions::VirtualZeroExtendWord,
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
+    InlineOp, InlineOperands, InlineRegister, NoAdvice, SourceInstructionKind,
     Value::{Imm, Reg},
 };
 
@@ -127,8 +120,11 @@ impl Blake3SequenceBuilder {
 
         // v[8..11] = IV[0..3]
         for (i, val) in IV.iter().enumerate().take(4) {
-            self.asm
-                .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
+            self.asm.emit_u(
+                SourceInstructionKind::LUI,
+                *self.vr[CHAINING_VALUE_LEN + i],
+                *val as u64,
+            );
         }
 
         // v[12..15] = counter, block_len, flags (loaded from memory)
@@ -185,26 +181,30 @@ impl Blake3SequenceBuilder {
         self.asm.add(Reg(temp1), Reg(mx), va);
 
         // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
+        self.asm
+            .emit_r(SourceInstructionKind::VirtualXORROTW16, vd, vd, va);
 
         // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
+        self.asm
+            .emit_r(SourceInstructionKind::VirtualXORROTW12, vb, vb, vc);
 
         // v[a] = v[a] + v[b] + m[y]
         self.asm.add(Reg(va), Reg(vb), temp1);
         self.asm.add(Reg(temp1), Reg(my), va);
 
         // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
+        self.asm
+            .emit_r(SourceInstructionKind::VirtualXORROTW8, vd, vd, va);
 
         // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
+        self.asm
+            .emit_r(SourceInstructionKind::VirtualXORROTW7, vb, vb, vc);
     }
 
     fn finalize_state(&mut self) {
@@ -270,13 +270,15 @@ impl Blake3SequenceBuilder {
 
     fn load_input_len_and_flags(&mut self) {
         // input length
-        self.asm.emit_ld::<LW>(
+        self.asm.emit_ld(
+            SourceInstructionKind::LW,
             *self.vr[INPUT_BYTES_VR],
             self.operands.rs2,
             (MSG_BLOCK_LEN + COUNTER_LEN) as i64 * 4,
         );
         // flag
-        self.asm.emit_ld::<LW>(
+        self.asm.emit_ld(
+            SourceInstructionKind::LW,
             *self.vr[FLAG_VR],
             self.operands.rs2,
             (MSG_BLOCK_LEN + COUNTER_LEN + 1) as i64 * 4,
@@ -336,8 +338,11 @@ impl Blake3Keyed64SequenceBuilder {
     fn initialize_internal_state(&mut self) {
         // v[8..11] = IV[0..3]
         for (i, val) in IV.iter().enumerate().take(4) {
-            self.asm
-                .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
+            self.asm.emit_u(
+                SourceInstructionKind::LUI,
+                *self.vr[CHAINING_VALUE_LEN + i],
+                *val as u64,
+            );
         }
 
         // v[12..15] = counter, block_len, flags
@@ -347,9 +352,13 @@ impl Blake3Keyed64SequenceBuilder {
         // NOTE: We intentionally omit the two `LUI 0` initializations for v[12], v[13].
         // Inline virtual registers are cleared by `finalize_inline`, so newly allocated
         // inline registers start at 0 across inline calls.
-        self.asm
-            .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 14], 64);
-        self.asm.emit_u::<LUI>(
+        self.asm.emit_u(
+            SourceInstructionKind::LUI,
+            *self.vr[INTERNAL_STATE_VR_START + 14],
+            64,
+        );
+        self.asm.emit_u(
+            SourceInstructionKind::LUI,
             *self.vr[INTERNAL_STATE_VR_START + 15],
             (FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH) as u64,
         );
@@ -386,39 +395,50 @@ impl Blake3Keyed64SequenceBuilder {
         self.asm.add(Reg(va), Reg(mx), va);
 
         // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
+        self.asm
+            .emit_r(SourceInstructionKind::VirtualXORROTW16, vd, vd, va);
 
         // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
+        self.asm
+            .emit_r(SourceInstructionKind::VirtualXORROTW12, vb, vb, vc);
 
         // v[a] = v[a] + v[b] + m[y]
         self.asm.add(Reg(va), Reg(vb), va);
         self.asm.add(Reg(va), Reg(my), va);
 
         // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
+        self.asm
+            .emit_r(SourceInstructionKind::VirtualXORROTW8, vd, vd, va);
 
         // v[c] = v[c] + v[d]
         self.asm.add(Reg(vc), Reg(vd), vc);
 
         // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
+        self.asm
+            .emit_r(SourceInstructionKind::VirtualXORROTW7, vb, vb, vc);
     }
 
     /// Load two u32 values from an 8-byte aligned address using a single LD.
     /// Uses `vr_hi` as the temporary 64-bit container (no extra scratch register).
     fn load_paired_u32(&mut self, base: u8, offset: i64, vr_lo: u8, vr_hi: u8) {
         // Load 64 bits (2 x u32) into vr_hi temporarily.
-        self.asm.emit_ld::<LD>(vr_hi, base, offset);
+        self.asm
+            .emit_ld(SourceInstructionKind::LD, vr_hi, base, offset);
 
         // Extract low 32 bits: zero-extend word.
-        self.asm.emit_i::<VirtualZeroExtendWord>(vr_lo, vr_hi, 0);
+        self.asm.emit_i(
+            SourceInstructionKind::VirtualZeroExtendWord(VirtualZeroExtendWord(())),
+            vr_lo,
+            vr_hi,
+            0,
+        );
 
         // Extract high 32 bits: shift right by 32 (in place).
-        self.asm.emit_i::<SRLI>(vr_hi, vr_hi, 32);
+        self.asm
+            .emit_i(SourceInstructionKind::SRLI, vr_hi, vr_hi, 32);
     }
 
     fn load_data_range_paired(

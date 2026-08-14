@@ -322,7 +322,8 @@ mod tests {
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        asm.emit_vshift_i::<jolt_riscv::instructions::VirtualRotriw>(
+        asm.emit_vshift_i(
+            jolt_riscv::SourceInstructionKind::VirtualROTRIW,
             5,
             operands.rs1,
             0xffff_ffff_0000_0000,
