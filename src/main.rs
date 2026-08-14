@@ -409,7 +409,7 @@ fn create_project(name: String, wasm: bool, zk: bool) {
     create_host_files(&name, zk).expect("file creation failed");
     create_guest_files(&name, zk).expect("file creation failed");
     if wasm {
-        modify_cargo_toml(&name).expect("Failed to update Cargo.toml");
+        modify_cargo_toml(&name, false).expect("Failed to update Cargo.toml");
     }
     display_welcome();
 }

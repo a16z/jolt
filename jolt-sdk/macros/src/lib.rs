@@ -9,13 +9,10 @@ use common::{
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use std::sync::Once;
 use syn::{
     parse_macro_input, punctuated::Punctuated, token::Comma, Ident, ItemFn, Meta, PatType,
     ReturnType, Token, Type,
 };
-
-static WASM_IMPORTS_INIT: Once = Once::new();
 
 #[proc_macro_attribute]
 pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -27,11 +24,6 @@ pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Add wasm utilities and functions if the function is marked as wasm
     if builder.has_wasm_attr() {
-        // wasm utilities should only be added once
-        WASM_IMPORTS_INIT.call_once(|| {
-            let wasm_utilities: TokenStream = builder.make_wasm_utilities().into();
-            token_stream.extend(wasm_utilities);
-        });
         let wasm_token_stream: TokenStream = builder.make_wasm_function().into();
         token_stream.extend(wasm_token_stream);
     }
@@ -1149,37 +1141,6 @@ impl MacroBuilder {
         }
     }
 
-    fn make_wasm_utilities(&self) -> TokenStream2 {
-        quote! {
-            #[cfg(target_arch = "wasm32")]
-            use wasm_bindgen::prelude::*;
-            #[cfg(target_arch = "wasm32")]
-            use std::vec::Vec;
-            #[cfg(target_arch = "wasm32")]
-            use rmp_serde::Deserializer;
-            #[cfg(target_arch = "wasm32")]
-            use serde::{Deserialize, Serialize};
-
-            #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
-            use jolt::host::ELFInstruction;
-
-            #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
-            #[derive(Serialize, Deserialize)]
-            struct DecodedData {
-                bytecode: Vec<ELFInstruction>,
-                memory_init: Vec<(u64, u8)>,
-            }
-
-            #[cfg(target_arch = "wasm32")]
-            fn deserialize_from_bin<'a, T: Deserialize<'a>>(
-                data: &'a [u8],
-            ) -> Result<T, rmp_serde::decode::Error> {
-                let mut de = Deserializer::new(data);
-                Deserialize::deserialize(&mut de)
-            }
-        }
-    }
-
     fn make_set_linker_parameters(&self) -> TokenStream2 {
         let attributes = parse_attributes(&self.attr);
         let mut code: Vec<TokenStream2> = Vec::new();
@@ -1383,29 +1344,56 @@ impl MacroBuilder {
         parse_attributes(&self.attr).wasm
     }
 
-    // TODO(moodlezoup): fix this
     fn make_wasm_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let verify_wasm_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
+        let has_trusted_advice = !self.trusted_func_args.is_empty();
+        let trusted_advice_parameter = has_trusted_advice.then(|| {
+            quote! {
+                , trusted_advice_commitment_bytes: &[u8]
+            }
+        });
+        let deserialize_trusted_advice = has_trusted_advice.then(|| {
+            quote! {
+                let trusted_advice_commitment:
+                    Option<jolt::VerifierTrustedAdviceCommitment> =
+                    match jolt::deserialize_verifier_object(trusted_advice_commitment_bytes) {
+                        Ok(commitment) => commitment,
+                        Err(_) => return false,
+                    };
+            }
+        });
+        let trusted_advice_argument = if has_trusted_advice {
+            quote! { trusted_advice_commitment.as_ref() }
+        } else {
+            quote! { None }
+        };
 
         quote! {
-            #[wasm_bindgen]
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
-            pub fn #verify_wasm_fn_name(preprocessing_data: &[u8], proof_bytes: &[u8], io_bytes: &[u8]) -> bool {
-                use jolt::{deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof};
-
-                let preprocessing: JoltVerifierPreprocessing = match deserialize_verifier_object(preprocessing_data) {
+            #[wasm_bindgen::prelude::wasm_bindgen]
+            pub fn #verify_wasm_fn_name(
+                preprocessing_data: &[u8],
+                proof_bytes: &[u8],
+                io_bytes: &[u8]
+                #trusted_advice_parameter
+            ) -> bool {
+                let preprocessing: jolt::JoltVerifierPreprocessing =
+                    match jolt::deserialize_verifier_object(preprocessing_data) {
                     Ok(preprocessing) => preprocessing,
                     Err(_) => return false,
                 };
-                let proof: RV64IMACProof = match deserialize_verifier_object(proof_bytes) {
+                let proof: jolt::RV64IMACProof =
+                    match jolt::deserialize_verifier_object(proof_bytes) {
                     Ok(proof) => proof,
                     Err(_) => return false,
                 };
-                let io_device: JoltDevice = match deserialize_verifier_object(io_bytes) {
+                let io_device: jolt::JoltDevice =
+                    match jolt::deserialize_verifier_object(io_bytes) {
                     Ok(io_device) => io_device,
                     Err(_) => return false,
                 };
+                #deserialize_trusted_advice
 
                 jolt::jolt_verifier::verify::<
                     jolt::VerifierField,
@@ -1416,7 +1404,7 @@ impl MacroBuilder {
                     &preprocessing,
                     &io_device,
                     &proof,
-                    None,
+                    #trusted_advice_argument,
                 ).is_ok()
             }
         }
@@ -1533,4 +1521,50 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wasm_builder(function: ItemFn) -> MacroBuilder {
+        let mut attributes = Punctuated::new();
+        attributes.push(syn::parse_quote!(wasm));
+        MacroBuilder::new(attributes, function)
+    }
+
+    #[test]
+    fn wasm_verifier_uses_fully_qualified_dependencies() {
+        let builder = wasm_builder(syn::parse_quote! {
+            fn example(input: u32) -> u32 {
+                input
+            }
+        });
+
+        let generated = builder.make_wasm_function();
+        syn::parse2::<syn::File>(generated.clone()).expect("generated WASM verifier must parse");
+        let generated = generated.to_string();
+
+        assert!(generated.contains("wasm_bindgen :: prelude :: wasm_bindgen"));
+        assert!(generated.contains("jolt :: deserialize_verifier_object"));
+        assert!(!generated.contains("trusted_advice_commitment_bytes"));
+        assert!(generated.contains("& proof , None"));
+    }
+
+    #[test]
+    fn wasm_verifier_deserializes_trusted_advice_commitment() {
+        let builder = wasm_builder(syn::parse_quote! {
+            fn example(input: jolt::TrustedAdvice<u32>) -> u32 {
+                *input
+            }
+        });
+
+        let generated = builder.make_wasm_function();
+        syn::parse2::<syn::File>(generated.clone()).expect("generated WASM verifier must parse");
+        let generated = generated.to_string();
+
+        assert!(generated.contains("trusted_advice_commitment_bytes"));
+        assert!(generated.contains("Option < jolt :: VerifierTrustedAdviceCommitment >"));
+        assert!(generated.contains("trusted_advice_commitment . as_ref ()"));
+    }
 }
