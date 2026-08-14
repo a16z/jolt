@@ -29,9 +29,6 @@ pub(super) fn shared_ram_cycle_family_owner(
                 reason: "RAM cycle-family owner has stale geometry",
             });
         }
-        owner
-            .verify_integrity()
-            .map_err(|error| owner_error(error.to_string()))?;
         return Ok(Some(Arc::clone(owner)));
     }
 
@@ -68,7 +65,6 @@ pub(super) fn shared_ram_cycle_family_owner(
         final_memory_elements = address_domain,
         record_bytes = tracing::field::Empty,
         final_memory_bytes = tracing::field::Empty,
-        read_write_topology_nodes = tracing::field::Empty,
         block_topology_nodes = tracing::field::Empty,
         topology_bytes = tracing::field::Empty,
         owner_bytes = tracing::field::Empty,
@@ -159,11 +155,6 @@ pub(super) fn shared_ram_cycle_family_owner(
             .map_err(|error| owner_error(error.to_string()))?,
     );
     let receipt = owner.receipt();
-    let read_write_topology_nodes = receipt
-        .read_write_census()
-        .iter()
-        .map(|level| level.entries())
-        .sum::<u64>();
     let block_topology_nodes = receipt
         .block_census()
         .iter()
@@ -199,7 +190,6 @@ pub(super) fn shared_ram_cycle_family_owner(
     let _ = owner_span.record("retained_records", receipt.access_count());
     let _ = owner_span.record("record_bytes", record_bytes);
     let _ = owner_span.record("final_memory_bytes", final_memory_bytes);
-    let _ = owner_span.record("read_write_topology_nodes", read_write_topology_nodes);
     let _ = owner_span.record("block_topology_nodes", block_topology_nodes);
     let _ = owner_span.record("topology_bytes", topology_bytes);
     let _ = owner_span.record("owner_bytes", owner_bytes);

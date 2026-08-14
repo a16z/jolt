@@ -4,23 +4,19 @@
 use jolt_field::{AkitaField, FromPrimitiveInt};
 use jolt_kernels::metal::solinas::{
     dense_pushforward_oracle, product_remainder_reference, ram_raf_split_equality,
-    ram_val_check_oracle, split_pushforward_oracle,
+    split_pushforward_oracle,
 };
 use jolt_kernels::metal::solinas::{
-    BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, DispatchConfig, Fp128, MetalError,
-    Probe, Product5SequenceConfig, ProductRemainderRow, ProductRemainderSequenceConfig,
-    RamRafConfig, RamValCheckConfig, RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan,
+    BooleanityRow, BooleanitySelector, BooleanitySequenceConfig, Fp128, MetalError,
+    Product5SequenceConfig, ProductRemainderRow, ProductRemainderSequenceConfig, RamRafConfig,
     RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValTransitionConfig,
-    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
+    SolinasMetal, AKITA_OFFSET_FFFFA7F7, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
 mod support;
 
-use support::{
-    expected_field_for_offset, expected_u32_mad, inputs, inputs_for_offset,
-    product5_fused_transition, product5_message, values, PRODUCT5_FACTORS,
-};
+use support::{product5_fused_transition, product5_message, values, PRODUCT5_FACTORS};
 
 #[test]
 fn akita_field_uses_the_metal_abi() {
@@ -39,182 +35,10 @@ fn akita_field_uses_the_metal_abi() {
 }
 
 #[test]
-fn akita_shader_matches_jolt_field() {
-    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
-    assert_eq!(context.device_info().offset, AKITA_OFFSET_FFFFA7F7);
-    let (lhs, rhs) = inputs_for_offset(4099, AKITA_OFFSET_FFFFA7F7);
-
-    for probe in [Probe::Copy, Probe::Add, Probe::Sub, Probe::MulWide] {
-        let invocation = context
-            .prepare(probe, &lhs, &rhs, DispatchConfig::default())
-            .expect("Akita probe should compile");
-        invocation.execute().expect("Akita probe should execute");
-        let actual = invocation.read_output().expect("Akita output should read");
-        let expected = lhs
-            .iter()
-            .zip(&rhs)
-            .map(|(&lhs, &rhs)| {
-                let lhs = lhs.into_jolt_field::<AkitaField>();
-                let rhs = rhs.into_jolt_field::<AkitaField>();
-                let value = match probe {
-                    Probe::Copy => lhs,
-                    Probe::Add => lhs + rhs,
-                    Probe::Sub => lhs - rhs,
-                    Probe::MulWide => lhs * rhs,
-                    _ => unreachable!("probe list contains only pointwise operations"),
-                };
-                Fp128::from_jolt_field(&value)
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(actual, expected, "{}", probe.name());
-    }
-}
-
-#[test]
 fn product_remainder_sequence_matches_cpu_at_every_boundary() {
     for rows in [1 << 8, 1 << 9] {
         assert_product_remainder_sequence(rows);
     }
-}
-
-#[test]
-fn ram_val_check_sequence_matches_cpu_at_every_boundary() {
-    let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
-    let log_t = 12;
-    let log_k = 5;
-    let cycles = 1usize << log_t;
-    let address_domain = 1usize << log_k;
-    let config = RamValCheckConfig {
-        first_message_threads: 32,
-        native_transition_threads: 32,
-        dense_transition_threads: 64,
-        cpu_tail_elements: 1 << 7,
-    };
-    let plan =
-        RamValCheckPlan::new(log_t, log_k, config).expect("RAM value-check plan should be valid");
-    let rows = (0..cycles)
-        .map(|index| {
-            let (address, increment) = match index % 11 {
-                0 => (None, 0),
-                1 => (Some((index % address_domain) as u32), u64::MAX as i128),
-                2 => (Some((index % address_domain) as u32), -(u64::MAX as i128)),
-                _ => (
-                    Some(((37 * index + 19) % address_domain) as u32),
-                    (index as i128 % 2001) - 1000,
-                ),
-            };
-            RamValCheckNativeRow::new(address, increment)
-                .expect("synthetic RAM value-check row should be valid")
-        })
-        .collect::<Vec<_>>();
-    let r_address = (0..log_k)
-        .map(|index| AkitaField::from_u64(0x101 + 17 * index as u64))
-        .collect::<Vec<_>>();
-    let r_cycle = (0..log_t)
-        .map(|index| AkitaField::from_u64(0x1001 + 29 * index as u64))
-        .collect::<Vec<_>>();
-    let eq_address = EqPolynomial::<AkitaField>::evals(&r_address, None);
-    let (r_hi, r_lo) = r_cycle.split_at(log_t - log_t / 2);
-    let mut lt_lo = LtPolynomial::<AkitaField>::evaluations(r_lo);
-    let gamma = AkitaField::from_u64(0xfeed_beef_cafe_babe);
-    let lt_hi = LtPolynomial::<AkitaField>::evaluations(r_hi)
-        .into_iter()
-        .map(|value| value + gamma)
-        .collect::<Vec<_>>();
-    let eq_hi = EqPolynomial::<AkitaField>::evals(r_hi, None);
-    let expected_first =
-        ram_val_check_oracle::first_message(&rows, &eq_address, &lt_lo, &lt_hi, &eq_hi)
-            .expect("CPU first message should be well-shaped");
-
-    let resident_rows = context
-        .prepare_ram_val_check_rows(&rows, address_domain)
-        .expect("RAM value-check rows should prepare");
-    let mut sequence = context
-        .prepare_ram_val_check_sequence(
-            resident_rows.clone(),
-            &eq_address,
-            &lt_lo,
-            &lt_hi,
-            &eq_hi,
-            plan,
-        )
-        .expect("RAM value-check sequence should prepare");
-    assert_eq!(sequence.round_device_buffer_allocations(), 0);
-    assert_eq!(
-        sequence.row_allocation_identity(),
-        resident_rows.allocation_identity()
-    );
-    assert_eq!(
-        sequence
-            .replay_first_message_timed()
-            .expect("first message should replay")
-            .0,
-        expected_first
-    );
-    assert_eq!(
-        sequence.message().expect("first message should execute"),
-        expected_first
-    );
-
-    let modulus_minus_one = AkitaField::from_u128(u128::MAX - AKITA_OFFSET_FFFFA7F7 as u128);
-    let challenges = [
-        AkitaField::from_u64(0),
-        AkitaField::from_u64(1),
-        modulus_minus_one,
-        AkitaField::from_u64(0x0123_4567_89ab_cdef),
-        AkitaField::from_u64(0x0ddc_0ffe_e15e_cafe),
-    ];
-    let mut expected_state: Option<Vec<RamValCheckDenseRow<AkitaField>>> = None;
-    for (round, challenge) in challenges
-        .into_iter()
-        .take(plan.gpu_bind_rounds())
-        .enumerate()
-    {
-        lt_lo = lt_lo
-            .chunks_exact(2)
-            .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
-            .collect();
-        let expected = if let Some(state) = expected_state.as_ref() {
-            ram_val_check_oracle::dense_bind_and_message(state, challenge, &lt_lo, &lt_hi, &eq_hi)
-                .expect("CPU dense transition should be well-shaped")
-        } else {
-            ram_val_check_oracle::native_bind_and_message(
-                &rows,
-                &eq_address,
-                challenge,
-                &lt_lo,
-                &lt_hi,
-                &eq_hi,
-            )
-            .expect("CPU native transition should be well-shaped")
-        };
-        assert_eq!(
-            sequence
-                .replay_current_bind_and_message_timed(challenge, &lt_lo)
-                .expect("RAM value-check transition should replay")
-                .0,
-            expected.evals,
-            "replay round {round}"
-        );
-        assert_eq!(
-            sequence
-                .bind_and_message(challenge, &lt_lo)
-                .expect("RAM value-check transition should execute"),
-            expected.evals,
-            "round {round}"
-        );
-        assert_eq!(
-            sequence
-                .read_current_state()
-                .expect("RAM value-check dense state should read"),
-            expected.state,
-            "state round {round}"
-        );
-        expected_state = Some(expected.state);
-    }
-    assert!(sequence.at_cpu_handoff());
-    assert_eq!(sequence.current_elements(), config.cpu_tail_elements);
-    assert_eq!(sequence.current_lt_lo_length(), lt_lo.len());
 }
 
 #[test]
@@ -895,107 +719,6 @@ fn product5_sequence_reuses_resident_buffers_across_rounds() {
 }
 
 #[test]
-fn gpu_field_probes_match_biguint() {
-    let context = SolinasMetal::for_offset_275().expect("Metal context should compile");
-    let (chain_lhs, chain_rhs) = inputs(4096);
-    let (tail_lhs, tail_rhs) = inputs(4103);
-
-    let noop = context
-        .prepare_noop()
-        .expect("noop pipeline should compile");
-    noop.execute().expect("noop should execute");
-    assert!(noop
-        .read_output()
-        .expect("noop output should read")
-        .is_empty());
-
-    for probe in [Probe::Copy, Probe::Add, Probe::Sub, Probe::MulWide] {
-        assert_probe(&context, probe, &tail_lhs, &tail_rhs, 1, OFFSET_275);
-    }
-
-    for probe in [
-        Probe::ChainWide1,
-        Probe::ChainWide2,
-        Probe::ChainWide4,
-        Probe::ChainWide8,
-    ] {
-        assert_probe(&context, probe, &chain_lhs, &chain_rhs, 3, OFFSET_275);
-    }
-}
-
-#[test]
-fn runtime_specialization_supports_offset_edges() {
-    assert!(matches!(
-        SolinasMetal::new(0),
-        Err(MetalError::InvalidOffset)
-    ));
-
-    for offset in [1, u32::MAX] {
-        let context = SolinasMetal::new(offset).expect("specialized Metal context should compile");
-        let (lhs, rhs) = inputs_for_offset(256, offset);
-        for probe in [Probe::Add, Probe::Sub, Probe::MulWide] {
-            assert_probe(&context, probe, &lhs, &rhs, 1, offset);
-        }
-    }
-}
-
-#[test]
-fn rust_bindings_reject_invalid_dispatches() {
-    let context = SolinasMetal::for_offset_275().expect("Metal context should compile");
-    let valid = [Fp128::ONE];
-    let noncanonical = [Fp128::from_u128(u128::MAX - OFFSET_275 as u128 + 1)];
-
-    assert!(matches!(
-        context.prepare(Probe::Add, &noncanonical, &valid, DispatchConfig::default()),
-        Err(MetalError::NonCanonicalInput { side: "lhs", .. })
-    ));
-    assert!(matches!(
-        context.prepare(Probe::Add, &valid, &[], DispatchConfig::default()),
-        Err(MetalError::LengthMismatch { .. })
-    ));
-    assert!(matches!(
-        context.prepare(Probe::Noop, &valid, &valid, DispatchConfig::default()),
-        Err(MetalError::NoopPreparation)
-    ));
-
-    let invocation = context
-        .prepare(Probe::Copy, &valid, &valid, DispatchConfig::default())
-        .expect("copy pipeline should compile");
-    assert!(matches!(
-        invocation.read_output(),
-        Err(MetalError::NotExecuted)
-    ));
-}
-
-#[test]
-fn raw_integer_probe_matches_wrapping_u32_arithmetic() {
-    let context = SolinasMetal::for_offset_275().expect("Metal context should compile");
-    let (lhs, rhs) = inputs(256);
-    let invocation = context
-        .prepare(
-            Probe::U32MadIlp8,
-            &lhs,
-            &rhs,
-            DispatchConfig {
-                iterations: 7,
-                threads_per_threadgroup: None,
-            },
-        )
-        .expect("raw integer pipeline should compile");
-
-    invocation
-        .execute()
-        .expect("raw integer probe should execute");
-    let actual = invocation.read_output().expect("raw output should read");
-    let expected = lhs
-        .iter()
-        .zip(&rhs)
-        .map(|(&lhs, &rhs)| expected_u32_mad(lhs, rhs, 7))
-        .collect::<Vec<_>>();
-    assert_eq!(actual, expected);
-}
-
-#[test]
 fn booleanity_sequence_matches_dense_cpu_at_every_round() {
     const LOG_T: usize = 10;
     const K: usize = 256;
@@ -1226,38 +949,4 @@ fn bind_dense_tables(tables: &mut [Vec<AkitaField>], challenge: AkitaField) {
 
 fn flatten_tables(tables: &[Vec<AkitaField>]) -> Vec<AkitaField> {
     tables.iter().flatten().copied().collect()
-}
-
-fn assert_probe(
-    context: &SolinasMetal,
-    probe: Probe,
-    lhs: &[Fp128],
-    rhs: &[Fp128],
-    iterations: u32,
-    offset: u32,
-) {
-    let invocation = context
-        .prepare(
-            probe,
-            lhs,
-            rhs,
-            DispatchConfig {
-                iterations,
-                threads_per_threadgroup: None,
-            },
-        )
-        .expect("pipeline should compile");
-    let limits = invocation.pipeline_limits();
-    assert!(limits.thread_execution_width > 0);
-    assert!(invocation.threads_per_threadgroup() <= limits.max_total_threads_per_threadgroup);
-
-    invocation.execute().expect("probe should execute");
-    let actual = invocation.read_output().expect("output should read");
-    let expected = lhs
-        .iter()
-        .zip(rhs)
-        .map(|(&lhs, &rhs)| expected_field_for_offset(probe, lhs, rhs, iterations, offset))
-        .collect::<Result<Vec<_>, _>>()
-        .expect("probe should have a field oracle");
-    assert_eq!(actual, expected, "{}", probe.name());
 }

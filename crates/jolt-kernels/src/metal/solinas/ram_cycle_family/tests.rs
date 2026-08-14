@@ -34,7 +34,7 @@ fn field(value: u64) -> AkitaField {
     clippy::unwrap_used,
     reason = "test fixtures should stop at the first violated invariant"
 )]
-fn owner_builds_checked_shared_topologies() {
+fn owner_builds_checked_shared_topology() {
     let owner = fixture_owner();
     owner.verify_integrity().unwrap();
     let receipt = owner.receipt();
@@ -46,14 +46,6 @@ fn owner_builds_checked_shared_topologies() {
     assert_eq!(receipt.increment_count(), 5);
     assert_eq!(
         receipt
-            .read_write_census()
-            .iter()
-            .map(|level| (level.entries(), level.groups()))
-            .collect::<Vec<_>>(),
-        vec![(4, 4), (4, 4), (2, 2), (2, 1)]
-    );
-    assert_eq!(
-        receipt
             .block_census()
             .iter()
             .map(|level| level.entries())
@@ -61,23 +53,6 @@ fn owner_builds_checked_shared_topologies() {
         vec![6, 4, 2, 1]
     );
     assert_eq!(owner.block_topology().leaf_cycles(), &[0, 2, 3, 4, 6, 7]);
-    assert_eq!(owner.read_write_topology().final_addresses(), &[1, 2]);
-    assert_eq!(
-        owner
-            .read_write_topology()
-            .events_for_round(0)
-            .unwrap()
-            .len(),
-        4
-    );
-    assert_eq!(
-        owner
-            .read_write_topology()
-            .group_events_for_round(2)
-            .unwrap()
-            .len(),
-        1
-    );
     assert_eq!(owner.block_topology().merges_for_round(0).unwrap().len(), 4);
     assert!(owner
         .increment_records()
@@ -114,10 +89,6 @@ fn sparse_records_reconstruct_the_checked_owner() {
     assert_eq!(
         actual.block_topology().leaf_cycles(),
         expected.block_topology().leaf_cycles()
-    );
-    assert_eq!(
-        actual.read_write_topology().final_addresses(),
-        expected.read_write_topology().final_addresses()
     );
 }
 

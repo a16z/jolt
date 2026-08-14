@@ -2,9 +2,9 @@ use std::mem::size_of;
 
 use thiserror::Error;
 
-use super::topology::{LevelCensus, RamBlockTopology, RamRwMergeTopology, TopologyError};
+use super::topology::{LevelCensus, RamBlockTopology, TopologyError};
 
-pub const RAM_CYCLE_FAMILY_SCHEMA_VERSION: u32 = 3;
+pub const RAM_CYCLE_FAMILY_SCHEMA_VERSION: u32 = 4;
 
 #[repr(C, align(8))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -317,11 +317,6 @@ impl RamCycleFamilyOwnerBuilder {
             }
         }
 
-        let rw_topology = RamRwMergeTopology::build(
-            self.config.log_t,
-            &self.records,
-            self.config.threadgroup_width,
-        )?;
         let block_topology = RamBlockTopology::build(
             self.config.log_t,
             &self.records,
@@ -338,7 +333,6 @@ impl RamCycleFamilyOwnerBuilder {
             &increment_cycles,
             &increments,
             &final_memory,
-            &rw_topology,
             &block_topology,
         );
         let receipt = RamCycleFamilyReceipt {
@@ -351,7 +345,6 @@ impl RamCycleFamilyOwnerBuilder {
             threadgroup_width: self.config.threadgroup_width,
             access_count: records.len(),
             increment_count: increments.len(),
-            rw_census: rw_topology.census().to_vec().into_boxed_slice(),
             block_census: block_topology.census().to_vec().into_boxed_slice(),
             fingerprint,
         };
@@ -361,7 +354,6 @@ impl RamCycleFamilyOwnerBuilder {
             increment_cycles,
             increments,
             final_memory,
-            rw_topology,
             block_topology,
         })
     }
@@ -377,7 +369,6 @@ pub struct RamCycleFamilyReceipt {
     threadgroup_width: usize,
     access_count: usize,
     increment_count: usize,
-    rw_census: Box<[LevelCensus]>,
     block_census: Box<[LevelCensus]>,
     fingerprint: u64,
 }
@@ -396,10 +387,6 @@ impl RamCycleFamilyReceipt {
         fingerprint: u64,
     } }
 
-    pub fn read_write_census(&self) -> &[LevelCensus] {
-        &self.rw_census
-    }
-
     pub fn block_census(&self) -> &[LevelCensus] {
         &self.block_census
     }
@@ -411,7 +398,6 @@ pub struct RamCycleFamilyOwner {
     increment_cycles: Box<[u64]>,
     increments: Box<[i128]>,
     final_memory: Box<[u64]>,
-    rw_topology: RamRwMergeTopology,
     block_topology: RamBlockTopology,
 }
 
@@ -437,12 +423,11 @@ impl allocative::Allocative for RamCycleFamilyOwner {
         );
         visitor.visit_simple(
             allocative::Key::new("topology"),
-            self.rw_topology.owned_heap_bytes() + self.block_topology.owned_heap_bytes(),
+            self.block_topology.owned_heap_bytes(),
         );
         visitor.visit_simple(
             allocative::Key::new("receipt_census"),
-            std::mem::size_of_val(self.receipt.rw_census.as_ref())
-                + std::mem::size_of_val(self.receipt.block_census.as_ref()),
+            std::mem::size_of_val(self.receipt.block_census.as_ref()),
         );
         visitor.exit();
     }
@@ -581,10 +566,6 @@ impl RamCycleFamilyOwner {
         &self.final_memory
     }
 
-    pub fn read_write_topology(&self) -> &RamRwMergeTopology {
-        &self.rw_topology
-    }
-
     pub fn block_topology(&self) -> &RamBlockTopology {
         &self.block_topology
     }
@@ -594,9 +575,7 @@ impl RamCycleFamilyOwner {
             + std::mem::size_of_val(self.increment_cycles.as_ref())
             + std::mem::size_of_val(self.increments.as_ref())
             + std::mem::size_of_val(self.final_memory.as_ref())
-            + self.rw_topology.owned_heap_bytes()
             + self.block_topology.owned_heap_bytes()
-            + std::mem::size_of_val(self.receipt.rw_census.as_ref())
             + std::mem::size_of_val(self.receipt.block_census.as_ref())
     }
 
@@ -616,9 +595,7 @@ impl RamCycleFamilyOwner {
             || self.final_memory.len() != address_domain
             || self.receipt.source_generation == 0
             || self.receipt.threadgroup_width == 0
-            || self.rw_topology.log_t() != self.receipt.log_t
             || self.block_topology.log_t() != self.receipt.log_t
-            || self.receipt.rw_census.as_ref() != self.rw_topology.census()
             || self.receipt.block_census.as_ref() != self.block_topology.census()
         {
             return Err(OwnerError::ReceiptMismatch);
@@ -677,7 +654,6 @@ impl RamCycleFamilyOwner {
             &self.increment_cycles,
             &self.increments,
             &self.final_memory,
-            &self.rw_topology,
             &self.block_topology,
         );
         if fingerprint != self.receipt.fingerprint {
@@ -700,7 +676,6 @@ fn build_owner(
     increments: Vec<i128>,
     final_memory: Vec<u64>,
 ) -> Result<RamCycleFamilyOwner, OwnerError> {
-    let rw_topology = RamRwMergeTopology::build(config.log_t, &records, config.threadgroup_width)?;
     let block_topology = RamBlockTopology::build(
         config.log_t,
         &records,
@@ -717,7 +692,6 @@ fn build_owner(
         &increment_cycles,
         &increments,
         &final_memory,
-        &rw_topology,
         &block_topology,
     );
     let receipt = RamCycleFamilyReceipt {
@@ -730,7 +704,6 @@ fn build_owner(
         threadgroup_width: config.threadgroup_width,
         access_count: records.len(),
         increment_count: increments.len(),
-        rw_census: rw_topology.census().to_vec().into_boxed_slice(),
         block_census: block_topology.census().to_vec().into_boxed_slice(),
         fingerprint,
     };
@@ -740,7 +713,6 @@ fn build_owner(
         increment_cycles,
         increments,
         final_memory,
-        rw_topology,
         block_topology,
     })
 }
@@ -751,7 +723,6 @@ fn owner_fingerprint(
     increment_cycles: &[u64],
     increments: &[i128],
     final_memory: &[u64],
-    rw_topology: &RamRwMergeTopology,
     block_topology: &RamBlockTopology,
 ) -> u64 {
     let mut state = 0x6a09_e667_f3bc_c909u64;
@@ -782,11 +753,6 @@ fn owner_fingerprint(
     }
     for &word in final_memory {
         state = mix(state, word);
-    }
-    for level in rw_topology.census() {
-        state = mix(state, level.entries());
-        state = mix(state, level.groups());
-        state = mix(state, level.tiles());
     }
     for level in block_topology.census() {
         state = mix(state, level.entries());

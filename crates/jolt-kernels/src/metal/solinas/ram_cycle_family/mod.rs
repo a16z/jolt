@@ -3,6 +3,7 @@
 //! The owner is built once from the RAM access tape and borrowed by the RAM
 //! read-write, value, RA, and Hamming members.
 
+#[cfg(test)]
 mod oracle;
 mod owner;
 mod ram_hamming_booleanity;
@@ -11,6 +12,7 @@ mod ram_ra_virtualization;
 mod ram_val_check;
 mod topology;
 
+#[cfg(test)]
 pub use oracle::DenseRamValCheckOracle;
 pub use owner::{
     OwnerConfig, OwnerError, RamAccessRecord, RamCycleFamilyOwner, RamCycleFamilyOwnerBuilder,
@@ -31,10 +33,7 @@ pub use ram_ra_virtualization::{
 pub use ram_val_check::{
     HostSparseRamValCheck, RamValError, RamValFrontierEntry, RamValMessage, RamValTerminalFactors,
 };
-pub use topology::{
-    BlockMerge, LevelCensus, RamBlockTopology, RamRwGroupEvent, RamRwMergeEvent,
-    RamRwMergeTopology, TopologyError,
-};
+pub use topology::{BlockMerge, LevelCensus, RamBlockTopology, TopologyError};
 
 #[cfg(test)]
 mod tests;

@@ -12,10 +12,7 @@ use rayon::prelude::*;
 #[cfg(feature = "test-utils")]
 use sha2::{Digest, Sha256};
 
-use super::{
-    source::{library_source, production_library_source},
-    Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
-};
+use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PipelineLimits {
@@ -62,14 +59,11 @@ impl SolinasMetal {
         #[cfg(feature = "test-utils")]
         {
             let assembly_started = Instant::now();
-            let source = production_library_source(AKITA_OFFSET_FFFFA7F7);
+            let source = library_source(AKITA_OFFSET_FFFFA7F7);
             Self::new_with_source(AKITA_OFFSET_FFFFA7F7, source, assembly_started.elapsed())
         }
         #[cfg(not(feature = "test-utils"))]
-        Self::new_with_source(
-            AKITA_OFFSET_FFFFA7F7,
-            production_library_source(AKITA_OFFSET_FFFFA7F7),
-        )
+        Self::new_with_source(AKITA_OFFSET_FFFFA7F7, library_source(AKITA_OFFSET_FFFFA7F7))
     }
 
     pub fn for_offset_275() -> Result<Self, MetalError> {

@@ -4,13 +4,8 @@
 //! performed by the shader specialized for `2^128 - C`; host callers supply
 //! canonical values for the selected offset.
 
-use std::{cell::Cell, slice, time::Duration};
-
 use jolt_field::FixedBytes;
-use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
-};
+use metal::MTLCommandBufferStatus;
 use thiserror::Error;
 
 macro_rules! copy_field_getters {
@@ -49,9 +44,7 @@ mod product_remainder;
 mod product_uniskip;
 #[doc(hidden)]
 pub mod ram_cycle_family;
-pub mod ram_ra_claim_reduction;
 mod ram_raf_evaluation;
-mod ram_val_check;
 pub mod registers_claim_reduction;
 mod registers_val;
 mod runtime;
@@ -161,15 +154,6 @@ pub use ram_raf_evaluation::{
     RAM_RAF_FOLD_PIPELINE, RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS,
     RAM_RAF_SIMD_WIDTH, RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
 };
-#[cfg(feature = "test-utils")]
-pub use ram_val_check::oracle as ram_val_check_oracle;
-pub use ram_val_check::{
-    RamValCheckConfig, RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan,
-    RamValCheckRowError, RamValCheckRows, RamValCheckSequence, RamValCheckShapeError,
-    RamValCheckStorageLayout, RAM_VAL_CHECK_DEFAULT_CPU_TAIL_ELEMENTS,
-    RAM_VAL_CHECK_FIVE_X_GATE_NS, RAM_VAL_CHECK_MESSAGE_COLUMNS, RAM_VAL_CHECK_NO_ACCESS,
-    RAM_VAL_CHECK_SIMD_WIDTH, RAM_VAL_CHECK_TARGET_CPU_NS,
-};
 pub(crate) use registers_val::{PendingRegistersValFirstMessage, RegistersValFirstMessageStats};
 pub use registers_val::{
     RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
@@ -243,66 +227,6 @@ impl Fp128 {
     }
 }
 
-/// A compiled entry point used to characterize one part of the field pipeline.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Probe {
-    Noop,
-    Copy,
-    Add,
-    Sub,
-    MulWide,
-    ChainWide1,
-    ChainWide2,
-    ChainWide4,
-    ChainWide8,
-    U32MadIlp8,
-}
-
-impl Probe {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Noop => "solinas_noop",
-            Self::Copy => "solinas_copy",
-            Self::Add => "solinas_add_probe",
-            Self::Sub => "solinas_sub_probe",
-            Self::MulWide => "solinas_mul_wide_probe",
-            Self::ChainWide1 => "solinas_chain_wide_1",
-            Self::ChainWide2 => "solinas_chain_wide_2",
-            Self::ChainWide4 => "solinas_chain_wide_4",
-            Self::ChainWide8 => "solinas_chain_wide_8",
-            Self::U32MadIlp8 => "solinas_u32_mad_ilp8",
-        }
-    }
-
-    pub const fn independent_chains(self) -> usize {
-        match self {
-            Self::ChainWide2 => 2,
-            Self::ChainWide4 => 4,
-            Self::ChainWide8 => 8,
-            _ => 1,
-        }
-    }
-
-    const fn accepts_noncanonical_output(self) -> bool {
-        matches!(self, Self::U32MadIlp8)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DispatchConfig {
-    pub iterations: u32,
-    pub threads_per_threadgroup: Option<usize>,
-}
-
-impl Default for DispatchConfig {
-    fn default() -> Self {
-        Self {
-            iterations: 1,
-            threads_per_threadgroup: None,
-        }
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum MetalError {
     #[error("no Metal device is available")]
@@ -319,10 +243,6 @@ pub enum MetalError {
     PipelineCompilation { name: &'static str, message: String },
     #[error("a non-noop dispatch requires at least one element")]
     EmptyInput,
-    #[error("use `prepare_noop` for the no-op probe")]
-    NoopPreparation,
-    #[error("input lengths differ: lhs={lhs}, rhs={rhs}")]
-    LengthMismatch { lhs: usize, rhs: usize },
     #[error("input length {0} exceeds the shader's 32-bit element count")]
     InputTooLong(usize),
     #[error("buffer requires {requested} bytes but the Metal device limit is {maximum}")]
@@ -341,12 +261,10 @@ pub enum MetalError {
         index: usize,
         offset: u32,
     },
+    #[error("input lengths differ: lhs={lhs}, rhs={rhs}")]
+    LengthMismatch { lhs: usize, rhs: usize },
     #[error("output[{index}] is not canonical for 2^128 - {offset}")]
     NonCanonicalOutput { index: usize, offset: u32 },
-    #[error("{probe} requires an element count divisible by its ILP ({ilp})")]
-    MisalignedElementCount { probe: &'static str, ilp: usize },
-    #[error("iteration count must be nonzero")]
-    ZeroIterations,
     #[error("Spartan outer uni-skip shape mismatch: rows={rows}, e_in={e_in}, e_out={e_out}")]
     SpartanOuterUniskipShape {
         rows: usize,
@@ -566,8 +484,6 @@ pub enum MetalError {
         maximum: u64,
     },
     #[error(transparent)]
-    RamValCheckShape(#[from] ram_val_check::RamValCheckShapeError),
-    #[error(transparent)]
     RamRaf(#[from] ram_raf_evaluation::RamRafError),
     #[error("RAM RAF address plane belongs to Metal device {got}, expected {expected}")]
     RamRafRowsDevice { expected: u64, got: u64 },
@@ -578,26 +494,6 @@ pub enum MetalError {
         invalid_rows: u32,
         unsupported_dispatches: u32,
     },
-    #[error("RAM value-check rows belong to Metal device {got}, expected {expected}")]
-    RamValCheckRowsDevice { expected: u64, got: u64 },
-    #[error(
-        "RAM value-check pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedRamValCheckExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    #[error(
-        "RAM value-check {phase} needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
-    )]
-    RamValCheckThreadgroupMemory {
-        phase: &'static str,
-        requested: u64,
-        maximum: u64,
-    },
-    #[error("invalid resident RAM value-check state: {0}")]
-    InvalidRamValCheckState(&'static str),
     #[error("invalid resident product remainder state: {0}")]
     InvalidProductRemainderState(&'static str),
     #[error(
@@ -803,258 +699,6 @@ impl MetalError {
                     instruction_claim_reduction::InstructionClaimShapeError::BufferLengthLimit { .. }
                 )
         )
-    }
-}
-
-impl SolinasMetal {
-    pub fn pipeline_limits(&self, probe: Probe) -> Result<PipelineLimits, MetalError> {
-        let pipeline = self.compile_pipeline(probe)?;
-        Ok(Self::limits(&pipeline))
-    }
-
-    pub fn prepare_noop(&self) -> Result<Invocation<'_>, MetalError> {
-        let pipeline = self.compile_pipeline(Probe::Noop)?;
-        let limits = Self::limits(&pipeline);
-        let threads_per_threadgroup =
-            Self::resolve_threadgroup_width(Some(limits.thread_execution_width), limits)?;
-
-        Ok(Invocation {
-            context: self,
-            probe: Probe::Noop,
-            pipeline,
-            buffers: None,
-            limits,
-            threads_per_threadgroup,
-            grid_threads: 1,
-            elements: 0,
-            iterations: 1,
-            completed: Cell::new(false),
-        })
-    }
-
-    pub fn prepare(
-        &self,
-        probe: Probe,
-        lhs: &[Fp128],
-        rhs: &[Fp128],
-        config: DispatchConfig,
-    ) -> Result<Invocation<'_>, MetalError> {
-        if probe == Probe::Noop {
-            return Err(MetalError::NoopPreparation);
-        }
-        if lhs.is_empty() {
-            return Err(MetalError::EmptyInput);
-        }
-        if lhs.len() != rhs.len() {
-            return Err(MetalError::LengthMismatch {
-                lhs: lhs.len(),
-                rhs: rhs.len(),
-            });
-        }
-        if config.iterations == 0 {
-            return Err(MetalError::ZeroIterations);
-        }
-        let elements = u32::try_from(lhs.len()).map_err(|_| MetalError::InputTooLong(lhs.len()))?;
-        let buffer_bytes =
-            u64::try_from(size_of_val(lhs)).map_err(|_| MetalError::InputTooLong(lhs.len()))?;
-        let max_buffer_length = self.device.max_buffer_length();
-        if buffer_bytes > max_buffer_length {
-            return Err(MetalError::BufferTooLong {
-                requested: buffer_bytes,
-                maximum: max_buffer_length,
-            });
-        }
-        self.validate_inputs("lhs", lhs)?;
-        self.validate_inputs("rhs", rhs)?;
-
-        let ilp = probe.independent_chains();
-        if !lhs.len().is_multiple_of(ilp) {
-            return Err(MetalError::MisalignedElementCount {
-                probe: probe.name(),
-                ilp,
-            });
-        }
-
-        let pipeline = self.compile_pipeline(probe)?;
-        let limits = Self::limits(&pipeline);
-        let threads_per_threadgroup =
-            Self::resolve_threadgroup_width(config.threads_per_threadgroup, limits)?;
-        let grid_threads = lhs.len() / ilp;
-        let params = ProbeParams {
-            elements,
-            iterations: config.iterations,
-        };
-        let buffers = Buffers {
-            lhs: buffer_from_slice(&self.device, lhs),
-            rhs: buffer_from_slice(&self.device, rhs),
-            output: self
-                .device
-                .new_buffer(buffer_bytes, MTLResourceOptions::StorageModeShared),
-            params: buffer_from_slice(&self.device, slice::from_ref(&params)),
-        };
-
-        Ok(Invocation {
-            context: self,
-            probe,
-            pipeline,
-            buffers: Some(buffers),
-            limits,
-            threads_per_threadgroup,
-            grid_threads,
-            elements: lhs.len(),
-            iterations: config.iterations,
-            completed: Cell::new(false),
-        })
-    }
-
-    fn compile_pipeline(&self, probe: Probe) -> Result<ComputePipelineState, MetalError> {
-        self.compile_named_pipeline(probe.name())
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct ProbeParams {
-    elements: u32,
-    iterations: u32,
-}
-
-struct Buffers {
-    lhs: Buffer,
-    rhs: Buffer,
-    output: Buffer,
-    params: Buffer,
-}
-
-pub struct Invocation<'a> {
-    context: &'a SolinasMetal,
-    probe: Probe,
-    pipeline: ComputePipelineState,
-    buffers: Option<Buffers>,
-    limits: PipelineLimits,
-    threads_per_threadgroup: usize,
-    grid_threads: usize,
-    elements: usize,
-    iterations: u32,
-    completed: Cell<bool>,
-}
-
-impl Invocation<'_> {
-    pub const fn probe(&self) -> Probe {
-        self.probe
-    }
-
-    pub const fn pipeline_limits(&self) -> PipelineLimits {
-        self.limits
-    }
-
-    pub const fn threads_per_threadgroup(&self) -> usize {
-        self.threads_per_threadgroup
-    }
-
-    pub const fn grid_threads(&self) -> usize {
-        self.grid_threads
-    }
-
-    pub const fn iterations(&self) -> u32 {
-        self.iterations
-    }
-
-    pub const fn field_operation_count(&self) -> u64 {
-        match self.probe {
-            Probe::Add | Probe::Sub | Probe::MulWide => self.elements as u64,
-            Probe::ChainWide1 | Probe::ChainWide2 | Probe::ChainWide4 | Probe::ChainWide8 => {
-                self.elements as u64 * self.iterations as u64
-            }
-            _ => 0,
-        }
-    }
-
-    pub const fn logical_bytes(&self) -> u64 {
-        let bytes_per_element = match self.probe {
-            Probe::Copy => 32,
-            Probe::Add
-            | Probe::Sub
-            | Probe::MulWide
-            | Probe::ChainWide1
-            | Probe::ChainWide2
-            | Probe::ChainWide4
-            | Probe::ChainWide8
-            | Probe::U32MadIlp8 => 48,
-            Probe::Noop => 0,
-        };
-        self.elements as u64 * bytes_per_element
-    }
-
-    pub fn execute(&self) -> Result<(), MetalError> {
-        self.execute_timed().map(|_| ())
-    }
-
-    /// Executes the command and returns time spent running on the GPU.
-    pub fn execute_timed(&self) -> Result<Duration, MetalError> {
-        autoreleasepool(|| {
-            let command_buffer = self.context.queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&self.pipeline);
-            if let Some(buffers) = &self.buffers {
-                encoder.set_buffer(0, Some(&buffers.lhs), 0);
-                encoder.set_buffer(1, Some(&buffers.rhs), 0);
-                encoder.set_buffer(2, Some(&buffers.output), 0);
-                encoder.set_buffer(3, Some(&buffers.params), 0);
-            }
-            let threads_per_threadgroup = MTLSize {
-                width: self.threads_per_threadgroup as u64,
-                height: 1,
-                depth: 1,
-            };
-            let threadgroups = MTLSize {
-                width: self.grid_threads.div_ceil(self.threads_per_threadgroup) as u64,
-                height: 1,
-                depth: 1,
-            };
-            encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
-            encoder.end_encoding();
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-            let status = command_buffer.status();
-            if status != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(status));
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
-            self.completed.set(true);
-            Ok(Duration::from_secs_f64(end - start))
-        })
-    }
-
-    pub fn read_output(&self) -> Result<Vec<Fp128>, MetalError> {
-        if !self.completed.get() {
-            return Err(MetalError::NotExecuted);
-        }
-        let Some(buffers) = &self.buffers else {
-            return Ok(Vec::new());
-        };
-        // SAFETY: `output` is shared storage allocated for exactly `elements`
-        // `Fp128` values and GPU execution is complete before callers read it.
-        let output = unsafe {
-            slice::from_raw_parts(buffers.output.contents().cast::<Fp128>(), self.elements).to_vec()
-        };
-        if !self.probe.accepts_noncanonical_output() {
-            if let Some((index, _)) = output
-                .iter()
-                .enumerate()
-                .find(|(_, value)| !value.is_canonical(self.context.offset))
-            {
-                return Err(MetalError::NonCanonicalOutput {
-                    index,
-                    offset: self.context.offset,
-                });
-            }
-        }
-        Ok(output)
     }
 }
 

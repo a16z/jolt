@@ -3,7 +3,6 @@ const SIMD_REDUCE_SOURCE: &str = include_str!("simd_reduce.metal");
 const BYTECODE_READ_RAF_OFFSET: u32 = super::AKITA_OFFSET_FFFFA7F7;
 const BYTECODE_READ_RAF_ADDRESS_SOURCE: &str = super::bytecode_read_raf_address::SOURCE;
 const REGISTERS_CLAIM_REDUCTION_SOURCE: &str = super::registers_claim_reduction::SOURCE;
-const RAM_RA_CLAIM_REDUCTION_SOURCE: &str = super::ram_ra_claim_reduction::SOURCE;
 const DEFERRED_SUM_SOURCE: &str = include_str!("deferred_sum.metal");
 const INSTRUCTION_READ_RAF_SOURCE: &str = super::instruction_read_raf::SOURCE;
 const SPARTAN_OUTER_COMMON_SOURCE: &str = include_str!("spartan_outer_common.metal");
@@ -13,14 +12,12 @@ const INSTRUCTION_CLAIM_REDUCTION_SOURCE: &str = super::instruction_claim_reduct
 const ADDRESS_RAF_DIRECT_SOURCE: &str = include_str!("address_raf_direct/shader.metal");
 const ADDRESS_SUFFIX_FULL_SOURCE: &str = include_str!("address_suffix_full/shader.metal");
 const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_sequence/shader.metal");
-const PROBE_SOURCE: &str = include_str!("probes.metal");
 const PRODUCT5_SOURCE: &str = include_str!("product5/shader.metal");
 const PRODUCT_REMAINDER_SOURCE: &str = super::product_remainder::SOURCE;
 const PRODUCT_INSTRUCTION_SERVICE_SOURCE: &str =
     super::instruction_claim_reduction_successor::SOURCE;
 const PRODUCT_UNISKIP_SOURCE: &str = super::product_uniskip::SOURCE;
 const RAM_RAF_EVALUATION_SOURCE: &str = super::ram_raf_evaluation::SOURCE;
-const RAM_VAL_CHECK_SOURCE: &str = super::ram_val_check::SOURCE;
 const REGISTERS_VAL_SOURCE: &str = include_str!("registers_val/shader.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity/shader.metal");
 const BOOLEANITY_ADDRESS_SOURCE: &str = include_str!("booleanity_address/shader.metal");
@@ -38,7 +35,6 @@ struct SourceFragment {
     id: &'static str,
     source: &'static str,
     required_offset: Option<u32>,
-    production: bool,
 }
 
 impl SourceFragment {
@@ -48,17 +44,6 @@ impl SourceFragment {
             id: _id,
             source,
             required_offset: None,
-            production: true,
-        }
-    }
-
-    const fn diagnostic(_id: &'static str, source: &'static str) -> Self {
-        Self {
-            #[cfg(test)]
-            id: _id,
-            source,
-            required_offset: None,
-            production: false,
         }
     }
 
@@ -68,7 +53,6 @@ impl SourceFragment {
             id: _id,
             source,
             required_offset: Some(offset),
-            production: true,
         }
     }
 
@@ -93,7 +77,6 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
         "registers_claim_reduction",
         REGISTERS_CLAIM_REDUCTION_SOURCE,
     ),
-    SourceFragment::new("ram_ra_claim_reduction", RAM_RA_CLAIM_REDUCTION_SOURCE),
     SourceFragment::new("deferred_sum", DEFERRED_SUM_SOURCE),
     SourceFragment::new("instruction_read_raf", INSTRUCTION_READ_RAF_SOURCE),
     SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
@@ -104,7 +87,6 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     ),
     SourceFragment::new("address_raf_direct", ADDRESS_RAF_DIRECT_SOURCE),
     SourceFragment::new("address_suffix_full", ADDRESS_SUFFIX_FULL_SOURCE),
-    SourceFragment::diagnostic("probes", PROBE_SOURCE),
     SourceFragment::new("product5", PRODUCT5_SOURCE),
     SourceFragment::new("product_remainder", PRODUCT_REMAINDER_SOURCE),
     SourceFragment::new(
@@ -113,7 +95,6 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     ),
     SourceFragment::new("product_uniskip", PRODUCT_UNISKIP_SOURCE),
     SourceFragment::new("ram_raf_evaluation", RAM_RAF_EVALUATION_SOURCE),
-    SourceFragment::new("ram_val_check", RAM_VAL_CHECK_SOURCE),
     SourceFragment::new("registers_val", REGISTERS_VAL_SOURCE),
     SourceFragment::new("booleanity", BOOLEANITY_SOURCE),
     SourceFragment::new("booleanity_address", BOOLEANITY_ADDRESS_SOURCE),
@@ -132,21 +113,13 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
 ];
 
 pub(super) fn library_source(offset: u32) -> String {
-    assemble_library_source_filtered(offset, LIBRARY_SOURCE_FRAGMENTS, false)
+    assemble_library_source(offset, LIBRARY_SOURCE_FRAGMENTS)
 }
 
-pub(super) fn production_library_source(offset: u32) -> String {
-    assemble_library_source_filtered(offset, LIBRARY_SOURCE_FRAGMENTS, true)
-}
-
-fn assemble_library_source_filtered(
-    offset: u32,
-    source_fragments: &[SourceFragment],
-    production_only: bool,
-) -> String {
+fn assemble_library_source(offset: u32, source_fragments: &[SourceFragment]) -> String {
     let fragments = source_fragments
         .iter()
-        .filter(|fragment| fragment.applies_to(offset) && (!production_only || fragment.production))
+        .filter(|fragment| fragment.applies_to(offset))
         .map(|fragment| fragment.source)
         .collect::<Vec<_>>();
     format!("#define SOLINAS_OFFSET {offset}u\n{}", fragments.join("\n"))
@@ -181,10 +154,9 @@ mod tests {
     }
 
     #[test]
-    fn production_source_excludes_diagnostic_and_rejected_kernels() {
-        let source = production_library_source(AKITA_OFFSET_FFFFA7F7);
+    fn source_excludes_rejected_kernels() {
+        let source = library_source(AKITA_OFFSET_FFFFA7F7);
 
-        assert!(!source.contains(PROBE_SOURCE));
         for rejected in [
             "solinas_ram_output_check_",
             "solinas_address_raf_histogram",
@@ -206,22 +178,12 @@ mod tests {
 
     #[test]
     fn production_manifest_matches_source_assembly() {
-        let production = LIBRARY_SOURCE_FRAGMENTS
+        let fragments = LIBRARY_SOURCE_FRAGMENTS
             .iter()
-            .filter(|fragment| fragment.production)
-            .map(|fragment| fragment.id.to_owned())
-            .collect::<Vec<_>>();
-        let diagnostic = LIBRARY_SOURCE_FRAGMENTS
-            .iter()
-            .filter(|fragment| !fragment.production)
             .map(|fragment| fragment.id.to_owned())
             .collect::<Vec<_>>();
 
-        assert_eq!(manifest_fragment_ids("metal_source_fragments"), production);
-        assert_eq!(
-            manifest_fragment_ids("diagnostic_source_fragments"),
-            diagnostic
-        );
+        assert_eq!(manifest_fragment_ids("metal_source_fragments"), fragments);
         assert_eq!(
             manifest_fragment_ids("cpu_delegated_slots"),
             ["registers_read_write", "ram_output_check"]

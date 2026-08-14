@@ -4,9 +4,8 @@ This directory contains the Apple Metal implementation of the Akita prover's
 hybrid sumcheck backend. It is available on macOS through the `metal` feature.
 
 Use `JoltAkitaBackend::metal()` for the supported route set. The production
-profile compiles only the source fragments listed in
-[`production_manifest.json`](production_manifest.json). Diagnostic kernels are
-kept out of that library.
+profile compiles the source fragments listed in
+[`production_manifest.json`](production_manifest.json).
 
 ```rust
 let prover = JoltAkitaBackend::metal()?;
