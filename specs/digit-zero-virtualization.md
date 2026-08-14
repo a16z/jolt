@@ -1,13 +1,16 @@
 # Digit-zero virtualization for the packed one-hot trace
 
-Status 2026-08-14: ACTIVE — this spec is the target formulation for PR #1731
-(`perf/akita-protocol-opts`); implementation in flight on that branch. It
-replaces the "Where the RAM activation is pinned" argument in
-`specs/lattice-claims.md` (five-hop chain, one-free-bit closure) with the
-direct construction below. Source formulation: "Digit-Zero Virtualization for
-Twist and Shout" (`~/akita-paper/ra-virtualization-note.pdf`); this document
-adapts its definitions to the code and carries the protocol-level soundness
-accounting the note leaves implicit.
+Status 2026-08-14: **SOUNDNESS REVIEW REQUIRED — do not treat the RAM
+activation as sound.** Implemented on `perf/akita-protocol-opts` (PR #1731) and
+adapted in the modular stack (PR #1732, held unpushed). An adversarial review
+found the RAM one-hotness argument (§5) has an open gap: the
+`RamActivationBooleanity` check's reference point predates the columns it
+checks, so it does not by itself force the activation Boolean. See the
+**OPEN SOUNDNESS QUESTION** box in §5. Instruction/bytecode/increment families
+(activation ≡ 1, Theorem 1) are unaffected. This document replaces the "Where
+the RAM activation is pinned" argument in `specs/lattice-claims.md` (five-hop
+chain, one-free-bit closure) with the construction below. Source: "Digit-Zero
+Virtualization for Twist and Shout" (`~/akita-paper/ra-virtualization-note.pdf`).
 
 Base (Dory) mode is untouched by everything here: it commits full one-hot
 columns, keeps its direct Hamming-weight legs and `RamHammingBooleanity`, and
@@ -256,41 +259,48 @@ columns — the two are cross-pinned only through steps 1–3, which is exactly
 enough: the activation's *value* is forced to the true access indicator, and
 the Spartan flags are separately bytecode-bound.
 
-**Why the zero-check binds although its columns are virtual.** A sumcheck
-over never-committed columns is not pointwise-binding by itself: the prover
-knows `r₁` (drawn at stage 1) before it chooses the columns (bound during
-stage 6b), and `Σ_j eq(r₁, j)·(B² − B)(j) = 0` has abundant non-Boolean
-solutions once the weights are known. The same was true of the previous
-`A² = A` gadget. The binding is composite, in three moves:
+**OPEN SOUNDNESS QUESTION (2026-08-14 adversarial review) — the activation
+booleanity check is not pointwise-binding as implemented.** A booleanity
+zero-check `Σ_j eq(ref, j)·(B² − B)(j) = 0` forces `B` Boolean only when `ref`
+is drawn *after* `B` is fixed. Here `B = Load + Store` is a virtual column the
+prover materializes at stage 6b, and `ref = r₁` is the **stage-1** Spartan
+`LookupOutput` cycle binding — drawn five stages earlier. The two flag
+openings are consumed by nothing but this gadget and the stage-7 baseline
+(verified: no tie to the bytecode-bound Spartan flags or to committed data),
+so the prover chooses `B` knowing `r₁` and can satisfy the single evaluation
+`(B²−B)̃(r₁) = 0` with a non-Boolean `B`.
 
-1. *The gadget's output value is not free.* The two flag openings feed the
-   `2·d` stage-7 RAM baselines — `2·d` equations sharing the single scalar
-   `v = Load@6b + Store@6b` against openings that terminate in the stage-8
-   PCS batch. Overdetermination forces `v = Ã(r_6b)` for the one polynomial
-   `Ã` consistent with the committed rows, which retroactively turns the
-   gadget into a genuine sumcheck for `0 = Σ_j eq(r₁, j)·(Ã² − Ã)(j)`.
-2. *`Ã`'s per-cycle values live in commitment-determined finite sets.* The
-   recentering identities plus (B) make every committed row and every
-   digit-zero row pointwise Boolean and force `Ã(j) − s_i(j) ∈ {0, 1}` for
-   every chunk `i`, where `s_i(j)` is chunk `i`'s committed row sum — all
-   fixed at stage 0. Hence per cycle `(Ã² − Ã)(j)` ranges over a small set
-   fixed at commitment time: exactly `{0}` on cycles whose committed sums are
-   0 or 1 (the free bit contributes `Ã ∈ {0, 1}`, so the quadratic vanishes
-   either way), and a set *excluding 0* on any would-be `m ≥ 2` cycle
-   (e.g. `s = 2` gives `(Ã² − Ã)(j) ∈ {2, 6}`).
-3. *Schwartz–Zippel over those sets.* `r₁` is drawn at stage 1, after the
-   stage-0 commitment fixes the sets — a load-bearing ordering. A prover with
-   any `m ≥ 2` cycle must hit `Σ_j eq(r₁, j)·(Ã² − Ã)(j) = 0` by choosing
-   each `(Ã² − Ã)(j)` from its finite set; with the attack cycles' sets
-   missing 0, this is a nontrivial linear condition on the `eq(r₁, ·)`
-   values, satisfied with probability `O(|sets|/|F|)` over `r₁`.
+Base mode does **not** have this gap: its Hamming-weight leg pins
+`H = Σ_k ra(k, ·)` to the stage-0 committed rows, so its identical stage-1
+booleanity check is really about a fixed stage-0 polynomial that genuinely
+predates `r₁`. Digit-zero virtualization deleted that leg (the weight identity
+"holds by construction"), which removed exactly the stage-0 pin that made the
+point ordering safe. An earlier draft of this section argued a three-move
+Schwartz–Zippel closure "over `r₁`"; that is **invalid** — it assumed `r₁`
+postdates the free digit-zero/flag choices, and it does not.
 
-So the check forces `Ã(j) ∈ {0, 1}` on every cycle; the only per-cycle
-freedom it cannot see is the empty-committed-row bit (whose quadratic is 0
-either way), which is exactly the residual step 3 closes through RAF. A
-γ-batch of per-flag legs enjoys no analogue of move 2 — the *split* between
-the two columns has no commitment-determined value set — which is the deeper
-reason the relation checks only the sum (§4).
+Consequence: for RAM, per-cycle one-hotness (`Σ_k ra(k,j) ≤ 1` on access
+cycles) currently has **no valid proof**. Step 4 above explicitly delegates the
+`m ≥ 2`-on-access-cycles case to this check, and RAF + Spartan rows 0/1 do not
+independently exclude it. Whether a weight-≥2 committed RAM tensor can survive
+the Twist read/write + val-check chain on a genuine access cycle (with a
+malicious committed program) was not resolved; if that chain independently
+pins the tensor one-hot, the construction is sound but this section's
+justification is still wrong. **Do not ship the RAM activation on this
+argument.** Instruction, bytecode, and increment families are unaffected
+(activation ≡ 1, Theorem 1, no gadget).
+
+Candidate hardenings (a design decision, not yet chosen):
+- tie the `RamActivationBooleanity` flag openings to the bytecode-bound
+  Spartan `OpFlags(Load)/OpFlags(Store)` (sound iff committed-program bytecode
+  flags are validated Boolean+exclusive offline);
+- commit the activation column at stage 0 and draw its booleanity reference
+  afterward, restoring the base-mode "fixed before `r₁`" property;
+- restore an explicit `Σ_k committed_ra(k,j) ≤ 1` bound for RAM whose
+  randomness postdates the commitment (a real weight leg, partially undoing
+  the RAM saving);
+- or prove that Twist read/write + val-check already forbid weight-≥2 RAM
+  tensors on access cycles, and rewrite §5 to rest on that instead.
 
 **Completeness.** Honest traces are always provable: padding cycles have both
 flags 0 and all-zero tensors (representable — every committed row empty,
