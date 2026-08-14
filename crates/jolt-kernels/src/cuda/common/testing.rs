@@ -5,12 +5,15 @@
 )]
 
 use common::jolt_device::MemoryLayout;
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltCommittedPolynomial, JoltPolynomialId};
+use jolt_claims::protocols::jolt::{
+    JoltChallengeId, JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
+};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_poly::UnivariatePoly;
+use jolt_program::execution::{JoltProgram, OwnedTrace, RegisterRead, RegisterState, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
-use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
@@ -18,8 +21,8 @@ use jolt_verifier::stages::relations::{
 use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 use jolt_witness::{
-    ChunkVisitor, FixedBackend, JoltWitnessOracle, JoltWitnessPlane, OneHotSource, ProgramSource,
-    RowSource, Shape, WitnessError,
+    ChunkVisitor, FixedBackend, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
+    JoltWitnessPlane, OneHotSource, ProgramSource, RowSource, Shape, TraceBackend, WitnessError,
 };
 use proptest::prelude::*;
 
@@ -258,6 +261,76 @@ pub fn ram_trace(log_t: usize, ram_k: usize) -> Vec<tracer::instruction::Cycle> 
             }
         })
         .collect()
+}
+
+fn instruction_rows(instruction: JoltInstructionRow, log_t: usize, seed: u64) -> Vec<TraceRow> {
+    (0..1usize << log_t)
+        .map(|cycle| {
+            let mix = seed
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(cycle as u64 + 1);
+            let rs1 = mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29);
+            let rs2 = mix.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (mix >> 31);
+            TraceRow {
+                instruction,
+                registers: RegisterState {
+                    rs1: Some(RegisterRead {
+                        register: 2,
+                        value: rs1,
+                    }),
+                    rs2: Some(RegisterRead {
+                        register: 3,
+                        value: rs2,
+                    }),
+                    ..Default::default()
+                },
+                ..TraceRow::default()
+            }
+        })
+        .collect()
+}
+
+pub fn with_instruction_witness<R>(
+    log_t: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
+    let instruction = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::XOR,
+        address: 0x8000_0000,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    };
+    let preprocessing = JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(
+            vec![instruction],
+            instruction.address as u64,
+            RV64IMAC_JOLT,
+        )
+        .expect("instruction bytecode fixture"),
+        ram: RAMPreprocessing::default(),
+        memory_layout: MemoryLayout::default(),
+        max_padded_trace_length: 1usize << log_t,
+    };
+    let program = JoltProgram::default();
+    let trace = TraceOutput::new(
+        OwnedTrace::new(instruction_rows(instruction, log_t, seed)),
+        Default::default(),
+        None,
+    );
+    let backend = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, 64, one_hot),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+    );
+    body(&backend)
 }
 
 pub fn reference_input_claim<'a, R>(

@@ -27,6 +27,10 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChallenges, RegistersReadWriteChecking, RegistersReadWriteInputClaims,
 };
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
+use jolt_verifier::stages::stage6b::instruction_ra_virtualization::{
+    InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
+    InstructionRaVirtualizationInputClaims,
+};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 use crate::profile::{pad_trace, trace_modular, BackendKind, Workload};
@@ -36,6 +40,7 @@ const SAFETY_MARGIN: f64 = 0.9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerticalRelation {
+    InstructionRaVirtualization,
     InstructionReadRaf,
     RamReadWrite,
     RamValCheck,
@@ -45,6 +50,7 @@ pub enum VerticalRelation {
 impl VerticalRelation {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::InstructionRaVirtualization => "instruction-ra-virtualization",
             Self::InstructionReadRaf => "instruction-read-raf",
             Self::RamReadWrite => "ram-read-write",
             Self::RamValCheck => "ram-val-check",
@@ -173,6 +179,9 @@ pub fn run(args: &VerticalArgs) -> Vec<VerticalTiming> {
     let mut timings = Vec::new();
     for &scale in &args.scales {
         let timing = match args.relation {
+            VerticalRelation::InstructionRaVirtualization => {
+                measure_instruction_ra_virtualization(args.name, scale, args.backend)
+            }
             VerticalRelation::InstructionReadRaf => {
                 measure_instruction_read_raf(args.name, scale, args.backend)
             }
@@ -318,6 +327,125 @@ fn measure_instruction_read_raf(
             std::cmp::Ordering::Greater => RoundPhase::Cycle,
         },
     )
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+fn measure_instruction_ra_virtualization(
+    workload: Workload,
+    scale: u32,
+    backend: BackendKind,
+) -> VerticalTiming {
+    let bench_name = workload.as_str();
+    let max_trace_length = 1usize << scale;
+    let input = workload.input((max_trace_length as f64 * SAFETY_MARGIN) as usize);
+
+    let mut program = host::Program::new(&format!("{bench_name}-guest"));
+    let (bytecode, init_memory_state, _, entry_address) = program.decode();
+    let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
+    drop(legacy_trace);
+    let elf_contents = program.get_elf_contents().expect("elf contents");
+    let memory_layout = io_device.memory_layout.clone();
+
+    let program_data =
+        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
+            .expect("legacy preprocess");
+    let shared =
+        JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
+    let legacy = LegacyProverPreprocessing::<
+        jolt_prover_legacy::ark_bn254::Fr,
+        jolt_prover_legacy::curve::Bn254Curve,
+        DoryCommitmentScheme,
+    >::new(shared);
+    let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy);
+    let program_preprocessing = verifier_preprocessing
+        .program
+        .as_full()
+        .expect("full program preprocessing")
+        .clone();
+    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+
+    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    let config = ProverConfig::derive::<Fr>(
+        trace_output.trace.rows(),
+        &memory_layout,
+        verifier_preprocessing.program.min_bytecode_address(),
+        verifier_preprocessing.program.program_image_len_words(),
+        max_trace_length,
+    )
+    .expect("derive config");
+    let padded = pad_trace(trace_output, config.trace_length);
+    let log_t = config.trace_length.ilog2() as usize;
+
+    let witness = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
+        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
+    );
+
+    let dimensions = formula_dimensions_from_parts(
+        config.one_hot_config,
+        log_t,
+        verifier_preprocessing.program.bytecode_len(),
+        config.ram_K,
+        JoltRelationId::InstructionRaVirtualization,
+    )
+    .expect("formula dimensions")
+    .instruction_ra_virtualization;
+    let chunk_bits = config.one_hot_config.committed_chunk_bits();
+    let instruction_address: Vec<Fr> = (0..dimensions.num_committed_ra_polys() * chunk_bits)
+        .map(|i| Fr::from_u64(29 + 5 * i as u64))
+        .collect();
+    let instruction_read_raf_cycle: Vec<Fr> = (0..log_t)
+        .map(|i| Fr::from_u64(37 + 7 * i as u64))
+        .collect();
+    let relation = InstructionRaVirtualization::<Fr>::new(
+        dimensions,
+        instruction_address,
+        instruction_read_raf_cycle,
+        chunk_bits,
+    );
+
+    let claims = InstructionRaVirtualizationInputClaims {
+        instruction_ra: vec![Fr::from_u64(0); dimensions.num_virtual_ra_polys()],
+    };
+    let points = InstructionRaVirtualizationInputClaims {
+        instruction_ra: (0..dimensions.num_virtual_ra_polys())
+            .map(|virtual_index| {
+                (0..dimensions.num_committed_per_virtual() * chunk_bits + log_t)
+                    .map(|bit| Fr::from_u64(11 + 3 * (virtual_index * 97 + bit) as u64))
+                    .collect()
+            })
+            .collect(),
+    };
+    let challenges = InstructionRaVirtualizationChallenges {
+        gamma: Fr::from_u64(101),
+    };
+    let inputs = || ProverInputs {
+        relation: &relation,
+        claims: &claims,
+        points: &points,
+        challenges: &challenges,
+    };
+
+    let selected = match backend {
+        BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        #[cfg(feature = "cuda")]
+        BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
+    };
+
+    let mut session = ProofSession::default();
+    let start = Instant::now();
+    let mut kernel = selected
+        .instruction_ra_virtualization
+        .prepare(&mut session, &witness, inputs())
+        .expect("prepare the stage-6b RA virtualization kernel");
+    let prepare = start.elapsed();
+
+    drive_rounds(&mut *kernel, &claims, log_t, log_t, prepare, |_| {
+        RoundPhase::Cycle
+    })
 }
 
 #[expect(

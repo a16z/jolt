@@ -60,6 +60,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("../kernels/ram_read_write.cu"),
     "\n",
     include_str!("../kernels/registers_read_write.cu"),
+    "\n",
+    include_str!("../kernels/instruction_ra_virtualization.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -139,6 +141,11 @@ pub struct CudaKernelContext {
     reg_count: CudaFunction,
     reg_scatter: CudaFunction,
     cr_quotient: CudaFunction,
+    irv_eq_double: CudaFunction,
+    irv_tables_split: CudaFunction,
+    irv_gather: CudaFunction,
+    irv_message_sparse: CudaFunction,
+    irv_message_dense: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -228,6 +235,11 @@ impl CudaKernelContext {
             reg_count: module.load_function("reg_count_kernel")?,
             reg_scatter: module.load_function("reg_scatter_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
+            irv_eq_double: module.load_function("irv_eq_double_kernel")?,
+            irv_tables_split: module.load_function("irv_tables_split_kernel")?,
+            irv_gather: module.load_function("irv_gather_kernel")?,
+            irv_message_sparse: module.load_function("irv_message_sparse_kernel")?,
+            irv_message_dense: module.load_function("irv_message_dense_kernel")?,
         })
     }
 
@@ -345,6 +357,26 @@ impl CudaKernelContext {
 
     pub(crate) const fn weighted_combine(&self) -> &CudaFunction {
         &self.weighted_combine
+    }
+
+    pub(crate) const fn irv_eq_double(&self) -> &CudaFunction {
+        &self.irv_eq_double
+    }
+
+    pub(crate) const fn irv_tables_split(&self) -> &CudaFunction {
+        &self.irv_tables_split
+    }
+
+    pub(crate) const fn irv_gather(&self) -> &CudaFunction {
+        &self.irv_gather
+    }
+
+    pub(crate) const fn irv_message_sparse(&self) -> &CudaFunction {
+        &self.irv_message_sparse
+    }
+
+    pub(crate) const fn irv_message_dense(&self) -> &CudaFunction {
+        &self.irv_message_dense
     }
 
     pub(crate) const fn ra_split_tables(&self) -> &CudaFunction {

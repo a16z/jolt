@@ -5,6 +5,7 @@ use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
 mod common;
+mod instruction_ra_virtualization;
 mod instruction_read_raf;
 mod ram_ra_claim_reduction;
 mod ram_read_write;
@@ -46,6 +47,7 @@ where
         if !device_available() {
             return backend;
         }
+        backend.instruction_ra_virtualization = Box::new(CudaBackend);
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);

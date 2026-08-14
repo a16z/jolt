@@ -74,6 +74,10 @@ impl<F: Field> DeviceSplitEq<F> {
         self.host.gruen_poly_deg_3(q0, q2, previous_claim)
     }
 
+    pub fn gruen_poly_from_evals(&self, q_evals: &[F], previous_claim: F) -> UnivariatePoly<F> {
+        self.host.gruen_poly_from_evals(q_evals, previous_claim)
+    }
+
     pub fn merge(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         context.upload(super::device::require_fr_slice(self.host.merge().evals())?)
     }
