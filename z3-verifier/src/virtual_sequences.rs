@@ -55,6 +55,7 @@ use tracer::{
         virtual_change_divisor_w::VirtualChangeDivisorW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
+        virtual_pext_signed::VirtualPextSigned,
         virtual_pow2::VirtualPow2,
         virtual_pow2_w::VirtualPow2W,
         virtual_shift_right_bitmask::VirtualShiftRightBitmask,
@@ -63,6 +64,7 @@ use tracer::{
         virtual_srai::VirtualSRAI,
         virtual_srl::VirtualSRL,
         virtual_srli::VirtualSRLI,
+        virtual_window_mask_w::VirtualWindowMaskW,
         virtual_zero_extend_word::VirtualZeroExtendWord,
         xor::XOR,
         Cycle, Instruction, RISCVCycle, RISCVInstruction, RISCVTrace,
@@ -191,6 +193,26 @@ impl SymbolicCpu {
     fn unsigned_data(&self, bv: &BV) -> BV {
         bv.clone()
     }
+}
+
+fn leading_zeros(bv: &BV, bitsz: u32) -> BV {
+    fn lz_recursive(bv: &BV, curr_sz: u32, bitsz: u32) -> BV {
+        if curr_sz == 1 {
+            return bv
+                .eq(BV::from_u64(0, 1))
+                .ite(&BV::from_u64(1, bitsz), &BV::from_u64(0, bitsz));
+        }
+        let half = curr_sz / 2;
+        let lower = bv.extract(half - 1, 0);
+        let upper = bv.extract(curr_sz - 1, half);
+        let upper_lz = lz_recursive(&upper, curr_sz - half, bitsz);
+        let lower_lz = lz_recursive(&lower, half, bitsz);
+        (upper.eq(BV::from_u64(0, curr_sz - half))).ite(
+            &(lower_lz + BV::from_u64((curr_sz - half) as u64, bitsz)),
+            &upper_lz,
+        )
+    }
+    lz_recursive(bv, bitsz, bitsz)
 }
 
 fn trailing_zeros(bv: &BV, bitsz: u32) -> BV {
@@ -379,6 +401,34 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = ones
                 .bvshl(shift.zero_ext(cpu.bv_bits))
                 .extract(cpu.bv_bits - 1, 0)
+        }
+        Instruction::VirtualWindowMaskW(VirtualWindowMaskW { operands, .. }) => {
+            let ea = cpu.x[operands.rs1 as usize].clone();
+            let bit2 = ea.extract(2, 2).zero_ext(cpu.bv_bits - 1);
+            let shift = bit2 * cpu.bv_u64(cpu.word_bits as u64);
+            let word_mask = cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
+            cpu.x[operands.rd as usize] = word_mask.bvshl(shift);
+        }
+        Instruction::VirtualPextSigned(VirtualPextSigned { operands, .. }) => {
+            // Sign-extending extract via shift-left then arithmetic
+            // shift-right: faithful for contiguous masks (including zero),
+            // the only shape the window-mask instructions produce. Any other
+            // mask havocs rd with a fresh unconstrained value, so a sequence
+            // relying on non-contiguous behavior fails verification instead
+            // of being certified against wrong semantics. (An assert would be
+            // wrong here: `cpu.asserts` are solver assumptions and would
+            // vacuously exclude exactly the misuse cases.)
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            let tz = trailing_zeros(&rs2, cpu.bv_bits);
+            let lz = leading_zeros(&rs2, cpu.bv_bits);
+            // Contiguous (or zero) mask: shifting out the trailing zeros
+            // leaves a value of the form 2^k − 1.
+            let normalized = rs2.bvlshr(&tz);
+            let extracted = rs1.bvshl(&lz).bvashr(lz + tz);
+            let contiguous = (normalized.clone() & (normalized + cpu.bv_u64(1))).eq(cpu.bv_zero());
+            let havoc = BV::fresh_const(&format!("{}_pext_nc", cpu.var_prefix), cpu.bv_bits);
+            cpu.x[operands.rd as usize] = contiguous.ite(&extracted, &havoc);
         }
         Instruction::VirtualSignExtendWord(VirtualSignExtendWord { operands, .. }) => {
             let val = cpu.x[operands.rs1 as usize].clone();

@@ -11,7 +11,7 @@
 //! Appendix A).
 //!
 //! **Address rounds** (first 128, MSB-first) run in phases of
-//! [`CHUNK_LEN`]` = 8` variables. Per phase, each of the 46 table prefixes is
+//! [`CHUNK_LEN`]` = 8` variables. Per phase, every table prefix is
 //! materialized as a dense 256-entry chunk polynomial from its checkpoints
 //! (`jolt-lookup-tables`' binary-point `evaluate` API is built for exactly
 //! this), each present table's suffixes are accumulated into 256-entry `Q`
@@ -173,10 +173,10 @@ pub struct InstructionReadRafKernel<F: Field> {
     /// Condensed per-cycle eq weights: after phase `p` starts,
     /// `u[j] = eq(r_reduction, j) · Π_{q<p} eq(phase-q challenges, chunk_q(k_j))`.
     u_evals: Vec<F>,
-    /// The 46 table-prefix checkpoints (fully bound values of completed
-    /// phases' prefix chunk polynomials).
+    /// The table-prefix checkpoints, one per `ALL_PREFIXES` entry (fully
+    /// bound values of completed phases' prefix chunk polynomials).
     prefix_checkpoints: Vec<PrefixEval<F>>,
-    /// The 46 materialized prefix chunk polynomials for the current phase,
+    /// The materialized prefix chunk polynomials for the current phase,
     /// in `ALL_PREFIXES` order.
     prefix_tables: Vec<Polynomial<F>>,
     /// Per present table (enum index, suffix `Q` polynomials in

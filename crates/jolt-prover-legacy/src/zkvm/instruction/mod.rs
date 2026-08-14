@@ -349,6 +349,8 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualXORROTW7 => {
                 LookupTables::VirtualXORROTW7(Default::default())
             }
+            JoltInstruction::WindowMaskW(_) => LookupTables::WindowMaskW(Default::default()),
+            JoltInstruction::PextSigned(_) => LookupTables::PextSigned(Default::default()),
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -498,7 +500,8 @@ define_rv64imac_trait_impls! {
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
-        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7
+        VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
+        VirtualWindowMaskW, VirtualPextSigned
     ]
 }
 
@@ -546,6 +549,7 @@ pub mod virtual_change_divisor_w;
 pub mod virtual_host_io;
 pub mod virtual_movsign;
 pub mod virtual_muli;
+pub mod virtual_pext_signed;
 pub mod virtual_pow2;
 pub mod virtual_pow2i;
 pub mod virtual_pow2iw;
@@ -560,6 +564,7 @@ pub mod virtual_sra;
 pub mod virtual_srai;
 pub mod virtual_srl;
 pub mod virtual_srli;
+pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
