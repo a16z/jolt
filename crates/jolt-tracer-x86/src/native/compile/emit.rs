@@ -732,11 +732,16 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSrl(_) => {
-                // Shift = x[rs2].trailing_zeros(); tzcnt(0) = 64 → shr masks to
-                // 0, matching wrapping_shr(64). Requires BMI1 (checked once).
-                e.load_reg(RCX, row.operands.rs2);
+                // rd = (x[rs1] >> tz(m)) & (m >> tz(m)) for mask m = x[rs2].
+                // The window AND matters for lane masks (contiguous runs that
+                // stop below bit 63, from the sub-word memory expansions);
+                // for shift bitmasks it is the identity. tzcnt(0) = 64 → both
+                // shr counts mask to 0 and the AND with m = 0 zeroes rd,
+                // matching wrapping_shr semantics. Requires BMI1 (checked
+                // once).
                 e.load_reg(RAX, row.operands.rs1);
-                dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr rax, cl);
+                e.load_reg(RDX, row.operands.rs2);
+                dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rdx ; shr rax, cl ; shr rdx, cl ; and rax, rdx);
                 e.store_rd(RAX, row.operands.rd);
             }
 

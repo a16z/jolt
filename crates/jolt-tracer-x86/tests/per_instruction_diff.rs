@@ -116,6 +116,13 @@ const SUPPORTED: &[&str] = &[
     "SubW",
     "MulW",
     "MulIW",
+    // Lane-mask sub-word memory framework:
+    "VirtualAlignAddr",
+    "VirtualLaneMaskB",
+    "VirtualLaneMaskH",
+    "VirtualLaneMaskW",
+    "VirtualPow2Lane",
+    "VirtualLaneExtractS",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -303,6 +310,26 @@ fn shift_reg(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
             1 => 0,
             _ => rng.gen(),
         };
+    }
+    i
+}
+
+fn lane_extract_s(rng: &mut StdRng) -> Instance {
+    let mut i = base_instance(rng, kind_by_name("VirtualLaneExtractS"));
+    let rs1 = reg(rng);
+    let rs2 = reg(rng);
+    i.row.operands.rs1 = Some(rs1);
+    i.row.operands.rs2 = Some(rs2);
+    i.row.operands.rd = Some(rd(rng));
+    // rs2 always carries a LaneMask output in real expansions: a byte,
+    // halfword, or word mask at a lane-aligned offset.
+    if rs2 != 0 {
+        let (base, align): (u64, u64) = match rng.gen_range(0..3) {
+            0 => (0xff, 7),
+            1 => (0xffff, 6),
+            _ => (0xffff_ffff, 4),
+        };
+        i.pre_regs[rs2 as usize] = base << (8 * (rng.gen::<u64>() & align));
     }
     i
 }
@@ -724,6 +751,12 @@ difftests! {
     diff_mulw => |r| alu_rr(r, K::MULW);
     diff_addiw => |r| alu_ri(r, K::ADDIW, false);
     diff_muliw => |r| alu_ri(r, K::VirtualMULIW, true);
+    diff_align_addr => |r| alu_ri(r, kind_by_name("VirtualAlignAddr"), false);
+    diff_lane_mask_b => |r| alu_ri(r, kind_by_name("VirtualLaneMaskB"), false);
+    diff_lane_mask_h => |r| alu_ri(r, kind_by_name("VirtualLaneMaskH"), false);
+    diff_lane_mask_w => |r| alu_ri(r, kind_by_name("VirtualLaneMaskW"), false);
+    diff_pow2_lane => |r| alu_ri(r, kind_by_name("VirtualPow2Lane"), false);
+    diff_lane_extract_s => lane_extract_s;
 }
 
 /// Every supported kind has a differential test above; this pins the count
@@ -732,5 +765,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 71);
+    assert_eq!(SUPPORTED.len(), 77);
 }
