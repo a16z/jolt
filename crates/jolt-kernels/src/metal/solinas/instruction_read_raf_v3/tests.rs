@@ -18,9 +18,6 @@ use super::abi::{
     ProducerAddressAtomTopologyReceipt, ProducerIdentity, ReductionEqReceipt,
     ResidentInstructionFacts, ResidentReadRafInputs, StageOutputReceipt, ADDRESS_SEGMENT_OFFSETS,
 };
-use super::model::{
-    choose_cycle_cutoff, AddressCensus, ExecutionModel, RoofRates, M4_MAX_RETAINED_RATES,
-};
 use super::shader_abi::{
     pack_claim, segment_index, AddressJob, AddressLookup, AtomMassFinalizeParams, AtomMassGroup,
     AtomMassJob, AtomMassPhaseParams, AtomPhaseParams, FlagOpeningParams, ReductionParams,
@@ -585,70 +582,4 @@ fn host_schedule_keeps_fiat_shamir_between_messages_and_binds() {
     assert_eq!(last.prior_bind(), PriorBind::Cycle(1));
     assert_eq!(last.message(), MemberMessage::Cycle(2));
     assert!(HostRoundBoundary::at(geometry, 131).is_err());
-}
-
-#[test]
-fn log26_model_charges_topology_and_exposes_atom_headroom() {
-    let geometry = InstructionReadRafGeometry::new(1 << 26, 4).unwrap();
-    let rows = 1u64 << 26;
-    let census = AddressCensus {
-        rows,
-        atoms: rows / 16,
-        mass_jobs: rows / 16,
-        split_atoms: 0,
-        split_mass_partials: 0,
-        phase_jobs: [1_024; ADDRESS_PHASES],
-        raf_scalar_products: rows,
-        suffix_scalar_products: 2 * rows,
-        accumulated_terms: 4 * rows,
-        topology_build_bytes: 0,
-        producer_coowned: true,
-    };
-    let compressed = ExecutionModel::compressed(geometry, census, 1 << 16).unwrap();
-    let dense = ExecutionModel::dense(geometry, census, 1 << 16).unwrap();
-    let invalid_jobs = AddressCensus {
-        mass_jobs: census.mass_jobs + 1,
-        ..census
-    };
-    assert!(matches!(
-        ExecutionModel::compressed(geometry, invalid_jobs, 1 << 16),
-        Err(InstructionReadRafV3Error::InvalidCensus(
-            "mass jobs must equal atoms - split atoms + mass partials"
-        ))
-    ));
-    assert_eq!(
-        compressed.address.useful_products,
-        rows as u128 + 15 * (rows / 16) as u128 + 3 * rows as u128
-    );
-    assert!(compressed.address.requested_bytes < dense.address.requested_bytes);
-    assert!(compressed.address.arithmetic_intensity().is_finite());
-    assert_eq!(compressed.address.dispatches, 49);
-    assert_eq!(dense.address.dispatches, 48);
-    assert_eq!(compressed.cycle.useful_products, 2_616_983_552);
-    assert_eq!(compressed.cycle.dispatches, 48);
-    assert_eq!(compressed.cycle.peak_owned_bytes, 7_026_638_848);
-
-    let report = compressed
-        .gate(3.574, 0.020, M4_MAX_RETAINED_RATES, 0.80, 5.0)
-        .unwrap();
-    assert!(report.projected_seconds.is_finite());
-    assert_eq!(
-        report.passes,
-        report.projected_seconds <= report.target_seconds
-    );
-
-    let cutoff = choose_cycle_cutoff(
-        1 << 25,
-        1 << 10,
-        RoofRates {
-            bandwidth_bytes_per_second: 400e9,
-            useful_products_per_second: 16e9,
-            dispatch_seconds: 20e-6,
-        },
-        0.8,
-        2e-9,
-    )
-    .unwrap();
-    assert!(cutoff.cutoff_elements.is_power_of_two());
-    assert!((1 << 10..=1 << 25).contains(&cutoff.cutoff_elements));
 }

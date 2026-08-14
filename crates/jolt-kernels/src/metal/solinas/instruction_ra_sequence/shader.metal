@@ -131,97 +131,33 @@ inline void instruction_ra_lazy_message_body(
         threads_per_threadgroup / 32u);
 }
 
-kernel void solinas_instruction_ra_message_width_2(
-    device const InstructionRaLookup* lookups [[buffer(0)]],
-    device const uint* cycle_to_table_major [[buffer(1)]],
-    device const SolinasFp128* branches [[buffer(2)]],
-    device const SolinasFp128* e_in [[buffer(3)]],
-    device const SolinasFp128* e_out [[buffer(4)]],
-    device SolinasFp128* partials [[buffer(5)]],
-    constant InstructionRaFirstMessageParams& params [[buffer(6)]],
-    threadgroup SolinasFp128* shared [[threadgroup(0)]],
-    uint x_in_thread [[thread_index_in_threadgroup]],
-    uint x_out [[threadgroup_position_in_grid]],
-    uint lane_in_simd [[thread_index_in_simdgroup]],
-    uint simdgroup [[simdgroup_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
-{
-    instruction_ra_lazy_message_body(
-        2u, lookups, cycle_to_table_major, branches, e_in, e_out, partials,
-        params, shared, x_in_thread, x_out, lane_in_simd, simdgroup, threads);
+#define DEFINE_INSTRUCTION_RA_MESSAGE_KERNEL(NAME, WIDTH) \
+kernel void NAME( \
+    device const InstructionRaLookup* lookups [[buffer(0)]], \
+    device const uint* cycle_to_table_major [[buffer(1)]], \
+    device const SolinasFp128* branches [[buffer(2)]], \
+    device const SolinasFp128* e_in [[buffer(3)]], \
+    device const SolinasFp128* e_out [[buffer(4)]], \
+    device SolinasFp128* partials [[buffer(5)]], \
+    constant InstructionRaFirstMessageParams& params [[buffer(6)]], \
+    threadgroup SolinasFp128* shared [[threadgroup(0)]], \
+    uint x_in_thread [[thread_index_in_threadgroup]], \
+    uint x_out [[threadgroup_position_in_grid]], \
+    uint lane_in_simd [[thread_index_in_simdgroup]], \
+    uint simdgroup [[simdgroup_index_in_threadgroup]], \
+    uint threads [[threads_per_threadgroup]]) \
+{ \
+    instruction_ra_lazy_message_body( \
+        WIDTH, lookups, cycle_to_table_major, branches, e_in, e_out, partials, \
+        params, shared, x_in_thread, x_out, lane_in_simd, simdgroup, threads); \
 }
 
-kernel void solinas_instruction_ra_message_width_4(
-    device const InstructionRaLookup* lookups [[buffer(0)]],
-    device const uint* cycle_to_table_major [[buffer(1)]],
-    device const SolinasFp128* branches [[buffer(2)]],
-    device const SolinasFp128* e_in [[buffer(3)]],
-    device const SolinasFp128* e_out [[buffer(4)]],
-    device SolinasFp128* partials [[buffer(5)]],
-    constant InstructionRaFirstMessageParams& params [[buffer(6)]],
-    threadgroup SolinasFp128* shared [[threadgroup(0)]],
-    uint x_in_thread [[thread_index_in_threadgroup]],
-    uint x_out [[threadgroup_position_in_grid]],
-    uint lane_in_simd [[thread_index_in_simdgroup]],
-    uint simdgroup [[simdgroup_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
-{
-    instruction_ra_lazy_message_body(
-        4u, lookups, cycle_to_table_major, branches, e_in, e_out, partials,
-        params, shared, x_in_thread, x_out, lane_in_simd, simdgroup, threads);
-}
-
-kernel void solinas_instruction_ra_message_width_8(
-    device const InstructionRaLookup* lookups [[buffer(0)]],
-    device const uint* cycle_to_table_major [[buffer(1)]],
-    device const SolinasFp128* branches [[buffer(2)]],
-    device const SolinasFp128* e_in [[buffer(3)]],
-    device const SolinasFp128* e_out [[buffer(4)]],
-    device SolinasFp128* partials [[buffer(5)]],
-    constant InstructionRaFirstMessageParams& params [[buffer(6)]],
-    threadgroup SolinasFp128* shared [[threadgroup(0)]],
-    uint x_in_thread [[thread_index_in_threadgroup]],
-    uint x_out [[threadgroup_position_in_grid]],
-    uint lane_in_simd [[thread_index_in_simdgroup]],
-    uint simdgroup [[simdgroup_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
-{
-    instruction_ra_lazy_message_body(
-        8u, lookups, cycle_to_table_major, branches, e_in, e_out, partials,
-        params, shared, x_in_thread, x_out, lane_in_simd, simdgroup, threads);
-}
-
-kernel void solinas_instruction_ra_message_wide(
-    device const InstructionRaLookup* lookups [[buffer(0)]],
-    device const uint* cycle_to_table_major [[buffer(1)]],
-    device const SolinasFp128* branches [[buffer(2)]],
-    device const SolinasFp128* e_in [[buffer(3)]],
-    device const SolinasFp128* e_out [[buffer(4)]],
-    device SolinasFp128* partials [[buffer(5)]],
-    constant InstructionRaFirstMessageParams& params [[buffer(6)]],
-    threadgroup SolinasFp128* shared [[threadgroup(0)]],
-    uint x_in_thread [[thread_index_in_threadgroup]],
-    uint x_out [[threadgroup_position_in_grid]],
-    uint lane_in_simd [[thread_index_in_simdgroup]],
-    uint simdgroup [[simdgroup_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
-{
-    instruction_ra_lazy_message_body(
-        instruction_ra_wide_branch_width,
-        lookups,
-        cycle_to_table_major,
-        branches,
-        e_in,
-        e_out,
-        partials,
-        params,
-        shared,
-        x_in_thread,
-        x_out,
-        lane_in_simd,
-        simdgroup,
-        threads);
-}
+DEFINE_INSTRUCTION_RA_MESSAGE_KERNEL(solinas_instruction_ra_message_width_2, 2u)
+DEFINE_INSTRUCTION_RA_MESSAGE_KERNEL(solinas_instruction_ra_message_width_4, 4u)
+DEFINE_INSTRUCTION_RA_MESSAGE_KERNEL(solinas_instruction_ra_message_width_8, 8u)
+DEFINE_INSTRUCTION_RA_MESSAGE_KERNEL(
+    solinas_instruction_ra_message_wide,
+    instruction_ra_wide_branch_width)
 
 kernel void solinas_instruction_ra_double_branches(
     device const SolinasFp128* source [[buffer(0)]],

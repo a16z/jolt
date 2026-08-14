@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -16,12 +14,10 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::backend::MetalBackend;
-use super::solinas::bytecode_read_raf::{
-    split_stage_eq_tables, BytecodeReadRafConfig, BytecodeReadRafFusedProductPath,
-    BytecodeReadRafShape,
-};
 use super::solinas::bytecode_read_raf_address::{
-    BytecodeAddressMajorConfig, BytecodeAddressSparseStage1Carrier,
+    carrier::{ADDRESS_LOG2, INNER_LOG2},
+    worklist::BYTECODE_ADDRESS_PUSHFORWARD_STAGES,
+    BytecodeAddressSparseStage1Carrier,
 };
 use super::solinas::{
     BooleanityRows, BytecodeCycleRowInputs, BytecodeCycleRowSequence, BytecodeCycleSequenceConfig,
@@ -29,8 +25,8 @@ use super::solinas::{
 };
 use crate::optimized::bytecode_read_raf::{
     prepare_bytecode_read_raf_address, prepare_bytecode_read_raf_address_from_pushforwards,
-    prepare_metal_bytecode_cycle_shell, AddressKernel, BytecodeCycleAlgebra,
-    BytecodeCycleDenseState, CycleKernel, MetalBytecodeCycleInputs, OptimizedBytecodeReadRafCycle,
+    prepare_metal_bytecode_cycle_shell, BytecodeCycleAlgebra, BytecodeCycleDenseState, CycleKernel,
+    MetalBytecodeCycleInputs, OptimizedBytecodeReadRafCycle,
 };
 use crate::optimized::instruction_read_raf::{collect_instruction_cycle_rows, InstructionCycleRow};
 use crate::{
@@ -40,8 +36,6 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BytecodeReadRafAddressImplementation {
     Cpu,
-    CsrShadow,
-    AddressMajorShadow,
     AddressMajor,
 }
 
@@ -49,8 +43,6 @@ impl BytecodeReadRafAddressImplementation {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Cpu => "cpu",
-            Self::CsrShadow => "csr_shadow",
-            Self::AddressMajorShadow => "address_major_shadow",
             Self::AddressMajor => "address_major",
         }
     }
@@ -59,20 +51,51 @@ impl BytecodeReadRafAddressImplementation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BytecodeReadRafAddressMetalConfig {
     pub implementation: BytecodeReadRafAddressImplementation,
-    pub dispatch: BytecodeReadRafConfig,
-    pub product_path: BytecodeReadRafFusedProductPath,
-    pub address_major: BytecodeAddressMajorConfig,
+    pub trace_cutoff_elements: usize,
 }
 
 impl Default for BytecodeReadRafAddressMetalConfig {
     fn default() -> Self {
         Self {
             implementation: BytecodeReadRafAddressImplementation::Cpu,
-            dispatch: BytecodeReadRafConfig::default(),
-            product_path: BytecodeReadRafFusedProductPath::FullWidth,
-            address_major: BytecodeAddressMajorConfig::default(),
+            trace_cutoff_elements: 1 << 20,
         }
     }
+}
+
+struct BytecodeAddressEqTables {
+    e_lo: Vec<Vec<AkitaField>>,
+    e_hi: Vec<Vec<AkitaField>>,
+}
+
+fn split_bytecode_address_eq_tables(
+    stage_points: &[Vec<AkitaField>],
+    log_rows: usize,
+    address_elements: usize,
+) -> Result<BytecodeAddressEqTables, KernelError<AkitaField>> {
+    if stage_points.len() != BYTECODE_ADDRESS_PUSHFORWARD_STAGES {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode address stage count is invalid",
+        });
+    }
+    if log_rows < INNER_LOG2 as usize || address_elements != 1usize << ADDRESS_LOG2 {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode address geometry is invalid",
+        });
+    }
+    let hi_bits = log_rows - INNER_LOG2 as usize;
+    let mut e_lo = Vec::with_capacity(stage_points.len());
+    let mut e_hi = Vec::with_capacity(stage_points.len());
+    for point in stage_points {
+        if point.len() != log_rows {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode address stage point has the wrong variable count",
+            });
+        }
+        e_hi.push(EqPolynomial::evals(&point[..hi_bits], None));
+        e_lo.push(EqPolynomial::evals(&point[hi_bits..], None));
+    }
+    Ok(BytecodeAddressEqTables { e_lo, e_hi })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -276,18 +299,13 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
         }
 
         let address_elements = 1usize << dimensions.log_k();
-        if trace_elements < config.dispatch.trace_cutoff {
+        if trace_elements < config.trace_cutoff_elements {
             let _ = route_span.record("realized_route", "cpu");
             let _ = route_span.record("fallback_reason", "trace_cutoff");
             return Ok(Box::new(cpu(session)?));
         }
-        if config.implementation == BytecodeReadRafAddressImplementation::AddressMajor {
-            let _ = route_span.record("realized_route", "address_major_fused_stage1_grouped_v1");
-            let _ = route_span.record("fallback_reason", "none");
-        } else {
-            let _ = route_span.record("realized_route", "cpu");
-            let _ = route_span.record("fallback_reason", "shadow_only");
-        }
+        let _ = route_span.record("realized_route", "address_major_fused_stage1_grouped_v1");
+        let _ = route_span.record("fallback_reason", "none");
         let stage_points = relation
             .stage_cycle_points()
             .iter()
@@ -295,464 +313,205 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             .cloned()
             .collect::<Vec<_>>();
         let prepare_span =
-            if config.implementation == BytecodeReadRafAddressImplementation::AddressMajor {
-                tracing::info_span!("MetalBytecodeReadRafAddress::address_major_prepare")
-            } else {
-                tracing::info_span!("MetalBytecodeReadRafAddress::shadow_prepare")
-            }
-            .entered();
-        let shape = if config.implementation == BytecodeReadRafAddressImplementation::AddressMajor {
-            BytecodeReadRafShape::new(trace_elements, address_elements).map_err(|error| {
+            tracing::info_span!("MetalBytecodeReadRafAddress::address_major_prepare").entered();
+        let tables =
+            split_bytecode_address_eq_tables(&stage_points, dimensions.log_t(), address_elements)?;
+        let carrier = session.take::<BytecodeAddressSparseStage1Carrier>().ok_or(
+            KernelError::InvariantViolation {
+                reason: "bytecode address-major carrier is missing",
+            },
+        )?;
+        let receipt = carrier.receipt();
+        let topology = carrier
+            .fused_topology_receipt()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode address-major carrier lacks fused Stage-1 topology",
+            })?;
+        let invocation = self
+            .context
+            .prepare_bytecode_address_sparse_resident(carrier, &tables.e_lo, &tables.e_hi)
+            .map_err(|error| {
                 KernelError::Sumcheck(metal_error(format!(
-                    "bytecode address-major shape is invalid: {error}"
-                )))
-            })?
-        } else {
-            match config.dispatch.validate(trace_elements, address_elements) {
-                Ok(shape) => shape,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "bytecode address CSR shape unavailable; using the optimized CPU kernel"
-                    );
-                    return Ok(Box::new(cpu(session)?));
-                }
-            }
-        };
-        let tables = split_stage_eq_tables(&stage_points, shape).map_err(|error| {
-            KernelError::Sumcheck(metal_error(format!(
-                "bytecode address equality-table preparation failed: {error}"
-            )))
-        })?;
-        if config.implementation == BytecodeReadRafAddressImplementation::AddressMajor {
-            let carrier = session.take::<BytecodeAddressSparseStage1Carrier>().ok_or(
-                KernelError::InvariantViolation {
-                    reason: "bytecode address-major carrier is missing",
-                },
-            )?;
-            let receipt = carrier.receipt();
-            let topology =
-                carrier
-                    .fused_topology_receipt()
-                    .ok_or(KernelError::InvariantViolation {
-                        reason: "bytecode address-major carrier lacks fused Stage-1 topology",
-                    })?;
-            let invocation = self
-                .context
-                .prepare_bytecode_address_sparse_resident(carrier, &tables.e_lo, &tables.e_hi)
-                .map_err(|error| {
-                    KernelError::Sumcheck(metal_error(format!(
-                        "bytecode address-major carrier preparation failed: {error}"
-                    )))
-                })?;
-            let storage = invocation.storage();
-            drop(prepare_span);
-
-            let _join_span =
-                tracing::info_span!("MetalBytecodeReadRafAddress::address_major_join").entered();
-            let observation = invocation.execute_timed().map_err(|error| {
-                KernelError::Sumcheck(metal_error(format!(
-                    "bytecode address-major completion failed: {error}"
+                    "bytecode address-major carrier preparation failed: {error}"
                 )))
             })?;
-            let source_buffers = [
-                receipt.occurrence_storage_id(),
-                receipt.magnitude_storage_id(),
-                receipt.work_item_storage_id(),
-                receipt.address_offset_storage_id(),
-            ];
-            if observation.source_rows_storage_id != receipt.source_rows_storage_id()
-                || observation.source_device_registry_id != receipt.device_registry_id()
-                || observation.source_generation != receipt.source_generation()
-                || observation.source_completion_serial != receipt.source_completion_serial()
-                || observation.physical_rows != receipt.physical_rows()
-                || observation.work_items != receipt.work_items()
-                || observation.static_buffer_identities[..4] != source_buffers
-            {
-                return Err(KernelError::InvariantViolation {
-                    reason: "bytecode address-major source identity changed",
-                });
-            }
-            drop(invocation);
-            let expected_fields = stage_points.len().checked_mul(address_elements).ok_or(
-                KernelError::InvariantViolation {
-                    reason: "bytecode address-major output size overflow",
-                },
-            )?;
-            if observation.output.len() != expected_fields {
-                return Err(KernelError::TableSizeMismatch {
-                    table: "Metal bytecode address pushforwards".to_owned(),
-                    expected: expected_fields,
-                    got: observation.output.len(),
-                });
-            }
-            let pushforwards = observation
-                .output
-                .chunks_exact(address_elements)
-                .map(<[AkitaField]>::to_vec)
-                .collect::<Vec<_>>();
-            let prepared = prepare_bytecode_read_raf_address_from_pushforwards(
-                witness,
-                cpu_inputs(),
-                pushforwards,
-                receipt.first_push_pc(),
-            )?;
-            let source_rows_bytes = trace_elements
-                .checked_mul(super::solinas::BOOLEANITY_SOURCE_ROW_BYTES)
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "bytecode address-major source byte count overflow",
-                })?;
-            let producer_persistent_write_bytes = receipt
-                .occurrence_bytes()
-                .checked_add(receipt.magnitude_bytes())
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "bytecode address-major producer traffic overflow",
-                })?;
-            let producer_topology_read_bytes = topology
-                .descriptor_bytes()
-                .checked_add(topology.pivot_bytes())
-                .and_then(|bytes| bytes.checked_add(topology.chunk_offset_bytes()))
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "bytecode address-major topology traffic overflow",
-                })?;
-            let producer_logical_movement_bytes = producer_persistent_write_bytes
-                .checked_add(producer_topology_read_bytes)
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "bytecode address-major producer movement overflow",
-                })?;
-            let topology_publication_bytes = producer_topology_read_bytes
-                .checked_add(topology.work_item_bytes())
-                .and_then(|bytes| bytes.checked_add(topology.address_offset_bytes()))
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "bytecode address-major topology publication overflow",
-                })?;
-            {
-                let _complete_span = tracing::info_span!(
-                    "MetalBytecodeReadRafAddress::address_major_complete",
-                    cycles = trace_elements,
-                    addresses = address_elements,
-                    stages = stage_points.len(),
-                    requested = "address_major",
-                    realized_route = "address_major_fused_stage1_grouped_v1",
-                    fallback_reason = "none",
-                    physical_rows = receipt.physical_rows(),
-                    work_items = receipt.work_items(),
-                    source_generation = receipt.source_generation(),
-                    source_completion_serial = receipt.source_completion_serial(),
-                    source_rows_storage_id = receipt.source_rows_storage_id(),
-                    source_rows_bytes,
-                    source_claim_storage_id = receipt.source_claim_storage_id(),
-                    source_device_registry_id = receipt.device_registry_id(),
-                    carrier_completion_serial = receipt.completion_serial(),
-                    carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
-                    carrier_occurrence_bytes = receipt.occurrence_bytes(),
-                    carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
-                    carrier_magnitude_bytes = receipt.magnitude_bytes(),
-                    carrier_work_item_storage_id = receipt.work_item_storage_id(),
-                    carrier_work_item_bytes = receipt.work_item_bytes(),
-                    carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
-                    carrier_address_offset_bytes = receipt.address_offset_bytes(),
-                    carrier_resident_bytes = receipt.persistent_bytes(),
-                    bytecode_descriptor_storage_id = topology.descriptor_allocation_identity(),
-                    bytecode_descriptor_bytes = topology.descriptor_bytes(),
-                    bytecode_pivot_storage_id = topology.pivot_allocation_identity(),
-                    bytecode_pivot_bytes = topology.pivot_bytes(),
-                    bytecode_chunk_offset_storage_id = topology.chunk_offset_allocation_identity(),
-                    bytecode_chunk_offset_bytes = topology.chunk_offset_bytes(),
-                    topology_publication_bytes,
-                    producer_persistent_write_bytes,
-                    producer_logical_movement_bytes,
-                    producer_topology_read_bytes,
-                    member_carrier_owned_bytes = 0usize,
-                    member_source_scans = 0usize,
-                    member_source_upload_bytes = 0usize,
-                    equality_bytes = storage.equality_bytes,
-                    padding_bytes = storage.padding_bytes,
-                    partial_bytes = storage.partial_bytes,
-                    output_readback_bytes = storage.output_bytes,
-                    member_owned_bytes = storage.member_owned_bytes,
-                    command_buffers = 1usize,
-                    waits = 1usize,
-                    worker_dispatches = 1usize,
-                    worker_variant = observation.worker_variant,
-                    worker_simd_width = observation.worker_simd_width,
-                    worker_threads = observation.worker_threads,
-                    worker_items_per_threadgroup = observation.worker_items_per_threadgroup,
-                    worker_threadgroups = observation.worker_threadgroups,
-                    worker_tail_slots = observation.worker_tail_slots,
-                    worker_dynamic_threadgroup_bytes = observation.worker_dynamic_threadgroup_bytes,
-                    worker_static_threadgroup_bytes = observation.worker_static_threadgroup_bytes,
-                    worker_threadgroup_bytes = observation.worker_threadgroup_bytes,
-                    reducer_dispatches = 1usize,
-                    reducer_threads = observation.reducer_threads,
-                    reducer_threadgroups = observation.reducer_threadgroups,
-                    reducer_static_threadgroup_bytes = observation.reducer_static_threadgroup_bytes,
-                    output_fields = expected_fields,
-                    submit_ns = 0u64,
-                    overlap_ns = 0u64,
-                    join_ns = observation.resident_wall.as_nanos() as u64,
-                    resident_wall_ns = observation.resident_wall.as_nanos() as u64,
-                    gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-                    completed_before_join = false,
-                    complete_overwrite = receipt.complete_overwrite(),
-                    carrier_released = true,
-                )
-                .entered();
-            }
-            tracing::info!(
-                target: "jolt::metal",
+        let storage = invocation.storage();
+        drop(prepare_span);
+
+        let _join_span =
+            tracing::info_span!("MetalBytecodeReadRafAddress::address_major_join").entered();
+        let observation = invocation.execute_timed().map_err(|error| {
+            KernelError::Sumcheck(metal_error(format!(
+                "bytecode address-major completion failed: {error}"
+            )))
+        })?;
+        let source_buffers = [
+            receipt.occurrence_storage_id(),
+            receipt.magnitude_storage_id(),
+            receipt.work_item_storage_id(),
+            receipt.address_offset_storage_id(),
+        ];
+        if observation.source_rows_storage_id != receipt.source_rows_storage_id()
+            || observation.source_device_registry_id != receipt.device_registry_id()
+            || observation.source_generation != receipt.source_generation()
+            || observation.source_completion_serial != receipt.source_completion_serial()
+            || observation.physical_rows != receipt.physical_rows()
+            || observation.work_items != receipt.work_items()
+            || observation.static_buffer_identities[..4] != source_buffers
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "bytecode address-major source identity changed",
+            });
+        }
+        drop(invocation);
+        let expected_fields = stage_points.len().checked_mul(address_elements).ok_or(
+            KernelError::InvariantViolation {
+                reason: "bytecode address-major output size overflow",
+            },
+        )?;
+        if observation.output.len() != expected_fields {
+            return Err(KernelError::TableSizeMismatch {
+                table: "Metal bytecode address pushforwards".to_owned(),
+                expected: expected_fields,
+                got: observation.output.len(),
+            });
+        }
+        let pushforwards = observation
+            .output
+            .chunks_exact(address_elements)
+            .map(<[AkitaField]>::to_vec)
+            .collect::<Vec<_>>();
+        let prepared = prepare_bytecode_read_raf_address_from_pushforwards(
+            witness,
+            cpu_inputs(),
+            pushforwards,
+            receipt.first_push_pc(),
+        )?;
+        let source_rows_bytes = trace_elements
+            .checked_mul(super::solinas::BOOLEANITY_SOURCE_ROW_BYTES)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode address-major source byte count overflow",
+            })?;
+        let producer_persistent_write_bytes = receipt
+            .occurrence_bytes()
+            .checked_add(receipt.magnitude_bytes())
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode address-major producer traffic overflow",
+            })?;
+        let producer_topology_read_bytes = topology
+            .descriptor_bytes()
+            .checked_add(topology.pivot_bytes())
+            .and_then(|bytes| bytes.checked_add(topology.chunk_offset_bytes()))
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode address-major topology traffic overflow",
+            })?;
+        let producer_logical_movement_bytes = producer_persistent_write_bytes
+            .checked_add(producer_topology_read_bytes)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode address-major producer movement overflow",
+            })?;
+        let topology_publication_bytes = producer_topology_read_bytes
+            .checked_add(topology.work_item_bytes())
+            .and_then(|bytes| bytes.checked_add(topology.address_offset_bytes()))
+            .ok_or(KernelError::InvariantViolation {
+                reason: "bytecode address-major topology publication overflow",
+            })?;
+        {
+            let _complete_span = tracing::info_span!(
+                "MetalBytecodeReadRafAddress::address_major_complete",
+                cycles = trace_elements,
+                addresses = address_elements,
+                stages = stage_points.len(),
+                requested = "address_major",
+                realized_route = "address_major_fused_stage1_grouped_v1",
+                fallback_reason = "none",
+                physical_rows = receipt.physical_rows(),
+                work_items = receipt.work_items(),
+                source_generation = receipt.source_generation(),
+                source_completion_serial = receipt.source_completion_serial(),
+                source_rows_storage_id = receipt.source_rows_storage_id(),
+                source_rows_bytes,
+                source_claim_storage_id = receipt.source_claim_storage_id(),
+                source_device_registry_id = receipt.device_registry_id(),
+                carrier_completion_serial = receipt.completion_serial(),
+                carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
+                carrier_occurrence_bytes = receipt.occurrence_bytes(),
+                carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
+                carrier_magnitude_bytes = receipt.magnitude_bytes(),
+                carrier_work_item_storage_id = receipt.work_item_storage_id(),
+                carrier_work_item_bytes = receipt.work_item_bytes(),
+                carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
+                carrier_address_offset_bytes = receipt.address_offset_bytes(),
+                carrier_resident_bytes = receipt.persistent_bytes(),
+                bytecode_descriptor_storage_id = topology.descriptor_allocation_identity(),
+                bytecode_descriptor_bytes = topology.descriptor_bytes(),
+                bytecode_pivot_storage_id = topology.pivot_allocation_identity(),
+                bytecode_pivot_bytes = topology.pivot_bytes(),
+                bytecode_chunk_offset_storage_id = topology.chunk_offset_allocation_identity(),
+                bytecode_chunk_offset_bytes = topology.chunk_offset_bytes(),
+                topology_publication_bytes,
+                producer_persistent_write_bytes,
+                producer_logical_movement_bytes,
+                producer_topology_read_bytes,
+                member_carrier_owned_bytes = 0usize,
+                member_source_scans = 0usize,
+                member_source_upload_bytes = 0usize,
+                equality_bytes = storage.equality_bytes,
+                padding_bytes = storage.padding_bytes,
+                partial_bytes = storage.partial_bytes,
+                output_readback_bytes = storage.output_bytes,
+                member_owned_bytes = storage.member_owned_bytes,
+                command_buffers = 1usize,
+                waits = 1usize,
+                worker_dispatches = 1usize,
+                worker_variant = observation.worker_variant,
+                worker_simd_width = observation.worker_simd_width,
+                worker_threads = observation.worker_threads,
+                worker_items_per_threadgroup = observation.worker_items_per_threadgroup,
+                worker_threadgroups = observation.worker_threadgroups,
+                worker_tail_slots = observation.worker_tail_slots,
+                worker_dynamic_threadgroup_bytes = observation.worker_dynamic_threadgroup_bytes,
+                worker_static_threadgroup_bytes = observation.worker_static_threadgroup_bytes,
+                worker_threadgroup_bytes = observation.worker_threadgroup_bytes,
+                reducer_dispatches = 1usize,
+                reducer_threads = observation.reducer_threads,
+                reducer_threadgroups = observation.reducer_threadgroups,
+                reducer_static_threadgroup_bytes = observation.reducer_static_threadgroup_bytes,
+                output_fields = expected_fields,
                 submit_ns = 0u64,
                 overlap_ns = 0u64,
                 join_ns = observation.resident_wall.as_nanos() as u64,
-                total_ns = observation.resident_wall.as_nanos() as u64,
-                gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-                completed_before_join = false,
-                source_generation = receipt.source_generation(),
-                source_rows_storage_id = receipt.source_rows_storage_id(),
-                source_device_registry_id = receipt.device_registry_id(),
-                carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
-                carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
-                carrier_work_item_storage_id = receipt.work_item_storage_id(),
-                carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
-                carrier_bytes = storage.carrier_bytes as u64,
-                member_carrier_owned_bytes = 0u64,
-                member_source_scans = 0u64,
-                member_source_upload_bytes = 0u64,
-                "Metal bytecode address-major carrier produced authoritative pushforwards"
-            );
-            return Ok(Box::new(prepared));
-        }
-
-        let Some(rows) = session.state::<BooleanityRows>().cloned() else {
-            return Ok(Box::new(cpu(session)?));
-        };
-        if rows.len() != trace_elements || self.context.validate_booleanity_rows(&rows).is_err() {
-            return Ok(Box::new(cpu(session)?));
-        }
-        if config.implementation == BytecodeReadRafAddressImplementation::AddressMajorShadow {
-            let Some(owned_rows) = witness.owned_rows() else {
-                tracing::warn!(
-                    "bytecode sparse address probe requires random-access witness rows; using the optimized CPU kernel"
-                );
-                return Ok(Box::new(cpu(session)?));
-            };
-            let physical_rows = owned_rows.physical_rows().min(trace_elements);
-            let worklist_started = Instant::now();
-            let worklist = match self
-                .context
-                .build_bytecode_address_sparse_worklist(&rows, physical_rows)
-            {
-                Ok(worklist) => worklist,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "bytecode sparse address worklist unavailable; using the optimized CPU kernel"
-                    );
-                    return Ok(Box::new(cpu(session)?));
-                }
-            };
-            let worklist_wall = worklist_started.elapsed();
-            let invocation = match self.context.prepare_bytecode_address_sparse_probe(
-                rows.clone(),
-                &worklist,
-                &tables.e_lo,
-                &tables.e_hi,
-            ) {
-                Ok(invocation) => invocation,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "bytecode sparse address preparation unavailable; using the optimized CPU kernel"
-                    );
-                    return Ok(Box::new(cpu(session)?));
-                }
-            };
-            let storage = invocation.storage();
-            let resident_rows_storage_id = rows.allocation_identity();
-            let resident_rows_device_registry_id = rows.device_registry_id();
-            drop(prepare_span);
-
-            let observation = match invocation.execute_timed() {
-                Ok(observation) => observation,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "bytecode sparse address execution unavailable; using the optimized CPU kernel"
-                    );
-                    return Ok(Box::new(cpu(session)?));
-                }
-            };
-            let prepared_cpu = cpu(session)?;
-            if observation.source_rows_storage_id != resident_rows_storage_id
-                || observation.source_device_registry_id != resident_rows_device_registry_id
-            {
-                return Err(KernelError::InvariantViolation {
-                    reason: "bytecode sparse address source identity changed",
-                });
-            }
-            validate_bytecode_address_pushforwards(
-                &prepared_cpu,
-                address_elements,
-                &observation.output,
-                "bytecode sparse address",
-            )?;
-            tracing::info!(
-                target: "jolt::metal",
-                worklist_host_build_ns = worklist_wall.as_nanos() as u64,
                 resident_wall_ns = observation.resident_wall.as_nanos() as u64,
                 gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-                physical_rows = observation.physical_rows as u64,
-                padded_rows = trace_elements as u64,
-                work_items = observation.work_items as u64,
-                persistent_worklist_bytes = worklist.persistent_bytes() as u64,
-                occurrence_bytes = storage.occurrence_bytes as u64,
-                magnitude_bytes = storage.magnitude_bytes as u64,
-                work_item_bytes = storage.work_item_bytes as u64,
-                address_offset_bytes = storage.address_offset_bytes as u64,
-                equality_bytes = storage.equality_bytes as u64,
-                padding_bytes = storage.padding_bytes as u64,
-                partial_bytes = storage.partial_bytes as u64,
-                output_bytes = storage.output_bytes as u64,
-                owned_bytes = storage.owned_bytes as u64,
-                threadgroup_bytes = invocation.threadgroup_memory_bytes() as u64,
-                worker_static_threadgroup_bytes = invocation
-                    .worker_pipeline_limits()
-                    .static_threadgroup_memory_length,
-                reduce_static_threadgroup_bytes = invocation
-                    .reduce_pipeline_limits()
-                    .static_threadgroup_memory_length,
-                buffer_0 = observation.static_buffer_identities[0],
-                buffer_1 = observation.static_buffer_identities[1],
-                buffer_2 = observation.static_buffer_identities[2],
-                buffer_3 = observation.static_buffer_identities[3],
-                buffer_4 = observation.static_buffer_identities[4],
-                buffer_5 = observation.static_buffer_identities[5],
-                buffer_6 = observation.static_buffer_identities[6],
-                buffer_7 = observation.static_buffer_identities[7],
-                resident_rows_storage_id,
-                row_allocations = 0u64,
-                row_upload_bytes = 0u64,
-                diagnostic_worklist_upload_bytes = worklist.persistent_bytes() as u64,
-                worker_variant = observation.worker_variant,
-                "Metal bytecode sparse-address probe matched the optimized CPU tables"
-            );
-            return Ok(Box::new(prepared_cpu));
+                completed_before_join = false,
+                complete_overwrite = receipt.complete_overwrite(),
+                carrier_released = true,
+            )
+            .entered();
         }
-        let invocation = match self.context.prepare_bytecode_read_raf_csr(
-            rows.clone(),
-            &tables,
-            config.dispatch,
-            config.product_path,
-        ) {
-            Ok(invocation) => invocation,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "bytecode address CSR preparation unavailable; using the optimized CPU kernel"
-                );
-                return Ok(Box::new(cpu(session)?));
-            }
-        };
-        let resident_rows_storage_id = rows.allocation_identity();
-        let pending = match invocation.submit() {
-            Ok(pending) => pending,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "bytecode address CSR submission unavailable; using the optimized CPU kernel"
-                );
-                return Ok(Box::new(cpu(session)?));
-            }
-        };
-        drop(prepare_span);
-
-        let prepared_cpu = cpu(session)?;
-        let _join_span = tracing::info_span!("MetalBytecodeReadRafAddress::shadow_join").entered();
-        let (_, observation) = match pending.join() {
-            Ok(completed) => completed,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "bytecode address CSR completion failed; retaining optimized CPU output"
-                );
-                return Ok(Box::new(prepared_cpu));
-            }
-        };
-        if observation.source_rows_storage_id != resident_rows_storage_id
-            || observation.source_rows_device_registry_id != rows.device_registry_id()
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "bytecode address CSR source identity changed",
-            });
-        }
-        validate_bytecode_address_pushforwards(
-            &prepared_cpu,
-            address_elements,
-            &observation.output,
-            "bytecode address CSR",
-        )?;
         tracing::info!(
             target: "jolt::metal",
-            submit_ns = observation.submit_wall.as_nanos() as u64,
-            overlap_ns = observation.overlap_wall.as_nanos() as u64,
-            join_ns = observation.join_wall.as_nanos() as u64,
-            total_ns = observation.total_wall.as_nanos() as u64,
+            submit_ns = 0u64,
+            overlap_ns = 0u64,
+            join_ns = observation.resident_wall.as_nanos() as u64,
+            total_ns = observation.resident_wall.as_nanos() as u64,
             gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-            completed_before_join = observation.completed_before_join,
-            short_runs = observation.telemetry.status.short_runs,
-            long_runs = observation.telemetry.status.long_runs,
-            short_occurrences = observation.telemetry.diagnostics.short_occurrences,
-            long_occurrences = observation.telemetry.diagnostics.long_occurrences,
-            maximum_run = observation.telemetry.diagnostics.maximum_run,
-            resident_rows_storage_id,
-            row_allocations = 0u64,
-            row_upload_bytes = 0u64,
-            "Metal bytecode address CSR shadow matched the optimized CPU tables"
+            completed_before_join = false,
+            source_generation = receipt.source_generation(),
+            source_rows_storage_id = receipt.source_rows_storage_id(),
+            source_device_registry_id = receipt.device_registry_id(),
+            carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
+            carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
+            carrier_work_item_storage_id = receipt.work_item_storage_id(),
+            carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
+            carrier_bytes = storage.carrier_bytes as u64,
+            member_carrier_owned_bytes = 0u64,
+            member_source_scans = 0u64,
+            member_source_upload_bytes = 0u64,
+            "Metal bytecode address-major carrier produced authoritative pushforwards"
         );
-        Ok(Box::new(prepared_cpu))
+        Ok(Box::new(prepared))
     }
-}
-
-fn validate_bytecode_address_pushforwards(
-    cpu: &AddressKernel<AkitaField>,
-    address_elements: usize,
-    gpu_output: &[AkitaField],
-    implementation: &'static str,
-) -> Result<(), KernelError<AkitaField>> {
-    let expected_output_elements = cpu
-        .pushforward_tables()
-        .len()
-        .checked_mul(address_elements)
-        .ok_or(KernelError::InvariantViolation {
-            reason: "bytecode address pushforward size overflow",
-        })?;
-    if gpu_output.len() != expected_output_elements {
-        return Err(KernelError::TableSizeMismatch {
-            table: "Metal bytecode address pushforwards".to_owned(),
-            expected: expected_output_elements,
-            got: gpu_output.len(),
-        });
-    }
-    for (stage, cpu_table) in cpu.pushforward_tables().enumerate() {
-        let start = stage * address_elements;
-        let gpu_table = &gpu_output[start..start + address_elements];
-        if let Some(index) = cpu_table
-            .iter()
-            .zip(gpu_table)
-            .position(|(cpu, gpu)| cpu != gpu)
-        {
-            tracing::error!(
-                stage,
-                index,
-                implementation,
-                "bytecode address parity mismatch"
-            );
-            return Err(KernelError::InvariantViolation {
-                reason: "bytecode address pushforward mismatch",
-            });
-        }
-    }
-    Ok(())
 }
 
 impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBackend {
@@ -1034,7 +793,7 @@ mod tests {
     use crate::ReferenceBackend;
 
     #[test]
-    fn bytecode_address_shadow_is_opt_in() {
+    fn bytecode_address_metal_is_opt_in() {
         assert_eq!(
             BytecodeReadRafAddressMetalConfig::default().implementation,
             BytecodeReadRafAddressImplementation::Cpu
@@ -1078,7 +837,7 @@ mod tests {
     }
 
     #[test]
-    fn bytecode_address_metal_routes_match_the_optimized_host_shell() {
+    fn bytecode_address_production_route_matches_the_optimized_host_shell() {
         let log_t = 15;
         with_sample_backend_at_geometry(log_t, 13, 8, |witness| {
             assert_eq!(
@@ -1128,53 +887,8 @@ mod tests {
                 inputs(),
             )
             .unwrap();
-            let mut expected =
-                prepare_bytecode_read_raf_address(&mut ProofSession::default(), witness, inputs())
-                    .unwrap();
-            let metal = MetalBackend::new(super::super::MetalConfig {
-                bytecode_read_raf_address: BytecodeReadRafAddressMetalConfig {
-                    implementation: BytecodeReadRafAddressImplementation::AddressMajorShadow,
-                    dispatch: BytecodeReadRafConfig {
-                        trace_cutoff: 1 << log_t,
-                        ..Default::default()
-                    },
-                    address_major: BytecodeAddressMajorConfig { outer_tiles: 1 },
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .unwrap();
-            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
-            let mut active_addresses = packed
-                .iter()
-                .map(|row| row.mapped_pc().unwrap_or(0) as u32)
-                .collect::<Vec<_>>();
-            active_addresses.sort_unstable();
-            active_addresses.dedup();
-            let support_offsets = [0, active_addresses.len() as u32];
-            let resident = metal
-                .context
-                .prepare_booleanity_rows_with_bytecode_support(
-                    InstructionCycleRow::metal_booleanity_rows(&packed),
-                    &support_offsets,
-                    &active_addresses,
-                )
-                .unwrap();
-            let mut session = ProofSession::default();
-            session.park(resident);
-            let mut actual = <MetalBackend as PrepareKernel<
-                AkitaField,
-                BytecodeReadRafAddressPhase<AkitaField>,
-            >>::prepare(&metal, &mut session, witness, inputs())
-            .unwrap();
-
             let claim = probe_input_claim(reference.as_mut());
             let round_challenges = point(dimensions.log_k(), 101);
-            run_lockstep(&mut expected, actual.as_mut(), claim, &round_challenges);
-            assert_eq!(
-                expected.output_claims(&claims).unwrap(),
-                actual.output_claims(&claims).unwrap()
-            );
 
             let production = MetalBackend::new(super::super::MetalConfig {
                 spartan_product_remainder: SpartanProductRemainderMetalConfig {
@@ -1188,12 +902,7 @@ mod tests {
                 },
                 bytecode_read_raf_address: BytecodeReadRafAddressMetalConfig {
                     implementation: BytecodeReadRafAddressImplementation::AddressMajor,
-                    dispatch: BytecodeReadRafConfig {
-                        trace_cutoff: 1 << log_t,
-                        ..Default::default()
-                    },
-                    address_major: BytecodeAddressMajorConfig { outer_tiles: 1 },
-                    ..Default::default()
+                    trace_cutoff_elements: 1 << log_t,
                 },
                 ..Default::default()
             })

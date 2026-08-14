@@ -6,7 +6,6 @@ struct BooleanityRow {
     ulong packed_pc_and_flags;
 };
 
-#define BOOLEANITY_SOURCE_WORDS 4u
 #define BOOLEANITY_SOURCE_RAM_MASK 0xfffffffful
 #define BOOLEANITY_SOURCE_PC_MASK 0x3ffful
 #define BOOLEANITY_SOURCE_PC_SHIFT 32u

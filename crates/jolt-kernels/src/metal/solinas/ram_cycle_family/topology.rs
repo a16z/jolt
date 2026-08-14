@@ -77,8 +77,6 @@ pub struct RamRwGroupEvent {
 
 const _: [(); 16] = [(); size_of::<RamRwGroupEvent>()];
 
-pub(crate) const RAM_RW_GROUP_EVENT_BYTES: usize = size_of::<RamRwGroupEvent>();
-
 impl RamRwGroupEvent {
     pub fn low_group(self) -> Option<usize> {
         index(self.low_group)
@@ -124,8 +122,6 @@ struct LevelRange {
 }
 
 const _: [(); 8] = [(); size_of::<LevelRange>()];
-
-pub(crate) const LEVEL_RANGE_BYTES: usize = size_of::<LevelRange>();
 
 impl LevelRange {
     fn slice<T>(self, values: &[T]) -> Result<&[T], TopologyError> {
@@ -178,22 +174,6 @@ impl RamRwMergeTopology {
             .get(round)
             .ok_or(TopologyError::RoundOutOfRange { round })?
             .slice(&self.group_events)
-    }
-
-    pub(crate) fn event_count(&self) -> usize {
-        self.events.len()
-    }
-
-    pub(crate) fn group_event_count(&self) -> usize {
-        self.group_events.len()
-    }
-
-    pub(crate) fn event_range_count(&self) -> usize {
-        self.event_levels.len()
-    }
-
-    pub(crate) fn group_range_count(&self) -> usize {
-        self.group_levels.len()
     }
 
     pub(crate) fn owned_heap_bytes(&self) -> usize {
@@ -380,14 +360,6 @@ impl RamBlockTopology {
             .get(round)
             .ok_or(TopologyError::RoundOutOfRange { round })?
             .slice(&self.merges)
-    }
-
-    pub(crate) fn merge_count(&self) -> usize {
-        self.merges.len()
-    }
-
-    pub(crate) fn range_count(&self) -> usize {
-        self.levels.len()
     }
 
     pub(crate) fn owned_heap_bytes(&self) -> usize {

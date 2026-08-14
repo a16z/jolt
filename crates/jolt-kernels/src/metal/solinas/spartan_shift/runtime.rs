@@ -10,12 +10,11 @@ use super::super::{
     buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
 use super::{
-    expanded_high_weights, mixed_gamma_multipliers, mixed_high_weights, prefix_fold_weights,
+    mixed_gamma_multipliers, mixed_high_weights, prefix_fold_weights,
     ResidentSpartanShiftBufferMetadata, ResidentSpartanShiftMetadata, SpartanShiftFlagWord,
     SpartanShiftGeometry, SpartanShiftKernelConfig, SpartanShiftOutputs, SpartanShiftPlan,
-    SpartanShiftPrefixStrategy, BUILD_EXPANDED_PIPELINE, BUILD_MIXED_PIPELINE,
-    FOLD_NATIVE_PIPELINE, REDUCE_PREFIX_PIPELINE, SPARTAN_SHIFT_OUTPUT_COLUMNS,
-    SPARTAN_SHIFT_PREFIX_PAIRS, SPARTAN_SHIFT_SIMD_WIDTH,
+    BUILD_MIXED_PIPELINE, FOLD_NATIVE_PIPELINE, REDUCE_PREFIX_PIPELINE,
+    SPARTAN_SHIFT_OUTPUT_COLUMNS, SPARTAN_SHIFT_PREFIX_PAIRS, SPARTAN_SHIFT_SIMD_WIDTH,
 };
 
 #[derive(Clone)]
@@ -81,7 +80,7 @@ impl SpartanShiftResidentRows {
 }
 
 struct SpartanShiftPrefixBuffers {
-    gamma_powers: Option<Buffer>,
+    gamma_powers: Buffer,
     high_weights: Buffer,
     partials: Buffer,
     q: Buffer,
@@ -393,43 +392,23 @@ impl SolinasMetal {
         r_product: &[AkitaField],
         gamma: AkitaField,
         config: SpartanShiftKernelConfig,
-        strategy: SpartanShiftPrefixStrategy,
     ) -> Result<SpartanShiftPrefixInvocation, MetalError> {
-        let plan = SpartanShiftPlan::new(rows.len(), config, strategy)?;
+        let plan = SpartanShiftPlan::new(rows.len(), config)?;
         rows.validate_for(self, &plan)?;
-        let (gamma_powers, high_weights) = match strategy {
-            SpartanShiftPrefixStrategy::Mixed => (
-                Some(encode_fields(&mixed_gamma_multipliers(gamma))),
-                encode_fields(&mixed_high_weights(
-                    plan.geometry,
-                    r_outer,
-                    r_product,
-                    gamma,
-                )?),
-            ),
-            SpartanShiftPrefixStrategy::ExpandedHalfWidth => (
-                None,
-                encode_fields(&expanded_high_weights(
-                    plan.geometry,
-                    r_outer,
-                    r_product,
-                    gamma,
-                )?),
-            ),
-        };
+        let gamma_powers = encode_fields(&mixed_gamma_multipliers(gamma));
+        let high_weights = encode_fields(&mixed_high_weights(
+            plan.geometry,
+            r_outer,
+            r_product,
+            gamma,
+        )?);
 
         let private_bytes = plan
             .storage
             .high_weight_bytes
             .checked_add(plan.storage.partial_bytes)
             .and_then(|bytes| bytes.checked_add(plan.storage.q_bytes))
-            .and_then(|bytes| {
-                bytes.checked_add(
-                    gamma_powers
-                        .as_ref()
-                        .map_or(0, |values| size_of_val(&values[..])),
-                )
-            })
+            .and_then(|bytes| bytes.checked_add(size_of_val(&gamma_powers[..])))
             .ok_or(MetalError::InputTooLong(rows.len()))?;
         validate_allocations(
             self,
@@ -441,10 +420,7 @@ impl SolinasMetal {
             ],
         )?;
 
-        let build_name = match strategy {
-            SpartanShiftPrefixStrategy::Mixed => BUILD_MIXED_PIPELINE,
-            SpartanShiftPrefixStrategy::ExpandedHalfWidth => BUILD_EXPANDED_PIPELINE,
-        };
+        let build_name = BUILD_MIXED_PIPELINE;
         let build_pipeline = self.compile_named_pipeline(build_name)?;
         let reduce_pipeline = self.compile_named_pipeline(REDUCE_PREFIX_PIPELINE)?;
         let build_limits = Self::limits(&build_pipeline);
@@ -471,9 +447,7 @@ impl SolinasMetal {
             reduce_limits,
             reduce_threads,
             buffers: SpartanShiftPrefixBuffers {
-                gamma_powers: gamma_powers
-                    .as_ref()
-                    .map(|values| buffer_from_slice(&self.device, values)),
+                gamma_powers: buffer_from_slice(&self.device, &gamma_powers),
                 high_weights: buffer_from_slice(&self.device, &high_weights),
                 partials: self.device.new_buffer(
                     plan.storage.partial_bytes as u64,
@@ -494,7 +468,7 @@ impl SolinasMetal {
         prefix_challenges: &[AkitaField],
         config: SpartanShiftKernelConfig,
     ) -> Result<SpartanShiftFoldInvocation, MetalError> {
-        let plan = SpartanShiftPlan::new(rows.len(), config, SpartanShiftPrefixStrategy::Mixed)?;
+        let plan = SpartanShiftPlan::new(rows.len(), config)?;
         rows.validate_for(self, &plan)?;
         let low_weights = encode_fields(&prefix_fold_weights(plan.geometry, prefix_challenges)?);
         self.validate_inputs("Spartan shift low weights", &low_weights)?;
@@ -578,22 +552,10 @@ impl SpartanShiftPrefixInvocation {
             encoder.set_buffer(0, Some(&self.rows.unexpanded_pc), 0);
             encoder.set_buffer(1, Some(&self.rows.pc), 0);
             encoder.set_buffer(2, Some(&self.rows.flags), 0);
-            match self.plan.strategy {
-                SpartanShiftPrefixStrategy::Mixed => {
-                    let gamma_powers = self.buffers.gamma_powers.as_ref().ok_or(
-                        MetalError::InvalidSpartanShiftState("mixed gamma buffer is missing"),
-                    )?;
-                    encoder.set_buffer(3, Some(gamma_powers), 0);
-                    encoder.set_buffer(4, Some(&self.buffers.high_weights), 0);
-                    encoder.set_buffer(5, Some(&self.buffers.partials), 0);
-                    set_inline_bytes(encoder, 6, &self.plan.params);
-                }
-                SpartanShiftPrefixStrategy::ExpandedHalfWidth => {
-                    encoder.set_buffer(3, Some(&self.buffers.high_weights), 0);
-                    encoder.set_buffer(4, Some(&self.buffers.partials), 0);
-                    set_inline_bytes(encoder, 5, &self.plan.params);
-                }
-            }
+            encoder.set_buffer(3, Some(&self.buffers.gamma_powers), 0);
+            encoder.set_buffer(4, Some(&self.buffers.high_weights), 0);
+            encoder.set_buffer(5, Some(&self.buffers.partials), 0);
+            set_inline_bytes(encoder, 6, &self.plan.params);
             encoder.dispatch_thread_groups(
                 MTLSize {
                     width: self.plan.build_threadgroups() as u64,

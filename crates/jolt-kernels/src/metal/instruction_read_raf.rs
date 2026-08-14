@@ -180,7 +180,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let rows = owner.receipt().rows();
         let fuse_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == crate::metal::BytecodeReadRafAddressImplementation::AddressMajor
-            && rows >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
+            && rows >= self.config.bytecode_read_raf_address.trace_cutoff_elements;
         let can_prefetch_scatter = self.config.instruction_read_raf.address_implementation
             == InstructionReadRafAddressImplementation::Stage1Grouped
             && session
@@ -377,12 +377,9 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             };
         let use_metal_address =
             trace_elements >= self.config.instruction_read_raf.address_cutoff_elements;
-        let collect_bytecode_support = self.config.bytecode_read_raf_address.implementation
-            == crate::metal::BytecodeReadRafAddressImplementation::AddressMajorShadow
-            && trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
         let fuse_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == crate::metal::BytecodeReadRafAddressImplementation::AddressMajor
-            && trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
+            && trace_elements >= self.config.bytecode_read_raf_address.trace_cutoff_elements;
         let share_registers_val_source = prefetched_scatter
             .as_ref()
             .is_some_and(|prefetched| prefetched.registers_val_lease.is_some())
@@ -397,8 +394,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let stage1_owner = (use_metal_address
             && self.config.instruction_read_raf.address_implementation
                 == InstructionReadRafAddressImplementation::Stage1Grouped
-            && dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
-            && !collect_bytecode_support)
+            && dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS)
             .then(|| session.take::<InstructionReadRafStage1Owner>())
             .flatten();
         if prefetched_scatter.is_some() && stage1_owner.is_none() {
@@ -600,13 +596,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             (cpu, Some(resident_input))
         } else {
             (
-                prepare_metal_instruction_read_raf(
-                    session,
-                    witness,
-                    inputs,
-                    use_metal_address,
-                    collect_bytecode_support,
-                )?,
+                prepare_metal_instruction_read_raf(session, witness, inputs, use_metal_address)?,
                 None,
             )
         };
@@ -620,7 +610,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         });
         let resident_rows_requested = trace_elements
             >= self.config.booleanity_address.trace_cutoff_elements
-            || trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff
+            || trace_elements >= self.config.bytecode_read_raf_address.trace_cutoff_elements
             || trace_elements >= self.config.booleanity_cycle.trace_cutoff_elements
             || trace_elements >= self.config.bytecode_read_raf_cycle.trace_cutoff_elements
             || hamming_rows_requested;

@@ -5,7 +5,6 @@
     "fp128",
     "simd_reduce",
     "booleanity_common",
-    "bytecode_read_raf",
     "bytecode_read_raf_address",
     "registers_claim_reduction",
     "ram_ra_claim_reduction",
@@ -41,10 +40,7 @@
     "outer_remainder_padded_56"
   ],
   "diagnostic_source_fragments": [
-    "product5_tiled_transition",
-    "probes",
-    "booleanity_address_packed_test",
-    "hamming_weight_retained"
+    "probes"
   ],
   "installed_slots": [
     "spartan_outer_uniskip",

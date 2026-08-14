@@ -28,53 +28,6 @@ const INSTRUCTION_SOURCE_RD_SHIFT: u32 = 46;
 const INSTRUCTION_SOURCE_RANK_SHIFT: u32 = 54;
 const INSTRUCTION_SOURCE_FUSED_SIGN_SHIFT: u32 = 61;
 const INSTRUCTION_SOURCE_RD_SIGN_SHIFT: u32 = 62;
-const BYTECODE_ADDRESS_COUNT: usize = 1 << 13;
-const BYTECODE_ADDRESS_INNER_LENGTH: usize = 1 << 15;
-
-#[derive(Clone)]
-struct BytecodeOuterSupport {
-    offsets: Box<[u32]>,
-    addresses: Box<[u32]>,
-    max_active_addresses: usize,
-}
-
-fn checked_bytecode_outer_support(
-    rows: usize,
-    offsets: &[u32],
-    addresses: &[u32],
-) -> Result<BytecodeOuterSupport, MetalError> {
-    let outer_length = rows.div_ceil(BYTECODE_ADDRESS_INNER_LENGTH);
-    let layout_valid = offsets.len() == outer_length + 1
-        && offsets.first() == Some(&0)
-        && offsets.last().copied() == u32::try_from(addresses.len()).ok();
-    let mut max_active_addresses = 0;
-    let segments_valid = layout_valid
-        && offsets.windows(2).all(|pair| {
-            let start = pair[0] as usize;
-            let end = pair[1] as usize;
-            let Some(segment) = addresses.get(start..end) else {
-                return false;
-            };
-            max_active_addresses = max_active_addresses.max(segment.len());
-            !segment.is_empty()
-                && segment
-                    .iter()
-                    .all(|address| (*address as usize) < BYTECODE_ADDRESS_COUNT)
-                && segment.windows(2).all(|entry| entry[0] < entry[1])
-        });
-    if !segments_valid {
-        return Err(MetalError::InvalidBooleanityBytecodeSupport {
-            count: addresses.len(),
-            maximum: BYTECODE_ADDRESS_COUNT,
-        });
-    }
-    Ok(BytecodeOuterSupport {
-        offsets: offsets.into(),
-        addresses: addresses.into(),
-        max_active_addresses,
-    })
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BooleanityRow {
@@ -92,37 +45,16 @@ struct BooleanityRowsInner {
     buffer: Buffer,
     len: usize,
     device_registry_id: u64,
-    bytecode_outer_support: Option<BytecodeOuterSupport>,
 }
 
 #[derive(Clone)]
 pub struct BooleanityRows(Arc<BooleanityRowsInner>);
-
-struct HammingHotRowsInner {
-    buffer: Buffer,
-    len: usize,
-    device_registry_id: u64,
-    source_rows_storage_id: usize,
-}
-
-/// Device-private selector bytes produced while stage 6a scans Booleanity rows.
-#[derive(Clone)]
-pub struct HammingHotRows(Arc<HammingHotRowsInner>);
 
 impl BooleanityRows {
     pub(super) fn from_initialized_buffer(
         buffer: Buffer,
         len: usize,
         expected_device_registry_id: u64,
-    ) -> Result<Self, MetalError> {
-        Self::from_initialized_buffer_inner(buffer, len, expected_device_registry_id, None)
-    }
-
-    fn from_initialized_buffer_inner(
-        buffer: Buffer,
-        len: usize,
-        expected_device_registry_id: u64,
-        bytecode_outer_support: Option<BytecodeOuterSupport>,
     ) -> Result<Self, MetalError> {
         if len == 0 {
             return Err(MetalError::EmptyInput);
@@ -146,7 +78,6 @@ impl BooleanityRows {
             buffer,
             len,
             device_registry_id: expected_device_registry_id,
-            bytecode_outer_support,
         })))
     }
 
@@ -154,23 +85,6 @@ impl BooleanityRows {
         &self.0.buffer
     }
 
-    pub(crate) fn row(&self, index: usize) -> Option<BooleanityRow> {
-        if index >= self.len() {
-            return None;
-        }
-        // SAFETY: BooleanityRows owns a fully initialized column-major buffer
-        // containing four u64 words for every logical row.
-        let words = unsafe {
-            slice::from_raw_parts(
-                self.0.buffer.contents().cast::<u64>(),
-                BOOLEANITY_SOURCE_WORDS * self.len(),
-            )
-        };
-        Some(BooleanityRow::from_instruction_source_words(
-            core::array::from_fn(|word| words[word * self.len() + index]),
-        ))
-    }
-
     pub fn len(&self) -> usize {
         self.0.len
     }
@@ -185,61 +99,11 @@ impl BooleanityRows {
 
     pub fn allocation_identity(&self) -> usize {
         self.0.buffer.as_ptr() as usize
-    }
-
-    pub(crate) fn bytecode_outer_support(&self) -> Option<(&[u32], &[u32], usize)> {
-        self.0.bytecode_outer_support.as_ref().map(|support| {
-            (
-                support.offsets.as_ref(),
-                support.addresses.as_ref(),
-                support.max_active_addresses,
-            )
-        })
     }
 
     #[cfg(test)]
     pub(crate) fn shares_allocation(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl HammingHotRows {
-    pub(super) fn new(
-        buffer: Buffer,
-        len: usize,
-        device_registry_id: u64,
-        source_rows_storage_id: usize,
-    ) -> Self {
-        Self(Arc::new(HammingHotRowsInner {
-            buffer,
-            len,
-            device_registry_id,
-            source_rows_storage_id,
-        }))
-    }
-
-    pub(crate) fn buffer(&self) -> &Buffer {
-        &self.0.buffer
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn device_registry_id(&self) -> u64 {
-        self.0.device_registry_id
-    }
-
-    pub fn source_rows_storage_id(&self) -> usize {
-        self.0.source_rows_storage_id
-    }
-
-    pub fn allocation_identity(&self) -> usize {
-        self.0.buffer.as_ptr() as usize
     }
 }
 
@@ -260,32 +124,6 @@ impl allocative::Allocative for BooleanityRows {
                 allocative::Key::new("device_rows"),
                 self.len() * BOOLEANITY_SOURCE_ROW_BYTES,
             );
-            shared.visit_simple(
-                allocative::Key::new("bytecode_outer_support"),
-                self.0.bytecode_outer_support.as_ref().map_or(0, |support| {
-                    (support.offsets.len() + support.addresses.len()) * size_of::<u32>()
-                }),
-            );
-            shared.exit();
-        }
-        visitor.exit();
-    }
-}
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for HammingHotRows {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        if let Some(mut shared) = visitor.enter_shared(
-            allocative::Key::new("rows"),
-            size_of::<*const HammingHotRowsInner>(),
-            Arc::as_ptr(&self.0).cast(),
-        ) {
-            shared.visit_simple(
-                allocative::Key::new("ArcInner"),
-                2 * size_of::<usize>() + size_of::<HammingHotRowsInner>(),
-            );
-            shared.visit_simple(allocative::Key::new("device_rows"), self.len() * 29);
             shared.exit();
         }
         visitor.exit();
@@ -391,6 +229,7 @@ impl BooleanityRow {
         Ok([self.fused_inc_magnitude, metadata])
     }
 
+    #[cfg(test)]
     pub(crate) const fn from_instruction_source_words(words: [u64; 4]) -> Self {
         let metadata = words[3];
         let pc_plus_one = (metadata >> INSTRUCTION_SOURCE_PC_SHIFT) & INSTRUCTION_SOURCE_PC_MASK;
@@ -407,6 +246,7 @@ impl BooleanityRow {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn mapped_pc(self) -> Option<usize> {
         let plus_one = self.packed_pc_and_flags & PACKED_PC_MASK;
         if plus_one == 0 {
@@ -437,27 +277,6 @@ pub enum BooleanitySelector {
     Ram { shift: u32 },
     FusedInc { shift: u32 },
     FusedIncMsb,
-}
-
-impl BooleanitySelector {
-    pub(crate) const fn packed_hot_plane(self) -> Option<usize> {
-        match self {
-            Self::Lookup { shift } if shift <= 120 && shift.is_multiple_of(8) => {
-                Some(15 - shift as usize / 8)
-            }
-            Self::Bytecode { shift } if shift <= 8 && shift.is_multiple_of(8) => {
-                Some(17 - shift as usize / 8)
-            }
-            Self::Ram { shift } if shift <= 8 && shift.is_multiple_of(8) => {
-                Some(19 - shift as usize / 8)
-            }
-            Self::FusedInc { shift } if shift <= 56 && shift.is_multiple_of(8) => {
-                Some(20 + shift as usize / 8)
-            }
-            Self::FusedIncMsb => Some(28),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -594,24 +413,6 @@ impl SolinasMetal {
         &self,
         rows: &[BooleanityRow],
     ) -> Result<BooleanityRows, MetalError> {
-        self.prepare_booleanity_rows_inner(rows, None)
-    }
-
-    pub(crate) fn prepare_booleanity_rows_with_bytecode_support(
-        &self,
-        rows: &[BooleanityRow],
-        offsets: &[u32],
-        addresses: &[u32],
-    ) -> Result<BooleanityRows, MetalError> {
-        let support = checked_bytecode_outer_support(rows.len(), offsets, addresses)?;
-        self.prepare_booleanity_rows_inner(rows, Some(support))
-    }
-
-    fn prepare_booleanity_rows_inner(
-        &self,
-        rows: &[BooleanityRow],
-        bytecode_outer_support: Option<BytecodeOuterSupport>,
-    ) -> Result<BooleanityRows, MetalError> {
         if rows.is_empty() {
             return Err(MetalError::EmptyInput);
         }
@@ -629,7 +430,6 @@ impl SolinasMetal {
             buffer: buffer_from_slice(&self.device, &column_major),
             len,
             device_registry_id: self.device.registry_id(),
-            bytecode_outer_support,
         })))
     }
 
@@ -1413,7 +1213,6 @@ mod tests {
             buffer: rows.buffer().clone(),
             len: rows.len(),
             device_registry_id: got,
-            bytecode_outer_support: rows.0.bytecode_outer_support.clone(),
         }));
 
         assert!(matches!(

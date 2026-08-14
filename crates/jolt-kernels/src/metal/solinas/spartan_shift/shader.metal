@@ -127,27 +127,6 @@ inline SolinasFp128 spartan_shift_outer_mixed(
     return value;
 }
 
-inline SolinasFp128 spartan_shift_outer_expanded(
-    SpartanShiftNativeValue native,
-    device const SolinasFp128* weights,
-    uint suffix_elements,
-    uint high)
-{
-    SolinasFp128 value = spartan_shift_mul_u64(
-        weights[high], native.unexpanded_pc);
-    value = solinas_add(
-        value,
-        spartan_shift_mul_u64(
-            weights[suffix_elements + high], native.pc));
-    if (native.is_virtual) {
-        value = solinas_add(value, weights[2u * suffix_elements + high]);
-    }
-    if (native.is_first_in_sequence) {
-        value = solinas_add(value, weights[3u * suffix_elements + high]);
-    }
-    return value;
-}
-
 kernel void solinas_spartan_shift_build_mixed_partials(
     device const ulong* unexpanded_pc [[buffer(0)]],
     device const ulong* pc [[buffer(1)]],
@@ -211,77 +190,6 @@ kernel void solinas_spartan_shift_build_mixed_partials(
         }
         current = next;
         current_noop = next_noop;
-    }
-
-    uint partial_count = params.prefix_elements * params.high_tiles;
-    uint partial = high_tile * params.prefix_elements + x_lo;
-    partials[partial] = outer_current;
-    partials[partial_count + partial] = outer_successor;
-    partials[2u * partial_count + partial] = product_current;
-    partials[3u * partial_count + partial] = product_successor;
-}
-
-kernel void solinas_spartan_shift_build_expanded_partials(
-    device const ulong* unexpanded_pc [[buffer(0)]],
-    device const ulong* pc [[buffer(1)]],
-    device const SpartanShiftFlagWord* flags [[buffer(2)]],
-    device const SolinasFp128* high_weights [[buffer(3)]],
-    device SolinasFp128* partials [[buffer(4)]],
-    constant SpartanShiftParams& params [[buffer(5)]],
-    uint group [[threadgroup_position_in_grid]],
-    uint tid [[thread_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
-{
-    uint low_groups = (params.prefix_elements + threads - 1u) / threads;
-    uint high_tile = group / low_groups;
-    uint low_group = group - high_tile * low_groups;
-    uint x_lo = low_group * threads + tid;
-    if (high_tile >= params.high_tiles || x_lo >= params.prefix_elements) {
-        return;
-    }
-
-    uint high_start = high_tile * params.high_tile_elements;
-    uint high_end = min(
-        high_start + params.high_tile_elements,
-        params.suffix_elements);
-    SolinasFp128 outer_current = solinas_zero();
-    SolinasFp128 outer_successor = solinas_zero();
-    SolinasFp128 product_current = solinas_zero();
-    SolinasFp128 product_successor = solinas_zero();
-    uint first_row = high_start * params.prefix_elements + x_lo;
-    SpartanShiftNativeValue current = spartan_shift_native_value(
-        unexpanded_pc, pc, flags, first_row);
-
-    for (uint high = high_start; high < high_end; high++) {
-        outer_current = solinas_add(
-            outer_current,
-            spartan_shift_outer_expanded(
-                current,
-                high_weights,
-                params.suffix_elements,
-                high));
-        SolinasFp128 product_weight =
-            high_weights[4u * params.suffix_elements + high];
-        if (!current.is_noop) {
-            product_current = solinas_add(product_current, product_weight);
-        }
-
-        if (high + 1u < params.suffix_elements) {
-            uint next_row = (high + 1u) * params.prefix_elements + x_lo;
-            SpartanShiftNativeValue next = spartan_shift_native_value(
-                unexpanded_pc, pc, flags, next_row);
-            outer_successor = solinas_add(
-                outer_successor,
-                spartan_shift_outer_expanded(
-                    next,
-                    high_weights,
-                    params.suffix_elements,
-                    high));
-            if (!next.is_noop) {
-                product_successor = solinas_add(product_successor, product_weight);
-            }
-            current = next;
-        }
     }
 
     uint partial_count = params.prefix_elements * params.high_tiles;

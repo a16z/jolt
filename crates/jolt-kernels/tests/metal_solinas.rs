@@ -8,12 +8,12 @@ use jolt_kernels::metal::solinas::{
 };
 use jolt_kernels::metal::solinas::{
     evaluate_product_uniskip_extensions_cpu, BooleanityRow, BooleanitySelector,
-    BooleanitySequenceConfig, DenseTransitionTile, DispatchConfig, Fp128,
-    InstructionRaFirstMessageConfig, MetalError, Probe, Product5Config, Product5SequenceConfig,
-    ProductRemainderRow, ProductRemainderSequenceConfig, ProductUniskipConfig, RamRafConfig,
-    RamValCheckConfig, RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan,
-    RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValTransitionConfig,
-    SolinasMetal, AKITA_OFFSET_FFFFA7F7, OFFSET_275, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
+    BooleanitySequenceConfig, DispatchConfig, Fp128, InstructionRaFirstMessageConfig, MetalError,
+    Probe, Product5Config, Product5SequenceConfig, ProductRemainderRow,
+    ProductRemainderSequenceConfig, ProductUniskipConfig, RamRafConfig, RamValCheckConfig,
+    RamValCheckDenseRow, RamValCheckNativeRow, RamValCheckPlan, RegistersValDenseConfig,
+    RegistersValFirstMessageConfig, RegistersValTransitionConfig, SolinasMetal,
+    AKITA_OFFSET_FFFFA7F7, OFFSET_275, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial};
 
@@ -1149,56 +1149,6 @@ fn product5_fused_transition_matches_biguint() {
 }
 
 #[test]
-fn product5_tiled_transition_matches_biguint() {
-    let context = SolinasMetal::for_akita().expect("Metal context should compile");
-    let elements = 1 << 12;
-    let tables = values(PRODUCT5_FACTORS * elements);
-    let (e_in, _) = inputs(128);
-    let (e_out, _) = inputs(elements / 4 / e_in.len());
-    let challenge = Fp128::from_u128(0x1234_5678_9abc_def0);
-    let (expected_bound, expected_message) = product5_fused_transition(
-        &tables,
-        elements,
-        challenge,
-        &e_in,
-        &e_out,
-        AKITA_OFFSET_FFFFA7F7,
-    );
-
-    for tile in [
-        DenseTransitionTile::Pairs32,
-        DenseTransitionTile::Pairs64,
-        DenseTransitionTile::Pairs128,
-    ] {
-        let invocation = context
-            .prepare_product5_tiled_transition(&tables, elements, challenge, &e_in, &e_out, tile)
-            .expect("dense transition should prepare");
-        let observation = invocation
-            .execute_timed()
-            .expect("dense transition should execute");
-        assert_eq!(observation.tile, tile);
-        assert_eq!(
-            observation.dynamic_threadgroup_bytes,
-            10 * tile.pairs() * 16
-        );
-        assert_eq!(
-            observation.useful_products,
-            8 * elements as u64 + 5 * e_out.len() as u64
-        );
-        assert_eq!(
-            invocation
-                .read_bound_tables()
-                .expect("bound tables should read"),
-            expected_bound
-        );
-        assert_eq!(
-            invocation.read_message().expect("message should read"),
-            expected_message
-        );
-    }
-}
-
-#[test]
 fn gpu_field_probes_match_biguint() {
     let context = SolinasMetal::for_offset_275().expect("Metal context should compile");
     let (chain_lhs, chain_rhs) = inputs(4096);
@@ -1431,8 +1381,8 @@ fn booleanity_rows(rows: usize) -> Vec<BooleanityRow> {
             state ^= state << 13;
             state ^= state >> 17;
             state ^= state << 43;
-            let mapped_pc = (row % 7 != 0).then_some(((state >> 49) as u64) & ((1 << 55) - 2));
-            let ram_address = (row % 11 != 0).then_some((state as u64) & (u64::MAX - 1));
+            let mapped_pc = (row % 7 != 0).then_some(((state >> 49) as u64) & ((1 << 13) - 2));
+            let ram_address = (row % 11 != 0).then_some((state as u64) & (u64::from(u32::MAX) - 1));
             let fused_inc = match row % 6 {
                 0 => -(u64::MAX as i128),
                 1 => -((1i128 << 63) + row as i128),

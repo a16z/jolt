@@ -869,7 +869,7 @@ mod tests {
     fn metal_witness_projection_matches_the_prefix_oracle() {
         use crate::metal::solinas::spartan_shift::{
             build_prefix_successor, pack_flag_words, SpartanShiftGeometry,
-            SpartanShiftKernelConfig, SpartanShiftNativePlanes, SpartanShiftPrefixStrategy,
+            SpartanShiftKernelConfig, SpartanShiftNativePlanes,
         };
         use crate::metal::solinas::SolinasMetal;
 
@@ -924,7 +924,6 @@ mod tests {
                         high_tile_elements: geometry.suffix_elements(),
                         fold_threads_per_threadgroup: 32,
                     },
-                    SpartanShiftPrefixStrategy::Mixed,
                 )
                 .unwrap()
                 .execute()

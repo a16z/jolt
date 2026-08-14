@@ -3242,7 +3242,7 @@ mod tests {
         };
 
         use crate::metal::solinas::spartan_shift::{
-            SpartanShiftGeometry, SpartanShiftKernelConfig, SpartanShiftPrefixStrategy,
+            SpartanShiftGeometry, SpartanShiftKernelConfig,
         };
         use crate::metal::solinas::SolinasMetal;
         use crate::optimized::spartan_shift::prepare_metal_spartan_shift_witness_rows;
@@ -3388,7 +3388,6 @@ mod tests {
                 &r_product,
                 gamma,
                 shift_config,
-                SpartanShiftPrefixStrategy::Mixed,
             )
             .unwrap()
             .execute()
@@ -3400,7 +3399,6 @@ mod tests {
                 &r_product,
                 gamma,
                 shift_config,
-                SpartanShiftPrefixStrategy::Mixed,
             )
             .unwrap()
             .execute()

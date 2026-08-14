@@ -18,19 +18,6 @@ fn row(seed: u64, imm: i128, selectors: [bool; 4]) -> InstructionInputSuccessorR
     )
 }
 
-fn all_guards() -> PromotionGuards {
-    PromotionGuards {
-        exact_round_polynomials: true,
-        exact_output_claims: true,
-        exact_transcript_and_proof: true,
-        source_and_binary_current: true,
-        resident_row_identity: true,
-        no_round_allocation: true,
-        resource_and_spill_capture: true,
-        noise_within_limit: true,
-    }
-}
-
 #[test]
 fn abi_and_entry_points_are_stable() {
     assert_eq!(size_of::<InstructionInputSuccessorRow>(), 48);
@@ -149,7 +136,7 @@ fn split_descriptors_match_an_independent_direct_walk() {
 }
 
 #[test]
-fn log_26_shapes_and_work_are_exact() {
+fn log_26_shapes_are_exact() {
     let materialize = checked_materialize_shape(1 << 26, MAX_BUFFER_LENGTH).unwrap();
     assert_eq!(materialize.grid_threads(), 1 << 25);
     assert_eq!(materialize.resident_row_bytes(), 3_221_225_472);
@@ -163,14 +150,6 @@ fn log_26_shapes_and_work_are_exact() {
     assert_eq!(message.table_bytes(), 4_294_967_296);
     assert_eq!(message.threadgroup_bytes(), 192);
     assert_eq!(message.params().table_elements, 1 << 25);
-
-    let geometry = Geometry::new(TARGET_ROWS, FROZEN_CPU_CUTOFF).unwrap();
-    let current = current_fused_plan(geometry).unwrap();
-    let split = split_first_bind_plan(geometry).unwrap();
-    assert_eq!(current.total_products().unwrap(), 1_341_063_168);
-    assert_eq!(current.total_large_state_bytes().unwrap(), 23_597_154_304);
-    assert_eq!(split.total_products().unwrap(), 1_206_845_440);
-    assert_eq!(split.total_large_state_bytes().unwrap(), 27_892_121_600);
 }
 
 #[test]
@@ -181,161 +160,4 @@ fn dense_message_rejects_more_simdgroups_than_the_reducer_covers() {
             Err(InstructionInputSuccessorError::InvalidThreadgroupWidth)
         );
     }
-}
-
-#[test]
-fn split_roofs_are_phase_sequential() {
-    let geometry = Geometry::new(TARGET_ROWS, FROZEN_CPU_CUTOFF).unwrap();
-    let split = split_first_bind_plan(geometry).unwrap();
-    let first_transition = split_first_transition_plan(geometry).unwrap();
-    let message_roof = sequential_roof_ns(
-        &split,
-        RoofAnchors {
-            bytes_per_second: RETAINED_COPY_BYTES_PER_SECOND,
-            products_per_second: RETAINED_MESSAGE_PRODUCTS_PER_SECOND,
-        },
-    )
-    .unwrap();
-    let register_roof = sequential_roof_ns(
-        &split,
-        RoofAnchors {
-            bytes_per_second: RETAINED_COPY_BYTES_PER_SECOND,
-            products_per_second: RETAINED_REGISTER_PRODUCTS_PER_SECOND,
-        },
-    )
-    .unwrap();
-    let conservative_roof = sequential_roof_ns(
-        &split,
-        RoofAnchors {
-            bytes_per_second: RETAINED_COPY_BYTES_PER_SECOND,
-            products_per_second: RETAINED_CONSERVATIVE_PRODUCTS_PER_SECOND,
-        },
-    )
-    .unwrap();
-    assert_eq!(message_roof, 61_748_986);
-    assert_eq!(register_roof, 75_900_929);
-    assert_eq!(conservative_roof, 81_964_193);
-    assert_eq!(utilization_cap_ns(message_roof, 4, 5).unwrap(), 77_186_233);
-    assert_eq!(utilization_cap_ns(register_roof, 4, 5).unwrap(), 94_876_162);
-    assert_eq!(
-        utilization_cap_ns(conservative_roof, 4, 5).unwrap(),
-        102_455_242
-    );
-
-    let message_transition = sequential_roof_ns(
-        &first_transition,
-        RoofAnchors {
-            bytes_per_second: RETAINED_COPY_BYTES_PER_SECOND,
-            products_per_second: RETAINED_MESSAGE_PRODUCTS_PER_SECOND,
-        },
-    )
-    .unwrap();
-    let register_transition = sequential_roof_ns(
-        &first_transition,
-        RoofAnchors {
-            bytes_per_second: RETAINED_COPY_BYTES_PER_SECOND,
-            products_per_second: RETAINED_REGISTER_PRODUCTS_PER_SECOND,
-        },
-    )
-    .unwrap();
-    let conservative_transition = sequential_roof_ns(
-        &first_transition,
-        RoofAnchors {
-            bytes_per_second: RETAINED_COPY_BYTES_PER_SECOND,
-            products_per_second: RETAINED_CONSERVATIVE_PRODUCTS_PER_SECOND,
-        },
-    )
-    .unwrap();
-    assert_eq!(message_transition, 26_148_142);
-    assert_eq!(register_transition, 33_324_252);
-    assert_eq!(conservative_transition, 35_031_316);
-    let projected = [
-        utilization_cap_ns(message_transition, 4, 5).unwrap(),
-        utilization_cap_ns(register_transition, 4, 5).unwrap(),
-        utilization_cap_ns(conservative_transition, 4, 5).unwrap(),
-    ]
-    .map(|round_one| round_one + u128::from(FROZEN_NON_ROUND_ONE_MEDIAN_NS));
-    assert_eq!(projected, [110_901_810, 119_871_947, 122_005_777]);
-    assert!(projected[2] <= u128::from(PRIMARY_COMPLETE_SERVICE_TARGET_NS));
-}
-
-#[test]
-fn frozen_candidate_fails_the_order_stratified_five_x_gate() {
-    assert_eq!(
-        FactorGate::Minimum5x.planning_cap_ns(FROZEN_CPU_MEDIAN_NS),
-        145_442_483
-    );
-    assert_eq!(
-        FactorGate::Stretch8x.planning_cap_ns(FROZEN_CPU_MEDIAN_NS),
-        90_901_552
-    );
-    assert_eq!(
-        FactorGate::Stretch8x.planning_cap_ns(FROZEN_CPU_MEDIAN_NS)
-            - FROZEN_READBACK_MEDIAN_NS
-            - FROZEN_CPU_TAIL_MEDIAN_NS,
-        84_079_552
-    );
-
-    let assessment =
-        assess_gate(FactorGate::Minimum5x, &FROZEN_SERVICE_PAIRS, all_guards()).unwrap();
-    assert!(assessment.guards_pass);
-    assert!(assessment.pooled_median_pass);
-    assert!(!assessment.cpu_first_median_pass);
-    assert!(assessment.metal_first_median_pass);
-    assert!(!assessment.accepted);
-}
-
-#[test]
-fn five_x_is_a_floor_and_eight_x_is_a_live_stretch_gate() {
-    let pairs = [
-        ServicePair {
-            cpu_ns: 800,
-            metal_ns: 100,
-            order: RunOrder::CpuFirst,
-        },
-        ServicePair {
-            cpu_ns: 816,
-            metal_ns: 102,
-            order: RunOrder::MetalFirst,
-        },
-        ServicePair {
-            cpu_ns: 792,
-            metal_ns: 99,
-            order: RunOrder::CpuFirst,
-        },
-        ServicePair {
-            cpu_ns: 824,
-            metal_ns: 103,
-            order: RunOrder::MetalFirst,
-        },
-        ServicePair {
-            cpu_ns: 808,
-            metal_ns: 101,
-            order: RunOrder::CpuFirst,
-        },
-    ];
-    assert!(
-        assess_gate(FactorGate::Minimum5x, &pairs, all_guards())
-            .unwrap()
-            .accepted
-    );
-    assert!(
-        assess_gate(FactorGate::Stretch8x, &pairs, all_guards())
-            .unwrap()
-            .accepted
-    );
-
-    let mut missing_capture = all_guards();
-    missing_capture.resource_and_spill_capture = false;
-    assert!(
-        !assess_gate(FactorGate::Minimum5x, &pairs, missing_capture)
-            .unwrap()
-            .accepted
-    );
-}
-
-#[test]
-fn hybrid_cutoff_uses_complete_incremental_cost() {
-    assert!(additional_gpu_round_wins(900, 700, 500, 200));
-    assert!(!additional_gpu_round_wins(1_001, 700, 500, 200));
 }

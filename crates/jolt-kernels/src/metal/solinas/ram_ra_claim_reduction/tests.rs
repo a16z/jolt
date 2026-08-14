@@ -106,17 +106,6 @@ fn q_abi_slots_and_entry_points_are_fixed() {
     assert_eq!(align_of::<RamRaClaimCounters>(), 4);
     assert_eq!(
         [
-            Q_BUILD_ADDRESSES_SLOT,
-            Q_BUILD_EQ_ADDRESS_SLOT,
-            Q_BUILD_EQ_HI_SLOT,
-            Q_BUILD_PARTIALS_SLOT,
-            Q_BUILD_COUNTERS_SLOT,
-            Q_BUILD_PARAMS_SLOT,
-        ],
-        [0, 1, 2, 3, 4, 5]
-    );
-    assert_eq!(
-        [
             Q_REDUCE_PARTIALS_SLOT,
             Q_REDUCE_OUTPUT_SLOT,
             Q_REDUCE_COUNTERS_SLOT,
@@ -136,12 +125,9 @@ fn q_abi_slots_and_entry_points_are_fixed() {
         ],
         [0, 1, 2, 3, 4, 5, 6]
     );
-    assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_build_q_partials"));
-    assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_build_q_partials_explicit"));
     assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_build_q_partials_compact"));
     assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_reduce_q"));
     assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_gather_h_compact"));
-    assert!(SOURCE.contains("kernel void solinas_ram_ra_claim_gather_h"));
 }
 
 #[test]
@@ -430,42 +416,28 @@ fn metal_q_matches_the_independent_direct_oracle() {
         ))
     ));
 
-    for q_accumulator in [
-        RamRaClaimQAccumulator::Array,
-        RamRaClaimQAccumulator::Explicit,
-        RamRaClaimQAccumulator::Compact,
-    ] {
-        let invocation = context
-            .prepare_ram_ra_claim_q(
-                &resident,
-                &r_address,
-                point_refs(&cycles),
-                RamRaClaimConfig {
-                    q_accumulator,
-                    ..config
-                },
-            )
-            .unwrap();
-        assert_eq!(invocation.execute_device_buffer_allocations(), 0);
-        assert_eq!(
-            invocation.source_allocation_identity(),
-            resident.allocation_identity()
-        );
-        assert_ne!(
-            invocation.source_allocation_identity(),
-            invocation.output_allocation_identity()
-        );
-        let observation = invocation.execute_timed().unwrap();
-        assert_eq!(observation.q, expected);
-        assert_eq!(observation.checksum, ram_ra_claim_q_checksum(&expected));
-        assert_eq!(observation.counters.q_accessed_rows as usize, accessed_rows);
-        assert_eq!(observation.counters.q_invalid_rows, 0);
-        assert_eq!(observation.counters.gather_invalid_rows, 0);
-        assert_eq!(observation.counters.unsupported_dispatches, 0);
-        assert_eq!(observation.useful_full_products, 3 * accessed_rows as u64);
-        assert_eq!(observation.producer_threadgroups, 16);
-        assert_eq!(observation.reducer_threadgroups, 2);
-    }
+    let invocation = context
+        .prepare_ram_ra_claim_q(&resident, &r_address, point_refs(&cycles), config)
+        .unwrap();
+    assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+    assert_eq!(
+        invocation.source_allocation_identity(),
+        resident.allocation_identity()
+    );
+    assert_ne!(
+        invocation.source_allocation_identity(),
+        invocation.output_allocation_identity()
+    );
+    let observation = invocation.execute_timed().unwrap();
+    assert_eq!(observation.q, expected);
+    assert_eq!(observation.checksum, ram_ra_claim_q_checksum(&expected));
+    assert_eq!(observation.counters.q_accessed_rows as usize, accessed_rows);
+    assert_eq!(observation.counters.q_invalid_rows, 0);
+    assert_eq!(observation.counters.gather_invalid_rows, 0);
+    assert_eq!(observation.counters.unsupported_dispatches, 0);
+    assert_eq!(observation.useful_full_products, 3 * accessed_rows as u64);
+    assert_eq!(observation.producer_threadgroups, 16);
+    assert_eq!(observation.reducer_threadgroups, 2);
 
     let r_prefix = point(shape.prefix_bits(), 0xc0de_1001);
     let eq_prefix = EqPolynomial::<AkitaField>::evals(&r_prefix, None);

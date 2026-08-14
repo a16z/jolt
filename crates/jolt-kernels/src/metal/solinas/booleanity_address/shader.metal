@@ -133,17 +133,6 @@ inline void booleanity_address_inc(
     }
 }
 
-inline int booleanity_address_inc_carry(
-    ulong magnitude,
-    ulong packed_pc_and_flags,
-    ulong bias)
-{
-    if ((packed_pc_and_flags >> 63) != 0ul) {
-        return magnitude > bias ? -1 : 0;
-    }
-    return bias + magnitude < bias ? 1 : 0;
-}
-
 inline void booleanity_address_add_inc(
     threadgroup atomic_uint* sums,
     ulong biased,

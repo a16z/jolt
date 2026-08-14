@@ -7,8 +7,6 @@
 //!   the optimized CPU prefix/suffix implementation;
 //! - [`abi`] makes reuse of the producer-owned instruction rows, claim bytes,
 //!   equality factors, and optional address-atom topology explicit;
-//! - [`model`] counts useful field products and every logical byte requested by
-//!   the proposed address and cycle sequences;
 //! - the tests require dense/atom parity, the sumcheck invariant at every
 //!   round, a final-expression match, and fail-closed receipt provenance.
 //!
@@ -55,7 +53,6 @@
 )]
 
 mod abi;
-mod model;
 mod oracle;
 mod runtime;
 mod shader_abi;
@@ -81,7 +78,6 @@ pub(crate) const ATOM_MASS_FINALIZE_PIPELINE: &str =
 pub(crate) const ATOM_PHASE_PIPELINE: &str = "solinas_instruction_read_raf_v3_atom_phase";
 pub(crate) const FINALIZE_RAF_PIPELINE: &str = "solinas_instruction_read_raf_v3_finalize_raf";
 pub(crate) const FINALIZE_SUFFIX_PIPELINE: &str = "solinas_instruction_read_raf_v3_finalize_suffix";
-pub(crate) const OPEN_FLAGS_PIPELINE: &str = "solinas_instruction_read_raf_v3_open_flags";
 pub(crate) const REDUCE_PIPELINE: &str = "solinas_instruction_read_raf_v3_reduce";
 
 pub(crate) use abi::{
@@ -89,9 +85,6 @@ pub(crate) use abi::{
     InstructionReadRafGeometry, PlaneDescriptor, ProducerAddressAtomTopologyReceipt,
     ProducerIdentity, ReductionEqReceipt, ResidentInstructionFacts, ResidentPlane,
     ResidentReadRafInputs, StageOutputReceipt,
-};
-pub(crate) use model::{
-    AddressCensus, CutoffDecision, ExecutionModel, GateReport, RoofRates, SequenceWork,
 };
 pub(crate) use oracle::{
     aggregate_address_atoms, atom_address_message, AddressAtom, DenseReadRafOracle,

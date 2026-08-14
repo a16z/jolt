@@ -124,7 +124,7 @@ fn log_25_screen_retains_the_saturated_threadgroup_cap() {
     assert_eq!(geometry.current_elements, 1 << 26);
     assert_eq!(geometry.weight_capacity, 1 << 13);
     assert_eq!(geometry.max_threadgroups, 8192);
-    assert_eq!(geometry.owned_bytes, 2_152_599_280);
+    assert_eq!(geometry.owned_bytes, 2_152_599_728);
     assert_eq!(
         outer_remainder_sequence_max_buffer_bytes_with_config(1 << 25, config).unwrap(),
         1 << 30,

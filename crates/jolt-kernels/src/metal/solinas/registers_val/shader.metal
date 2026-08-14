@@ -7,7 +7,6 @@ struct RegistersValMessageParams {
     uint source_layout;
 };
 
-#define REGISTERS_VAL_SOURCE_MATERIALIZED 0u
 #define REGISTERS_VAL_SOURCE_INSTRUCTION_ROWS 1u
 
 struct RegistersValReductionParams {

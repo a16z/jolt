@@ -19,13 +19,13 @@ use super::{
     RegistersClaimGeometry, RegistersClaimKernelConfig, RegistersClaimLinearQPlan,
     RegistersClaimPlan, RegistersClaimPlanError, RegistersClaimStrategy, ALIAS_FOLD_EQ_PREFIX_SLOT,
     ALIAS_FOLD_OUTPUT_SLOT, ALIAS_FOLD_PARAMS_SLOT, ALIAS_FOLD_PIPELINE,
-    ALIAS_FOLD_RD_WRITE_VALUE_SLOT, ALIAS_FOLD_THREADGROUP_SLOT, DIRECT_FOLD_EQ_PREFIX_SLOT,
-    DIRECT_FOLD_OUTPUT_SLOT, DIRECT_FOLD_PARAMS_SLOT, DIRECT_FOLD_PIPELINE,
-    DIRECT_FOLD_RD_WRITE_VALUE_SLOT, DIRECT_FOLD_RS1_VALUE_SLOT, DIRECT_FOLD_RS2_VALUE_SLOT,
-    DIRECT_FOLD_THREADGROUP_SLOT, LINEAR_Q_EQ_SUFFIX_SLOT, LINEAR_Q_GAMMA_POWERS_SLOT,
-    LINEAR_Q_OUTPUT_SLOT, LINEAR_Q_PARAMS_SLOT, LINEAR_Q_RD_WRITE_VALUE_SLOT,
-    LINEAR_Q_RS1_VALUE_SLOT, LINEAR_Q_RS2_VALUE_SLOT, REGISTERS_CLAIM_AKITA_OFFSET,
-    REGISTERS_CLAIM_OUTPUT_COLUMNS, REGISTERS_CLAIM_SIMD_WIDTH,
+    ALIAS_FOLD_RD_WRITE_VALUE_SLOT, ALIAS_FOLD_THREADGROUP_SLOT, BUILD_LINEAR_CANONICAL_PIPELINE,
+    DIRECT_FOLD_EQ_PREFIX_SLOT, DIRECT_FOLD_OUTPUT_SLOT, DIRECT_FOLD_PARAMS_SLOT,
+    DIRECT_FOLD_PIPELINE, DIRECT_FOLD_RD_WRITE_VALUE_SLOT, DIRECT_FOLD_RS1_VALUE_SLOT,
+    DIRECT_FOLD_RS2_VALUE_SLOT, DIRECT_FOLD_THREADGROUP_SLOT, LINEAR_Q_EQ_SUFFIX_SLOT,
+    LINEAR_Q_GAMMA_POWERS_SLOT, LINEAR_Q_OUTPUT_SLOT, LINEAR_Q_PARAMS_SLOT,
+    LINEAR_Q_RD_WRITE_VALUE_SLOT, LINEAR_Q_RS1_VALUE_SLOT, LINEAR_Q_RS2_VALUE_SLOT,
+    REGISTERS_CLAIM_AKITA_OFFSET, REGISTERS_CLAIM_OUTPUT_COLUMNS, REGISTERS_CLAIM_SIMD_WIDTH,
 };
 
 #[derive(Debug, Error)]
@@ -495,7 +495,7 @@ impl SolinasMetal {
             self.validate_buffer_length(to_u64(bytes)?)?;
         }
 
-        let pipeline_name = plan.config.accumulator.pipeline();
+        let pipeline_name = BUILD_LINEAR_CANONICAL_PIPELINE;
         let pipeline = self.compile_named_pipeline(pipeline_name)?;
         let limits = Self::limits(&pipeline);
         if limits.thread_execution_width != REGISTERS_CLAIM_SIMD_WIDTH {
@@ -965,8 +965,7 @@ impl RegistersClaimDirectFoldInvocation {
             let work = self
                 .plan
                 .geometry
-                .work(RegistersClaimStrategy::DirectLinear)?
-                .fold;
+                .fold_work(RegistersClaimStrategy::DirectLinear)?;
             Ok(RegistersClaimDirectFoldObservation {
                 outputs,
                 useful_half_width_terms: work.half_width_terms,

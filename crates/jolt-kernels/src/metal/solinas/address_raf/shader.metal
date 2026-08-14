@@ -1,6 +1,5 @@
 #define ADDRESS_RAF_BINS 256u
 #define ADDRESS_RAF_KEYS (2u * ADDRESS_RAF_BINS)
-#define ADDRESS_RAF_LANES 6u
 #define ADDRESS_RAF_PARTIAL_LANES 3u
 
 struct AddressRafParams {

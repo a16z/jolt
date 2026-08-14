@@ -1,4 +1,4 @@
-use super::super::{ProducerGeometry, ProducerShardPlan, ProducerSourceReceipt};
+use super::super::{ProducerGeometry, ProducerShardPlan};
 use super::accounting::{AddressAtomPlaneRole, AddressAtomShape, ADDRESS_ATOM_PLANE_ROLES};
 use super::error::{AddressAtomError, AddressAtomResult};
 
@@ -30,16 +30,6 @@ impl AddressAtomSourceProvenance {
             source_completion_serial,
             allocation_identities,
         })
-    }
-
-    pub fn from_producer_receipt(receipt: ProducerSourceReceipt) -> AddressAtomResult<Self> {
-        Self::new(
-            receipt.shard(),
-            receipt.device_registry_id(),
-            receipt.source_generation(),
-            receipt.source_completion_serial(),
-            receipt.allocation_identities(),
-        )
     }
 
     pub const fn shard(self) -> ProducerShardPlan {

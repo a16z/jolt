@@ -496,9 +496,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             self.config.instruction_read_raf.address_implementation
                 == InstructionReadRafAddressImplementation::Stage1Grouped
                 && cycles >= self.config.instruction_read_raf.address_cutoff_elements
-                && !(self.config.bytecode_read_raf_address.implementation
-                    == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajorShadow
-                    && cycles >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff)
                 && witness
                     .owned_rows()
                     .is_some_and(|rows| cycles <= rows.cycles());
@@ -533,7 +530,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             stage1_projection_owner_requested && self.ram_raf_witness_requested(log_t, witness)?;
         let prepare_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajor
-            && cycles >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
+            && cycles >= self.config.bytecode_read_raf_address.trace_cutoff_elements;
         if prepare_bytecode_carrier && !instruction_read_raf_owner_requested {
             return Err(KernelError::InvariantViolation {
                 reason: "bytecode address-major requires the random-access Stage-1 owner",
@@ -873,7 +870,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 OuterRemainder<AkitaField>,
             >>::prepare_witness(&OptimizedOuterUniskip, session, log_t, witness)?;
         }
-        self.publish_registers_read_write_prefetch_source(session, witness, cycles)?;
         if cycles >= STAGE1_SOURCE_PRIMER_CUTOFF_ELEMENTS {
             let pending = session
                 .state::<SpartanOuterUniskipRows>()
@@ -2221,19 +2217,19 @@ mod tests {
 
         assert_eq!(
             working_set(1 << 26, true, true, false, false, true, true, true),
-            22_581_415_824
+            22_581_416_272
         );
         assert_eq!(
             working_set(1 << 28, true, true, false, false, true, true, true),
-            90_305_466_256
+            90_305_466_704
         );
         assert_eq!(
             working_set(1 << 26, true, true, true, false, true, true, true),
-            25_332_879_248
+            24_796_008_784
         );
         assert_eq!(
             working_set(1 << 27, true, true, true, false, true, true, true),
-            50_659_725_200
+            49_585_983_824
         );
         assert_eq!(
             working_set(1 << 26, false, true, false, false, false, false, false),
@@ -2245,7 +2241,7 @@ mod tests {
         );
         assert_eq!(
             working_set(1 << 28, true, false, false, false, true, true, true),
-            64_533_696_400
+            64_533_696_848
         );
     }
 

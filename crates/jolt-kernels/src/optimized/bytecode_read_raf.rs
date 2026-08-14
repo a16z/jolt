@@ -509,11 +509,6 @@ impl<F: Field> allocative::Allocative for AddressKernel<F> {
 }
 
 impl<F: Field> AddressKernel<F> {
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    pub(crate) fn pushforward_tables(&self) -> impl ExactSizeIterator<Item = &[F]> {
-        self.pushforwards.iter().map(|table| table.evals())
-    }
-
     #[inline]
     fn stage_pair(&self, stage: usize, y: usize) -> (F, F) {
         match self.stage_values[stage] {

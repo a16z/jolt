@@ -12,15 +12,6 @@ use super::{
     buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
 
-mod tiled_transition;
-
-pub use tiled_transition::{
-    DenseTransitionError, DenseTransitionInvocation, DenseTransitionObservation,
-    DenseTransitionParams, DenseTransitionTile,
-};
-
-pub(super) const TILED_TRANSITION_SOURCE: &str = include_str!("tiled_transition.metal");
-
 pub const PRODUCT5_FACTORS: usize = 5;
 
 const PRODUCT5_SIMD_WIDTH: usize = 32;

@@ -15,8 +15,8 @@ use super::backend::MetalBackend;
 use super::solinas::spartan_shift::{
     bind_dense_state, bind_prefix_tables, build_dense_state, dense_round, final_outputs,
     prefix_round, PendingSpartanShiftFold, PendingSpartanShiftPrefix, SpartanShiftDenseState,
-    SpartanShiftFlagWord, SpartanShiftGeometry, SpartanShiftKernelConfig,
-    SpartanShiftPrefixStrategy, SpartanShiftPrefixTables, SpartanShiftResidentRows,
+    SpartanShiftFlagWord, SpartanShiftGeometry, SpartanShiftKernelConfig, SpartanShiftPrefixTables,
+    SpartanShiftResidentRows,
 };
 use super::solinas::SolinasMetal;
 use super::spartan_dense::SpartanDenseResidentOwner;
@@ -29,7 +29,6 @@ use crate::{
 pub struct SpartanShiftMetalConfig {
     pub trace_cutoff_elements: usize,
     pub dispatch: SpartanShiftKernelConfig,
-    pub prefix_strategy: SpartanShiftPrefixStrategy,
 }
 
 impl Default for SpartanShiftMetalConfig {
@@ -37,7 +36,6 @@ impl Default for SpartanShiftMetalConfig {
         Self {
             trace_cutoff_elements: 1 << 25,
             dispatch: SpartanShiftKernelConfig::default(),
-            prefix_strategy: SpartanShiftPrefixStrategy::Mixed,
         }
     }
 }
@@ -158,14 +156,12 @@ impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
 
         let geometry = SpartanShiftGeometry::new(cycles).map_err(metal_prepare_error)?;
         let config = metal_config.dispatch;
-        let strategy = metal_config.prefix_strategy;
         let invocation = match self.context.prepare_spartan_shift_prefix(
             &rows,
             r_outer,
             r_product,
             inputs.challenges.gamma,
             config,
-            strategy,
         ) {
             Ok(invocation) => invocation,
             Err(error) => {

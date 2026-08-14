@@ -249,16 +249,3 @@ inline SolinasFp128 solinas_half_width_mul_signed_u64(
     SolinasFp128 negated = solinas_sub(solinas_zero(), positive);
     return solinas_select(!negative, positive, negated);
 }
-
-inline SolinasFp128 solinas_half_width_mul_u64_delta(
-    SolinasFp128 coefficient,
-    ulong minuend,
-    ulong subtrahend)
-{
-    bool negative = minuend < subtrahend;
-    ulong forward = minuend - subtrahend;
-    ulong reverse = subtrahend - minuend;
-    ulong magnitude = negative ? reverse : forward;
-    return solinas_half_width_mul_signed_u64(
-        coefficient, magnitude, negative);
-}

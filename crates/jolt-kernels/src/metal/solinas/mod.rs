@@ -20,19 +20,10 @@ mod address_suffix;
 mod address_suffix_full;
 mod booleanity;
 mod booleanity_address;
-pub mod booleanity_address_successor;
 mod bytecode_cycle;
-#[doc(hidden)]
-pub mod bytecode_read_raf;
 #[doc(hidden)]
 pub mod bytecode_read_raf_address;
 mod bytecode_row;
-#[cfg(feature = "test-utils")]
-#[doc(hidden)]
-pub mod hamming_weight_claim_reduction;
-#[cfg(not(feature = "test-utils"))]
-mod hamming_weight_claim_reduction;
-pub mod hamming_weight_claim_reduction_successor;
 pub mod instruction_claim_reduction;
 mod instruction_claim_reduction_successor;
 mod instruction_input;
@@ -57,9 +48,6 @@ pub mod registers_claim_reduction;
 mod registers_val;
 mod runtime;
 mod source;
-#[cfg(feature = "test-utils")]
-#[doc(hidden)]
-pub mod spartan_outer_successor;
 mod spartan_outer_uniskip;
 pub mod spartan_shift;
 
@@ -80,25 +68,17 @@ pub use address_suffix::{
     AddressSuffixOneInvocation, AddressSuffixOneSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
 };
 pub use address_suffix_full::{AddressSuffixFullInvocation, AddressSuffixFullSums};
+pub use booleanity::BooleanityRows;
 pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
 };
-pub use booleanity::{BooleanityRows, HammingHotRows};
 pub(crate) use booleanity::{BOOLEANITY_SOURCE_ROW_BYTES, BOOLEANITY_SOURCE_WORDS};
 pub use booleanity_address::{BooleanityAddressPushforward, BooleanityAddressPushforwardConfig};
-pub use booleanity_address_successor::{
-    BooleanityAddressSuccessorConfig, BooleanityAddressSuccessorInvocation,
-    BooleanityAddressSuccessorRuntimeError,
-};
 pub use bytecode_cycle::{
     BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables,
     BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
-pub use hamming_weight_claim_reduction::HammingWeightSuccessorError;
-pub use hamming_weight_claim_reduction_successor::{
-    HammingWeightRetainedConfig, HammingWeightRetainedInvocation, HammingWeightRetainedRuntimeError,
-};
 pub(crate) use instruction_claim_reduction_successor::{
     PendingProductInstructionInitialMessage, ProductInstructionInitialMessageStats,
     ProductInstructionRoundService, ProductInstructionRoundStats,
@@ -162,9 +142,7 @@ pub use outer_remainder::{
 #[cfg(feature = "test-utils")]
 pub use outer_remainder::{OuterKernelArtifact, SealedOuterArtifact};
 pub use product5::{
-    DenseTransitionError, DenseTransitionInvocation, DenseTransitionObservation,
-    DenseTransitionParams, DenseTransitionTile, Product5Config, Product5Invocation,
-    Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
+    Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
 };
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;
@@ -189,16 +167,12 @@ pub use ram_raf_evaluation::{
     address_opening_point as ram_raf_address_opening_point, dense_pushforward_oracle,
     split_equality as ram_raf_split_equality, split_pushforward_oracle, tiled_pushforward_oracle,
     PendingRamRafSequence, RamRafAddress, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
-    RamRafCostModel, RamRafCounters, RamRafDecision, RamRafDeviceLimits, RamRafError,
-    RamRafEvidence, RamRafExecution, RamRafFoldParams, RamRafMeasuredResult, RamRafObservation,
-    RamRafProjection, RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan,
-    RamRafSubmissionStats, RamRafTailOutput, RamRafTopology, ValidatedRamRafAddressPlane,
-    RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_AKITA_OFFSET, RAM_RAF_DEFAULT_TRACE_CUTOFF,
-    RAM_RAF_FINALIZE_PIPELINE, RAM_RAF_FIXED_PROJECTION_NS, RAM_RAF_FOLD_PIPELINE,
-    RAM_RAF_FOLD_REDESIGN_NS, RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS,
-    RAM_RAF_PURSUIT_NS, RAM_RAF_SIMD_WIDTH, RAM_RAF_TARGET_CPU_NS, RAM_RAF_TARGET_CPU_PREPARE_NS,
-    RAM_RAF_TARGET_CPU_TAIL_NS, RAM_RAF_TARGET_FIVE_X_NS, RAM_RAF_TARGET_LOG_T,
-    RAM_RAF_TARGET_ROWS, RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
+    RamRafCounters, RamRafDeviceLimits, RamRafError, RamRafExecution, RamRafFoldParams,
+    RamRafObservation, RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan,
+    RamRafSubmissionStats, RamRafTailOutput, ValidatedRamRafAddressPlane, RAM_RAF_ADDRESS_DOMAIN,
+    RAM_RAF_AKITA_OFFSET, RAM_RAF_DEFAULT_TRACE_CUTOFF, RAM_RAF_FINALIZE_PIPELINE,
+    RAM_RAF_FOLD_PIPELINE, RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS,
+    RAM_RAF_SIMD_WIDTH, RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
 };
 #[cfg(feature = "test-utils")]
 pub use ram_val_check::oracle as ram_val_check_oracle;
@@ -594,32 +568,6 @@ pub enum MetalError {
     InstructionClaimShape(#[from] instruction_claim_reduction::InstructionClaimShapeError),
     #[error(transparent)]
     InstructionClaimOpening(#[from] instruction_claim_reduction::InstructionClaimOpeningError),
-    #[error(transparent)]
-    HammingWeightSuccessor(#[from] hamming_weight_claim_reduction::HammingWeightSuccessorError),
-    #[error(
-        "Hamming-weight pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedHammingWeightExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    #[error(
-        "Hamming-weight pipeline `{pipeline}` needs {requested} threads, pipeline maximum is {maximum}"
-    )]
-    HammingWeightThreadgroupLimit {
-        pipeline: &'static str,
-        requested: usize,
-        maximum: usize,
-    },
-    #[error(
-        "Hamming-weight pipeline `{pipeline}` needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
-    )]
-    HammingWeightThreadgroupMemory {
-        pipeline: &'static str,
-        requested: u64,
-        maximum: u64,
-    },
     #[error("invalid resident instruction claim-reduction state: {0}")]
     InvalidInstructionClaimState(&'static str),
     #[error(
@@ -767,10 +715,6 @@ pub enum MetalError {
     },
     #[error("booleanity row cannot be represented by the packed Metal ABI")]
     InvalidBooleanityRow,
-    #[error(
-        "Booleanity bytecode support has {count} entries; expected a nonempty sorted set below {maximum}"
-    )]
-    InvalidBooleanityBytecodeSupport { count: usize, maximum: usize },
     #[error("booleanity needs a power-of-two row count of at least four, got {0}")]
     InvalidBooleanityRows(usize),
     #[error("booleanity chunk size must be a power of two in 2..=256, got {0}")]

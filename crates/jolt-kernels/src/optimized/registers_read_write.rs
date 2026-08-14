@@ -55,8 +55,6 @@ use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
 use jolt_witness::witnesses::WitnessEnv;
-#[cfg(all(feature = "metal", target_os = "macos"))]
-use jolt_witness::OwnedRows;
 #[cfg(feature = "parallel")]
 use jolt_witness::RandomAccessRows;
 use jolt_witness::{
@@ -142,53 +140,6 @@ pub(crate) struct PreparedRegisterEntries<F: Field> {
     rs2_indices: Vec<Option<u8>>,
     rd_indices: Vec<Option<u8>>,
     inc_table: Vec<F>,
-}
-
-#[cfg_attr(
-    not(all(feature = "metal", target_os = "macos")),
-    expect(
-        dead_code,
-        reason = "receipt accounting is consumed by the Metal prefetch"
-    )
-)]
-impl<F: Field> PreparedRegisterEntries<F> {
-    pub(crate) const fn cycles(&self) -> usize {
-        self.cycles
-    }
-
-    pub(crate) fn entries(&self) -> usize {
-        match &self.entries {
-            PreparedSparseEntries::Flat(entries) => entries.len(),
-            PreparedSparseEntries::Chunked(chunks) => {
-                chunks.iter().map(|entries| entries.len()).sum()
-            }
-        }
-    }
-
-    pub(crate) fn entry_chunks(&self) -> usize {
-        match &self.entries {
-            PreparedSparseEntries::Flat(_) => 1,
-            PreparedSparseEntries::Chunked(chunks) => chunks.len(),
-        }
-    }
-
-    pub(crate) fn heap_bytes(&self) -> usize {
-        let entries = match &self.entries {
-            PreparedSparseEntries::Flat(entries) => {
-                entries.capacity() * core::mem::size_of::<IndexedSparseEntry<F>>()
-            }
-            PreparedSparseEntries::Chunked(chunks) => {
-                chunks.iter().map(|entries| entries.len()).sum::<usize>()
-                    * core::mem::size_of::<IndexedSparseEntry<F>>()
-                    + chunks.len() * core::mem::size_of::<Box<[IndexedSparseEntry<F>]>>()
-            }
-        };
-        entries
-            + self.rs1_indices.capacity() * core::mem::size_of::<Option<u8>>()
-            + self.rs2_indices.capacity() * core::mem::size_of::<Option<u8>>()
-            + self.rd_indices.capacity() * core::mem::size_of::<Option<u8>>()
-            + self.inc_table.capacity() * core::mem::size_of::<F>()
-    }
 }
 
 impl<F: Field> StreamConsumer for PreparedRegisterEntries<F> {
@@ -860,39 +811,6 @@ impl OptimizedRegistersReadWrite {
         cycles: usize,
     ) -> Result<PreparedRegisterEntries<F>, KernelError<F>> {
         collect_register_entries(witness, cycles)
-    }
-
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    pub(crate) fn precompute_owned<F: Field>(
-        owned: OwnedRows,
-        cycles: usize,
-    ) -> Result<PreparedRegisterEntries<F>, KernelError<F>> {
-        if cycles > owned.cycles() {
-            return Err(KernelError::InvariantViolation {
-                reason: "registers read-write prefetch exceeds its owned witness domain",
-            });
-        }
-        let access = owned.view();
-        #[cfg(feature = "parallel")]
-        {
-            collect_register_entries_par(&access, cycles)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            let mut prepared = PreparedRegisterEntries {
-                cycles,
-                entries: PreparedSparseEntries::Flat(Vec::with_capacity(cycles * 3)),
-                rs1_indices: Vec::with_capacity(cycles),
-                rs2_indices: Vec::with_capacity(cycles),
-                rd_indices: Vec::with_capacity(cycles),
-                inc_table: Vec::with_capacity(cycles),
-            };
-            for row in 0..cycles {
-                let cycle = access.window::<RegisterCycleRow>(row)?;
-                prepared.consume(core::slice::from_ref(&cycle));
-            }
-            Ok(prepared)
-        }
     }
 
     pub(crate) fn prepare_precomputed<F: Field>(
@@ -2203,7 +2121,7 @@ mod tests {
         TraceFixture,
     };
     #[cfg(feature = "parallel")]
-    use super::{collect_register_entries_par_with, RegisterCycleRow};
+    use super::{collect_register_entries_par_with, PreparedSparseEntries, RegisterCycleRow};
     use super::{IndexedSparseEntry, OptimizedRegistersReadWrite, SmallLutIndex};
     use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
@@ -2250,8 +2168,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(extractions.load(Ordering::Relaxed), physical_rows);
-        assert_eq!(prepared.cycles(), cycles);
-        assert_eq!(prepared.entries(), 3 * physical_rows);
+        assert_eq!(prepared.cycles, cycles);
+        let entry_count = match &prepared.entries {
+            PreparedSparseEntries::Flat(entries) => entries.len(),
+            PreparedSparseEntries::Chunked(chunks) => {
+                chunks.iter().map(|entries| entries.len()).sum::<usize>()
+            }
+        };
+        assert_eq!(entry_count, 3 * physical_rows);
         assert!(prepared.rs1_indices[physical_rows..]
             .iter()
             .all(Option::is_none));

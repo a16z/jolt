@@ -2,13 +2,10 @@
 #define INSTRUCTION_READ_RAF_V3_TABLES 40u
 #define INSTRUCTION_READ_RAF_V3_TABLE_VALUES 41u
 #define INSTRUCTION_READ_RAF_V3_RAF_VALUES 2u
-#define INSTRUCTION_READ_RAF_V3_SEGMENTS 82u
 #define INSTRUCTION_READ_RAF_V3_RAF_LANES 3u
 #define INSTRUCTION_READ_RAF_V3_EXPLICIT_SUFFIX_LANES 3u
 #define INSTRUCTION_READ_RAF_V3_MAX_SUFFIXES 4u
-#define INSTRUCTION_READ_RAF_V3_JOB_LANES 6u
 #define INSTRUCTION_READ_RAF_V3_JOB_FIELDS 1536u
-#define INSTRUCTION_READ_RAF_V3_FLAG_COLUMNS 41u
 #define INSTRUCTION_READ_RAF_V3_WORDS 5u
 
 struct InstructionReadRafV3Lookup {
@@ -50,20 +47,6 @@ struct InstructionReadRafV3Table {
     uint segment_raf_one;
 };
 
-struct InstructionReadRafV3WeightParams {
-    uint rows;
-    uint e_in_length;
-    uint e_out_length;
-    uint e_in_log2;
-};
-
-struct InstructionReadRafV3PhaseParams {
-    uint suffix_len;
-    uint job_count;
-    uint condense;
-    uint reserved;
-};
-
 struct InstructionReadRafV3AtomPhaseParams {
     uint suffix_len;
     uint job_count;
@@ -87,13 +70,6 @@ struct InstructionReadRafV3AtomMassFinalizeParams {
     uint split_atoms;
     uint mass_partials;
     uint reserved;
-};
-
-struct InstructionReadRafV3FlagParams {
-    uint rows;
-    uint e_in_length;
-    uint e_out_length;
-    uint columns;
 };
 
 struct InstructionReadRafV3ReductionParams {
@@ -602,60 +578,6 @@ kernel void solinas_instruction_read_raf_v3_finalize_suffix(
     }
     output[(descriptor.output_start + suffix) * INSTRUCTION_READ_RAF_V3_BINS + chunk]
         = sum;
-}
-
-kernel void solinas_instruction_read_raf_v3_open_flags(
-    device const uchar* claim_columns [[buffer(0)]],
-    device const SolinasFp128* e_in [[buffer(1)]],
-    device const SolinasFp128* e_out [[buffer(2)]],
-    device SolinasFp128* partials [[buffer(3)]],
-    constant InstructionReadRafV3FlagParams& params [[buffer(4)]],
-    threadgroup atomic_uint* sums [[threadgroup(0)]],
-    uint x_out [[threadgroup_position_in_grid]],
-    uint tid [[thread_index_in_threadgroup]],
-    uint threads [[threads_per_threadgroup]])
-{
-    if (x_out >= params.e_out_length) {
-        return;
-    }
-    for (uint counter = tid;
-         counter < INSTRUCTION_READ_RAF_V3_FLAG_COLUMNS
-            * INSTRUCTION_READ_RAF_V3_WORDS;
-         counter += threads) {
-        atomic_store_explicit(&sums[counter], 0u, memory_order_relaxed);
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    uint block_start = x_out * params.e_in_length;
-    for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
-        uint row = block_start + x_in;
-        if (row >= params.rows) {
-            continue;
-        }
-        uchar packed = claim_columns[row];
-        uint table_plus_one = (uint)packed & 0x7fu;
-        if (table_plus_one != 0u
-            && table_plus_one <= INSTRUCTION_READ_RAF_V3_TABLES) {
-            solinas_deferred_atomic_add_5(
-                sums,
-                table_plus_one - 1u,
-                e_in[x_in]);
-        }
-        if ((packed & 0x80u) != 0u) {
-            solinas_deferred_atomic_add_5(
-                sums,
-                INSTRUCTION_READ_RAF_V3_TABLES,
-                e_in[x_in]);
-        }
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    for (uint column = tid; column < params.columns; column += threads) {
-        SolinasFp128 value = solinas_deferred_atomic_reduce_5(sums, column);
-        partials[column * params.e_out_length + x_out] = solinas_mul_wide(
-            e_out[x_out],
-            value);
-    }
 }
 
 kernel void solinas_instruction_read_raf_v3_reduce(

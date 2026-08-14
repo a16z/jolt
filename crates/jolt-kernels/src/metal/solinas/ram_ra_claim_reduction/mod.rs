@@ -34,31 +34,18 @@ pub const RAM_RA_CLAIM_AKITA_OFFSET: u32 = 0xffff_a7f7;
 pub const RAM_RA_CLAIM_TARGET_LOG_T: usize = 26;
 pub const RAM_RA_CLAIM_TARGET_ROWS: usize = 1 << RAM_RA_CLAIM_TARGET_LOG_T;
 pub const RAM_RA_CLAIM_TARGET_CPU_NS: u64 = 40_507_503;
-pub const RAM_RA_CLAIM_TARGET_FIVE_X_NS: u64 = 8_101_500;
 pub const RAM_RA_CLAIM_TARGET_ACCESSED_ROWS: usize = 22_000_000;
 pub const RAM_RA_CLAIM_TARGET_FIXED_NS: u64 = 1_500_000;
 
-/// Measured on the M4 Max full-width six-accumulator control, not this shader.
-pub const M4_MAX_SIX_ACCUMULATOR_FULL_WIDTH_PRODUCTS_PER_SECOND: u64 = 18_100_000_000;
 /// Measured on the M4 Max one-chain full-width probe matched to the compact gather.
 pub const M4_MAX_ONE_CHAIN_FULL_WIDTH_PRODUCTS_PER_SECOND: u64 = 45_709_000_000;
 /// Measured on the M4 Max large streaming-copy control.
 pub const M4_MAX_COPY_BYTES_PER_SECOND: u64 = 451_701_710_520;
 
-pub const BUILD_Q_PARTIALS_PIPELINE: &str = "solinas_ram_ra_claim_build_q_partials";
-pub const BUILD_Q_PARTIALS_EXPLICIT_PIPELINE: &str =
-    "solinas_ram_ra_claim_build_q_partials_explicit";
 pub const BUILD_Q_PARTIALS_COMPACT_PIPELINE: &str = "solinas_ram_ra_claim_build_q_partials_compact";
 pub const REDUCE_Q_PIPELINE: &str = "solinas_ram_ra_claim_reduce_q";
-pub const GATHER_H_PIPELINE: &str = "solinas_ram_ra_claim_gather_h";
 pub const GATHER_H_COMPACT_PIPELINE: &str = "solinas_ram_ra_claim_gather_h_compact";
 
-pub const Q_BUILD_ADDRESSES_SLOT: u64 = 0;
-pub const Q_BUILD_EQ_ADDRESS_SLOT: u64 = 1;
-pub const Q_BUILD_EQ_HI_SLOT: u64 = 2;
-pub const Q_BUILD_PARTIALS_SLOT: u64 = 3;
-pub const Q_BUILD_COUNTERS_SLOT: u64 = 4;
-pub const Q_BUILD_PARAMS_SLOT: u64 = 5;
 pub const Q_COMPACT_BUILD_ENTRIES_SLOT: u64 = 0;
 pub const Q_COMPACT_BUILD_OFFSETS_SLOT: u64 = 1;
 pub const Q_COMPACT_BUILD_EQ_ADDRESS_SLOT: u64 = 2;
@@ -221,38 +208,11 @@ impl RamRaClaimShape {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum RamRaClaimQAccumulator {
-    Array,
-    Explicit,
-    #[default]
-    Compact,
-}
-
-impl RamRaClaimQAccumulator {
-    pub const fn pipeline(self) -> &'static str {
-        match self {
-            Self::Array => BUILD_Q_PARTIALS_PIPELINE,
-            Self::Explicit => BUILD_Q_PARTIALS_EXPLICIT_PIPELINE,
-            Self::Compact => BUILD_Q_PARTIALS_COMPACT_PIPELINE,
-        }
-    }
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Array => "array",
-            Self::Explicit => "explicit",
-            Self::Compact => "compact",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RamRaClaimConfig {
     pub threads: usize,
     pub q_partitions: usize,
     pub trace_cutoff: usize,
-    pub q_accumulator: RamRaClaimQAccumulator,
 }
 
 impl Default for RamRaClaimConfig {
@@ -261,7 +221,6 @@ impl Default for RamRaClaimConfig {
             threads: RAM_RA_CLAIM_SIMD_WIDTH,
             q_partitions: RAM_RA_CLAIM_Q_PARTITIONS,
             trace_cutoff: RAM_RA_CLAIM_DEFAULT_TRACE_CUTOFF,
-            q_accumulator: RamRaClaimQAccumulator::Compact,
         }
     }
 }

@@ -132,16 +132,6 @@ fn log26_linear_q_accounting_is_exact() {
     let work = plan.work().unwrap();
     assert_eq!(work.half_width_terms, 201_326_592);
     assert_eq!(work.full_products, 16_384);
-    assert_eq!(work.compulsory_bytes, 1_610_874_880);
-    let ceiling = work
-        .calibrated_ceiling(RegistersClaimRoofRates::CONSERVATIVE, 80)
-        .unwrap();
-    assert_eq!(ceiling.half_width_floor_ns, 7_663_162);
-    assert_eq!(ceiling.full_product_floor_ns, 906);
-    assert_eq!(ceiling.arithmetic_floor_ns, 7_664_068);
-    assert_eq!(ceiling.traffic_floor_ns, 3_566_236);
-    assert_eq!(ceiling.roof_floor_ns, 7_664_068);
-    assert_eq!(ceiling.utilization_cap_ns, 9_580_085);
 }
 
 #[test]
@@ -228,42 +218,34 @@ fn metal_linear_q_matches_the_unfactored_oracle() {
     ));
     for gamma in [field(0), field(1), -field(1), field(0xfeed_face_cafe_beef)] {
         let expected = build_dense_reference_q(geometry, planes, &tau, gamma).unwrap();
-        for accumulator in [
-            RegistersClaimAccumulator::Deferred224,
-            RegistersClaimAccumulator::Canonical128,
-        ] {
-            let invocation = context
-                .prepare_registers_claim_linear_q(
-                    &resident,
-                    &tau,
-                    gamma,
-                    RegistersClaimKernelConfig {
-                        accumulator,
-                        ..RegistersClaimKernelConfig::default()
-                    },
-                )
-                .unwrap();
+        let invocation = context
+            .prepare_registers_claim_linear_q(
+                &resident,
+                &tau,
+                gamma,
+                RegistersClaimKernelConfig::default(),
+            )
+            .unwrap();
 
-            assert_eq!(invocation.execute_device_buffer_allocations(), 0);
-            assert_eq!(
-                invocation.source_allocation_identities(),
-                resident.allocation_identities()
-            );
-            assert!(!invocation
-                .source_allocation_identities()
-                .contains(&invocation.output_allocation_identity()));
-            let observation = invocation.execute_timed().unwrap();
-            assert_eq!(observation.q, expected.q);
-            assert_eq!(
-                observation.checksum,
-                registers_claim_q_checksum(&expected.q)
-            );
-            assert_eq!(observation.useful_half_width_terms, 3 * rows as u64);
-            assert_eq!(
-                observation.full_products,
-                2 * geometry.prefix_elements() as u64
-            );
-        }
+        assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+        assert_eq!(
+            invocation.source_allocation_identities(),
+            resident.allocation_identities()
+        );
+        assert!(!invocation
+            .source_allocation_identities()
+            .contains(&invocation.output_allocation_identity()));
+        let observation = invocation.execute_timed().unwrap();
+        assert_eq!(observation.q, expected.q);
+        assert_eq!(
+            observation.checksum,
+            registers_claim_q_checksum(&expected.q)
+        );
+        assert_eq!(observation.useful_half_width_terms, 3 * rows as u64);
+        assert_eq!(
+            observation.full_products,
+            2 * geometry.prefix_elements() as u64
+        );
     }
 
     let prefix_challenges = challenge_point(geometry.prefix_vars());

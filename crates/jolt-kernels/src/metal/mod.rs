@@ -27,14 +27,12 @@ mod spartan_product;
 mod spartan_shift;
 
 pub use backend::{MetalBackend, MetalConfig};
-pub use booleanity::{
-    BooleanityAddressImplementation, BooleanityAddressMetalConfig, BooleanityMetalConfig,
-};
+pub use booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
 pub use bytecode_read_raf::{
     BytecodeReadRafAddressImplementation, BytecodeReadRafAddressMetalConfig,
     BytecodeReadRafMetalConfig, BytecodeReadRafResidentRows,
 };
-pub use hamming_weight_claim_reduction::{HammingWeightImplementation, HammingWeightMetalConfig};
+pub use hamming_weight_claim_reduction::HammingWeightMetalConfig;
 pub use instruction_claim_reduction::InstructionClaimReductionMetalConfig;
 pub use instruction_input::{InstructionInputDenseStorageMode, InstructionInputMetalConfig};
 pub use instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
@@ -50,7 +48,6 @@ pub use ram_val_check::RamValCheckMetalConfig;
 pub use registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
 };
-pub use registers_read_write::RegistersReadWriteMetalConfig;
 pub use registers_val_evaluation::{
     RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
 };

@@ -201,8 +201,6 @@ const _: [(); 4] = [(); align_of::<InstructionInputSuccessorDenseMessageParams>(
 pub enum InstructionInputSuccessorError {
     #[error("InstructionInput successor requires a power-of-two row count of at least four")]
     InvalidRows,
-    #[error("InstructionInput successor CPU cutoff must be a power of two no larger than N/2")]
-    InvalidCutoff,
     #[error("InstructionInput successor geometry exceeds the shader's 32-bit index space")]
     ShaderIndexOverflow,
     #[error("InstructionInput successor geometry arithmetic overflowed")]
@@ -227,10 +225,4 @@ pub enum InstructionInputSuccessorError {
     InvalidImmediateEncoding,
     #[error("InstructionInput successor load row contains a nonzero effective rs2")]
     UnmaskedLoadRs2,
-    #[error("InstructionInput successor timing sample is zero")]
-    ZeroTimingSample,
-    #[error("InstructionInput successor gate requires five alternating pairs (three CPU-first, two Metal-first)")]
-    InvalidGateTopology,
-    #[error("InstructionInput successor roof rate or utilization is zero")]
-    ZeroRoof,
 }

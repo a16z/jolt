@@ -20,16 +20,10 @@ pub const SPARTAN_SHIFT_SIMD_WIDTH: usize = 32;
 pub const SPARTAN_SHIFT_MAX_THREADS_PER_THREADGROUP: usize = 1024;
 pub const SPARTAN_SHIFT_OUTPUT_COLUMNS: usize = 5;
 pub const SPARTAN_SHIFT_PREFIX_PAIRS: usize = 4;
-pub const SPARTAN_SHIFT_FLAG_PLANES: usize = 3;
 pub const SPARTAN_SHIFT_FLAG_ROWS_PER_WORD: usize = 32;
 pub const SPARTAN_SHIFT_TARGET_LOG_T: usize = 26;
-pub const SPARTAN_SHIFT_TARGET_ROWS: usize = 1 << SPARTAN_SHIFT_TARGET_LOG_T;
-pub const SPARTAN_SHIFT_CPU_MEDIAN_NS: u64 = 131_051_624;
-pub const SPARTAN_SHIFT_FIVE_X_CAP_NS: u64 = 26_210_324;
-pub const SPARTAN_SHIFT_EIGHT_X_CAP_NS: u64 = 16_381_453;
 
 pub const BUILD_MIXED_PIPELINE: &str = "solinas_spartan_shift_build_mixed_partials";
-pub const BUILD_EXPANDED_PIPELINE: &str = "solinas_spartan_shift_build_expanded_partials";
 pub const REDUCE_PREFIX_PIPELINE: &str = "solinas_spartan_shift_reduce_prefix";
 pub const FOLD_NATIVE_PIPELINE: &str = "solinas_spartan_shift_fold_native";
 
@@ -219,26 +213,10 @@ impl SpartanShiftGeometry {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SpartanShiftPrefixStrategy {
-    Mixed,
-    ExpandedHalfWidth,
-}
-
-impl SpartanShiftPrefixStrategy {
-    const fn high_weight_columns(self) -> usize {
-        match self {
-            Self::Mixed => 2,
-            Self::ExpandedHalfWidth => 5,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanShiftPlan {
     pub geometry: SpartanShiftGeometry,
     pub config: SpartanShiftKernelConfig,
     pub params: SpartanShiftParams,
-    pub strategy: SpartanShiftPrefixStrategy,
     pub storage: SpartanShiftStorage,
     pub cost: SpartanShiftCost,
 }
@@ -247,18 +225,16 @@ impl SpartanShiftPlan {
     pub fn new(
         rows: usize,
         config: SpartanShiftKernelConfig,
-        strategy: SpartanShiftPrefixStrategy,
     ) -> Result<Self, SpartanShiftPlanError> {
         let geometry = SpartanShiftGeometry::new(rows)?;
         let config = config.validate()?;
         let params = geometry.params(config)?;
-        let storage = storage(geometry, config, strategy)?;
-        let cost = cost(geometry, config, strategy)?;
+        let storage = storage(geometry, config)?;
+        let cost = cost(geometry, config)?;
         Ok(Self {
             geometry,
             config,
             params,
-            strategy,
             storage,
             cost,
         })
@@ -297,7 +273,6 @@ pub struct SpartanShiftCost {
     pub build_row_evaluations: usize,
     pub mixed_full_products: usize,
     pub mixed_half_products: usize,
-    pub expanded_half_products: usize,
     pub fold_half_products: usize,
     pub prefix_host_products: usize,
     pub suffix_host_products: usize,
@@ -314,7 +289,6 @@ pub struct SpartanShiftCost {
 fn storage(
     geometry: SpartanShiftGeometry,
     config: SpartanShiftKernelConfig,
-    strategy: SpartanShiftPrefixStrategy,
 ) -> Result<SpartanShiftStorage, SpartanShiftPlanError> {
     let high_tiles = geometry.suffix_elements / config.high_tile_elements;
     let partials = checked_product("prefix partials", geometry.prefix_elements, high_tiles)?;
@@ -324,11 +298,7 @@ fn storage(
         geometry.flag_words,
         size_of::<SpartanShiftFlagWord>(),
     )?;
-    let high_weight_bytes = checked_bytes(
-        "high weights",
-        strategy.high_weight_columns() * geometry.suffix_elements,
-        16,
-    )?;
+    let high_weight_bytes = checked_bytes("high weights", 2 * geometry.suffix_elements, 16)?;
     let low_weight_bytes = checked_bytes("low weights", geometry.prefix_elements, 16)?;
     let partial_bytes =
         checked_bytes("prefix partials", SPARTAN_SHIFT_PREFIX_PAIRS * partials, 16)?;
@@ -404,7 +374,6 @@ fn coalesced_halo_flag_words(
 fn cost(
     geometry: SpartanShiftGeometry,
     config: SpartanShiftKernelConfig,
-    strategy: SpartanShiftPrefixStrategy,
 ) -> Result<SpartanShiftCost, SpartanShiftPlanError> {
     let high_tiles = geometry.suffix_elements / config.high_tile_elements;
     let internal_halos = high_tiles - 1;
@@ -420,7 +389,6 @@ fn cost(
         .checked_add(successor_rows)
         .ok_or(SpartanShiftPlanError::SizeOverflow)?;
     let mixed_half_products = build_row_evaluations;
-    let expanded_half_products = checked_product("expanded half products", 2, mixed_full_products)?;
     let fold_half_products = checked_product("fold half products", 2, geometry.rows)?;
     let prefix_host_products = geometry
         .prefix_elements
@@ -433,7 +401,7 @@ fn cost(
         .and_then(|products| products.checked_sub(19))
         .ok_or(SpartanShiftPlanError::SizeOverflow)?;
 
-    let storage = storage(geometry, config, strategy)?;
+    let storage = storage(geometry, config)?;
     let partial_read_write = checked_product("partial read/write", storage.partial_bytes, 2)?;
     let build_unique_bytes = checked_sum(
         "build unique traffic",
@@ -479,7 +447,6 @@ fn cost(
         build_row_evaluations,
         mixed_full_products,
         mixed_half_products,
-        expanded_half_products,
         fold_half_products,
         prefix_host_products,
         suffix_host_products,
@@ -788,27 +755,6 @@ pub fn mixed_high_weights<F: Field>(
             .into_iter()
             .map(|weight| gamma_four * weight),
     );
-    Ok(weights)
-}
-
-/// Expanded shader weight order: outer equality scaled by gamma powers zero
-/// through three, followed by product equality scaled by gamma power four.
-pub fn expanded_high_weights<F: Field>(
-    geometry: SpartanShiftGeometry,
-    r_outer: &[F],
-    r_product: &[F],
-    gamma: F,
-) -> Result<Vec<F>, SpartanShiftOracleError> {
-    let (r_outer_hi, _) = split_point(geometry, r_outer)?;
-    let (r_product_hi, _) = split_point(geometry, r_product)?;
-    let outer = EqPolynomial::<F>::evals(r_outer_hi, None);
-    let product = EqPolynomial::<F>::evals(r_product_hi, None);
-    let gamma_powers = gamma_powers(gamma);
-    let mut weights = Vec::with_capacity(5 * geometry.suffix_elements);
-    for scale in gamma_powers.iter().take(4) {
-        weights.extend(outer.iter().map(|weight| *scale * *weight));
-    }
-    weights.extend(product.into_iter().map(|weight| gamma_powers[4] * weight));
     Ok(weights)
 }
 
@@ -1153,21 +1099,6 @@ pub fn final_outputs<F: Field>(
     })
 }
 
-pub fn output_term<F: Field>(
-    outputs: SpartanShiftOutputs<F>,
-    eq_plus_one_outer: F,
-    eq_plus_one_product: F,
-    gamma: F,
-) -> F {
-    let gamma_powers = gamma_powers(gamma);
-    eq_plus_one_outer
-        * (outputs.unexpanded_pc
-            + gamma_powers[1] * outputs.pc
-            + gamma_powers[2] * outputs.is_virtual
-            + gamma_powers[3] * outputs.is_first_in_sequence)
-        + eq_plus_one_product * gamma_powers[4] * (F::one() - outputs.is_noop)
-}
-
 fn validate_oracle_inputs<F: Field>(
     geometry: SpartanShiftGeometry,
     planes: SpartanShiftNativePlanes<'_>,
@@ -1439,7 +1370,6 @@ mod tests {
         };
         for name in [
             BUILD_MIXED_PIPELINE,
-            BUILD_EXPANDED_PIPELINE,
             REDUCE_PREFIX_PIPELINE,
             FOLD_NATIVE_PIPELINE,
         ] {
@@ -1494,26 +1424,17 @@ mod tests {
     }
 
     #[test]
-    fn target_plan_prices_packed_halos_for_both_builds() {
+    fn target_plan_prices_packed_halos() {
         let geometry = SpartanShiftGeometry::target();
         let config = SpartanShiftKernelConfig::default();
-        let mixed = SpartanShiftPlan::new(geometry.rows, config, SpartanShiftPrefixStrategy::Mixed)
-            .unwrap();
-        let expanded = SpartanShiftPlan::new(
-            geometry.rows,
-            config,
-            SpartanShiftPrefixStrategy::ExpandedHalfWidth,
-        )
-        .unwrap();
+        let plan = SpartanShiftPlan::new(geometry.rows, config).unwrap();
 
-        assert_eq!(mixed.cost.halo_rows, 516_096);
-        assert_eq!(mixed.cost.halo_flag_words, 16_128);
-        assert_eq!(mixed.cost.build_halo_value_bytes, 8_257_536);
-        assert_eq!(mixed.cost.build_halo_flag_bytes, 193_536);
-        assert_eq!(mixed.cost.build_unique_bytes, 1_166_802_944);
-        assert_eq!(mixed.cost.build_coalesced_bytes_with_halo, 1_175_254_016);
-        assert_eq!(expanded.cost.build_unique_bytes, 1_167_196_160);
-        assert_eq!(expanded.cost.build_coalesced_bytes_with_halo, 1_175_647_232);
+        assert_eq!(plan.cost.halo_rows, 516_096);
+        assert_eq!(plan.cost.halo_flag_words, 16_128);
+        assert_eq!(plan.cost.build_halo_value_bytes, 8_257_536);
+        assert_eq!(plan.cost.build_halo_flag_bytes, 193_536);
+        assert_eq!(plan.cost.build_unique_bytes, 1_166_802_944);
+        assert_eq!(plan.cost.build_coalesced_bytes_with_halo, 1_175_254_016);
 
         let producer = SpartanShiftProducerPlan::new(geometry).unwrap();
         assert_eq!(producer.row_extractions, 67_108_864);
@@ -1690,47 +1611,35 @@ mod tests {
         let expected_prefix =
             build_prefix_successor(geometry, planes, &r_outer, &r_product, gamma).unwrap();
 
-        for strategy in [
-            SpartanShiftPrefixStrategy::Mixed,
-            SpartanShiftPrefixStrategy::ExpandedHalfWidth,
-        ] {
-            let invocation = context
-                .prepare_spartan_shift_prefix(
-                    &rows,
-                    &r_outer,
-                    &r_product,
-                    gamma,
-                    SpartanShiftKernelConfig::default(),
-                    strategy,
-                )
-                .unwrap();
-            assert_eq!(
-                invocation.source_allocation_identities(),
-                source_allocations
-            );
-            assert_eq!(invocation.execute_device_buffer_allocations(), 0);
-            let observation = match strategy {
-                SpartanShiftPrefixStrategy::Mixed => {
-                    let pending = invocation.submit().unwrap();
-                    let (invocation, observation) = pending.join().unwrap();
-                    assert_eq!(
-                        invocation.source_allocation_identities(),
-                        source_allocations
-                    );
-                    observation
-                }
-                SpartanShiftPrefixStrategy::ExpandedHalfWidth => invocation.execute().unwrap(),
-            };
-            assert_eq!(observation.q, expected_prefix.q, "strategy {strategy:?}");
-            assert!(!observation.gpu_active.is_zero());
-            assert!(observation.submit_wall <= observation.wall);
-            assert!(observation.overlap_wall <= observation.wall);
-            assert!(observation.join_wall <= observation.wall);
-            assert!(
-                observation.submit_wall + observation.overlap_wall + observation.join_wall
-                    <= observation.wall
-            );
-        }
+        let invocation = context
+            .prepare_spartan_shift_prefix(
+                &rows,
+                &r_outer,
+                &r_product,
+                gamma,
+                SpartanShiftKernelConfig::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            invocation.source_allocation_identities(),
+            source_allocations
+        );
+        assert_eq!(invocation.execute_device_buffer_allocations(), 0);
+        let pending = invocation.submit().unwrap();
+        let (invocation, observation) = pending.join().unwrap();
+        assert_eq!(
+            invocation.source_allocation_identities(),
+            source_allocations
+        );
+        assert_eq!(observation.q, expected_prefix.q);
+        assert!(!observation.gpu_active.is_zero());
+        assert!(observation.submit_wall <= observation.wall);
+        assert!(observation.overlap_wall <= observation.wall);
+        assert!(observation.join_wall <= observation.wall);
+        assert!(
+            observation.submit_wall + observation.overlap_wall + observation.join_wall
+                <= observation.wall
+        );
 
         let prefix_challenges = point(geometry.prefix_vars, 0xD44F_2004);
         let expected_fold = fold_native_prefix(geometry, planes, &prefix_challenges).unwrap();

@@ -1,11 +1,6 @@
 #define ADDRESS_SUFFIX_BINS 256u
 #define ADDRESS_SUFFIX_WORDS 5u
 
-struct AddressSuffixParams {
-    uint job_count;
-    uint table_count;
-};
-
 struct AddressSuffixJob {
     uint start;
     uint end;

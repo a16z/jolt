@@ -87,13 +87,6 @@ use crate::{
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
-#[cfg(all(feature = "metal", target_os = "macos"))]
-const BYTECODE_ADDRESS_COUNT: usize = 1 << 13;
-#[cfg(all(feature = "metal", target_os = "macos"))]
-const BYTECODE_ADDRESS_SUPPORT_WORDS: usize = BYTECODE_ADDRESS_COUNT / u64::BITS as usize;
-#[cfg(all(feature = "metal", target_os = "macos"))]
-const BYTECODE_ADDRESS_INNER_LENGTH: usize = 1 << 15;
-
 const _: () = assert!(
     LookupTableKind::<RISCV_XLEN>::COUNT < u8::MAX as usize,
     "InstructionCycleRow packs lookup table indices as u8"
@@ -420,7 +413,6 @@ pub(crate) fn prepare_metal_instruction_read_raf(
     witness: &dyn JoltWitnessPlane<AkitaField>,
     inputs: ProverInputs<'_, AkitaField, InstructionReadRaf<AkitaField>>,
     external_address_phases: bool,
-    collect_bytecode_support: bool,
 ) -> Result<OptimizedInstructionReadRafKernel<AkitaField>, KernelError<AkitaField>> {
     let dimensions = inputs.relation.dimensions();
     let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(collect_instruction_cycle_rows(
@@ -434,7 +426,6 @@ pub(crate) fn prepare_metal_instruction_read_raf(
         rows,
         inputs.challenges.gamma,
         external_address_phases,
-        collect_bytecode_support,
     )
 }
 
@@ -758,12 +749,6 @@ pub struct OptimizedInstructionReadRafKernel<F: Field> {
     /// Per-table cycle buckets (`u32` cycle indices), by
     /// `LookupTableKind::index()`.
     buckets: Vec<Vec<u32>>,
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    bytecode_outer_support_offsets: Vec<u32>,
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    bytecode_outer_support_addresses: Vec<u32>,
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    bytecode_address_out_of_range: bool,
     /// Condensed per-cycle eq weights (see the reference kernel).
     u_evals: Vec<F>,
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -806,12 +791,6 @@ impl<F: Field> allocative::Allocative for OptimizedInstructionReadRafKernel<F> {
         visitor.visit_simple(
             allocative::Key::new("buckets"),
             nested_vec_heap_bytes(&self.buckets),
-        );
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        visitor.visit_simple(
-            allocative::Key::new("bytecode_outer_support"),
-            vec_heap_bytes(&self.bytecode_outer_support_offsets)
-                + vec_heap_bytes(&self.bytecode_outer_support_addresses),
         );
         visitor.visit_simple(
             allocative::Key::new("u_evals"),
@@ -868,102 +847,28 @@ impl<F: Field> allocative::Allocative for OptimizedInstructionReadRafKernel<F> {
 
 struct CycleBucketBuild {
     buckets: Vec<Vec<u32>>,
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    bytecode_outer_support_offsets: Vec<u32>,
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    bytecode_outer_support_addresses: Vec<u32>,
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    bytecode_address_out_of_range: bool,
 }
 
 #[cfg(feature = "parallel")]
 struct CycleBucketChunkCounts {
     table_counts: Vec<usize>,
     invalid_table: bool,
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    bytecode_outer_address_words: Vec<[u64; BYTECODE_ADDRESS_SUPPORT_WORDS]>,
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    bytecode_address_out_of_range: bool,
-}
-
-#[cfg(all(feature = "metal", target_os = "macos"))]
-fn record_bytecode_address(
-    words: &mut [u64; BYTECODE_ADDRESS_SUPPORT_WORDS],
-    out_of_range: &mut bool,
-    row: &InstructionCycleRow,
-) {
-    let address = row.mapped_pc().unwrap_or(0);
-    if address < BYTECODE_ADDRESS_COUNT {
-        words[address / u64::BITS as usize] |= 1 << (address % u64::BITS as usize);
-    } else {
-        *out_of_range = true;
-    }
-}
-
-#[cfg(all(feature = "metal", target_os = "macos"))]
-fn active_bytecode_addresses(words: &[u64; BYTECODE_ADDRESS_SUPPORT_WORDS]) -> Vec<u32> {
-    words
-        .iter()
-        .enumerate()
-        .flat_map(|(word_index, word)| {
-            (0..u64::BITS as usize).filter_map(move |bit| {
-                (word & (1 << bit) != 0).then_some((word_index * u64::BITS as usize + bit) as u32)
-            })
-        })
-        .collect()
-}
-
-#[cfg(all(feature = "metal", target_os = "macos"))]
-fn append_outer_bytecode_support(
-    words: &[u64; BYTECODE_ADDRESS_SUPPORT_WORDS],
-    offsets: &mut Vec<u32>,
-    addresses: &mut Vec<u32>,
-) {
-    addresses.extend(active_bytecode_addresses(words));
-    offsets.push(addresses.len() as u32);
 }
 
 fn build_cycle_buckets<F: Field>(
     rows: &[InstructionCycleRow],
-    collect_bytecode_support: bool,
 ) -> Result<CycleBucketBuild, KernelError<F>> {
     let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
-    #[cfg(not(all(feature = "metal", target_os = "macos")))]
-    let _ = collect_bytecode_support;
 
     #[cfg(feature = "parallel")]
     {
-        let natural_chunk_size = rows.len().div_ceil(rayon::current_num_threads()).max(1);
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        let chunk_size = if collect_bytecode_support {
-            natural_chunk_size
-                .div_ceil(BYTECODE_ADDRESS_INNER_LENGTH)
-                .max(1)
-                * BYTECODE_ADDRESS_INNER_LENGTH
-        } else {
-            natural_chunk_size
-        };
-        #[cfg(not(all(feature = "metal", target_os = "macos")))]
-        let chunk_size = natural_chunk_size;
+        let chunk_size = rows.len().div_ceil(rayon::current_num_threads()).max(1);
         let chunk_counts: Vec<CycleBucketChunkCounts> = rows
             .par_chunks(chunk_size)
             .map(|chunk| {
                 let mut counts = vec![0; num_tables];
                 let mut invalid = false;
-                #[cfg(all(feature = "metal", target_os = "macos"))]
-                let mut bytecode_outer_address_words = if collect_bytecode_support {
-                    vec![
-                        [0; BYTECODE_ADDRESS_SUPPORT_WORDS];
-                        chunk.len().div_ceil(BYTECODE_ADDRESS_INNER_LENGTH)
-                    ]
-                } else {
-                    Vec::new()
-                };
-                #[cfg(all(feature = "metal", target_os = "macos"))]
-                let mut bytecode_address_out_of_range = false;
-                for (index, row) in chunk.iter().enumerate() {
-                    #[cfg(not(all(feature = "metal", target_os = "macos")))]
-                    let _ = index;
+                for row in chunk {
                     if let Some(table) = row.table_index() {
                         if let Some(count) = counts.get_mut(table) {
                             *count += 1;
@@ -971,23 +876,10 @@ fn build_cycle_buckets<F: Field>(
                             invalid = true;
                         }
                     }
-                    #[cfg(all(feature = "metal", target_os = "macos"))]
-                    if collect_bytecode_support {
-                        record_bytecode_address(
-                            &mut bytecode_outer_address_words
-                                [index / BYTECODE_ADDRESS_INNER_LENGTH],
-                            &mut bytecode_address_out_of_range,
-                            row,
-                        );
-                    }
                 }
                 CycleBucketChunkCounts {
                     table_counts: counts,
                     invalid_table: invalid,
-                    #[cfg(all(feature = "metal", target_os = "macos"))]
-                    bytecode_outer_address_words,
-                    #[cfg(all(feature = "metal", target_os = "macos"))]
-                    bytecode_address_out_of_range,
                 }
             })
             .collect();
@@ -996,24 +888,6 @@ fn build_cycle_buckets<F: Field>(
                 reason: "stage-5 row selects an unknown lookup table",
             });
         }
-
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        let (
-            bytecode_outer_support_offsets,
-            bytecode_outer_support_addresses,
-            bytecode_address_out_of_range,
-        ) = {
-            let mut offsets = vec![0];
-            let mut addresses = Vec::new();
-            let mut out_of_range = false;
-            for chunk in &chunk_counts {
-                for words in &chunk.bytecode_outer_address_words {
-                    append_outer_bytecode_support(words, &mut offsets, &mut addresses);
-                }
-                out_of_range |= chunk.bytecode_address_out_of_range;
-            }
-            (offsets, addresses, out_of_range)
-        };
 
         let mut totals = vec![0; num_tables];
         let chunk_offsets: Vec<Vec<usize>> = chunk_counts
@@ -1058,32 +932,13 @@ fn build_cycle_buckets<F: Field>(
             // SAFETY: the fill writes every slot in each exact-capacity bucket.
             unsafe { bucket.set_len(count) };
         }
-        Ok(CycleBucketBuild {
-            buckets,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_outer_support_offsets,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_outer_support_addresses,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_address_out_of_range,
-        })
+        Ok(CycleBucketBuild { buckets })
     }
 
     #[cfg(not(feature = "parallel"))]
     {
         let mut counts = vec![0; num_tables];
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        let mut bytecode_outer_address_words = if collect_bytecode_support {
-            vec![
-                [0; BYTECODE_ADDRESS_SUPPORT_WORDS];
-                rows.len().div_ceil(BYTECODE_ADDRESS_INNER_LENGTH)
-            ]
-        } else {
-            Vec::new()
-        };
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        let mut bytecode_address_out_of_range = false;
-        for (index, row) in rows.iter().enumerate() {
+        for row in rows {
             if let Some(table) = row.table_index() {
                 let count = counts
                     .get_mut(table)
@@ -1092,14 +947,6 @@ fn build_cycle_buckets<F: Field>(
                     })?;
                 *count += 1;
             }
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            if collect_bytecode_support {
-                record_bytecode_address(
-                    &mut bytecode_outer_address_words[index / BYTECODE_ADDRESS_INNER_LENGTH],
-                    &mut bytecode_address_out_of_range,
-                    row,
-                );
-            }
         }
         let mut buckets: Vec<Vec<u32>> = counts.into_iter().map(Vec::with_capacity).collect();
         for (cycle, row) in rows.iter().enumerate() {
@@ -1107,24 +954,7 @@ fn build_cycle_buckets<F: Field>(
                 buckets[table].push(cycle as u32);
             }
         }
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        let (bytecode_outer_support_offsets, bytecode_outer_support_addresses) = {
-            let mut offsets = vec![0];
-            let mut addresses = Vec::new();
-            for words in &bytecode_outer_address_words {
-                append_outer_bytecode_support(words, &mut offsets, &mut addresses);
-            }
-            (offsets, addresses)
-        };
-        Ok(CycleBucketBuild {
-            buckets,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_outer_support_offsets,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_outer_support_addresses,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_address_out_of_range,
-        })
+        Ok(CycleBucketBuild { buckets })
     }
 }
 
@@ -1135,7 +965,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
-        Self::new_inner(dimensions, r_reduction, rows, gamma, false, false)
+        Self::new_inner(dimensions, r_reduction, rows, gamma, false)
     }
 
     fn new_inner(
@@ -1144,7 +974,6 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
         rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
         external_address_phases: bool,
-        collect_bytecode_support: bool,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
         let log_t = dimensions.log_t();
@@ -1182,7 +1011,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
-        let bucket_build = build_cycle_buckets(&rows, collect_bytecode_support)?;
+        let bucket_build = build_cycle_buckets(&rows)?;
 
         let mut kernel = Self {
             dimensions,
@@ -1190,12 +1019,6 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             r_reduction: r_reduction.to_vec(),
             rows,
             buckets: bucket_build.buckets,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_outer_support_offsets: bucket_build.bytecode_outer_support_offsets,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_outer_support_addresses: bucket_build.bytecode_outer_support_addresses,
-            #[cfg(all(feature = "metal", target_os = "macos"))]
-            bytecode_address_out_of_range: bucket_build.bytecode_address_out_of_range,
             u_evals: eq_table(r_reduction),
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
@@ -1982,9 +1805,6 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
             r_reduction: r_reduction.to_vec(),
             rows: Arc::new(Vec::new()),
             buckets: Vec::new(),
-            bytecode_outer_support_offsets: Vec::new(),
-            bytecode_outer_support_addresses: Vec::new(),
-            bytecode_address_out_of_range: false,
             u_evals: Vec::new(),
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
@@ -2015,18 +1835,7 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
                 "resident Stage-1 rows must be borrowed from their owner".to_owned(),
             ));
         }
-        if self.bytecode_outer_support_offsets.len() <= 1 {
-            return context
-                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&self.rows));
-        }
-        if self.bytecode_address_out_of_range {
-            return Err(MetalError::InvalidBooleanityRow);
-        }
-        context.prepare_booleanity_rows_with_bytecode_support(
-            InstructionCycleRow::metal_booleanity_rows(&self.rows),
-            &self.bytecode_outer_support_offsets,
-            &self.bytecode_outer_support_addresses,
-        )
+        context.prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&self.rows))
     }
 
     pub(crate) fn metal_prepare_address_sequence(
@@ -2733,7 +2542,7 @@ mod tests {
     #[test]
     fn cycle_buckets_preserve_cycle_order() {
         let rows = pack(&fixture_rows(9, 0xB0C7));
-        let actual = build_cycle_buckets::<Fr>(&rows, false).unwrap();
+        let actual = build_cycle_buckets::<Fr>(&rows).unwrap();
         let mut expected = vec![Vec::new(); LookupTableKind::<RISCV_XLEN>::COUNT];
         for (cycle, row) in rows.iter().enumerate() {
             if let Some(table) = row.table_index() {
@@ -2965,7 +2774,6 @@ mod tests {
             Arc::new(pack(&rows)),
             gamma,
             use_metal_address,
-            true,
         )
         .unwrap();
         let mut expected = OptimizedInstructionReadRafKernel::new(

@@ -10,11 +10,9 @@ use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhas
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
-use super::hamming_weight_claim_reduction::HammingWeightImplementation;
 use super::solinas::{
-    BooleanityAddressPushforwardConfig, BooleanityAddressSuccessorConfig,
-    BooleanityAddressSuccessorRuntimeError, BooleanityRows, BooleanitySelector, BooleanitySequence,
-    BooleanitySequenceConfig, HammingHotRows, MetalError, BOOLEANITY_SOURCE_ROW_BYTES,
+    BooleanityAddressPushforwardConfig, BooleanityRows, BooleanitySequence,
+    BooleanitySequenceConfig, MetalError, BOOLEANITY_SOURCE_ROW_BYTES,
 };
 use crate::optimized::booleanity::{
     prepare_metal_booleanity_cycle, prepare_optimized_booleanity_cycle, BooleanityAddressMetalPlan,
@@ -26,23 +24,14 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BooleanityAddressImplementation {
-    Accepted,
-    PackedHot,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BooleanityAddressMetalConfig {
-    pub implementation: BooleanityAddressImplementation,
     pub trace_cutoff_elements: usize,
     pub dispatch: BooleanityAddressPushforwardConfig,
-    pub packed_hot: BooleanityAddressSuccessorConfig,
 }
 
 impl Default for BooleanityAddressMetalConfig {
     fn default() -> Self {
         Self {
-            implementation: BooleanityAddressImplementation::Accepted,
             trace_cutoff_elements: 1 << 18,
             dispatch: BooleanityAddressPushforwardConfig {
                 inner_log2: 15,
@@ -50,7 +39,6 @@ impl Default for BooleanityAddressMetalConfig {
                 tile_threads_per_threadgroup: Some(512),
                 finalize_threads_per_threadgroup: Some(1024),
             },
-            packed_hot: BooleanityAddressSuccessorConfig::default(),
         }
     }
 }
@@ -93,7 +81,6 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
             challenges: inputs.challenges,
         };
         let cpu = |session: &mut ProofSession| {
-            let _ = session.take::<HammingHotRows>();
             OptimizedBooleanityAddress.prepare(session, witness, cpu_inputs())
         };
         let dimensions = inputs.relation.dimensions();
@@ -129,153 +116,8 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
         drop(resident_span);
         let _span = tracing::info_span!("MetalBooleanityAddressPhase::prepare").entered();
         let plan = BooleanityAddressMetalPlan::new(witness, inputs.relation, inputs.challenges)?;
-        if config.implementation == BooleanityAddressImplementation::PackedHot {
-            let Some(packed_planes) = plan
-                .selectors()
-                .iter()
-                .copied()
-                .map(BooleanitySelector::packed_hot_plane)
-                .collect::<Option<Vec<_>>>()
-            else {
-                tracing::warn!(
-                    "Booleanity-address selectors exceed the packed projection; using accepted Metal"
-                );
-                return prepare_accepted_booleanity_address(
-                    self,
-                    session,
-                    resident_rows,
-                    plan,
-                    config,
-                    cpu,
-                );
-            };
-            let device = self.context.device_info();
-            let invocation = match self.context.prepare_booleanity_address_successor(
-                resident_rows.clone(),
-                plan.reference_cycle(),
-                config.packed_hot,
-            ) {
-                Ok(invocation) => invocation,
-                Err(error) if booleanity_address_successor_can_fallback(&error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "Packed Booleanity-address preparation unavailable; using accepted Metal"
-                    );
-                    return prepare_accepted_booleanity_address(
-                        self,
-                        session,
-                        resident_rows,
-                        plan,
-                        config,
-                        cpu,
-                    );
-                }
-                Err(error) => return Err(metal_error(error.to_string()).into()),
-            };
-            let lengths = invocation
-                .buffer_lengths()
-                .map_err(|error| metal_error(error.to_string()))?;
-            let dispatch_plan = invocation
-                .dispatch_plan()
-                .map_err(|error| metal_error(error.to_string()))?;
-            let owned_bytes = lengths
-                .owned_bytes()
-                .map_err(|error| metal_error(format!("{error:?}")))?;
-            let sequence_guard = tracing::info_span!(
-                "MetalBooleanityAddressPhase::packed_hot_sequence",
-                resident_rows_storage_id = resident_row_identity,
-                hot_rows_storage_id = invocation.hot_rows_storage_id(),
-                rows = trace_elements,
-                resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES,
-                hot_bytes = lengths.hot_bytes,
-                validity_bytes = lengths.validity_bytes,
-                e_in_fields = lengths.e_in_fields,
-                e_out_fields = lengths.e_out_fields,
-                partial_fields = lengths.partial_fields,
-                output_fields = lengths.output_fields,
-                owned_bytes,
-                current_device_bytes = device.current_allocated_size,
-                recommended_device_bytes = device.recommended_max_working_set_size,
-                command_buffers = dispatch_plan.command_buffers,
-                dispatches = dispatch_plan.dispatches,
-                readbacks = dispatch_plan.readbacks,
-            )
-            .entered();
-            drop(sequence_guard);
-            let dispatch_span = tracing::info_span!(
-                "MetalBooleanityAddressPhase::packed_hot_dispatch",
-                command_buffers = 1u64,
-                dispatches = 3u64,
-                command_completed = tracing::field::Empty,
-                gpu_active_ns = tracing::field::Empty,
-                resident_rows_storage_id = resident_row_identity,
-                hot_rows_storage_id = invocation.hot_rows_storage_id(),
-            );
-            let dispatch_guard = dispatch_span.enter();
-            let gpu_active = invocation
-                .execute_timed()
-                .map_err(|error| metal_error(error.to_string()))?;
-            let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
-            let _ = dispatch_span.record("command_completed", true);
-            let _ = dispatch_span.record("gpu_active_ns", gpu_active_ns);
-            drop(dispatch_guard);
-            let hot_rows = invocation
-                .completed_hot_rows()
-                .map_err(|error| metal_error(error.to_string()))?;
-            if hot_rows.source_rows_storage_id() != resident_row_identity {
-                return Err(KernelError::InvariantViolation {
-                    reason: "packed Booleanity-address projection changed source row identity",
-                });
-            }
-            let readback_guard = tracing::info_span!(
-                "MetalBooleanityAddressPhase::packed_hot_readback",
-                elements = invocation.output_elements(),
-                bytes = invocation.output_elements() * size_of::<AkitaField>(),
-                readbacks = 1u64,
-            )
-            .entered();
-            let masses = invocation
-                .read_masses()
-                .map_err(|error| metal_error(error.to_string()))?;
-            drop(readback_guard);
-            let masses = select_packed_hot_masses(&masses, &packed_planes)?;
-            let kernel = plan.finish(masses)?;
-            session.park(hot_rows);
-            return Ok(kernel);
-        }
         prepare_accepted_booleanity_address(self, session, resident_rows, plan, config, cpu)
     }
-}
-
-pub(super) fn select_packed_hot_masses(
-    masses: &[AkitaField],
-    planes: &[usize],
-) -> Result<Vec<AkitaField>, KernelError<AkitaField>> {
-    const BINS: usize = 256;
-    const PLANES: usize = 29;
-    if masses.len() != PLANES * BINS {
-        return Err(KernelError::TableSizeMismatch {
-            table: "packed Booleanity-address masses".to_owned(),
-            expected: PLANES * BINS,
-            got: masses.len(),
-        });
-    }
-    let mut selected = Vec::with_capacity(planes.len() * BINS);
-    for &plane in planes {
-        let start = plane
-            .checked_mul(BINS)
-            .ok_or_else(|| KernelError::InvalidGeometry {
-                reason: "packed Booleanity-address plane offset overflows usize".to_owned(),
-            })?;
-        let end = start + BINS;
-        let table = masses
-            .get(start..end)
-            .ok_or(KernelError::InvariantViolation {
-                reason: "packed Booleanity-address selector plane is out of range",
-            })?;
-        selected.extend_from_slice(table);
-    }
-    Ok(selected)
 }
 
 fn prepare_accepted_booleanity_address(
@@ -423,8 +265,6 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
         let hamming_config = self.config.hamming_weight_claim_reduction;
         let retain_for_hamming =
             hamming_config.admits(trace_elements, dimensions.log_t, dimensions.log_k_chunk);
-        let wants_retained_hot = retain_for_hamming
-            && hamming_config.implementation == HammingWeightImplementation::RetainedHot;
         let has_resident_rows = trace_elements
             >= self.config.booleanity_cycle.trace_cutoff_elements
             && session.state::<BooleanityRows>().is_some_and(|rows| {
@@ -437,20 +277,6 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
         };
         if trace_elements < self.config.booleanity_cycle.trace_cutoff_elements {
             let retained_rows = session.state::<BooleanityRows>().cloned();
-            let retained_hot = session.state::<HammingHotRows>().cloned().filter(|hot| {
-                wants_retained_hot
-                    && retained_rows
-                        .as_ref()
-                        .is_some_and(|rows| hamming_hot_matches(rows, hot))
-            });
-            if let Some(hot) = retained_hot.as_ref() {
-                let _ = session.take::<BooleanityRows>();
-                trace_hamming_hot_retention(hot);
-                return Ok(Box::new(cpu));
-            }
-            if wants_retained_hot {
-                let _ = session.take::<HammingHotRows>();
-            }
             match retained_rows {
                 Some(rows)
                     if retain_for_hamming
@@ -463,9 +289,6 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
                     let _ = session.take::<BooleanityRows>();
                 }
                 None => {}
-            }
-            if !wants_retained_hot {
-                let _ = session.take::<HammingHotRows>();
             }
             return Ok(Box::new(cpu));
         }
@@ -496,22 +319,10 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
                 }
             }
         };
-        let retained_hot = session
-            .state::<HammingHotRows>()
-            .cloned()
-            .filter(|hot| wants_retained_hot && hamming_hot_matches(&resident_rows, hot));
-        let hot_is_valid = retained_hot.is_some();
-        if let Some(hot) = retained_hot.as_ref() {
-            let _ = session.take::<BooleanityRows>();
-            trace_hamming_hot_retention(hot);
-        } else if retain_for_hamming {
-            if wants_retained_hot {
-                let _ = session.take::<HammingHotRows>();
-            }
+        if retain_for_hamming {
             session.park(resident_rows.clone());
         } else {
             let _ = session.take::<BooleanityRows>();
-            let _ = session.take::<HammingHotRows>();
         }
         let lifecycle_span = tracing::info_span!(
             "MetalBooleanityRows::stage6b_cycle_use",
@@ -528,7 +339,7 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
         )
         .entered();
         drop(lifecycle_span);
-        if retain_for_hamming && !hot_is_valid {
+        if retain_for_hamming {
             trace_hamming_row_retention(&resident_rows);
         }
         let mut dispatch = self.config.booleanity_cycle.dispatch;
@@ -542,27 +353,6 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
             self.config.booleanity_cycle.cutoff_elements,
         )?))
     }
-}
-
-fn hamming_hot_matches(rows: &BooleanityRows, hot: &HammingHotRows) -> bool {
-    hot.len() == rows.len()
-        && hot.device_registry_id() == rows.device_registry_id()
-        && hot.source_rows_storage_id() == rows.allocation_identity()
-}
-
-fn trace_hamming_hot_retention(rows: &HammingHotRows) {
-    let span = tracing::info_span!(
-        "MetalHammingHotRows::stage6b_retain_for_stage7",
-        hot_rows_storage_id = rows.allocation_identity(),
-        source_rows_storage_id = rows.source_rows_storage_id(),
-        hot_rows = rows.len(),
-        hot_row_bytes = 29usize,
-        device_registry_id = rows.device_registry_id(),
-        row_allocations = 0u64,
-        row_upload_bytes = 0u64,
-    )
-    .entered();
-    drop(span);
 }
 
 fn trace_hamming_row_retention(rows: &BooleanityRows) {
@@ -730,16 +520,6 @@ pub(super) fn booleanity_address_can_fallback(error: &MetalError) -> bool {
     )
 }
 
-fn booleanity_address_successor_can_fallback(
-    error: &BooleanityAddressSuccessorRuntimeError,
-) -> bool {
-    matches!(
-        error,
-        BooleanityAddressSuccessorRuntimeError::Metal(error)
-            if booleanity_address_can_fallback(error)
-    )
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
@@ -796,7 +576,6 @@ mod tests {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
-                    ..Default::default()
                 },
                 ..Default::default()
             })
@@ -812,90 +591,6 @@ mod tests {
             let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
             let parked = session.state::<BooleanityRows>().unwrap();
             assert!(retained.shares_allocation(parked));
-
-            let mut claim = AkitaField::zero();
-            let mut bind = None;
-            let mut round_challenges = Vec::new();
-            for round in 0..expected.num_rounds() {
-                let expected_poly = expected.prove_round(bind, round, claim).unwrap();
-                let actual_poly = actual.prove_round(bind, round, claim).unwrap();
-                assert_eq!(actual_poly, expected_poly, "round {round}");
-                let challenge = AkitaField::from_u64(0x1234_5678 + 1000 * round as u64 + 7);
-                claim = expected_poly.evaluate(challenge);
-                round_challenges.push(challenge);
-                bind = Some(challenge);
-            }
-            let final_bind = *round_challenges.last().unwrap();
-            expected.finish_rounds(final_bind).unwrap();
-            actual.finish_rounds(final_bind).unwrap();
-            assert_eq!(
-                actual.output_claims(&claims).unwrap(),
-                expected.output_claims(&claims).unwrap()
-            );
-            let output_points = relation
-                .derive_opening_points(&round_challenges, &points)
-                .unwrap();
-            actual
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
-        });
-    }
-
-    #[test]
-    fn packed_address_prepare_matches_cpu_and_parks_hamming_projection() {
-        let log_t = 15;
-        with_booleanity_backend(log_t, 8, |witness, dimensions| {
-            let relation = BooleanityAddressPhase::new(
-                dimensions,
-                point(900, dimensions.log_k_chunk),
-                point(400, log_t),
-            );
-            let claims = Default::default();
-            let points = Default::default();
-            let challenges = BooleanityAddressPhaseChallenges {
-                reference_address: point(700, dimensions.log_k_chunk),
-                gamma: AkitaField::from_u64(31),
-            };
-            let inputs = || ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &challenges,
-            };
-
-            let mut expected = OptimizedBooleanityAddress
-                .prepare(&mut ProofSession::default(), witness, inputs())
-                .unwrap();
-            let metal = MetalBackend::new(super::super::MetalConfig {
-                booleanity_address: BooleanityAddressMetalConfig {
-                    implementation: BooleanityAddressImplementation::PackedHot,
-                    trace_cutoff_elements: 2,
-                    packed_hot: BooleanityAddressSuccessorConfig::default(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .unwrap();
-            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
-            let resident = metal
-                .context
-                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
-                .unwrap();
-            let resident_identity = resident.allocation_identity();
-            let retained = resident.clone();
-            let mut session = ProofSession::default();
-            session.park(resident);
-
-            let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
-            let parked_rows = session.state::<BooleanityRows>().unwrap();
-            assert!(retained.shares_allocation(parked_rows));
-            let hot_rows = session.state::<HammingHotRows>().unwrap();
-            assert_eq!(hot_rows.len(), 1 << log_t);
-            assert_eq!(
-                hot_rows.device_registry_id(),
-                metal.context.device_registry_id()
-            );
-            assert_eq!(hot_rows.source_rows_storage_id(), resident_identity);
 
             let mut claim = AkitaField::zero();
             let mut bind = None;
@@ -1056,7 +751,6 @@ mod tests {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
-                    ..Default::default()
                 },
                 ..Default::default()
             })
@@ -1084,105 +778,6 @@ mod tests {
                 .unwrap();
 
             assert!(retained.shares_allocation(session.state::<BooleanityRows>().unwrap()));
-        });
-    }
-
-    #[test]
-    fn cycle_releases_rows_when_retained_hamming_projection_exists() {
-        let log_t = 15;
-        with_booleanity_backend(log_t, 8, |witness, dimensions| {
-            let r_address = point(110, dimensions.log_k_chunk);
-            let address_relation = BooleanityAddressPhase::new(
-                dimensions,
-                point(900, dimensions.log_k_chunk),
-                point(400, log_t),
-            );
-            let address_claims = Default::default();
-            let address_points = Default::default();
-            let address_challenges = BooleanityAddressPhaseChallenges {
-                reference_address: point(700, dimensions.log_k_chunk),
-                gamma: AkitaField::from_u64(31),
-            };
-            let cycle_relation = Booleanity::new(
-                LatticeBooleanityDimensions::new(dimensions).unwrap(),
-                r_address.clone(),
-                point(700, dimensions.log_k_chunk),
-                point(400, log_t),
-            );
-            let cycle_claims = BooleanityInputClaims {
-                address_phase: AkitaField::from_u64(17),
-            };
-            let cycle_points = BooleanityInputClaims {
-                address_phase: r_address,
-            };
-            let cycle_challenges = BooleanityCyclePhaseChallenges {
-                gamma: AkitaField::from_u64(31),
-            };
-            let metal = MetalBackend::new(super::super::MetalConfig {
-                booleanity_address: BooleanityAddressMetalConfig {
-                    implementation: BooleanityAddressImplementation::PackedHot,
-                    trace_cutoff_elements: 2,
-                    ..Default::default()
-                },
-                booleanity_cycle: BooleanityMetalConfig {
-                    trace_cutoff_elements: 2,
-                    ..Default::default()
-                },
-                hamming_weight_claim_reduction: super::super::HammingWeightMetalConfig {
-                    implementation: super::super::HammingWeightImplementation::RetainedHot,
-                    trace_cutoff_elements: 2,
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .unwrap();
-            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
-            let resident = metal
-                .context
-                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
-                .unwrap();
-            let mut session = ProofSession::default();
-            session.park(resident);
-
-            let _address_kernel = metal
-                .prepare(
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &address_relation,
-                        claims: &address_claims,
-                        points: &address_points,
-                        challenges: &address_challenges,
-                    },
-                )
-                .unwrap();
-            let hot_identity = session
-                .state::<HammingHotRows>()
-                .unwrap()
-                .allocation_identity();
-            assert!(session.state::<BooleanityRows>().is_some());
-
-            let _cycle_kernel = metal
-                .prepare(
-                    &mut session,
-                    witness,
-                    ProverInputs {
-                        relation: &cycle_relation,
-                        claims: &cycle_claims,
-                        points: &cycle_points,
-                        challenges: &cycle_challenges,
-                    },
-                )
-                .unwrap();
-
-            assert!(session.state::<BooleanityRows>().is_none());
-            assert_eq!(
-                session
-                    .state::<HammingHotRows>()
-                    .unwrap()
-                    .allocation_identity(),
-                hot_identity
-            );
         });
     }
 
@@ -1224,7 +819,6 @@ mod tests {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
-                    ..Default::default()
                 },
                 ..Default::default()
             })
@@ -1293,7 +887,6 @@ mod tests {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
-                    ..Default::default()
                 },
                 ..Default::default()
             })

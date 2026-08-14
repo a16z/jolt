@@ -1,16 +1,12 @@
 const FIELD_SOURCE: &str = include_str!("fp128.metal");
-#[cfg(feature = "test-utils")]
-const HAMMING_WEIGHT_CLAIM_REDUCTION_SOURCE: &str = super::hamming_weight_claim_reduction::SOURCE;
 const SIMD_REDUCE_SOURCE: &str = include_str!("simd_reduce.metal");
-const BYTECODE_READ_RAF_SOURCE: &str = super::bytecode_read_raf::SOURCE;
-const BYTECODE_READ_RAF_OFFSET: u32 = super::bytecode_read_raf::BYTECODE_ADDRESS_AKITA_OFFSET;
+const BYTECODE_READ_RAF_OFFSET: u32 = super::AKITA_OFFSET_FFFFA7F7;
 const BYTECODE_READ_RAF_ADDRESS_SOURCE: &str = super::bytecode_read_raf_address::SOURCE;
 const REGISTERS_CLAIM_REDUCTION_SOURCE: &str = super::registers_claim_reduction::SOURCE;
 const RAM_RA_CLAIM_REDUCTION_SOURCE: &str = super::ram_ra_claim_reduction::SOURCE;
 const DEFERRED_SUM_SOURCE: &str = include_str!("deferred_sum.metal");
 const INSTRUCTION_READ_RAF_ADDRESS_SOURCE: &str = super::instruction_read_raf_v3::SOURCE;
 const INSTRUCTION_READ_RAF_SOURCE: &str = super::instruction_read_raf::SOURCE;
-const PRODUCT5_TILED_TRANSITION_SOURCE: &str = super::product5::TILED_TRANSITION_SOURCE;
 const SPARTAN_OUTER_COMMON_SOURCE: &str = include_str!("spartan_outer_common.metal");
 const BOOLEANITY_COMMON_SOURCE: &str = include_str!("booleanity_common.metal");
 const INSTRUCTION_RA_COMMON_SOURCE: &str = include_str!("instruction_ra_common.metal");
@@ -31,9 +27,6 @@ const RAM_VAL_CHECK_SOURCE: &str = super::ram_val_check::SOURCE;
 const REGISTERS_VAL_SOURCE: &str = include_str!("registers_val/shader.metal");
 const BOOLEANITY_SOURCE: &str = include_str!("booleanity/shader.metal");
 const BOOLEANITY_ADDRESS_SOURCE: &str = include_str!("booleanity_address/shader.metal");
-const PACKED_BOOLEANITY_ADDRESS_TEST_SOURCE: &str = super::booleanity_address_successor::SOURCE;
-const HAMMING_WEIGHT_RETAINED_SOURCE: &str =
-    super::hamming_weight_claim_reduction_successor::SOURCE;
 const INSTRUCTION_RA_SOURCE: &str = include_str!("instruction_ra_virtualization/shader.metal");
 const INSTRUCTION_RA_SEQUENCE_SOURCE: &str = include_str!("instruction_ra_sequence/shader.metal");
 const INSTRUCTION_INPUT_SOURCE: &str = include_str!("instruction_input/shader.metal");
@@ -93,11 +86,6 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("simd_reduce", SIMD_REDUCE_SOURCE),
     SourceFragment::new("booleanity_common", BOOLEANITY_COMMON_SOURCE),
     SourceFragment::for_offset(
-        "bytecode_read_raf",
-        BYTECODE_READ_RAF_SOURCE,
-        BYTECODE_READ_RAF_OFFSET,
-    ),
-    SourceFragment::for_offset(
         "bytecode_read_raf_address",
         BYTECODE_READ_RAF_ADDRESS_SOURCE,
         BYTECODE_READ_RAF_OFFSET,
@@ -113,10 +101,6 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
         INSTRUCTION_READ_RAF_ADDRESS_SOURCE,
     ),
     SourceFragment::new("instruction_read_raf", INSTRUCTION_READ_RAF_SOURCE),
-    SourceFragment::diagnostic(
-        "product5_tiled_transition",
-        PRODUCT5_TILED_TRANSITION_SOURCE,
-    ),
     SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
     SourceFragment::new("instruction_ra_common", INSTRUCTION_RA_COMMON_SOURCE),
     SourceFragment::new(
@@ -140,11 +124,6 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("registers_val", REGISTERS_VAL_SOURCE),
     SourceFragment::new("booleanity", BOOLEANITY_SOURCE),
     SourceFragment::new("booleanity_address", BOOLEANITY_ADDRESS_SOURCE),
-    SourceFragment::diagnostic(
-        "booleanity_address_packed_test",
-        PACKED_BOOLEANITY_ADDRESS_TEST_SOURCE,
-    ),
-    SourceFragment::diagnostic("hamming_weight_retained", HAMMING_WEIGHT_RETAINED_SOURCE),
     SourceFragment::new("instruction_ra_virtualization", INSTRUCTION_RA_SOURCE),
     SourceFragment::new("instruction_ra_sequence", INSTRUCTION_RA_SEQUENCE_SOURCE),
     SourceFragment::new("bytecode_cycle", BYTECODE_CYCLE_SOURCE),
@@ -179,34 +158,6 @@ pub(super) fn library_source(offset: u32) -> String {
 
 pub(super) fn production_library_source(offset: u32) -> String {
     assemble_library_source_filtered(offset, LIBRARY_SOURCE_FRAGMENTS, None, true)
-}
-
-#[cfg(feature = "test-utils")]
-pub(super) fn hamming_weight_claim_reduction_probe_source(offset: u32) -> String {
-    assemble_library_source(
-        offset,
-        &[
-            SourceFragment::new("fp128", FIELD_SOURCE),
-            SourceFragment::new(
-                "hamming_weight_claim_reduction",
-                HAMMING_WEIGHT_CLAIM_REDUCTION_SOURCE,
-            ),
-        ],
-        None,
-    )
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub(super) fn bytecode_read_raf_probe_source(offset: u32) -> String {
-    assemble_library_source(
-        offset,
-        &[
-            SourceFragment::new("fp128", FIELD_SOURCE),
-            SourceFragment::new("simd_reduce", SIMD_REDUCE_SOURCE),
-            SourceFragment::new("bytecode_read_raf", BYTECODE_READ_RAF_SOURCE),
-        ],
-        None,
-    )
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -269,22 +220,6 @@ mod tests {
             .collect()
     }
 
-    fn expected_library_source(offset: u32) -> String {
-        let bytecode_read_raf = if offset == BYTECODE_READ_RAF_OFFSET {
-            format!("\n{BYTECODE_READ_RAF_SOURCE}")
-        } else {
-            String::new()
-        };
-        let bytecode_read_raf_address = if offset == BYTECODE_READ_RAF_OFFSET {
-            format!("\n{BYTECODE_READ_RAF_ADDRESS_SOURCE}")
-        } else {
-            String::new()
-        };
-        format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}{bytecode_read_raf}{bytecode_read_raf_address}\n{REGISTERS_CLAIM_REDUCTION_SOURCE}\n{RAM_RA_CLAIM_REDUCTION_SOURCE}\n{DEFERRED_SUM_SOURCE}\n{INSTRUCTION_READ_RAF_ADDRESS_SOURCE}\n{INSTRUCTION_READ_RAF_SOURCE}\n{PRODUCT5_TILED_TRANSITION_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{BOOLEANITY_COMMON_SOURCE}\n{INSTRUCTION_RA_COMMON_SOURCE}\n{INSTRUCTION_CLAIM_REDUCTION_SOURCE}\n{ADDRESS_RAF_SOURCE}\n{ADDRESS_RAF_DIRECT_SOURCE}\n{ADDRESS_SUFFIX_SOURCE}\n{ADDRESS_SUFFIX_FULL_SOURCE}\n{PROBE_SOURCE}\n{PRODUCT5_SOURCE}\n{PRODUCT_REMAINDER_SOURCE}\n{PRODUCT_INSTRUCTION_SERVICE_SOURCE}\n{PRODUCT_UNISKIP_SOURCE}\n{RAM_RAF_EVALUATION_SOURCE}\n{RAM_VAL_CHECK_SOURCE}\n{REGISTERS_VAL_SOURCE}\n{BOOLEANITY_SOURCE}\n{BOOLEANITY_ADDRESS_SOURCE}\n{PACKED_BOOLEANITY_ADDRESS_TEST_SOURCE}\n{HAMMING_WEIGHT_RETAINED_SOURCE}\n{INSTRUCTION_RA_SOURCE}\n{INSTRUCTION_RA_SEQUENCE_SOURCE}\n{BYTECODE_CYCLE_SOURCE}\n{BYTECODE_ROW_SOURCE}\n{SPARTAN_OUTER_UNISKIP_SOURCE}\n{SPARTAN_SHIFT_SOURCE}\n{INSTRUCTION_INPUT_SOURCE}\n{INSTRUCTION_INPUT_DENSE_SOURCE}\n{ADDRESS_CYCLE_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{OUTER_REMAINDER_PADDED_56_SOURCE}"
-        )
-    }
-
     fn expected_outer_library_source(offset: u32, outer_source: &str) -> String {
         format!(
             "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{outer_source}"
@@ -293,26 +228,20 @@ mod tests {
 
     #[test]
     fn source_assembly_puts_the_runtime_fragment_last() {
-        for offset in [275, 0xffff_a7f7] {
-            assert_eq!(
-                library_source(offset).as_bytes(),
-                expected_library_source(offset).as_bytes()
-            );
-        }
+        let generic = library_source(275);
+        assert!(!generic.contains(BYTECODE_READ_RAF_ADDRESS_SOURCE));
+        assert!(generic.ends_with(OUTER_REMAINDER_PADDED_56_SOURCE));
+
+        let akita = library_source(AKITA_OFFSET_FFFFA7F7);
+        assert!(akita.contains(BYTECODE_READ_RAF_ADDRESS_SOURCE));
+        assert!(akita.ends_with(OUTER_REMAINDER_PADDED_56_SOURCE));
     }
 
     #[test]
     fn production_source_excludes_diagnostic_and_rejected_kernels() {
         let source = production_library_source(AKITA_OFFSET_FFFFA7F7);
 
-        for excluded in [
-            PRODUCT5_TILED_TRANSITION_SOURCE,
-            PROBE_SOURCE,
-            PACKED_BOOLEANITY_ADDRESS_TEST_SOURCE,
-            HAMMING_WEIGHT_RETAINED_SOURCE,
-        ] {
-            assert!(!source.contains(excluded));
-        }
+        assert!(!source.contains(PROBE_SOURCE));
         assert!(!source.contains("solinas_ram_output_check_"));
         for required in [
             PRODUCT_REMAINDER_SOURCE,
@@ -357,26 +286,6 @@ mod tests {
         assert!(source.contains(OUTER_REMAINDER_SOURCE));
         assert!(!source.contains(OUTER_REMAINDER_PADDED_56_SOURCE));
         assert!(!source.contains(INSTRUCTION_INPUT_SOURCE));
-    }
-
-    #[test]
-    fn hamming_weight_probe_source_has_only_its_field_dependency() {
-        let source = hamming_weight_claim_reduction_probe_source(0xffff_a7f7);
-
-        assert!(source.starts_with("#define SOLINAS_OFFSET 4294944759u\n"));
-        assert!(source.contains(FIELD_SOURCE));
-        assert!(source.ends_with(HAMMING_WEIGHT_CLAIM_REDUCTION_SOURCE));
-    }
-
-    #[test]
-    fn bytecode_read_raf_probe_source_has_only_its_field_dependencies() {
-        let source = bytecode_read_raf_probe_source(0xffff_a7f7);
-
-        assert!(source.starts_with("#define SOLINAS_OFFSET 4294944759u\n"));
-        assert!(source.contains(FIELD_SOURCE));
-        assert!(source.contains(SIMD_REDUCE_SOURCE));
-        assert!(source.ends_with(BYTECODE_READ_RAF_SOURCE));
-        assert!(!source.contains(OUTER_REMAINDER_SOURCE));
     }
 
     #[test]

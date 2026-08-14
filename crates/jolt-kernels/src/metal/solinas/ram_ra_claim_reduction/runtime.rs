@@ -17,17 +17,15 @@ use super::super::{
 };
 use super::{
     RamRaClaimAddress, RamRaClaimConfig, RamRaClaimCounters, RamRaClaimError, RamRaClaimExecution,
-    RamRaClaimFallback, RamRaClaimPlan, RamRaClaimProjection, RamRaClaimQAccumulator,
-    RamRaClaimQPlan, RamRaClaimShape, ValidatedRamRaClaimAddressPlane, GATHER_H_COMPACT_PIPELINE,
+    RamRaClaimFallback, RamRaClaimPlan, RamRaClaimProjection, RamRaClaimQPlan, RamRaClaimShape,
+    ValidatedRamRaClaimAddressPlane, BUILD_Q_PARTIALS_COMPACT_PIPELINE, GATHER_H_COMPACT_PIPELINE,
     H_COMPACT_COUNTERS_SLOT, H_COMPACT_ENTRIES_SLOT, H_COMPACT_EQ_ADDRESS_SLOT,
     H_COMPACT_EQ_PREFIX_SLOT, H_COMPACT_OFFSETS_SLOT, H_COMPACT_OUTPUT_SLOT, H_COMPACT_PARAMS_SLOT,
-    Q_BUILD_ADDRESSES_SLOT, Q_BUILD_COUNTERS_SLOT, Q_BUILD_EQ_ADDRESS_SLOT, Q_BUILD_EQ_HI_SLOT,
-    Q_BUILD_PARAMS_SLOT, Q_BUILD_PARTIALS_SLOT, Q_COMPACT_BUILD_COUNTERS_SLOT,
-    Q_COMPACT_BUILD_ENTRIES_SLOT, Q_COMPACT_BUILD_EQ_ADDRESS_SLOT, Q_COMPACT_BUILD_EQ_HI_SLOT,
-    Q_COMPACT_BUILD_OFFSETS_SLOT, Q_COMPACT_BUILD_PARAMS_SLOT, Q_COMPACT_BUILD_PARTIALS_SLOT,
-    Q_REDUCE_COUNTERS_SLOT, Q_REDUCE_OUTPUT_SLOT, Q_REDUCE_PARAMS_SLOT, Q_REDUCE_PARTIALS_SLOT,
-    RAM_RA_CLAIM_ADDRESS_DOMAIN, RAM_RA_CLAIM_AKITA_OFFSET, RAM_RA_CLAIM_SIMD_WIDTH,
-    RAM_RA_CLAIM_TERMS, REDUCE_Q_PIPELINE,
+    Q_COMPACT_BUILD_COUNTERS_SLOT, Q_COMPACT_BUILD_ENTRIES_SLOT, Q_COMPACT_BUILD_EQ_ADDRESS_SLOT,
+    Q_COMPACT_BUILD_EQ_HI_SLOT, Q_COMPACT_BUILD_OFFSETS_SLOT, Q_COMPACT_BUILD_PARAMS_SLOT,
+    Q_COMPACT_BUILD_PARTIALS_SLOT, Q_REDUCE_COUNTERS_SLOT, Q_REDUCE_OUTPUT_SLOT,
+    Q_REDUCE_PARAMS_SLOT, Q_REDUCE_PARTIALS_SLOT, RAM_RA_CLAIM_ADDRESS_DOMAIN,
+    RAM_RA_CLAIM_AKITA_OFFSET, RAM_RA_CLAIM_SIMD_WIDTH, RAM_RA_CLAIM_TERMS, REDUCE_Q_PIPELINE,
 };
 
 #[derive(Debug, Error)]
@@ -391,9 +389,7 @@ impl SolinasMetal {
         }
         let plan = RamRaClaimQPlan::new(config, addresses.shape)?;
         addresses.validate_for(self, plan.shape)?;
-        if plan.config.q_accumulator == RamRaClaimQAccumulator::Compact
-            && addresses.compact.is_none()
-        {
+        if addresses.compact.is_none() {
             return Err(RamRaClaimQRuntimeError::MissingCompactLayout);
         }
         match config.execution_for_validated_plane(
@@ -437,7 +433,7 @@ impl SolinasMetal {
         self.validate_inputs("RAM RA Q eq_hi", &eq_hi)?;
 
         validate_q_allocations(self, plan)?;
-        let producer_pipeline_name = plan.config.q_accumulator.pipeline();
+        let producer_pipeline_name = BUILD_Q_PARTIALS_COMPACT_PIPELINE;
         let producer_pipeline = self.compile_named_pipeline(producer_pipeline_name)?;
         let reducer_pipeline = self.compile_named_pipeline(REDUCE_Q_PIPELINE)?;
         let producer_limits = Self::limits(&producer_pipeline);
@@ -622,39 +618,30 @@ impl RamRaClaimQInvocation {
 
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.producer_pipeline);
-            if self.plan.config.q_accumulator == RamRaClaimQAccumulator::Compact {
-                let compact = self
-                    .addresses
-                    .compact
-                    .as_ref()
-                    .ok_or(RamRaClaimQRuntimeError::MissingCompactLayout)?;
-                encoder.set_buffer(Q_COMPACT_BUILD_ENTRIES_SLOT, Some(&compact.low.entries), 0);
-                encoder.set_buffer(Q_COMPACT_BUILD_OFFSETS_SLOT, Some(&compact.low.offsets), 0);
-                encoder.set_buffer(
-                    Q_COMPACT_BUILD_EQ_ADDRESS_SLOT,
-                    Some(&self.buffers.eq_address),
-                    0,
-                );
-                encoder.set_buffer(Q_COMPACT_BUILD_EQ_HI_SLOT, Some(&self.buffers.eq_hi), 0);
-                encoder.set_buffer(
-                    Q_COMPACT_BUILD_PARTIALS_SLOT,
-                    Some(&self.buffers.q_partials),
-                    0,
-                );
-                encoder.set_buffer(
-                    Q_COMPACT_BUILD_COUNTERS_SLOT,
-                    Some(&self.buffers.counters),
-                    0,
-                );
-                set_inline_bytes(encoder, Q_COMPACT_BUILD_PARAMS_SLOT, &self.plan.params);
-            } else {
-                encoder.set_buffer(Q_BUILD_ADDRESSES_SLOT, Some(&self.addresses.buffer), 0);
-                encoder.set_buffer(Q_BUILD_EQ_ADDRESS_SLOT, Some(&self.buffers.eq_address), 0);
-                encoder.set_buffer(Q_BUILD_EQ_HI_SLOT, Some(&self.buffers.eq_hi), 0);
-                encoder.set_buffer(Q_BUILD_PARTIALS_SLOT, Some(&self.buffers.q_partials), 0);
-                encoder.set_buffer(Q_BUILD_COUNTERS_SLOT, Some(&self.buffers.counters), 0);
-                set_inline_bytes(encoder, Q_BUILD_PARAMS_SLOT, &self.plan.params);
-            }
+            let compact = self
+                .addresses
+                .compact
+                .as_ref()
+                .ok_or(RamRaClaimQRuntimeError::MissingCompactLayout)?;
+            encoder.set_buffer(Q_COMPACT_BUILD_ENTRIES_SLOT, Some(&compact.low.entries), 0);
+            encoder.set_buffer(Q_COMPACT_BUILD_OFFSETS_SLOT, Some(&compact.low.offsets), 0);
+            encoder.set_buffer(
+                Q_COMPACT_BUILD_EQ_ADDRESS_SLOT,
+                Some(&self.buffers.eq_address),
+                0,
+            );
+            encoder.set_buffer(Q_COMPACT_BUILD_EQ_HI_SLOT, Some(&self.buffers.eq_hi), 0);
+            encoder.set_buffer(
+                Q_COMPACT_BUILD_PARTIALS_SLOT,
+                Some(&self.buffers.q_partials),
+                0,
+            );
+            encoder.set_buffer(
+                Q_COMPACT_BUILD_COUNTERS_SLOT,
+                Some(&self.buffers.counters),
+                0,
+            );
+            set_inline_bytes(encoder, Q_COMPACT_BUILD_PARAMS_SLOT, &self.plan.params);
             dispatch(encoder, self.plan.producer_dispatch);
 
             encoder.set_compute_pipeline_state(&self.reducer_pipeline);
@@ -753,10 +740,7 @@ impl RamRaClaimQInvocation {
                 "resident plane no longer satisfies the checked execution policy",
             ));
         }
-        validate_pipeline(
-            self.plan.config.q_accumulator.pipeline(),
-            self.producer_limits,
-        )?;
+        validate_pipeline(BUILD_Q_PARTIALS_COMPACT_PIPELINE, self.producer_limits)?;
         validate_pipeline(REDUCE_Q_PIPELINE, self.reducer_limits)?;
 
         let expected_device = self.context.device_registry_id();

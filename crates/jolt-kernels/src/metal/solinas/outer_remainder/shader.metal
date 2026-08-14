@@ -1,9 +1,7 @@
 // Candidate source. Concatenate after fp128.metal, simd_reduce.metal, and
 // spartan_outer_common.metal.
 
-#define OUTER_REMAINDER_COLUMNS 37u
 #define OUTER_REMAINDER_CANONICAL_OPENINGS 35u
-#define OUTER_REMAINDER_STREAM_ROWS 10u
 #define OUTER_REMAINDER_TILE_ROWS 64u
 #define OUTER_REMAINDER_SIMD_WIDTH 32u
 #define OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP 9u
@@ -134,183 +132,6 @@ inline void outer_row_memory(
     ram_write = load ? memory_1 : (store ? rs2 : 0ul);
 }
 
-inline SpartanSigned192 outer_b_row(
-    device const InstructionInputRow& compact,
-    device const SpartanOuterUniskipResidualRow& residual,
-    uint row,
-    bool second_stream)
-{
-    ulong flags = instruction_input_row_word(compact, 5u);
-    ulong ram_address;
-    ulong rs2;
-    ulong rd_write;
-    ulong ram_read;
-    ulong ram_write;
-    outer_row_memory(
-        compact, residual, ram_address, rs2, rd_write, ram_read, ram_write);
-
-    SpartanSigned192 value = spartan_s192_zero();
-    if (!second_stream) {
-        switch (row) {
-            case 0u:
-                spartan_accumulate_scaled_u64(value, ram_address, 1);
-                break;
-            case 1u:
-                spartan_accumulate_scaled_u64(value, ram_read, 1);
-                spartan_accumulate_scaled_u64(value, ram_write, -1);
-                break;
-            case 2u:
-                spartan_accumulate_scaled_u64(value, ram_read, 1);
-                spartan_accumulate_scaled_u64(value, rd_write, -1);
-                break;
-            case 3u:
-                spartan_accumulate_scaled_u64(value, rs2, 1);
-                spartan_accumulate_scaled_u64(value, ram_write, -1);
-                break;
-            case 4u:
-                spartan_accumulate_scaled_u64(
-                    value, spartan_outer_residual_word(residual, 8u), 1);
-                break;
-            case 5u:
-                spartan_accumulate_scaled_u64(
-                    value, spartan_outer_residual_word(residual, 8u), 1);
-                spartan_accumulate_scaled_u64(
-                    value, spartan_outer_residual_word(residual, 0u), -1);
-                break;
-            case 6u:
-                spartan_accumulate_scaled_u64(
-                    value, spartan_outer_residual_word(residual, 13u), 1);
-                spartan_accumulate_i32(value, -1);
-                break;
-            case 7u:
-                spartan_accumulate_scaled_u64(
-                    value, spartan_outer_residual_word(residual, 11u), 1);
-                spartan_accumulate_scaled_u64(
-                    value, spartan_outer_residual_word(residual, 13u), -1);
-                break;
-            case 8u:
-                spartan_accumulate_scaled_u64(
-                    value, spartan_outer_residual_word(residual, 12u), 1);
-                spartan_accumulate_scaled_u64(
-                    value, spartan_outer_residual_word(residual, 5u), -1);
-                spartan_accumulate_i32(value, -1);
-                break;
-            default:
-                spartan_accumulate_i32(value, 1 - outer_flag(flags, 15u));
-                break;
-        }
-        return value;
-    }
-
-    switch (row) {
-        case 0u:
-            spartan_accumulate_scaled_u64(value, ram_address, 1);
-            spartan_accumulate_scaled_u64(
-                value, instruction_input_row_word(compact, 0u), -1);
-            spartan_accumulate_scaled_u128(
-                value,
-                instruction_input_row_word(compact, 3u),
-                instruction_input_row_word(compact, 4u),
-                outer_flag(flags, 18u) != 0,
-                -1);
-            break;
-        case 1u:
-            spartan_accumulate_scaled_u128(
-                value,
-                spartan_outer_residual_word(residual, 9u),
-                spartan_outer_residual_word(residual, 10u),
-                true,
-                1);
-            spartan_accumulate_scaled_u64(
-                value, spartan_outer_residual_word(residual, 0u), -1);
-            spartan_accumulate_scaled_u128(
-                value,
-                spartan_outer_residual_word(residual, 1u),
-                spartan_outer_residual_word(residual, 2u),
-                outer_flag(flags, 17u) != 0,
-                -1);
-            break;
-        case 2u:
-            spartan_accumulate_scaled_u128(
-                value,
-                spartan_outer_residual_word(residual, 9u),
-                spartan_outer_residual_word(residual, 10u),
-                true,
-                1);
-            spartan_accumulate_scaled_u64(
-                value, spartan_outer_residual_word(residual, 0u), -1);
-            spartan_accumulate_scaled_u128(
-                value,
-                spartan_outer_residual_word(residual, 1u),
-                spartan_outer_residual_word(residual, 2u),
-                outer_flag(flags, 17u) != 0,
-                1);
-            spartan_accumulate_pow64(value, -1);
-            break;
-        case 3u:
-            spartan_accumulate_scaled_u128(
-                value,
-                spartan_outer_residual_word(residual, 9u),
-                spartan_outer_residual_word(residual, 10u),
-                true,
-                1);
-            spartan_accumulate_scaled_u128(
-                value,
-                spartan_outer_residual_word(residual, 3u),
-                spartan_outer_residual_word(residual, 4u),
-                outer_flag(flags, 19u) != 0,
-                -1);
-            break;
-        case 4u:
-            spartan_accumulate_scaled_u128(
-                value,
-                spartan_outer_residual_word(residual, 9u),
-                spartan_outer_residual_word(residual, 10u),
-                true,
-                1);
-            spartan_accumulate_scaled_u128(
-                value,
-                spartan_outer_residual_word(residual, 1u),
-                spartan_outer_residual_word(residual, 2u),
-                outer_flag(flags, 17u) != 0,
-                -1);
-            break;
-        case 5u:
-            spartan_accumulate_scaled_u64(value, rd_write, 1);
-            spartan_accumulate_scaled_u64(
-                value, spartan_outer_residual_word(residual, 13u), -1);
-            break;
-        case 6u:
-            spartan_accumulate_scaled_u64(value, rd_write, 1);
-            spartan_accumulate_scaled_u64(
-                value, instruction_input_row_word(compact, 1u), -1);
-            spartan_accumulate_i32(value, -4 + 2 * outer_flag(flags, 16u));
-            break;
-        case 7u:
-            spartan_accumulate_scaled_u64(
-                value, spartan_outer_residual_word(residual, 11u), 1);
-            spartan_accumulate_scaled_u64(
-                value, instruction_input_row_word(compact, 1u), -1);
-            spartan_accumulate_scaled_u128(
-                value,
-                instruction_input_row_word(compact, 3u),
-                instruction_input_row_word(compact, 4u),
-                outer_flag(flags, 18u) != 0,
-                -1);
-            break;
-        default:
-            spartan_accumulate_scaled_u64(
-                value, spartan_outer_residual_word(residual, 11u), 1);
-            spartan_accumulate_scaled_u64(
-                value, instruction_input_row_word(compact, 1u), -1);
-            spartan_accumulate_i32(
-                value,
-                -4 + 4 * outer_flag(flags, 15u) + 2 * outer_flag(flags, 16u));
-            break;
-    }
-    return value;
-}
-
 inline SolinasFp128 outer_fold_a(
     device const InstructionInputRow& compact,
     device const SolinasFp128* lagrange,
@@ -377,34 +198,6 @@ inline void outer_deferred_s320_add(
         accumulator.limb[i] = (uint)word;
         carry = word >> 32;
     }
-}
-
-inline void outer_deferred_s320_fmadd(
-    thread OuterDeferredSigned320& accumulator,
-    SolinasFp128 weight,
-    SpartanSigned192 value)
-{
-    bool negative = (value.limb[5] & 0x80000000u) != 0u;
-    if (negative) {
-        value = spartan_s192_negate(value);
-    }
-
-    OuterDeferredSigned320 product = outer_deferred_s320_zero();
-    for (uint i = 0u; i < 5u; i++) {
-        ulong carry = 0ul;
-        for (uint j = 0u; j < 4u; j++) {
-            uint k = i + j;
-            ulong word = (ulong)value.limb[i] * (ulong)weight.limb[j]
-                + (ulong)product.limb[k]
-                + carry;
-            product.limb[k] = (uint)word;
-            carry = word >> 32;
-        }
-        product.limb[i + 4u] = (uint)carry;
-    }
-    outer_deferred_s320_add(
-        accumulator,
-        negative ? outer_deferred_s320_negate(product) : product);
 }
 
 inline void outer_deferred_s320_fmadd_u64(
@@ -533,23 +326,6 @@ inline SolinasFp128 outer_deferred_s320_reduce(OuterDeferredSigned320 value) {
 
     SolinasFp128 reduced = solinas_reduce(folded);
     return negative ? solinas_sub(solinas_zero(), reduced) : reduced;
-}
-
-inline SolinasFp128 outer_fold_b(
-    device const InstructionInputRow& compact,
-    device const SpartanOuterUniskipResidualRow& residual,
-    constant const SolinasFp128* lagrange,
-    bool second_stream)
-{
-    uint count = second_stream ? 9u : 10u;
-    OuterDeferredSigned320 sum = outer_deferred_s320_zero();
-    for (uint row = 0; row < count; row++) {
-        outer_deferred_s320_fmadd(
-            sum,
-            lagrange[row],
-            outer_b_row(compact, residual, row, second_stream));
-    }
-    return outer_deferred_s320_reduce(sum);
 }
 
 inline SolinasFp128 outer_fold_b_first(

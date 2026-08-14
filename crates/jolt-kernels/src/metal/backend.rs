@@ -25,7 +25,6 @@ use super::ram_val_check::RamValCheckMetalConfig;
 use super::registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
 };
-use super::registers_read_write::RegistersReadWriteMetalConfig;
 use super::registers_val_evaluation::{
     RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
 };
@@ -57,8 +56,6 @@ pub struct MetalConfig {
     pub instruction_input: InstructionInputMetalConfig,
     /// Stage-3 registers claim-reduction settings.
     pub registers_claim_reduction: RegistersClaimReductionMetalConfig,
-    /// Challenge-independent Stage-4 registers read-write preparation.
-    pub registers_read_write: RegistersReadWriteMetalConfig,
     /// Stage-5 instruction read-RAF settings.
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-5 registers value-evaluation settings.
@@ -95,13 +92,12 @@ impl MetalConfig {
             crate::optimized::bytecode_read_raf::BytecodeCycleAlgebra::Q10;
         config.bytecode_read_raf_address.implementation =
             BytecodeReadRafAddressImplementation::AddressMajor;
-        config.bytecode_read_raf_address.dispatch.trace_cutoff = 1 << 26;
+        config.bytecode_read_raf_address.trace_cutoff_elements = 1 << 26;
         config.spartan_product_remainder.witness_source =
             SpartanProductWitnessSource::SpartanStage1;
         config.spartan_product_remainder.reuse_outer_state_a = true;
         config.registers_claim_reduction.implementation =
             RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
-        config.registers_read_write.precompute_cutoff_elements = usize::MAX;
         config
             .spartan_outer_remainder
             .dispatch
@@ -223,9 +219,8 @@ impl MetalBackend {
             && (config.instruction_read_raf.address_implementation
                 != InstructionReadRafAddressImplementation::Stage1Grouped
                 || config.instruction_read_raf.address_cutoff_elements
-                    > config.bytecode_read_raf_address.dispatch.trace_cutoff
-                || config.bytecode_read_raf_address.dispatch.trace_cutoff < 1 << 15
-                || config.bytecode_read_raf_address.address_major.outer_tiles == 0)
+                    > config.bytecode_read_raf_address.trace_cutoff_elements
+                || config.bytecode_read_raf_address.trace_cutoff_elements < 1 << 15)
         {
             return Err(MetalError::InvalidBytecodeReadRafAddressConfig(
                 "address-major requires the Stage-1 grouped owner at every admitted trace size",
@@ -280,7 +275,7 @@ impl MetalBackend {
             config.ram_ra_virtualization.trace_cutoff_elements,
             config.ram_hamming_booleanity.trace_cutoff_elements,
             config.booleanity_address.trace_cutoff_elements,
-            config.bytecode_read_raf_address.dispatch.trace_cutoff,
+            config.bytecode_read_raf_address.trace_cutoff_elements,
             config.booleanity_cycle.trace_cutoff_elements,
             config.booleanity_cycle.cutoff_elements,
             config.bytecode_read_raf_cycle.trace_cutoff_elements,
@@ -292,12 +287,6 @@ impl MetalBackend {
             if cutoff < 2 || !cutoff.is_power_of_two() {
                 return Err(MetalError::InvalidHybridCutoff(cutoff));
             }
-        }
-        let registers_read_write_cutoff = config.registers_read_write.precompute_cutoff_elements;
-        if registers_read_write_cutoff != usize::MAX
-            && (registers_read_write_cutoff < 2 || !registers_read_write_cutoff.is_power_of_two())
-        {
-            return Err(MetalError::InvalidHybridCutoff(registers_read_write_cutoff));
         }
         let instruction_ra_cutoff = config.instruction_ra_virtualization.trace_cutoff_elements;
         if instruction_ra_cutoff < address_cutoff {
