@@ -7,6 +7,7 @@ use crate::JoltBackend;
 mod common;
 mod instruction_read_raf;
 mod ram_ra_claim_reduction;
+mod ram_read_write;
 mod ram_val_check;
 mod registers_read_write;
 mod registers_val_evaluation;

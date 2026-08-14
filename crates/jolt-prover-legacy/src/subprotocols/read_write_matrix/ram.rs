@@ -47,7 +47,7 @@ pub struct RamCycleMajorEntry<F: JoltField> {
     /// `prev_val` contains the unbound coefficient before
     /// Val(k, j', 00...0) –– abusing notation, `prev_val` is
     /// Val(k, j'-1, 11...1)
-    pub(crate) prev_val: u64,
+    pub prev_val: u64,
     /// In round i, each ReadWriteEntry represents a coefficient
     ///   Val(k, j', r)
     /// which is some combination of Val(k, j', 00...0), ...
@@ -55,7 +55,7 @@ pub struct RamCycleMajorEntry<F: JoltField> {
     /// `next_val` contains the unbound coefficient after
     /// Val(k, j', 00...0) –– abusing notation, `next_val` is
     /// Val(k, j'+1, 00...0)
-    pub(crate) next_val: u64,
+    pub next_val: u64,
     /// The Val coefficient for this matrix entry.
     pub val_coeff: F,
     /// The ra coefficient for this matrix entry. Note that for RAM,
