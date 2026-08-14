@@ -55,6 +55,7 @@ use tracer::{
         virtual_change_divisor_w::VirtualChangeDivisorW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
+        virtual_pext::VirtualPext,
         virtual_pext_signed::VirtualPextSigned,
         virtual_pow2::VirtualPow2,
         virtual_pow2_w::VirtualPow2W,
@@ -64,6 +65,8 @@ use tracer::{
         virtual_srai::VirtualSRAI,
         virtual_srl::VirtualSRL,
         virtual_srli::VirtualSRLI,
+        virtual_window_mask_b::VirtualWindowMaskB,
+        virtual_window_mask_h::VirtualWindowMaskH,
         virtual_window_mask_w::VirtualWindowMaskW,
         virtual_zero_extend_word::VirtualZeroExtendWord,
         xor::XOR,
@@ -408,6 +411,47 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let shift = bit2 * cpu.bv_u64(cpu.word_bits as u64);
             let word_mask = cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
             cpu.x[operands.rd as usize] = word_mask.bvshl(shift);
+        }
+        Instruction::VirtualWindowMaskB(VirtualWindowMaskB { operands, .. }) => {
+            let ea = cpu.x[operands.rs1 as usize].clone();
+            let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
+            // One of 8 lanes of bv_bits/8 bits each; scales with the reduced
+            // solver widths.
+            let byte_bits = (cpu.bv_bits / 8) as u64;
+            let shift = offset * cpu.bv_u64(byte_bits);
+            let byte_mask = cpu.bv_u64((1u64 << byte_bits) - 1);
+            cpu.x[operands.rd as usize] = byte_mask.bvshl(shift);
+        }
+        Instruction::VirtualWindowMaskH(VirtualWindowMaskH { operands, .. }) => {
+            let ea = cpu.x[operands.rs1 as usize].clone();
+            let offset = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2);
+            // One of 4 lanes of bv_bits/4 bits each; scales with the reduced
+            // solver widths.
+            let half_bits = (cpu.bv_bits / 4) as u64;
+            let shift = offset * cpu.bv_u64(half_bits);
+            let half_mask = cpu.bv_u64((1u64 << half_bits) - 1);
+            cpu.x[operands.rd as usize] = half_mask.bvshl(shift);
+        }
+        Instruction::VirtualPext(VirtualPext { operands, .. }) => {
+            // Zero-extending extract via shift-left then logical shift-right:
+            // faithful for contiguous masks (including zero), the only shape
+            // the window-mask instructions produce. Any other mask havocs rd
+            // with a fresh unconstrained value, so a sequence relying on
+            // non-contiguous behavior fails verification instead of being
+            // certified against wrong semantics. (An assert would be wrong
+            // here: `cpu.asserts` are solver assumptions and would vacuously
+            // exclude exactly the misuse cases.)
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            let tz = trailing_zeros(&rs2, cpu.bv_bits);
+            let lz = leading_zeros(&rs2, cpu.bv_bits);
+            // Contiguous (or zero) mask: shifting out the trailing zeros
+            // leaves a value of the form 2^k − 1.
+            let normalized = rs2.bvlshr(&tz);
+            let extracted = rs1.bvshl(&lz).bvlshr(lz + tz);
+            let contiguous = (normalized.clone() & (normalized + cpu.bv_u64(1))).eq(cpu.bv_zero());
+            let havoc = BV::fresh_const(&format!("{}_pext_nc", cpu.var_prefix), cpu.bv_bits);
+            cpu.x[operands.rd as usize] = contiguous.ite(&extracted, &havoc);
         }
         Instruction::VirtualPextSigned(VirtualPextSigned { operands, .. }) => {
             // Sign-extending extract via shift-left then arithmetic

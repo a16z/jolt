@@ -108,6 +108,7 @@ pub use m::RemUW;
 pub use m::RemW;
 pub use virt::MovSign;
 pub use virt::MulI;
+pub use virt::Pext;
 pub use virt::PextSigned;
 pub use virt::Pow2;
 pub use virt::Pow2I;
@@ -138,6 +139,8 @@ pub use virt::VirtualXorRotW16;
 pub use virt::VirtualXorRotW7;
 pub use virt::VirtualXorRotW8;
 pub use virt::VirtualZeroExtendWord;
+pub use virt::WindowMaskB;
+pub use virt::WindowMaskH;
 pub use virt::WindowMaskW;
 
 // Atomic + system + advice-load + virtual lw/sw additions
@@ -405,6 +408,9 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualXorRotW7(VirtualXorRotW7<T>),
     WindowMaskW(WindowMaskW<T>),
     PextSigned(PextSigned<T>),
+    Pext(Pext<T>),
+    WindowMaskB(WindowMaskB<T>),
+    WindowMaskH(WindowMaskH<T>),
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
@@ -609,6 +615,9 @@ impl_jolt_instructions_flags! {
     VirtualXorRotW7 => VirtualXORROTW7,
     WindowMaskW => VirtualWindowMaskW,
     PextSigned => VirtualPextSigned,
+    Pext => VirtualPext,
+    WindowMaskB => VirtualWindowMaskB,
+    WindowMaskH => VirtualWindowMaskH,
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,
