@@ -286,6 +286,7 @@ where
             proof.folded_eval_blinding_openings.len(),
         )?;
 
+        let binding_count = coordinates.len();
         let mut output_openings = proof.folded_eval_output_openings.iter();
         let mut blinding_openings = proof.folded_eval_blinding_openings.iter();
         for (index, coordinates) in coordinates.iter().enumerate() {
@@ -296,7 +297,16 @@ where
                     actual: proof.folded_eval_output_openings.len(),
                 })?;
                 let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
-                if opened != proof.folded_eval_outputs[index] {
+                let expected_output =
+                    proof
+                        .folded_eval_outputs
+                        .get(index)
+                        .ok_or(RelaxedError::LengthMismatch {
+                            name: "folded eval outputs",
+                            expected: binding_count,
+                            actual: proof.folded_eval_outputs.len(),
+                        })?;
+                if opened != *expected_output {
                     return Err(VerificationError::EvalWitnessMismatch {
                         kind: "output",
                         index,
@@ -320,7 +330,16 @@ where
                         actual: proof.folded_eval_blinding_openings.len(),
                     })?;
                 let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
-                if opened != proof.folded_eval_blindings[index] {
+                let expected_blinding =
+                    proof
+                        .folded_eval_blindings
+                        .get(index)
+                        .ok_or(RelaxedError::LengthMismatch {
+                            name: "folded eval blindings",
+                            expected: binding_count,
+                            actual: proof.folded_eval_blindings.len(),
+                        })?;
+                if opened != *expected_blinding {
                     return Err(VerificationError::EvalWitnessMismatch {
                         kind: "blinding",
                         index,
@@ -588,6 +607,7 @@ fn ensure_len(name: &'static str, expected: usize, actual: usize) -> Result<(), 
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests should fail loudly")]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use crate::{
@@ -929,6 +949,31 @@ mod tests {
 
         assert_eq!(folded, expected);
         assert_eq!(transcript.state(), manual_transcript.state());
+    }
+
+    /// Regression: a proof with fewer `folded_eval_outputs` than the layout's
+    /// eval coordinates previously reached `folded_eval_outputs[index]` and
+    /// panicked; both the eager length gate and the per-coordinate lookup
+    /// must surface the same typed length error instead.
+    #[test]
+    fn verify_rejects_truncated_folded_eval_outputs_without_panicking() {
+        let setup = setup();
+        let protocol = protocol_with_eval(&setup);
+        let mut proof = proof_with_valid_eval_opening(&setup, &protocol);
+        let _ = proof.folded_eval_outputs.pop();
+        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
+
+        let error = protocol
+            .verify::<Pedersen<Bn254G1>, _>(&proof, &setup, &mut transcript)
+            .expect_err("truncated folded eval outputs are rejected");
+
+        assert!(matches!(
+            error,
+            VerificationError::Relaxed(RelaxedError::LengthMismatch {
+                name: "folded eval outputs",
+                ..
+            })
+        ));
     }
 
     #[test]

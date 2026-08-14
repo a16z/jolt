@@ -31,6 +31,15 @@ pub enum SumcheckError<F: FieldCore> {
         max: usize,
     },
 
+    /// A batch with rounds to prove declared a maximum degree of zero. A
+    /// sumcheck round polynomial must have degree at least 1 — the same
+    /// invariant `SumcheckClaim::new` enforces on the verify side.
+    #[error("batch declares max degree 0 with {max_num_vars} rounds to prove")]
+    ZeroBatchDegree {
+        /// Number of rounds that would need round polynomials.
+        max_num_vars: usize,
+    },
+
     /// A round polynomial encoded in compressed form had fewer than two
     /// coefficients, so there is no linear term to omit. Any valid
     /// compressed sumcheck round polynomial has degree ≥ 1.
@@ -133,6 +142,26 @@ pub enum SumcheckError<F: FieldCore> {
         rounds: usize,
         /// The batch's total round count.
         max_num_vars: usize,
+    },
+
+    /// The batch's round scheduler returned no round message for an active
+    /// member. Reported rather than folded as that member's `claim / 2`
+    /// padding (which would surface only as a round-sum mismatch).
+    #[error("batch member {member}: round scheduler produced no round message")]
+    MissingRoundMessage {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+    },
+
+    /// A round handle came back carrying a member index the batch does not
+    /// have. The engine assigns those indices, so this means the scheduler
+    /// rewrote one; attributing the message by it would misfold the round.
+    #[error("round scheduler returned member index {member}, but the batch has {members} members")]
+    RoundMemberIndexOutOfRange {
+        /// The out-of-range index carried by the returned handle.
+        member: usize,
+        /// Number of members in the batch.
+        members: usize,
     },
 
     /// The caller selected a verifier path that is incompatible with the proof

@@ -253,6 +253,11 @@ impl Default for ExpansionAllocator {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
+
     use super::*;
 
     const FIRST_ALLOC_REG: u8 = RISCV_REGISTER_BASE + NUM_RESERVED_VIRTUAL_REGISTERS as u8;

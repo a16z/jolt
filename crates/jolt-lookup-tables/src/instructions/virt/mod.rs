@@ -16,6 +16,7 @@ pub mod host_io;
 pub mod lane;
 pub mod movsign;
 pub mod muli;
+pub mod muliw;
 pub mod pow2;
 pub mod pow2i;
 pub mod pow2iw;
