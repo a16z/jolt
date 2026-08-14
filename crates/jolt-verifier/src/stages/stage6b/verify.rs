@@ -15,6 +15,10 @@ use super::inc_claim_reduction::{
 };
 #[cfg(not(feature = "akita"))]
 use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
+#[cfg(feature = "akita")]
+use super::ram_activation_booleanity::RamActivationBooleanityInputClaims;
+#[cfg(not(feature = "akita"))]
+use super::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
 use super::{
     batch::Stage6bDraws,
     booleanity::BooleanityInputClaims,
@@ -33,7 +37,6 @@ use super::{
         Stage6bClearOutput, Stage6bInputClaims, Stage6bInputPoints, Stage6bOutput,
         Stage6bOutputClaims, Stage6bSumchecks,
     },
-    ram_hamming_booleanity::RamHammingBooleanityInputClaims,
     ram_ra_virtualization::{
         ram_ra_virtualization_input_points_from_upstream,
         ram_ra_virtualization_input_values_from_upstream,
@@ -263,12 +266,12 @@ fn validate_cycle_phase_claim_shape<F: Field>(
         });
     }
 
-    // The packed unsigned-inc chunk claims: one per chunk of the shared
+    // The packed increment digit claims: one per chunk of the shared
     // one-hot chunking.
     #[cfg(feature = "akita")]
     {
         let expected_chunks =
-            jolt_claims::protocols::jolt::lattice::geometry::UnsignedIncChunking::new(
+            jolt_claims::protocols::jolt::lattice::geometry::BalancedIncChunking::new(
                 committed_chunk_bits,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -276,12 +279,12 @@ fn validate_cycle_phase_claim_shape<F: Field>(
                 reason: error.to_string(),
             })?
             .chunk_count();
-        if claims.booleanity.unsigned_inc_chunks.len() != expected_chunks {
+        if claims.booleanity.balanced_inc_digits.len() != expected_chunks {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::Booleanity,
                 reason: format!(
-                    "unsigned-inc chunk claim count mismatch: expected {expected_chunks}, got {}",
-                    claims.booleanity.unsigned_inc_chunks.len()
+                    "increment digit claim count mismatch: expected {expected_chunks}, got {}",
+                    claims.booleanity.balanced_inc_digits.len()
                 ),
             });
         }
@@ -336,7 +339,10 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
         booleanity: BooleanityInputClaims {
             address_phase: address_claims.booleanity.intermediate,
         },
+        #[cfg(not(feature = "akita"))]
         ram_hamming_booleanity: RamHammingBooleanityInputClaims::default(),
+        #[cfg(feature = "akita")]
+        ram_activation_booleanity: RamActivationBooleanityInputClaims::default(),
         ram_ra_virtualization: ram_ra_virtualization_input_values_from_upstream(stage5),
         instruction_ra_virtualization: instruction_ra_virtualization_input_values_from_upstream(
             stage5,
@@ -427,10 +433,13 @@ pub fn stage6b_opening_values<F: Field>(
     values.extend(&claims.booleanity.ram_ra);
     #[cfg(feature = "akita")]
     {
-        values.extend(&claims.booleanity.unsigned_inc_chunks);
-        values.push(claims.booleanity.unsigned_inc_msb);
+        values.extend(&claims.booleanity.balanced_inc_digits);
+        values.push(claims.booleanity.balanced_inc_carry);
     }
+    #[cfg(not(feature = "akita"))]
     values.extend(claims.ram_hamming_booleanity.opening_values());
+    #[cfg(feature = "akita")]
+    values.extend(claims.ram_activation_booleanity.opening_values());
     values.extend(claims.ram_ra_virtualization.opening_values());
     values.extend(claims.instruction_ra_virtualization.opening_values());
     #[cfg(not(feature = "akita"))]
@@ -483,12 +492,15 @@ fn append_opening_claims<F, T>(
     }
     #[cfg(feature = "akita")]
     {
-        for opening_claim in &claims.booleanity.unsigned_inc_chunks {
+        for opening_claim in &claims.booleanity.balanced_inc_digits {
             transcript.append_labeled(b"opening_claim", opening_claim);
         }
-        transcript.append_labeled(b"opening_claim", &claims.booleanity.unsigned_inc_msb);
+        transcript.append_labeled(b"opening_claim", &claims.booleanity.balanced_inc_carry);
     }
+    #[cfg(not(feature = "akita"))]
     claims.ram_hamming_booleanity.append_openings(transcript);
+    #[cfg(feature = "akita")]
+    claims.ram_activation_booleanity.append_openings(transcript);
     claims.ram_ra_virtualization.append_openings(transcript);
     claims
         .instruction_ra_virtualization
@@ -523,6 +535,9 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
+    #[cfg(feature = "akita")]
+    use super::super::ram_activation_booleanity::RamActivationBooleanityOutputClaims;
+    #[cfg(not(feature = "akita"))]
     use super::super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
@@ -536,7 +551,7 @@ mod tests {
     /// Per-mode sample claims with sentinel values in the canonical append
     /// order: base interleaves the inc member after the RA virtualizations;
     /// Akita carries the read-raf `FusedInc` cell and the lattice booleanity
-    /// chunk/MSB cells instead.
+    /// digit/carry cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(not(feature = "akita"))]
         let (bytecode_read_raf, booleanity, last) = (
@@ -560,22 +575,25 @@ mod tests {
                 instruction_ra: vec![fr(4)],
                 bytecode_ra: vec![fr(5)],
                 ram_ra: vec![fr(6)],
-                unsigned_inc_chunks: vec![fr(7)],
-                unsigned_inc_msb: fr(8),
+                balanced_inc_digits: vec![fr(7)],
+                balanced_inc_carry: fr(8),
             },
-            11,
+            12,
         );
         #[cfg(not(feature = "akita"))]
         let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7), fr(8));
         #[cfg(feature = "akita")]
-        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(9), fr(10), fr(11));
+        let (load, store, ram_ra_virt, instruction_ra_virt) = (fr(9), fr(10), fr(11), fr(12));
         (
             Stage6bOutputClaims {
                 bytecode_read_raf,
                 booleanity,
+                #[cfg(not(feature = "akita"))]
                 ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: hamming,
                 },
+                #[cfg(feature = "akita")]
+                ram_activation_booleanity: RamActivationBooleanityOutputClaims { load, store },
                 ram_ra_virtualization: RamRaVirtualizationOutputClaims {
                     ram_ra: vec![ram_ra_virt],
                 },

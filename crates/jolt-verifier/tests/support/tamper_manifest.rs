@@ -820,6 +820,7 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets every Booleanity RAM RA output claim",
     ),
+    #[cfg(not(feature = "akita"))]
     checked_standard(
         "stage6.claims.ram_hamming_booleanity.ram_hamming_weight",
         "claims.stage6b.ram_hamming_booleanity.ram_hamming_weight",
@@ -1048,36 +1049,52 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         "the lattice read-raf cycle output fold rejects an offset fused-inc opening",
     ),
     checked_standard(
-        "stage6.claims.booleanity.unsigned_inc_chunks",
-        "claims.stage6b.booleanity.unsigned_inc_chunks",
+        "stage6.claims.ram_activation_booleanity.load",
+        "claims.stage6b.ram_activation_booleanity.load",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the RAM activation booleanity fold and the stage-7 digit-zero baselines reject an offset Load opening",
+    ),
+    checked_standard(
+        "stage6.claims.ram_activation_booleanity.store",
+        "claims.stage6b.ram_activation_booleanity.store",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "the RAM activation booleanity fold and the stage-7 digit-zero baselines reject an offset Store opening",
+    ),
+    checked_standard(
+        "stage6.claims.booleanity.balanced_inc_digits",
+        "claims.stage6b.booleanity.balanced_inc_digits",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "the lattice booleanity output fold covers every chunk cell",
     ),
     checked_standard(
-        "stage6.claims.booleanity.unsigned_inc_msb",
-        "claims.stage6b.booleanity.unsigned_inc_msb",
+        "stage6.claims.booleanity.balanced_inc_carry",
+        "claims.stage6b.booleanity.balanced_inc_carry",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "the lattice booleanity output fold covers the msb cell",
+        "the lattice booleanity output fold covers the carry cell",
     ),
     checked_standard(
-        "stage7.claims.hamming_weight_claim_reduction.unsigned_inc_chunks",
-        "claims.stage7.hamming_weight_claim_reduction.unsigned_inc_chunks",
+        "stage7.claims.hamming_weight_claim_reduction.balanced_inc_digits",
+        "claims.stage7.hamming_weight_claim_reduction.balanced_inc_digits",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "the hamming-weight reduction final-claim fold covers every increment chunk",
     ),
     checked_standard(
-        "stage7.claims.hamming_weight_claim_reduction.unsigned_inc_msb",
-        "claims.stage7.hamming_weight_claim_reduction.unsigned_inc_msb",
+        "stage7.claims.hamming_weight_claim_reduction.balanced_inc_carry",
+        "claims.stage7.hamming_weight_claim_reduction.balanced_inc_carry",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "the hamming-weight reduction final-claim fold covers the increment MSB",
+        "the hamming-weight reduction final-claim fold covers the increment carry",
     ),
     checked_standard(
         "reconstruction.claims.untrusted_advice",
@@ -1517,11 +1534,17 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     instruction_ra: vec![zero],
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
-                    unsigned_inc_chunks: vec![zero],
-                    unsigned_inc_msb: zero,
+                    balanced_inc_digits: vec![zero],
+                    balanced_inc_carry: zero,
                 },
+            #[cfg(not(feature = "akita"))]
             ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
+            },
+            #[cfg(feature = "akita")]
+            ram_activation_booleanity: stage6b::outputs::RamActivationBooleanityOutputClaims {
+                load: zero,
+                store: zero,
             },
             ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                 ram_ra: vec![zero],
@@ -1560,9 +1583,9 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
                     #[cfg(feature = "akita")]
-                    unsigned_inc_chunks: vec![zero],
+                    balanced_inc_digits: vec![zero],
                     #[cfg(feature = "akita")]
-                    unsigned_inc_msb: zero,
+                    balanced_inc_carry: zero,
                 },
             trusted_advice: fill_optionals.then_some(
                 stage7::advice_address_phase::TrustedAdviceAddressPhaseOutputClaims {

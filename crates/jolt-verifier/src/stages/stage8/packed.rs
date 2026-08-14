@@ -444,16 +444,16 @@ pub fn leaf_claims<F: Field>(
 
     insert_indexed(
         &mut leaves,
-        &hamming_values.unsigned_inc_chunks,
-        &hamming_points.unsigned_inc_chunks,
-        Poly::UnsignedIncChunk,
+        &hamming_values.balanced_inc_digits,
+        &hamming_points.balanced_inc_digits,
+        Poly::BalancedIncDigit,
     );
     insert(
         &mut leaves,
-        Poly::UnsignedIncMsb,
+        Poly::BalancedIncCarry,
         leaf(
-            hamming_values.unsigned_inc_msb,
-            &hamming_points.unsigned_inc_msb,
+            hamming_values.balanced_inc_carry,
+            &hamming_points.balanced_inc_carry,
         ),
     );
 
@@ -746,15 +746,15 @@ mod tests {
                 .collect(),
             bytecode_ra: (0..layout.bytecode()).map(|i| fr(200 + i as u64)).collect(),
             ram_ra: (0..layout.ram()).map(|i| fr(300 + i as u64)).collect(),
-            unsigned_inc_chunks: (0..INC_CHUNKS).map(|i| fr(400 + i as u64)).collect(),
-            unsigned_inc_msb: fr(500),
+            balanced_inc_digits: (0..INC_CHUNKS).map(|i| fr(400 + i as u64)).collect(),
+            balanced_inc_carry: fr(500),
         };
         let hamming_points = HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![point(one_hot_arity); layout.instruction()],
             bytecode_ra: vec![point(one_hot_arity); layout.bytecode()],
             ram_ra: vec![point(one_hot_arity); layout.ram()],
-            unsigned_inc_chunks: vec![point(one_hot_arity); INC_CHUNKS],
-            unsigned_inc_msb: point(one_hot_arity),
+            balanced_inc_digits: vec![point(one_hot_arity); INC_CHUNKS],
+            balanced_inc_carry: point(one_hot_arity),
         };
         Stage7ClearOutput {
             output_values: Stage7OutputClaims {

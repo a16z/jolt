@@ -19,6 +19,7 @@ pub use super::committed_reduction_cycle_phase::{
 };
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
+pub use super::ram_activation_booleanity::RamActivationBooleanityOutputClaims;
 pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
 pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 
@@ -31,6 +32,9 @@ use super::committed_reduction_cycle_phase::{
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
+#[cfg(feature = "akita")]
+use super::ram_activation_booleanity::RamActivationBooleanity;
+#[cfg(not(feature = "akita"))]
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 
@@ -74,7 +78,14 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 pub struct Stage6bSumchecks<F: Field> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,
+    #[cfg(not(feature = "akita"))]
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
+    /// Packed path: replaces the RAM hamming booleanity — binds the
+    /// `Load`/`Store` activation columns, proves the activation sum Boolean,
+    /// and produces the flag openings the stage-7 digit-zero baselines
+    /// consume (`specs/digit-zero-virtualization.md`).
+    #[cfg(feature = "akita")]
+    pub ram_activation_booleanity: RamActivationBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
     /// Absent on the packed path: the inc claims are discharged inside the
@@ -104,7 +115,7 @@ impl<F: Field> Stage6bOutputPoints<F> {
         #[cfg(not(feature = "akita"))]
         let chunk_fallback = None;
         #[cfg(feature = "akita")]
-        let chunk_fallback = self.booleanity.unsigned_inc_chunks.first();
+        let chunk_fallback = self.booleanity.balanced_inc_digits.first();
         self.booleanity
             .instruction_ra
             .first()

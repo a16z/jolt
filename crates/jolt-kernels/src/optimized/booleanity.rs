@@ -75,9 +75,9 @@ use jolt_verifier::stages::stage6a::booleanity::{
 };
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_verifier::VerifierError;
-use jolt_witness::witnesses::RaChunkSelector;
 #[cfg(feature = "akita")]
-use jolt_witness::witnesses::UnsignedIncLane;
+use jolt_witness::witnesses::BalancedIncLane;
+use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -96,7 +96,7 @@ enum ColumnSelector {
     Bytecode(RaChunkSelector),
     Ram(RaChunkSelector),
     #[cfg(feature = "akita")]
-    UnsignedInc(UnsignedIncLane),
+    UnsignedInc(BalancedIncLane),
 }
 
 impl ColumnSelector {
@@ -189,17 +189,17 @@ fn column_selectors<F: Field>(
     let mut selectors = selectors;
     #[cfg(feature = "akita")]
     {
-        let chunking = jolt_claims::protocols::jolt::lattice::UnsignedIncChunking::new(log_k_chunk)
+        let chunking = jolt_claims::protocols::jolt::lattice::BalancedIncChunking::new(log_k_chunk)
             .map_err(|_| KernelError::InvariantViolation {
                 reason: "the packed shape requires a lattice-compatible chunk width",
             })?;
         selectors.extend((0..chunking.chunk_count()).map(|index| {
-            ColumnSelector::UnsignedInc(UnsignedIncLane::Chunk {
+            ColumnSelector::UnsignedInc(BalancedIncLane::Digit {
                 width: log_k_chunk,
                 index,
             })
         }));
-        selectors.push(ColumnSelector::UnsignedInc(UnsignedIncLane::Msb {
+        selectors.push(ColumnSelector::UnsignedInc(BalancedIncLane::Carry {
             width: log_k_chunk,
         }));
     }

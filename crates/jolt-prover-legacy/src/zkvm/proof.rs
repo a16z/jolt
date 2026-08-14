@@ -839,6 +839,9 @@ pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelatio
         prover_opening::SumcheckId::RamValCheck => JoltRelationId::RamValCheck,
         prover_opening::SumcheckId::RamRaClaimReduction => JoltRelationId::RamRaClaimReduction,
         prover_opening::SumcheckId::RamHammingBooleanity => JoltRelationId::RamHammingBooleanity,
+        prover_opening::SumcheckId::RamActivationBooleanity => {
+            JoltRelationId::RamActivationBooleanity
+        }
         prover_opening::SumcheckId::RamRaVirtualization => JoltRelationId::RamRaVirtualization,
         prover_opening::SumcheckId::RegistersClaimReduction => {
             JoltRelationId::RegistersClaimReduction
@@ -914,11 +917,11 @@ fn convert_committed_polynomial(
         prover_witness::CommittedPolynomial::ProgramImageInit => {
             JoltCommittedPolynomial::ProgramImageInit
         }
-        prover_witness::CommittedPolynomial::UnsignedIncChunk(index) => {
-            JoltCommittedPolynomial::UnsignedIncChunk(index)
+        prover_witness::CommittedPolynomial::BalancedIncDigit(index) => {
+            JoltCommittedPolynomial::BalancedIncDigit(index)
         }
-        prover_witness::CommittedPolynomial::UnsignedIncMsb => {
-            JoltCommittedPolynomial::UnsignedIncMsb
+        prover_witness::CommittedPolynomial::BalancedIncCarry => {
+            JoltCommittedPolynomial::BalancedIncCarry
         }
         prover_witness::CommittedPolynomial::BytecodeRegisterSelector(chunk, lane) => {
             JoltCommittedPolynomial::BytecodeRegisterSelector {

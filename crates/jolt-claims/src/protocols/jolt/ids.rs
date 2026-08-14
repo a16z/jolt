@@ -42,6 +42,11 @@ pub enum JoltRelationId {
     TrustedAdviceReconstruction,
     ProgramImageReconstruction,
     BytecodeChunkReconstruction,
+    /// Packed path: binds the `Load`/`Store` activation columns at the
+    /// stage-6b cycle point and proves the activation sum Boolean — the
+    /// digit-zero virtualization replacement for `RamHammingBooleanity`.
+    /// Appended for codec stability.
+    RamActivationBooleanity,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -85,6 +90,11 @@ pub enum RamRaVirtualizationPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamHammingBooleanityPublic {
+    EqCycle,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RamActivationBooleanityPublic {
     EqCycle,
 }
 
@@ -138,11 +148,13 @@ pub enum HammingWeightClaimReductionChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
-    EqBooleanityAtDefault,
+    /// Packed path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
+    /// weight of a Booleanity leg (`specs/digit-zero-virtualization.md`).
+    EqBooleanityAtDigitZero,
     EqVirtualization(usize),
-    EqVirtualizationAtDefault(usize),
-    EqDefault,
-    RamHammingWeight,
+    /// Packed path: `eq(r_virtualization_address_i, 0)` — the digit-zero
+    /// baseline weight of a virtualization leg.
+    EqVirtualizationAtDigitZero(usize),
     BalancedIncValueAtAddress,
 }
 
@@ -411,8 +423,8 @@ pub enum JoltCommittedPolynomial {
     ProgramImageInit,
     // Lattice-mode committed polynomials (slots of the packed witness); base
     // mode never constructs these. Appended for codec stability.
-    UnsignedIncChunk(usize),
-    UnsignedIncMsb,
+    BalancedIncDigit(usize),
+    BalancedIncCarry,
     TrustedAdviceBytes,
     UntrustedAdviceBytes,
     // Lattice-mode precommitted bytecode decompositions: the per-lane one-hot /
@@ -601,6 +613,7 @@ pub enum JoltDerivedId {
     TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
     ProgramImageReconstruction(ProgramImageReconstructionPublic),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
+    RamActivationBooleanity(RamActivationBooleanityPublic),
     /// Test-only derived id for toy relations that define their own
     /// `derive_output_term`. Gated on `any(test, feature = "test-utils")`
     /// rather than `test` alone because `cfg(test)` is per-crate: a downstream

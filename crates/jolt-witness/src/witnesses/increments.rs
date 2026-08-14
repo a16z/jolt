@@ -1,4 +1,4 @@
-use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
+use jolt_claims::protocols::jolt::lattice::FUSED_INC_BITS;
 use jolt_field::Field;
 use jolt_riscv::CircuitFlags;
 use jolt_riscv::JoltTraceRow as TraceRow;
@@ -66,28 +66,28 @@ pub struct FusedInc(pub i128);
 
 impl FusedInc {
     fn balanced_bias(width: usize) -> i128 {
-        debug_assert!(width > 0 && UNSIGNED_INC_BITS.is_multiple_of(width));
+        debug_assert!(width > 0 && FUSED_INC_BITS.is_multiple_of(width));
         let radix = 1i128 << width;
-        (radix / 2) * (((1i128 << UNSIGNED_INC_BITS) - 1) / (radix - 1))
+        (radix / 2) * (((1i128 << FUSED_INC_BITS) - 1) / (radix - 1))
     }
 
     fn biased_for_balanced_digits(self, width: usize) -> i128 {
-        debug_assert!(self.0.unsigned_abs() < 1u128 << UNSIGNED_INC_BITS);
+        debug_assert!(self.0.unsigned_abs() < 1u128 << FUSED_INC_BITS);
         self.0 + Self::balanced_bias(width)
     }
 
     /// The hot address of one centered digit or its signed carry.
-    pub fn hot_lane(self, lane: UnsignedIncLane) -> usize {
+    pub fn hot_lane(self, lane: BalancedIncLane) -> usize {
         match lane {
-            UnsignedIncLane::Chunk { width, index } => {
+            BalancedIncLane::Digit { width, index } => {
                 let radix = 1i128 << width;
                 let standard =
                     (self.biased_for_balanced_digits(width) >> (width * index)) & (radix - 1);
                 ((standard + radix / 2) & (radix - 1)) as usize
             }
-            UnsignedIncLane::Msb { width } => {
+            BalancedIncLane::Carry { width } => {
                 let radix = 1i128 << width;
-                let carry = self.biased_for_balanced_digits(width) >> UNSIGNED_INC_BITS;
+                let carry = self.biased_for_balanced_digits(width) >> FUSED_INC_BITS;
                 debug_assert!((-1..=1).contains(&carry));
                 carry.rem_euclid(radix) as usize
             }
@@ -130,25 +130,25 @@ impl Extract for FusedInc {
 
 /// Selects one centered radix digit or the signed carry above bit 63.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnsignedIncLane {
-    Chunk { width: usize, index: usize },
-    Msb { width: usize },
+pub enum BalancedIncLane {
+    Digit { width: usize, index: usize },
+    Carry { width: usize },
 }
 
-/// The per-cycle hot address of one `UnsignedIncChunk`/`UnsignedIncMsb`
+/// The per-cycle hot address of one `BalancedIncDigit`/`BalancedIncCarry`
 /// column; every cycle is hot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct UnsignedIncHot(pub usize);
+pub struct BalancedIncHot(pub usize);
 
-impl From<UnsignedIncHot> for Option<usize> {
-    fn from(hot: UnsignedIncHot) -> Self {
+impl From<BalancedIncHot> for Option<usize> {
+    fn from(hot: BalancedIncHot) -> Self {
         Some(hot.0)
     }
 }
 
-impl ExtractIndexed<UnsignedIncLane> for UnsignedIncHot {
+impl ExtractIndexed<BalancedIncLane> for BalancedIncHot {
     fn extract_indexed(
-        lane: UnsignedIncLane,
+        lane: BalancedIncLane,
         row: &TraceRow,
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
@@ -162,7 +162,7 @@ mod tests {
     use super::*;
 
     const LOG_K_CHUNK: usize = 8;
-    const CHUNKS: usize = UNSIGNED_INC_BITS / LOG_K_CHUNK;
+    const CHUNKS: usize = FUSED_INC_BITS / LOG_K_CHUNK;
 
     fn fused_trace() -> Vec<FusedInc> {
         [
@@ -188,7 +188,7 @@ mod tests {
             let half = radix / 2;
             let mut reconstructed = 0i128;
             for index in 0..CHUNKS {
-                let hot = inc.hot_lane(UnsignedIncLane::Chunk {
+                let hot = inc.hot_lane(BalancedIncLane::Digit {
                     width: LOG_K_CHUNK,
                     index,
                 });
@@ -200,9 +200,9 @@ mod tests {
                 };
                 reconstructed += digit << (LOG_K_CHUNK * index);
             }
-            let carry = inc.hot_lane(UnsignedIncLane::Msb { width: LOG_K_CHUNK }) as i128;
+            let carry = inc.hot_lane(BalancedIncLane::Carry { width: LOG_K_CHUNK }) as i128;
             let carry = if carry < half { carry } else { carry - radix };
-            reconstructed += carry << UNSIGNED_INC_BITS;
+            reconstructed += carry << FUSED_INC_BITS;
             assert_eq!(reconstructed, inc.0, "cycle {cycle}");
         }
     }
@@ -211,12 +211,12 @@ mod tests {
     fn zero_delta_uses_balanced_zero_digits_and_carry() {
         let padding = FusedInc(0);
         assert_eq!(
-            padding.hot_lane(UnsignedIncLane::Msb { width: LOG_K_CHUNK }),
+            padding.hot_lane(BalancedIncLane::Carry { width: LOG_K_CHUNK }),
             0
         );
         for index in 0..CHUNKS {
             assert_eq!(
-                padding.hot_lane(UnsignedIncLane::Chunk {
+                padding.hot_lane(BalancedIncLane::Digit {
                     width: LOG_K_CHUNK,
                     index,
                 }),

@@ -256,6 +256,24 @@ pub fn ram_hamming_weight() -> JoltOpeningId {
     )
 }
 
+/// Packed path: the `Load` flag opening at the stage-6b cycle point, one of
+/// the two claims whose sum is the RAM activation `M_RAM = Load + Store`.
+pub fn ram_activation_load() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::OpFlags(jolt_riscv::CircuitFlags::Load),
+        JoltRelationId::RamActivationBooleanity,
+    )
+}
+
+/// Packed path: the `Store` flag opening at the stage-6b cycle point, one of
+/// the two claims whose sum is the RAM activation `M_RAM = Load + Store`.
+pub fn ram_activation_store() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::OpFlags(jolt_riscv::CircuitFlags::Store),
+        JoltRelationId::RamActivationBooleanity,
+    )
+}
+
 #[cfg(test)]
 #[expect(clippy::panic)]
 mod tests {

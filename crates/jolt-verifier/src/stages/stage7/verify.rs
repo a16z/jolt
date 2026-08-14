@@ -66,7 +66,7 @@ where
     let hamming_dimensions = base_hamming_dimensions;
     #[cfg(feature = "akita")]
     let hamming_dimensions =
-        jolt_claims::protocols::jolt::lattice::relations::hamming_weight::LatticeHammingWeightClaimReductionDimensions::new(
+        jolt_claims::protocols::jolt::lattice::relations::digit_zero::LatticeDigitZeroClaimReductionDimensions::new(
             base_hamming_dimensions.layout,
             base_hamming_dimensions.log_k_chunk,
         )
@@ -195,12 +195,6 @@ pub fn build_stage7_sumchecks<F: Field>(
         booleanity_r_cycle.to_vec(),
         booleanity_r_address.to_vec(),
         stage7_hamming_virtualization_address_points(hamming_dimensions, stage6_points)?,
-        clear.map(|(_, stage6)| {
-            stage6
-                .output_values
-                .ram_hamming_booleanity
-                .ram_hamming_weight
-        }),
     );
 
     // The staged advice RAM address point from stage 4's RAM value-check (`None`

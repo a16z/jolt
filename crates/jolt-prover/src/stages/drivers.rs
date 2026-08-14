@@ -103,6 +103,9 @@ mod stage6b {
         Stage6bChallenges, Stage6bInputClaims, Stage6bInputPoints, Stage6bOutputClaims,
         Stage6bOutputPoints, Stage6bSumchecks,
     };
+    #[cfg(feature = "akita")]
+    use jolt_verifier::stages::stage6b::ram_activation_booleanity::RamActivationBooleanity;
+    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
     use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
     use jolt_verifier::stages::stage6b::stage6b_opening_values;

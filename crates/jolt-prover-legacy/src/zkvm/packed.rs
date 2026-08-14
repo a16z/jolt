@@ -73,11 +73,11 @@ use crate::zkvm::instruction_lookups::ra_virtual::{
     InstructionRaSumcheckParams, InstructionRaSumcheckProver as LookupsRaSumcheckProver,
 };
 use crate::zkvm::packed_witness::{
-    pack_one_hot_columns, FusedIncValue, SparseUnitPolynomial, UNSIGNED_INC_BITS,
+    pack_one_hot_columns, FusedIncValue, SparseUnitPolynomial, FUSED_INC_BITS,
 };
 use crate::zkvm::prover::JoltCpuProver;
-use crate::zkvm::ram::hamming_booleanity::{
-    HammingBooleanitySumcheckParams, HammingBooleanitySumcheckProver,
+use crate::zkvm::ram::activation_booleanity::{
+    ActivationBooleanitySumcheckParams, ActivationBooleanitySumcheckProver,
 };
 use crate::zkvm::ram::populate_memory_states;
 use crate::zkvm::ram::ra_virtual::{RamRaVirtualParams, RamRaVirtualSumcheckProver};
@@ -715,8 +715,9 @@ impl AkitaPackedProver<'_> {
         .expect("Jolt always commits at least one RA polynomial")
     }
 
-    /// Builds the physical prefix-packed `OneHotTrace` polynomial. Lane zero
-    /// is omitted; Stage 7 accounts for its public logical contribution.
+    /// Builds the physical prefix-packed `OneHotTrace` polynomial. The
+    /// digit-zero row is omitted; Stage 7 reconstructs it from the column's
+    /// activation (`specs/digit-zero-virtualization.md`).
     #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
     fn assemble_one_hot_trace(
         &self,
@@ -761,10 +762,10 @@ impl AkitaPackedProver<'_> {
                             }
                             JoltCommittedPolynomial::RamRa(index) => (*ram_address)
                                 .map(|address| params.ram_address_chunk(address, *index) as usize),
-                            JoltCommittedPolynomial::UnsignedIncChunk(index) => {
+                            JoltCommittedPolynomial::BalancedIncDigit(index) => {
                                 Some(inc.balanced_chunk_hot_lane_bits(params.log_k_chunk, *index))
                             }
-                            JoltCommittedPolynomial::UnsignedIncMsb => {
+                            JoltCommittedPolynomial::BalancedIncCarry => {
                                 Some(inc.balanced_carry_hot_lane_bits(params.log_k_chunk))
                             }
                             _ => unreachable!("OneHotTrace plan contains only canonical columns"),
@@ -795,7 +796,7 @@ impl AkitaPackedProver<'_> {
         use rayon::prelude::*;
         use std::sync::Arc;
 
-        let chunk_count = UNSIGNED_INC_BITS / self.one_hot_params.log_k_chunk;
+        let chunk_count = FUSED_INC_BITS / self.one_hot_params.log_k_chunk;
         let width = self.one_hot_params.log_k_chunk;
         let one_hot: Vec<Arc<Vec<Option<u8>>>> = (0..chunk_count)
             .map(|index| {
@@ -919,8 +920,8 @@ impl AkitaPackedProver<'_> {
         AkitaNoCurve,
         AkitaTranscript,
     > {
-        let ram_hamming_booleanity_params =
-            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
+        let ram_activation_booleanity_params =
+            ActivationBooleanitySumcheckParams::new(&self.opening_accumulator);
         let ram_ra_virtual_params = RamRaVirtualParams::new(
             self.trace.len(),
             &self.one_hot_params,
@@ -948,8 +949,10 @@ impl AkitaPackedProver<'_> {
             booleanity_cycle_input,
             &self.opening_accumulator,
         );
-        let mut ram_hamming_booleanity =
-            HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
+        let mut ram_activation_booleanity = ActivationBooleanitySumcheckProver::initialize(
+            ram_activation_booleanity_params,
+            &self.trace,
+        );
         let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
             &self.trace,
@@ -1074,7 +1077,7 @@ impl AkitaPackedProver<'_> {
         > = vec![
             &mut bytecode_read_raf,
             &mut booleanity,
-            &mut ram_hamming_booleanity,
+            &mut ram_activation_booleanity,
             &mut ram_ra_virtual,
             &mut lookups_ra_virtual,
         ];
@@ -1345,12 +1348,12 @@ impl AkitaPackedProver<'_> {
                 CommittedPolynomial::RamRa(index),
                 SumcheckId::HammingWeightClaimReduction,
             ),
-            JoltCommittedPolynomial::UnsignedIncChunk(index) => (
-                CommittedPolynomial::UnsignedIncChunk(index),
+            JoltCommittedPolynomial::BalancedIncDigit(index) => (
+                CommittedPolynomial::BalancedIncDigit(index),
                 SumcheckId::HammingWeightClaimReduction,
             ),
-            JoltCommittedPolynomial::UnsignedIncMsb => (
-                CommittedPolynomial::UnsignedIncMsb,
+            JoltCommittedPolynomial::BalancedIncCarry => (
+                CommittedPolynomial::BalancedIncCarry,
                 SumcheckId::HammingWeightClaimReduction,
             ),
             other => {
@@ -1831,7 +1834,7 @@ mod tests {
         verify(&proof).expect("packed verifier should accept the packed proof");
 
         // Live tampers on the fused-inc pipeline's claim wires: the fused
-        // increment's reduced claim and the hamming-reduction chunk/msb
+        // increment's reduced claim and the hamming-reduction digit/carry
         // finals each participate in a batched output fold — an offset on
         // any of them must be rejected.
         let tamper = |mutate: &dyn Fn(&mut jolt_verifier::proof::ClearProofClaims<AkitaField>)| {
@@ -1855,17 +1858,17 @@ mod tests {
             verify(&tamper(&|claims| claims
                 .stage7
                 .hamming_weight_claim_reduction
-                .unsigned_inc_chunks[0] += one))
+                .balanced_inc_digits[0] += one))
             .is_err(),
-            "tampered unsigned-inc chunk final must be rejected"
+            "tampered increment digit final must be rejected"
         );
         assert!(
             verify(&tamper(&|claims| claims
                 .stage7
                 .hamming_weight_claim_reduction
-                .unsigned_inc_msb += one))
+                .balanced_inc_carry += one))
             .is_err(),
-            "tampered unsigned-inc msb final must be rejected"
+            "tampered increment carry final must be rejected"
         );
     }
 
@@ -2398,5 +2401,91 @@ impl<F: Field> VectorCommitment for NoVectorCommitment<F> {
         _blinding: &Self::Field,
     ) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod advice_object_tests {
+    use super::*;
+    use jolt_poly::MultilinearPoly;
+
+    /// A couple of bytes of advice must stay provable: without the packing
+    /// plan's capacity padding, the 11-variable cell domain of a one-word
+    /// region has no dense fold schedule and `advice_object_setup` fails
+    /// before anything is committed.
+    #[test]
+    fn byte_sized_advice_region_commits_and_opens() {
+        let max_advice_bytes = 8;
+        let advice_bytes = [5u8, 7];
+
+        for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
+            let setup = advice_object_setup(kind, max_advice_bytes).unwrap();
+            let AdviceOneHot {
+                plan,
+                byte_column,
+                commitment,
+                hint,
+                ..
+            } = commit_advice_one_hot(kind, &advice_bytes, max_advice_bytes, &setup).unwrap();
+            let column = JoltCommittedPolynomial::advice_bytes(kind);
+            let logical_vars = plan.logical_num_vars(column).unwrap();
+            let selector_vars = plan.packing().selector_num_vars();
+            assert!(selector_vars > 0, "tiny advice must pad selector capacity");
+
+            // Logical claim: the byte column restricted to slot zero.
+            let logical_point = (0..logical_vars)
+                .map(|index| AkitaField::from_u64(index as u64 + 2))
+                .collect::<Vec<_>>();
+            let mut physical_point = vec![AkitaField::zero(); selector_vars];
+            physical_point.extend_from_slice(&logical_point);
+            let value = byte_column.evaluate(&physical_point);
+
+            let claims = std::collections::BTreeMap::from([(
+                column,
+                EvaluationClaim::new(logical_point, value),
+            )]);
+            let packed = plan.packed_claims(&claims).unwrap();
+
+            let mut prover_transcript =
+                <AkitaTranscript as jolt_transcript::Transcript>::new(b"tiny-advice-object");
+            let physical = plan
+                .packing()
+                .reduce_claims(&packed, &mut prover_transcript)
+                .unwrap();
+            let proof = <AkitaScheme as VerifierCommitmentScheme>::open(
+                &byte_column,
+                physical.point.as_slice(),
+                physical.value,
+                &setup,
+                Some(hint),
+                &mut prover_transcript,
+            )
+            .unwrap();
+
+            let (_, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+                jolt_akita::AkitaSetupParams::dense_only(
+                    plan.packing().packed_num_vars(),
+                    1,
+                    plan.layout_digest(),
+                ),
+            )
+            .unwrap();
+            let mut verifier_transcript =
+                <AkitaTranscript as jolt_transcript::Transcript>::new(b"tiny-advice-object");
+            let reduced = plan
+                .packing()
+                .reduce_claims(&packed, &mut verifier_transcript)
+                .unwrap();
+            <AkitaScheme as VerifierCommitmentScheme>::verify(
+                &commitment,
+                reduced.point.as_slice(),
+                reduced.value,
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+            )
+            .unwrap();
+        }
     }
 }

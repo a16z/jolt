@@ -81,37 +81,23 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBac
         #[cfg(feature = "akita")]
         {
             let table_len = 1usize << dimensions.log_k_chunk;
-            let at_default = |point: &[F]| {
+            let at_digit_zero = |point: &[F]| {
                 point
                     .iter()
                     .fold(F::one(), |acc, coordinate| acc * (F::one() - *coordinate))
             };
             let _ = derived_tables.insert(
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanityAtDefault),
-                Polynomial::new(vec![at_default(r_address); table_len]),
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero),
+                Polynomial::new(vec![at_digit_zero(r_address); table_len]),
             );
             for (index, point) in virtualization_points.iter().enumerate() {
                 let _ = derived_tables.insert(
                     JoltDerivedId::from(
-                        HammingWeightClaimReductionPublic::EqVirtualizationAtDefault(index),
+                        HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(index),
                     ),
-                    Polynomial::new(vec![at_default(point); table_len]),
+                    Polynomial::new(vec![at_digit_zero(point); table_len]),
                 );
             }
-            let _ = derived_tables.insert(
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqDefault),
-                Polynomial::new(eq_table(&vec![F::zero(); dimensions.log_k_chunk])),
-            );
-            let ram_hamming_weight =
-                relation
-                    .ram_hamming_weight()
-                    .ok_or(KernelError::InvariantViolation {
-                        reason: "Akita hamming reduction is missing the RAM activation",
-                    })?;
-            let _ = derived_tables.insert(
-                JoltDerivedId::from(HammingWeightClaimReductionPublic::RamHammingWeight),
-                Polynomial::new(vec![ram_hamming_weight; table_len]),
-            );
             let balanced_values = (0..table_len)
                 .map(|lane| balanced_inc_value(&boolean_point_msb(dimensions.log_k_chunk, lane)))
                 .collect();
@@ -133,8 +119,8 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBac
                         if matches!(
                             id.polynomial_id(),
                             JoltPolynomialId::Committed(
-                                JoltCommittedPolynomial::UnsignedIncChunk(_)
-                                    | JoltCommittedPolynomial::UnsignedIncMsb,
+                                JoltCommittedPolynomial::BalancedIncDigit(_)
+                                    | JoltCommittedPolynomial::BalancedIncCarry,
                             )
                         ) && !opening_tables.contains_key(id)
                         {

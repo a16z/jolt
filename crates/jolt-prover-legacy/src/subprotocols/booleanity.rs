@@ -614,9 +614,11 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
     }
 }
 
-/// Extends the base Booleanity parameters with the unsigned-inc chunks and
-/// MSB. Every added member is a full `(address ‖ cycle)` one-hot polynomial;
-/// the MSB selects address zero or one. The batching weights therefore grow
+/// Extends the base Booleanity parameters with the increment digits and
+/// the carry. Every added member is a full `(address ‖ cycle)` one-hot
+/// polynomial over the same `K` lanes; the carry decodes to a signed value,
+/// which the honest encoder keeps in `{0, +1, -1}` though only the full
+/// alphabet is enforced. The batching weights therefore grow
 /// by `chunk_count + 1`, and every added member participates in both phases.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub fn lattice_booleanity_params<F: JoltField>(
@@ -626,15 +628,15 @@ pub fn lattice_booleanity_params<F: JoltField>(
     transcript: &mut impl Transcript,
 ) -> BooleanitySumcheckParams<F> {
     let mut params = BooleanitySumcheckParams::new(log_t, one_hot_params, accumulator, transcript);
-    let chunk_count = crate::zkvm::packed_witness::UNSIGNED_INC_BITS / params.log_k_chunk;
+    let chunk_count = crate::zkvm::packed_witness::FUSED_INC_BITS / params.log_k_chunk;
     for index in 0..chunk_count {
         params
             .polynomial_types
-            .push(CommittedPolynomial::UnsignedIncChunk(index));
+            .push(CommittedPolynomial::BalancedIncDigit(index));
     }
     params
         .polynomial_types
-        .push(CommittedPolynomial::UnsignedIncMsb);
+        .push(CommittedPolynomial::BalancedIncCarry);
     let gamma_f: F = params.gamma.into();
     let gamma_sq = gamma_f.square();
     let mut next = *params
@@ -653,10 +655,15 @@ pub fn lattice_booleanity_params<F: JoltField>(
 /// Stage 7 hamming-weight reduction.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub struct FusedIncColumns {
-    /// One-hot hot-address lanes: the unsigned-inc chunk columns in index
-    /// order, then the MSB column (hot address zero or one) last — the
-    /// batching order of [`lattice_booleanity_params`]. Lanes are never
-    /// `None`; the `Option` is the [`RaPolynomial`] index encoding.
+    /// One-hot hot-address lanes: the increment digit columns in index
+    /// order, then the carry column last (which this encoder keeps on lane
+    /// `0`, `1`, or `K - 1`, though the protocol enforces only one-hotness
+    /// over all `K`) — the batching order of
+    /// [`lattice_booleanity_params`]. Lanes are never
+    /// `None`: Booleanity must see the digit-zero-*inclusive* columns, unlike
+    /// the commitment, which omits the digit-zero row and lets Stage 7
+    /// reconstruct it (`specs/digit-zero-virtualization.md`).
+    /// The `Option` is the [`RaPolynomial`] index encoding.
     pub one_hot: Vec<Arc<Vec<Option<u8>>>>,
     /// The signed fused delta per cycle.
     pub fused: Vec<i128>,
@@ -713,10 +720,11 @@ pub struct LatticeBooleanityCycleInput<F: JoltField> {
     one_hot_columns: Vec<Arc<Vec<Option<u8>>>>,
 }
 
-/// Lattice booleanity address phase: the base prover with the chunk columns'
-/// pushforward tables appended to `G` (built with the same split-eq cycle
-/// convention as `compute_all_G`). The msb column is absent by construction —
-/// see [`lattice_booleanity_params`].
+/// Lattice booleanity address phase: the base prover with the increment
+/// columns' pushforward tables appended to `G` (built with the same split-eq
+/// cycle convention as `compute_all_G`). `one_hot_columns` includes the carry
+/// column — [`lattice_booleanity_params`] pushes `BalancedIncCarry` into the
+/// polynomial types, and the fused columns carry it last.
 #[cfg(all(feature = "prover", feature = "akita"))]
 #[derive(Allocative)]
 pub struct LatticeBooleanityAddressSumcheckProver<F: JoltField> {
@@ -813,7 +821,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
 }
 
 /// Lattice booleanity cycle phase: the base fold extended over the chunk
-/// columns, including the MSB, as one-hot columns over the shared bound-
+/// columns, including the carry, as one-hot columns over the shared bound-
 /// address table. Each column stays index-form ([`RaPolynomial`]) through the
 /// first three rounds — like the base `H` members — instead of materializing
 /// a full `T`-sized coefficient vector up front.
@@ -824,7 +832,7 @@ pub struct LatticeBooleanityCycleSumcheckProver<F: JoltField> {
     H: SharedRaPolynomials<F>,
     chunk_h: Vec<RaPolynomial<u8, F>>,
     eq_r_r: F,
-    /// Per-column powers γ^i over `polynomial_types ++ [msb]`.
+    /// Per-column powers γ^i over `polynomial_types ++ [carry]`.
     gamma_powers: Vec<F>,
     gamma_powers_inv: Vec<F>,
     params: BooleanityCyclePhaseParams<F>,
@@ -1148,42 +1156,40 @@ mod tests {
             .collect()
     }
 
-    /// Synthetic fused-inc chunk/msb columns plus per-cycle `Ra` indices; then
+    /// Synthetic fused-inc digit/carry columns plus per-cycle `Ra` indices; then
     /// the full lattice cycle-phase round loop: the input claim matches the
     /// brute-forced sum, every round polynomial folds the previous claim, and
     /// the final claim equals the verifier's closed-form expected output over
-    /// the cached (unscaled) openings — msb leg included.
+    /// the cached (unscaled) openings — carry leg included.
     #[test]
     fn lattice_cycle_round_loop_reduces_to_the_booleanity_openings() {
         let one_hot_params = OneHotParams::new(LOG_T, 4, 256);
         let width = one_hot_params.log_k_chunk;
         assert_eq!(
-            crate::zkvm::packed_witness::UNSIGNED_INC_BITS % width,
+            crate::zkvm::packed_witness::FUSED_INC_BITS % width,
             0,
-            "chunk width must divide the unsigned-inc bits"
+            "chunk width must divide the fused-increment bits"
         );
-        let chunk_count = crate::zkvm::packed_witness::UNSIGNED_INC_BITS / width;
+        let chunk_count = crate::zkvm::packed_witness::FUSED_INC_BITS / width;
         let k_chunk = one_hot_params.k_chunk;
         let num_base =
             one_hot_params.instruction_d + one_hot_params.bytecode_d + one_hot_params.ram_d;
 
-        // Fused deltas exercising padding (0 => msb hot, chunks at 0),
+        // Fused deltas exercising padding (0 => every column on digit zero),
         // negatives, and extremes.
         let fused: Vec<i128> = vec![5, -7, 0, (1 << 63) - 1, -(1 << 63), 123, -456, 0];
-        let shifted = |delta: i128| {
-            (delta + (1i128 << crate::zkvm::packed_witness::UNSIGNED_INC_BITS)) as u128
-        };
+        let inc = |delta: i128| crate::zkvm::packed_witness::FusedIncValue { delta };
         let hot_lanes: Vec<Vec<u8>> = (0..chunk_count)
             .map(|index| {
                 fused
                     .iter()
-                    .map(|delta| ((shifted(*delta) >> (width * index)) & ((1 << width) - 1)) as u8)
+                    .map(|delta| inc(*delta).balanced_chunk_hot_lane_bits(width, index) as u8)
                     .collect()
             })
             .collect();
-        let msb: Vec<u8> = fused
+        let carry: Vec<u8> = fused
             .iter()
-            .map(|delta| (shifted(*delta) >> crate::zkvm::packed_witness::UNSIGNED_INC_BITS) as u8)
+            .map(|delta| inc(*delta).balanced_carry_hot_lane_bits(width) as u8)
             .collect();
 
         let ra_indices: Vec<RaIndices> = (0..T)
@@ -1273,7 +1279,7 @@ mod tests {
             }
             inner += leg(
                 gamma_powers[num_base + chunk_count],
-                f_table[msb[j] as usize],
+                f_table[carry[j] as usize],
             );
             input_claim += w_cycle[j] * inner;
         }
@@ -1291,7 +1297,7 @@ mod tests {
 
         let one_hot_columns: Vec<Arc<Vec<Option<u8>>>> = hot_lanes
             .iter()
-            .chain(core::iter::once(&msb))
+            .chain(core::iter::once(&carry))
             .map(|column| Arc::new(column.iter().map(|lane| Some(*lane)).collect()))
             .collect();
         let input = LatticeBooleanityCycleInput {

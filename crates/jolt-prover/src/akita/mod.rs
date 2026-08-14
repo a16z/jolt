@@ -132,6 +132,7 @@ where
                 bytecode_read_raf_cycle: Box::new(ReferenceBackend),
                 booleanity_cycle: Box::new(ReferenceBackend),
                 ram_hamming_booleanity: Box::new(ReferenceBackend),
+                ram_activation_booleanity: Box::new(ReferenceBackend),
                 ram_ra_virtualization: Box::new(ReferenceBackend),
                 instruction_ra_virtualization: Box::new(ReferenceBackend),
                 inc_claim_reduction: Box::new(ReferenceBackend),

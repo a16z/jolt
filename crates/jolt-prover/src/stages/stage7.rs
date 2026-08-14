@@ -78,7 +78,7 @@ where
     // `stage7::verify` applies.
     #[cfg(feature = "akita")]
     let hamming_dimensions =
-        jolt_claims::protocols::jolt::lattice::relations::hamming_weight::LatticeHammingWeightClaimReductionDimensions::new(
+        jolt_claims::protocols::jolt::lattice::relations::digit_zero::LatticeDigitZeroClaimReductionDimensions::new(
             hamming_dimensions.layout,
             hamming_dimensions.log_k_chunk,
         )

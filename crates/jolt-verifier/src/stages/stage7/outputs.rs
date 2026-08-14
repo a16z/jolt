@@ -156,9 +156,9 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     #[cfg(feature = "akita")]
-    use jolt_claims::protocols::jolt::lattice::relations::hamming_weight::{
-        LatticeHammingWeightClaimReductionDimensions as HammingWeightClaimReductionDimensions,
-        LatticeHammingWeightClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
+    use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
+        LatticeDigitZeroClaimReductionDimensions as HammingWeightClaimReductionDimensions,
+        LatticeDigitZeroClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
     };
     use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
@@ -214,7 +214,7 @@ mod tests {
                 4,
             )
             .unwrap();
-            HammingWeightClaimReduction::new(dimensions, Vec::new(), Vec::new(), Vec::new(), None)
+            HammingWeightClaimReduction::new(dimensions, Vec::new(), Vec::new(), Vec::new())
         };
         let trusted_instance = || {
             TrustedAdviceAddressPhase::new(
@@ -232,7 +232,7 @@ mod tests {
         };
 
         // Sentinels are sequential in canonical append order. Under Akita the
-        // hamming reduction itself emits the increment chunk and MSB openings.
+        // hamming reduction itself emits the increment digit and carry openings.
         #[cfg(not(feature = "akita"))]
         let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
             (5, 6, 7, 8, 9, 6, 9);
@@ -244,9 +244,9 @@ mod tests {
             bytecode_ra: vec![fr(3)],
             ram_ra: vec![fr(4)],
             #[cfg(feature = "akita")]
-            unsigned_inc_chunks: vec![fr(5)],
+            balanced_inc_digits: vec![fr(5)],
             #[cfg(feature = "akita")]
-            unsigned_inc_msb: fr(6),
+            balanced_inc_carry: fr(6),
         };
         let trusted_advice = TrustedAdviceAddressPhaseOutputClaims {
             trusted: fr(trusted),

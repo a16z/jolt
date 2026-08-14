@@ -4,7 +4,7 @@
 
 use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
 use jolt_claims::protocols::jolt::lattice::PrefixPackedObjectPlan;
-pub use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
+pub use jolt_claims::protocols::jolt::lattice::FUSED_INC_BITS;
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
 use jolt_poly::OneHotPolynomial;
 use jolt_riscv::JoltInstructionRow;
@@ -18,7 +18,7 @@ use crate::zkvm::lookup_table::LookupTables;
 use common::constants::XLEN;
 
 /// Packs equal-length semantic columns into prefix slots and pads unused
-/// slots with zero rows. Logical lane zero is virtual and therefore omitted
+/// slots with zero rows. The logical digit-zero row is virtual and therefore omitted
 /// from the physical one-hot polynomial.
 pub fn pack_one_hot_columns(
     k: usize,
@@ -187,13 +187,13 @@ impl FusedIncValue {
     }
 
     fn balanced_bias(width: usize) -> i128 {
-        debug_assert!(width > 0 && UNSIGNED_INC_BITS.is_multiple_of(width));
+        debug_assert!(width > 0 && FUSED_INC_BITS.is_multiple_of(width));
         let radix = 1i128 << width;
-        (radix / 2) * (((1i128 << UNSIGNED_INC_BITS) - 1) / (radix - 1))
+        (radix / 2) * (((1i128 << FUSED_INC_BITS) - 1) / (radix - 1))
     }
 
     fn biased_for_balanced_digits(self, width: usize) -> i128 {
-        debug_assert!(self.delta.unsigned_abs() < 1u128 << UNSIGNED_INC_BITS);
+        debug_assert!(self.delta.unsigned_abs() < 1u128 << FUSED_INC_BITS);
         self.delta + Self::balanced_bias(width)
     }
 
@@ -208,7 +208,7 @@ impl FusedIncValue {
     /// The signed carry above bit 63, encoded modulo the chunk radix.
     pub fn balanced_carry_hot_lane_bits(self, width: usize) -> usize {
         let radix = 1i128 << width;
-        let carry = self.biased_for_balanced_digits(width) >> UNSIGNED_INC_BITS;
+        let carry = self.biased_for_balanced_digits(width) >> FUSED_INC_BITS;
         debug_assert!((-1..=1).contains(&carry));
         carry.rem_euclid(radix) as usize
     }
@@ -377,7 +377,7 @@ pub fn assemble_precommitted_witness<F: JoltField>(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use jolt_claims::protocols::jolt::lattice::UnsignedIncChunking;
+    use jolt_claims::protocols::jolt::lattice::BalancedIncChunking;
 
     #[test]
     fn physical_one_hot_prefix_order_matches_selector_reduction() {
@@ -418,7 +418,7 @@ mod tests {
             (1i128 << 64) - 1,
         ];
         for width in [4, 8] {
-            let chunking = UnsignedIncChunking::new(width).unwrap();
+            let chunking = BalancedIncChunking::new(width).unwrap();
             let radix = 1i128 << width;
             for delta in values {
                 let inc = FusedIncValue { delta };
@@ -439,7 +439,7 @@ mod tests {
                 let reconstructed = digits
                     .enumerate()
                     .fold(0, |sum, (index, digit)| sum + (digit << (width * index)))
-                    + (carry << UNSIGNED_INC_BITS);
+                    + (carry << FUSED_INC_BITS);
                 assert_eq!(reconstructed, delta, "width={width}, delta={delta}");
             }
         }

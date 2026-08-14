@@ -21,7 +21,7 @@ use jolt_riscv::{
     JoltInstructionRow, CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 use jolt_witness::witnesses::{
-    FusedInc, LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress, UnsignedIncLane,
+    BalancedIncLane, FusedInc, LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress,
 };
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
@@ -172,7 +172,7 @@ enum OneHotTraceColumn {
     Instruction(RaChunkSelector),
     Bytecode(RaChunkSelector),
     Ram(RaChunkSelector),
-    Increment(UnsignedIncLane),
+    Increment(BalancedIncLane),
 }
 
 struct PackedTraceRows {
@@ -258,14 +258,14 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
                 let selector = RaChunkSelector::new(*index, ra_layout.ram(), log_k_chunk)?;
                 columns.push(OneHotTraceColumn::Ram(selector));
             }
-            JoltCommittedPolynomial::UnsignedIncChunk(index) => {
-                columns.push(OneHotTraceColumn::Increment(UnsignedIncLane::Chunk {
+            JoltCommittedPolynomial::BalancedIncDigit(index) => {
+                columns.push(OneHotTraceColumn::Increment(BalancedIncLane::Digit {
                     width: log_k_chunk,
                     index: *index,
                 }));
             }
-            JoltCommittedPolynomial::UnsignedIncMsb => {
-                columns.push(OneHotTraceColumn::Increment(UnsignedIncLane::Msb {
+            JoltCommittedPolynomial::BalancedIncCarry => {
+                columns.push(OneHotTraceColumn::Increment(BalancedIncLane::Carry {
                     width: log_k_chunk,
                 }));
             }

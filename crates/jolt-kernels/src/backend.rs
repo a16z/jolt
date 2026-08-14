@@ -41,6 +41,7 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
 };
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
+use jolt_verifier::stages::stage6b::ram_activation_booleanity::RamActivationBooleanity;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_verifier::stages::stage7::advice_address_phase::{
@@ -139,6 +140,9 @@ where
     pub bytecode_read_raf_cycle: Box<dyn PrepareKernel<F, BytecodeReadRafCycle<F>>>,
     pub booleanity_cycle: Box<dyn PrepareKernel<F, Booleanity<F>>>,
     pub ram_hamming_booleanity: Box<dyn PrepareKernel<F, RamHammingBooleanity<F>>>,
+    /// Packed path: replaces the RAM hamming booleanity in the stage-6b batch
+    /// (`specs/digit-zero-virtualization.md`).
+    pub ram_activation_booleanity: Box<dyn PrepareKernel<F, RamActivationBooleanity<F>>>,
     pub ram_ra_virtualization: Box<dyn PrepareKernel<F, RamRaVirtualization<F>>>,
     pub instruction_ra_virtualization: Box<dyn PrepareKernel<F, InstructionRaVirtualization<F>>>,
     pub inc_claim_reduction: Box<dyn PrepareKernel<F, IncClaimReduction<F>>>,
