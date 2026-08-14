@@ -128,9 +128,16 @@ impl<F: Field> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         let coeffs = self.poly.coefficients();
+        // An empty round polynomial would absorb nothing (not even the
+        // label) and silently desynchronize the prover and verifier
+        // transcripts; every construction path produces >= 2 coefficients.
+        debug_assert!(!coeffs.is_empty(), "round polynomial has no coefficients");
+        let Some((constant, rest)) = coeffs.split_first() else {
+            return;
+        };
         transcript.append(&LabelWithCount(self.label, (coeffs.len() - 1) as u64));
-        coeffs[0].append_to_transcript(transcript);
-        for c in coeffs.iter().skip(2) {
+        constant.append_to_transcript(transcript);
+        for c in rest.iter().skip(1) {
             c.append_to_transcript(transcript);
         }
     }

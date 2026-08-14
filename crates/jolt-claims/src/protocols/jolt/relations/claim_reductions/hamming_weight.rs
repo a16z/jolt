@@ -132,6 +132,11 @@ impl SymbolicSumcheck for ClaimReduction {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
+
     use super::*;
     use crate::protocols::jolt::geometry::dimensions::JoltFormulaDimensionsError;
     use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};

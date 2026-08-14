@@ -69,19 +69,22 @@ impl Sha256 {
         self.total_len += input_len as u64;
         let mut offset = 0;
 
-        // Cast buffer to u8 for byte-level operations
-        let buffer_u8 =
-            unsafe { core::slice::from_raw_parts_mut(self.buffer.as_mut_ptr() as *mut u8, 64) };
+        // WARNING: byte-level buffer pointers are derived fresh inside each
+        // unsafe block. Holding a `&mut [u8]` view of `self.buffer` across the
+        // `&mut self` calls below (`buffer_as_u32_mut`, `sha256_compress`)
+        // would be aliasing UB.
 
         // Handle partial buffer
         if self.buffer_len != 0 {
             let needed = 64 - self.buffer_len;
             let to_copy = needed.min(input_len);
 
+            // SAFETY: `buffer_len < 64` on entry and `to_copy <= 64 - buffer_len`,
+            // so the copy stays within the 64-byte buffer.
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     input.as_ptr(),
-                    buffer_u8.as_mut_ptr().add(self.buffer_len),
+                    (self.buffer.as_mut_ptr() as *mut u8).add(self.buffer_len),
                     to_copy,
                 );
             }
@@ -111,10 +114,11 @@ impl Sha256 {
         // Process blocks in batches to improve cache locality
         while offset < blocks_end {
             // Load directly into aligned buffer
+            // SAFETY: copies exactly one 64-byte block into the 64-byte buffer.
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     input.as_ptr().add(offset),
-                    buffer_u8.as_mut_ptr(),
+                    self.buffer.as_mut_ptr() as *mut u8,
                     64,
                 );
             }
@@ -135,10 +139,11 @@ impl Sha256 {
         // Buffer remaining bytes
         let remaining = input_len - offset;
         if remaining > 0 {
+            // SAFETY: `remaining < 64` because all complete blocks were consumed above.
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     input.as_ptr().add(offset),
-                    buffer_u8.as_mut_ptr(),
+                    self.buffer.as_mut_ptr() as *mut u8,
                     remaining,
                 );
             }
@@ -151,27 +156,30 @@ impl Sha256 {
     pub fn finalize(mut self) -> [u8; 32] {
         let bit_len = self.total_len << 3; // * 8
 
-        // Cast buffer to u8 for padding
-        let buffer_u8 =
-            unsafe { core::slice::from_raw_parts_mut(self.buffer.as_mut_ptr() as *mut u8, 64) };
-
         // Add padding byte
-        buffer_u8[self.buffer_len] = 0x80;
+        // SAFETY: `update` never leaves a full buffer, so `buffer_len < 64` and
+        // the write is in bounds. Pointer derived fresh (see WARNING in `update`).
+        unsafe {
+            (self.buffer.as_mut_ptr() as *mut u8)
+                .add(self.buffer_len)
+                .write(0x80);
+        }
         let padding_start = self.buffer_len + 1;
 
         // Determine if we need an extra block
         if self.buffer_len < 56 {
             // Single block case - zero padding and add length
+            // SAFETY: `padding_start <= 56`, so the zero fill ends at byte 56 and
+            // the length write covers bytes 56..64. The u64 store is 8-byte
+            // aligned: the struct is `repr(C, align(8))` and `buffer` sits at
+            // offset 32, so buffer byte 56 is 8-byte aligned.
             unsafe {
+                let buffer_ptr = self.buffer.as_mut_ptr() as *mut u8;
                 // Zero fill from padding_start to 56
-                core::ptr::write_bytes(
-                    buffer_u8.as_mut_ptr().add(padding_start),
-                    0,
-                    56 - padding_start,
-                );
+                core::ptr::write_bytes(buffer_ptr.add(padding_start), 0, 56 - padding_start);
 
                 // Write length as big-endian u64
-                *(buffer_u8.as_mut_ptr().add(56) as *mut u64) = bit_len.to_be();
+                (buffer_ptr.add(56) as *mut u64).write(bit_len.to_be());
             }
 
             #[cfg(target_endian = "little")]
@@ -185,10 +193,11 @@ impl Sha256 {
             }
         } else {
             // Two block case
+            // SAFETY: `padding_start <= 64`; zero fill stays within the buffer.
             unsafe {
                 // Zero fill rest of first block
                 core::ptr::write_bytes(
-                    buffer_u8.as_mut_ptr().add(padding_start),
+                    (self.buffer.as_mut_ptr() as *mut u8).add(padding_start),
                     0,
                     64 - padding_start,
                 );
@@ -235,31 +244,30 @@ impl Sha256 {
             }
         }
 
-        // Convert state to bytes
-        let mut result = [0u8; 32];
-        unsafe {
-            let result_u32 = core::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u32, 8);
-            let state = self.state_as_u32();
+        // Convert state to big-endian bytes
+        // SAFETY: state is fully initialized (a compression ran above).
+        let state = unsafe { self.state_as_u32() };
 
-            #[cfg(target_endian = "little")]
-            {
-                // Unroll the loop for cycle optimization
-                result_u32[0] = swap_bytes(state[0]);
-                result_u32[1] = swap_bytes(state[1]);
-                result_u32[2] = swap_bytes(state[2]);
-                result_u32[3] = swap_bytes(state[3]);
-                result_u32[4] = swap_bytes(state[4]);
-                result_u32[5] = swap_bytes(state[5]);
-                result_u32[6] = swap_bytes(state[6]);
-                result_u32[7] = swap_bytes(state[7]);
-            }
-            #[cfg(target_endian = "big")]
-            {
-                core::ptr::copy_nonoverlapping(state.as_ptr(), result_u32.as_mut_ptr(), 8);
-            }
-        }
+        // Unrolled for cycle optimization
+        #[cfg(target_endian = "little")]
+        let words: [u32; 8] = [
+            swap_bytes(state[0]),
+            swap_bytes(state[1]),
+            swap_bytes(state[2]),
+            swap_bytes(state[3]),
+            swap_bytes(state[4]),
+            swap_bytes(state[5]),
+            swap_bytes(state[6]),
+            swap_bytes(state[7]),
+        ];
+        #[cfg(target_endian = "big")]
+        let words: [u32; 8] = [
+            state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7],
+        ];
 
-        result
+        // SAFETY: by-value transmute between arrays of equal size; `u8` has no
+        // alignment requirement and the byte order was fixed above.
+        unsafe { core::mem::transmute::<[u32; 8], [u8; 32]>(words) }
     }
 
     /// Computes SHA-256 hash of the input data in one call.

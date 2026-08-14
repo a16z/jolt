@@ -20,10 +20,17 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 | `sha3-chain` | 2^22 |
 | `btreemap` | 2^20 |
 
+`--backend` selects the prover backend (both subcommands): `reference`
+(default) is the naive test oracle — absolute numbers are provisional,
+attribution is meaningful relatively — while `optimized` is the performance
+tier (legacy-parity prover performance), slotting into the same
+instrumented seams.
+
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =
 `modular_{workload}_{scale}`, hyphens in the workload mapped to
-underscores), and `benchmark-runs/latest_{trace_name}` is symlinked to the
+underscores; optimized runs append `_optimized`, keeping their artifact set
+next to the reference one), and `benchmark-runs/latest_{trace_name}` is symlinked to the
 newest successful run — the stable path every example below reads. All
 paths are under the current working directory. The directory name carries
 the run identity, so the files inside use fixed names:
@@ -61,8 +68,8 @@ python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.jso
 ```
 
 Mind the machine: the reference backend retains ~18 GiB regardless of scale
-and grows steeply with it — large-scale sweeps are for big-memory hosts
-until an optimized backend lands.
+and grows steeply with it — large-scale sweeps on the reference backend are
+for big-memory hosts; use `--backend optimized` above small scales.
 
 The span labels are a versioned public schema — taxonomy v1 lives in the
 `jolt-profiling` crate docs (`crates/jolt-profiling/src/taxonomy.rs`), the

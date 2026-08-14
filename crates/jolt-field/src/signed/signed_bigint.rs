@@ -182,10 +182,12 @@ impl<const N: usize> SignedBigInt<N> {
 
     #[inline]
     pub fn zero_extend_from<const M: usize>(smaller: &SignedBigInt<M>) -> SignedBigInt<N> {
-        debug_assert!(
-            M <= N,
-            "cannot zero-extend: source has more limbs than destination"
-        );
+        const {
+            assert!(
+                M <= N,
+                "cannot zero-extend: source has more limbs than destination"
+            );
+        }
         let widened_mag = Limbs::<N>::zero_extend_from::<M>(&smaller.magnitude);
         SignedBigInt::from_limbs(widened_mag, smaller.is_positive)
     }
@@ -372,7 +374,7 @@ impl<const N: usize> SignedBigInt<N> {
 
     #[inline]
     pub fn from_u128(value: u128) -> Self {
-        debug_assert!(N >= 2, "from_u128 requires at least 2 limbs");
+        const { assert!(N >= 2, "from_u128 requires at least 2 limbs") }
         let mut limbs = [0u64; N];
         limbs[0] = value as u64;
         limbs[1] = (value >> 64) as u64;
@@ -381,7 +383,7 @@ impl<const N: usize> SignedBigInt<N> {
 
     #[inline]
     pub fn from_i128(value: i128) -> Self {
-        debug_assert!(N >= 2, "from_i128 requires at least 2 limbs");
+        const { assert!(N >= 2, "from_i128 requires at least 2 limbs") }
         if value >= 0 {
             let mut limbs = [0u64; N];
             let v = value as u128;
@@ -422,7 +424,6 @@ impl<const N: usize> From<(u64, bool)> for SignedBigInt<N> {
 impl<const N: usize> From<u128> for SignedBigInt<N> {
     #[inline]
     fn from(value: u128) -> Self {
-        debug_assert!(N >= 2, "From<u128> requires at least 2 limbs");
         Self::from_u128(value)
     }
 }
@@ -430,7 +431,6 @@ impl<const N: usize> From<u128> for SignedBigInt<N> {
 impl<const N: usize> From<i128> for SignedBigInt<N> {
     #[inline]
     fn from(value: i128) -> Self {
-        debug_assert!(N >= 2, "From<i128> requires at least 2 limbs");
         Self::from_i128(value)
     }
 }
