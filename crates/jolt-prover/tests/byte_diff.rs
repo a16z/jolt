@@ -1812,7 +1812,8 @@ mod inline_sha3 {
 
     use super::support;
 
-    const KECCAK_ROTRI_ROWS: usize = 696;
+    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
+    const KECCAK_ROTRI_ROWS: usize = 576;
 
     #[test]
     fn prover_matches_legacy_on_sha3_inline() {
