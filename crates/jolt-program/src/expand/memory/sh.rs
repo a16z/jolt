@@ -9,7 +9,8 @@ pub(in crate::expand) fn expand_sh(
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     super::shared::expand_narrow_store(
         instruction,
-        0xffff,
+        SourceInstructionKind::VirtualWindowMaskH,
+        SourceInstructionKind::VirtualShiftDataH,
         Some(SourceInstructionKind::VirtualAssertHalfwordAlignment),
     )
 }

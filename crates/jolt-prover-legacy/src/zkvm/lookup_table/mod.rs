@@ -15,6 +15,9 @@ use prefixes::PrefixEval;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
 use serde::{Deserialize, Serialize};
+use shift_data_b::ShiftDataBTable;
+use shift_data_h::ShiftDataHTable;
+use shift_data_w::ShiftDataWTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
 use sign_extend_half_word::SignExtendHalfWordTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
@@ -94,6 +97,9 @@ pub mod pow2;
 pub mod pow2_w;
 pub mod range_check;
 pub mod range_check_aligned;
+pub mod shift_data_b;
+pub mod shift_data_h;
+pub mod shift_data_w;
 pub mod shift_right_bitmask;
 pub mod sign_extend_half_word;
 pub mod signed_greater_than_equal;
@@ -175,6 +181,9 @@ pub enum LookupTables<const XLEN: usize> {
     Pext(PextTable<XLEN>),
     WindowMaskB(WindowMaskBTable<XLEN>),
     WindowMaskH(WindowMaskHTable<XLEN>),
+    ShiftDataB(ShiftDataBTable<XLEN>),
+    ShiftDataH(ShiftDataHTable<XLEN>),
+    ShiftDataW(ShiftDataWTable<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -232,6 +241,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.materialize(),
             LookupTables::WindowMaskB(table) => table.materialize(),
             LookupTables::WindowMaskH(table) => table.materialize(),
+            LookupTables::ShiftDataB(table) => table.materialize(),
+            LookupTables::ShiftDataH(table) => table.materialize(),
+            LookupTables::ShiftDataW(table) => table.materialize(),
         }
     }
 
@@ -282,6 +294,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.materialize_entry(index),
             LookupTables::WindowMaskB(table) => table.materialize_entry(index),
             LookupTables::WindowMaskH(table) => table.materialize_entry(index),
+            LookupTables::ShiftDataB(table) => table.materialize_entry(index),
+            LookupTables::ShiftDataH(table) => table.materialize_entry(index),
+            LookupTables::ShiftDataW(table) => table.materialize_entry(index),
         }
     }
 
@@ -336,6 +351,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.evaluate_mle(r),
             LookupTables::WindowMaskB(table) => table.evaluate_mle(r),
             LookupTables::WindowMaskH(table) => table.evaluate_mle(r),
+            LookupTables::ShiftDataB(table) => table.evaluate_mle(r),
+            LookupTables::ShiftDataH(table) => table.evaluate_mle(r),
+            LookupTables::ShiftDataW(table) => table.evaluate_mle(r),
         }
     }
 
@@ -386,6 +404,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.suffixes(),
             LookupTables::WindowMaskB(table) => table.suffixes(),
             LookupTables::WindowMaskH(table) => table.suffixes(),
+            LookupTables::ShiftDataB(table) => table.suffixes(),
+            LookupTables::ShiftDataH(table) => table.suffixes(),
+            LookupTables::ShiftDataW(table) => table.suffixes(),
         }
     }
 
@@ -440,6 +461,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.combine(prefixes, suffixes),
             LookupTables::WindowMaskB(table) => table.combine(prefixes, suffixes),
             LookupTables::WindowMaskH(table) => table.combine(prefixes, suffixes),
+            LookupTables::ShiftDataB(table) => table.combine(prefixes, suffixes),
+            LookupTables::ShiftDataH(table) => table.combine(prefixes, suffixes),
+            LookupTables::ShiftDataW(table) => table.combine(prefixes, suffixes),
         }
     }
 }

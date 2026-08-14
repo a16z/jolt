@@ -26,6 +26,7 @@ pub mod lt;
 pub mod negative_divisor_equals_remainder;
 pub mod negative_divisor_greater_than_remainder;
 pub mod negative_divisor_zero_remainder;
+pub mod offset_scale;
 pub mod or;
 pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
@@ -40,6 +41,7 @@ pub mod right_operand_msb;
 pub mod right_operand_w;
 pub mod right_shift;
 pub mod right_shift_w;
+pub mod shift_data;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
@@ -163,6 +165,12 @@ pub enum Prefixes {
     WindowSignPow2,
     Pow2OffsetB,
     Pow2OffsetH,
+    ShiftDataB,
+    ShiftDataH,
+    ShiftDataW,
+    OffsetScaleB,
+    OffsetScaleH,
+    OffsetScaleW,
 }
 
 /// Total number of prefix variants.
@@ -229,6 +237,12 @@ macro_rules! dispatch_prefix {
             Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
             Prefixes::Pow2OffsetB => pow2_offset::Pow2OffsetPrefix::<0>::$method($($args),*),
             Prefixes::Pow2OffsetH => pow2_offset::Pow2OffsetPrefix::<1>::$method($($args),*),
+            Prefixes::ShiftDataB => shift_data::ShiftDataPrefix::<1>::$method($($args),*),
+            Prefixes::ShiftDataH => shift_data::ShiftDataPrefix::<2>::$method($($args),*),
+            Prefixes::ShiftDataW => shift_data::ShiftDataPrefix::<4>::$method($($args),*),
+            Prefixes::OffsetScaleB => offset_scale::OffsetScalePrefix::<1>::$method($($args),*),
+            Prefixes::OffsetScaleH => offset_scale::OffsetScalePrefix::<2>::$method($($args),*),
+            Prefixes::OffsetScaleW => offset_scale::OffsetScalePrefix::<4>::$method($($args),*),
         }
     };
 }

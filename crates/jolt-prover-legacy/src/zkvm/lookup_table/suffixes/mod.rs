@@ -14,6 +14,7 @@ use left_is_zero::LeftOperandIsZeroSuffix;
 use lsb::LsbSuffix;
 use lt::LessThanSuffix;
 use num_derive::FromPrimitive;
+use offset_scale::OffsetScaleSuffix;
 use or::OrSuffix;
 use pext::PextSuffix;
 use pext_helper::PextHelperSuffix;
@@ -29,6 +30,7 @@ use right_shift_helper::RightShiftHelperSuffix;
 use right_shift_padding::RightShiftPaddingSuffix;
 use right_shift_w::RightShiftWSuffix;
 use right_shift_w_helper::RightShiftWHelperSuffix;
+use shift_data::ShiftDataSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
@@ -62,6 +64,7 @@ pub mod lower_word;
 pub mod lsb;
 pub mod lt;
 pub mod notand;
+pub mod offset_scale;
 pub mod one;
 pub mod or;
 pub mod overflow_bits_zero;
@@ -81,6 +84,7 @@ pub mod right_shift_helper;
 pub mod right_shift_padding;
 pub mod right_shift_w;
 pub mod right_shift_w_helper;
+pub mod shift_data;
 pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
@@ -152,6 +156,12 @@ pub enum Suffixes {
     WindowSignPow2,
     Pow2OffsetB,
     Pow2OffsetH,
+    ShiftDataB,
+    ShiftDataH,
+    ShiftDataW,
+    OffsetScaleB,
+    OffsetScaleH,
+    OffsetScaleW,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -237,6 +247,12 @@ impl Suffixes {
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
             Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
             Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
+            Suffixes::ShiftDataB => ShiftDataSuffix::<XLEN, 1>::suffix_mle(b),
+            Suffixes::ShiftDataH => ShiftDataSuffix::<XLEN, 2>::suffix_mle(b),
+            Suffixes::ShiftDataW => ShiftDataSuffix::<XLEN, 4>::suffix_mle(b),
+            Suffixes::OffsetScaleB => OffsetScaleSuffix::<XLEN, 1>::suffix_mle(b),
+            Suffixes::OffsetScaleH => OffsetScaleSuffix::<XLEN, 2>::suffix_mle(b),
+            Suffixes::OffsetScaleW => OffsetScaleSuffix::<XLEN, 4>::suffix_mle(b),
         }
     }
 }

@@ -528,15 +528,16 @@ pub(in crate::expand) fn expand_amo_post64(
     Ok(())
 }
 
-/// Lowers `SB`/`SH` by replacing a narrow lane inside an aligned doubleword.
+/// Lowers a narrow store (`SB`/`SH`/`SW`) via a fused read-modify-write.
 ///
-/// The helper optionally emits the source instruction's alignment assertion,
-/// loads the containing doubleword, builds a byte/halfword mask shifted to the
-/// selected lane, merges the low bits of `rs2`, and writes the whole
-/// doubleword back.
+/// The containing doubleword is loaded, the addressed lane is cleared with the
+/// window mask (`ANDN`) and replaced by the store data shifted into position
+/// (`ShiftData`); the lane bits are disjoint from the cleared doubleword, so a
+/// plain `ADD` merges them before the `SD` writes the doubleword back.
 pub(in crate::expand) fn expand_narrow_store(
     instruction: &SourceInstructionRow,
-    mask: i128,
+    window_mask: SourceInstructionKind,
+    shift_data: SourceInstructionKind,
     alignment: Option<SourceInstructionKind>,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
@@ -546,7 +547,9 @@ pub(in crate::expand) fn expand_narrow_store(
     let v3 = asm.allocate()?;
 
     if let Some(alignment) = alignment {
-        // `SH` requires halfword alignment; `SB` passes `None`.
+        // `SH`/`SW` assert alignment; `SB` passes `None`. The asserts also
+        // guarantee the offset bits the window-mask and shift-data tables do
+        // not read are zero.
         asm.expand_address(alignment, reg(rs1(instruction)?), instruction.operands.imm);
     }
     asm.expand_i(
@@ -562,36 +565,24 @@ pub(in crate::expand) fn expand_narrow_store(
         format_i_imm(-8),
     );
     asm.expand_i(SourceInstructionKind::LD, v2.operand(), v1.operand(), 0);
-    asm.expand_i(SourceInstructionKind::SLLI, v3.operand(), v0.operand(), 3);
-    asm.expand_u(SourceInstructionKind::LUI, v0.operand(), mask);
-    // As in the word-store and AMO paths, masked-XOR replacement updates only
-    // the selected narrow lane.
+    // v3 = byte mask of the addressed lane.
+    asm.expand_i(window_mask, v3.operand(), v0.operand(), 0);
+    // v2 = doubleword with the lane cleared.
     asm.expand_r(
-        SourceInstructionKind::SLL,
-        v0.operand(),
-        v0.operand(),
-        v3.operand(),
-    );
-    asm.expand_r(
-        SourceInstructionKind::SLL,
-        v3.operand(),
-        reg(rs2(instruction)?),
-        v3.operand(),
-    );
-    asm.expand_r(
-        SourceInstructionKind::XOR,
-        v3.operand(),
+        SourceInstructionKind::ANDN,
+        v2.operand(),
         v2.operand(),
         v3.operand(),
     );
+    // v3 = store data shifted into the lane.
     asm.expand_r(
-        SourceInstructionKind::AND,
+        shift_data,
         v3.operand(),
-        v3.operand(),
+        reg(rs2(instruction)?),
         v0.operand(),
     );
     asm.expand_r(
-        SourceInstructionKind::XOR,
+        SourceInstructionKind::ADD,
         v2.operand(),
         v2.operand(),
         v3.operand(),
