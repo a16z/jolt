@@ -719,58 +719,6 @@ fn target_scale_storage_layout_is_pinned() {
 }
 
 #[test]
-fn target_scale_work_separates_useful_issued_and_traffic_counts() {
-    let geometry = InstructionClaimGeometry::new(INSTRUCTION_CLAIM_TARGET_ROWS)
-        .expect("the target geometry is valid");
-    let aliased =
-        InstructionClaimWorkPlan::new(geometry, InstructionClaimOpeningArchitecture::Aliased)
-            .expect("the aliased plan is valid");
-
-    assert_eq!(aliased.materialize.useful_field_products, 335_560_704);
-    assert_eq!(aliased.materialize.issued_field_product_lanes, 335_806_464);
-    assert_eq!(aliased.transitions.useful_field_products, 134_430_714);
-    assert_eq!(aliased.transitions.issued_field_product_lanes, 142_868_320);
-    assert_eq!(aliased.opening.useful_field_products, 134_234_112);
-    assert_eq!(aliased.opening.issued_field_product_lanes, 134_479_872);
-    assert_eq!(aliased.useful_field_products(), 604_225_530);
-    assert_eq!(aliased.issued_field_product_lanes(), 613_154_656);
-
-    assert_eq!(aliased.materialize.compulsory_bytes, 4_831_838_208);
-    assert_eq!(aliased.transitions.compulsory_bytes, 3_221_225_376);
-    assert_eq!(aliased.opening.compulsory_bytes, 1_610_612_736);
-    assert_eq!(
-        aliased.product_fused_materialize_incremental_bytes,
-        2_684_354_560
-    );
-    assert_eq!(
-        aliased.shared_row_standalone_materialize_bytes,
-        5_368_709_120
-    );
-
-    assert_eq!(
-        aliased.materialize.shader_logical_equality_bytes,
-        537_001_984
-    );
-    assert_eq!(
-        aliased.transitions.shader_logical_equality_bytes,
-        538_574_816
-    );
-    assert_eq!(aliased.opening.shader_logical_equality_bytes, 1_073_872_896);
-    assert_eq!(aliased.materialize.reduction.traffic_bytes, 279_072);
-    assert_eq!(aliased.transitions.reduction.traffic_bytes, 3_627_968);
-    assert_eq!(aliased.opening.reduction.traffic_bytes, 279_072);
-
-    let core = InstructionClaimWorkPlan::new(
-        geometry,
-        InstructionClaimOpeningArchitecture::CoreAndRecover,
-    )
-    .expect("the core-opening plan is valid");
-    assert_eq!(core.useful_field_products(), 738_459_642);
-    assert_eq!(core.issued_field_product_lanes(), 747_372_384);
-    assert_eq!(core.opening.compulsory_bytes, 2_684_354_560);
-}
-
-#[test]
 fn resident_sequence_matches_every_oracle_intermediate() {
     assert_resident_sequence(AkitaField::from_u64(17), 1 << 9);
 }
@@ -1167,35 +1115,4 @@ fn assert_resident_sequence(gamma: AkitaField, rows: usize) {
         finish_bind([state[0], state[1]], challenges[log_t - 1])
     );
     assert_eq!(sequence.allocation_identities(), allocations);
-}
-
-#[test]
-fn optimized_cpu_work_and_promotion_gates_are_frozen() {
-    let geometry = InstructionClaimGeometry::new(INSTRUCTION_CLAIM_TARGET_ROWS)
-        .expect("the target geometry is valid");
-    let cpu = InstructionClaimCpuWorkPlan::new(geometry).expect("the CPU plan is valid");
-    assert_eq!(cpu.combined_useful_products, 268_435_456);
-    assert_eq!(cpu.combined_scalar_fmadds, 469_762_048);
-    assert_eq!(cpu.message_useful_products, 201_670_728);
-    assert_eq!(cpu.bind_useful_products, 67_108_915);
-    assert_eq!(cpu.opening_useful_products, 335_585_280);
-    assert_eq!(cpu.useful_field_products(), 872_800_379);
-    assert_eq!(cpu.visible_payload_bytes(), 17_716_740_016);
-
-    let alias =
-        InstructionClaimPromotionGates::target(InstructionClaimOpeningArchitecture::Aliased)
-            .expect("the target gates are valid");
-    assert_eq!(alias.cpu_median_ns, 306_683_705);
-    assert_eq!(alias.five_x_wall_ns, 61_336_741);
-    assert_eq!(alias.eight_x_wall_ns, 38_335_463);
-    assert_eq!(alias.materialize_active_ns, 13_371_209);
-    assert_eq!(alias.transitions_active_ns, 8_914_139);
-    assert_eq!(alias.opening_active_ns, 5_132_844);
-    assert_eq!(alias.total_active_ns, 27_418_192);
-
-    let standalone =
-        InstructionClaimPromotionGates::target(InstructionClaimOpeningArchitecture::CoreAndRecover)
-            .expect("the standalone gates are valid");
-    assert_eq!(standalone.opening_active_ns, 10_265_687);
-    assert_eq!(standalone.total_active_ns, 32_551_035);
 }

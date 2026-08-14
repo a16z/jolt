@@ -318,19 +318,18 @@ fn fused_stage1_scatter_rejects_rank_past_the_exact_chunk_cell() {
         .lease(padded_rows, context.device_registry_id())
         .unwrap();
     // SAFETY: no command has been submitted, the shared allocation contains
-    // five initialized columns of `padded_rows`, and the lease keeps it alive.
+    // four initialized columns of `padded_rows`, and the lease keeps it alive.
     unsafe {
         let words = corrupt_source.row_buffer().contents().cast::<u64>();
-        let packed = words.add(4 * padded_rows);
-        let first = BooleanityRow::from_words([
+        let first = BooleanityRow::from_instruction_source_words([
             *words,
             *words.add(padded_rows),
             *words.add(2 * padded_rows),
             *words.add(3 * padded_rows),
-            *packed,
         ])
         .with_bytecode_chunk_rank_low7(corrupted_rank);
-        packed.write(first.words()[4]);
+        let encoded = first.instruction_source_words(None).unwrap();
+        words.add(3 * padded_rows).write(encoded[3]);
     }
     drop(corrupt_source);
 

@@ -14,13 +14,9 @@ use super::{
     BOOLEANITY_SOURCE_ROW_BYTES, BOOLEANITY_SOURCE_WORDS,
 };
 
-#[cfg(feature = "test-utils")]
-mod probe;
 mod scatter;
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
-#[cfg(feature = "test-utils")]
-pub use probe::{run_instruction_read_raf_stage1_probe, InstructionReadRafStage1ProbeResult};
 #[cfg(test)]
 pub(crate) use scatter::validate_bytecode_topology_admission;
 pub(crate) use scatter::{
@@ -100,93 +96,30 @@ pub(crate) struct InstructionReadRafStage1Receipt {
 }
 
 impl InstructionReadRafStage1Receipt {
-    pub(crate) const fn rows(self) -> usize {
-        self.rows
-    }
-
-    pub(crate) const fn row_bytes(self) -> u64 {
-        self.row_bytes
-    }
-
-    pub(crate) const fn claim_bytes(self) -> u64 {
-        self.claim_bytes
-    }
-
-    pub(crate) const fn row_allocation_identity(self) -> usize {
-        self.row_allocation_identity
-    }
-
-    pub(crate) const fn claim_allocation_identity(self) -> usize {
-        self.claim_allocation_identity
-    }
-
-    pub(crate) const fn device_registry_id(self) -> u64 {
-        self.device_registry_id
-    }
-
-    pub(crate) const fn source_generation(self) -> u64 {
-        self.source_generation
-    }
-
-    pub(crate) const fn completion_serial(self) -> u64 {
-        self.completion_serial
-    }
-
-    pub(crate) const fn count_order(self) -> InstructionReadRafCountOrder {
-        self.count_order
-    }
-
-    pub(crate) const fn publication_kind(self) -> InstructionReadRafPublicationKind {
-        self.publication_kind
-    }
-
-    pub(crate) const fn count_chunks(self) -> usize {
-        self.count_chunks
-    }
-
-    pub(crate) const fn row_layout(self) -> InstructionReadRafRowLayout {
-        self.row_layout
-    }
-
-    pub(crate) const fn count_bytes(self) -> usize {
-        self.count_bytes
-    }
-
-    pub(crate) const fn count_allocation_identity(self) -> usize {
-        self.count_allocation_identity
-    }
-
-    pub(crate) const fn resident_device_bytes(self) -> u64 {
-        self.resident_device_bytes
-    }
-
-    pub(crate) const fn host_row_write_bytes(self) -> u64 {
-        self.host_row_write_bytes
-    }
-
-    pub(crate) const fn host_claim_write_bytes(self) -> u64 {
-        self.host_claim_write_bytes
-    }
-
-    pub(crate) const fn host_count_update_bytes(self) -> u64 {
-        self.host_count_update_bytes
-    }
-
-    pub(crate) const fn complete_overwrite(self) -> bool {
-        self.complete_overwrite
-    }
-
-    pub(crate) const fn source_windows(self) -> usize {
-        self.source_windows
-    }
-
-    pub(crate) const fn member_upload_bytes(self) -> u64 {
-        self.member_upload_bytes
-    }
-
-    pub(crate) const fn projection_dispatches(self) -> usize {
-        self.projection_dispatches
-    }
+    copy_field_getters! { pub(crate), {
+        rows: usize,
+        row_bytes: u64,
+        claim_bytes: u64,
+        row_allocation_identity: usize,
+        claim_allocation_identity: usize,
+        device_registry_id: u64,
+        source_generation: u64,
+        completion_serial: u64,
+        count_order: InstructionReadRafCountOrder,
+        publication_kind: InstructionReadRafPublicationKind,
+        count_chunks: usize,
+        row_layout: InstructionReadRafRowLayout,
+        count_bytes: usize,
+        count_allocation_identity: usize,
+        resident_device_bytes: u64,
+        host_row_write_bytes: u64,
+        host_claim_write_bytes: u64,
+        host_count_update_bytes: u64,
+        complete_overwrite: bool,
+        source_windows: usize,
+        member_upload_bytes: u64,
+        projection_dispatches: usize,
+    } }
 }
 
 struct InstructionReadRafStage1Inner {
@@ -422,15 +355,6 @@ impl InstructionReadRafStage1Storage {
 impl InstructionReadRafStage1ChunkWriter<'_> {
     pub fn len(&self) -> usize {
         self.fused_inc_magnitude.len()
-    }
-
-    pub(crate) fn push(
-        &mut self,
-        row: BooleanityRow,
-        table_plus_one: u8,
-        raf: bool,
-    ) -> Result<(), MetalError> {
-        self.push_with_source_metadata(row, table_plus_one, raf, 0, None)
     }
 
     #[cfg(test)]

@@ -383,41 +383,18 @@ pub struct RamCycleFamilyReceipt {
 }
 
 impl RamCycleFamilyReceipt {
-    pub const fn schema_version(&self) -> u32 {
-        self.schema_version
-    }
-
-    pub const fn source_generation(&self) -> u64 {
-        self.source_generation
-    }
-
-    pub const fn log_t(&self) -> usize {
-        self.log_t
-    }
-
-    pub const fn log_k(&self) -> usize {
-        self.log_k
-    }
-
-    pub const fn cycles(&self) -> usize {
-        self.cycles
-    }
-
-    pub const fn address_domain(&self) -> usize {
-        self.address_domain
-    }
-
-    pub const fn threadgroup_width(&self) -> usize {
-        self.threadgroup_width
-    }
-
-    pub const fn access_count(&self) -> usize {
-        self.access_count
-    }
-
-    pub const fn increment_count(&self) -> usize {
-        self.increment_count
-    }
+    copy_field_getters! { pub, {
+        schema_version: u32,
+        source_generation: u64,
+        log_t: usize,
+        log_k: usize,
+        cycles: usize,
+        address_domain: usize,
+        threadgroup_width: usize,
+        access_count: usize,
+        increment_count: usize,
+        fingerprint: u64,
+    } }
 
     pub fn read_write_census(&self) -> &[LevelCensus] {
         &self.rw_census
@@ -425,10 +402,6 @@ impl RamCycleFamilyReceipt {
 
     pub fn block_census(&self) -> &[LevelCensus] {
         &self.block_census
-    }
-
-    pub const fn fingerprint(&self) -> u64 {
-        self.fingerprint
     }
 }
 

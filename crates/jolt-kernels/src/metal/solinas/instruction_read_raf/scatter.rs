@@ -136,32 +136,34 @@ pub(crate) struct InstructionReadRafFusedBytecodeReceipt {
 }
 
 impl InstructionReadRafDenseGroupedReceipt {
-    pub(crate) const fn source(&self) -> InstructionReadRafStage1Receipt {
-        self.source
-    }
-
-    pub(crate) const fn rows(&self) -> usize {
-        self.rows
-    }
+    copy_field_getters! { pub(crate), {
+        source: InstructionReadRafStage1Receipt,
+        rows: usize,
+        packed_rows_bytes: u64,
+        lookups_bytes: u64,
+        inverse_bytes: u64,
+        weights_bytes: u64,
+        device_registry_id: u64,
+        completion_serial: u64,
+        e_in_length: usize,
+        e_out_length: usize,
+        additional_allocation_bytes: u64,
+        threadgroups: usize,
+        threads_per_threadgroup: usize,
+        dynamic_threadgroup_bytes: u64,
+        static_threadgroup_bytes: u64,
+        command_buffers: usize,
+        waits: usize,
+        encoders: usize,
+        dispatches: usize,
+        source_copy_bytes: u64,
+        full_plane_readback_bytes: u64,
+        complete_overwrite: bool,
+        bytecode: Option<InstructionReadRafFusedBytecodeReceipt>,
+    } }
 
     pub(crate) fn segment_ranges(&self) -> &[Range<usize>; INSTRUCTION_READ_RAF_SEGMENTS] {
         &self.segment_ranges
-    }
-
-    pub(crate) const fn packed_rows_bytes(&self) -> u64 {
-        self.packed_rows_bytes
-    }
-
-    pub(crate) const fn lookups_bytes(&self) -> u64 {
-        self.lookups_bytes
-    }
-
-    pub(crate) const fn inverse_bytes(&self) -> u64 {
-        self.inverse_bytes
-    }
-
-    pub(crate) const fn weights_bytes(&self) -> u64 {
-        self.weights_bytes
     }
 
     pub(crate) const fn allocation_identities(&self) -> [usize; 4] {
@@ -172,192 +174,40 @@ impl InstructionReadRafDenseGroupedReceipt {
             self.weights_identity,
         ]
     }
-
-    pub(crate) const fn device_registry_id(&self) -> u64 {
-        self.device_registry_id
-    }
-
-    pub(crate) const fn completion_serial(&self) -> u64 {
-        self.completion_serial
-    }
-
-    pub(crate) const fn e_in_length(&self) -> usize {
-        self.e_in_length
-    }
-
-    pub(crate) const fn e_out_length(&self) -> usize {
-        self.e_out_length
-    }
-
-    pub(crate) const fn additional_allocation_bytes(&self) -> u64 {
-        self.additional_allocation_bytes
-    }
-
-    pub(crate) const fn threadgroups(&self) -> usize {
-        self.threadgroups
-    }
-
-    pub(crate) const fn threads_per_threadgroup(&self) -> usize {
-        self.threads_per_threadgroup
-    }
-
-    pub(crate) const fn dynamic_threadgroup_bytes(&self) -> u64 {
-        self.dynamic_threadgroup_bytes
-    }
-
-    pub(crate) const fn static_threadgroup_bytes(&self) -> u64 {
-        self.static_threadgroup_bytes
-    }
-
-    pub(crate) const fn command_buffers(&self) -> usize {
-        self.command_buffers
-    }
-
-    pub(crate) const fn waits(&self) -> usize {
-        self.waits
-    }
-
-    pub(crate) const fn encoders(&self) -> usize {
-        self.encoders
-    }
-
-    pub(crate) const fn dispatches(&self) -> usize {
-        self.dispatches
-    }
-
-    pub(crate) const fn source_copy_bytes(&self) -> u64 {
-        self.source_copy_bytes
-    }
-
-    pub(crate) const fn full_plane_readback_bytes(&self) -> u64 {
-        self.full_plane_readback_bytes
-    }
-
-    pub(crate) const fn complete_overwrite(&self) -> bool {
-        self.complete_overwrite
-    }
-
-    pub(crate) const fn bytecode(&self) -> Option<InstructionReadRafFusedBytecodeReceipt> {
-        self.bytecode
-    }
 }
 
 impl InstructionReadRafFusedBytecodeReceipt {
-    pub(crate) const fn physical_rows(self) -> usize {
-        self.physical_rows
-    }
-
-    pub(crate) const fn work_items(self) -> usize {
-        self.work_items
-    }
-
-    pub(crate) const fn descriptor_elements(self) -> usize {
-        self.descriptor_elements
-    }
-
-    pub(crate) const fn descriptor_bytes(self) -> usize {
-        self.descriptor_bytes
-    }
-
-    pub(crate) const fn descriptor_identity(self) -> usize {
-        self.descriptor_identity
-    }
-
-    pub(crate) const fn pivot_elements(self) -> usize {
-        self.pivot_elements
-    }
-
-    pub(crate) const fn pivot_bytes(self) -> usize {
-        self.pivot_bytes
-    }
-
-    pub(crate) const fn pivot_identity(self) -> usize {
-        self.pivot_identity
-    }
-
-    pub(crate) const fn chunk_offset_elements(self) -> usize {
-        self.chunk_offset_elements
-    }
-
-    pub(crate) const fn chunk_offset_bytes(self) -> usize {
-        self.chunk_offset_bytes
-    }
-
-    pub(crate) const fn chunk_offset_identity(self) -> usize {
-        self.chunk_offset_identity
-    }
-
-    pub(crate) const fn work_item_bytes(self) -> usize {
-        self.work_item_bytes
-    }
-
-    pub(crate) const fn work_item_identity(self) -> usize {
-        self.work_item_identity
-    }
-
-    pub(crate) const fn address_offset_elements(self) -> usize {
-        self.address_offset_elements
-    }
-
-    pub(crate) const fn address_offset_bytes(self) -> usize {
-        self.address_offset_bytes
-    }
-
-    pub(crate) const fn address_offset_identity(self) -> usize {
-        self.address_offset_identity
-    }
-
-    pub(crate) const fn occurrence_bytes(self) -> usize {
-        self.occurrence_bytes
-    }
-
-    pub(crate) const fn occurrence_identity(self) -> usize {
-        self.occurrence_identity
-    }
-
-    pub(crate) const fn magnitude_bytes(self) -> usize {
-        self.magnitude_bytes
-    }
-
-    pub(crate) const fn magnitude_identity(self) -> usize {
-        self.magnitude_identity
-    }
-
-    pub(crate) const fn max_descriptors_per_chunk(self) -> usize {
-        self.max_descriptors_per_chunk
-    }
-
-    pub(crate) const fn max_pivots_per_chunk(self) -> usize {
-        self.max_pivots_per_chunk
-    }
-
-    pub(crate) const fn dynamic_threadgroup_bytes(self) -> u64 {
-        self.dynamic_threadgroup_bytes
-    }
-
-    pub(crate) const fn max_admitted_descriptors_per_chunk(self) -> usize {
-        self.max_admitted_descriptors_per_chunk
-    }
-
-    pub(crate) const fn max_admitted_pivots_per_chunk(self) -> usize {
-        self.max_admitted_pivots_per_chunk
-    }
-
-    pub(crate) const fn threadgroup_memory_limit_bytes(self) -> u64 {
-        self.threadgroup_memory_limit_bytes
-    }
-
-    pub(crate) const fn shared_source_row_scans(self) -> usize {
-        self.shared_source_row_scans
-    }
-
-    pub(crate) const fn additional_source_row_scans(self) -> usize {
-        self.additional_source_row_scans
-    }
-
-    pub(crate) const fn member_upload_bytes(self) -> usize {
-        self.member_upload_bytes
-    }
+    copy_field_getters! { pub(crate), {
+        physical_rows: usize,
+        work_items: usize,
+        descriptor_elements: usize,
+        descriptor_bytes: usize,
+        descriptor_identity: usize,
+        pivot_elements: usize,
+        pivot_bytes: usize,
+        pivot_identity: usize,
+        chunk_offset_elements: usize,
+        chunk_offset_bytes: usize,
+        chunk_offset_identity: usize,
+        work_item_bytes: usize,
+        work_item_identity: usize,
+        address_offset_elements: usize,
+        address_offset_bytes: usize,
+        address_offset_identity: usize,
+        occurrence_bytes: usize,
+        occurrence_identity: usize,
+        magnitude_bytes: usize,
+        magnitude_identity: usize,
+        max_descriptors_per_chunk: usize,
+        max_pivots_per_chunk: usize,
+        dynamic_threadgroup_bytes: u64,
+        max_admitted_descriptors_per_chunk: usize,
+        max_admitted_pivots_per_chunk: usize,
+        threadgroup_memory_limit_bytes: u64,
+        shared_source_row_scans: usize,
+        additional_source_row_scans: usize,
+        member_upload_bytes: usize,
+    } }
 }
 
 pub(crate) struct InstructionReadRafDenseGroupedPlanes {
@@ -385,15 +235,6 @@ impl InstructionReadRafDenseGroupedPlanes {
 
     pub(crate) const fn execution(&self) -> InstructionReadRafProducerExecution {
         self.execution
-    }
-
-    pub(crate) fn buffers(&self) -> [&Buffer; 4] {
-        [
-            &self.packed_rows,
-            &self.lookups,
-            &self.inverse,
-            &self.weights,
-        ]
     }
 
     pub(crate) fn into_parts(self) -> InstructionReadRafDenseGroupedParts {

@@ -34,11 +34,7 @@
 //!   carries the mapped PC and remapped RAM address alongside the stage-5
 //!   facts at no size cost.
 
-use std::ops::Range;
-use std::sync::Arc;
 #[cfg(all(feature = "metal", target_os = "macos"))]
-use std::{collections::hash_map::Entry, collections::HashMap};
-
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
@@ -63,19 +59,15 @@ use jolt_witness::{
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::ops::Range;
+use std::sync::Arc;
 
 use super::support::accumulate_product;
-#[cfg(all(feature = "metal", target_os = "macos"))]
-use crate::metal::solinas::instruction_read_raf_v3::{
-    AddressAtomRuntimeConfig, AddressAtomSequence, AddressAtomTopology, AddressAtomTopologyConfig,
-    InstructionReadRafRow, PRODUCTION_VIRTUAL_RA,
-};
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, AddressRafScanRow,
     BooleanityRow, BooleanityRows, Fp128, InstructionReadRafStage1Lease, MetalError,
-    Product5Sequence, Product5SequenceConfig, ResidentLookupIndexPlane, SolinasMetal,
-    PRODUCT5_FACTORS,
+    Product5Sequence, Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -1858,7 +1850,6 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
                 self.rows.len(),
                 &self.buckets,
                 config,
-                |index| self.rows[index].raf_flag(),
                 |index| {
                     let row = &self.rows[index];
                     (
@@ -1875,121 +1866,6 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
         self.u_evals = Vec::new();
         self.buckets = Vec::new();
         Ok(sequence)
-    }
-
-    pub(crate) fn metal_prepare_atom_address_sequence(
-        &mut self,
-        context: &SolinasMetal,
-        max_atoms: usize,
-        retain_lookup_plane: bool,
-    ) -> Result<
-        Option<(AddressAtomSequence, Option<ResidentLookupIndexPlane>)>,
-        SumcheckError<AkitaField>,
-    > {
-        if self.claim_columns.is_stage1() {
-            return Err(metal_state_error(
-                "resident Stage-1 state cannot build address atoms from CPU rows",
-            ));
-        }
-        if !self.external_address_phases || self.rounds_bound != 0 {
-            return Err(metal_state_error(
-                "atom address handoff requires an unbound external address state",
-            ));
-        }
-        if self.dimensions.num_virtual_ra_polys() != PRODUCTION_VIRTUAL_RA || max_atoms == 0 {
-            return Ok(None);
-        }
-
-        let mut atom_by_key = HashMap::<(usize, u128), u32>::new();
-        let mut atom_keys = Vec::<(usize, u128)>::new();
-        let mut cycle_atoms = Vec::<u32>::with_capacity(self.rows.len());
-        for row in self.rows.iter() {
-            let table_plus_one = row.table_index().map_or(0, |table| table + 1);
-            let key = (
-                2 * table_plus_one + usize::from(row.raf_flag()),
-                row.lookup_index(),
-            );
-            let next_atom = atom_keys.len();
-            let atom = match atom_by_key.entry(key) {
-                Entry::Occupied(entry) => *entry.get(),
-                Entry::Vacant(entry) => {
-                    if next_atom >= max_atoms {
-                        let rejection = tracing::info_span!(
-                            "MetalInstructionReadRaf::atom_v3_admission_rejected",
-                            cycles_scanned = (cycle_atoms.len() + 1) as u64,
-                            observed_atoms = (next_atom + 1) as u64,
-                            maximum_atoms = max_atoms as u64,
-                        )
-                        .entered();
-                        drop(rejection);
-                        return Ok(None);
-                    }
-                    let atom = u32::try_from(next_atom)
-                        .map_err(|_| metal_state_error("atom count exceeds the u32 ABI"))?;
-                    let _ = entry.insert(atom);
-                    atom_keys.push(key);
-                    atom
-                }
-            };
-            cycle_atoms.push(atom);
-        }
-
-        let mut sorted_atoms = (0..atom_keys.len())
-            .map(|atom| {
-                u32::try_from(atom).map_err(|_| metal_state_error("atom index exceeds the u32 ABI"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        sorted_atoms.sort_unstable_by_key(|&atom| atom_keys[atom as usize]);
-        let mut sorted_rank = vec![0usize; sorted_atoms.len()];
-        for (rank, &atom) in sorted_atoms.iter().enumerate() {
-            sorted_rank[atom as usize] = rank;
-        }
-        let mut atom_counts = vec![0usize; sorted_atoms.len()];
-        for &atom in &cycle_atoms {
-            atom_counts[sorted_rank[atom as usize]] += 1;
-        }
-        let mut atom_offsets = vec![0usize; sorted_atoms.len()];
-        let mut offset = 0usize;
-        for (rank, count) in atom_counts.into_iter().enumerate() {
-            atom_offsets[rank] = offset;
-            offset = offset
-                .checked_add(count)
-                .ok_or_else(|| metal_state_error("atom topology length overflow"))?;
-        }
-        let mut cursors = atom_offsets;
-        let mut sorted_cycles = vec![0u32; self.rows.len()];
-        for (cycle, atom) in cycle_atoms.into_iter().enumerate() {
-            let rank = sorted_rank[atom as usize];
-            let position = cursors[rank];
-            sorted_cycles[position] = u32::try_from(cycle)
-                .map_err(|_| metal_state_error("cycle index exceeds the u32 ABI"))?;
-            cursors[rank] += 1;
-        }
-
-        let topology = AddressAtomTopology::from_sorted_cycles_by(
-            self.rows.len(),
-            &sorted_cycles,
-            AddressAtomTopologyConfig::default(),
-            |cycle| {
-                let row = &self.rows[cycle];
-                InstructionReadRafRow::new(row.lookup_index(), row.table_index(), row.raf_flag())
-            },
-        )
-        .map_err(|error| metal_state_error(error.to_string()))?;
-        let resident_lookup_plane = retain_lookup_plane
-            .then(|| context.prepare_instruction_read_raf_v3_lookup_plane(&topology))
-            .transpose()
-            .map_err(|error| metal_state_error(error.to_string()))?;
-        let sequence = context
-            .prepare_instruction_read_raf_v3_address(
-                topology,
-                &self.r_reduction,
-                AddressAtomRuntimeConfig::default(),
-            )
-            .map_err(|error| metal_state_error(error.to_string()))?;
-        self.u_evals = Vec::new();
-        self.buckets = Vec::new();
-        Ok(Some((sequence, resident_lookup_plane)))
     }
 
     pub(crate) fn metal_address_phase_request(

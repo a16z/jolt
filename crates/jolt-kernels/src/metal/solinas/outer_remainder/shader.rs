@@ -1,9 +1,5 @@
 pub(in super::super) const SOURCE: &str = include_str!("shader.metal");
-#[cfg(not(feature = "metal-runtime-artifact-only"))]
 pub(in super::super) const PADDED_56_SOURCE: &str = include_str!("opening_padded_56.metal");
-#[cfg(feature = "metal-runtime-artifact-only")]
-pub(in super::super) const PADDED_56_SOURCE: &str =
-    "// supplied by a content-addressed outer runtime artifact";
 
 use super::artifact::OuterBindingPlan;
 
@@ -84,7 +80,6 @@ mod tests {
                 + PADDED_56_SOURCE.matches(&declaration).count();
             assert_eq!(count, 1, "{name}");
         }
-        #[cfg(not(feature = "metal-runtime-artifact-only"))]
         assert_eq!(
             PADDED_56_SOURCE
                 .matches(&format!("kernel void {PADDED_56_OPENING_PIPELINE}("))
@@ -98,11 +93,7 @@ mod tests {
                 + PADDED_56_SOURCE
                     .matches("kernel void solinas_outer_remainder_")
                     .count(),
-            if cfg!(feature = "metal-runtime-artifact-only") {
-                9
-            } else {
-                10
-            },
+            10,
         );
         assert_eq!(
             pipeline_names(OuterBindingPlan::BOnlyV1).materialize,
@@ -114,7 +105,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(feature = "metal-runtime-artifact-only"))]
     #[test]
     fn padded_56_shader_closes_its_opening_layout() {
         for declaration in [
@@ -135,15 +125,5 @@ mod tests {
             1,
         );
         assert!(!PADDED_56_SOURCE.contains("[[threadgroup(2)]]"));
-    }
-
-    #[cfg(feature = "metal-runtime-artifact-only")]
-    #[test]
-    fn runtime_artifact_only_build_omits_the_padded_implementation() {
-        assert_eq!(
-            PADDED_56_SOURCE,
-            "// supplied by a content-addressed outer runtime artifact"
-        );
-        assert!(!PADDED_56_SOURCE.contains(PADDED_56_OPENING_PIPELINE));
     }
 }

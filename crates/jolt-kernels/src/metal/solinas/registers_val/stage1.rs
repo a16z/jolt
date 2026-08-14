@@ -18,41 +18,17 @@ pub(crate) struct RegistersValInstructionSourceReceipt {
 }
 
 impl RegistersValInstructionSourceReceipt {
-    pub(crate) const fn cycles(self) -> usize {
-        self.cycles
-    }
-
-    pub(crate) const fn explicit_rows(self) -> usize {
-        self.explicit_rows
-    }
-
-    pub(crate) const fn device_registry_id(self) -> u64 {
-        self.device_registry_id
-    }
-
-    pub(crate) const fn generation(self) -> u64 {
-        self.generation
-    }
-
-    pub(crate) const fn completion_serial(self) -> u64 {
-        self.completion_serial
-    }
-
-    pub(crate) const fn source_storage_ids(self) -> [usize; 2] {
-        self.source_storage_ids
-    }
-
-    pub(crate) const fn source_storage_bytes(self) -> [u64; 2] {
-        self.source_storage_bytes
-    }
-
-    pub(crate) const fn instruction_rows_storage_id(self) -> usize {
-        self.instruction_rows_storage_id
-    }
-
-    pub(crate) const fn instruction_rows_bytes(self) -> u64 {
-        self.instruction_rows_bytes
-    }
+    copy_field_getters! { pub(crate), {
+        cycles: usize,
+        explicit_rows: usize,
+        device_registry_id: u64,
+        generation: u64,
+        completion_serial: u64,
+        source_storage_ids: [usize; 2],
+        source_storage_bytes: [u64; 2],
+        instruction_rows_storage_id: usize,
+        instruction_rows_bytes: u64,
+    } }
 }
 
 pub(crate) struct RegistersValInstructionSourceLease {
@@ -91,25 +67,13 @@ pub(crate) struct RegistersValInstructionSourceRequest {
 }
 
 impl RegistersValInstructionSourceRequest {
-    pub(crate) const fn cycles(&self) -> usize {
-        self.cycles
-    }
-
-    pub(crate) const fn explicit_rows(&self) -> usize {
-        self.explicit_rows
-    }
-
-    pub(crate) const fn instruction_source(&self) -> InstructionReadRafStage1Receipt {
-        self.instruction_source
-    }
-
-    pub(crate) const fn source_storage_ids(&self) -> [usize; 2] {
-        self.source_storage_ids
-    }
-
-    pub(crate) const fn source_storage_bytes(&self) -> [u64; 2] {
-        self.source_storage_bytes
-    }
+    copy_field_getters! { pub(crate), {
+        cycles: usize,
+        explicit_rows: usize,
+        instruction_source: InstructionReadRafStage1Receipt,
+        source_storage_ids: [usize; 2],
+        source_storage_bytes: [u64; 2],
+    } }
 
     pub(crate) fn publish(
         self,

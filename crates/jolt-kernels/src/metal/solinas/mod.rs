@@ -13,6 +13,22 @@ use metal::{
 };
 use thiserror::Error;
 
+macro_rules! copy_field_getters {
+    ($visibility:vis, { $($method:ident $(=> $field:ident)?: $type:ty),* $(,)? }) => {
+        $(
+            $visibility const fn $method(&self) -> $type {
+                copy_field_getters!(@get self, $method $(=> $field)?)
+            }
+        )*
+    };
+    (@get $self:ident, $method:ident) => {
+        $self.$method
+    };
+    (@get $self:ident, $method:ident => $field:ident) => {
+        $self.$field
+    };
+}
+
 mod address_raf;
 mod address_raf_direct;
 mod address_sequence;
@@ -31,10 +47,6 @@ pub mod instruction_input_successor;
 mod instruction_ra_sequence;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
-#[doc(hidden)]
-pub mod instruction_read_raf_producer;
-#[doc(hidden)]
-pub mod instruction_read_raf_v3;
 mod outer_remainder;
 mod product5;
 mod product_remainder;
@@ -123,10 +135,6 @@ pub(crate) use instruction_read_raf::{
     PendingInstructionReadRafSourcePrimer, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
     INSTRUCTION_READ_RAF_SEGMENTS,
 };
-#[cfg(feature = "test-utils")]
-pub use instruction_read_raf::{
-    run_instruction_read_raf_stage1_probe, InstructionReadRafStage1ProbeResult,
-};
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRegistersClaimCarrier,
@@ -139,8 +147,6 @@ pub use outer_remainder::{
     OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
     OuterRemainderStorageInitializationStats, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
-#[cfg(feature = "test-utils")]
-pub use outer_remainder::{OuterKernelArtifact, SealedOuterArtifact};
 pub use product5::{
     Product5Config, Product5Invocation, Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS,
 };
@@ -322,12 +328,6 @@ pub enum MetalError {
     DeviceUnavailable,
     #[error("Solinas offset must be nonzero")]
     InvalidOffset,
-    #[error("invalid OuterRemainder runtime artifact source")]
-    InvalidOuterArtifactSource,
-    #[error("invalid sealed OuterRemainder artifact: {0}")]
-    InvalidSealedOuterArtifact(String),
-    #[error("OuterRemainder artifact and runtime binding plans differ")]
-    OuterArtifactBindingPlanMismatch,
     #[error("kernel requires Solinas offset {expected:#x}, but the context uses {got:#x}")]
     UnexpectedSolinasOffset { expected: u32, got: u32 },
     #[error("failed to compile the Solinas Metal library: {0}")]

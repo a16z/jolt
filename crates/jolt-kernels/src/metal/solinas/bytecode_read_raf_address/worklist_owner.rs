@@ -41,103 +41,37 @@ pub(crate) struct BytecodeAddressSparseStage1Receipt {
 }
 
 impl BytecodeAddressSparseStage1Receipt {
-    pub(crate) const fn shape(self) -> AddressMajorShape {
-        self.shape
-    }
-
-    pub(crate) const fn physical_rows(self) -> usize {
-        self.physical_rows
-    }
-
-    pub(crate) const fn work_items(self) -> usize {
-        self.work_items
-    }
-
-    pub(crate) const fn first_push_pc(self) -> usize {
-        self.first_push_pc
-    }
-
-    pub(crate) const fn device_registry_id(self) -> u64 {
-        self.device_registry_id
-    }
-
-    pub(crate) const fn source_generation(self) -> u64 {
-        self.source_generation
-    }
-
-    pub(crate) const fn source_completion_serial(self) -> u64 {
-        self.source_completion_serial
-    }
-
-    pub(crate) const fn source_rows_storage_id(self) -> usize {
-        self.source_rows_storage_id
-    }
-
-    pub(crate) const fn source_claim_storage_id(self) -> usize {
-        self.source_claim_storage_id
-    }
-
-    pub(crate) const fn source_windows(self) -> usize {
-        self.source_windows
-    }
-
-    pub(crate) const fn completion_serial(self) -> u64 {
-        self.completion_serial
-    }
-
-    pub(crate) const fn occurrence_storage_id(self) -> usize {
-        self.occurrence_storage_id
-    }
-
-    pub(crate) const fn occurrence_bytes(self) -> usize {
-        self.occurrence_bytes
-    }
-
-    pub(crate) const fn magnitude_storage_id(self) -> usize {
-        self.magnitude_storage_id
-    }
-
-    pub(crate) const fn magnitude_bytes(self) -> usize {
-        self.magnitude_bytes
-    }
-
-    pub(crate) const fn work_item_storage_id(self) -> usize {
-        self.work_item_storage_id
-    }
-
-    pub(crate) const fn work_item_bytes(self) -> usize {
-        self.work_item_bytes
-    }
-
-    pub(crate) const fn address_offset_storage_id(self) -> usize {
-        self.address_offset_storage_id
-    }
-
-    pub(crate) const fn address_offset_bytes(self) -> usize {
-        self.address_offset_bytes
-    }
+    copy_field_getters! { pub(crate), {
+        shape: AddressMajorShape,
+        physical_rows: usize,
+        work_items: usize,
+        first_push_pc: usize,
+        device_registry_id: u64,
+        source_generation: u64,
+        source_completion_serial: u64,
+        source_rows_storage_id: usize,
+        source_claim_storage_id: usize,
+        source_windows: usize,
+        completion_serial: u64,
+        occurrence_storage_id: usize,
+        occurrence_bytes: usize,
+        magnitude_storage_id: usize,
+        magnitude_bytes: usize,
+        work_item_storage_id: usize,
+        work_item_bytes: usize,
+        address_offset_storage_id: usize,
+        address_offset_bytes: usize,
+        complete_overwrite: bool,
+        covered_rows: usize,
+        additional_source_scans: usize,
+        member_upload_bytes: usize,
+    } }
 
     pub(crate) const fn persistent_bytes(self) -> usize {
         self.occurrence_bytes
             + self.magnitude_bytes
             + self.work_item_bytes
             + self.address_offset_bytes
-    }
-
-    pub(crate) const fn complete_overwrite(self) -> bool {
-        self.complete_overwrite
-    }
-
-    pub(crate) const fn covered_rows(self) -> usize {
-        self.covered_rows
-    }
-
-    pub(crate) const fn additional_source_scans(self) -> usize {
-        self.additional_source_scans
-    }
-
-    pub(crate) const fn member_upload_bytes(self) -> usize {
-        self.member_upload_bytes
     }
 }
 

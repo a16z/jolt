@@ -14,7 +14,6 @@ use super::solinas::bytecode_read_raf_address::{
     BytecodeAddressFusedScatterRequest, BytecodeAddressSparseStage1Carrier,
     BytecodeAddressStage1TopologyOwner,
 };
-use super::solinas::instruction_read_raf_v3::{AddressAtomSequence, ADDRESS_PHASE_BITS};
 use super::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, BooleanityRows,
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
@@ -39,8 +38,6 @@ pub struct InstructionReadRafMetalConfig {
     pub address_cutoff_elements: usize,
     /// Address implementation selected before the first round is absorbed.
     pub address_implementation: InstructionReadRafAddressImplementation,
-    /// Maximum exact-key atom count admitted by the compressed address path.
-    pub address_atom_max_unique: usize,
     /// Threadgroup width for the Stage-1 compatibility scatter.
     pub stage1_scatter_threads_per_threadgroup: usize,
     /// Dispatch geometry for the resident address sequence.
@@ -56,7 +53,6 @@ impl Default for InstructionReadRafMetalConfig {
         Self {
             address_cutoff_elements: 1 << 25,
             address_implementation: InstructionReadRafAddressImplementation::Stage1Grouped,
-            address_atom_max_unique: 1 << 16,
             stage1_scatter_threads_per_threadgroup: 256,
             address_dispatch: AddressPhaseSequenceConfig::default(),
             cutoff_elements: 1 << 16,
@@ -68,7 +64,6 @@ impl Default for InstructionReadRafMetalConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InstructionReadRafAddressImplementation {
     GroupedRows,
-    AtomV3,
     Stage1Grouped,
 }
 
@@ -697,18 +692,12 @@ pub(crate) struct MetalInstructionReadRafKernel {
     cpu: OptimizedInstructionReadRafKernel<AkitaField>,
     context: Arc<SolinasMetal>,
     config: InstructionReadRafMetalConfig,
-    address_sequence: Option<ResidentAddressSequence>,
-    address_challenge_batch: Vec<AkitaField>,
+    address_sequence: Option<Box<AddressPhaseSequence>>,
     resident_lookup_plane: Option<ResidentLookupIndexPlane>,
     sequence: Option<Product5Sequence>,
     host_tail: Option<[Vec<AkitaField>; PRODUCT5_FACTORS]>,
     metal_rounds: usize,
     metal_address_phases: usize,
-}
-
-enum ResidentAddressSequence {
-    Grouped(Box<AddressPhaseSequence>),
-    Atom(Box<AddressAtomSequence>),
 }
 
 pub(crate) enum ResidentGroupedInput {
@@ -733,7 +722,6 @@ impl MetalInstructionReadRafKernel {
             context,
             config,
             address_sequence: None,
-            address_challenge_batch: Vec::with_capacity(ADDRESS_PHASE_BITS),
             resident_lookup_plane: None,
             sequence: None,
             host_tail: Some(std::array::from_fn(|_| {
@@ -793,72 +781,30 @@ impl MetalInstructionReadRafKernel {
                 };
                 kernel.cpu.metal_install_address_phase(sums)?;
                 kernel.metal_address_phases = 1;
-                kernel.address_sequence = Some(ResidentAddressSequence::Grouped(sequence));
+                kernel.address_sequence = Some(sequence);
                 return Ok(kernel);
             }
-            let atom = if config.address_implementation
-                == InstructionReadRafAddressImplementation::AtomV3
-            {
+            let mut sequence = {
                 let _span =
-                    tracing::info_span!("MetalInstructionReadRaf::atom_v3_sequence_prepare")
-                        .entered();
-                kernel.cpu.metal_prepare_atom_address_sequence(
-                    &kernel.context,
-                    config.address_atom_max_unique,
-                    retain_lookup_plane,
-                )?
-            } else {
-                None
-            };
-            if let Some((mut sequence, lookup_plane)) = atom {
-                let (suffix_len, _) = kernel.cpu.metal_address_phase_request()?;
-                let address_atoms = sequence
-                    .atom_count()
-                    .map_err(|error| backend_error(error.to_string()))?;
-                let output = {
-                    let _span = tracing::info_span!(
-                        "MetalInstructionReadRaf::atom_v3_initial_address_phase",
-                        address_atoms = address_atoms as u64,
-                    )
-                    .entered();
-                    sequence
-                        .first_phase()
-                        .map_err(|error| backend_error(error.to_string()))?
-                };
-                if output.suffix_len() != suffix_len as usize || output.phase() != 0 {
-                    return Err(backend_error("atom address phase zero has the wrong shape"));
-                }
+                    tracing::info_span!("MetalInstructionReadRaf::sequence_prepare").entered();
                 kernel
                     .cpu
-                    .metal_install_address_phase(output.into_phase_sums())?;
-                kernel.resident_lookup_plane = lookup_plane;
-                kernel.metal_address_phases = 1;
-                kernel.address_sequence = Some(ResidentAddressSequence::Atom(Box::new(sequence)));
-            } else {
-                let mut sequence = {
-                    let _span =
-                        tracing::info_span!("MetalInstructionReadRaf::sequence_prepare").entered();
-                    kernel
-                        .cpu
-                        .metal_prepare_address_sequence(&kernel.context, config.address_dispatch)?
-                };
-                if retain_lookup_plane {
-                    kernel.resident_lookup_plane = Some(sequence.resident_lookup_index_plane());
-                }
-                let (suffix_len, previous) = kernel.cpu.metal_address_phase_request()?;
-                let sums = {
-                    let _span =
-                        tracing::info_span!("MetalInstructionReadRaf::initial_address_phase")
-                            .entered();
-                    sequence
-                        .phase(suffix_len, previous.as_ref())
-                        .map_err(|error| backend_error(error.to_string()))?
-                };
-                kernel.cpu.metal_install_address_phase(sums)?;
-                kernel.metal_address_phases = 1;
-                kernel.address_sequence =
-                    Some(ResidentAddressSequence::Grouped(Box::new(sequence)));
+                    .metal_prepare_address_sequence(&kernel.context, config.address_dispatch)?
+            };
+            if retain_lookup_plane {
+                kernel.resident_lookup_plane = Some(sequence.resident_lookup_index_plane());
             }
+            let (suffix_len, previous) = kernel.cpu.metal_address_phase_request()?;
+            let sums = {
+                let _span =
+                    tracing::info_span!("MetalInstructionReadRaf::initial_address_phase").entered();
+                sequence
+                    .phase(suffix_len, previous.as_ref())
+                    .map_err(|error| backend_error(error.to_string()))?
+            };
+            kernel.cpu.metal_install_address_phase(sums)?;
+            kernel.metal_address_phases = 1;
+            kernel.address_sequence = Some(Box::new(sequence));
         }
         Ok(kernel)
     }
@@ -875,72 +821,15 @@ impl MetalInstructionReadRafKernel {
 
     fn install_next_address_phase(&mut self) -> Result<(), SumcheckError<AkitaField>> {
         let (suffix_len, previous) = self.cpu.metal_address_phase_request()?;
-        let atom_batch = matches!(
-            self.address_sequence,
-            Some(ResidentAddressSequence::Atom(_))
-        )
-        .then(|| self.take_atom_challenge_batch())
-        .transpose()?;
         let sequence = self
             .address_sequence
             .as_mut()
             .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
-        let sums = match sequence {
-            ResidentAddressSequence::Grouped(sequence) => sequence
-                .phase(suffix_len, previous.as_ref())
-                .map_err(|error| backend_error(error.to_string()))?,
-            ResidentAddressSequence::Atom(sequence) => {
-                let _span =
-                    tracing::info_span!("MetalInstructionReadRaf::atom_v3_address_phase").entered();
-                let output = sequence
-                    .next_phase(atom_batch.ok_or_else(|| {
-                        backend_error("atom address phase is missing its challenge batch")
-                    })?)
-                    .map_err(|error| backend_error(error.to_string()))?;
-                if output.suffix_len() != suffix_len as usize
-                    || output.phase() != self.metal_address_phases
-                {
-                    return Err(backend_error("atom address phase has the wrong shape"));
-                }
-                output.into_phase_sums()
-            }
-        };
+        let sums = sequence
+            .phase(suffix_len, previous.as_ref())
+            .map_err(|error| backend_error(error.to_string()))?;
         self.cpu.metal_install_address_phase(sums)?;
         self.metal_address_phases += 1;
-        Ok(())
-    }
-
-    fn take_atom_challenge_batch(
-        &mut self,
-    ) -> Result<[AkitaField; ADDRESS_PHASE_BITS], SumcheckError<AkitaField>> {
-        let challenges = std::mem::take(&mut self.address_challenge_batch);
-        challenges.try_into().map_err(|challenges: Vec<_>| {
-            backend_error(format!(
-                "atom address phase received {} challenges, expected {ADDRESS_PHASE_BITS}",
-                challenges.len()
-            ))
-        })
-    }
-
-    fn finish_atom_address_sequence(&mut self) -> Result<(), SumcheckError<AkitaField>> {
-        let challenges = self.take_atom_challenge_batch()?;
-        let sequence = self
-            .address_sequence
-            .take()
-            .ok_or_else(|| backend_error("atom address sequence disappeared before final bind"))?;
-        let ResidentAddressSequence::Atom(mut sequence) = sequence else {
-            return Err(backend_error(
-                "grouped address sequence reached the atom finalization path",
-            ));
-        };
-        sequence
-            .finish_address(challenges)
-            .map_err(|error| backend_error(error.to_string()))?;
-        if !sequence.is_finished() || sequence.phases_executed() != self.metal_address_phases {
-            return Err(backend_error(
-                "atom address sequence did not finish every installed phase",
-            ));
-        }
         Ok(())
     }
 
@@ -976,23 +865,9 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
         if self.address_sequence.is_some() && self.cpu.metal_address_active() {
             let _span = tracing::info_span!("MetalInstructionReadRaf::address_round").entered();
             if let Some(challenge) = bind.take() {
-                let atom_address = matches!(
-                    self.address_sequence,
-                    Some(ResidentAddressSequence::Atom(_))
-                );
                 self.cpu.metal_bind_address(challenge)?;
-                if atom_address {
-                    self.address_challenge_batch.push(challenge);
-                    if self.address_challenge_batch.len() > ADDRESS_PHASE_BITS {
-                        return Err(backend_error(
-                            "atom address phase accumulated too many challenges",
-                        ));
-                    }
-                }
                 if self.cpu.metal_address_phase_pending() {
                     self.install_next_address_phase()?;
-                } else if atom_address && !self.cpu.metal_address_active() {
-                    self.finish_atom_address_sequence()?;
                 }
             }
             if self.cpu.metal_address_active() {
@@ -1004,10 +879,7 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
             self.address_sequence = None;
         }
 
-        if matches!(
-            self.address_sequence,
-            Some(ResidentAddressSequence::Grouped(_))
-        ) {
+        if self.address_sequence.is_some() {
             if let Some(challenge) = bind.take() {
                 let _span =
                     tracing::info_span!("MetalInstructionReadRaf::resident_handoff").entered();
@@ -1015,11 +887,6 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
                     .address_sequence
                     .take()
                     .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
-                let ResidentAddressSequence::Grouped(address_sequence) = address_sequence else {
-                    return Err(backend_error(
-                        "atom address sequence reached the grouped cycle handoff",
-                    ));
-                };
                 let (sequence, q_evals) = self.cpu.metal_offload_resident_bind(
                     challenge,
                     *address_sequence,
@@ -1035,11 +902,6 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
             let (cpu, address_sequence) = (&self.cpu, self.address_sequence.as_mut());
             let address_sequence = address_sequence
                 .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
-            let ResidentAddressSequence::Grouped(address_sequence) = address_sequence else {
-                return Err(backend_error(
-                    "atom address sequence reached the grouped cycle message",
-                ));
-            };
             let poly = cpu.metal_resident_cycle_message(address_sequence, previous_claim)?;
             self.metal_rounds += 1;
             return Ok(poly);

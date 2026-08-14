@@ -202,153 +202,45 @@ pub(crate) struct BytecodeAddressStage1TopologyLease {
 }
 
 impl BytecodeAddressStage1TopologyReceipt {
-    pub(crate) const fn shape(self) -> AddressMajorShape {
-        self.shape
-    }
-
-    pub(crate) const fn padded_rows(self) -> usize {
-        self.padded_rows
-    }
-
-    pub(crate) const fn physical_rows(self) -> usize {
-        self.physical_rows
-    }
-
-    pub(crate) const fn first_push_pc(self) -> usize {
-        self.first_push_pc
-    }
-
-    pub(crate) const fn chunks(self) -> usize {
-        self.chunks
-    }
-
-    pub(crate) const fn descriptors(self) -> usize {
-        self.descriptors
-    }
-
-    pub(crate) const fn descriptor_elements(self) -> usize {
-        self.descriptor_elements
-    }
-
-    pub(crate) const fn descriptor_bytes(self) -> usize {
-        self.descriptor_bytes
-    }
-
-    pub(crate) const fn descriptor_allocation_identity(self) -> usize {
-        self.descriptor_allocation_identity
-    }
-
-    pub(crate) const fn pivots(self) -> usize {
-        self.pivots
-    }
-
-    pub(crate) const fn pivot_elements(self) -> usize {
-        self.pivot_elements
-    }
-
-    pub(crate) const fn pivot_bytes(self) -> usize {
-        self.pivot_bytes
-    }
-
-    pub(crate) const fn pivot_allocation_identity(self) -> usize {
-        self.pivot_allocation_identity
-    }
-
-    pub(crate) const fn chunk_offset_elements(self) -> usize {
-        self.chunk_offset_elements
-    }
-
-    pub(crate) const fn chunk_offset_bytes(self) -> usize {
-        self.chunk_offset_bytes
-    }
-
-    pub(crate) const fn chunk_offset_allocation_identity(self) -> usize {
-        self.chunk_offset_allocation_identity
-    }
-
-    pub(crate) const fn work_items(self) -> usize {
-        self.work_items
-    }
-
-    pub(crate) const fn work_item_bytes(self) -> usize {
-        self.work_item_bytes
-    }
-
-    pub(crate) const fn work_item_allocation_identity(self) -> usize {
-        self.work_item_allocation_identity
-    }
-
-    pub(crate) const fn address_offset_elements(self) -> usize {
-        self.address_offset_elements
-    }
-
-    pub(crate) const fn address_offset_bytes(self) -> usize {
-        self.address_offset_bytes
-    }
-
-    pub(crate) const fn address_offset_allocation_identity(self) -> usize {
-        self.address_offset_allocation_identity
-    }
-
-    pub(crate) const fn max_descriptors_per_chunk(self) -> usize {
-        self.max_descriptors_per_chunk
-    }
-
-    pub(crate) const fn max_pivots_per_chunk(self) -> usize {
-        self.max_pivots_per_chunk
-    }
-
-    pub(crate) const fn source_receipt(self) -> InstructionReadRafStage1Receipt {
-        self.source_receipt
-    }
-
-    pub(crate) const fn device_registry_id(self) -> u64 {
-        self.device_registry_id
-    }
-
-    pub(crate) const fn source_generation(self) -> u64 {
-        self.source_generation
-    }
-
-    pub(crate) const fn source_completion_serial(self) -> u64 {
-        self.source_completion_serial
-    }
-
-    pub(crate) const fn source_rows_storage_id(self) -> usize {
-        self.source_rows_storage_id
-    }
-
-    pub(crate) const fn source_claim_storage_id(self) -> usize {
-        self.source_claim_storage_id
-    }
-
-    pub(crate) const fn source_windows(self) -> usize {
-        self.source_windows
-    }
-
-    pub(crate) const fn completion_serial(self) -> u64 {
-        self.completion_serial
-    }
-
-    pub(crate) const fn complete_overwrite(self) -> bool {
-        self.complete_overwrite
-    }
-
-    pub(crate) const fn covered_rows(self) -> usize {
-        self.covered_rows
-    }
-
-    pub(crate) const fn shared_source_row_scans(self) -> usize {
-        self.shared_source_row_scans
-    }
-
-    pub(crate) const fn additional_source_row_scans(self) -> usize {
-        self.additional_source_row_scans
-    }
-
-    pub(crate) const fn member_upload_bytes(self) -> usize {
-        self.member_upload_bytes
-    }
+    copy_field_getters! { pub(crate), {
+        shape: AddressMajorShape,
+        padded_rows: usize,
+        physical_rows: usize,
+        first_push_pc: usize,
+        chunks: usize,
+        descriptors: usize,
+        descriptor_elements: usize,
+        descriptor_bytes: usize,
+        descriptor_allocation_identity: usize,
+        pivots: usize,
+        pivot_elements: usize,
+        pivot_bytes: usize,
+        pivot_allocation_identity: usize,
+        chunk_offset_elements: usize,
+        chunk_offset_bytes: usize,
+        chunk_offset_allocation_identity: usize,
+        work_items: usize,
+        work_item_bytes: usize,
+        work_item_allocation_identity: usize,
+        address_offset_elements: usize,
+        address_offset_bytes: usize,
+        address_offset_allocation_identity: usize,
+        max_descriptors_per_chunk: usize,
+        max_pivots_per_chunk: usize,
+        source_receipt: InstructionReadRafStage1Receipt,
+        device_registry_id: u64,
+        source_generation: u64,
+        source_completion_serial: u64,
+        source_rows_storage_id: usize,
+        source_claim_storage_id: usize,
+        source_windows: usize,
+        completion_serial: u64,
+        complete_overwrite: bool,
+        covered_rows: usize,
+        shared_source_row_scans: usize,
+        additional_source_row_scans: usize,
+        member_upload_bytes: usize,
+    } }
 }
 
 pub(crate) fn bytecode_address_stage1_topology_max_plane_bytes(

@@ -28,8 +28,6 @@ use super::registers_claim_reduction::{
 use super::registers_val_evaluation::{
     RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
 };
-#[cfg(feature = "test-utils")]
-use super::solinas::OuterKernelArtifact;
 use super::solinas::{
     InstructionInputStorageInitialization, MetalError, OuterRemainderStorageInitialization,
     SolinasMetal,
@@ -169,27 +167,6 @@ impl MetalBackend {
             SolinasMetal::for_akita()?
         };
         Ok(Self::with_context(&config, context))
-    }
-
-    #[cfg(feature = "test-utils")]
-    #[doc(hidden)]
-    pub fn new_with_outer_artifact(
-        mut config: MetalConfig,
-        artifact: &OuterKernelArtifact,
-    ) -> Result<Self, MetalError> {
-        config
-            .spartan_outer_remainder
-            .dispatch
-            .registers_claim_carrier = config.registers_claim_reduction.implementation
-            == RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
-        if config.spartan_outer_remainder.dispatch.binding_plan != artifact.binding_plan() {
-            return Err(MetalError::OuterArtifactBindingPlanMismatch);
-        }
-        Self::validate_config(&config)?;
-        Ok(Self::with_context(
-            &config,
-            SolinasMetal::for_akita_with_outer_artifact(artifact)?,
-        ))
     }
 
     fn validate_config(config: &MetalConfig) -> Result<(), MetalError> {

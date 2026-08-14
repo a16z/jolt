@@ -5,7 +5,6 @@ const BYTECODE_READ_RAF_ADDRESS_SOURCE: &str = super::bytecode_read_raf_address:
 const REGISTERS_CLAIM_REDUCTION_SOURCE: &str = super::registers_claim_reduction::SOURCE;
 const RAM_RA_CLAIM_REDUCTION_SOURCE: &str = super::ram_ra_claim_reduction::SOURCE;
 const DEFERRED_SUM_SOURCE: &str = include_str!("deferred_sum.metal");
-const INSTRUCTION_READ_RAF_ADDRESS_SOURCE: &str = super::instruction_read_raf_v3::SOURCE;
 const INSTRUCTION_READ_RAF_SOURCE: &str = super::instruction_read_raf::SOURCE;
 const SPARTAN_OUTER_COMMON_SOURCE: &str = include_str!("spartan_outer_common.metal");
 const BOOLEANITY_COMMON_SOURCE: &str = include_str!("booleanity_common.metal");
@@ -39,6 +38,7 @@ const OUTER_REMAINDER_SOURCE: &str = super::outer_remainder::SOURCE;
 const OUTER_REMAINDER_PADDED_56_SOURCE: &str = super::outer_remainder::PADDED_56_SOURCE;
 
 struct SourceFragment {
+    #[cfg(test)]
     id: &'static str,
     source: &'static str,
     required_offset: Option<u32>,
@@ -46,27 +46,30 @@ struct SourceFragment {
 }
 
 impl SourceFragment {
-    const fn new(id: &'static str, source: &'static str) -> Self {
+    const fn new(_id: &'static str, source: &'static str) -> Self {
         Self {
-            id,
+            #[cfg(test)]
+            id: _id,
             source,
             required_offset: None,
             production: true,
         }
     }
 
-    const fn diagnostic(id: &'static str, source: &'static str) -> Self {
+    const fn diagnostic(_id: &'static str, source: &'static str) -> Self {
         Self {
-            id,
+            #[cfg(test)]
+            id: _id,
             source,
             required_offset: None,
             production: false,
         }
     }
 
-    const fn for_offset(id: &'static str, source: &'static str, offset: u32) -> Self {
+    const fn for_offset(_id: &'static str, source: &'static str, offset: u32) -> Self {
         Self {
-            id,
+            #[cfg(test)]
+            id: _id,
             source,
             required_offset: Some(offset),
             production: true,
@@ -96,10 +99,6 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     ),
     SourceFragment::new("ram_ra_claim_reduction", RAM_RA_CLAIM_REDUCTION_SOURCE),
     SourceFragment::new("deferred_sum", DEFERRED_SUM_SOURCE),
-    SourceFragment::new(
-        "instruction_read_raf_address",
-        INSTRUCTION_READ_RAF_ADDRESS_SOURCE,
-    ),
     SourceFragment::new("instruction_read_raf", INSTRUCTION_READ_RAF_SOURCE),
     SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
     SourceFragment::new("instruction_ra_common", INSTRUCTION_RA_COMMON_SOURCE),
@@ -140,65 +139,23 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     ),
 ];
 
-#[cfg(any(test, feature = "test-utils"))]
-const OUTER_LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
-    SourceFragment::new("fp128", FIELD_SOURCE),
-    SourceFragment::new("simd_reduce", SIMD_REDUCE_SOURCE),
-    SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
-    SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
-    SourceFragment::new(
-        "outer_remainder_padded_56",
-        OUTER_REMAINDER_PADDED_56_SOURCE,
-    ),
-];
-
 pub(super) fn library_source(offset: u32) -> String {
-    assemble_library_source(offset, LIBRARY_SOURCE_FRAGMENTS, None)
+    assemble_library_source_filtered(offset, LIBRARY_SOURCE_FRAGMENTS, false)
 }
 
 pub(super) fn production_library_source(offset: u32) -> String {
-    assemble_library_source_filtered(offset, LIBRARY_SOURCE_FRAGMENTS, None, true)
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub(super) fn library_source_with_outer(offset: u32, outer_source: &str) -> String {
-    assemble_library_source(
-        offset,
-        LIBRARY_SOURCE_FRAGMENTS,
-        Some(("outer_remainder_padded_56", outer_source)),
-    )
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub(super) fn outer_library_source_with_outer(offset: u32, outer_source: &str) -> String {
-    assemble_library_source(
-        offset,
-        OUTER_LIBRARY_SOURCE_FRAGMENTS,
-        Some(("outer_remainder_padded_56", outer_source)),
-    )
-}
-
-fn assemble_library_source(
-    offset: u32,
-    source_fragments: &[SourceFragment],
-    replacement: Option<(&str, &str)>,
-) -> String {
-    assemble_library_source_filtered(offset, source_fragments, replacement, false)
+    assemble_library_source_filtered(offset, LIBRARY_SOURCE_FRAGMENTS, true)
 }
 
 fn assemble_library_source_filtered(
     offset: u32,
     source_fragments: &[SourceFragment],
-    replacement: Option<(&str, &str)>,
     production_only: bool,
 ) -> String {
     let fragments = source_fragments
         .iter()
         .filter(|fragment| fragment.applies_to(offset) && (!production_only || fragment.production))
-        .map(|fragment| match replacement {
-            Some((id, source)) if fragment.id == id => source,
-            _ => fragment.source,
-        })
+        .map(|fragment| fragment.source)
         .collect::<Vec<_>>();
     format!("#define SOLINAS_OFFSET {offset}u\n{}", fragments.join("\n"))
 }
@@ -220,14 +177,8 @@ mod tests {
             .collect()
     }
 
-    fn expected_outer_library_source(offset: u32, outer_source: &str) -> String {
-        format!(
-            "#define SOLINAS_OFFSET {offset}u\n{FIELD_SOURCE}\n{SIMD_REDUCE_SOURCE}\n{SPARTAN_OUTER_COMMON_SOURCE}\n{OUTER_REMAINDER_SOURCE}\n{outer_source}"
-        )
-    }
-
     #[test]
-    fn source_assembly_puts_the_runtime_fragment_last() {
+    fn source_assembly_puts_the_outer_fragment_last() {
         let generic = library_source(275);
         assert!(!generic.contains(BYTECODE_READ_RAF_ADDRESS_SOURCE));
         assert!(generic.ends_with(OUTER_REMAINDER_PADDED_56_SOURCE));
@@ -246,7 +197,6 @@ mod tests {
         for required in [
             PRODUCT_REMAINDER_SOURCE,
             PRODUCT_INSTRUCTION_SERVICE_SOURCE,
-            INSTRUCTION_READ_RAF_ADDRESS_SOURCE,
             REGISTERS_VAL_SOURCE,
         ] {
             assert!(source.contains(required));
@@ -275,28 +225,5 @@ mod tests {
             manifest_fragment_ids("cpu_delegated_slots"),
             ["registers_read_write", "ram_output_check"]
         );
-    }
-
-    #[test]
-    fn outer_source_assembly_closes_the_minimal_dependency_set() {
-        let replacement = "kernel void replacement_outer() {}";
-        let source = outer_library_source_with_outer(275, replacement);
-
-        assert_eq!(source, expected_outer_library_source(275, replacement));
-        assert!(source.contains(OUTER_REMAINDER_SOURCE));
-        assert!(!source.contains(OUTER_REMAINDER_PADDED_56_SOURCE));
-        assert!(!source.contains(INSTRUCTION_INPUT_SOURCE));
-    }
-
-    #[test]
-    fn full_source_assembly_replaces_only_the_outer_fragment() {
-        let replacement = "kernel void replacement_outer() {}";
-        let source = library_source_with_outer(275, replacement);
-
-        assert!(source.contains(replacement));
-        assert!(source.contains(OUTER_REMAINDER_SOURCE));
-        assert!(!source.contains(OUTER_REMAINDER_PADDED_56_SOURCE));
-        assert!(source.contains(INSTRUCTION_INPUT_SOURCE));
-        assert!(source.ends_with(replacement));
     }
 }

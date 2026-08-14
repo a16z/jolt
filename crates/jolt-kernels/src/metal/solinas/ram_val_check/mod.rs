@@ -56,20 +56,14 @@ pub struct RamValCheckRows {
 }
 
 impl RamValCheckRows {
-    pub const fn len(&self) -> usize {
-        self.len
-    }
+    copy_field_getters! { pub, {
+        len: usize,
+        address_domain: usize,
+        device_registry_id: u64,
+    } }
 
     pub const fn is_empty(&self) -> bool {
         self.len == 0
-    }
-
-    pub const fn address_domain(&self) -> usize {
-        self.address_domain
-    }
-
-    pub const fn device_registry_id(&self) -> u64 {
-        self.device_registry_id
     }
 
     pub fn allocation_identity(&self) -> usize {
@@ -163,9 +157,7 @@ impl RamValCheckNativeRow {
         }
     }
 
-    pub const fn increment_magnitude(self) -> u64 {
-        self.increment_magnitude
-    }
+    copy_field_getters! { pub, { increment_magnitude: u64 } }
 
     pub const fn increment_nonnegative(self) -> bool {
         self.flags & FLAG_INCREMENT_NONNEGATIVE != 0
@@ -389,56 +381,23 @@ impl RamValCheckPlan {
         })
     }
 
-    pub const fn log_t(self) -> usize {
-        self.log_t
-    }
-
-    pub const fn log_k(self) -> usize {
-        self.log_k
-    }
-
-    pub const fn cycles(self) -> usize {
-        self.cycles
-    }
-
-    pub const fn address_domain(self) -> usize {
-        self.address_domain
-    }
-
-    pub const fn low_bits(self) -> usize {
-        self.low_bits
-    }
-
-    pub const fn high_bits(self) -> usize {
-        self.high_bits
-    }
-
-    pub const fn initial_lt_lo_length(self) -> usize {
-        self.lt_lo_length
-    }
-
-    pub const fn high_blocks(self) -> usize {
-        self.high_blocks
-    }
-
-    pub const fn gpu_bind_rounds(self) -> usize {
-        self.gpu_bind_rounds
-    }
+    copy_field_getters! { pub, {
+        log_t: usize,
+        log_k: usize,
+        cycles: usize,
+        address_domain: usize,
+        low_bits: usize,
+        high_bits: usize,
+        initial_lt_lo_length => lt_lo_length: usize,
+        high_blocks: usize,
+        gpu_bind_rounds: usize,
+        dense_transition_rounds: usize,
+        cpu_tail_elements: usize,
+        config: RamValCheckConfig,
+    } }
 
     pub const fn gpu_message_rounds(self) -> usize {
         self.gpu_bind_rounds + 1
-    }
-
-    pub const fn dense_transition_rounds(self) -> usize {
-        self.dense_transition_rounds
-    }
-
-    pub const fn cpu_tail_elements(self) -> usize {
-        self.cpu_tail_elements
-    }
-
-    pub const fn config(self) -> RamValCheckConfig {
-        self.config
     }
 
     pub const fn lt_lo_length_at_handoff(self) -> usize {
@@ -631,41 +590,17 @@ impl RamValCheckStorageLayout {
         })
     }
 
-    pub const fn native_row_bytes(self) -> usize {
-        self.native_row_bytes
-    }
-
-    pub const fn dense_a_fields(self) -> usize {
-        self.dense_a_fields
-    }
-
-    pub const fn dense_b_fields(self) -> usize {
-        self.dense_b_fields
-    }
-
-    pub const fn address_fields(self) -> usize {
-        self.address_fields
-    }
-
-    pub const fn split_lt_fields(self) -> usize {
-        self.split_lt_fields
-    }
-
-    pub const fn partial_fields_per_buffer(self) -> usize {
-        self.partial_fields_per_buffer
-    }
-
-    pub const fn workspace_bytes(self) -> usize {
-        self.workspace_bytes
-    }
-
-    pub const fn resident_bytes(self) -> usize {
-        self.resident_bytes
-    }
-
-    pub const fn tail_handoff_bytes(self) -> usize {
-        self.tail_handoff_bytes
-    }
+    copy_field_getters! { pub, {
+        native_row_bytes: usize,
+        dense_a_fields: usize,
+        dense_b_fields: usize,
+        address_fields: usize,
+        split_lt_fields: usize,
+        partial_fields_per_buffer: usize,
+        workspace_bytes: usize,
+        resident_bytes: usize,
+        tail_handoff_bytes: usize,
+    } }
 }
 
 struct RamValCheckBuffers {
@@ -1102,24 +1037,19 @@ impl RamValCheckSequence {
         self.plan.initial_lt_lo_length() >> self.gpu_binds
     }
 
-    pub const fn gpu_binds(&self) -> usize {
-        self.gpu_binds
-    }
+    copy_field_getters! { pub, {
+        gpu_binds: usize,
+        storage_layout => layout: RamValCheckStorageLayout,
+        plan: RamValCheckPlan,
+        gpu_active_time: Duration,
+        first_message_pipeline_limits => first_message_limits: PipelineLimits,
+        native_transition_pipeline_limits => native_transition_limits: PipelineLimits,
+        dense_transition_pipeline_limits => dense_transition_limits: PipelineLimits,
+        reduction_pipeline_limits => reduction_limits: PipelineLimits,
+    } }
 
     pub const fn at_cpu_handoff(&self) -> bool {
         self.gpu_binds == self.plan.gpu_bind_rounds()
-    }
-
-    pub const fn storage_layout(&self) -> RamValCheckStorageLayout {
-        self.layout
-    }
-
-    pub const fn plan(&self) -> RamValCheckPlan {
-        self.plan
-    }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
     }
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
@@ -1132,22 +1062,6 @@ impl RamValCheckSequence {
 
     pub fn row_allocation_identity(&self) -> usize {
         self.rows.allocation_identity()
-    }
-
-    pub const fn first_message_pipeline_limits(&self) -> PipelineLimits {
-        self.first_message_limits
-    }
-
-    pub const fn native_transition_pipeline_limits(&self) -> PipelineLimits {
-        self.native_transition_limits
-    }
-
-    pub const fn dense_transition_pipeline_limits(&self) -> PipelineLimits {
-        self.dense_transition_limits
-    }
-
-    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
-        self.reduction_limits
     }
 
     pub fn read_current_state(&self) -> Result<Vec<RamValCheckDenseRow<AkitaField>>, MetalError> {
