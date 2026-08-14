@@ -88,6 +88,35 @@ impl DeviceReadWriteMatrix {
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the device-side construction hands over one buffer per matrix column"
+    )]
+    pub(crate) fn from_device_parts(
+        rows: CudaSlice<u32>,
+        cols: CudaSlice<u32>,
+        val_coeff: DeviceFrVec,
+        prev_val: CudaSlice<u64>,
+        next_val: CudaSlice<u64>,
+        coeffs: DeviceFrVec,
+        wa_scale: DeviceFrVec,
+        coeff_width: usize,
+        entries: usize,
+    ) -> Self {
+        Self {
+            rows,
+            cols,
+            val_coeff,
+            prev_val,
+            next_val,
+            coeffs,
+            wa_scale,
+            coeff_width,
+            entries,
+            rounds_bound: 0,
+        }
+    }
+
     pub const fn len(&self) -> usize {
         self.entries
     }

@@ -1,4 +1,3 @@
-use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamReadWriteInputClaims, RamReadWriteOutputClaims,
 };
@@ -17,11 +16,11 @@ use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
-use crate::reference::views::dense_view;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+pub(crate) mod device_rows;
 pub(crate) mod witness;
 
 pub struct RamReadWriteKernel<F: Field> {
@@ -189,18 +188,13 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
             });
         }
 
-        let gamma = inputs.challenges.gamma;
+        let gamma = require_fr(inputs.challenges.gamma).map_err(|_| KernelError::Unsupported {
+            reason: "CUDA kernels support only the BN254 scalar field",
+        })?;
         let rows = collect_bundles::<witness::RamReadWriteWitness>(witness, 1usize << log_t)?;
-        let entries = witness::matrix_entries(&rows);
-        let cycle = DeviceReadWriteMatrix::new(
-            context,
-            &entries,
-            1,
-            Some(require_fr(gamma).map_err(|_| KernelError::Unsupported {
-                reason: "CUDA kernels support only the BN254 scalar field",
-            })?),
-        )?;
-        let inc = context.upload(require_fr_slice(&dense_view(witness, ram_inc())?)?)?;
+        let rows = device_rows::DeviceRamRows::upload(context, &rows)?;
+        let cycle = rows.matrix(context, gamma)?;
+        let inc = rows.inc(context)?;
         let val_init = require_fr_slice(
             &witness.oracle_table(JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamValInit))?,
         )?

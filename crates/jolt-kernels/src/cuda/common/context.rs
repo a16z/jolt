@@ -56,6 +56,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("../kernels/address_phase.cu"),
     "\n",
     include_str!("../kernels/cycle_rounds.cu"),
+    "\n",
+    include_str!("../kernels/ram_read_write.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -129,6 +131,9 @@ pub struct CudaKernelContext {
     amm_message: CudaFunction,
     amm_materialize: CudaFunction,
     amm_lift: CudaFunction,
+    rrw_flags: CudaFunction,
+    rrw_inc: CudaFunction,
+    rrw_scatter: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -213,6 +218,9 @@ impl CudaKernelContext {
             amm_message: module.load_function("amm_message_kernel")?,
             amm_materialize: module.load_function("amm_materialize_kernel")?,
             amm_lift: module.load_function("amm_lift_kernel")?,
+            rrw_flags: module.load_function("rrw_flags_kernel")?,
+            rrw_inc: module.load_function("rrw_inc_kernel")?,
+            rrw_scatter: module.load_function("rrw_scatter_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -290,6 +298,18 @@ impl CudaKernelContext {
     pub(crate) fn upload_u8_slice(&self, values: &[u8]) -> Result<CudaSlice<u8>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    pub(crate) fn download_u32_range(
+        &self,
+        buffer: &CudaSlice<u32>,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<u32>, CudaError> {
+        let view = buffer.slice(start..end);
+        xfer_stats::timed(Phase::D2h, (end - start) * size_of::<u32>(), || {
+            Ok(self.stream.clone_dtoh(&view)?)
         })
     }
 
@@ -515,6 +535,18 @@ impl CudaKernelContext {
 
     pub(crate) const fn amm_lift(&self) -> &CudaFunction {
         &self.amm_lift
+    }
+
+    pub(crate) const fn rrw_flags(&self) -> &CudaFunction {
+        &self.rrw_flags
+    }
+
+    pub(crate) const fn rrw_inc(&self) -> &CudaFunction {
+        &self.rrw_inc
+    }
+
+    pub(crate) const fn rrw_scatter(&self) -> &CudaFunction {
+        &self.rrw_scatter
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {

@@ -1,4 +1,4 @@
-use cudarc::driver::PushKernelArg;
+use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_poly::BindingOrder;
 
@@ -290,6 +290,55 @@ impl CudaKernelContext {
         // buffer), and writes only `out[i*4..i*4+4]` of `count * LIMBS`. All
         // three are distinct allocations. Threads with `i >= count` return first.
         let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub(crate) fn exclusive_scan_u32_on_device(
+        &self,
+        input: &CudaSlice<u32>,
+        len: usize,
+    ) -> Result<CudaSlice<u32>, CudaError> {
+        let count = Self::count_of(len)?;
+        let blocks = count.div_ceil(BLOCK_SIZE);
+        let mut output = self.alloc_u32(len)?;
+        let mut block_sums = self.alloc_u32(blocks as usize)?;
+        let mut builder = self.stream().launch_builder(&self.scan_u32_block);
+        let _ = builder.arg(input);
+        let _ = builder.arg(&mut output);
+        let _ = builder.arg(&mut block_sums);
+        let _ = builder.arg(&count);
+        // SAFETY: identical launch to `exclusive_scan_u32`, differing only in
+        // that the input already lives on device: thread `i < count` reads
+        // `input[i]` and writes `out[i]`, both `count` u32s, and only the last
+        // thread of each block writes `block_sums[blockIdx.x]` of `blocks` u32s.
+        let _ = unsafe {
+            builder.launch(cudarc::driver::LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (BLOCK_SIZE, 1, 1),
+                shared_mem_bytes: 0,
+            })
+        }?;
+        self.stream().synchronize()?;
+        if blocks == 1 {
+            return Ok(output);
+        }
+
+        let offsets = self.exclusive_scan_u32_on_device(&block_sums, blocks as usize)?;
+        let mut builder = self.stream().launch_builder(&self.scan_u32_add_offsets);
+        let _ = builder.arg(&mut output);
+        let _ = builder.arg(&offsets);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads `block_offsets[blockIdx.x]` of
+        // `blocks` u32s and read-modify-writes only `out[i]` of `count` u32s,
+        // one thread per element.
+        let _ = unsafe {
+            builder.launch(cudarc::driver::LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (BLOCK_SIZE, 1, 1),
+                shared_mem_bytes: 0,
+            })
+        }?;
         self.stream().synchronize()?;
         Ok(output)
     }

@@ -11,6 +11,13 @@ pub struct RamReadWriteWitness {
     pub write_value: RamWriteValue,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the host construction is retained as the oracle for the device-side one"
+    )
+)]
 pub fn matrix_entries(rows: &[RamReadWriteWitness]) -> Vec<MatrixEntry> {
     let one = Fr::from_u64(1);
     let zero = Fr::from_u64(0);
