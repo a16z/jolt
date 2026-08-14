@@ -167,15 +167,8 @@ impl DeviceReadWriteMatrix {
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(entries)) }?;
         context.stream().synchronize()?;
 
-        let host_flags = context.download_u32(&flags)?;
-        let mut ranks = Vec::with_capacity(host_flags.len());
-        let mut running = 0u32;
-        for flag in &host_flags {
-            ranks.push(running);
-            running += *flag;
-        }
-        let segment_count = running as usize;
-        let device_ranks = context.upload_u32_slice(&ranks)?;
+        let (device_ranks, segment_count) =
+            context.exclusive_scan_with_total_u32(&flags, self.entries)?;
 
         let mut seg = Segments {
             start: context.alloc_u32(segment_count)?,
@@ -331,17 +324,8 @@ impl DeviceReadWriteMatrix {
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(segments)) }?;
         context.stream().synchronize()?;
 
-        let host_counts = context.download_u32(&counts)?;
-        let offsets = context.exclusive_scan_u32(&host_counts)?;
-        let bound_len = offsets
-            .last()
-            .copied()
-            .unwrap_or(0)
-            .checked_add(host_counts.last().copied().unwrap_or(0))
-            .ok_or(CudaError::InvariantViolation {
-                reason: "bound read-write matrix length overflowed u32",
-            })? as usize;
-        let device_offsets = context.upload_u32_slice(&offsets)?;
+        let (device_offsets, bound_len) =
+            context.exclusive_scan_with_total_u32(&counts, segment_count)?;
 
         let mut out_rows = context.alloc_u32(bound_len)?;
         let mut out_cols = context.alloc_u32(bound_len)?;

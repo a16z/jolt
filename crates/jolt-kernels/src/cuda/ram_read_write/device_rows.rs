@@ -63,10 +63,7 @@ impl DeviceRamRows {
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(cycles)) }?;
         context.stream().synchronize()?;
 
-        let offsets = context.exclusive_scan_u32_on_device(&flags, self.cycles)?;
-        let tail = context.download_u32_range(&flags, self.cycles - 1, self.cycles)?[0];
-        let last = context.download_u32_range(&offsets, self.cycles - 1, self.cycles)?[0];
-        let entries = (last + tail) as usize;
+        let (offsets, entries) = context.exclusive_scan_with_total_u32(&flags, self.cycles)?;
 
         let mut out_rows = context.alloc_u32(entries)?;
         let mut out_cols = context.alloc_u32(entries)?;

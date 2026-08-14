@@ -294,6 +294,25 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    pub(crate) fn exclusive_scan_with_total_u32(
+        &self,
+        input: &CudaSlice<u32>,
+        len: usize,
+    ) -> Result<(CudaSlice<u32>, usize), CudaError> {
+        let scanned = self.exclusive_scan_u32_on_device(input, len)?;
+        if len == 0 {
+            return Ok((scanned, 0));
+        }
+        let tail = self.download_u32_range(input, len - 1, len)?[0];
+        let last = self.download_u32_range(&scanned, len - 1, len)?[0];
+        let total = last
+            .checked_add(tail)
+            .ok_or(CudaError::InvariantViolation {
+                reason: "an exclusive scan total overflowed u32",
+            })? as usize;
+        Ok((scanned, total))
+    }
+
     pub(crate) fn exclusive_scan_u32_on_device(
         &self,
         input: &CudaSlice<u32>,
