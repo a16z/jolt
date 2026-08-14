@@ -173,6 +173,54 @@ impl DeviceAddressMajorMatrix {
         Ok((segment_count, seg))
     }
 
+    pub fn materialize(
+        &self,
+        context: &CudaKernelContext,
+        k_prime: usize,
+        t_prime: usize,
+    ) -> Result<[DeviceFrVec; 3], CudaError> {
+        if k_prime < self.val_init.len() {
+            return Err(CudaError::InvariantViolation {
+                reason: "materializing an address-major matrix needs a column per unbound address",
+            });
+        }
+        let mut ra = context.alloc(k_prime * t_prime)?;
+        let mut wa = context.alloc(k_prime * t_prime)?;
+        let mut val = context.alloc(k_prime * t_prime)?;
+        if self.entries == 0 || t_prime == 0 {
+            return Ok([ra, wa, val]);
+        }
+        let entries = CudaKernelContext::count_of(self.entries)?;
+        let width = CudaKernelContext::count_of(self.coeff_width)?;
+        let cycles = CudaKernelContext::count_of(t_prime)?;
+
+        let mut builder = context.stream().launch_builder(context.amm_materialize());
+        let _ = builder.arg(&self.rows);
+        let _ = builder.arg(&self.cols);
+        let _ = builder.arg(self.val_coeff.limbs());
+        let _ = builder.arg(self.next_val.limbs());
+        let _ = builder.arg(self.coeffs.limbs());
+        let _ = builder.arg(&width);
+        let _ = builder.arg(&entries);
+        let _ = builder.arg(&cycles);
+        let _ = builder.arg(ra.limbs_mut());
+        let _ = builder.arg(wa.limbs_mut());
+        let _ = builder.arg(val.limbs_mut());
+        // SAFETY: thread `n < entries` reads `rows`/`cols` at `n` and `n + 1`
+        // (guarded), and its own `val_coeff`/`next_val`/`coeffs` slots. It returns
+        // unless `row < t_prime`, and writes `ra`/`wa`/`val` only at
+        // `col * t_prime + r` for `r` in `[row, fill_end)` with `fill_end <=
+        // t_prime` — inside all three buffers because `col < val_init.len() <=
+        // k_prime` (columns are `[0, val_init.len())` by construction and the
+        // caller's `k_prime` was checked above). Writes are disjoint across
+        // threads: entries have distinct `(col, row)` and each thread's fill range
+        // stops at the next entry's row in the same column. Inputs and outputs are
+        // distinct allocations.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(entries)) }?;
+        context.stream().synchronize()?;
+        Ok([ra, wa, val])
+    }
+
     pub fn round_evals<F: jolt_field::Field>(
         &self,
         context: &CudaKernelContext,
@@ -365,6 +413,7 @@ mod tests {
     use tracer::instruction::Cycle;
 
     use super::super::context::shared_context;
+    use super::super::device::DeviceFrVec;
     use super::{AddressMajorEntry, DeviceAddressMajorMatrix};
 
     const LOG_T: usize = 6;
@@ -521,6 +570,81 @@ mod tests {
                 legacy_view(&legacy),
                 "entry sets diverged after binding round {round}",
             );
+        }
+    }
+
+    fn legacy_dense(polys: &[LegacyMultilinear<LegacyFr>; 3]) -> Vec<Vec<Fr>> {
+        polys
+            .iter()
+            .map(|poly| {
+                (0..poly.len())
+                    .map(|index| Fr::from(poly.get_bound_coeff(index)))
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn device_dense(polys: &[DeviceFrVec; 3]) -> Vec<Vec<Fr>> {
+        polys
+            .iter()
+            .map(|poly| poly.to_host().expect("download"))
+            .collect()
+    }
+
+    #[test]
+    fn address_major_materialize_matches_legacy() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let mut rng = StdRng::seed_from_u64(31);
+        let trace: Vec<Cycle> = (0..1usize << LOG_T)
+            .map(|_| random_cycle(&mut rng))
+            .collect();
+        let gamma = <LegacyFr as LegacyJoltField>::from_u64(101);
+
+        let cycle_major = ReadWriteMatrixCycleMajor::<
+            LegacyFr,
+            RegistersCycleMajorEntry<LegacyFr, _>,
+        >::new(&trace, gamma);
+        let mut legacy: LegacyAddressMajor = cycle_major.into();
+
+        let val_init = val_init_values();
+        legacy.val_init = legacy_val_init(&val_init);
+        let seeded = seed_from(&legacy);
+        let mut device = DeviceAddressMajorMatrix::new(context, &seeded, &val_init, COEFF_WIDTH)
+            .expect("device address-major matrix");
+
+        let t_prime = 1usize << LOG_T;
+        for round in 0..=REGISTER_COUNT.ilog2() as usize {
+            let k_prime = REGISTER_COUNT >> round;
+            assert_eq!(
+                device_dense(
+                    &device
+                        .materialize(context, k_prime, t_prime)
+                        .expect("device materialize")
+                ),
+                legacy_dense(&legacy.clone().materialize(k_prime, t_prime)),
+                "materialized polynomials diverged after {round} bound rounds",
+            );
+
+            if round == REGISTER_COUNT.ilog2() as usize {
+                assert_eq!(
+                    device_dense(
+                        &device
+                            .materialize(context, 1, 1)
+                            .expect("device materialize")
+                    ),
+                    legacy_dense(&legacy.clone().materialize(1, 1)),
+                    "fully collapsed materialization diverged",
+                );
+                break;
+            }
+
+            let challenge = LegacyChallenge::new(41 + round as u128);
+            legacy.bind(challenge);
+            device
+                .bind(context, Fr::from(LegacyFr::from(challenge)))
+                .expect("device bind");
         }
     }
 

@@ -192,6 +192,44 @@ extern "C" __global__ void amm_merge_kernel(
     }
 }
 
+extern "C" __global__ void amm_materialize_kernel(
+    const unsigned int *__restrict__ rows, const unsigned int *__restrict__ cols,
+    const u64 *__restrict__ val_coeff, const u64 *__restrict__ next_val,
+    const u64 *__restrict__ coeffs, unsigned int coeff_width, unsigned int entries,
+    unsigned int t_prime, u64 *__restrict__ ra, u64 *__restrict__ wa, u64 *__restrict__ val) {
+    unsigned int n = blockIdx.x * blockDim.x + threadIdx.x;
+    if (n >= entries) return;
+
+    unsigned int row = rows[n];
+    if (row >= t_prime) return;
+
+    unsigned int col = cols[n];
+    unsigned long long base = (unsigned long long)col * t_prime;
+    unsigned int ra_lane = 0;
+    unsigned int wa_lane = (coeff_width > 1) ? 1 : 0;
+
+    u64 coeff[LIMBS];
+    load4(coeffs + ((unsigned long long)n * coeff_width + ra_lane) * LIMBS, coeff);
+    store4(ra + (base + row) * LIMBS, coeff);
+    load4(coeffs + ((unsigned long long)n * coeff_width + wa_lane) * LIMBS, coeff);
+    store4(wa + (base + row) * LIMBS, coeff);
+    load4(val_coeff + (unsigned long long)n * LIMBS, coeff);
+    store4(val + (base + row) * LIMBS, coeff);
+
+    unsigned int fill_end = t_prime;
+    if (n + 1 < entries && cols[n + 1] == col) {
+        unsigned int next_row = rows[n + 1];
+        fill_end = (next_row < t_prime) ? next_row : t_prime;
+    }
+    if (row + 1 < fill_end) {
+        u64 carried[LIMBS];
+        load4(next_val + (unsigned long long)n * LIMBS, carried);
+        for (unsigned int r = row + 1; r < fill_end; r++) {
+            store4(val + (base + r) * LIMBS, carried);
+        }
+    }
+}
+
 extern "C" __global__ void amm_message_kernel(
     const unsigned int *__restrict__ rows, const u64 *__restrict__ val_coeff,
     const u64 *__restrict__ next_val, const u64 *__restrict__ coeffs, unsigned int coeff_width,

@@ -127,6 +127,7 @@ pub struct CudaKernelContext {
     amm_count: CudaFunction,
     amm_merge: CudaFunction,
     amm_message: CudaFunction,
+    amm_materialize: CudaFunction,
     cr_quotient: CudaFunction,
 }
 
@@ -209,6 +210,7 @@ impl CudaKernelContext {
             amm_count: module.load_function("amm_count_kernel")?,
             amm_merge: module.load_function("amm_merge_kernel")?,
             amm_message: module.load_function("amm_message_kernel")?,
+            amm_materialize: module.load_function("amm_materialize_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
         })
     }
@@ -497,6 +499,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn amm_message(&self) -> &CudaFunction {
         &self.amm_message
+    }
+
+    pub(crate) const fn amm_materialize(&self) -> &CudaFunction {
+        &self.amm_materialize
     }
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
