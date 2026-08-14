@@ -20,6 +20,9 @@ use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
 use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::formula_dimensions_from_parts;
+use jolt_verifier::stages::stage2::ram_read_write_checking::{
+    RamReadWriteChallenges, RamReadWriteChecking, RamReadWriteInputClaims,
+};
 use jolt_verifier::stages::stage4::registers_read_write_checking::{
     RegistersReadWriteChallenges, RegistersReadWriteChecking, RegistersReadWriteInputClaims,
 };
@@ -34,6 +37,7 @@ const SAFETY_MARGIN: f64 = 0.9;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerticalRelation {
     InstructionReadRaf,
+    RamReadWrite,
     RamValCheck,
     RegistersReadWrite,
 }
@@ -42,6 +46,7 @@ impl VerticalRelation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::InstructionReadRaf => "instruction-read-raf",
+            Self::RamReadWrite => "ram-read-write",
             Self::RamValCheck => "ram-val-check",
             Self::RegistersReadWrite => "registers-read-write",
         }
@@ -170,6 +175,9 @@ pub fn run(args: &VerticalArgs) -> Vec<VerticalTiming> {
         let timing = match args.relation {
             VerticalRelation::InstructionReadRaf => {
                 measure_instruction_read_raf(args.name, scale, args.backend)
+            }
+            VerticalRelation::RamReadWrite => {
+                measure_ram_read_write(args.name, scale, args.backend)
             }
             VerticalRelation::RamValCheck => measure_ram_val_check(args.name, scale, args.backend),
             VerticalRelation::RegistersReadWrite => {
@@ -413,6 +421,113 @@ fn measure_ram_val_check(workload: Workload, scale: u32, backend: BackendKind) -
 
     drive_rounds(&mut *kernel, &claims, log_t, log_t, prepare, |_| {
         RoundPhase::Cycle
+    })
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+fn measure_ram_read_write(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
+    let bench_name = workload.as_str();
+    let max_trace_length = 1usize << scale;
+    let input = workload.input((max_trace_length as f64 * SAFETY_MARGIN) as usize);
+
+    let mut program = host::Program::new(&format!("{bench_name}-guest"));
+    let (bytecode, init_memory_state, _, entry_address) = program.decode();
+    let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
+    drop(legacy_trace);
+    let elf_contents = program.get_elf_contents().expect("elf contents");
+    let memory_layout = io_device.memory_layout.clone();
+
+    let program_data =
+        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
+            .expect("legacy preprocess");
+    let shared =
+        JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
+    let legacy = LegacyProverPreprocessing::<
+        jolt_prover_legacy::ark_bn254::Fr,
+        jolt_prover_legacy::curve::Bn254Curve,
+        DoryCommitmentScheme,
+    >::new(shared);
+    let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy);
+    let program_preprocessing = verifier_preprocessing
+        .program
+        .as_full()
+        .expect("full program preprocessing")
+        .clone();
+    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+
+    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    let config = ProverConfig::derive::<Fr>(
+        trace_output.trace.rows(),
+        &memory_layout,
+        verifier_preprocessing.program.min_bytecode_address(),
+        verifier_preprocessing.program.program_image_len_words(),
+        max_trace_length,
+    )
+    .expect("derive config");
+    let padded = pad_trace(trace_output, config.trace_length);
+    let log_t = config.trace_length.ilog2() as usize;
+    let ram_log_k = config.ram_K.ilog2() as usize;
+
+    let witness = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
+        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
+    );
+
+    let ram_dimensions = config.rw_config.ram_dimensions(log_t, ram_log_k);
+    let tau_low: Vec<Fr> = (0..log_t)
+        .map(|i| Fr::from_u64(53 + 11 * i as u64))
+        .collect();
+    let relation = RamReadWriteChecking::<Fr>::new(ram_dimensions, ram_log_k, tau_low);
+
+    let point = |offset: u64| -> Vec<Fr> {
+        (0..log_t)
+            .map(|i| Fr::from_u64(offset + 7 * i as u64 + 3))
+            .collect()
+    };
+    let claims = RamReadWriteInputClaims {
+        ram_read_value: Fr::from_u64(0),
+        ram_write_value: Fr::from_u64(0),
+    };
+    let points = RamReadWriteInputClaims {
+        ram_read_value: point(41),
+        ram_write_value: point(141),
+    };
+    let challenges = RamReadWriteChallenges {
+        gamma: Fr::from_u64(103),
+    };
+    let inputs = || ProverInputs {
+        relation: &relation,
+        claims: &claims,
+        points: &points,
+        challenges: &challenges,
+    };
+
+    let selected = match backend {
+        BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        #[cfg(feature = "cuda")]
+        BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
+    };
+
+    let mut session = ProofSession::default();
+    let start = Instant::now();
+    let mut kernel = selected
+        .ram_read_write
+        .prepare(&mut session, &witness, inputs())
+        .expect("prepare the stage-2 RAM read-write kernel");
+    let prepare = start.elapsed();
+
+    let rounds = jolt_claims::SymbolicSumcheck::rounds(
+        jolt_verifier::stages::relations::ConcreteSumcheck::symbolic(&relation),
+    );
+    drive_rounds(&mut *kernel, &claims, rounds, log_t, prepare, |round| {
+        if round < log_t {
+            RoundPhase::Cycle
+        } else {
+            RoundPhase::Address
+        }
     })
 }
 
