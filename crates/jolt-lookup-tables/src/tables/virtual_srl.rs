@@ -61,8 +61,8 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRLTable<XLEN
         prefixes[Prefixes::RightShift] * right_shift_helper + right_shift
     }
 
-    #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
+    #[cfg(any(test, feature = "test-utils"))]
+    fn random_lookup_index(&self, rng: &mut rand::rngs::StdRng) -> u128 {
         use rand::Rng;
 
         let x = rng.gen::<u64>() & ((1u128 << XLEN).wrapping_sub(1) as u64);

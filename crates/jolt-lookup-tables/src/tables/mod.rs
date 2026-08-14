@@ -264,6 +264,13 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
     pub fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         dispatch!(self, t => PrefixSuffixDecomposition::combine(t, prefixes, suffixes))
     }
+
+    /// Generate a random lookup index inside this table's valid input domain,
+    /// for testing. See [`PrefixSuffixDecomposition::random_lookup_index`].
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn random_lookup_index(&self, rng: &mut rand::rngs::StdRng) -> u128 {
+        dispatch!(self, t => PrefixSuffixDecomposition::random_lookup_index(t, rng))
+    }
 }
 
 /// Prefix/suffix decomposition for sub-linear MLE evaluation.
@@ -285,13 +292,16 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Def
     /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
     fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 
-    /// Generate a random lookup index for testing.
+    /// Generate a random lookup index inside the table's valid input domain,
+    /// for testing.
     ///
     /// The default returns a uniform random `u128` masked to `2 * XLEN` bits.
-    /// Tables with constrained input domains (e.g., shift/rotate tables that expect
-    /// bitmask-shaped right operands) should override this.
-    #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
+    /// Tables with constrained input domains (e.g., shift/rotate tables that
+    /// expect bitmask-shaped right operands) override this; off-domain
+    /// indices are unreachable in real traces, and the prefix-suffix
+    /// decomposition only matches `materialize_entry` on the valid domain.
+    #[cfg(any(test, feature = "test-utils"))]
+    fn random_lookup_index(&self, rng: &mut rand::rngs::StdRng) -> u128 {
         let raw: u128 = rand::Rng::gen(rng);
         if XLEN == 64 {
             raw
@@ -301,5 +311,7 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Def
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) mod index_gen;
 #[cfg(test)]
 pub(crate) mod test_utils;

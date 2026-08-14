@@ -1343,6 +1343,8 @@ mod tests {
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     use crate::reference::instruction_read_raf::{
         InstructionReadRafKernel, InstructionReadRafWitness,
@@ -1385,25 +1387,37 @@ mod tests {
         z ^ (z >> 31)
     }
 
-    /// Synthetic rows exercising every branch: a handful of present tables,
+    /// Synthetic rows exercising every branch: a handful of present tables
+    /// (each row's lookup index drawn from its table's valid input domain),
     /// no-table rows, both RAF branches, and edge indices (0, all-ones,
     /// all-ones upper half — the canonical-address path).
+    ///
+    /// Edge-index rows carry no table: tables with constrained operand
+    /// domains (shift/rotate bitmask operands, lane-mask operands) never see
+    /// arbitrary indices in real traces, and their prefix-suffix
+    /// decomposition only matches `materialize_entry` on the valid domain.
+    /// The RAF operand paths the edge indices target are table-independent.
     fn fixture_rows(log_t: usize, seed: u64) -> Vec<InstructionReadRafWitness> {
-        let count = LookupTableKind::<RISCV_XLEN>::COUNT;
+        let kinds: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::iter().collect();
+        let count = kinds.len();
         let tables = [0, 3 % count, 7 % count, 11 % count, count - 1];
         let mut state = seed;
+        let mut rng = StdRng::seed_from_u64(seed);
         (0..1usize << log_t)
             .map(|j| {
-                let lookup_index = match j {
-                    0 => 0u128,
-                    1 => u128::MAX,
-                    2 => ((u64::MAX as u128) << 64) | splitmix(&mut state) as u128,
-                    _ => ((splitmix(&mut state) as u128) << 64) | splitmix(&mut state) as u128,
-                };
-                let table_index = if j % 7 == 3 {
+                let table_index = if j < 3 || j % 7 == 3 {
                     None
                 } else {
                     Some(tables[j % tables.len()])
+                };
+                let lookup_index = match (j, table_index) {
+                    (0, _) => 0u128,
+                    (1, _) => u128::MAX,
+                    (2, _) => ((u64::MAX as u128) << 64) | splitmix(&mut state) as u128,
+                    (_, Some(index)) => kinds[index].random_lookup_index(&mut rng),
+                    (_, None) => {
+                        ((splitmix(&mut state) as u128) << 64) | splitmix(&mut state) as u128
+                    }
                 };
                 InstructionReadRafWitness {
                     lookup_index: LookupIndex(lookup_index),

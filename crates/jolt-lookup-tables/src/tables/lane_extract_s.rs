@@ -93,8 +93,8 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for LaneExtractSTable<XL
             - prefixes[Prefixes::LastMaskBit] * straddle
     }
 
-    #[cfg(test)]
-    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
+    #[cfg(any(test, feature = "test-utils"))]
+    fn random_lookup_index(&self, rng: &mut rand::rngs::StdRng) -> u128 {
         use rand::Rng;
 
         let x = rng.gen::<u64>() & ((1u128 << XLEN).wrapping_sub(1) as u64);
@@ -125,10 +125,7 @@ mod tests {
         let table = LaneExtractSTable::<XLEN>;
         let mut rng = StdRng::seed_from_u64(12345);
         for _ in 0..1000 {
-            let index =
-                <LaneExtractSTable<XLEN> as PrefixSuffixDecomposition<XLEN>>::random_lookup_index(
-                    &mut rng,
-                );
+            let index = PrefixSuffixDecomposition::<XLEN>::random_lookup_index(&table, &mut rng);
             assert_eq!(
                 Fr::from_u64(table.materialize_entry(index)),
                 table.evaluate_mle::<Fr, Fr>(&index_to_field_bitvector(index, 2 * XLEN)),
