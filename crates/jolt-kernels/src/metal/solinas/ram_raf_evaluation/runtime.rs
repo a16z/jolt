@@ -10,9 +10,7 @@ use metal::{
     ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 
-use super::super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
-};
+use super::super::{buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, SolinasMetal};
 use super::{
     split_equality, RamRafAddress, RamRafConfig, RamRafCounters, RamRafDeviceLimits, RamRafError,
     RamRafFoldParams, RamRafShape, RamRafStoragePlan, ValidatedRamRafAddressPlane,
@@ -77,8 +75,6 @@ pub struct RamRafSequence {
     context: SolinasMetal,
     fold_pipeline: ComputePipelineState,
     finalize_pipeline: ComputePipelineState,
-    fold_limits: PipelineLimits,
-    finalize_limits: PipelineLimits,
     fold_threads: usize,
     finalize_threads: usize,
     addresses: RamRafAddressPlane,
@@ -294,8 +290,6 @@ impl SolinasMetal {
             context: self.clone(),
             fold_pipeline,
             finalize_pipeline,
-            fold_limits,
-            finalize_limits,
             fold_threads,
             finalize_threads,
             addresses,
@@ -330,24 +324,12 @@ impl RamRafAddressPlane {
 }
 
 impl RamRafSequence {
-    pub const fn fold_pipeline_limits(&self) -> PipelineLimits {
-        self.fold_limits
-    }
-
-    pub const fn finalize_pipeline_limits(&self) -> PipelineLimits {
-        self.finalize_limits
-    }
-
     pub const fn fold_threads(&self) -> usize {
         self.fold_threads
     }
 
     pub const fn finalize_threads(&self) -> usize {
         self.finalize_threads
-    }
-
-    pub const fn storage_plan(&self) -> RamRafStoragePlan {
-        self.storage
     }
 
     pub const fn address_storage_id(&self) -> usize {

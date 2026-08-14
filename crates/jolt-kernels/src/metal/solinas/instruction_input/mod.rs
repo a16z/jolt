@@ -553,9 +553,6 @@ pub(crate) fn instruction_input_sequence_auxiliary_storage_bytes(
 pub(crate) struct InstructionInputSequenceStorage {
     context: SolinasMetal,
     pipelines: Pipelines,
-    native_message_limits: PipelineLimits,
-    native_transition_limits: PipelineLimits,
-    dense_transition_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
     dense_arena: DenseArenaState,
@@ -602,7 +599,6 @@ pub struct InstructionInputSequence {
     phase: SequencePhase,
     dense_elements: usize,
     dense_in_a: bool,
-    gpu_active_time: Duration,
 }
 
 #[cfg(feature = "allocative")]
@@ -616,16 +612,6 @@ impl allocative::Allocative for InstructionInputSequence {
 }
 
 impl SolinasMetal {
-    pub fn prepare_instruction_input_rows(
-        &self,
-        rows: &[InstructionInputRow],
-    ) -> Result<InstructionInputRows, MetalError> {
-        self.prepare_instruction_input_rows_with_fill(rows.len(), |destination| {
-            destination.copy_from_slice(rows);
-            Ok(())
-        })
-    }
-
     pub fn prepare_instruction_input_rows_from_spartan(
         &self,
         rows: &[super::SpartanOuterUniskipRow],
@@ -848,9 +834,6 @@ impl SolinasMetal {
         Ok(InstructionInputSequenceStorage {
             context: self.clone(),
             pipelines,
-            native_message_limits,
-            native_transition_limits,
-            dense_transition_limits,
             reduction_limits,
             buffers,
             dense_arena,
@@ -1103,7 +1086,6 @@ impl InstructionInputSequenceStorage {
             phase: SequencePhase::BeforeMessage,
             dense_elements: 0,
             dense_in_a: true,
-            gpu_active_time: Duration::ZERO,
         })
     }
 
@@ -1118,7 +1100,6 @@ impl InstructionInputSequence {
         self.phase = SequencePhase::BeforeMessage;
         self.dense_elements = 0;
         self.dense_in_a = true;
-        self.gpu_active_time = Duration::ZERO;
     }
 
     pub(crate) fn submit_native_pipeline_primer(
@@ -1136,21 +1117,6 @@ impl InstructionInputSequence {
             sequence: Some(self),
             command: Some(command),
         })
-    }
-
-    /// Primes the InstructionInput pipelines on a zero-weighted 64-row prefix
-    /// without advancing the protocol state.
-    pub fn prime_native_pipeline(&mut self) -> Result<InstructionInputPrimerStats, MetalError> {
-        if self.phase != SequencePhase::BeforeMessage {
-            return Err(MetalError::InvalidInstructionInputState(
-                "native pipeline primer requires the initial sequence state",
-            ));
-        }
-        let command = self
-            .storage
-            .submit_native_pipeline_primer(&self.resident_rows)?;
-        self.storage
-            .complete_native_pipeline_primer(&self.resident_rows, command)
     }
 
     pub fn message(
@@ -1225,10 +1191,6 @@ impl InstructionInputSequence {
         matches!(self.phase, SequencePhase::Dense)
     }
 
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
-    }
-
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0
     }
@@ -1241,24 +1203,8 @@ impl InstructionInputSequence {
         self.storage.buffers.identities()
     }
 
-    pub const fn owned_storage_bytes(&self) -> u64 {
-        self.storage.owned_bytes
-    }
-
     pub const fn storage_initialization(&self) -> InstructionInputStorageInitializationStats {
         self.storage.initialization
-    }
-
-    pub const fn native_message_pipeline_limits(&self) -> PipelineLimits {
-        self.storage.native_message_limits
-    }
-
-    pub const fn native_transition_pipeline_limits(&self) -> PipelineLimits {
-        self.storage.native_transition_limits
-    }
-
-    pub const fn dense_transition_pipeline_limits(&self) -> PipelineLimits {
-        self.storage.dense_transition_limits
     }
 
     fn execute(
@@ -1404,12 +1350,6 @@ impl InstructionInputSequence {
         if command_buffer.status() != MTLCommandBufferStatus::Completed {
             return Err(MetalError::CommandFailed(command_buffer.status()));
         }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        self.gpu_active_time += Duration::from_secs_f64(end - start);
         let final_buffer = self.final_partial_buffer(e_out.len());
         // SAFETY: the completed reduction leaves three canonical fields at the
         // start of the selected partial buffer.

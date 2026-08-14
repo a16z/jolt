@@ -153,10 +153,6 @@ impl<F: Field> HostSparseRamRaVirtualization<F> {
         self.round
     }
 
-    pub const fn num_factors(&self) -> usize {
-        self.factors
-    }
-
     pub fn message(&mut self) -> Result<RamRaVirtualizationMessage<F>, RamRaVirtualizationError> {
         if self.round >= self.rounds {
             return Err(RamRaVirtualizationError::AlreadyFullyBound);

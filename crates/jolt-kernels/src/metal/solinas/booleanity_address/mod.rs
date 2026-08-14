@@ -86,8 +86,6 @@ pub struct BooleanityAddressPushforward {
     context: SolinasMetal,
     tile_pipelines: Vec<ComputePipelineState>,
     finalize_pipeline: ComputePipelineState,
-    tile_limits: PipelineLimits,
-    finalize_limits: PipelineLimits,
     buffers: Buffers,
     rows: usize,
     polys: usize,
@@ -322,8 +320,6 @@ impl SolinasMetal {
             context: self.clone(),
             tile_pipelines,
             finalize_pipeline,
-            tile_limits,
-            finalize_limits,
             buffers: Buffers {
                 rows,
                 selectors: selectors_buffer,
@@ -350,14 +346,6 @@ impl SolinasMetal {
 }
 
 impl BooleanityAddressPushforward {
-    pub const fn tile_pipeline_limits(&self) -> PipelineLimits {
-        self.tile_limits
-    }
-
-    pub const fn finalize_pipeline_limits(&self) -> PipelineLimits {
-        self.finalize_limits
-    }
-
     pub const fn tile_threads_per_threadgroup(&self) -> usize {
         self.tile_threads_per_threadgroup
     }

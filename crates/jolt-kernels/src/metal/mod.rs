@@ -30,7 +30,7 @@ pub use backend::{MetalBackend, MetalConfig};
 pub use booleanity::{BooleanityAddressMetalConfig, BooleanityMetalConfig};
 pub use bytecode_read_raf::{
     BytecodeReadRafAddressImplementation, BytecodeReadRafAddressMetalConfig,
-    BytecodeReadRafMetalConfig, BytecodeReadRafResidentRows,
+    BytecodeReadRafMetalConfig,
 };
 pub use hamming_weight_claim_reduction::HammingWeightMetalConfig;
 pub use instruction_claim_reduction::InstructionClaimReductionMetalConfig;

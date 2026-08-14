@@ -12,8 +12,8 @@ use metal::{
 
 use super::super::spartan_outer_uniskip::OuterResidualReleaseReceipt;
 use super::super::{
-    command_buffer_timestamp, Fp128, InstructionInputRows, MetalError, PipelineLimits,
-    SolinasMetal, SpartanOuterUniskipRows,
+    command_buffer_timestamp, Fp128, InstructionInputRows, MetalError, SolinasMetal,
+    SpartanOuterUniskipRows,
 };
 use super::{
     api::{
@@ -1064,26 +1064,6 @@ impl OuterRemainderSequence {
             residual_row_identity: rows.allocation_identity(),
             row_device_registry_id: rows.device_registry_id(),
         })
-    }
-
-    pub const fn materialize_pipeline_limits(&self) -> PipelineLimits {
-        self.storage.limits.materialize
-    }
-
-    pub const fn stream_bind_pipeline_limits(&self) -> PipelineLimits {
-        self.storage.limits.stream_bind
-    }
-
-    pub const fn transition_pipeline_limits(&self) -> PipelineLimits {
-        self.storage.limits.transition
-    }
-
-    pub const fn opening_pipeline_limits(&self) -> PipelineLimits {
-        self.storage.limits.opening
-    }
-
-    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
-        self.storage.limits.reduction
     }
 
     fn rows(&self) -> Result<&SpartanOuterUniskipRows, MetalError> {

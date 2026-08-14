@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use super::spartan_shift::{SpartanShiftFlagWord, SpartanShiftGeometry, SpartanShiftResidentRows};
 use super::{
     buffer_from_slice, command_buffer_timestamp, Fp128, InstructionInputRow, InstructionInputRows,
-    MetalError, PipelineLimits, SolinasMetal,
+    MetalError, SolinasMetal,
 };
 
 pub const SPARTAN_OUTER_EXTENDED_NODES: usize = 9;
@@ -764,8 +764,6 @@ pub struct SpartanOuterUniskipInvocation<'a> {
     context: &'a SolinasMetal,
     blocks_pipeline: ComputePipelineState,
     reduce_pipeline: ComputePipelineState,
-    blocks_limits: PipelineLimits,
-    reduce_limits: PipelineLimits,
     buffers: Buffers,
     blocks: usize,
     threads_per_threadgroup: usize,
@@ -1171,8 +1169,6 @@ impl SolinasMetal {
             context: self,
             blocks_pipeline,
             reduce_pipeline,
-            blocks_limits,
-            reduce_limits,
             buffers: Buffers {
                 instruction_input_rows: instruction_input_rows_buffer,
                 residual_rows: residual_rows_buffer,
@@ -1194,24 +1190,8 @@ impl SolinasMetal {
 }
 
 impl SpartanOuterUniskipInvocation<'_> {
-    pub const fn pipeline_limits(&self) -> PipelineLimits {
-        self.blocks_limits
-    }
-
-    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
-        self.reduce_limits
-    }
-
     pub const fn threads_per_threadgroup(&self) -> usize {
         self.threads_per_threadgroup
-    }
-
-    pub const fn block_count(&self) -> usize {
-        self.blocks
-    }
-
-    pub const fn execution_device_buffer_allocations(&self) -> usize {
-        0
     }
 
     pub fn execute(&self) -> Result<(), MetalError> {

@@ -177,7 +177,7 @@ impl PendingProductInstructionInitialMessage {
             threads_per_threadgroup: command.threads_per_threadgroup,
             threadgroup_bytes: command.threadgroup_bytes,
         };
-        product.complete_joint_materialize(stats.gpu_active)?;
+        product.complete_joint_materialize()?;
         instruction.complete_joint_materialize(stats.wall, stats.gpu_active)?;
         Ok((
             product,
@@ -324,7 +324,7 @@ impl ProductInstructionRoundService {
             gpu_active: Duration::from_secs_f64(end - start),
             joint: true,
         };
-        self.product.complete_joint_transition(stats.gpu_active)?;
+        self.product.complete_joint_transition()?;
         self.instruction
             .complete_joint_transition(stats.wall, stats.gpu_active)?;
         self.cached_instruction = Some(CachedInstructionRound {

@@ -217,19 +217,6 @@ impl<F: Field> RegistersClaimPartialQHandoff<F> {
         Ok(())
     }
 
-    pub fn stage1_register_openings(
-        &self,
-        geometry: RegistersClaimGeometry,
-    ) -> Result<RegistersClaimOutputs<F>, RegistersClaimOracleError> {
-        let (_, tau_lo) = split_tau(geometry, &self.product_tau_low)?;
-        let e_in = EqPolynomial::<F>::evals(tau_lo, None);
-        Ok(RegistersClaimOutputs {
-            rd_write_value: dot_table(&e_in, &self.components.rd_write_value)?,
-            rs1_value: dot_table(&e_in, &self.components.rs1_value)?,
-            rs2_value: dot_table(&e_in, &self.components.rs2_value)?,
-        })
-    }
-
     pub fn stage3_prefix_tables(
         &self,
         geometry: RegistersClaimGeometry,
@@ -406,19 +393,6 @@ fn validate_three_tables<F>(
         });
     }
     Ok(first.len())
-}
-
-fn dot_table<F: Field>(left: &[F], right: &[F]) -> Result<F, RegistersClaimOracleError> {
-    if left.len() != right.len() {
-        return Err(RegistersClaimOracleError::MismatchedRoundTables {
-            left: left.len(),
-            right: right.len(),
-        });
-    }
-    Ok(left
-        .iter()
-        .zip(right)
-        .fold(F::zero(), |sum, (left, right)| sum + *left * *right))
 }
 
 fn threadgroup_bytes(

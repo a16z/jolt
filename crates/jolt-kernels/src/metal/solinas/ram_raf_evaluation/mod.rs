@@ -241,10 +241,6 @@ impl RamRafShape {
     pub const fn tiles(self) -> usize {
         self.tiles
     }
-
-    pub fn maximum_live_subtotals(self) -> Result<usize, RamRafError> {
-        checked_product("maximum live subtotals", self.outer_length, self.addresses)
-    }
 }
 
 /// Metadata proving that a shared address allocation was checked once by its producer.

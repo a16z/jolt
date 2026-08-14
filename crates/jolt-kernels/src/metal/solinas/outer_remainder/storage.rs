@@ -126,7 +126,6 @@ impl Buffers {
 pub(super) struct Storage {
     pub(super) context: SolinasMetal,
     pub(super) pipelines: Pipelines,
-    pub(super) limits: PipelineSetLimits,
     pub(super) threads: Threads,
     pub(super) buffers: Buffers,
     pub(super) weight_capacity: usize,
@@ -332,7 +331,6 @@ impl SolinasMetal {
             storage: Storage {
                 context: self.clone(),
                 pipelines,
-                limits,
                 threads,
                 buffers,
                 weight_capacity,

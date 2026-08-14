@@ -91,8 +91,6 @@ pub struct SpartanShiftPrefixInvocation {
     rows: SpartanShiftResidentRows,
     build_pipeline: ComputePipelineState,
     reduce_pipeline: ComputePipelineState,
-    build_limits: PipelineLimits,
-    reduce_limits: PipelineLimits,
     reduce_threads: usize,
     buffers: SpartanShiftPrefixBuffers,
     plan: SpartanShiftPlan,
@@ -443,8 +441,6 @@ impl SolinasMetal {
             rows: rows.clone(),
             build_pipeline,
             reduce_pipeline,
-            build_limits,
-            reduce_limits,
             reduce_threads,
             buffers: SpartanShiftPrefixBuffers {
                 gamma_powers: buffer_from_slice(&self.device, &gamma_powers),
@@ -642,14 +638,6 @@ impl SpartanShiftPrefixInvocation {
 
     pub const fn plan(&self) -> SpartanShiftPlan {
         self.plan
-    }
-
-    pub const fn build_pipeline_limits(&self) -> PipelineLimits {
-        self.build_limits
-    }
-
-    pub const fn reduce_pipeline_limits(&self) -> PipelineLimits {
-        self.reduce_limits
     }
 
     pub const fn execute_device_buffer_allocations(&self) -> usize {

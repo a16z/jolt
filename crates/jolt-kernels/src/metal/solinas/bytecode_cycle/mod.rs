@@ -1,4 +1,4 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{mem::size_of, slice};
 
 use jolt_field::AkitaField;
 use metal::{
@@ -6,10 +6,7 @@ use metal::{
     MTLResourceOptions, MTLSize,
 };
 
-use super::{
-    command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
-    AKITA_OFFSET_FFFFA7F7,
-};
+use super::{Fp128, MetalError, PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7};
 
 pub const BYTECODE_CYCLE_TABLES: usize = 5;
 pub const BYTECODE_CYCLE_SAMPLES: usize = 4;
@@ -143,8 +140,6 @@ struct Buffers {
 pub struct BytecodeCycleSequence {
     context: SolinasMetal,
     pipelines: Pipelines,
-    message_limits: PipelineLimits,
-    transition_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
     message_threads_per_threadgroup: usize,
@@ -153,7 +148,6 @@ pub struct BytecodeCycleSequence {
     initial_elements: usize,
     current_elements: usize,
     source_in_a: bool,
-    gpu_active_time: Duration,
 }
 
 impl SolinasMetal {
@@ -256,8 +250,6 @@ impl SolinasMetal {
         Ok(BytecodeCycleSequence {
             context: self.clone(),
             pipelines,
-            message_limits,
-            transition_limits,
             reduction_limits,
             buffers: Buffers {
                 tables_a: self.new_bytecode_cycle_buffers(elements_per_table)?,
@@ -271,7 +263,6 @@ impl SolinasMetal {
             initial_elements: elements_per_table,
             current_elements: elements_per_table,
             source_in_a: true,
-            gpu_active_time: Duration::ZERO,
         })
     }
 
@@ -303,7 +294,6 @@ impl BytecodeCycleSequence {
         }
         self.current_elements = self.initial_elements;
         self.source_in_a = true;
-        self.gpu_active_time = Duration::ZERO;
         Ok(())
     }
 
@@ -356,18 +346,6 @@ impl BytecodeCycleSequence {
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0
-    }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
-    }
-
-    pub const fn message_pipeline_limits(&self) -> PipelineLimits {
-        self.message_limits
-    }
-
-    pub const fn transition_pipeline_limits(&self) -> PipelineLimits {
-        self.transition_limits
     }
 
     fn execute_round(
@@ -448,13 +426,6 @@ impl BytecodeCycleSequence {
         if command_buffer.status() != MTLCommandBufferStatus::Completed {
             return Err(MetalError::CommandFailed(command_buffer.status()));
         }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        self.gpu_active_time += Duration::from_secs_f64(end - start);
-
         let message = self.read_reduced_message(threadgroups)?;
         if challenge.is_some() {
             self.current_elements /= 2;
@@ -743,7 +714,6 @@ mod tests {
             .unwrap();
         assert_eq!(restored, expected_tables);
         assert_eq!(sequence.round_device_buffer_allocations(), 0);
-        assert!(sequence.gpu_active_time() > Duration::ZERO);
     }
 
     #[test]

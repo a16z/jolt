@@ -15,7 +15,7 @@ use super::backend::MetalBackend;
 use super::solinas::spartan_shift::{
     bind_dense_state, bind_prefix_tables, build_dense_state, dense_round, final_outputs,
     prefix_round, PendingSpartanShiftFold, PendingSpartanShiftPrefix, SpartanShiftDenseState,
-    SpartanShiftFlagWord, SpartanShiftGeometry, SpartanShiftKernelConfig, SpartanShiftPrefixTables,
+    SpartanShiftGeometry, SpartanShiftKernelConfig, SpartanShiftPrefixTables,
     SpartanShiftResidentRows,
 };
 use super::solinas::SolinasMetal;
@@ -70,26 +70,6 @@ impl MetalBackend {
         let _ = SpartanShiftGeometry::new(rows.len()).map_err(metal_prepare_error)?;
         session.park(PreparedSpartanShiftRows(rows));
         Ok(())
-    }
-
-    /// Creates and installs a host-produced Phase-A resident projection.
-    ///
-    /// This is the explicit measurement/test bridge. Production witness setup
-    /// co-produces the planes with Stage 1 and carries their checked lease in
-    /// [`SpartanDenseResidentOwner`].
-    #[doc(hidden)]
-    pub fn prepare_spartan_shift_resident_rows(
-        &self,
-        session: &mut ProofSession,
-        unexpanded_pc: &[u64],
-        pc: &[u64],
-        flags: &[SpartanShiftFlagWord],
-    ) -> Result<(), KernelError<AkitaField>> {
-        let rows = self
-            .context
-            .prepare_spartan_shift_rows(unexpanded_pc, pc, flags, true)
-            .map_err(metal_prepare_error)?;
-        self.install_spartan_shift_resident_rows(session, rows)
     }
 }
 

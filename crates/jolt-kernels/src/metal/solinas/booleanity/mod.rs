@@ -1,8 +1,6 @@
-use std::{mem::size_of, slice, sync::Arc, time::Duration};
+use std::{mem::size_of, slice, sync::Arc};
 
-use super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
-};
+use super::{buffer_from_slice, Fp128, MetalError, PipelineLimits, SolinasMetal};
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
@@ -377,7 +375,6 @@ pub struct BooleanitySequence {
     dense_elements: usize,
     dense_source_in_a: bool,
     rho_values: Vec<AkitaField>,
-    gpu_active_time: Duration,
 }
 
 impl SolinasMetal {
@@ -633,7 +630,6 @@ impl SolinasMetal {
             dense_elements: 0,
             dense_source_in_a: true,
             rho_values: rho.to_vec(),
-            gpu_active_time: Duration::ZERO,
         })
     }
 
@@ -696,7 +692,6 @@ impl BooleanitySequence {
         self.dense = false;
         self.dense_elements = 0;
         self.dense_source_in_a = true;
-        self.gpu_active_time = Duration::ZERO;
         Ok(())
     }
 
@@ -744,10 +739,6 @@ impl BooleanitySequence {
 
     pub const fn is_dense(&self) -> bool {
         self.dense
-    }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
     }
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
@@ -1012,13 +1003,6 @@ impl BooleanitySequence {
         if command_buffer.status() != MTLCommandBufferStatus::Completed {
             return Err(MetalError::CommandFailed(command_buffer.status()));
         }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        self.gpu_active_time += Duration::from_secs_f64(end - start);
-
         let mut reductions = reduction_input_count;
         let mut final_in_a = true;
         while reductions > 1 {

@@ -1,4 +1,4 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{mem::size_of, slice};
 
 use jolt_field::AkitaField;
 use metal::{
@@ -8,7 +8,7 @@ use metal::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal};
+use super::{Fp128, MetalError, PipelineLimits, SolinasMetal};
 
 pub const PRODUCT5_FACTORS: usize = 5;
 
@@ -106,7 +106,6 @@ pub struct Product5Sequence {
     e_in_capacity: usize,
     e_out_capacity: usize,
     source_in_a: bool,
-    gpu_active_time: Duration,
 }
 
 impl SolinasMetal {
@@ -288,7 +287,6 @@ impl SolinasMetal {
             e_in_capacity,
             e_out_capacity,
             source_in_a: true,
-            gpu_active_time: Duration::ZERO,
         })
     }
 
@@ -306,10 +304,6 @@ impl Product5Sequence {
         &self.buffers.tables_a
     }
 
-    pub(super) fn record_gpu_active_time(&mut self, duration: Duration) {
-        self.gpu_active_time += duration;
-    }
-
     /// Restores the initial tables without reallocating device buffers.
     pub fn reset(&mut self, tables: &[AkitaField]) -> Result<(), MetalError> {
         let expected = PRODUCT5_FACTORS * self.initial_elements;
@@ -322,7 +316,6 @@ impl Product5Sequence {
         write_akita_fields(&self.buffers.tables_a, expected, tables)?;
         self.current_elements = self.initial_elements;
         self.source_in_a = true;
-        self.gpu_active_time = Duration::ZERO;
         Ok(())
     }
 
@@ -407,10 +400,6 @@ impl Product5Sequence {
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0
-    }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
     }
 
     fn execute_round(
@@ -544,13 +533,6 @@ impl Product5Sequence {
             if command_buffer.status() != MTLCommandBufferStatus::Completed {
                 return Err(MetalError::CommandFailed(command_buffer.status()));
             }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
-            self.gpu_active_time += Duration::from_secs_f64(end - start);
-
             let final_buffer = if input_a {
                 &self.buffers.partial_a
             } else {

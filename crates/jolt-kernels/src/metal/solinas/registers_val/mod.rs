@@ -279,7 +279,6 @@ pub struct RegistersValSequence {
     threads_per_threadgroup: usize,
     source_in_a: bool,
     final_in_a: bool,
-    gpu_active_time: Duration,
 }
 
 impl SolinasMetal {
@@ -857,7 +856,6 @@ impl RegistersValFirstTransitionInvocation {
             threads_per_threadgroup,
             source_in_a: true,
             final_in_a: self.final_in_a,
-            gpu_active_time: Duration::ZERO,
         })
     }
 
@@ -1029,7 +1027,6 @@ impl RegistersValSequence {
         self.current_elements = next_elements;
         self.current_lt_lo_length = next_lt_lo_length;
         self.source_in_a = !self.source_in_a;
-        self.gpu_active_time += active_time;
         Ok((message, active_time))
     }
 
@@ -1161,10 +1158,6 @@ impl RegistersValSequence {
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0
-    }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
     }
 
     pub const fn dynamic_threadgroup_memory_bytes(&self) -> usize {

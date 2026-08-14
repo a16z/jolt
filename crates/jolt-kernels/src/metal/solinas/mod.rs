@@ -53,8 +53,6 @@ mod spartan_outer_uniskip;
 pub mod spartan_shift;
 
 pub(crate) use runtime::validate_working_set;
-#[cfg(feature = "test-utils")]
-pub use runtime::SolinasMetalCompilationStats;
 use runtime::{buffer_from_slice, command_buffer_timestamp};
 pub use runtime::{DeviceInfo, PipelineLimits, SolinasMetal};
 
@@ -92,8 +90,8 @@ pub use instruction_input::{
 };
 pub(crate) use instruction_ra_sequence::InstructionRaSequenceStorage;
 pub use instruction_ra_sequence::{
-    InstructionRaLookupPlane, InstructionRaMaterializeWidth, InstructionRaSequence,
-    InstructionRaSequenceConfig, InstructionRaSequenceScratchLayout,
+    InstructionRaMaterializeWidth, InstructionRaSequence, InstructionRaSequenceConfig,
+    InstructionRaSequenceScratchLayout,
 };
 #[cfg(test)]
 pub(crate) use instruction_read_raf::validate_bytecode_topology_admission;

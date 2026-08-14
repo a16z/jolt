@@ -4,27 +4,15 @@
 //! the branch tables. At the configured width, the final gather writes
 //! factor-major dense tables before releasing the lookup plane.
 
-use std::{
-    ffi::c_void,
-    mem::size_of,
-    slice,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{ffi::c_void, mem::size_of, slice};
 
 use jolt_field::AkitaField;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    FunctionConstantValues, MTLCommandBufferStatus, MTLDataType, MTLResourceOptions, MTLSize,
+    objc::rc::autoreleasepool, Buffer, ComputePipelineState, FunctionConstantValues,
+    MTLCommandBufferStatus, MTLDataType, MTLResourceOptions, MTLSize,
 };
 
-use super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits,
-    ResidentLookupIndexPlane, SolinasMetal,
-};
+use super::{Fp128, MetalError, PipelineLimits, ResidentLookupIndexPlane, SolinasMetal};
 
 const FACTORS: usize = 16;
 const BINS: usize = 256;
@@ -43,56 +31,6 @@ const MATERIALIZE_WIDTH_16_PIPELINE: &str = "solinas_instruction_ra_materialize_
 const MATERIALIZE_WIDE_PIPELINE: &str = "solinas_instruction_ra_materialize_wide";
 const DENSE_TRANSITION_PIPELINE: &str = "solinas_instruction_ra_dense_transition";
 const REDUCE_PIPELINE: &str = "solinas_instruction_ra_reduce";
-
-#[repr(C)]
-struct LookupAbi {
-    limbs: [u64; 2],
-}
-
-/// Standalone handle for the resident stage-5 lookup layout.
-///
-/// A sequence configured with inverse reuse consumes the inverse contents at
-/// materialization. Such a handle must not be replayed in another sequence.
-#[derive(Clone)]
-pub struct InstructionRaLookupPlane {
-    plane: ResidentLookupIndexPlane,
-    inverse_claimed: Arc<AtomicBool>,
-}
-
-impl InstructionRaLookupPlane {
-    pub const fn len(&self) -> usize {
-        self.plane.len()
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub const fn logical_bytes(&self) -> u64 {
-        (size_of::<LookupAbi>() * self.len() + size_of::<u32>() * self.len()) as u64
-    }
-
-    pub fn inverse_buffer_identity(&self) -> usize {
-        self.plane.cycle_to_table_major().as_ptr() as usize
-    }
-
-    fn into_plane(
-        self,
-        reuse_inverse_for_dense: bool,
-    ) -> Result<ResidentLookupIndexPlane, MetalError> {
-        if reuse_inverse_for_dense
-            && self
-                .inverse_claimed
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-        {
-            return Err(MetalError::InvalidInstructionRaState(
-                "the one-shot inverse buffer was already claimed",
-            ));
-        }
-        Ok(self.plane)
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
@@ -266,8 +204,6 @@ pub(crate) struct InstructionRaSequenceStorage {
     context: SolinasMetal,
     config: InstructionRaSequenceConfig,
     pipelines: Pipelines,
-    message_limits: PipelineLimits,
-    materialize_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
     rows: usize,
@@ -294,8 +230,6 @@ pub struct InstructionRaSequence {
     context: SolinasMetal,
     lookup_plane: Option<ResidentLookupIndexPlane>,
     pipelines: Pipelines,
-    message_limits: PipelineLimits,
-    materialize_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
     rows: usize,
@@ -311,7 +245,6 @@ pub struct InstructionRaSequence {
     dense: bool,
     dense_in_a: bool,
     dense_elements: usize,
-    gpu_active_time: Duration,
 }
 
 #[cfg(feature = "allocative")]
@@ -330,65 +263,6 @@ impl allocative::Allocative for InstructionRaSequence {
 }
 
 impl SolinasMetal {
-    pub fn prepare_instruction_ra_lookup_plane(
-        &self,
-        table_major_lookups: &[u128],
-        cycle_to_table_major: &[u32],
-    ) -> Result<InstructionRaLookupPlane, MetalError> {
-        let rows = table_major_lookups.len();
-        if rows < 32 || !rows.is_power_of_two() {
-            return Err(MetalError::InvalidInstructionRaRows(rows));
-        }
-        if rows != cycle_to_table_major.len() {
-            return Err(MetalError::InstructionRaPlaneLength {
-                name: "cycle-to-table-major",
-                expected: rows as u64 * size_of::<u32>() as u64,
-                got: cycle_to_table_major.len() as u64 * size_of::<u32>() as u64,
-            });
-        }
-        if let Some(&row) = cycle_to_table_major
-            .iter()
-            .find(|&&row| row as usize >= rows)
-        {
-            return Err(MetalError::InputTooLong(row as usize));
-        }
-        let lookups = table_major_lookups
-            .iter()
-            .map(|&lookup| LookupAbi {
-                limbs: [lookup as u64, (lookup >> 64) as u64],
-            })
-            .collect::<Vec<_>>();
-        let plane = ResidentLookupIndexPlane::from_buffers(
-            buffer_from_slice(&self.device, &lookups),
-            buffer_from_slice(&self.device, cycle_to_table_major),
-            rows,
-            self.device.registry_id(),
-        );
-        validate_plane(self, &plane)?;
-        Ok(InstructionRaLookupPlane {
-            plane,
-            inverse_claimed: Arc::new(AtomicBool::new(false)),
-        })
-    }
-
-    pub fn prepare_instruction_ra_sequence(
-        &self,
-        plane: InstructionRaLookupPlane,
-        chunk_tables: &[AkitaField],
-        e_in_capacity: usize,
-        e_out_capacity: usize,
-        config: InstructionRaSequenceConfig,
-    ) -> Result<InstructionRaSequence, MetalError> {
-        let plane = plane.into_plane(config.reuse_inverse_for_dense)?;
-        self.prepare_instruction_ra_sequence_with_plane(
-            plane,
-            chunk_tables,
-            e_in_capacity,
-            e_out_capacity,
-            config,
-        )
-    }
-
     fn compile_instruction_ra_width_pipeline(
         &self,
         name: &'static str,
@@ -552,8 +426,6 @@ impl SolinasMetal {
         Ok(InstructionRaSequenceStorage {
             context: self.clone(),
             pipelines,
-            message_limits,
-            materialize_limits,
             reduction_limits,
             buffers: Buffers {
                 branches_a: new_buffer(self, branch_a_capacity)?,
@@ -632,8 +504,6 @@ impl InstructionRaSequenceStorage {
             context: self.context,
             lookup_plane: Some(plane),
             pipelines: self.pipelines,
-            message_limits: self.message_limits,
-            materialize_limits: self.materialize_limits,
             reduction_limits: self.reduction_limits,
             buffers: self.buffers,
             rows: self.rows,
@@ -649,7 +519,6 @@ impl InstructionRaSequenceStorage {
             dense: false,
             dense_in_a: true,
             dense_elements: 0,
-            gpu_active_time: Duration::ZERO,
         })
     }
 }
@@ -675,52 +544,6 @@ fn device_storage_bytes(buffers: &Buffers) -> usize {
 }
 
 impl InstructionRaSequence {
-    /// Restores preallocated storage for another standalone evaluation.
-    ///
-    /// When inverse reuse is enabled, `plane` must be freshly prepared: the
-    /// preceding evaluation repurposed its inverse buffer as dense scratch.
-    pub fn reset(
-        &mut self,
-        plane: InstructionRaLookupPlane,
-        chunk_tables: &[AkitaField],
-    ) -> Result<(), MetalError> {
-        if self.rows != plane.len() {
-            return Err(MetalError::InvalidInstructionRaState(
-                "resident lookup plane does not match the reusable sequence",
-            ));
-        }
-        if chunk_tables.len() != FACTORS * BINS {
-            return Err(MetalError::InstructionRaStorageLength {
-                expected: FACTORS * BINS,
-                got: chunk_tables.len(),
-            });
-        }
-        validate_plane(&self.context, &plane.plane)?;
-        let plane = plane.into_plane(self.reuse_inverse_for_dense)?;
-        if self.reuse_inverse_for_dense {
-            let required =
-                byte_length::<Fp128>(FACTORS * (self.rows / self.materialize_width) / 2)?;
-            let inverse = plane.cycle_to_table_major();
-            if inverse.length() < required {
-                return Err(MetalError::InstructionRaPlaneLength {
-                    name: "cycle-to-table-major dense reuse",
-                    expected: required,
-                    got: inverse.length(),
-                });
-            }
-            self.buffers.dense_b = None;
-        }
-        write_fields(&self.buffers.branches_a, FACTORS * BINS, chunk_tables)?;
-        self.lookup_plane = Some(plane);
-        self.branch_width = 1;
-        self.branches_in_a = true;
-        self.dense = false;
-        self.dense_in_a = true;
-        self.dense_elements = 0;
-        self.gpu_active_time = Duration::ZERO;
-        Ok(())
-    }
-
     pub fn message(
         &mut self,
         e_in: &[AkitaField],
@@ -783,51 +606,8 @@ impl InstructionRaSequence {
         self.branch_width
     }
 
-    pub const fn materialize_width(&self) -> usize {
-        self.materialize_width
-    }
-
-    pub const fn reuses_inverse_for_dense(&self) -> bool {
-        self.reuse_inverse_for_dense
-    }
-
     pub const fn is_dense(&self) -> bool {
         self.dense
-    }
-
-    pub const fn lookup_plane_is_resident(&self) -> bool {
-        self.lookup_plane.is_some()
-    }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
-    }
-
-    pub fn static_buffer_identity(&self) -> [usize; 7] {
-        [
-            self.buffers.branches_a.as_ptr() as usize,
-            self.buffers.branches_b.as_ptr() as usize,
-            self.buffers.dense_a.as_ptr() as usize,
-            self.buffers.e_in.as_ptr() as usize,
-            self.buffers.e_out.as_ptr() as usize,
-            self.buffers.partial_a.as_ptr() as usize,
-            self.buffers.partial_b.as_ptr() as usize,
-        ]
-    }
-
-    pub fn dense_b_identity(&self) -> Option<usize> {
-        self.buffers
-            .dense_b
-            .as_ref()
-            .map(|buffer| buffer.as_ptr() as usize)
-    }
-
-    pub const fn message_pipeline_limits(&self) -> PipelineLimits {
-        self.message_limits
-    }
-
-    pub const fn materialize_pipeline_limits(&self) -> PipelineLimits {
-        self.materialize_limits
     }
 
     fn execute_lazy(
@@ -1141,13 +921,6 @@ impl InstructionRaSequence {
         if command_buffer.status() != MTLCommandBufferStatus::Completed {
             return Err(MetalError::CommandFailed(command_buffer.status()));
         }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        self.gpu_active_time += Duration::from_secs_f64(end - start);
-
         let mut count = reduction_input_count;
         let mut final_in_a = true;
         while count > 1 {
@@ -1225,7 +998,7 @@ fn validate_plane(
     context: &SolinasMetal,
     plane: &ResidentLookupIndexPlane,
 ) -> Result<(), MetalError> {
-    let expected_lookups = byte_length::<LookupAbi>(plane.len())?;
+    let expected_lookups = byte_length::<[u64; 2]>(plane.len())?;
     let expected_inverse = byte_length::<u32>(plane.len())?;
     if plane.lookups().length() != expected_lookups {
         return Err(MetalError::InstructionRaPlaneLength {
@@ -1288,7 +1061,6 @@ fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, va
     );
 }
 
-const _: () = assert!(size_of::<LookupAbi>() == 16);
 const _: () = assert!(size_of::<MessageParams>() == 16);
 const _: () = assert!(size_of::<BranchParams>() == 16);
 const _: () = assert!(size_of::<MaterializeParams>() == 16);

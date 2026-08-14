@@ -20,7 +20,7 @@ use super::product_uniskip::{
 };
 use super::{
     buffer_from_slice, command_buffer_timestamp, spartan_outer_uniskip_residual_row_bytes, Fp128,
-    InstructionInputRow, MetalError, PipelineLimits, SolinasMetal,
+    InstructionInputRow, MetalError, SolinasMetal,
 };
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
@@ -677,16 +677,6 @@ impl ProductRemainderStorageLayout {
     pub const fn resident_bytes(self) -> usize {
         self.resident_bytes
     }
-
-    pub fn max_workspace_buffer_bytes(self) -> usize {
-        let fields = self
-            .state_a_fields
-            .max(self.state_b_fields)
-            .max(self.e_in_fields)
-            .max(self.e_out_fields)
-            .max(self.partial_fields);
-        fields * size_of::<super::Fp128>()
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -713,11 +703,6 @@ pub struct ProductRemainderSequence {
     transition_pipeline: ComputePipelineState,
     openings_pipeline: ComputePipelineState,
     reduction_pipeline: ComputePipelineState,
-    uniskip_limits: PipelineLimits,
-    materialize_limits: PipelineLimits,
-    transition_limits: PipelineLimits,
-    openings_limits: PipelineLimits,
-    reduction_limits: PipelineLimits,
     buffers: ProductRemainderBuffers,
     state_a_borrowed: bool,
     layout: ProductRemainderStorageLayout,
@@ -728,7 +713,6 @@ pub struct ProductRemainderSequence {
     current_elements: usize,
     source_in_a: bool,
     phase: ProductRemainderPhase,
-    gpu_active_time: Duration,
 }
 
 struct ProductRemainderInitialMessageCommand {
@@ -1014,11 +998,6 @@ impl SolinasMetal {
             transition_pipeline,
             openings_pipeline,
             reduction_pipeline,
-            uniskip_limits,
-            materialize_limits,
-            transition_limits,
-            openings_limits,
-            reduction_limits,
             buffers: ProductRemainderBuffers {
                 rows,
                 lagrange: buffer_from_slice(&self.device, &lagrange),
@@ -1038,7 +1017,6 @@ impl SolinasMetal {
             current_elements: row_count,
             source_in_a: true,
             phase: ProductRemainderPhase::Ready,
-            gpu_active_time: Duration::ZERO,
         })
     }
 
@@ -1106,7 +1084,6 @@ impl ProductRemainderSequence {
 
     pub(in crate::metal::solinas) fn complete_joint_materialize(
         &mut self,
-        gpu_active: Duration,
     ) -> Result<(), MetalError> {
         if self.phase != ProductRemainderPhase::Ready {
             return Err(MetalError::InvalidProductRemainderState(
@@ -1116,7 +1093,6 @@ impl ProductRemainderSequence {
         self.current_elements = self.layout.rows();
         self.source_in_a = true;
         self.phase = ProductRemainderPhase::Materialized;
-        self.gpu_active_time += gpu_active;
         Ok(())
     }
 
@@ -1178,7 +1154,6 @@ impl ProductRemainderSequence {
 
     pub(in crate::metal::solinas) fn complete_joint_transition(
         &mut self,
-        gpu_active: Duration,
     ) -> Result<(), MetalError> {
         if self.phase != ProductRemainderPhase::Materialized || self.current_elements < 4 {
             return Err(MetalError::InvalidProductRemainderState(
@@ -1187,7 +1162,6 @@ impl ProductRemainderSequence {
         }
         self.current_elements /= 2;
         self.source_in_a = !self.source_in_a;
-        self.gpu_active_time += gpu_active;
         Ok(())
     }
 
@@ -1344,7 +1318,6 @@ impl ProductRemainderSequence {
                 "product uni-skip endpoints",
             )
         })?;
-        self.gpu_active_time += active_time;
         Ok((
             ProductUniskipExtendedNodes {
                 minus_two: values[0],
@@ -1374,7 +1347,6 @@ impl ProductRemainderSequence {
         }
         let (message, active_time) = self.execute_materialize_message(e_in, e_out)?;
         self.phase = ProductRemainderPhase::Materialized;
-        self.gpu_active_time += active_time;
         Ok((message, active_time))
     }
 
@@ -1460,7 +1432,6 @@ impl ProductRemainderSequence {
         self.current_elements = self.layout.rows();
         self.source_in_a = true;
         self.phase = ProductRemainderPhase::Materialized;
-        self.gpu_active_time += stats.gpu_active;
         Ok((message, stats))
     }
 
@@ -1589,7 +1560,6 @@ impl ProductRemainderSequence {
             self.execute_current_bind_and_message(challenge, e_in, e_out)?;
         self.current_elements /= 2;
         self.source_in_a = !self.source_in_a;
-        self.gpu_active_time += active_time;
         Ok((message, active_time))
     }
 
@@ -1680,7 +1650,6 @@ impl ProductRemainderSequence {
             ));
         }
         let (openings, active_time) = self.execute_openings(e_in, e_out)?;
-        self.gpu_active_time += active_time;
         Ok((openings, active_time))
     }
 
@@ -1695,7 +1664,6 @@ impl ProductRemainderSequence {
             ));
         }
         let (openings, active_time) = self.execute_openings(e_in, e_out)?;
-        self.gpu_active_time += active_time;
         Ok((openings, active_time))
     }
 
@@ -1792,30 +1760,6 @@ impl ProductRemainderSequence {
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0
-    }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
-    }
-
-    pub const fn materialize_pipeline_limits(&self) -> PipelineLimits {
-        self.materialize_limits
-    }
-
-    pub const fn uniskip_pipeline_limits(&self) -> PipelineLimits {
-        self.uniskip_limits
-    }
-
-    pub const fn transition_pipeline_limits(&self) -> PipelineLimits {
-        self.transition_limits
-    }
-
-    pub const fn openings_pipeline_limits(&self) -> PipelineLimits {
-        self.openings_limits
-    }
-
-    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
-        self.reduction_limits
     }
 
     #[doc(hidden)]

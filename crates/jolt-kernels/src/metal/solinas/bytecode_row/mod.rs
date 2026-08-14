@@ -1,4 +1,4 @@
-use std::{mem::size_of, time::Duration};
+use std::mem::size_of;
 
 use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
@@ -10,9 +10,9 @@ use metal::{
 #[cfg(test)]
 use super::PipelineLimits;
 use super::{
-    buffer_from_slice, command_buffer_timestamp, BooleanityRows, BytecodeCycleSequence,
-    BytecodeCycleSequenceConfig, BytecodeCycleTablesMut, Fp128, MetalError, SolinasMetal,
-    BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
+    buffer_from_slice, BooleanityRows, BytecodeCycleSequence, BytecodeCycleSequenceConfig,
+    BytecodeCycleTablesMut, Fp128, MetalError, SolinasMetal, BYTECODE_CYCLE_SAMPLES,
+    BYTECODE_CYCLE_TABLES,
 };
 
 pub(crate) const BYTECODE_ROW_STAGES: usize = 9;
@@ -88,7 +88,6 @@ pub(crate) struct BytecodeCycleRowSequence {
     first_bind_threads: usize,
     initial_elements: usize,
     phase: RowPhase,
-    gpu_active_time: Duration,
 }
 
 impl SolinasMetal {
@@ -253,7 +252,6 @@ impl SolinasMetal {
             first_bind_threads,
             initial_elements: elements,
             phase: RowPhase::BeforeMessage,
-            gpu_active_time: Duration::ZERO,
         })
     }
 }
@@ -314,11 +312,6 @@ impl BytecodeCycleRowSequence {
     #[cfg(test)]
     pub(crate) const fn round_device_buffer_allocations() -> usize {
         0
-    }
-
-    #[cfg(test)]
-    pub(crate) fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time + self.dense.gpu_active_time()
     }
 
     #[cfg(test)]
@@ -395,12 +388,6 @@ impl BytecodeCycleRowSequence {
         if command_buffer.status() != MTLCommandBufferStatus::Completed {
             return Err(MetalError::CommandFailed(command_buffer.status()));
         }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        self.gpu_active_time += Duration::from_secs_f64(end - start);
         self.dense
             .read_reduced_message(self.params.hi_length as usize)
     }
@@ -807,6 +794,5 @@ mod tests {
             sequence.first_bind_pipeline_limits().thread_execution_width,
             32
         );
-        assert!(sequence.gpu_active_time() > Duration::ZERO);
     }
 }

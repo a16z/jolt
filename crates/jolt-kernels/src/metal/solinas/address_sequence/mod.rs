@@ -1,4 +1,4 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{mem::size_of, slice};
 
 use jolt_field::AkitaField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -12,10 +12,10 @@ use rayon::prelude::*;
 use super::{
     address_raf::{AddressRafScanRow, AddressRafSums},
     address_suffix_full::AddressSuffixFullSums,
-    buffer_from_slice, command_buffer_timestamp, Fp128, InstructionReadRafCountOrder,
-    InstructionReadRafDenseGroupedPlanes, MetalError, PipelineLimits, Product5Sequence,
-    Product5SequenceConfig, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES, ADDRESS_SUFFIX_BINS,
-    ADDRESS_SUFFIX_TABLES, INSTRUCTION_READ_RAF_SEGMENTS, PRODUCT5_FACTORS,
+    buffer_from_slice, Fp128, InstructionReadRafCountOrder, InstructionReadRafDenseGroupedPlanes,
+    MetalError, PipelineLimits, Product5Sequence, Product5SequenceConfig, SolinasMetal,
+    ADDRESS_RAF_BINS, ADDRESS_RAF_LANES, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES,
+    INSTRUCTION_READ_RAF_SEGMENTS, PRODUCT5_FACTORS,
 };
 
 const RAF_KEYS: usize = 2 * ADDRESS_RAF_BINS;
@@ -227,14 +227,12 @@ pub struct AddressPhaseSequence {
     cycle_e_in_capacity: usize,
     cycle_e_out_capacity: usize,
     phases_executed: usize,
-    gpu_active_time: Duration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AddressPhaseSums {
     raf: AddressRafSums,
     suffix: AddressSuffixFullSums,
-    gpu_active_time: Duration,
 }
 
 impl AddressPhaseSums {
@@ -245,39 +243,9 @@ impl AddressPhaseSums {
     pub const fn suffix(&self) -> &AddressSuffixFullSums {
         &self.suffix
     }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
-    }
 }
 
 impl SolinasMetal {
-    pub fn prepare_address_phase_sequence(
-        &self,
-        rows: &[AddressRafScanRow],
-        weights: &[Fp128],
-        config: AddressPhaseSequenceConfig,
-    ) -> Result<AddressPhaseSequence, MetalError> {
-        if rows.len() != weights.len() {
-            return Err(MetalError::AddressRafLengthMismatch {
-                rows: rows.len(),
-                weights: weights.len(),
-            });
-        }
-        let mut buckets = vec![Vec::new(); ADDRESS_SUFFIX_TABLES];
-        for (index, row) in rows.iter().enumerate() {
-            if let Some(table) = row.table_index() {
-                buckets
-                    .get_mut(table)
-                    .ok_or(MetalError::InvalidAddressSuffixTable(table))?
-                    .push(u32::try_from(index).map_err(|_| MetalError::InputTooLong(index))?);
-            }
-        }
-        self.prepare_address_phase_sequence_from_buckets(rows.len(), &buckets, config, |index| {
-            (rows[index], weights[index])
-        })
-    }
-
     pub(crate) fn prepare_address_phase_sequence_from_buckets(
         &self,
         rows: usize,
@@ -821,7 +789,6 @@ impl SolinasMetal {
             cycle_e_in_capacity,
             cycle_e_out_capacity,
             phases_executed: 0,
-            gpu_active_time: Duration::ZERO,
         })
     }
 }
@@ -980,13 +947,6 @@ impl AddressPhaseSequence {
         if status != MTLCommandBufferStatus::Completed {
             return Err(MetalError::CommandFailed(status));
         }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        let gpu_active_time = Duration::from_secs_f64(end - start);
-        self.gpu_active_time += gpu_active_time;
         self.phases_executed += 1;
 
         let raf_elements = ADDRESS_RAF_LANES * ADDRESS_RAF_BINS;
@@ -1016,7 +976,6 @@ impl AddressPhaseSequence {
                 suffix_values.to_vec(),
                 self.table_offsets.clone(),
             ),
-            gpu_active_time,
         })
     }
 
@@ -1038,7 +997,6 @@ impl AddressPhaseSequence {
             e_out,
             None,
         )
-        .map(|(message, _)| message)
     }
 
     #[expect(
@@ -1063,7 +1021,7 @@ impl AddressPhaseSequence {
             e_out.len(),
             config,
         )?;
-        let active_time = self.bind_cycle_tables(
+        self.bind_cycle_tables(
             phase_tables,
             table_values,
             raf_interleaved,
@@ -1071,7 +1029,6 @@ impl AddressPhaseSequence {
             challenge,
             sequence.initial_table_buffer(),
         )?;
-        sequence.record_gpu_active_time(active_time);
         let message = sequence.message(e_in, e_out)?;
         Ok((sequence, message))
     }
@@ -1084,7 +1041,7 @@ impl AddressPhaseSequence {
         raf_identity: AkitaField,
         challenge: AkitaField,
         bound: &Buffer,
-    ) -> Result<Duration, MetalError> {
+    ) -> Result<(), MetalError> {
         if self.rows < 4 || !self.rows.is_power_of_two() {
             return Err(MetalError::InvalidProduct5TableLength {
                 minimum: 4,
@@ -1153,14 +1110,7 @@ impl AddressPhaseSequence {
         if command_buffer.status() != MTLCommandBufferStatus::Completed {
             return Err(MetalError::CommandFailed(command_buffer.status()));
         }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        let active_time = Duration::from_secs_f64(end - start);
-        self.gpu_active_time += active_time;
-        Ok(active_time)
+        Ok(())
     }
 
     #[expect(
@@ -1176,7 +1126,7 @@ impl AddressPhaseSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
         transition: Option<(AkitaField, &Buffer)>,
-    ) -> Result<([AkitaField; PRODUCT5_FACTORS], Duration), MetalError> {
+    ) -> Result<[AkitaField; PRODUCT5_FACTORS], MetalError> {
         if self.rows < 4 || !self.rows.is_power_of_two() {
             return Err(MetalError::InvalidProduct5TableLength {
                 minimum: 4,
@@ -1326,13 +1276,6 @@ impl AddressPhaseSequence {
         if command_buffer.status() != MTLCommandBufferStatus::Completed {
             return Err(MetalError::CommandFailed(command_buffer.status()));
         }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        let active_time = Duration::from_secs_f64(end - start);
-        self.gpu_active_time += active_time;
         let output = if final_in_a {
             &self.buffers.cycle_partial_a
         } else {
@@ -1344,26 +1287,15 @@ impl AddressPhaseSequence {
             unsafe { slice::from_raw_parts(output.contents().cast::<Fp128>(), PRODUCT5_FACTORS) };
         self.context
             .validate_inputs("resident address cycle message", values)?;
-        Ok((
-            std::array::from_fn(|index| values[index].into_jolt_field()),
-            active_time,
-        ))
+        Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
     }
 
     pub const fn phases_executed(&self) -> usize {
         self.phases_executed
     }
 
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active_time
-    }
-
     pub const fn resident_buffer_count(&self) -> usize {
         21
-    }
-
-    pub const fn phase_device_buffer_allocations(&self) -> usize {
-        0
     }
 }
 

@@ -5,12 +5,10 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
-use jolt_verifier::stages::stage6b::bytecode_read_raf::{
-    BytecodeReadRafCycle, BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
-};
+use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::JoltWitnessPlane;
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
 use super::backend::MetalBackend;
@@ -23,12 +21,15 @@ use super::solinas::{
     BooleanityRows, BytecodeCycleRowInputs, BytecodeCycleRowSequence, BytecodeCycleSequenceConfig,
     BytecodeCycleTablesMut, MetalError,
 };
+#[cfg(test)]
+use crate::optimized::bytecode_read_raf::MetalBytecodeCycleInputs;
 use crate::optimized::bytecode_read_raf::{
     prepare_bytecode_read_raf_address, prepare_bytecode_read_raf_address_from_pushforwards,
     prepare_metal_bytecode_cycle_shell, BytecodeCycleAlgebra, BytecodeCycleDenseState, CycleKernel,
-    MetalBytecodeCycleInputs, OptimizedBytecodeReadRafCycle,
+    OptimizedBytecodeReadRafCycle,
 };
-use crate::optimized::instruction_read_raf::{collect_instruction_cycle_rows, InstructionCycleRow};
+#[cfg(test)]
+use crate::optimized::instruction_read_raf::InstructionCycleRow;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -117,69 +118,7 @@ impl Default for BytecodeReadRafMetalConfig {
     }
 }
 
-#[doc(hidden)]
-#[derive(Clone)]
-pub struct BytecodeReadRafResidentRows(BooleanityRows);
-
-impl BytecodeReadRafResidentRows {
-    #[doc(hidden)]
-    pub fn install(&self, session: &mut ProofSession) {
-        session.park(self.0.clone());
-    }
-}
-
-impl MetalBackend {
-    #[doc(hidden)]
-    pub fn bytecode_read_raf_input_claim(
-        witness: &dyn JoltWitnessPlane<AkitaField>,
-        relation: &BytecodeReadRafCycle<AkitaField>,
-        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<AkitaField>,
-    ) -> Result<AkitaField, KernelError<AkitaField>> {
-        let trace_elements = 1usize
-            .checked_shl(relation.dimensions().log_t() as u32)
-            .ok_or(KernelError::InvariantViolation {
-                reason: "Bytecode evaluator trace domain overflows usize",
-            })?;
-        let rows = collect_instruction_cycle_rows(witness, trace_elements)?;
-        let claims = BytecodeReadRafInputClaims::default();
-        let points = BytecodeReadRafInputClaims::default();
-        let (_, metadata) = prepare_metal_bytecode_cycle_shell(
-            ProverInputs {
-                relation,
-                claims: &claims,
-                points: &points,
-                challenges,
-            },
-            BytecodeCycleAlgebra::Q10,
-        )?;
-        let address_elements = 1usize
-            .checked_shl(relation.dimensions().log_k() as u32)
-            .ok_or(KernelError::InvariantViolation {
-                reason: "Bytecode evaluator address domain overflows usize",
-            })?;
-        exact_bytecode_cycle_input_claim(&rows, &metadata, address_elements)
-    }
-
-    #[doc(hidden)]
-    pub fn prepare_bytecode_read_raf_resident_rows(
-        &self,
-        witness: &dyn JoltWitnessPlane<AkitaField>,
-        trace_elements: usize,
-    ) -> Result<BytecodeReadRafResidentRows, KernelError<AkitaField>> {
-        if trace_elements < 4 || !trace_elements.is_power_of_two() {
-            return Err(KernelError::InvariantViolation {
-                reason: "Bytecode evaluator trace length must be a power of two of at least four",
-            });
-        }
-        let rows = collect_instruction_cycle_rows(witness, trace_elements)?;
-        let resident_rows = self
-            .context
-            .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&rows))
-            .map_err(|error| KernelError::from(metal_error(error.to_string())))?;
-        Ok(BytecodeReadRafResidentRows(resident_rows))
-    }
-}
-
+#[cfg(test)]
 fn exact_bytecode_cycle_input_claim(
     rows: &[InstructionCycleRow],
     inputs: &MetalBytecodeCycleInputs,

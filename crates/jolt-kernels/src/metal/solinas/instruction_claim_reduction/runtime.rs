@@ -11,8 +11,8 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits,
-    ProductRemainderRows, ProductRemainderSourceKind, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, ProductRemainderRows,
+    ProductRemainderSourceKind, SolinasMetal,
 };
 use super::{
     finalize_openings, finish_bind, nontrivial_gamma_powers, InstructionClaimGeometry,
@@ -172,11 +172,6 @@ struct InstructionClaimPipelines {
     opening: ComputePipelineState,
     aliased_opening: ComputePipelineState,
     reduction: ComputePipelineState,
-    materialize_limits: PipelineLimits,
-    transition_limits: PipelineLimits,
-    opening_limits: PipelineLimits,
-    aliased_opening_limits: PipelineLimits,
-    reduction_limits: PipelineLimits,
 }
 
 enum InstructionClaimRows {
@@ -538,11 +533,6 @@ impl SolinasMetal {
                 opening,
                 aliased_opening,
                 reduction,
-                materialize_limits,
-                transition_limits,
-                opening_limits,
-                aliased_opening_limits,
-                reduction_limits,
             },
             buffers,
             geometry,
@@ -1413,26 +1403,6 @@ impl InstructionClaimSequence {
             self.buffers.partial_b.as_ptr() as usize,
         ]);
         identities
-    }
-
-    pub const fn materialize_pipeline_limits(&self) -> PipelineLimits {
-        self.pipelines.materialize_limits
-    }
-
-    pub const fn transition_pipeline_limits(&self) -> PipelineLimits {
-        self.pipelines.transition_limits
-    }
-
-    pub const fn opening_pipeline_limits(&self) -> PipelineLimits {
-        self.pipelines.opening_limits
-    }
-
-    pub const fn aliased_opening_pipeline_limits(&self) -> PipelineLimits {
-        self.pipelines.aliased_opening_limits
-    }
-
-    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
-        self.pipelines.reduction_limits
     }
 
     #[cfg(feature = "test-utils")]
