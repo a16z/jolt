@@ -21,8 +21,8 @@ use super::{
     worklist_owner::{BytecodeAddressSparseStage1Carrier, BytecodeAddressSparseStage1Receipt},
 };
 use crate::metal::solinas::{
-    buffer_from_slice, command_buffer_timestamp, BooleanityRow, BooleanityRows, Fp128, MetalError,
-    PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, BooleanityRows, Fp128, MetalError, PipelineLimits,
+    SolinasMetal,
 };
 
 const WORKER_PIPELINE: &str = "solinas_bytecode_address_sparse_worker_packed_4_5_4";
@@ -160,16 +160,17 @@ impl SolinasMetal {
             });
         }
         let shape = AddressMajorShape::production(rows.len().ilog2())?;
-        // SAFETY: every BooleanityRows constructor publishes a fully initialized
-        // shared allocation whose checked length is `rows.len()`.
-        let source = unsafe {
-            slice::from_raw_parts(rows.buffer().contents().cast::<BooleanityRow>(), rows.len())
-        };
         Ok(SparseAddressWorklist::try_build_with(
             physical_rows,
             shape,
             |index| {
-                let row = source[index];
+                let row = rows
+                    .row(index)
+                    .ok_or(SparseAddressWorklistError::PhysicalRows {
+                        physical: physical_rows,
+                        available: rows.len(),
+                        domain: rows.len(),
+                    })?;
                 let words = row.words();
                 SparseAddressRow::with_magnitude(row.mapped_pc(), words[3], words[4] >> 63 != 0)
             },

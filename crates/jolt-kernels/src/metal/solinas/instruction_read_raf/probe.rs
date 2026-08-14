@@ -65,7 +65,7 @@ pub fn run_instruction_read_raf_stage1_probe(
             let table_plus_one = logical / 2;
             AddressRafScanRow::new_with_table(
                 probe_lookup(cycle),
-                (table_plus_one != 0).then_some(table_plus_one - 1),
+                table_plus_one.checked_sub(1),
                 !logical.is_multiple_of(2),
             )
         })

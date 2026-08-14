@@ -72,7 +72,7 @@ fn params_and_dispatch_abi_are_exact() {
 fn log_26_buffer_and_traffic_counts_are_exact() {
     let geometry = log_26_geometry();
     let lengths = geometry.buffer_lengths().unwrap();
-    assert_eq!(lengths.resident_row_bytes, 2_684_354_560);
+    assert_eq!(lengths.resident_row_bytes, 2_147_483_648);
     assert_eq!(lengths.hot_bytes, 1_946_157_056);
     assert_eq!(lengths.validity_bytes, 67_108_864);
     assert_eq!(lengths.e_in_fields, 32_768);
@@ -83,7 +83,7 @@ fn log_26_buffer_and_traffic_counts_are_exact() {
     lengths.validate(lengths).unwrap();
 
     let traffic = TrafficModel::new(geometry).unwrap();
-    assert_eq!(traffic.resident_row_read_bytes, 2_684_354_560);
+    assert_eq!(traffic.resident_row_read_bytes, 2_147_483_648);
     assert_eq!(traffic.packed_write_bytes, 2_013_265_920);
     assert_eq!(traffic.packed_read_bytes, 1_677_721_600);
     assert_eq!(traffic.e_in_cache_unique_bytes, 524_288);
@@ -259,7 +259,7 @@ fn metal_runtime_matches_unfactored_oracle_and_exposes_completed_lease() {
     let rows = (0..row_count)
         .map(|index| {
             let lookup = (index as u128).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-            let pc = (!index.is_multiple_of(7)).then_some((index & 0xffff) as u64);
+            let pc = (!index.is_multiple_of(7)).then_some((index & 0x1fff) as u64);
             let ram = (!index.is_multiple_of(11)).then_some((index & 0xffff) as u64);
             let inc = if index.is_multiple_of(2) {
                 index as i128

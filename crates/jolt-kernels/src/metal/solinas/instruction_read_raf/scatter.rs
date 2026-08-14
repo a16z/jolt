@@ -37,8 +37,9 @@ const BYTECODE_PIVOT_BYTES: usize = size_of::<u16>();
 const BYTECODE_OCCURRENCE_BYTES_PER_ROW: u64 = size_of::<u16>() as u64;
 const BYTECODE_MAGNITUDE_BYTES_PER_ROW: u64 = size_of::<u64>() as u64;
 const BYTECODE_INNER_LOG2: u32 = 15;
-const BYTECODE_MAX_DESCRIPTORS_PER_CHUNK: usize = 512;
+const BYTECODE_MAX_DESCRIPTORS_PER_CHUNK: usize = INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
 const BYTECODE_MAX_PIVOTS_PER_CHUNK: usize = 15;
+const THREADGROUP_ALLOCATION_ALIGNMENT: u64 = 16;
 
 type ScatterLayout = (
     Vec<u32>,
@@ -476,7 +477,6 @@ impl SolinasMetal {
         if let Some(request) = bytecode.as_ref() {
             validate_bytecode_request(request, source_receipt, rows, self.device.registry_id())?;
         }
-
         let pipeline = self.compile_named_pipeline(PIPELINE)?;
         let limits = Self::limits(&pipeline);
         if limits.thread_execution_width != SIMD_WIDTH {
@@ -507,6 +507,23 @@ impl SolinasMetal {
             .checked_add(limits.static_threadgroup_memory_length)
             .ok_or(MetalError::InputTooLong(INSTRUCTION_READ_RAF_SEGMENTS))?;
         let maximum_threadgroup_bytes = self.device.max_threadgroup_memory_length();
+        let dynamic_threadgroup_memory_limit =
+            maximum_threadgroup_bytes.saturating_sub(limits.static_threadgroup_memory_length);
+        let bytecode_max_admitted_descriptors_per_chunk = if let Some(request) = bytecode.as_ref() {
+            let observed = request.receipt().max_descriptors_per_chunk();
+            let admitted = bytecode_descriptor_capacity(
+                dynamic_threadgroup_memory_limit,
+                request.receipt().max_pivots_per_chunk(),
+            );
+            if observed > admitted {
+                return Err(invalid_scatter(format!(
+                    "fused bytecode topology admission failed: clause=max_descriptors_per_chunk observed={observed} allowed=1..={admitted}"
+                )));
+            }
+            admitted
+        } else {
+            0
+        };
         if total_threadgroup_bytes > maximum_threadgroup_bytes {
             return Err(MetalError::AddressRafDirectThreadgroupMemory {
                 requested: total_threadgroup_bytes,
@@ -772,10 +789,9 @@ impl SolinasMetal {
                     max_descriptors_per_chunk: topology.max_descriptors_per_chunk(),
                     max_pivots_per_chunk: topology.max_pivots_per_chunk(),
                     dynamic_threadgroup_bytes: threadgroup_bytes,
-                    max_admitted_descriptors_per_chunk: BYTECODE_MAX_DESCRIPTORS_PER_CHUNK,
+                    max_admitted_descriptors_per_chunk: bytecode_max_admitted_descriptors_per_chunk,
                     max_admitted_pivots_per_chunk: BYTECODE_MAX_PIVOTS_PER_CHUNK,
-                    threadgroup_memory_limit_bytes: maximum_threadgroup_bytes
-                        .saturating_sub(limits.static_threadgroup_memory_length),
+                    threadgroup_memory_limit_bytes: dynamic_threadgroup_memory_limit,
                     shared_source_row_scans: topology.shared_source_row_scans(),
                     additional_source_row_scans: topology.additional_source_row_scans(),
                     member_upload_bytes: topology.member_upload_bytes(),
@@ -910,6 +926,28 @@ pub(crate) fn validate_bytecode_topology_admission(
         )));
     }
     Ok(())
+}
+
+fn bytecode_descriptor_capacity(
+    dynamic_threadgroup_memory_limit: u64,
+    max_pivots_per_chunk: usize,
+) -> usize {
+    let count_bytes =
+        aligned_threadgroup_bytes((INSTRUCTION_READ_RAF_SEGMENTS * size_of::<u32>()) as u64);
+    let pivot_bytes =
+        aligned_threadgroup_bytes((max_pivots_per_chunk.max(1) * BYTECODE_PIVOT_BYTES) as u64);
+    let descriptor_budget = dynamic_threadgroup_memory_limit
+        .saturating_sub(count_bytes)
+        .saturating_sub(pivot_bytes);
+    let descriptor_elements = descriptor_budget / THREADGROUP_ALLOCATION_ALIGNMENT
+        * (THREADGROUP_ALLOCATION_ALIGNMENT / BYTECODE_DESCRIPTOR_BYTES as u64);
+    usize::try_from(descriptor_elements.saturating_sub(1))
+        .unwrap_or(usize::MAX)
+        .min(BYTECODE_MAX_DESCRIPTORS_PER_CHUNK)
+}
+
+const fn aligned_threadgroup_bytes(bytes: u64) -> u64 {
+    bytes.div_ceil(THREADGROUP_ALLOCATION_ALIGNMENT) * THREADGROUP_ALLOCATION_ALIGNMENT
 }
 
 fn validate_bytecode_request(

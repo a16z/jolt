@@ -2,10 +2,17 @@ use std::mem::{size_of, MaybeUninit};
 use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use metal::{foreign_types::ForeignType, Buffer, MTLResourceOptions};
+use metal::{
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+};
 
-use super::{BooleanityRow, BooleanityRows, MetalError, SolinasMetal};
+use super::{
+    command_buffer_timestamp, BooleanityRow, BooleanityRows, MetalError, SolinasMetal,
+    BOOLEANITY_SOURCE_ROW_BYTES, BOOLEANITY_SOURCE_WORDS,
+};
 
 #[cfg(feature = "test-utils")]
 mod probe;
@@ -19,12 +26,16 @@ pub(crate) use scatter::validate_bytecode_topology_admission;
 pub(crate) use scatter::{
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
     InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
+    InstructionReadRafProducerExecution,
 };
 
 pub(crate) const INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS: usize = 1 << 12;
 pub(crate) const INSTRUCTION_READ_RAF_TABLES: usize = 40;
 pub(crate) const INSTRUCTION_READ_RAF_SEGMENTS: usize = 82;
 const MAX_ROWS: usize = 1 << 28;
+const SOURCE_PRIMER_PIPELINE: &str = "solinas_instruction_read_raf_source_primer";
+const SOURCE_PRIMER_PAGE_BYTES: usize = 16 * 1024;
+const SOURCE_PRIMER_THREADS: usize = 256 * 256;
 
 static NEXT_SOURCE_GENERATION: AtomicU64 = AtomicU64::new(1);
 static NEXT_COMPLETION_SERIAL: AtomicU64 = AtomicU64::new(1);
@@ -41,6 +52,27 @@ pub(crate) enum InstructionReadRafPublicationKind {
     HostFillV1,
 }
 
+impl InstructionReadRafPublicationKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::HostFillV1 => "host_fill_v1",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InstructionReadRafRowLayout {
+    ColumnMajorPackedU64V3,
+}
+
+impl InstructionReadRafRowLayout {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ColumnMajorPackedU64V3 => "column_major_packed_u64_v3",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct InstructionReadRafStage1Receipt {
     rows: usize,
@@ -53,6 +85,7 @@ pub(crate) struct InstructionReadRafStage1Receipt {
     completion_serial: u64,
     count_order: InstructionReadRafCountOrder,
     publication_kind: InstructionReadRafPublicationKind,
+    row_layout: InstructionReadRafRowLayout,
     count_chunks: usize,
     count_bytes: usize,
     count_allocation_identity: usize,
@@ -103,8 +136,16 @@ impl InstructionReadRafStage1Receipt {
         self.count_order
     }
 
+    pub(crate) const fn publication_kind(self) -> InstructionReadRafPublicationKind {
+        self.publication_kind
+    }
+
     pub(crate) const fn count_chunks(self) -> usize {
         self.count_chunks
+    }
+
+    pub(crate) const fn row_layout(self) -> InstructionReadRafRowLayout {
+        self.row_layout
     }
 
     pub(crate) const fn count_bytes(self) -> usize {
@@ -156,10 +197,60 @@ struct InstructionReadRafStage1Inner {
 }
 
 #[derive(Clone)]
-pub(crate) struct InstructionReadRafStage1Owner(Arc<InstructionReadRafStage1Inner>);
+#[doc(hidden)]
+pub struct InstructionReadRafStage1Owner(Arc<InstructionReadRafStage1Inner>);
 
 pub(crate) struct InstructionReadRafStage1Lease {
     owner: InstructionReadRafStage1Owner,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SourcePrimerParams {
+    word_counts: [u64; 2],
+    page_words: u32,
+    total_threads: u32,
+}
+
+const _: [(); 24] = [(); size_of::<SourcePrimerParams>()];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InstructionReadRafSourcePrimerObservation {
+    pub wall: Duration,
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
+    pub gpu_active: Duration,
+    pub completed_before_join: bool,
+    pub source_bytes: u64,
+    pub source_pages: u64,
+}
+
+#[must_use = "the source primer must be joined before Instruction Read-RAF"]
+pub(crate) struct PendingInstructionReadRafSourcePrimer {
+    source: InstructionReadRafStage1Lease,
+    command: Option<CommandBuffer>,
+    checksums: Buffer,
+    source_identities: [usize; 2],
+    submitted_at: Instant,
+    submit_wall: Duration,
+    source_bytes: u64,
+    source_pages: u64,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PendingInstructionReadRafSourcePrimer {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit();
+    }
+}
+
+impl Drop for PendingInstructionReadRafSourcePrimer {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.wait_until_completed();
+        }
+    }
 }
 
 pub(crate) struct InstructionReadRafStage1Storage {
@@ -171,7 +262,10 @@ pub(crate) struct InstructionReadRafStage1Storage {
 }
 
 pub(crate) struct InstructionReadRafStage1ChunkWriter<'a> {
-    rows: &'a mut [MaybeUninit<BooleanityRow>],
+    lookup_lo: &'a mut [MaybeUninit<u64>],
+    lookup_hi: &'a mut [MaybeUninit<u64>],
+    fused_inc_magnitude: &'a mut [MaybeUninit<u64>],
+    packed_metadata: &'a mut [MaybeUninit<u64>],
     claims: &'a mut [MaybeUninit<u8>],
     counts: &'a mut InstructionReadRafChunkCounts,
     written: usize,
@@ -213,15 +307,16 @@ impl InstructionReadRafStage1Storage {
         fill: impl FnOnce(&mut [InstructionReadRafStage1ChunkWriter<'_>]) -> Result<R, MetalError>,
     ) -> Result<R, MetalError> {
         // SAFETY: storage is unpublished and exclusively borrowed. The row
-        // allocation has the exact length validated at allocation.
-        let rows = unsafe {
+        // allocation contains four disjoint u64 columns of exactly self.rows.
+        let row_words = unsafe {
             slice::from_raw_parts_mut(
-                self.row_buffer
-                    .contents()
-                    .cast::<MaybeUninit<BooleanityRow>>(),
-                self.rows,
+                self.row_buffer.contents().cast::<MaybeUninit<u64>>(),
+                BOOLEANITY_SOURCE_WORDS * self.rows,
             )
         };
+        let (lookup_lo, row_words) = row_words.split_at_mut(self.rows);
+        let (lookup_hi, row_words) = row_words.split_at_mut(self.rows);
+        let (fused_inc_magnitude, packed_metadata) = row_words.split_at_mut(self.rows);
         // SAFETY: the unpublished claim allocation has exactly one byte per
         // row and is disjoint from the row allocation.
         let claims = unsafe {
@@ -230,13 +325,22 @@ impl InstructionReadRafStage1Storage {
                 self.rows,
             )
         };
-        let mut chunks: Vec<_> = rows
+        let mut chunks: Vec<_> = lookup_lo
             .chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
+            .zip(lookup_hi.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+            .zip(fused_inc_magnitude.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+            .zip(packed_metadata.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
             .zip(claims.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
             .zip(self.counts.iter_mut())
             .map(
-                |((rows, claims), counts)| InstructionReadRafStage1ChunkWriter {
-                    rows,
+                |(
+                    ((((lookup_lo, lookup_hi), fused_inc_magnitude), packed_metadata), claims),
+                    counts,
+                )| InstructionReadRafStage1ChunkWriter {
+                    lookup_lo,
+                    lookup_hi,
+                    fused_inc_magnitude,
+                    packed_metadata,
                     claims,
                     counts,
                     written: 0,
@@ -244,7 +348,10 @@ impl InstructionReadRafStage1Storage {
             )
             .collect();
         let output = fill(&mut chunks)?;
-        if chunks.iter().any(|chunk| chunk.written != chunk.rows.len()) {
+        if chunks
+            .iter()
+            .any(|chunk| chunk.written != chunk.fused_inc_magnitude.len())
+        {
             return Err(invalid_source(
                 "Stage-1 source fill did not initialize every row exactly once",
             ));
@@ -253,18 +360,7 @@ impl InstructionReadRafStage1Storage {
     }
 
     pub(crate) fn seal(self) -> Result<InstructionReadRafStage1Owner, MetalError> {
-        for (chunk, counts) in self.counts.iter().enumerate() {
-            let expected = ((chunk + 1) * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS).min(self.rows)
-                - chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
-            let observed = counts
-                .iter()
-                .try_fold(0usize, |sum, &count| sum.checked_add(count as usize));
-            if observed != Some(expected) {
-                return Err(invalid_source(
-                    "chunk selector counts do not cover every row",
-                ));
-            }
-        }
+        validate_chunk_counts(self.rows, &self.counts)?;
         let row_bytes = instruction_read_raf_stage1_row_bytes(self.rows)?;
         let claim_bytes = instruction_read_raf_stage1_claim_bytes(self.rows)?;
         let count_bytes = instruction_read_raf_stage1_count_bytes(self.rows)?;
@@ -291,6 +387,7 @@ impl InstructionReadRafStage1Storage {
             completion_serial,
             count_order: InstructionReadRafCountOrder::TableMajorThenNoneV1,
             publication_kind: InstructionReadRafPublicationKind::HostFillV1,
+            row_layout: InstructionReadRafRowLayout::ColumnMajorPackedU64V3,
             count_chunks: self.counts.len(),
             count_bytes,
             count_allocation_identity,
@@ -323,8 +420,8 @@ impl InstructionReadRafStage1Storage {
 }
 
 impl InstructionReadRafStage1ChunkWriter<'_> {
-    pub(crate) fn len(&self) -> usize {
-        self.rows.len()
+    pub fn len(&self) -> usize {
+        self.fused_inc_magnitude.len()
     }
 
     pub(crate) fn push(
@@ -333,9 +430,10 @@ impl InstructionReadRafStage1ChunkWriter<'_> {
         table_plus_one: u8,
         raf: bool,
     ) -> Result<(), MetalError> {
-        self.push_with_bytecode_chunk_rank(row, table_plus_one, raf, 0)
+        self.push_with_source_metadata(row, table_plus_one, raf, 0, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn push_with_bytecode_chunk_rank(
         &mut self,
         row: BooleanityRow,
@@ -343,7 +441,65 @@ impl InstructionReadRafStage1ChunkWriter<'_> {
         raf: bool,
         rank: u8,
     ) -> Result<(), MetalError> {
-        if self.written == self.rows.len() {
+        self.push_with_source_metadata(row, table_plus_one, raf, rank, None)
+    }
+
+    pub fn push_with_register_write(
+        &mut self,
+        row: BooleanityRow,
+        table_plus_one: u8,
+        raf: bool,
+        rank: u8,
+        rd_write: Option<(u8, u64, u64)>,
+    ) -> Result<(), MetalError> {
+        self.push_with_source_metadata(row, table_plus_one, raf, rank, rd_write)
+    }
+
+    pub(crate) fn fill_repeated_with_register_write(
+        &mut self,
+        row: BooleanityRow,
+        table_plus_one: u8,
+        raf: bool,
+        rank: u8,
+        rd_write: Option<(u8, u64, u64)>,
+        count: usize,
+    ) -> Result<(), MetalError> {
+        if count == 0 {
+            return Ok(());
+        }
+        let end = self
+            .written
+            .checked_add(count)
+            .filter(|&end| end <= self.fused_inc_magnitude.len())
+            .ok_or_else(|| invalid_source("Stage-1 source chunk received too many rows"))?;
+        let (claim, count_rank) = instruction_read_raf_claim_and_count_rank(table_plus_one, raf)
+            .ok_or_else(|| invalid_source("Stage-1 source selector exceeds the table domain"))?;
+        let row = row.with_bytecode_chunk_rank_low7(rank);
+        let claim = claim | ((rank & 0x80) >> 1);
+        let words = row.instruction_source_words(rd_write)?;
+        self.lookup_lo[self.written..end].fill(MaybeUninit::new(words[0]));
+        self.lookup_hi[self.written..end].fill(MaybeUninit::new(words[1]));
+        self.fused_inc_magnitude[self.written..end].fill(MaybeUninit::new(words[2]));
+        self.packed_metadata[self.written..end].fill(MaybeUninit::new(words[3]));
+        self.claims[self.written..end].fill(MaybeUninit::new(claim));
+        let count = u32::try_from(count)
+            .map_err(|_| invalid_source("Stage-1 repeated source count exceeds u32"))?;
+        self.counts[count_rank] = self.counts[count_rank]
+            .checked_add(count)
+            .ok_or_else(|| invalid_source("Stage-1 source selector count overflowed"))?;
+        self.written = end;
+        Ok(())
+    }
+
+    fn push_with_source_metadata(
+        &mut self,
+        row: BooleanityRow,
+        table_plus_one: u8,
+        raf: bool,
+        rank: u8,
+        rd_write: Option<(u8, u64, u64)>,
+    ) -> Result<(), MetalError> {
+        if self.written == self.fused_inc_magnitude.len() {
             return Err(invalid_source(
                 "Stage-1 source chunk received too many rows",
             ));
@@ -352,12 +508,35 @@ impl InstructionReadRafStage1ChunkWriter<'_> {
             .ok_or_else(|| invalid_source("Stage-1 source selector exceeds the table domain"))?;
         let row = row.with_bytecode_chunk_rank_low7(rank);
         let claim = claim | ((rank & 0x80) >> 1);
-        let _ = self.rows[self.written].write(row);
+        let words = row.instruction_source_words(rd_write)?;
+        let _ = self.lookup_lo[self.written].write(words[0]);
+        let _ = self.lookup_hi[self.written].write(words[1]);
+        let _ = self.fused_inc_magnitude[self.written].write(words[2]);
+        let _ = self.packed_metadata[self.written].write(words[3]);
         let _ = self.claims[self.written].write(claim);
         self.counts[count_rank] += 1;
         self.written += 1;
         Ok(())
     }
+}
+
+fn validate_chunk_counts(
+    rows: usize,
+    counts: &[InstructionReadRafChunkCounts],
+) -> Result<(), MetalError> {
+    for (chunk, counts) in counts.iter().enumerate() {
+        let expected = ((chunk + 1) * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS).min(rows)
+            - chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+        let observed = counts
+            .iter()
+            .try_fold(0usize, |sum, &count| sum.checked_add(count as usize));
+        if observed != Some(expected) {
+            return Err(invalid_source(
+                "chunk selector counts do not cover every row",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -415,6 +594,141 @@ impl InstructionReadRafStage1Lease {
     }
 }
 
+impl PendingInstructionReadRafSourcePrimer {
+    pub(crate) const fn source_bytes(&self) -> u64 {
+        self.source_bytes
+    }
+
+    pub(crate) const fn source_pages(&self) -> u64 {
+        self.source_pages
+    }
+
+    pub(crate) const fn submit_wall(&self) -> Duration {
+        self.submit_wall
+    }
+
+    pub(crate) fn join(mut self) -> Result<InstructionReadRafSourcePrimerObservation, MetalError> {
+        let source_identities = [
+            self.source.row_buffer().as_ptr() as usize,
+            self.source.claim_buffer().as_ptr() as usize,
+        ];
+        if source_identities != self.source_identities
+            || self.checksums.length() != byte_length::<u32>(SOURCE_PRIMER_THREADS)?
+        {
+            return Err(invalid_source(
+                "source primer resources changed before completion",
+            ));
+        }
+        let command = self
+            .command
+            .take()
+            .ok_or_else(|| invalid_source("source primer command was already joined"))?;
+        let completed_before_join = command.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(self.submitted_at)
+            .saturating_sub(self.submit_wall);
+        command.wait_until_completed();
+        let join_wall = join_started.elapsed();
+        if command.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command.status()));
+        }
+        let start = command_buffer_timestamp(&command, "GPUStartTime")?;
+        let end = command_buffer_timestamp(&command, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        Ok(InstructionReadRafSourcePrimerObservation {
+            wall: self.submitted_at.elapsed(),
+            submit_wall: self.submit_wall,
+            overlap_wall,
+            join_wall,
+            gpu_active: Duration::from_secs_f64(end - start),
+            completed_before_join,
+            source_bytes: self.source_bytes,
+            source_pages: self.source_pages,
+        })
+    }
+}
+
+impl SolinasMetal {
+    pub(crate) fn submit_instruction_read_raf_source_primer(
+        &self,
+        owner: &InstructionReadRafStage1Owner,
+    ) -> Result<PendingInstructionReadRafSourcePrimer, MetalError> {
+        let receipt = owner.receipt();
+        let source = owner.lease(receipt.rows(), self.device_registry_id())?;
+        let sources = [source.row_buffer(), source.claim_buffer()];
+        let source_identities = sources.map(|buffer| buffer.as_ptr() as usize);
+        let source_bytes = sources.iter().try_fold(0u64, |total, buffer| {
+            total
+                .checked_add(buffer.length())
+                .ok_or(MetalError::InputTooLong(receipt.rows()))
+        })?;
+        let page_bytes = SOURCE_PRIMER_PAGE_BYTES as u64;
+        let source_pages = sources.iter().try_fold(0u64, |total, buffer| {
+            total
+                .checked_add(buffer.length().div_ceil(page_bytes))
+                .ok_or(MetalError::InputTooLong(receipt.rows()))
+        })?;
+        let params = SourcePrimerParams {
+            word_counts: sources.map(|buffer| buffer.length() / size_of::<u32>() as u64),
+            page_words: (SOURCE_PRIMER_PAGE_BYTES / size_of::<u32>()) as u32,
+            total_threads: SOURCE_PRIMER_THREADS as u32,
+        };
+        let pipeline = self.compile_named_pipeline(SOURCE_PRIMER_PIPELINE)?;
+        let limits = Self::limits(&pipeline);
+        if limits.thread_execution_width != 32 || limits.max_total_threads_per_threadgroup < 256 {
+            return Err(invalid_source("source primer pipeline limits changed"));
+        }
+        let checksum_bytes = byte_length::<u32>(SOURCE_PRIMER_THREADS)?;
+        self.validate_additional_working_set(checksum_bytes)?;
+        let checksums = self
+            .device
+            .new_buffer(checksum_bytes, MTLResourceOptions::StorageModePrivate);
+
+        let submitted_at = Instant::now();
+        let command = self.queue.new_command_buffer().to_owned();
+        autoreleasepool(|| {
+            let encoder = command.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&pipeline);
+            encoder.set_buffer(0, Some(sources[0]), 0);
+            encoder.set_buffer(1, Some(sources[1]), 0);
+            encoder.set_buffer(2, Some(&checksums), 0);
+            encoder.set_bytes(
+                3,
+                size_of::<SourcePrimerParams>() as u64,
+                std::ptr::from_ref(&params).cast::<std::ffi::c_void>(),
+            );
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: 256,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: 256,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.end_encoding();
+            command.commit();
+        });
+        let submit_wall = submitted_at.elapsed();
+        Ok(PendingInstructionReadRafSourcePrimer {
+            source,
+            command: Some(command),
+            checksums,
+            source_identities,
+            submitted_at,
+            submit_wall,
+            source_bytes,
+            source_pages,
+        })
+    }
+}
+
 #[cfg(feature = "allocative")]
 impl allocative::Allocative for InstructionReadRafStage1Owner {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
@@ -444,7 +758,9 @@ impl allocative::Allocative for InstructionReadRafStage1Owner {
 }
 
 pub(crate) fn instruction_read_raf_stage1_row_bytes(rows: usize) -> Result<u64, MetalError> {
-    byte_length::<BooleanityRow>(rows)
+    rows.checked_mul(BOOLEANITY_SOURCE_ROW_BYTES)
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or(MetalError::InputTooLong(rows))
 }
 
 pub(crate) fn instruction_read_raf_stage1_claim_bytes(rows: usize) -> Result<u64, MetalError> {
@@ -511,6 +827,7 @@ fn validate_owner(
         || receipt.completion_serial == 0
         || !receipt.complete_overwrite
         || receipt.publication_kind != InstructionReadRafPublicationKind::HostFillV1
+        || receipt.row_layout != InstructionReadRafRowLayout::ColumnMajorPackedU64V3
         || receipt.source_windows != expected_rows
         || receipt.member_upload_bytes != 0
         || receipt.projection_dispatches != 0

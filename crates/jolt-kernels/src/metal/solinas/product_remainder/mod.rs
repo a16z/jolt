@@ -7,7 +7,7 @@ use std::{
 use jolt_field::{AkitaField, Field};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
 };
 use thiserror::Error;
 
@@ -16,10 +16,11 @@ use crate::optimized::spartan_product::SpartanProductRow;
 use super::product_uniskip::{
     ProductUniskipBlockParams, ProductUniskipExtendedNodes,
     BLOCKS_PIPELINE as PRODUCT_UNISKIP_PIPELINE, PRODUCT_UNISKIP_EXTENDED_NODES,
-    PRODUCT_UNISKIP_SIMD_WIDTH,
+    PRODUCT_UNISKIP_SIMD_WIDTH, STAGE1_BLOCKS_PIPELINE as PRODUCT_UNISKIP_STAGE1_PIPELINE,
 };
 use super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, spartan_outer_uniskip_residual_row_bytes, Fp128,
+    InstructionInputRow, MetalError, PipelineLimits, SolinasMetal,
 };
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
@@ -30,8 +31,11 @@ pub const PRODUCT_REMAINDER_OPENINGS: usize = 8;
 pub const PRODUCT_REMAINDER_SIMD_WIDTH: usize = 32;
 
 pub(crate) const MATERIALIZE_PIPELINE: &str = "solinas_product_remainder_materialize_message";
+pub(crate) const MATERIALIZE_STAGE1_PIPELINE: &str =
+    "solinas_product_remainder_materialize_stage1_message";
 pub(crate) const TRANSITION_PIPELINE: &str = "solinas_product_remainder_bind_and_message";
 pub(crate) const OPENINGS_PIPELINE: &str = "solinas_product_remainder_openings";
+pub(crate) const OPENINGS_STAGE1_PIPELINE: &str = "solinas_product_remainder_stage1_openings";
 pub(crate) const REDUCTION_PIPELINE: &str = "solinas_product_remainder_reduce";
 
 const ROW_LEFT_INPUT: usize = 0;
@@ -253,9 +257,34 @@ impl Default for ProductRemainderRow {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProductRemainderSourceKind {
+    Packed,
+    SpartanStage1,
+}
+
+impl ProductRemainderSourceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Packed => "packed",
+            Self::SpartanStage1 => "spartan_stage1",
+        }
+    }
+}
+
+#[derive(Clone)]
+enum ProductRemainderSource {
+    Packed(Buffer),
+    SpartanStage1 {
+        compact: Buffer,
+        residual: Buffer,
+        generation: u64,
+    },
+}
+
 #[derive(Clone)]
 pub struct ProductRemainderRows {
-    buffer: Buffer,
+    source: ProductRemainderSource,
     len: usize,
     device_registry_id: u64,
 }
@@ -274,15 +303,92 @@ impl ProductRemainderRows {
     }
 
     pub fn allocation_identity(&self) -> usize {
-        self.buffer.as_ptr() as usize
+        match &self.source {
+            ProductRemainderSource::Packed(buffer) => buffer.as_ptr() as usize,
+            ProductRemainderSource::SpartanStage1 { compact, .. } => compact.as_ptr() as usize,
+        }
+    }
+
+    pub fn allocation_identities(&self) -> Vec<usize> {
+        match &self.source {
+            ProductRemainderSource::Packed(buffer) => vec![buffer.as_ptr() as usize],
+            ProductRemainderSource::SpartanStage1 {
+                compact, residual, ..
+            } => vec![compact.as_ptr() as usize, residual.as_ptr() as usize],
+        }
+    }
+
+    pub const fn source_kind(&self) -> ProductRemainderSourceKind {
+        match self.source {
+            ProductRemainderSource::Packed(_) => ProductRemainderSourceKind::Packed,
+            ProductRemainderSource::SpartanStage1 { .. } => {
+                ProductRemainderSourceKind::SpartanStage1
+            }
+        }
+    }
+
+    pub const fn source_generation(&self) -> Option<u64> {
+        match self.source {
+            ProductRemainderSource::Packed(_) => None,
+            ProductRemainderSource::SpartanStage1 { generation, .. } => Some(generation),
+        }
     }
 
     pub const fn resident_bytes(&self) -> usize {
-        self.len * size_of::<ProductRemainderRow>()
+        match self.source {
+            ProductRemainderSource::Packed(_) => self.len * size_of::<ProductRemainderRow>(),
+            ProductRemainderSource::SpartanStage1 { .. } => 0,
+        }
     }
 
-    pub(crate) fn buffer(&self) -> &Buffer {
-        &self.buffer
+    pub(crate) fn packed_buffer(&self) -> Option<&Buffer> {
+        match &self.source {
+            ProductRemainderSource::Packed(buffer) => Some(buffer),
+            ProductRemainderSource::SpartanStage1 { .. } => None,
+        }
+    }
+
+    pub(crate) fn stage1_buffers(&self) -> Option<(&Buffer, &Buffer)> {
+        match &self.source {
+            ProductRemainderSource::Packed(_) => None,
+            ProductRemainderSource::SpartanStage1 {
+                compact, residual, ..
+            } => Some((compact, residual)),
+        }
+    }
+
+    pub(crate) fn from_spartan_stage1(
+        compact: Buffer,
+        residual: Buffer,
+        len: usize,
+        device_registry_id: u64,
+        generation: u64,
+    ) -> Result<Self, MetalError> {
+        let compact_bytes = len
+            .checked_mul(size_of::<InstructionInputRow>())
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(len))?;
+        let residual_bytes = spartan_outer_uniskip_residual_row_bytes(len)?;
+        if len < 2
+            || !len.is_power_of_two()
+            || generation == 0
+            || compact.length() != compact_bytes
+            || residual.length() != residual_bytes
+            || compact.as_ptr() == residual.as_ptr()
+        {
+            return Err(MetalError::InvalidProductRemainderState(
+                "the Spartan Stage-1 product source has invalid provenance or shape",
+            ));
+        }
+        Ok(Self {
+            source: ProductRemainderSource::SpartanStage1 {
+                compact,
+                residual,
+                generation,
+            },
+            len,
+            device_registry_id,
+        })
     }
 }
 
@@ -290,10 +396,12 @@ impl ProductRemainderRows {
 impl allocative::Allocative for ProductRemainderRows {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("device_rows"),
-            self.len * size_of::<ProductRemainderRow>(),
-        );
+        if self.source_kind() == ProductRemainderSourceKind::Packed {
+            visitor.visit_simple(
+                allocative::Key::new("device_rows"),
+                self.len * size_of::<ProductRemainderRow>(),
+            );
+        }
         visitor.exit();
     }
 }
@@ -569,12 +677,21 @@ impl ProductRemainderStorageLayout {
     pub const fn resident_bytes(self) -> usize {
         self.resident_bytes
     }
+
+    pub fn max_workspace_buffer_bytes(self) -> usize {
+        let fields = self
+            .state_a_fields
+            .max(self.state_b_fields)
+            .max(self.e_in_fields)
+            .max(self.e_out_fields)
+            .max(self.partial_fields);
+        fields * size_of::<super::Fp128>()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProductRemainderPhase {
-    Raw,
-    Primed,
+    Ready,
     Materialized,
 }
 
@@ -602,6 +719,7 @@ pub struct ProductRemainderSequence {
     openings_limits: PipelineLimits,
     reduction_limits: PipelineLimits,
     buffers: ProductRemainderBuffers,
+    state_a_borrowed: bool,
     layout: ProductRemainderStorageLayout,
     uniskip_threads_per_threadgroup: usize,
     materialize_threads_per_threadgroup: usize,
@@ -611,32 +729,6 @@ pub struct ProductRemainderSequence {
     source_in_a: bool,
     phase: ProductRemainderPhase,
     gpu_active_time: Duration,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ProductRemainderPrimerStats {
-    materialize_wall: Duration,
-    materialize_gpu_active: Duration,
-    transition_wall: Duration,
-    transition_gpu_active: Duration,
-}
-
-impl ProductRemainderPrimerStats {
-    pub(crate) const fn materialize_wall(self) -> Duration {
-        self.materialize_wall
-    }
-
-    pub(crate) const fn materialize_gpu_active(self) -> Duration {
-        self.materialize_gpu_active
-    }
-
-    pub(crate) const fn transition_wall(self) -> Duration {
-        self.transition_wall
-    }
-
-    pub(crate) const fn transition_gpu_active(self) -> Duration {
-        self.transition_gpu_active
-    }
 }
 
 struct ProductRemainderInitialMessageCommand {
@@ -655,6 +747,16 @@ pub(crate) struct ProductRemainderInitialMessageStats {
     pub(crate) join_wall: Duration,
     pub(crate) gpu_active: Duration,
     pub(crate) completed_before_join: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProductRemainderWorkspacePrimerStats {
+    pub(crate) bytes: u64,
+    pub(crate) buffers: usize,
+    pub(crate) state_a_identity: usize,
+    pub(crate) state_b_identity: usize,
+    pub(crate) wall: Duration,
+    pub(crate) gpu_active: Duration,
 }
 
 #[must_use = "a submitted product-remainder message must be joined"]
@@ -699,9 +801,9 @@ impl PendingProductRemainderInitialMessage {
             .ok_or(MetalError::InvalidProductRemainderState(
                 "the pending first message lost its resident sequence",
             ))?;
-        if !sequence.is_primed() {
+        if !sequence.is_ready() {
             return Err(MetalError::InvalidProductRemainderState(
-                "the pending first message lost its primed sequence state",
+                "the pending first message lost its ready sequence state",
             ));
         }
         let command = self
@@ -710,7 +812,7 @@ impl PendingProductRemainderInitialMessage {
             .ok_or(MetalError::InvalidProductRemainderState(
                 "the pending first message lost its command buffer",
             ))?;
-        let (message, stats) = sequence.complete_restart_message(command)?;
+        let (message, stats) = sequence.complete_initial_message(command)?;
         Ok((sequence, message, stats))
     }
 }
@@ -744,7 +846,7 @@ impl SolinasMetal {
         self.validate_buffer_length(row_bytes)?;
         self.validate_additional_working_set(row_bytes)?;
         Ok(ProductRemainderRows {
-            buffer: buffer_from_slice(&self.device, rows),
+            source: ProductRemainderSource::Packed(buffer_from_slice(&self.device, rows)),
             len: rows.len(),
             device_registry_id: self.device_registry_id(),
         })
@@ -776,6 +878,25 @@ impl SolinasMetal {
         e_out_capacity: usize,
         config: ProductRemainderSequenceConfig,
     ) -> Result<ProductRemainderSequence, MetalError> {
+        self.prepare_product_remainder_sequence_with_rows_and_state_a(
+            rows,
+            lagrange_weights,
+            e_in_capacity,
+            e_out_capacity,
+            config,
+            None,
+        )
+    }
+
+    pub(crate) fn prepare_product_remainder_sequence_with_rows_and_state_a(
+        &self,
+        rows: ProductRemainderRows,
+        lagrange_weights: [AkitaField; 3],
+        e_in_capacity: usize,
+        e_out_capacity: usize,
+        config: ProductRemainderSequenceConfig,
+        state_a: Option<Buffer>,
+    ) -> Result<ProductRemainderSequence, MetalError> {
         if rows.device_registry_id() != self.device_registry_id() {
             return Err(MetalError::ProductRemainderRowsDevice {
                 expected: self.device_registry_id(),
@@ -784,14 +905,46 @@ impl SolinasMetal {
         }
         let row_count = rows.len();
         let layout = ProductRemainderStorageLayout::new(row_count, e_in_capacity, e_out_capacity)?;
-        let workspace_bytes = u64::try_from(layout.workspace_bytes())
-            .map_err(|_| MetalError::InputTooLong(layout.workspace_bytes()))?;
+        let state_a_bytes = layout
+            .state_a_fields()
+            .checked_mul(size_of::<Fp128>())
+            .ok_or(MetalError::InputTooLong(layout.state_a_fields()))?;
+        if let Some(state_a) = &state_a {
+            let expected = u64::try_from(state_a_bytes)
+                .map_err(|_| MetalError::InputTooLong(state_a_bytes))?;
+            if state_a.length() != expected {
+                return Err(MetalError::InvalidProductRemainderState(
+                    "borrowed product state A has the wrong length",
+                ));
+            }
+        }
+        let workspace_bytes = layout
+            .workspace_bytes()
+            .checked_sub(usize::from(state_a.is_some()) * state_a_bytes)
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(MetalError::InputTooLong(layout.workspace_bytes()))?;
         self.validate_additional_working_set(workspace_bytes)?;
 
-        let uniskip_pipeline = self.compile_named_pipeline(PRODUCT_UNISKIP_PIPELINE)?;
-        let materialize_pipeline = self.compile_named_pipeline(MATERIALIZE_PIPELINE)?;
+        let stage1_source = rows.source_kind() == ProductRemainderSourceKind::SpartanStage1;
+        let uniskip_pipeline_name = if stage1_source {
+            PRODUCT_UNISKIP_STAGE1_PIPELINE
+        } else {
+            PRODUCT_UNISKIP_PIPELINE
+        };
+        let materialize_pipeline_name = if stage1_source {
+            MATERIALIZE_STAGE1_PIPELINE
+        } else {
+            MATERIALIZE_PIPELINE
+        };
+        let openings_pipeline_name = if stage1_source {
+            OPENINGS_STAGE1_PIPELINE
+        } else {
+            OPENINGS_PIPELINE
+        };
+        let uniskip_pipeline = self.compile_named_pipeline(uniskip_pipeline_name)?;
+        let materialize_pipeline = self.compile_named_pipeline(materialize_pipeline_name)?;
         let transition_pipeline = self.compile_named_pipeline(TRANSITION_PIPELINE)?;
-        let openings_pipeline = self.compile_named_pipeline(OPENINGS_PIPELINE)?;
+        let openings_pipeline = self.compile_named_pipeline(openings_pipeline_name)?;
         let reduction_pipeline = self.compile_named_pipeline(REDUCTION_PIPELINE)?;
         let uniskip_limits = Self::limits(&uniskip_pipeline);
         let materialize_limits = Self::limits(&materialize_pipeline);
@@ -806,9 +959,9 @@ impl SolinasMetal {
             });
         }
         for (pipeline, limits) in [
-            (MATERIALIZE_PIPELINE, materialize_limits),
+            (materialize_pipeline_name, materialize_limits),
             (TRANSITION_PIPELINE, transition_limits),
-            (OPENINGS_PIPELINE, openings_limits),
+            (openings_pipeline_name, openings_limits),
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != PRODUCT_REMAINDER_SIMD_WIDTH {
@@ -842,6 +995,18 @@ impl SolinasMetal {
             .collect::<Vec<_>>();
         self.validate_inputs("product remainder lagrange weights", &lagrange)?;
 
+        let state_a_borrowed = state_a.is_some();
+        let state_a = match state_a {
+            Some(state_a) => state_a,
+            None => self.new_product_remainder_buffer(layout.state_a_fields())?,
+        };
+        let state_b = self.new_product_remainder_buffer(layout.state_b_fields())?;
+        if state_a.as_ptr() == state_b.as_ptr() {
+            return Err(MetalError::InvalidProductRemainderState(
+                "product state buffers alias",
+            ));
+        }
+
         Ok(ProductRemainderSequence {
             context: self.clone(),
             uniskip_pipeline,
@@ -857,13 +1022,14 @@ impl SolinasMetal {
             buffers: ProductRemainderBuffers {
                 rows,
                 lagrange: buffer_from_slice(&self.device, &lagrange),
-                state_a: self.new_product_remainder_buffer(layout.state_a_fields())?,
-                state_b: self.new_product_remainder_buffer(layout.state_b_fields())?,
+                state_a,
+                state_b,
                 e_in: self.new_product_remainder_buffer(layout.e_in_fields())?,
                 e_out: self.new_product_remainder_buffer(layout.e_out_fields())?,
                 partial_a: self.new_product_remainder_buffer(layout.partial_fields())?,
                 partial_b: self.new_product_remainder_buffer(layout.partial_fields())?,
             },
+            state_a_borrowed,
             layout,
             uniskip_threads_per_threadgroup,
             materialize_threads_per_threadgroup,
@@ -871,7 +1037,7 @@ impl SolinasMetal {
             openings_threads_per_threadgroup,
             current_elements: row_count,
             source_in_a: true,
-            phase: ProductRemainderPhase::Raw,
+            phase: ProductRemainderPhase::Ready,
             gpu_active_time: Duration::ZERO,
         })
     }
@@ -889,46 +1055,213 @@ impl SolinasMetal {
 }
 
 impl ProductRemainderSequence {
-    pub(crate) fn prime(&mut self) -> Result<ProductRemainderPrimerStats, MetalError> {
-        if self.phase != ProductRemainderPhase::Raw
-            || self.current_elements != self.layout.rows()
-            || !self.source_in_a
-        {
+    pub(in crate::metal::solinas) fn encode_joint_stage1_materialize(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<ProductRemainderPhaseParams, MetalError> {
+        if self.phase != ProductRemainderPhase::Ready {
             return Err(MetalError::InvalidProductRemainderState(
-                "pipeline priming requires a fresh sequence",
+                "joint materialization requires a ready product sequence",
             ));
         }
+        let params =
+            ProductRemainderPhaseParams::materialize(self.layout.rows(), e_in.len(), e_out.len())?;
+        let Some((compact, residual)) = self.buffers.rows.stage1_buffers() else {
+            return Err(MetalError::InvalidProductRemainderState(
+                "joint materialization requires resident Stage-1 rows",
+            ));
+        };
+        self.write_weights(e_in, e_out)?;
+        encoder.set_buffer(0, Some(compact), 0);
+        encoder.set_buffer(1, Some(residual), 0);
+        encoder.set_buffer(2, Some(&self.buffers.lagrange), 0);
+        encoder.set_buffer(4, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(5, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(6, Some(&self.buffers.state_a), 0);
+        encoder.set_buffer(8, Some(&self.buffers.partial_a), 0);
+        Ok(params)
+    }
 
-        let (materialize_e_in_len, materialize_e_out_len) =
-            balanced_weight_shape(self.layout.rows() / 2);
-        let materialize_e_in = vec![AkitaField::zero(); materialize_e_in_len];
-        let materialize_e_out = vec![AkitaField::zero(); materialize_e_out_len];
-        let started = Instant::now();
-        let (_, materialize_gpu_active) =
-            self.execute_materialize_message(&materialize_e_in, &materialize_e_out)?;
-        let materialize_wall = started.elapsed();
-        self.phase = ProductRemainderPhase::Materialized;
-
-        let (transition_e_in_len, transition_e_out_len) =
-            balanced_weight_shape(self.layout.rows() / 4);
-        let transition_e_in = vec![AkitaField::zero(); transition_e_in_len];
-        let transition_e_out = vec![AkitaField::zero(); transition_e_out_len];
-        let started = Instant::now();
-        let (_, transition_gpu_active) = self.execute_current_bind_and_message(
-            AkitaField::zero(),
-            &transition_e_in,
-            &transition_e_out,
+    pub(in crate::metal::solinas) fn encode_joint_initial_reductions(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        e_out_length: usize,
+    ) -> Result<Buffer, MetalError> {
+        let final_in_a = encode_product_remainder_reductions(
+            encoder,
+            &self.reduction_pipeline,
+            &self.buffers.partial_a,
+            &self.buffers.partial_b,
+            e_out_length,
+            PRODUCT_REMAINDER_MESSAGE_COLUMNS,
         )?;
-        let transition_wall = started.elapsed();
+        Ok(if final_in_a {
+            self.buffers.partial_a.clone()
+        } else {
+            self.buffers.partial_b.clone()
+        })
+    }
+
+    pub(in crate::metal::solinas) fn complete_joint_materialize(
+        &mut self,
+        gpu_active: Duration,
+    ) -> Result<(), MetalError> {
+        if self.phase != ProductRemainderPhase::Ready {
+            return Err(MetalError::InvalidProductRemainderState(
+                "joint product state was materialized more than once",
+            ));
+        }
         self.current_elements = self.layout.rows();
         self.source_in_a = true;
-        self.phase = ProductRemainderPhase::Primed;
+        self.phase = ProductRemainderPhase::Materialized;
+        self.gpu_active_time += gpu_active;
+        Ok(())
+    }
 
-        Ok(ProductRemainderPrimerStats {
-            materialize_wall,
-            materialize_gpu_active,
-            transition_wall,
-            transition_gpu_active,
+    pub(in crate::metal::solinas) fn encode_joint_transition(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<Buffer, MetalError> {
+        if self.phase != ProductRemainderPhase::Materialized || self.current_elements < 4 {
+            return Err(MetalError::InvalidProductRemainderState(
+                "a joint transition needs a materialized product state",
+            ));
+        }
+        let params = ProductRemainderPhaseParams::transition(
+            self.current_elements,
+            e_in.len(),
+            e_out.len(),
+        )?;
+        self.write_weights(e_in, e_out)?;
+        let challenge = Fp128::from_jolt_field(&challenge);
+        self.context
+            .validate_inputs("joint product remainder challenge", &[challenge])?;
+        encoder.set_compute_pipeline_state(&self.transition_pipeline);
+        encoder.set_buffer(0, Some(self.source_buffer()), 0);
+        encoder.set_buffer(1, Some(self.destination_buffer()), 0);
+        encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+        set_inline_bytes(encoder, 5, &challenge);
+        set_inline_bytes(encoder, 6, &params);
+        encoder.set_threadgroup_memory_length(
+            0,
+            product_remainder_threadgroup_bytes(
+                PRODUCT_REMAINDER_MESSAGE_COLUMNS,
+                self.transition_threads_per_threadgroup,
+            ) as u64,
+        );
+        dispatch_product_remainder_blocks(
+            encoder,
+            e_out.len(),
+            self.transition_threads_per_threadgroup,
+        );
+        let final_in_a = encode_product_remainder_reductions(
+            encoder,
+            &self.reduction_pipeline,
+            &self.buffers.partial_a,
+            &self.buffers.partial_b,
+            e_out.len(),
+            PRODUCT_REMAINDER_MESSAGE_COLUMNS,
+        )?;
+        Ok(if final_in_a {
+            self.buffers.partial_a.clone()
+        } else {
+            self.buffers.partial_b.clone()
+        })
+    }
+
+    pub(in crate::metal::solinas) fn complete_joint_transition(
+        &mut self,
+        gpu_active: Duration,
+    ) -> Result<(), MetalError> {
+        if self.phase != ProductRemainderPhase::Materialized || self.current_elements < 4 {
+            return Err(MetalError::InvalidProductRemainderState(
+                "joint product transition completed in the wrong phase",
+            ));
+        }
+        self.current_elements /= 2;
+        self.source_in_a = !self.source_in_a;
+        self.gpu_active_time += gpu_active;
+        Ok(())
+    }
+
+    pub(in crate::metal::solinas) const fn joint_materialize_threads_per_threadgroup(
+        &self,
+    ) -> usize {
+        self.materialize_threads_per_threadgroup
+    }
+
+    pub(in crate::metal::solinas) fn joint_stage1_allocation_identities(
+        &self,
+    ) -> Option<[usize; 2]> {
+        let (compact, residual) = self.buffers.rows.stage1_buffers()?;
+        Some([compact.as_ptr() as usize, residual.as_ptr() as usize])
+    }
+
+    pub(in crate::metal::solinas) const fn context(&self) -> &SolinasMetal {
+        &self.context
+    }
+
+    pub(crate) fn prime_workspace(
+        &self,
+    ) -> Result<ProductRemainderWorkspacePrimerStats, MetalError> {
+        if !self.is_ready() {
+            return Err(MetalError::InvalidProductRemainderState(
+                "workspace priming requires a ready sequence",
+            ));
+        }
+        let state_a_identity = self.buffers.state_a.as_ptr() as usize;
+        let state_b_identity = self.buffers.state_b.as_ptr() as usize;
+        if state_a_identity == state_b_identity {
+            return Err(MetalError::InvalidProductRemainderState(
+                "workspace state buffers alias",
+            ));
+        }
+        let buffers = if self.state_a_borrowed {
+            [&self.buffers.state_b, &self.buffers.state_b][..1].to_vec()
+        } else {
+            [&self.buffers.state_a, &self.buffers.state_b].to_vec()
+        };
+        let bytes = buffers.iter().try_fold(0u64, |sum, buffer| {
+            sum.checked_add(buffer.length())
+                .ok_or(MetalError::InputTooLong(self.layout.state_a_fields()))
+        })?;
+        let started = Instant::now();
+        let command_buffer = self.context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_blit_command_encoder();
+            for buffer in &buffers {
+                encoder.fill_buffer(buffer, NSRange::new(0, buffer.length()), 0);
+            }
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let gpu_start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+        let gpu_end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
+        {
+            return Err(MetalError::InvalidGpuTimestamps {
+                start: gpu_start,
+                end: gpu_end,
+            });
+        }
+        Ok(ProductRemainderWorkspacePrimerStats {
+            bytes,
+            buffers: buffers.len(),
+            state_a_identity,
+            state_b_identity,
+            wall: started.elapsed(),
+            gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
         })
     }
 
@@ -949,9 +1282,9 @@ impl ProductRemainderSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<(ProductUniskipExtendedNodes<AkitaField>, Duration), MetalError> {
-        if !self.is_primed() {
+        if !self.is_ready() {
             return Err(MetalError::InvalidProductRemainderState(
-                "product uni-skip requires a primed resident sequence",
+                "product uni-skip requires a ready resident sequence",
             ));
         }
         let params = ProductUniskipBlockParams::new(self.layout.rows(), e_in.len(), e_out.len())?;
@@ -960,11 +1293,25 @@ impl ProductRemainderSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.uniskip_pipeline);
-            encoder.set_buffer(0, Some(self.buffers.rows.buffer()), 0);
-            encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
-            encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
-            encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
-            set_inline_bytes(encoder, 4, &params);
+            if let Some((compact, residual)) = self.buffers.rows.stage1_buffers() {
+                encoder.set_buffer(0, Some(compact), 0);
+                encoder.set_buffer(1, Some(residual), 0);
+                encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+                encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+                encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 5, &params);
+            } else {
+                let rows = self.buffers.rows.packed_buffer().ok_or(
+                    MetalError::InvalidProductRemainderState(
+                        "packed product uni-skip lost its row buffer",
+                    ),
+                )?;
+                encoder.set_buffer(0, Some(rows), 0);
+                encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+                encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+                encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 4, &params);
+            }
             encoder.set_threadgroup_memory_length(
                 0,
                 product_remainder_threadgroup_bytes(
@@ -1020,7 +1367,7 @@ impl ProductRemainderSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
-        if self.phase != ProductRemainderPhase::Raw {
+        if self.phase != ProductRemainderPhase::Ready {
             return Err(MetalError::InvalidProductRemainderState(
                 "the materialization message was already emitted",
             ));
@@ -1049,7 +1396,7 @@ impl ProductRemainderSequence {
         self.execute_materialize_message(e_in, e_out)
     }
 
-    /// Rebuilds the initial state in the existing buffers.
+    /// Materializes the initial protocol state in the existing buffers.
     #[doc(hidden)]
     pub fn restart_message_timed(
         &mut self,
@@ -1057,18 +1404,18 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
         let command = self.submit_materialize_message_command(e_in, e_out)?;
-        let (message, stats) = self.complete_restart_message(command)?;
+        let (message, stats) = self.complete_initial_message(command)?;
         Ok((message, stats.gpu_active))
     }
 
-    pub(crate) fn submit_restart_message(
+    pub(crate) fn submit_initial_message(
         self,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<PendingProductRemainderInitialMessage, MetalError> {
-        if !self.is_primed() {
+        if !self.is_ready() {
             return Err(MetalError::InvalidProductRemainderState(
-                "product-remainder prefetch requires a primed sequence",
+                "product-remainder prefetch requires a ready sequence",
             ));
         }
         let command = self.submit_materialize_message_command(e_in, e_out)?;
@@ -1078,7 +1425,7 @@ impl ProductRemainderSequence {
         })
     }
 
-    fn complete_restart_message(
+    fn complete_initial_message(
         &mut self,
         command: ProductRemainderInitialMessageCommand,
     ) -> Result<
@@ -1180,13 +1527,29 @@ impl ProductRemainderSequence {
             let command_buffer = self.context.queue.new_command_buffer().to_owned();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.materialize_pipeline);
-            encoder.set_buffer(0, Some(self.buffers.rows.buffer()), 0);
-            encoder.set_buffer(1, Some(&self.buffers.lagrange), 0);
-            encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
-            encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
-            encoder.set_buffer(4, Some(&self.buffers.state_a), 0);
-            encoder.set_buffer(5, Some(&self.buffers.partial_a), 0);
-            set_inline_bytes(encoder, 6, &params);
+            if let Some((compact, residual)) = self.buffers.rows.stage1_buffers() {
+                encoder.set_buffer(0, Some(compact), 0);
+                encoder.set_buffer(1, Some(residual), 0);
+                encoder.set_buffer(2, Some(&self.buffers.lagrange), 0);
+                encoder.set_buffer(3, Some(&self.buffers.e_in), 0);
+                encoder.set_buffer(4, Some(&self.buffers.e_out), 0);
+                encoder.set_buffer(5, Some(&self.buffers.state_a), 0);
+                encoder.set_buffer(6, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 7, &params);
+            } else {
+                let rows = self.buffers.rows.packed_buffer().ok_or(
+                    MetalError::InvalidProductRemainderState(
+                        "packed product materialization lost its row buffer",
+                    ),
+                )?;
+                encoder.set_buffer(0, Some(rows), 0);
+                encoder.set_buffer(1, Some(&self.buffers.lagrange), 0);
+                encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+                encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+                encoder.set_buffer(4, Some(&self.buffers.state_a), 0);
+                encoder.set_buffer(5, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 6, &params);
+            }
             encoder.set_threadgroup_memory_length(
                 0,
                 product_remainder_threadgroup_bytes(
@@ -1279,12 +1642,14 @@ impl ProductRemainderSequence {
         let challenge = Fp128::from_jolt_field(&challenge);
         self.context
             .validate_inputs("product remainder challenge", &[challenge])?;
+        let source = self.source_buffer();
+        let destination = self.destination_buffer();
         autoreleasepool(|| {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.transition_pipeline);
-            encoder.set_buffer(0, Some(self.source_buffer()), 0);
-            encoder.set_buffer(1, Some(self.destination_buffer()), 0);
+            encoder.set_buffer(0, Some(source), 0);
+            encoder.set_buffer(1, Some(destination), 0);
             encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
             encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
             encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
@@ -1385,11 +1750,25 @@ impl ProductRemainderSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.openings_pipeline);
-            encoder.set_buffer(0, Some(self.buffers.rows.buffer()), 0);
-            encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
-            encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
-            encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
-            set_inline_bytes(encoder, 4, &params);
+            if let Some((compact, residual)) = self.buffers.rows.stage1_buffers() {
+                encoder.set_buffer(0, Some(compact), 0);
+                encoder.set_buffer(1, Some(residual), 0);
+                encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+                encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+                encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 5, &params);
+            } else {
+                let rows = self.buffers.rows.packed_buffer().ok_or(
+                    MetalError::InvalidProductRemainderState(
+                        "packed product openings lost its row buffer",
+                    ),
+                )?;
+                encoder.set_buffer(0, Some(rows), 0);
+                encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+                encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+                encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 4, &params);
+            }
             encoder.set_threadgroup_memory_length(
                 0,
                 product_remainder_threadgroup_bytes(
@@ -1432,8 +1811,8 @@ impl ProductRemainderSequence {
         self.layout
     }
 
-    pub const fn resident_buffer_count(&self) -> usize {
-        8
+    pub fn resident_buffer_count(&self) -> usize {
+        self.buffers.rows.allocation_identities().len() + 7
     }
 
     pub fn row_allocation_identity(&self) -> usize {
@@ -1444,8 +1823,8 @@ impl ProductRemainderSequence {
         self.context.device_registry_id()
     }
 
-    pub(crate) fn is_primed(&self) -> bool {
-        self.phase == ProductRemainderPhase::Primed
+    pub(crate) fn is_ready(&self) -> bool {
+        self.phase == ProductRemainderPhase::Ready
             && self.current_elements == self.layout.rows()
             && self.source_in_a
     }
@@ -1485,13 +1864,11 @@ impl ProductRemainderSequence {
                 "the product state is not materialized",
             ));
         }
+        let state = self.source_buffer();
         let values = unsafe {
             // SAFETY: the active buffer stores two `current_elements` tables
             // and all preceding commands have completed.
-            slice::from_raw_parts(
-                self.source_buffer().contents().cast::<Fp128>(),
-                2 * self.current_elements,
-            )
+            slice::from_raw_parts(state.contents().cast::<Fp128>(), 2 * self.current_elements)
         };
         self.context
             .validate_inputs("product remainder resident state", values)?;
@@ -1536,12 +1913,6 @@ impl ProductRemainderSequence {
 
 fn product_remainder_threadgroup_bytes(columns: usize, threads: usize) -> usize {
     columns * (threads / PRODUCT_REMAINDER_SIMD_WIDTH) * size_of::<Fp128>()
-}
-
-fn balanced_weight_shape(elements: usize) -> (usize, usize) {
-    debug_assert!(elements.is_power_of_two());
-    let e_in = 1usize << (elements.ilog2() as usize / 2);
-    (e_in, elements / e_in)
 }
 
 fn dispatch_product_remainder_blocks(
@@ -1838,9 +2209,14 @@ pub mod reference {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests use a fixed valid storage shape")]
+#[expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "tests use a fixed valid storage shape"
+)]
 mod tests {
     use super::super::product_uniskip::evaluate_product_uniskip_extensions_cpu;
+    use super::super::SpartanOuterUniskipRow;
     use super::*;
 
     #[test]
@@ -1871,7 +2247,7 @@ mod tests {
     }
 
     #[test]
-    fn primed_sequence_reuses_resident_rows_for_product_uniskip() {
+    fn ready_sequence_reuses_resident_rows_for_product_uniskip() {
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
         let row_count = 1usize << 10;
         let rows = (0..row_count)
@@ -1906,21 +2282,19 @@ mod tests {
             )
             .expect("resident product sequence should prepare");
         let row_storage_id = sequence.row_allocation_identity();
-        let _ = sequence
-            .prime()
-            .expect("resident product sequence should prime");
+        assert!(sequence.is_ready());
 
         let (actual, _) = sequence
             .uniskip_message_timed(&e_in, &e_out)
             .expect("resident product uni-skip should execute");
         assert_eq!(actual, expected);
-        assert!(sequence.is_primed());
+        assert!(sequence.is_ready());
         assert_eq!(sequence.row_allocation_identity(), row_storage_id);
         assert_eq!(sequence.round_device_buffer_allocations(), 0);
     }
 
     #[test]
-    fn submitted_restart_matches_the_independent_materialization_oracle() {
+    fn submitted_initial_message_matches_the_independent_materialization_oracle() {
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
         let row_count = 1usize << 10;
         let rows = (0..row_count)
@@ -1950,7 +2324,7 @@ mod tests {
         ];
         let expected = reference::materialize_message(&rows, lagrange, &e_in, &e_out)
             .expect("the independent materialization should be well-shaped");
-        let mut sequence = context
+        let sequence = context
             .prepare_product_remainder_sequence(
                 &rows,
                 lagrange,
@@ -1959,12 +2333,9 @@ mod tests {
                 ProductRemainderSequenceConfig::default(),
             )
             .expect("resident product sequence should prepare");
-        let _ = sequence
-            .prime()
-            .expect("resident product sequence should prime");
 
         let pending = sequence
-            .submit_restart_message(&e_in, &e_out)
+            .submit_initial_message(&e_in, &e_out)
             .expect("the materialization should submit");
         let (sequence, actual, stats) = pending.join().expect("the materialization should join");
         let (left, right) = sequence
@@ -1978,6 +2349,113 @@ mod tests {
         assert!(stats.gpu_active > Duration::ZERO);
         assert_eq!(sequence.current_elements(), row_count);
         assert_eq!(sequence.round_device_buffer_allocations(), 0);
+    }
+
+    #[test]
+    fn stage1_source_matches_packed_product_rows() {
+        let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
+        let row_count = 1usize << 8;
+        let packed = (0..row_count)
+            .map(|index| {
+                ProductRemainderRow::new(
+                    (17 * index + 3) as u64,
+                    index as i128 - 129,
+                    index % 3 == 0,
+                    index % 5 == 0,
+                    (29 * index + 11) as u64,
+                    index % 7 == 0,
+                    index % 11 == 0,
+                    index % 13 == 0,
+                )
+            })
+            .collect::<Vec<_>>();
+        let stage1 = packed
+            .iter()
+            .map(|row| {
+                let mut words = [0u64; 20];
+                let right = row.right_instruction_input().unsigned_abs();
+                words[0] = row.left_instruction_input();
+                words[1] = right as u64;
+                words[2] = (right >> 64) as u64;
+                words[18] = row.lookup_output();
+                words[19] = u64::from(row.jump()) << 5
+                    | u64::from(row.virtual_instruction()) << 9
+                    | u64::from(row.write_lookup_output_to_rd()) << 14
+                    | u64::from(row.right_instruction_input() >= 0) << 17
+                    | u64::from(row.branch()) << 25
+                    | u64::from(row.next_is_noop()) << 26;
+                SpartanOuterUniskipRow::from_words(words)
+            })
+            .collect::<Vec<_>>();
+        let stage1 = context
+            .prepare_spartan_outer_uniskip_rows(&stage1)
+            .expect("Stage-1 rows should prepare");
+        let resident = stage1
+            .share_product_remainder_rows()
+            .expect("Stage-1 rows should expose a product view");
+        assert!(resident.source_generation().is_some());
+        assert_eq!(
+            resident.source_kind(),
+            ProductRemainderSourceKind::SpartanStage1
+        );
+
+        let lagrange = [
+            AkitaField::from_u64(5),
+            AkitaField::from_u64(7),
+            AkitaField::from_u64(11),
+        ];
+        let e_in = (0..16)
+            .map(|index| AkitaField::from_u64((37 * index + 19) as u64))
+            .collect::<Vec<_>>();
+        let e_out = (0..16)
+            .map(|index| AkitaField::from_u64((43 * index + 23) as u64))
+            .collect::<Vec<_>>();
+        let materialize_e_out = &e_out[..e_out.len() / 2];
+        let mut expected = context
+            .prepare_product_remainder_sequence(
+                &packed,
+                lagrange,
+                e_in.len(),
+                e_out.len(),
+                ProductRemainderSequenceConfig::default(),
+            )
+            .expect("packed product sequence should prepare");
+        let mut actual = context
+            .prepare_product_remainder_sequence_with_rows(
+                resident,
+                lagrange,
+                e_in.len(),
+                e_out.len(),
+                ProductRemainderSequenceConfig::default(),
+            )
+            .expect("Stage-1 product sequence should prepare");
+
+        assert!(expected.is_ready());
+        assert!(actual.is_ready());
+        assert_eq!(
+            actual.uniskip_message_timed(&e_in, &e_out).unwrap().0,
+            expected.uniskip_message_timed(&e_in, &e_out).unwrap().0
+        );
+        assert_eq!(
+            actual
+                .restart_message_timed(&e_in, materialize_e_out)
+                .unwrap()
+                .0,
+            expected
+                .restart_message_timed(&e_in, materialize_e_out)
+                .unwrap()
+                .0
+        );
+        assert_eq!(
+            actual
+                .openings_after_cpu_tail_timed(&e_in, &e_out)
+                .unwrap()
+                .0,
+            expected
+                .openings_after_cpu_tail_timed(&e_in, &e_out)
+                .unwrap()
+                .0
+        );
     }
 
     #[test]

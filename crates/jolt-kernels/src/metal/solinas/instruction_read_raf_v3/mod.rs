@@ -1,7 +1,7 @@
-//! First-principles foundation for a resident InstructionReadRaf Metal owner.
+//! Resident address phase for the InstructionReadRAF Metal implementation.
 //!
-//! This module is intentionally not wired into the backend.  It fixes four
-//! things before a shader is admitted:
+//! The production runtime uses this module for the address phase. The model
+//! and independent oracle keep the shader boundary explicit:
 //!
 //! - [`oracle`] states the relation and every round equation independently of
 //!   the optimized CPU prefix/suffix implementation;
@@ -51,7 +51,7 @@
 #![expect(
     dead_code,
     unused_imports,
-    reason = "the v3 foundation remains hidden until a runtime owner is wired"
+    reason = "the production runtime shares its model and oracle with test fixtures"
 )]
 
 mod abi;

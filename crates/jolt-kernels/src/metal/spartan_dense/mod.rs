@@ -422,6 +422,10 @@ impl SpartanDenseResidentOwner {
         self.register_contract
     }
 
+    pub(super) fn shift_rows(&self) -> Option<&SpartanShiftResidentRows> {
+        self.shift_rows.as_ref()
+    }
+
     pub(super) fn take_shift_lease(&mut self) -> Option<SpartanDenseShiftLease> {
         self.shift_rows.take().map(|rows| SpartanDenseShiftLease {
             rows,

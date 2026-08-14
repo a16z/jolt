@@ -106,6 +106,9 @@ struct ChunkTopologyBuilder {
     expected_rows: usize,
     rows: usize,
     first_address: Option<usize>,
+}
+
+pub(crate) struct BytecodeAddressStage1TopologyScratch {
     counts: Vec<u16>,
     touched: Vec<u16>,
     pivots: Vec<(u16, u16)>,
@@ -478,20 +481,45 @@ impl BytecodeAddressStage1TopologyStorage {
 }
 
 impl BytecodeAddressStage1TopologyChunkWriter<'_> {
-    pub(crate) fn record(&mut self, address: usize) -> Result<u8, MetalError> {
+    pub(crate) fn record(
+        &mut self,
+        scratch: &mut BytecodeAddressStage1TopologyScratch,
+        address: usize,
+    ) -> Result<u8, MetalError> {
         self.builder
             .as_mut()
             .ok_or_else(|| invalid("bytecode Stage-1 topology chunk is already finished"))?
-            .record(address)
+            .record(scratch, address)
     }
 
-    pub(crate) fn finish(&mut self) -> Result<(), MetalError> {
+    pub(crate) fn finish(
+        &mut self,
+        scratch: &mut BytecodeAddressStage1TopologyScratch,
+    ) -> Result<(), MetalError> {
         let builder = self
             .builder
             .take()
             .ok_or_else(|| invalid("bytecode Stage-1 topology chunk was finished twice"))?;
-        *self.output = Some(builder.finish()?);
+        *self.output = Some(builder.finish(scratch)?);
         Ok(())
+    }
+}
+
+impl BytecodeAddressStage1TopologyScratch {
+    pub(crate) const fn new() -> Self {
+        Self {
+            counts: Vec::new(),
+            touched: Vec::new(),
+            pivots: Vec::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        for &address in &self.touched {
+            self.counts[usize::from(address)] = 0;
+        }
+        self.touched.clear();
+        self.pivots.clear();
     }
 }
 
@@ -502,29 +530,30 @@ impl ChunkTopologyBuilder {
             expected_rows,
             rows: 0,
             first_address: None,
-            counts: Vec::new(),
-            touched: Vec::new(),
-            pivots: Vec::new(),
         }
     }
 
-    fn record(&mut self, address: usize) -> Result<u8, MetalError> {
+    fn record(
+        &mut self,
+        scratch: &mut BytecodeAddressStage1TopologyScratch,
+        address: usize,
+    ) -> Result<u8, MetalError> {
         if self.rows == self.expected_rows || address >= ADDRESS_COUNT {
             return Err(invalid(
                 "bytecode Stage-1 topology chunk row is out of range",
             ));
         }
-        if self.counts.is_empty() {
-            self.counts.resize(ADDRESS_COUNT, 0);
+        if scratch.counts.is_empty() {
+            scratch.counts.resize(ADDRESS_COUNT, 0);
         }
         let address_u16 = address as u16;
-        let count = &mut self.counts[address];
+        let count = &mut scratch.counts[address];
         if *count == 0 {
-            self.touched.push(address_u16);
+            scratch.touched.push(address_u16);
         }
         let rank = *count;
         if rank != 0 && usize::from(rank).is_multiple_of(RANK_RADIX) {
-            self.pivots.push((address_u16, self.rows as u16));
+            scratch.pivots.push((address_u16, self.rows as u16));
         }
         *count = count
             .checked_add(1)
@@ -536,7 +565,19 @@ impl ChunkTopologyBuilder {
         Ok(rank as u8)
     }
 
-    fn finish(mut self) -> Result<ChunkTopology, MetalError> {
+    fn finish(
+        self,
+        scratch: &mut BytecodeAddressStage1TopologyScratch,
+    ) -> Result<ChunkTopology, MetalError> {
+        let result = self.finish_inner(scratch);
+        scratch.reset();
+        result
+    }
+
+    fn finish_inner(
+        self,
+        scratch: &mut BytecodeAddressStage1TopologyScratch,
+    ) -> Result<ChunkTopology, MetalError> {
         if self.rows != self.expected_rows {
             return Err(invalid(
                 "bytecode Stage-1 topology chunk does not cover its physical rows",
@@ -551,21 +592,21 @@ impl ChunkTopologyBuilder {
                 pivots: Vec::new(),
             });
         }
-        self.touched.sort_unstable();
-        self.pivots.sort_unstable();
+        scratch.touched.sort_unstable();
+        scratch.pivots.sort_unstable();
         let mut pivot_index = 0;
-        let mut entries = Vec::with_capacity(self.touched.len());
-        let mut compact_pivots = Vec::with_capacity(self.pivots.len());
-        for &address in &self.touched {
-            let count = self.counts[usize::from(address)];
+        let mut entries = Vec::with_capacity(scratch.touched.len());
+        let mut compact_pivots = Vec::with_capacity(scratch.pivots.len());
+        for &address in &scratch.touched {
+            let count = scratch.counts[usize::from(address)];
             let pivot_start = u32::try_from(compact_pivots.len())
                 .map_err(|_| invalid("bytecode Stage-1 pivot count exceeds u32"))?;
-            while self
+            while scratch
                 .pivots
                 .get(pivot_index)
                 .is_some_and(|pivot| pivot.0 == address)
             {
-                compact_pivots.push(self.pivots[pivot_index].1);
+                compact_pivots.push(scratch.pivots[pivot_index].1);
                 pivot_index += 1;
             }
             if compact_pivots.len() - pivot_start as usize != (usize::from(count) - 1) / RANK_RADIX
@@ -579,7 +620,7 @@ impl ChunkTopologyBuilder {
                 pivot_start,
             });
         }
-        if pivot_index != self.pivots.len() {
+        if pivot_index != scratch.pivots.len() {
             return Err(invalid("bytecode Stage-1 chunk pivot address changed"));
         }
         Ok(ChunkTopology {
@@ -1190,6 +1231,7 @@ mod tests {
         let padded_chunks = padded_rows / INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
         let mut chunks = Vec::with_capacity(padded_chunks);
         let mut ranks = Vec::with_capacity(physical_rows);
+        let mut scratch = BytecodeAddressStage1TopologyScratch::new();
         for chunk in 0..padded_chunks {
             let start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
             let rows = physical_rows
@@ -1197,9 +1239,13 @@ mod tests {
                 .min(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS);
             let mut builder = ChunkTopologyBuilder::new(chunk, rows);
             for row in 0..rows {
-                ranks.push(builder.record(address_at(start + row)).unwrap());
+                ranks.push(
+                    builder
+                        .record(&mut scratch, address_at(start + row))
+                        .unwrap(),
+                );
             }
-            chunks.push(Some(builder.finish().unwrap()));
+            chunks.push(Some(builder.finish(&mut scratch).unwrap()));
         }
         (
             merge_chunk_topologies(shape, physical_rows, &mut chunks).unwrap(),
@@ -1311,19 +1357,32 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_cap_plus_one_reports_the_admission_clause() {
-        let (data, _) = build_data(1 << 15, 4096, |row| row % 513);
-        assert_eq!(data.max_descriptors_per_chunk, 513);
-        assert_eq!(data.max_pivots_per_chunk, 0);
+    fn log27_census_descriptor_shape_passes_scatter_admission() {
+        const HOT_ROWS: usize = 3_243;
+        const TAIL_ADDRESSES: usize = 853;
+        let (data, _) = build_data(1 << 15, 4096, |row| {
+            if row < HOT_ROWS {
+                0
+            } else {
+                1 + (row - HOT_ROWS) % TAIL_ADDRESSES
+            }
+        });
 
-        let error = validate_bytecode_topology_admission(
+        assert_eq!(data.max_descriptors_per_chunk, 854);
+        assert_eq!(data.max_pivots_per_chunk, 12);
+        validate_bytecode_topology_admission(
             data.max_descriptors_per_chunk,
             data.max_pivots_per_chunk,
         )
-        .unwrap_err();
+        .unwrap();
+    }
+
+    #[test]
+    fn structural_descriptor_cap_plus_one_reports_the_admission_clause() {
+        let error = validate_bytecode_topology_admission(4097, 0).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "invalid grouped InstructionReadRaf state: fused bytecode topology admission failed: clause=max_descriptors_per_chunk observed=513 allowed=1..=512"
+            "invalid grouped InstructionReadRaf state: fused bytecode topology admission failed: clause=max_descriptors_per_chunk observed=4097 allowed=1..=4096"
         );
     }
 
@@ -1421,9 +1480,10 @@ mod tests {
     #[test]
     fn chunk_builder_rejects_bad_shape_and_incomplete_fill() {
         let mut builder = ChunkTopologyBuilder::new(0, 2);
-        assert!(builder.record(ADDRESS_COUNT).is_err());
-        assert_eq!(builder.record(0).unwrap(), 0);
-        assert!(builder.finish().is_err());
+        let mut scratch = BytecodeAddressStage1TopologyScratch::new();
+        assert!(builder.record(&mut scratch, ADDRESS_COUNT).is_err());
+        assert_eq!(builder.record(&mut scratch, 0).unwrap(), 0);
+        assert!(builder.finish(&mut scratch).is_err());
     }
 
     #[test]

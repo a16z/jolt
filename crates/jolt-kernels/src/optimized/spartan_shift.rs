@@ -692,9 +692,10 @@ mod tests {
     use jolt_verifier::stages::stage3::spartan_shift::{
         SpartanShift, SpartanShiftChallenges, SpartanShiftInputClaims,
     };
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    use jolt_witness::RowSource;
     use jolt_witness::{
-        JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, JoltWitnessPlane, RowSource,
-        TraceBackend,
+        JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, JoltWitnessPlane, TraceBackend,
     };
 
     use super::super::registers_read_write::test_support::{

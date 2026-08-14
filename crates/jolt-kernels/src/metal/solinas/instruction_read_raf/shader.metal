@@ -17,13 +17,37 @@ constant uint BYTECODE_ADDRESS_COUNT = 1u << 13u;
 constant uint BYTECODE_ADDRESS_DESCRIPTOR_PIVOT_START_MASK = 0x000fffffu;
 constant ulong BYTECODE_ADDRESS_PC_MASK = (1ul << 56u) - 1ul;
 
-struct InstructionReadRafSourceRow {
-    ulong lookup_lo;
-    ulong lookup_hi;
-    ulong ram_address_plus_one;
-    ulong fused_inc_magnitude;
-    ulong packed_pc_and_flags;
+struct InstructionReadRafSourcePrimerParams {
+    ulong word_counts[2];
+    uint page_words;
+    uint total_threads;
 };
+
+kernel void solinas_instruction_read_raf_source_primer(
+    device const uint* rows [[buffer(0)]],
+    device const uint* claims [[buffer(1)]],
+    device uint* checksums [[buffer(2)]],
+    constant InstructionReadRafSourcePrimerParams& params [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= params.total_threads) {
+        return;
+    }
+    const ulong row_pages = (params.word_counts[0] + params.page_words - 1u)
+        / params.page_words;
+    const ulong claim_pages = (params.word_counts[1] + params.page_words - 1u)
+        / params.page_words;
+    const ulong total_pages = row_pages + claim_pages;
+    uint checksum = 0x9e3779b9u ^ gid;
+    for (ulong page = gid; page < total_pages; page += params.total_threads) {
+        const uint value = page < row_pages
+            ? rows[page * params.page_words]
+            : claims[(page - row_pages) * params.page_words];
+        checksum ^= value ^ (uint)page;
+        checksum = ((checksum << 5u) | (checksum >> 27u)) * 0x85ebca6bu;
+    }
+    checksums[gid] = checksum;
+}
 
 struct InstructionReadRafLookup {
     ulong lo;
@@ -75,7 +99,7 @@ struct InstructionReadRafScatterParams {
 };
 
 kernel void solinas_instruction_read_raf_compatibility_scatter(
-    device const InstructionReadRafSourceRow* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const uchar* claims [[buffer(1)]],
     device const uint* chunk_segment_bases [[buffer(2)]],
     device const uint* segment_offsets [[buffer(3)]],
@@ -233,7 +257,7 @@ kernel void solinas_instruction_read_raf_compatibility_scatter(
             continue;
         }
 
-        InstructionReadRafSourceRow row = rows[cycle];
+        BooleanityRow row = booleanity_row_load(rows, params.rows, cycle);
         InstructionReadRafLookup lookup;
         lookup.lo = row.lookup_lo;
         lookup.hi = row.lookup_hi;

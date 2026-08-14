@@ -278,7 +278,7 @@ inline ulong booleanity_address_successor_partial_index(
 }
 
 kernel void solinas_booleanity_address_successor_pack_and_first(
-    device const BooleanityRow* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const SolinasFp128* e_in [[buffer(1)]],
     device const SolinasFp128* e_out [[buffer(2)]],
     device uchar* hot_rows [[buffer(3)]],
@@ -300,7 +300,7 @@ kernel void solinas_booleanity_address_successor_pack_and_first(
     uint row_base = x_out * params.e_in_length;
     for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
         uint row_index = row_base + x_in;
-        BooleanityRow row = rows[row_index];
+        BooleanityRow row = booleanity_row_load(rows, params.rows, row_index);
         SolinasFp128 weight = e_in[x_in];
         for (uint local = 0u;
              local < BOOLEANITY_ADDRESS_SUCCESSOR_FIRST_SELECTORS;

@@ -647,7 +647,43 @@ pub(crate) fn prepare_optimized_booleanity_cycle<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     inputs: ProverInputs<'_, F, Booleanity<F>>,
 ) -> Result<OptimizedBooleanityCycleKernel<F>, KernelError<F>> {
-    let relation = inputs.relation;
+    let dimensions = inputs.relation.dimensions();
+    let columns = column_selectors(witness, dimensions)?;
+    let cycles = 1usize << dimensions.log_t;
+    let rows = shared_instruction_rows(session, witness, cycles)?;
+    build_booleanity_cycle_kernel(
+        inputs.relation,
+        inputs.challenges.gamma,
+        columns,
+        rows,
+        cycles,
+    )
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_booleanity_cycle(
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    inputs: ProverInputs<'_, AkitaField, Booleanity<AkitaField>>,
+) -> Result<OptimizedBooleanityCycleKernel<AkitaField>, KernelError<AkitaField>> {
+    let dimensions = inputs.relation.dimensions();
+    let columns = column_selectors(witness, dimensions)?;
+    let cycles = 1usize << dimensions.log_t;
+    build_booleanity_cycle_kernel(
+        inputs.relation,
+        inputs.challenges.gamma,
+        columns,
+        Arc::new(Vec::new()),
+        cycles,
+    )
+}
+
+fn build_booleanity_cycle_kernel<F: Field>(
+    relation: &Booleanity<F>,
+    gamma: F,
+    columns: BooleanityColumns,
+    rows: Arc<Vec<InstructionCycleRow>>,
+    cycles: usize,
+) -> Result<OptimizedBooleanityCycleKernel<F>, KernelError<F>> {
     let dimensions = relation.dimensions();
     let r_address = relation.r_address();
     let reference_address = relation.reference_address();
@@ -657,16 +693,18 @@ pub(crate) fn prepare_optimized_booleanity_cycle<F: Field>(
             reason: "booleanity cycle-phase point lengths disagree with the dimensions",
         });
     }
-    let columns = column_selectors(witness, dimensions)?;
-    let rows = shared_instruction_rows(session, witness, 1usize << dimensions.log_t)?;
+    if cycles != 1usize << dimensions.log_t || (!rows.is_empty() && rows.len() != cycles) {
+        return Err(KernelError::InvariantViolation {
+            reason: "booleanity cycle source length disagrees with the dimensions",
+        });
+    }
 
     let address_scalar =
         try_eq_mle(r_address, reference_address).map_err(|_| KernelError::InvariantViolation {
             reason: "booleanity address point and reference length mismatch",
         })?;
     let eq_address = eq_table(r_address);
-    let (gamma_powers, gamma_powers_inv) =
-        gamma_power_pairs(inputs.challenges.gamma, columns.selectors.len())?;
+    let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(gamma, columns.selectors.len())?;
     let tables: Vec<Vec<F>> = gamma_powers
         .iter()
         .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
@@ -683,6 +721,7 @@ pub(crate) fn prepare_optimized_booleanity_cycle<F: Field>(
             tables,
             BooleanityChunks {
                 rows,
+                cycles,
                 selectors: columns.selectors,
             },
         ),
@@ -719,6 +758,7 @@ fn gamma_power_pairs<F: Field>(gamma: F, count: usize) -> Result<(Vec<F>, Vec<F>
 /// chunk at cycle `j`, through the layout's selectors.
 struct BooleanityChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
+    cycles: usize,
     selectors: Vec<ColumnSelector>,
 }
 
@@ -728,11 +768,12 @@ impl ChunkIndexSource for BooleanityChunks {
     }
 
     fn cycles(&self) -> usize {
-        self.rows.len()
+        self.cycles
     }
 
     #[inline]
     fn index(&self, i: usize, j: usize) -> Option<usize> {
+        debug_assert_eq!(self.rows.len(), self.cycles);
         self.selectors[i].index(&self.rows[j])
     }
 
@@ -805,6 +846,11 @@ impl OptimizedBooleanityCycleKernel<AkitaField> {
                 "resident row preparation requires the initial unbound state",
             ));
         }
+        if source.rows.len() != source.cycles {
+            return Err(booleanity_metal_state_error(
+                "resident-only Booleanity state has no CPU row source",
+            ));
+        }
         Ok(&source.rows)
     }
 
@@ -829,7 +875,7 @@ impl OptimizedBooleanityCycleKernel<AkitaField> {
                 "Booleanity offload requires the initial unbound state",
             ));
         }
-        if resident_rows.len() != source.rows.len() {
+        if resident_rows.len() != source.cycles {
             return Err(booleanity_metal_state_error(
                 "resident Booleanity row count disagrees with the CPU source",
             ));

@@ -28,5 +28,9 @@ pub(crate) use registers_claim::{OuterRegistersClaimCarrier, OuterRegistersClaim
 #[cfg(feature = "test-utils")]
 pub use sealed::SealedOuterArtifact;
 pub use sequence::OuterRemainderSequence;
+pub(crate) use sequence::{
+    OuterRegistersClaimCarrierJoinStats, OuterRegistersClaimCarrierSubmission,
+    PendingOuterRegistersClaimCarrier,
+};
 pub(super) use shader::{PADDED_56_SOURCE, SOURCE};
 pub(crate) use storage::OuterRemainderSequenceStorage;

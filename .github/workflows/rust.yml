@@ -122,6 +122,32 @@ jobs:
           --
           -D warnings
 
+  akita-metal:
+    name: Akita Metal
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: akita-metal
+      - uses: taiki-e/install-action@nextest
+      - name: Lint Metal kernels and benchmark integration
+        run: |
+          cargo clippy -p jolt-kernels --features metal,test-utils --all-targets
+          cargo clippy -p jolt-prover --example modular_benchmark --features prover-fixtures,akita,metal
+      - name: Run platform-independent Metal contract tests
+        run: >
+          cargo nextest run -p jolt-kernels --features metal,test-utils --cargo-quiet
+          -E 'test(metal::backend::tests::production_profile_selects_only_retained_routes)
+          | test(metal::solinas::source::tests::production_manifest_matches_source_assembly)
+          | test(metal::solinas::source::tests::production_source_excludes_diagnostic_and_rejected_kernels)
+          | test(/metal::solinas::bytecode_read_raf_address::stage1_topology::tests/)
+          | test(/metal::solinas::ram_cycle_family::tests/)'
+
   machete:
     runs-on: ubuntu-latest
     steps:

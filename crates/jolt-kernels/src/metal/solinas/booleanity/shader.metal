@@ -34,32 +34,33 @@ inline ulong booleanity_broadcast_ulong(ulong value, ushort source_lane)
     return ((ulong)hi << 32) | (ulong)lo;
 }
 
-inline BooleanityRow booleanity_load_row(
-    device const BooleanityRow* rows,
+inline BooleanityRow booleanity_load_row_simd(
+    device const ulong* rows,
+    uint row_count,
     uint row,
     uint lane)
 {
     BooleanityRow value;
     value.lookup_lo = booleanity_broadcast_ulong(
-        lane == 0 ? rows[row].lookup_lo : 0ul,
+        lane == 0 ? booleanity_row_word(rows, row_count, 0u, row) : 0ul,
         0);
     value.lookup_hi = booleanity_broadcast_ulong(
-        lane == 1 ? rows[row].lookup_hi : 0ul,
+        lane == 1 ? booleanity_row_word(rows, row_count, 1u, row) : 0ul,
         1);
     value.ram_address_plus_one = booleanity_broadcast_ulong(
-        lane == 2 ? rows[row].ram_address_plus_one : 0ul,
+        lane == 2 ? booleanity_row_word(rows, row_count, 2u, row) : 0ul,
         2);
     value.fused_inc_magnitude = booleanity_broadcast_ulong(
-        lane == 3 ? rows[row].fused_inc_magnitude : 0ul,
+        lane == 3 ? booleanity_row_word(rows, row_count, 3u, row) : 0ul,
         3);
     value.packed_pc_and_flags = booleanity_broadcast_ulong(
-        lane == 4 ? rows[row].packed_pc_and_flags : 0ul,
+        lane == 4 ? booleanity_row_word(rows, row_count, 4u, row) : 0ul,
         4);
     return value;
 }
 
 inline void booleanity_lazy_pair(
-    device const BooleanityRow* rows,
+    device const ulong* rows,
     device const BooleanitySelector* selectors,
     device const SolinasFp128* branches,
     device const SolinasFp128* rho,
@@ -75,8 +76,10 @@ inline void booleanity_lazy_pair(
     for (uint poly = lane; poly < params.polys; poly += 32u) {
         if (params.branch_width == 1u && params.materialize == 0u) {
             BooleanitySelector selector = selectors[poly];
-            BooleanityRow row_0 = booleanity_load_row(rows, 2u * pair, lane);
-            BooleanityRow row_1 = booleanity_load_row(rows, 2u * pair + 1u, lane);
+            BooleanityRow row_0 = booleanity_load_row_simd(
+                rows, params.rows, 2u * pair, lane);
+            BooleanityRow row_1 = booleanity_load_row_simd(
+                rows, params.rows, 2u * pair + 1u, lane);
             uint first = params.k;
             uint second = params.k;
             booleanity_hot_index(
@@ -97,9 +100,11 @@ inline void booleanity_lazy_pair(
         BooleanitySelector selector = selectors[poly];
         uint original = 2u * pair * params.branch_width;
         for (uint offset = 0; offset < params.branch_width; offset++) {
-            BooleanityRow row_0 = booleanity_load_row(rows, original + offset, lane);
-            BooleanityRow row_1 = booleanity_load_row(
+            BooleanityRow row_0 = booleanity_load_row_simd(
+                rows, params.rows, original + offset, lane);
+            BooleanityRow row_1 = booleanity_load_row_simd(
                 rows,
+                params.rows,
                 original + params.branch_width + offset,
                 lane);
             uint hot;
@@ -161,7 +166,7 @@ inline void booleanity_finish_block(
 }
 
 kernel void solinas_booleanity_lazy_message(
-    device const BooleanityRow* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const BooleanitySelector* selectors [[buffer(1)]],
     device const SolinasFp128* branches [[buffer(2)]],
     device const SolinasFp128* rho [[buffer(3)]],

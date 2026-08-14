@@ -3602,7 +3602,6 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "common",
- "criterion",
  "jolt-claims",
  "jolt-dory",
  "jolt-field",
@@ -3627,7 +3626,6 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.18",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

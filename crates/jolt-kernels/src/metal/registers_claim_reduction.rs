@@ -4,6 +4,8 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
+    thread::JoinHandle,
+    time::{Duration, Instant},
 };
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersClaimReductionPublic};
@@ -27,7 +29,11 @@ use super::solinas::registers_claim_reduction::{
     RegistersClaimKernelConfig, RegistersClaimPartialQHandoff, RegistersClaimResidentPlanes,
     RegistersClaimResidentRdPlane,
 };
-use super::solinas::{OuterRegistersClaimCarrier, OuterRegistersClaimCarrierReceipt, SolinasMetal};
+use super::solinas::{
+    OuterRegistersClaimCarrier, OuterRegistersClaimCarrierJoinStats,
+    OuterRegistersClaimCarrierReceipt, OuterRegistersClaimCarrierSubmission,
+    PendingOuterRegistersClaimCarrier, SolinasMetal,
+};
 use crate::optimized::registers_claim_reduction::{
     OptimizedRegistersClaimReduction, RegisterValuesRow,
 };
@@ -63,13 +69,170 @@ pub(super) struct MetalRegistersClaimOuterSource<'a> {
     pub(super) compact_storage_id: usize,
     pub(super) residual_storage_id: usize,
     pub(super) device_registry_id: u64,
-    pub(super) openings: &'a [AkitaField; 35],
 }
 
 pub(super) struct MetalRegistersClaimStage1Carry {
     receipt: OuterRegistersClaimCarrierReceipt,
     partial_q: RegistersClaimPartialQHandoff<AkitaField>,
     rd: RegistersClaimResidentRdPlane,
+}
+
+pub(super) struct MetalRegistersClaimPendingStage1Carry {
+    pending: PendingOuterRegistersClaimCarrier,
+    submission: OuterRegistersClaimCarrierSubmission,
+    context: SolinasMetal,
+    product_tau_low: Vec<AkitaField>,
+    rows: usize,
+    compact_storage_id: usize,
+    residual_storage_id: usize,
+    device_registry_id: u64,
+}
+
+pub(super) struct MetalRegistersClaimAsyncStage1Carry {
+    submission: OuterRegistersClaimCarrierSubmission,
+    handle: Option<
+        JoinHandle<
+            Result<
+                (
+                    MetalRegistersClaimStage1Carry,
+                    OuterRegistersClaimCarrierJoinStats,
+                ),
+                String,
+            >,
+        >,
+    >,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalRegistersClaimAsyncStage1Carry {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("device_storage"),
+            (self.submission.partial_bytes
+                + self.submission.component_bytes
+                + self.submission.rd_bytes) as usize,
+        );
+        visitor.exit();
+    }
+}
+
+impl Drop for MetalRegistersClaimAsyncStage1Carry {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl MetalRegistersClaimAsyncStage1Carry {
+    pub(super) const fn submission(&self) -> OuterRegistersClaimCarrierSubmission {
+        self.submission
+    }
+
+    fn join(
+        mut self,
+    ) -> Result<
+        (
+            MetalRegistersClaimStage1Carry,
+            OuterRegistersClaimCarrierJoinStats,
+            bool,
+            Duration,
+        ),
+        KernelError<AkitaField>,
+    > {
+        let completed_before_join = self
+            .handle
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished);
+        let handle = self.handle.take().ok_or(KernelError::InvariantViolation {
+            reason: "registers claim-reduction carrier worker was already consumed",
+        })?;
+        let join_started = Instant::now();
+        let (carry, stats) = handle
+            .join()
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "registers claim-reduction carrier worker panicked",
+            })?
+            .map_err(metal_prepare_error)?;
+        Ok((carry, stats, completed_before_join, join_started.elapsed()))
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for MetalRegistersClaimPendingStage1Carry {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_field(allocative::Key::new("pending"), &self.pending);
+        visitor.visit_simple(
+            allocative::Key::new("product_tau_low"),
+            crate::backend::vec_heap_bytes(&self.product_tau_low),
+        );
+        visitor.exit();
+    }
+}
+
+impl MetalRegistersClaimPendingStage1Carry {
+    pub(super) fn from_outer(
+        pending: PendingOuterRegistersClaimCarrier,
+        source: MetalRegistersClaimOuterSource<'_>,
+    ) -> Result<Self, super::solinas::MetalError> {
+        let submission = pending.submission()?;
+        if submission.rows != source.rows
+            || submission.explicit_rows > submission.rows
+            || submission.device_registry_id != source.device_registry_id
+            || submission.source_compact_storage_id != source.compact_storage_id
+            || submission.source_residual_storage_id != source.residual_storage_id
+        {
+            return Err(super::solinas::MetalError::InvalidOuterRemainderConfig(
+                "pending registers-claim carrier provenance is inconsistent",
+            ));
+        }
+        Ok(Self {
+            pending,
+            submission,
+            context: source.context.clone(),
+            product_tau_low: source.product_tau_low.to_vec(),
+            rows: source.rows,
+            compact_storage_id: source.compact_storage_id,
+            residual_storage_id: source.residual_storage_id,
+            device_registry_id: source.device_registry_id,
+        })
+    }
+
+    pub(super) fn start(self) -> MetalRegistersClaimAsyncStage1Carry {
+        let submission = self.submission;
+        let handle = std::thread::spawn(move || self.join().map_err(|error| error.to_string()));
+        MetalRegistersClaimAsyncStage1Carry {
+            submission,
+            handle: Some(handle),
+        }
+    }
+
+    fn join(
+        self,
+    ) -> Result<
+        (
+            MetalRegistersClaimStage1Carry,
+            OuterRegistersClaimCarrierJoinStats,
+        ),
+        KernelError<AkitaField>,
+    > {
+        let (carrier, stats) = self.pending.join().map_err(metal_prepare_error)?;
+        let carry = MetalRegistersClaimStage1Carry::from_outer(
+            carrier,
+            MetalRegistersClaimOuterSource {
+                context: &self.context,
+                product_tau_low: &self.product_tau_low,
+                rows: self.rows,
+                compact_storage_id: self.compact_storage_id,
+                residual_storage_id: self.residual_storage_id,
+                device_registry_id: self.device_registry_id,
+            },
+        )
+        .map_err(metal_prepare_error)?;
+        Ok((carry, stats))
+    }
 }
 
 impl MetalRegistersClaimStage1Carry {
@@ -116,21 +279,6 @@ impl MetalRegistersClaimStage1Carry {
                 "Outer registers-claim component handoff is invalid",
             )
         })?;
-        let expected_openings = partial_q.stage1_register_openings(geometry).map_err(|_| {
-            super::solinas::registers_claim_reduction::RegistersClaimLinearQError::InvalidState(
-                "Outer registers-claim opening reconstruction failed",
-            )
-        })?;
-        if expected_openings.rd_write_value != source.openings[10]
-            || expected_openings.rs1_value != source.openings[8]
-            || expected_openings.rs2_value != source.openings[9]
-        {
-            return Err(
-                super::solinas::registers_claim_reduction::RegistersClaimLinearQError::InvalidState(
-                    "Outer registers-claim components disagree with canonical openings",
-                ),
-            );
-        }
         let rd = source.context.attach_registers_claim_resident_rd_plane(
             rd_buffer,
             source.rows,
@@ -142,10 +290,6 @@ impl MetalRegistersClaimStage1Carry {
             partial_q,
             rd,
         })
-    }
-
-    pub(super) const fn receipt(&self) -> OuterRegistersClaimCarrierReceipt {
-        self.receipt
     }
 }
 
@@ -338,13 +482,18 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
             .ok_or(KernelError::InvariantViolation {
                 reason: "registers claim-reduction trace domain overflows usize",
             })?;
-        let stage1_carry_present = session.state::<MetalRegistersClaimStage1Carry>().is_some();
+        let pending_stage1_carry_present = session
+            .state::<MetalRegistersClaimAsyncStage1Carry>()
+            .is_some();
+        let stage1_carry_present = session.state::<MetalRegistersClaimStage1Carry>().is_some()
+            || pending_stage1_carry_present;
         let alias_receiver_present = session.state::<RegistersClaimAliasReceiver>().is_some();
         let route_span = tracing::info_span!(
             "MetalRegistersClaimReduction::route",
             cycles,
             requested = config.implementation.as_str(),
             stage1_carry_present,
+            pending_stage1_carry_present,
             alias_receiver_present,
             realized_route = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
@@ -380,6 +529,7 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
                 == RegistersClaimReductionImplementation::OuterCarrierAliasHybrid
             {
                 drop(session.take::<MetalRegistersClaimStage1Carry>());
+                drop(session.take::<MetalRegistersClaimAsyncStage1Carry>());
                 drop(session.take::<RegistersClaimAliasReceiver>());
             }
             return OptimizedRegistersClaimReduction.prepare(session, witness, inputs);
@@ -453,7 +603,42 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
             }
             RegistersClaimReductionImplementation::OuterCarrierAliasHybrid => {
                 let carry = session.take::<MetalRegistersClaimStage1Carry>();
+                let pending = session.take::<MetalRegistersClaimAsyncStage1Carry>();
                 let aliases = session.take::<RegistersClaimAliasReceiver>();
+                let carry = match (carry, pending) {
+                    (Some(carry), None) => Some(carry),
+                    (None, Some(pending)) => {
+                        let join_span = tracing::info_span!(
+                            "MetalRegistersClaimReduction::carrier_join",
+                            completed_before_join = tracing::field::Empty,
+                            lifecycle_wall_ns = tracing::field::Empty,
+                            join_wall_ns = tracing::field::Empty,
+                            gpu_active_ns = tracing::field::Empty,
+                        );
+                        let _join_guard = join_span.enter();
+                        let (carry, stats, completed_before_join, join_wall) = pending.join()?;
+                        let _ = join_span.record("completed_before_join", completed_before_join);
+                        let _ = join_span.record(
+                            "lifecycle_wall_ns",
+                            u64::try_from(stats.lifecycle_wall.as_nanos()).unwrap_or(u64::MAX),
+                        );
+                        let _ = join_span.record(
+                            "join_wall_ns",
+                            u64::try_from(join_wall.as_nanos()).unwrap_or(u64::MAX),
+                        );
+                        let _ = join_span.record(
+                            "gpu_active_ns",
+                            u64::try_from(stats.gpu_active.as_nanos()).unwrap_or(u64::MAX),
+                        );
+                        Some(carry)
+                    }
+                    (None, None) => None,
+                    (Some(_), Some(_)) => {
+                        return Err(KernelError::InvariantViolation {
+                            reason: "registers claim-reduction found duplicate stage-1 carries",
+                        });
+                    }
+                };
                 let (Some(carry), Some(aliases)) = (carry, aliases) else {
                     let _ = route_span.record("realized_route", "optimized_cpu");
                     let _ = route_span.record("fallback_reason", "missing_carrier");

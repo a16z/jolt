@@ -29,13 +29,14 @@ inline SolinasFp128 bytecode_row_signed_magnitude(ulong magnitude, bool negative
 }
 
 inline BytecodeRowTail bytecode_row_tail(
-    device const BooleanityRow* rows,
+    device const ulong* rows,
+    uint row_count,
     uint index,
     device const SolinasFp128* ra_zero,
     device const SolinasFp128* ra_one)
 {
-    ulong magnitude = rows[index].fused_inc_magnitude;
-    ulong flags = rows[index].packed_pc_and_flags;
+    ulong magnitude = booleanity_row_word(rows, row_count, 3u, index);
+    ulong flags = booleanity_row_word(rows, row_count, 4u, index);
     BytecodeRowTail result;
     result.fused_inc = bytecode_row_signed_magnitude(
         magnitude,
@@ -91,7 +92,7 @@ inline void bytecode_row_coefficients(
 }
 
 kernel void solinas_bytecode_row_first_message(
-    device const BooleanityRow* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const SolinasFp128* eq_lo [[buffer(1)]],
     device const SolinasFp128* weighted_eq_hi [[buffer(2)]],
     device const SolinasFp128* ra_zero [[buffer(3)]],
@@ -128,8 +129,10 @@ kernel void solinas_bytecode_row_first_message(
         if (row_zero == 0u) {
             lo[0] = solinas_add(lo[0], entry_weight);
         }
-        BytecodeRowTail lo_tail = bytecode_row_tail(rows, row_zero, ra_zero, ra_one);
-        BytecodeRowTail hi_tail = bytecode_row_tail(rows, row_zero + 1u, ra_zero, ra_one);
+        BytecodeRowTail lo_tail = bytecode_row_tail(
+            rows, params.rows, row_zero, ra_zero, ra_one);
+        BytecodeRowTail hi_tail = bytecode_row_tail(
+            rows, params.rows, row_zero + 1u, ra_zero, ra_one);
         lo[2] = lo_tail.fused_inc;
         lo[3] = lo_tail.ra_zero;
         lo[4] = lo_tail.ra_one;
@@ -173,7 +176,7 @@ kernel void solinas_bytecode_row_bind_lo_roots(
 }
 
 kernel void solinas_bytecode_row_first_bind_message(
-    device const BooleanityRow* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const SolinasFp128* bound_eq_lo [[buffer(1)]],
     device const SolinasFp128* weighted_eq_hi [[buffer(2)]],
     device const SolinasFp128* ra_zero [[buffer(3)]],
@@ -220,10 +223,14 @@ kernel void solinas_bytecode_row_first_bind_message(
             lo[0] = solinas_add(lo[0], bound_entry_weight);
         }
 
-        BytecodeRowTail row_zero = bytecode_row_tail(rows, source, ra_zero, ra_one);
-        BytecodeRowTail row_one = bytecode_row_tail(rows, source + 1u, ra_zero, ra_one);
-        BytecodeRowTail row_two = bytecode_row_tail(rows, source + 2u, ra_zero, ra_one);
-        BytecodeRowTail row_three = bytecode_row_tail(rows, source + 3u, ra_zero, ra_one);
+        BytecodeRowTail row_zero = bytecode_row_tail(
+            rows, params.rows, source, ra_zero, ra_one);
+        BytecodeRowTail row_one = bytecode_row_tail(
+            rows, params.rows, source + 1u, ra_zero, ra_one);
+        BytecodeRowTail row_two = bytecode_row_tail(
+            rows, params.rows, source + 2u, ra_zero, ra_one);
+        BytecodeRowTail row_three = bytecode_row_tail(
+            rows, params.rows, source + 3u, ra_zero, ra_one);
         lo[2] = bytecode_row_bind(row_zero.fused_inc, row_one.fused_inc, challenge);
         lo[3] = bytecode_row_bind(row_zero.ra_zero, row_one.ra_zero, challenge);
         lo[4] = bytecode_row_bind(row_zero.ra_one, row_one.ra_one, challenge);

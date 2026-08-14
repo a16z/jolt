@@ -1,8 +1,13 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{
+    mem::size_of,
+    slice,
+    time::{Duration, Instant},
+};
 
 use jolt_field::AkitaField;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, MTLCommandBufferStatus, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    MTLCommandBufferStatus, MTLSize,
 };
 
 use super::super::spartan_outer_uniskip::OuterResidualReleaseReceipt;
@@ -15,7 +20,9 @@ use super::{
         OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequenceConfig,
         OuterRemainderStorageInitializationStats, OuterRemainderStorageStats,
         OUTER_REMAINDER_A_LOOKUP_FIELDS, OUTER_REMAINDER_COLLAPSED_A_FIELDS,
-        OUTER_REMAINDER_OPENINGS, OUTER_REMAINDER_PRODUCT_ENDPOINTS, OUTER_REMAINDER_STREAM_ROWS,
+        OUTER_REMAINDER_FIRST_B_FIELDS, OUTER_REMAINDER_OPENINGS,
+        OUTER_REMAINDER_PRODUCT_ENDPOINTS, OUTER_REMAINDER_SECOND_B_FIELDS,
+        OUTER_REMAINDER_STREAM_ROWS,
     },
     plan::{
         message_threadgroup_bytes, opening_output_count, opening_threadgroup_memory_lengths,
@@ -32,6 +39,7 @@ use super::{
 use crate::metal::solinas::registers_claim_reduction::RegistersClaimLinearComponents;
 
 const CANONICAL_PADDING_ONE_OPENING: usize = 30;
+const SKIP_REGISTER_OPENINGS: u32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -124,19 +132,75 @@ fn a_lookup(coefficients: &[AkitaField; 16]) -> [AkitaField; OUTER_REMAINDER_COL
     })
 }
 
+fn first_b_coefficients(
+    lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
+) -> [AkitaField; OUTER_REMAINDER_FIRST_B_FIELDS] {
+    [
+        lagrange[0],
+        lagrange[1] + lagrange[2],
+        -lagrange[1] - lagrange[3],
+        -lagrange[2],
+        lagrange[3],
+        lagrange[4] + lagrange[5],
+        -lagrange[5],
+        lagrange[6] - lagrange[7],
+        lagrange[7],
+        lagrange[8],
+        -lagrange[8],
+        -lagrange[6] - lagrange[8] + lagrange[9],
+        -lagrange[9],
+    ]
+}
+
+fn second_b_coefficients(
+    lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
+) -> [AkitaField; OUTER_REMAINDER_SECOND_B_FIELDS] {
+    let two_pow_64 = AkitaField::from_canonical_u128(1_u128 << 64);
+    [
+        lagrange[0],
+        -lagrange[0],
+        -lagrange[0] - lagrange[7],
+        lagrange[1] + lagrange[2] + lagrange[3] + lagrange[4],
+        -lagrange[1] - lagrange[2],
+        -lagrange[1] + lagrange[2] - lagrange[4],
+        -lagrange[3],
+        lagrange[5] + lagrange[6],
+        -lagrange[5],
+        -lagrange[6] - lagrange[7] - lagrange[8],
+        lagrange[7] + lagrange[8],
+        -lagrange[2] * two_pow_64,
+        -AkitaField::from_u64(4) * (lagrange[6] + lagrange[8]),
+        AkitaField::from_u64(2) * (lagrange[6] + lagrange[8]),
+        AkitaField::from_u64(4) * lagrange[8],
+    ]
+}
+
 fn materialize_a_lookup(
     lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
 ) -> [AkitaField; OUTER_REMAINDER_A_LOOKUP_FIELDS] {
     let endpoints = a_endpoint_coefficients(lagrange);
     let first = a_lookup(&endpoints[0]);
     let second = a_lookup(&endpoints[1]);
+    let first_b = first_b_coefficients(lagrange);
+    let second_b = second_b_coefficients(lagrange);
     std::array::from_fn(|index| {
         if index < OUTER_REMAINDER_STREAM_ROWS {
             lagrange[index]
         } else if index < OUTER_REMAINDER_STREAM_ROWS + OUTER_REMAINDER_COLLAPSED_A_FIELDS {
             first[index - OUTER_REMAINDER_STREAM_ROWS]
-        } else {
+        } else if index < OUTER_REMAINDER_STREAM_ROWS + 2 * OUTER_REMAINDER_COLLAPSED_A_FIELDS {
             second[index - OUTER_REMAINDER_STREAM_ROWS - OUTER_REMAINDER_COLLAPSED_A_FIELDS]
+        } else if index
+            < OUTER_REMAINDER_STREAM_ROWS
+                + 2 * OUTER_REMAINDER_COLLAPSED_A_FIELDS
+                + OUTER_REMAINDER_FIRST_B_FIELDS
+        {
+            first_b[index - OUTER_REMAINDER_STREAM_ROWS - 2 * OUTER_REMAINDER_COLLAPSED_A_FIELDS]
+        } else {
+            second_b[index
+                - OUTER_REMAINDER_STREAM_ROWS
+                - 2 * OUTER_REMAINDER_COLLAPSED_A_FIELDS
+                - OUTER_REMAINDER_FIRST_B_FIELDS]
         }
     })
 }
@@ -161,7 +225,221 @@ pub struct OuterRemainderSequence {
     gpu_active: Duration,
     dispatch_counts: OuterRemainderDispatchCounts,
     product_uniskip_endpoints: Option<[AkitaField; OUTER_REMAINDER_PRODUCT_ENDPOINTS]>,
-    registers_claim_carrier: Option<OuterRegistersClaimCarrier>,
+    pending_registers_claim_carrier: Option<PendingOuterRegistersClaimCarrier>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OuterRegistersClaimCarrierSubmission {
+    pub(crate) rows: usize,
+    pub(crate) explicit_rows: usize,
+    pub(crate) prefix_elements: usize,
+    pub(crate) suffix_elements: usize,
+    pub(crate) blocks: usize,
+    pub(crate) device_registry_id: u64,
+    pub(crate) source_generation: u64,
+    pub(crate) source_compact_storage_id: usize,
+    pub(crate) source_residual_storage_id: usize,
+    pub(crate) partial_storage_id: usize,
+    pub(crate) component_storage_id: usize,
+    pub(crate) rd_storage_id: usize,
+    pub(crate) partial_bytes: u64,
+    pub(crate) component_bytes: u64,
+    pub(crate) rd_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OuterRegistersClaimCarrierJoinStats {
+    pub(crate) lifecycle_wall: Duration,
+    pub(crate) join_wall: Duration,
+    pub(crate) gpu_active: Duration,
+    pub(crate) completed_before_join: bool,
+}
+
+#[must_use = "a submitted outer registers-claim carrier must be joined"]
+pub(crate) struct PendingOuterRegistersClaimCarrier {
+    context: SolinasMetal,
+    command_buffer: Option<CommandBuffer>,
+    buffers: Option<RegistersClaimBuffers>,
+    source: super::super::spartan_outer_uniskip::OuterResidualArenaKey,
+    explicit_rows: usize,
+    submitted_at: Instant,
+    gpu_active_accounted_by_outer: bool,
+    source_instruction_input: Buffer,
+    source_residual: Buffer,
+    source_e_in: Buffer,
+    source_e_out: Buffer,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PendingOuterRegistersClaimCarrier {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(buffers) = &self.buffers {
+            visitor.visit_simple(
+                allocative::Key::new("device_storage"),
+                buffers.geometry.owned_bytes as usize,
+            );
+        }
+        visitor.exit();
+    }
+}
+
+impl Drop for PendingOuterRegistersClaimCarrier {
+    fn drop(&mut self) {
+        if let Some(command_buffer) = &self.command_buffer {
+            command_buffer.wait_until_completed();
+        }
+    }
+}
+
+impl PendingOuterRegistersClaimCarrier {
+    pub(crate) fn submission(&self) -> Result<OuterRegistersClaimCarrierSubmission, MetalError> {
+        let buffers = self
+            .buffers
+            .as_ref()
+            .ok_or(MetalError::InvalidOuterRemainderConfig(
+                "pending registers-claim carrier lost its buffers",
+            ))?;
+        Ok(OuterRegistersClaimCarrierSubmission {
+            rows: self.source.rows,
+            explicit_rows: self.explicit_rows,
+            prefix_elements: buffers.geometry.prefix_elements,
+            suffix_elements: buffers.geometry.suffix_elements,
+            blocks: buffers.geometry.blocks,
+            device_registry_id: self.source.device_registry_id,
+            source_generation: self.source.generation,
+            source_compact_storage_id: self.source.compact_storage_id,
+            source_residual_storage_id: self.source.storage_id,
+            partial_storage_id: buffers.partials.as_ptr() as usize,
+            component_storage_id: buffers.components.as_ptr() as usize,
+            rd_storage_id: buffers.rd_write_value.as_ptr() as usize,
+            partial_bytes: buffers.geometry.partial_bytes,
+            component_bytes: buffers.geometry.component_bytes,
+            rd_bytes: buffers.geometry.rd_bytes,
+        })
+    }
+
+    pub(crate) fn join(
+        mut self,
+    ) -> Result<
+        (
+            OuterRegistersClaimCarrier,
+            OuterRegistersClaimCarrierJoinStats,
+        ),
+        MetalError,
+    > {
+        let command_buffer =
+            self.command_buffer
+                .take()
+                .ok_or(MetalError::InvalidOuterRemainderConfig(
+                    "pending registers-claim carrier lost its command buffer",
+                ))?;
+        let completed_before_join = command_buffer.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        command_buffer.wait_until_completed();
+        let join_wall = join_started.elapsed();
+        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command_buffer.status()));
+        }
+        let gpu_start = command_buffer_timestamp(&command_buffer, "GPUStartTime")?;
+        let gpu_end = command_buffer_timestamp(&command_buffer, "GPUEndTime")?;
+        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
+        {
+            return Err(MetalError::InvalidGpuTimestamps {
+                start: gpu_start,
+                end: gpu_end,
+            });
+        }
+        let buffers = self
+            .buffers
+            .take()
+            .ok_or(MetalError::InvalidOuterRemainderConfig(
+                "pending registers-claim carrier lost its buffers",
+            ))?;
+        let device_registry_id = self.context.device_registry_id();
+        if self.source.device_registry_id != device_registry_id
+            || self.source_instruction_input.as_ptr() as usize != self.source.compact_storage_id
+            || self.source_residual.as_ptr() as usize != self.source.storage_id
+            || [
+                &self.source_instruction_input,
+                &self.source_residual,
+                &self.source_e_in,
+                &self.source_e_out,
+                &buffers.partials,
+                &buffers.components,
+                &buffers.rd_write_value,
+            ]
+            .into_iter()
+            .any(|buffer| buffer.device().registry_id() != device_registry_id)
+        {
+            return Err(MetalError::InvalidOuterRemainderConfig(
+                "pending registers-claim carrier changed source provenance",
+            ));
+        }
+        // SAFETY: the completed reduction initializes every component field
+        // before the CPU-visible read.
+        let values = unsafe {
+            slice::from_raw_parts(
+                buffers.components.contents().cast::<Fp128>(),
+                buffers.geometry.component_elements,
+            )
+        };
+        self.context
+            .validate_inputs("outer registers-claim components", values)?;
+        let table = |component: usize| {
+            values[component * buffers.geometry.prefix_elements
+                ..(component + 1) * buffers.geometry.prefix_elements]
+                .iter()
+                .copied()
+                .map(Fp128::into_jolt_field)
+                .collect::<Vec<_>>()
+        };
+        let components = RegistersClaimLinearComponents {
+            rd_write_value: table(0),
+            rs1_value: table(1),
+            rs2_value: table(2),
+        };
+        let receipt = OuterRegistersClaimCarrierReceipt {
+            rows: self.source.rows,
+            explicit_rows: self.explicit_rows,
+            prefix_elements: buffers.geometry.prefix_elements,
+            suffix_elements: buffers.geometry.suffix_elements,
+            blocks: buffers.geometry.blocks,
+            device_registry_id,
+            source_generation: self.source.generation,
+            source_compact_storage_id: self.source.compact_storage_id,
+            source_residual_storage_id: self.source.storage_id,
+            partial_storage_id: buffers.partials.as_ptr() as usize,
+            component_storage_id: buffers.components.as_ptr() as usize,
+            rd_storage_id: buffers.rd_write_value.as_ptr() as usize,
+            partial_bytes: buffers.geometry.partial_bytes,
+            component_bytes: buffers.geometry.component_bytes,
+            rd_bytes: buffers.geometry.rd_bytes,
+            completion_serial: next_completion_serial()?,
+            row_scans: 2,
+            command_buffers: 1,
+            waits: 1,
+            uploads: 0,
+            prezero_dispatches: 0,
+            complete_overwrite: true,
+        };
+        let carrier = OuterRegistersClaimCarrier::new(receipt, components, buffers.rd_write_value)?;
+        drop(buffers.partials);
+        drop(buffers.components);
+        Ok((
+            carrier,
+            OuterRegistersClaimCarrierJoinStats {
+                lifecycle_wall: self.submitted_at.elapsed(),
+                join_wall,
+                gpu_active: if self.gpu_active_accounted_by_outer {
+                    Duration::ZERO
+                } else {
+                    Duration::from_secs_f64(gpu_end - gpu_start)
+                },
+                completed_before_join,
+            },
+        ))
+    }
 }
 
 #[cfg(feature = "allocative")]
@@ -224,7 +502,7 @@ impl OuterRemainderSequenceStorage {
             gpu_active: Duration::ZERO,
             dispatch_counts: OuterRemainderDispatchCounts::default(),
             product_uniskip_endpoints: None,
-            registers_claim_carrier: None,
+            pending_registers_claim_carrier: None,
         })
     }
 }
@@ -524,7 +802,11 @@ impl OuterRemainderSequence {
             e_out_length: to_u32(active_e_out)?,
             blocks: to_u32(blocks)?,
             source_elements: to_u32(explicit_rows)?,
-            reserved: [0; 3],
+            reserved: [
+                u32::from(self.config.registers_claim_carrier) * SKIP_REGISTER_OPENINGS,
+                0,
+                0,
+            ],
         };
         let carrier_params = self
             .storage
@@ -548,11 +830,14 @@ impl OuterRemainderSequence {
                     e_out_length: to_u32(e_out.len())?,
                     blocks: to_u32(carrier.geometry.blocks)?,
                     source_elements: to_u32(explicit_rows)?,
-                    reserved: [0; 3],
+                    reserved: [SKIP_REGISTER_OPENINGS, 0, 0],
                 })
             })
             .transpose()?;
         let rows = self.rows()?;
+        let source = rows.residual_arena_key();
+        let source_instruction_input = rows.instruction_input_buffer().clone();
+        let source_residual = rows.residual_buffer().clone();
         let threads = self.storage.threads.opening;
         let threadgroup_memory = opening_threadgroup_memory_lengths(
             self.config.binding_plan,
@@ -561,7 +846,7 @@ impl OuterRemainderSequence {
             self.config.registers_claim_carrier,
         )?;
         let queue = self.storage.context.queue.clone();
-        let command_buffer = queue.new_command_buffer();
+        let command_buffer = queue.new_command_buffer().to_owned();
         if self.storage.buffers.registers_claim.is_some()
             && (self.storage.pipelines.registers_claim_build.is_none()
                 || self.storage.pipelines.registers_claim_reduce.is_none()
@@ -572,11 +857,12 @@ impl OuterRemainderSequence {
                 got: self.phase.name(),
             });
         }
+        let carrier_submitted_at = Instant::now();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.storage.pipelines.opening);
-            encoder.set_buffer(0, Some(rows.instruction_input_buffer()), 0);
-            encoder.set_buffer(1, Some(rows.residual_buffer()), 0);
+            encoder.set_buffer(0, Some(&source_instruction_input), 0);
+            encoder.set_buffer(1, Some(&source_residual), 0);
             encoder.set_buffer(2, Some(&self.storage.buffers.e_in), 0);
             encoder.set_buffer(3, Some(&self.storage.buffers.e_out), 0);
             encoder.set_buffer(4, Some(&self.storage.buffers.opening_partials), 0);
@@ -602,8 +888,8 @@ impl OuterRemainderSequence {
                 carrier_params,
             ) {
                 encoder.set_compute_pipeline_state(build);
-                encoder.set_buffer(0, Some(rows.instruction_input_buffer()), 0);
-                encoder.set_buffer(1, Some(rows.residual_buffer()), 0);
+                encoder.set_buffer(0, Some(&source_instruction_input), 0);
+                encoder.set_buffer(1, Some(&source_residual), 0);
                 encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
                 encoder.set_buffer(3, Some(&carrier.partials), 0);
                 encoder.set_buffer(4, Some(&carrier.rd_write_value), 0);
@@ -643,7 +929,7 @@ impl OuterRemainderSequence {
             command_buffer.wait_until_completed();
         });
         self.dispatch_counts.command_buffers += 1;
-        self.finish_command(command_buffer)?;
+        self.finish_command(&command_buffer)?;
         let output = self.storage.buffers.opening_output.clone();
         // SAFETY: the completed reduction initializes `output_count` fields in
         // the shared output buffer before this CPU-visible read.
@@ -658,7 +944,33 @@ impl OuterRemainderSequence {
             std::array::from_fn(|index| values[OUTER_REMAINDER_OPENINGS + index].into_jolt_field())
         });
         if self.config.registers_claim_carrier {
-            self.finish_registers_claim_carrier(explicit_rows)?;
+            let carrier = self.storage.buffers.registers_claim.take().ok_or(
+                MetalError::InvalidOuterRemainderState {
+                    expected: "registers-claim buffers after carrier submission",
+                    got: self.phase.name(),
+                },
+            )?;
+            self.storage.owned_bytes = self
+                .storage
+                .owned_bytes
+                .checked_sub(carrier.geometry.owned_bytes)
+                .ok_or(MetalError::InvalidOuterRemainderState {
+                    expected: "storage accounting that includes the pending registers carrier",
+                    got: self.phase.name(),
+                })?;
+            self.pending_registers_claim_carrier = Some(PendingOuterRegistersClaimCarrier {
+                context: self.storage.context.clone(),
+                command_buffer: Some(command_buffer),
+                buffers: Some(carrier),
+                source,
+                explicit_rows,
+                submitted_at: carrier_submitted_at,
+                gpu_active_accounted_by_outer: true,
+                source_instruction_input,
+                source_residual,
+                source_e_in: self.storage.buffers.e_in.clone(),
+                source_e_out: self.storage.buffers.e_out.clone(),
+            });
             self.dispatch_counts.registers_claim_carriers += 1;
         }
         self.phase = OuterRemainderPhase::OpeningsComplete;
@@ -672,27 +984,19 @@ impl OuterRemainderSequence {
         self.product_uniskip_endpoints.take()
     }
 
-    pub(crate) fn take_registers_claim_carrier(
+    pub(crate) fn take_pending_registers_claim_carrier(
         &mut self,
-    ) -> Result<Option<OuterRegistersClaimCarrier>, MetalError> {
+    ) -> Result<Option<PendingOuterRegistersClaimCarrier>, MetalError> {
         self.require_phase(OuterRemainderPhase::OpeningsComplete)?;
         if !self.config.registers_claim_carrier {
             return Ok(None);
         }
-        let Some(carrier) = self.registers_claim_carrier.take() else {
+        let Some(carrier) = self.pending_registers_claim_carrier.take() else {
             return Err(MetalError::InvalidOuterRemainderState {
-                expected: "unconsumed registers-claim carrier",
+                expected: "unconsumed pending registers-claim carrier",
                 got: self.phase.name(),
             });
         };
-        self.storage.owned_bytes = self
-            .storage
-            .owned_bytes
-            .checked_sub(carrier.receipt().rd_bytes)
-            .ok_or(MetalError::InvalidOuterRemainderState {
-                expected: "storage accounting that includes the registers rd carrier",
-                got: self.phase.name(),
-            })?;
         Ok(Some(carrier))
     }
 
@@ -711,7 +1015,7 @@ impl OuterRemainderSequence {
 
     pub fn into_instruction_input_rows(mut self) -> Result<InstructionInputRows, MetalError> {
         self.require_phase(OuterRemainderPhase::OpeningsComplete)?;
-        if self.config.registers_claim_carrier && self.registers_claim_carrier.is_some() {
+        if self.config.registers_claim_carrier && self.pending_registers_claim_carrier.is_some() {
             return Err(MetalError::InvalidOuterRemainderState {
                 expected: "registers-claim carrier detached before row transfer",
                 got: self.phase.name(),
@@ -908,86 +1212,6 @@ impl OuterRemainderSequence {
             ((self.storage.threads.reduction / SIMD_WIDTH) * size_of::<Fp128>()) as u64,
         );
         dispatch(encoder, columns, self.storage.threads.reduction);
-    }
-
-    fn finish_registers_claim_carrier(&mut self, explicit_rows: usize) -> Result<(), MetalError> {
-        let RegistersClaimBuffers {
-            partials,
-            components,
-            rd_write_value,
-            geometry,
-        } = self.storage.buffers.registers_claim.take().ok_or(
-            MetalError::InvalidOuterRemainderState {
-                expected: "registers-claim buffers after carrier dispatch",
-                got: self.phase.name(),
-            },
-        )?;
-        // SAFETY: the completed carrier command fully initializes all 3P fields
-        // before this shared-buffer read.
-        let values = unsafe {
-            slice::from_raw_parts(
-                components.contents().cast::<Fp128>(),
-                geometry.component_elements,
-            )
-        };
-        self.storage
-            .context
-            .validate_inputs("outer registers-claim components", values)?;
-        let table = |component: usize| {
-            values[component * geometry.prefix_elements..(component + 1) * geometry.prefix_elements]
-                .iter()
-                .copied()
-                .map(Fp128::into_jolt_field)
-                .collect::<Vec<_>>()
-        };
-        let linear_components = RegistersClaimLinearComponents {
-            rd_write_value: table(0),
-            rs1_value: table(1),
-            rs2_value: table(2),
-        };
-        let source = self.rows()?.residual_arena_key();
-        let receipt = OuterRegistersClaimCarrierReceipt {
-            rows: self.rows()?.len(),
-            explicit_rows,
-            prefix_elements: geometry.prefix_elements,
-            suffix_elements: geometry.suffix_elements,
-            blocks: geometry.blocks,
-            device_registry_id: source.device_registry_id,
-            source_generation: source.generation,
-            source_compact_storage_id: source.compact_storage_id,
-            source_residual_storage_id: source.storage_id,
-            partial_storage_id: partials.as_ptr() as usize,
-            component_storage_id: components.as_ptr() as usize,
-            rd_storage_id: rd_write_value.as_ptr() as usize,
-            partial_bytes: geometry.partial_bytes,
-            component_bytes: geometry.component_bytes,
-            rd_bytes: geometry.rd_bytes,
-            completion_serial: next_completion_serial()?,
-            row_scans: 2,
-            command_buffers: 1,
-            waits: 1,
-            uploads: 0,
-            prezero_dispatches: 0,
-            complete_overwrite: true,
-        };
-        self.registers_claim_carrier = Some(OuterRegistersClaimCarrier::new(
-            receipt,
-            linear_components,
-            rd_write_value,
-        )?);
-        let released = geometry
-            .partial_bytes
-            .checked_add(geometry.component_bytes)
-            .ok_or(MetalError::InputTooLong(geometry.component_elements))?;
-        self.storage.owned_bytes = self.storage.owned_bytes.checked_sub(released).ok_or(
-            MetalError::InvalidOuterRemainderState {
-                expected: "storage accounting that includes registers scratch",
-                got: self.phase.name(),
-            },
-        )?;
-        drop(partials);
-        drop(components);
-        Ok(())
     }
 
     fn finish_command(

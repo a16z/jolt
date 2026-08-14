@@ -18,6 +18,7 @@ use super::{
     RamRafFoldParams, RamRafShape, RamRafStoragePlan, ValidatedRamRafAddressPlane,
     RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_FINALIZE_PIPELINE, RAM_RAF_FOLD_PIPELINE, RAM_RAF_SIMD_WIDTH,
 };
+use crate::optimized::ram_trace::ValidatedRamAccessAddresses;
 
 #[derive(Clone)]
 pub struct RamRafAddressPlane {
@@ -177,6 +178,24 @@ impl SolinasMetal {
         for &address in addresses {
             let _ = RamRafAddress::try_from(address)?;
         }
+        self.prepare_ram_raf_address_buffer(addresses, shape)
+    }
+
+    pub(crate) fn prepare_ram_raf_certified_addresses(
+        &self,
+        addresses: ValidatedRamAccessAddresses<'_>,
+        config: RamRafConfig,
+    ) -> Result<RamRafAddressPlane, MetalError> {
+        let addresses = addresses.as_slice();
+        let shape = config.validate_metal(addresses.len(), RAM_RAF_ADDRESS_DOMAIN)?;
+        self.prepare_ram_raf_address_buffer(addresses, shape)
+    }
+
+    fn prepare_ram_raf_address_buffer(
+        &self,
+        addresses: &[u32],
+        shape: RamRafShape,
+    ) -> Result<RamRafAddressPlane, MetalError> {
         let byte_length = addresses
             .len()
             .checked_mul(size_of::<u32>())

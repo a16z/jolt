@@ -12,7 +12,7 @@ use metal::{
 
 use super::super::{
     buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits,
-    ProductRemainderRows, SolinasMetal,
+    ProductRemainderRows, ProductRemainderSourceKind, SolinasMetal,
 };
 use super::{
     finalize_openings, finish_bind, nontrivial_gamma_powers, InstructionClaimGeometry,
@@ -26,7 +26,10 @@ use super::{
 
 const PRODUCT_ROWS_MATERIALIZE_PIPELINE: &str =
     "solinas_instruction_claim_materialize_product_rows";
+const STAGE1_ROWS_MATERIALIZE_PIPELINE: &str = "solinas_instruction_claim_materialize_stage1_rows";
 const LOOKUP_COMPANION_OPENING_PIPELINE: &str = "solinas_instruction_claim_open_lookup_companion";
+const STAGE1_LOOKUP_OPENING_PIPELINE: &str =
+    "solinas_instruction_claim_open_stage1_lookup_operands";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct InstructionClaimTiming {
@@ -96,16 +99,18 @@ impl PendingInstructionClaimInitialMessage {
         ),
         MetalError,
     > {
-        let mut sequence = self.sequence.take().ok_or(
-            MetalError::InvalidInstructionClaimState(
+        let mut sequence = self
+            .sequence
+            .take()
+            .ok_or(MetalError::InvalidInstructionClaimState(
                 "the pending first message lost its resident sequence",
-            ),
-        )?;
-        let command = self.command.take().ok_or(
-            MetalError::InvalidInstructionClaimState(
+            ))?;
+        let command = self
+            .command
+            .take()
+            .ok_or(MetalError::InvalidInstructionClaimState(
                 "the pending first message lost its command buffer",
-            ),
-        )?;
+            ))?;
         let (message, stats) = sequence.complete_initial_message(command)?;
         Ok((sequence, message, stats))
     }
@@ -184,7 +189,7 @@ enum InstructionClaimRows {
     },
     ProductResident {
         product: ProductRemainderRows,
-        lookup: InstructionClaimLookupRows,
+        lookup: Option<InstructionClaimLookupRows>,
     },
 }
 
@@ -192,6 +197,11 @@ impl InstructionClaimRows {
     fn materialize_pipeline(&self) -> &'static str {
         match self {
             Self::Standalone { .. } => MATERIALIZE_PIPELINE,
+            Self::ProductResident { product, .. }
+                if product.source_kind() == ProductRemainderSourceKind::SpartanStage1 =>
+            {
+                STAGE1_ROWS_MATERIALIZE_PIPELINE
+            }
             Self::ProductResident { .. } => PRODUCT_ROWS_MATERIALIZE_PIPELINE,
         }
     }
@@ -199,6 +209,11 @@ impl InstructionClaimRows {
     fn aliased_opening_pipeline(&self) -> &'static str {
         match self {
             Self::Standalone { .. } => ALIASED_OPENING_PIPELINE,
+            Self::ProductResident { product, .. }
+                if product.source_kind() == ProductRemainderSourceKind::SpartanStage1 =>
+            {
+                STAGE1_LOOKUP_OPENING_PIPELINE
+            }
             Self::ProductResident { .. } => LOOKUP_COMPANION_OPENING_PIPELINE,
         }
     }
@@ -219,7 +234,11 @@ impl InstructionClaimRows {
                 right_instruction_input.as_ptr() as usize,
             ],
             Self::ProductResident { product, lookup } => {
-                vec![product.allocation_identity(), lookup.allocation_identity()]
+                let mut identities = product.allocation_identities();
+                if let Some(lookup) = lookup {
+                    identities.push(lookup.allocation_identity());
+                }
+                identities
             }
         }
     }
@@ -268,7 +287,9 @@ impl allocative::Allocative for InstructionClaimSequence {
                 self.layout.resident_bytes() - self.layout.workspace_bytes(),
             ),
             InstructionClaimRows::ProductResident { lookup, .. } => {
-                visitor.visit_field(allocative::Key::new("lookup_rows"), lookup);
+                if let Some(lookup) = lookup {
+                    visitor.visit_field(allocative::Key::new("lookup_rows"), lookup);
+                }
             }
         }
         visitor.exit();
@@ -336,9 +357,10 @@ impl SolinasMetal {
     ) -> Result<InstructionClaimSequence, MetalError> {
         if product.device_registry_id() != self.device_registry_id()
             || lookup.device_registry_id() != self.device_registry_id()
+            || product.source_kind() != ProductRemainderSourceKind::Packed
         {
             return Err(MetalError::InvalidInstructionClaimState(
-                "resident instruction rows belong to a different Metal device",
+                "packed resident instruction rows have the wrong source or Metal device",
             ));
         }
         if product.len() != lookup.len() {
@@ -348,7 +370,36 @@ impl SolinasMetal {
         }
         let len = product.len();
         self.prepare_instruction_claim_sequence_from_rows(
-            InstructionClaimRows::ProductResident { product, lookup },
+            InstructionClaimRows::ProductResident {
+                product,
+                lookup: Some(lookup),
+            },
+            len,
+            gamma,
+            config,
+            false,
+        )
+    }
+
+    pub fn prepare_instruction_claim_sequence_with_stage1_rows(
+        &self,
+        product: ProductRemainderRows,
+        gamma: AkitaField,
+        config: InstructionClaimKernelConfig,
+    ) -> Result<InstructionClaimSequence, MetalError> {
+        if product.device_registry_id() != self.device_registry_id()
+            || product.source_kind() != ProductRemainderSourceKind::SpartanStage1
+        {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "resident instruction Stage-1 rows have the wrong source or Metal device",
+            ));
+        }
+        let len = product.len();
+        self.prepare_instruction_claim_sequence_from_rows(
+            InstructionClaimRows::ProductResident {
+                product,
+                lookup: None,
+            },
             len,
             gamma,
             config,
@@ -522,6 +573,169 @@ impl SolinasMetal {
 }
 
 impl InstructionClaimSequence {
+    pub(in crate::metal::solinas) fn encode_joint_stage1_materialize(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        e_in_length: usize,
+        e_out_length: usize,
+    ) -> Result<InstructionClaimPhaseParams, MetalError> {
+        if self.phase != InstructionClaimPhase::Raw {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "joint materialization requires a raw instruction sequence",
+            ));
+        }
+        if !matches!(
+            &self.buffers.rows,
+            InstructionClaimRows::ProductResident { product, lookup: None }
+                if product.source_kind() == ProductRemainderSourceKind::SpartanStage1
+        ) {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "joint materialization requires resident Stage-1 rows",
+            ));
+        }
+        let params =
+            InstructionClaimPhaseParams::materialize(self.geometry, e_in_length, e_out_length)?;
+        encoder.set_buffer(3, Some(&self.buffers.gamma_powers), 0);
+        encoder.set_buffer(7, Some(&self.buffers.state_a), 0);
+        encoder.set_buffer(9, Some(&self.buffers.partial_a), 0);
+        Ok(params)
+    }
+
+    pub(in crate::metal::solinas) fn encode_joint_initial_reductions(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        e_out_length: usize,
+    ) -> Result<Buffer, MetalError> {
+        let final_in_a = encode_reductions(
+            encoder,
+            &self.pipelines.reduction,
+            &self.buffers.partial_a,
+            &self.buffers.partial_b,
+            e_out_length,
+            INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
+        )?;
+        Ok(if final_in_a {
+            self.buffers.partial_a.clone()
+        } else {
+            self.buffers.partial_b.clone()
+        })
+    }
+
+    pub(in crate::metal::solinas) fn complete_joint_materialize(
+        &mut self,
+        wall: Duration,
+        gpu_active: Duration,
+    ) -> Result<(), MetalError> {
+        if self.phase != InstructionClaimPhase::Raw {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "joint instruction state was materialized more than once",
+            ));
+        }
+        self.phase = InstructionClaimPhase::Materialized;
+        self.timing.wall += wall;
+        self.timing.gpu_active += gpu_active;
+        Ok(())
+    }
+
+    pub(in crate::metal::solinas) fn encode_joint_transition(
+        &self,
+        encoder: &metal::ComputeCommandEncoderRef,
+        challenge: AkitaField,
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<Buffer, MetalError> {
+        if self.phase != InstructionClaimPhase::Materialized || self.current_elements < 4 {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "a joint transition needs a materialized instruction state",
+            ));
+        }
+        let round = self.rounds_bound + 1;
+        let params =
+            InstructionClaimPhaseParams::transition(self.geometry, round, e_in.len(), e_out.len())?;
+        self.write_weights(e_in, e_out)?;
+        let challenge = Fp128::from_jolt_field(&challenge);
+        self.context
+            .validate_inputs("joint instruction claim challenge", &[challenge])?;
+        encoder.set_compute_pipeline_state(&self.pipelines.transition);
+        encoder.set_buffer(0, Some(self.source_buffer()), 0);
+        encoder.set_buffer(1, Some(self.destination_buffer()), 0);
+        encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+        set_inline_bytes(encoder, 5, &challenge);
+        set_inline_bytes(encoder, 6, &params);
+        encoder
+            .set_threadgroup_memory_length(0, self.config.transition_threadgroup_bytes()? as u64);
+        dispatch_blocks(
+            encoder,
+            e_out.len(),
+            self.config.transition_threads_per_threadgroup,
+        );
+        let final_in_a = encode_reductions(
+            encoder,
+            &self.pipelines.reduction,
+            &self.buffers.partial_a,
+            &self.buffers.partial_b,
+            e_out.len(),
+            INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
+        )?;
+        Ok(if final_in_a {
+            self.buffers.partial_a.clone()
+        } else {
+            self.buffers.partial_b.clone()
+        })
+    }
+
+    pub(in crate::metal::solinas) fn complete_joint_transition(
+        &mut self,
+        wall: Duration,
+        gpu_active: Duration,
+    ) -> Result<(), MetalError> {
+        if self.phase != InstructionClaimPhase::Materialized || self.current_elements < 4 {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "joint instruction transition completed in the wrong phase",
+            ));
+        }
+        self.current_elements /= 2;
+        self.rounds_bound += 1;
+        self.source_in_a = !self.source_in_a;
+        self.timing.wall += wall;
+        self.timing.gpu_active += gpu_active;
+        Ok(())
+    }
+
+    pub(in crate::metal::solinas) const fn joint_materialize_threads_per_threadgroup(
+        &self,
+    ) -> usize {
+        self.config.materialize_threads_per_threadgroup
+    }
+
+    pub(in crate::metal::solinas) fn joint_stage1_allocation_identities(
+        &self,
+    ) -> Option<[usize; 2]> {
+        let InstructionClaimRows::ProductResident {
+            product,
+            lookup: None,
+        } = &self.buffers.rows
+        else {
+            return None;
+        };
+        let identities = product.allocation_identities();
+        (identities.len() == 2).then(|| [identities[0], identities[1]])
+    }
+
+    pub(in crate::metal::solinas) const fn joint_rows(&self) -> usize {
+        self.geometry.rows()
+    }
+
+    pub(in crate::metal::solinas) fn joint_device_registry_id(&self) -> u64 {
+        self.context.device_registry_id()
+    }
+
+    pub(crate) const fn joint_gamma(&self) -> AkitaField {
+        self.gamma
+    }
+
     pub fn message(
         &mut self,
         e_in: &[AkitaField],
@@ -601,8 +815,29 @@ impl InstructionClaimSequence {
                     set_inline_bytes(encoder, 10, &params);
                 }
                 InstructionClaimRows::ProductResident { product, lookup } => {
-                    encoder.set_buffer(0, Some(product.buffer()), 0);
-                    encoder.set_buffer(1, Some(lookup.buffer()), 0);
+                    if let Some((compact, residual)) = product.stage1_buffers() {
+                        if lookup.is_some() {
+                            return Err(MetalError::InvalidInstructionClaimState(
+                                "Stage-1 instruction rows unexpectedly retained a packed companion",
+                            ));
+                        }
+                        encoder.set_buffer(0, Some(compact), 0);
+                        encoder.set_buffer(1, Some(residual), 0);
+                    } else {
+                        let product = product.packed_buffer().ok_or(
+                            MetalError::InvalidInstructionClaimState(
+                                "packed instruction rows lost their product allocation",
+                            ),
+                        )?;
+                        let lookup =
+                            lookup
+                                .as_ref()
+                                .ok_or(MetalError::InvalidInstructionClaimState(
+                                    "packed instruction rows lost their lookup companion",
+                                ))?;
+                        encoder.set_buffer(0, Some(product), 0);
+                        encoder.set_buffer(1, Some(lookup.buffer()), 0);
+                    }
                     encoder.set_buffer(2, Some(&self.buffers.gamma_powers), 0);
                     encoder.set_buffer(3, Some(&self.buffers.e_in), 0);
                     encoder.set_buffer(4, Some(&self.buffers.e_out), 0);
@@ -992,12 +1227,32 @@ impl InstructionClaimSequence {
                     encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
                     set_inline_bytes(encoder, 5, &params);
                 }
-                InstructionClaimRows::ProductResident { lookup, .. } => {
-                    encoder.set_buffer(0, Some(lookup.buffer()), 0);
-                    encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
-                    encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
-                    encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
-                    set_inline_bytes(encoder, 4, &params);
+                InstructionClaimRows::ProductResident { product, lookup } => {
+                    if let Some((compact, residual)) = product.stage1_buffers() {
+                        if lookup.is_some() {
+                            return Err(MetalError::InvalidInstructionClaimState(
+                                "Stage-1 instruction openings retained a packed companion",
+                            ));
+                        }
+                        encoder.set_buffer(0, Some(compact), 0);
+                        encoder.set_buffer(1, Some(residual), 0);
+                        encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+                        encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+                        encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+                        set_inline_bytes(encoder, 5, &params);
+                    } else {
+                        let lookup =
+                            lookup
+                                .as_ref()
+                                .ok_or(MetalError::InvalidInstructionClaimState(
+                                    "packed instruction openings lost their lookup companion",
+                                ))?;
+                        encoder.set_buffer(0, Some(lookup.buffer()), 0);
+                        encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+                        encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+                        encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+                        set_inline_bytes(encoder, 4, &params);
+                    }
                 }
             }
             encoder.set_threadgroup_memory_length(

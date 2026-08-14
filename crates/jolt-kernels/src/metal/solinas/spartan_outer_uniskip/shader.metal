@@ -4,6 +4,7 @@
 #define SPARTAN_OUTER_FIRST_ROWS_PER_SIMD 5u
 #define SPARTAN_OUTER_SECOND_NODES 3u
 #define SPARTAN_OUTER_SECOND_ROWS_PER_SIMD 10u
+#define SPARTAN_STAGE1_PRIMER_SOURCES 5u
 
 struct SpartanOuterUniskipParams {
     uint rows;
@@ -11,6 +12,56 @@ struct SpartanOuterUniskipParams {
     uint blocks;
     uint reserved;
 };
+
+struct SpartanStage1SourcePrimerParams {
+    ulong word_counts[SPARTAN_STAGE1_PRIMER_SOURCES];
+    uint page_words;
+    uint total_threads;
+};
+
+kernel void solinas_spartan_stage1_source_primer(
+    device const uint* instruction_input [[buffer(0)]],
+    device const uint* residual [[buffer(1)]],
+    device const uint* unexpanded_pc [[buffer(2)]],
+    device const uint* pc [[buffer(3)]],
+    device const uint* shift_flags [[buffer(4)]],
+    device uint* checksums [[buffer(5)]],
+    constant SpartanStage1SourcePrimerParams& params [[buffer(6)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= params.total_threads) {
+        return;
+    }
+
+    ulong pages[SPARTAN_STAGE1_PRIMER_SOURCES];
+    ulong total_pages = 0;
+    for (uint source = 0; source < SPARTAN_STAGE1_PRIMER_SOURCES; source++) {
+        pages[source] = (params.word_counts[source] + params.page_words - 1u)
+            / params.page_words;
+        total_pages += pages[source];
+    }
+
+    uint checksum = 0x9e3779b9u ^ gid;
+    for (ulong page = gid; page < total_pages; page += params.total_threads) {
+        ulong local_page = page;
+        uint value;
+        if (local_page < pages[0]) {
+            value = instruction_input[local_page * params.page_words];
+        } else if ((local_page -= pages[0]) < pages[1]) {
+            value = residual[local_page * params.page_words];
+        } else if ((local_page -= pages[1]) < pages[2]) {
+            value = unexpanded_pc[local_page * params.page_words];
+        } else if ((local_page -= pages[2]) < pages[3]) {
+            value = pc[local_page * params.page_words];
+        } else {
+            local_page -= pages[3];
+            value = shift_flags[local_page * params.page_words];
+        }
+        checksum ^= value ^ (uint)page;
+        checksum = ((checksum << 5u) | (checksum >> 27u)) * 0x85ebca6bu;
+    }
+    checksums[gid] = checksum;
+}
 
 struct SpartanFieldSum192 {
     uint limb[6];

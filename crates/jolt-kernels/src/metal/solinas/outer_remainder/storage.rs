@@ -376,6 +376,18 @@ impl OuterRemainderSequenceStorage {
         self.storage.initialization
     }
 
+    pub(crate) fn share_product_state_a(&self) -> Result<Buffer, MetalError> {
+        self.storage
+            .buffers
+            .dense
+            .as_ref()
+            .map(|dense| dense.state_a.clone())
+            .ok_or(MetalError::InvalidOuterRemainderState {
+                expected: "allocated dense storage for sequential Product reuse",
+                got: "released dense storage",
+            })
+    }
+
     #[cfg(feature = "test-utils")]
     pub(crate) const fn pipeline_compile_wall(&self) -> Duration {
         self.storage.pipeline_compile_wall
@@ -451,7 +463,7 @@ fn initialize_storage(
     let completion = tracing::info_span!(
         "MetalOuterRemainder::storage_initialize_complete",
         mode = mode.as_str(),
-        command_completed = true,
+        command_completed = mode == OuterRemainderStorageInitialization::Full,
         bytes,
         wall_ns,
         gpu_active_ns,

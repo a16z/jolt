@@ -5,7 +5,7 @@ use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_field::{AkitaField, CanonicalU64};
 use jolt_witness::JoltWitnessPlane;
 
-use super::solinas::ram_cycle_family_v3::{
+use super::solinas::ram_cycle_family::{
     OwnerConfig, RamAccessRecord, RamCycleFamilyOwner, RamIncrementRecord,
 };
 use crate::optimized::ram_trace::{RamAccessColumns, RamIncrementActivity};
@@ -53,7 +53,7 @@ pub(super) fn shared_ram_cycle_family_owner(
     let owner_span = tracing::info_span!(
         "MetalRamCycleFamily::owner_prepare",
         enabled = true,
-        schema_version = super::solinas::ram_cycle_family_v3::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+        schema_version = super::solinas::ram_cycle_family::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
         source_kind = "ram_access_tape_v1",
         source_generation = tracing::field::Empty,
         source_fingerprint = tracing::field::Empty,

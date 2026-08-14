@@ -1,4 +1,6 @@
-use std::{mem::size_of, sync::Arc};
+use std::sync::{mpsc, Arc};
+use std::thread::JoinHandle;
+use std::time::Instant;
 
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::AkitaField;
@@ -14,17 +16,20 @@ use super::solinas::bytecode_read_raf_address::{
 };
 use super::solinas::instruction_read_raf_v3::{AddressAtomSequence, ADDRESS_PHASE_BITS};
 use super::solinas::{
-    AddressPhaseSequence, AddressPhaseSequenceConfig, BooleanityRows,
+    AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, BooleanityRows,
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
     InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
-    InstructionReadRafStage1Owner, InstructionReadRafStage1Receipt, Product5Sequence,
-    Product5SequenceConfig, ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
+    InstructionReadRafProducerExecution, InstructionReadRafStage1Owner,
+    InstructionReadRafStage1Receipt, PendingInstructionReadRafSourcePrimer, Product5Sequence,
+    Product5SequenceConfig, RegistersValInstructionSourceLease,
+    RegistersValInstructionSourceRequest, ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::optimized::instruction_read_raf::{
     prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
 };
 use crate::{
-    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+    KernelError, PrepareKernel, ProofSession, ProverInputs, Stage5InstructionReadRafPrefetch,
+    SumcheckKernel, SumcheckKernelError,
 };
 
 /// Dispatch and crossover settings for the stage-5 dense cycle tail.
@@ -67,7 +72,248 @@ pub enum InstructionReadRafAddressImplementation {
     Stage1Grouped,
 }
 
+const SOURCE_PRIMER_CUTOFF_ELEMENTS: usize = 1 << 28;
+const INITIAL_ADDRESS_SUFFIX_BITS: u32 = 120;
+
+struct PrefetchedInstructionReadRafScatter {
+    sequence: Box<AddressPhaseSequence>,
+    initial_sums: AddressPhaseSums,
+    receipt: InstructionReadRafDenseGroupedReceipt,
+    execution: InstructionReadRafProducerExecution,
+    bytecode_carrier: Option<BytecodeAddressSparseStage1Carrier>,
+    registers_val_lease: Option<RegistersValInstructionSourceLease>,
+}
+
+struct PendingInstructionReadRafScatter {
+    rows: usize,
+    lookup_output_point: Vec<AkitaField>,
+    start_sender: mpsc::Sender<()>,
+    handle: Option<JoinHandle<Result<PrefetchedInstructionReadRafScatter, String>>>,
+}
+
+struct InstructionReadRafScatterStart {
+    sender: mpsc::Sender<()>,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for InstructionReadRafScatterStart {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit();
+    }
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PendingInstructionReadRafScatter {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit();
+    }
+}
+
+impl Drop for PendingInstructionReadRafScatter {
+    fn drop(&mut self) {
+        let _ = self.start_sender.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl PendingInstructionReadRafScatter {
+    fn join(
+        mut self,
+    ) -> Result<(PrefetchedInstructionReadRafScatter, bool, u64), KernelError<AkitaField>> {
+        let _ = self.start_sender.send(());
+        let completed_before_join = self
+            .handle
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished);
+        let started = Instant::now();
+        let handle = self.handle.take().ok_or(KernelError::InvariantViolation {
+            reason: "Instruction Read-RAF scatter prefetch was already consumed",
+        })?;
+        let result = handle.join().map_err(|_| KernelError::InvariantViolation {
+            reason: "Instruction Read-RAF scatter prefetch worker panicked",
+        })?;
+        Ok((
+            result.map_err(metal_prepare_error)?,
+            completed_before_join,
+            duration_ns(started.elapsed()),
+        ))
+    }
+}
+
+pub(super) fn start_instruction_read_raf_scatter(
+    session: &mut ProofSession,
+) -> Result<(), KernelError<AkitaField>> {
+    let Some(start) = session.take::<InstructionReadRafScatterStart>() else {
+        return Ok(());
+    };
+    start
+        .sender
+        .send(())
+        .map_err(|_| KernelError::InvariantViolation {
+            reason: "Instruction Read-RAF scatter prefetch worker stopped before release",
+        })
+}
+
 impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend {
+    fn prefetch(&self, session: &mut ProofSession) -> Result<(), KernelError<AkitaField>> {
+        if session
+            .state::<PendingInstructionReadRafScatter>()
+            .is_some()
+            || session
+                .state::<PendingInstructionReadRafSourcePrimer>()
+                .is_some()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "Instruction Read-RAF prefetch was submitted more than once",
+            });
+        }
+        let Some(owner) = session
+            .state::<InstructionReadRafStage1Owner>()
+            .filter(|owner| owner.receipt().rows() >= SOURCE_PRIMER_CUTOFF_ELEMENTS)
+            .cloned()
+        else {
+            return Ok(());
+        };
+
+        let rows = owner.receipt().rows();
+        let fuse_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
+            == crate::metal::BytecodeReadRafAddressImplementation::AddressMajor
+            && rows >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
+        let can_prefetch_scatter = self.config.instruction_read_raf.address_implementation
+            == InstructionReadRafAddressImplementation::Stage1Grouped
+            && session
+                .state::<Stage5InstructionReadRafPrefetch<AkitaField>>()
+                .is_some()
+            && (!fuse_bytecode_carrier
+                || session
+                    .state::<BytecodeAddressStage1TopologyOwner>()
+                    .is_some());
+        if can_prefetch_scatter {
+            let point = session
+                .take::<Stage5InstructionReadRafPrefetch<AkitaField>>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "Instruction Read-RAF prefetch point disappeared",
+                })?
+                .lookup_output_point;
+            let topology_owner = if fuse_bytecode_carrier {
+                Some(session.take::<BytecodeAddressStage1TopologyOwner>().ok_or(
+                    KernelError::InvariantViolation {
+                        reason: "fused bytecode topology disappeared before prefetch",
+                    },
+                )?)
+            } else {
+                None
+            };
+            let registers_val_request = session.take::<RegistersValInstructionSourceRequest>();
+            let context = Arc::clone(&self.context);
+            let config = self.config.instruction_read_raf;
+            let worker_point = point.clone();
+            let (start_sender, start_receiver) = mpsc::channel();
+            let handle = std::thread::Builder::new()
+                .name("jolt-instruction-read-raf-prefetch".to_owned())
+                .spawn(move || {
+                    start_receiver.recv().map_err(|_| {
+                        "Instruction Read-RAF scatter release was dropped".to_owned()
+                    })?;
+                    let source = owner
+                        .lease(rows, context.device_registry_id())
+                        .map_err(|error| error.to_string())?;
+                    let bytecode_request = topology_owner
+                        .map(|topology_owner| {
+                            let topology_source = owner
+                                .lease(rows, context.device_registry_id())
+                                .map_err(|error| error.to_string())?;
+                            let topology = topology_owner
+                                .lease(topology_source)
+                                .map_err(|error| error.to_string())?;
+                            BytecodeAddressFusedScatterRequest::new(topology)
+                                .map_err(|error| error.to_string())
+                        })
+                        .transpose()?;
+                    let registers_val_lease = registers_val_request
+                        .map(|request| {
+                            let register_source = owner
+                                .lease(rows, context.device_registry_id())
+                                .map_err(|error| error.to_string())?;
+                            request
+                                .publish(&context, register_source)
+                                .map_err(|error| error.to_string())
+                        })
+                        .transpose()?;
+                    let mut planes = context
+                        .prepare_instruction_read_raf_compatibility_scatter(
+                            source,
+                            &worker_point,
+                            InstructionReadRafCompatibilityScatterConfig {
+                                threads_per_threadgroup: config
+                                    .stage1_scatter_threads_per_threadgroup,
+                            },
+                            bytecode_request,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let receipt = planes.receipt().clone();
+                    let execution = planes.execution();
+                    let bytecode_carrier = planes.take_bytecode_carrier();
+                    let span = tracing::info_span!(
+                        "MetalInstructionReadRaf::address_prefetch",
+                        rows,
+                        suffix_bits = INITIAL_ADDRESS_SUFFIX_BITS,
+                        complete = tracing::field::Empty,
+                    );
+                    let _entered = span.enter();
+                    let mut sequence = context
+                        .prepare_address_phase_sequence_from_resident_grouped(
+                            planes,
+                            config.address_dispatch,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let initial_sums = sequence
+                        .phase(INITIAL_ADDRESS_SUFFIX_BITS, None)
+                        .map_err(|error| error.to_string())?;
+                    let _ = span.record("complete", true);
+                    Ok(PrefetchedInstructionReadRafScatter {
+                        sequence: Box::new(sequence),
+                        initial_sums,
+                        receipt,
+                        execution,
+                        bytecode_carrier,
+                        registers_val_lease,
+                    })
+                })
+                .map_err(metal_prepare_error)?;
+            session.park(InstructionReadRafScatterStart {
+                sender: start_sender.clone(),
+            });
+            session.park(PendingInstructionReadRafScatter {
+                rows,
+                lookup_output_point: point,
+                start_sender,
+                handle: Some(handle),
+            });
+            return Ok(());
+        }
+
+        let pending = self
+            .context
+            .submit_instruction_read_raf_source_primer(&owner)
+            .map_err(metal_prepare_error)?;
+        let span = tracing::info_span!(
+            "MetalInstructionReadRaf::source_primer_submit",
+            source_bytes = pending.source_bytes(),
+            source_pages = pending.source_pages(),
+            submit_wall_ns = duration_ns(pending.submit_wall()),
+            command_buffers = 1u64,
+            dispatches = 1u64,
+            waits = 0u64,
+            readback_bytes = 0u64,
+        );
+        let _entered = span.enter();
+        session.park(pending);
+        Ok(())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -77,8 +323,58 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         Box<dyn SumcheckKernel<AkitaField, Relation = InstructionReadRaf<AkitaField>>>,
         KernelError<AkitaField>,
     > {
+        if let Some(primer) = session.take::<PendingInstructionReadRafSourcePrimer>() {
+            let span = tracing::info_span!(
+                "MetalInstructionReadRaf::source_primer_join",
+                source_bytes = primer.source_bytes(),
+                source_pages = primer.source_pages(),
+                completed_before_join = tracing::field::Empty,
+                submit_wall_ns = tracing::field::Empty,
+                overlap_wall_ns = tracing::field::Empty,
+                join_wall_ns = tracing::field::Empty,
+                lifecycle_wall_ns = tracing::field::Empty,
+                gpu_active_ns = tracing::field::Empty,
+                command_buffers = 1u64,
+                dispatches = 1u64,
+                waits = 1u64,
+                readback_bytes = 0u64,
+            );
+            let _entered = span.enter();
+            let observation = primer.join().map_err(metal_prepare_error)?;
+            let _ = span.record("completed_before_join", observation.completed_before_join);
+            let _ = span.record("submit_wall_ns", duration_ns(observation.submit_wall));
+            let _ = span.record("overlap_wall_ns", duration_ns(observation.overlap_wall));
+            let _ = span.record("join_wall_ns", duration_ns(observation.join_wall));
+            let _ = span.record("lifecycle_wall_ns", duration_ns(observation.wall));
+            let _ = span.record("gpu_active_ns", duration_ns(observation.gpu_active));
+        }
         let dimensions = inputs.relation.dimensions();
         let trace_elements = 1usize << dimensions.log_t();
+        let prefetched_scatter =
+            if let Some(pending) = session.take::<PendingInstructionReadRafScatter>() {
+                if pending.rows != trace_elements
+                    || pending.lookup_output_point != inputs.points.lookup_output
+                {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "Instruction Read-RAF scatter prefetch has stale inputs",
+                    });
+                }
+                let span = tracing::info_span!(
+                    "MetalInstructionReadRaf::scatter_prefetch_join",
+                    rows = trace_elements,
+                    completed_before_join = tracing::field::Empty,
+                    join_wall_ns = tracing::field::Empty,
+                    complete = tracing::field::Empty,
+                );
+                let _entered = span.enter();
+                let (prefetched, completed_before_join, join_wall_ns) = pending.join()?;
+                let _ = span.record("completed_before_join", completed_before_join);
+                let _ = span.record("join_wall_ns", join_wall_ns);
+                let _ = span.record("complete", true);
+                Some(prefetched)
+            } else {
+                None
+            };
         let use_metal_address =
             trace_elements >= self.config.instruction_read_raf.address_cutoff_elements;
         let collect_bytecode_support = self.config.bytecode_read_raf_address.implementation
@@ -87,6 +383,12 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         let fuse_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == crate::metal::BytecodeReadRafAddressImplementation::AddressMajor
             && trace_elements >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
+        let share_registers_val_source = prefetched_scatter
+            .as_ref()
+            .is_some_and(|prefetched| prefetched.registers_val_lease.is_some())
+            || session
+                .state::<RegistersValInstructionSourceRequest>()
+                .is_some();
         let retain_lookup_plane = trace_elements
             >= self
                 .config
@@ -99,61 +401,112 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             && !collect_bytecode_support)
             .then(|| session.take::<InstructionReadRafStage1Owner>())
             .flatten();
-        if fuse_bytecode_carrier && stage1_owner.is_none() {
+        if prefetched_scatter.is_some() && stage1_owner.is_none() {
             return Err(KernelError::InvariantViolation {
-                reason:
-                    "fused bytecode address carrier requires the InstructionReadRAF Stage-1 owner",
+                reason: "prefetched Instruction Read-RAF scatter requires its Stage-1 owner",
             });
         }
-        let (cpu, resident_grouped_planes) = if let Some(owner) = stage1_owner.as_ref() {
+        if (fuse_bytecode_carrier || share_registers_val_source) && stage1_owner.is_none() {
+            return Err(KernelError::InvariantViolation {
+                reason: "fused Stage-1 consumers require the InstructionReadRAF Stage-1 owner",
+            });
+        }
+        let (cpu, resident_grouped_input) = if let Some(owner) = stage1_owner.as_ref() {
             let device_registry_id = self.context.device_registry_id();
-            let scatter_source = owner
-                .lease(trace_elements, device_registry_id)
-                .map_err(metal_prepare_error)?;
             let retained_claims = owner
                 .lease(trace_elements, device_registry_id)
                 .map_err(metal_prepare_error)?;
-            let bytecode_request = if fuse_bytecode_carrier {
-                let topology_owner = session.take::<BytecodeAddressStage1TopologyOwner>().ok_or(
-                    KernelError::InvariantViolation {
-                        reason: "fused bytecode address carrier topology is missing",
-                    },
-                )?;
-                let topology_source = owner
-                    .lease(trace_elements, device_registry_id)
-                    .map_err(metal_prepare_error)?;
-                let topology = topology_owner
-                    .lease(topology_source)
-                    .map_err(metal_prepare_error)?;
-                Some(
-                    BytecodeAddressFusedScatterRequest::new(topology)
-                        .map_err(metal_prepare_error)?,
-                )
-            } else {
-                None
-            };
             let cpu = OptimizedInstructionReadRafKernel::new_metal_resident(
                 dimensions,
                 &inputs.points.lookup_output,
                 retained_claims,
                 inputs.challenges.gamma,
             )?;
-            let mut planes = self
-                .context
-                .prepare_instruction_read_raf_compatibility_scatter(
-                    scatter_source,
-                    &inputs.points.lookup_output,
-                    InstructionReadRafCompatibilityScatterConfig {
-                        threads_per_threadgroup: self
-                            .config
-                            .instruction_read_raf
-                            .stage1_scatter_threads_per_threadgroup,
-                    },
-                    bytecode_request,
-                )
-                .map_err(metal_prepare_error)?;
-            let receipt = planes.receipt().clone();
-            let execution = planes.execution();
+            let (resident_input, receipt, execution, bytecode_carrier, registers_val_lease) =
+                if let Some(prefetched) = prefetched_scatter {
+                    let PrefetchedInstructionReadRafScatter {
+                        sequence,
+                        initial_sums,
+                        receipt,
+                        execution,
+                        bytecode_carrier,
+                        registers_val_lease,
+                    } = prefetched;
+                    (
+                        ResidentGroupedInput::Prefetched {
+                            sequence,
+                            initial_sums,
+                        },
+                        receipt,
+                        execution,
+                        bytecode_carrier,
+                        registers_val_lease,
+                    )
+                } else {
+                    let scatter_source = owner
+                        .lease(trace_elements, device_registry_id)
+                        .map_err(metal_prepare_error)?;
+                    let bytecode_request = if fuse_bytecode_carrier {
+                        let topology_owner = session
+                            .take::<BytecodeAddressStage1TopologyOwner>()
+                            .ok_or(KernelError::InvariantViolation {
+                            reason: "fused bytecode address carrier topology is missing",
+                        })?;
+                        let topology_source = owner
+                            .lease(trace_elements, device_registry_id)
+                            .map_err(metal_prepare_error)?;
+                        let topology = topology_owner
+                            .lease(topology_source)
+                            .map_err(metal_prepare_error)?;
+                        Some(
+                            BytecodeAddressFusedScatterRequest::new(topology)
+                                .map_err(metal_prepare_error)?,
+                        )
+                    } else {
+                        None
+                    };
+                    let registers_val_lease = if share_registers_val_source {
+                        let request = session
+                            .take::<RegistersValInstructionSourceRequest>()
+                            .ok_or(KernelError::InvariantViolation {
+                                reason: "RegistersVal instruction-source request is missing",
+                            })?;
+                        let source = owner
+                            .lease(trace_elements, device_registry_id)
+                            .map_err(metal_prepare_error)?;
+                        Some(
+                            request
+                                .publish(&self.context, source)
+                                .map_err(metal_prepare_error)?,
+                        )
+                    } else {
+                        None
+                    };
+                    let mut planes = self
+                        .context
+                        .prepare_instruction_read_raf_compatibility_scatter(
+                            scatter_source,
+                            &inputs.points.lookup_output,
+                            InstructionReadRafCompatibilityScatterConfig {
+                                threads_per_threadgroup: self
+                                    .config
+                                    .instruction_read_raf
+                                    .stage1_scatter_threads_per_threadgroup,
+                            },
+                            bytecode_request,
+                        )
+                        .map_err(metal_prepare_error)?;
+                    let receipt = planes.receipt().clone();
+                    let execution = planes.execution();
+                    let bytecode_carrier = planes.take_bytecode_carrier();
+                    (
+                        ResidentGroupedInput::Planes(Box::new(planes)),
+                        receipt,
+                        execution,
+                        bytecode_carrier,
+                        registers_val_lease,
+                    )
+                };
             let fused = receipt.bytecode();
             trace_instruction_read_raf_scatter(
                 &receipt,
@@ -163,7 +516,6 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 duration_ns(execution.gpu_active),
                 execution.status_readback_bytes,
             );
-            let bytecode_carrier = planes.take_bytecode_carrier();
             match (fuse_bytecode_carrier, fused, bytecode_carrier) {
                 (true, Some(fused), Some(carrier)) => {
                     validate_fused_bytecode_carrier(receipt.source(), fused, &carrier)?;
@@ -191,7 +543,61 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                     });
                 }
             }
-            (cpu, Some(planes))
+            match (share_registers_val_source, registers_val_lease) {
+                (true, Some(lease)) => {
+                    if session
+                        .state::<RegistersValInstructionSourceLease>()
+                        .is_some()
+                    {
+                        return Err(KernelError::InvariantViolation {
+                            reason:
+                                "RegistersVal instruction source would replace an existing lease",
+                        });
+                    }
+                    let source_receipt = lease.receipt();
+                    let source_ids = source_receipt.source_storage_ids();
+                    let source_bytes = source_receipt.source_storage_bytes();
+                    let _span = tracing::info_span!(
+                        "MetalRegistersValEvaluation::instruction_source_publish",
+                        cycles = source_receipt.cycles(),
+                        explicit_rows = source_receipt.explicit_rows(),
+                        source = "instruction_read_raf_stage1_rows_v1",
+                        row_layout = "column_major_packed_u64_v3",
+                        source_generation = source_receipt.generation(),
+                        source_device_registry_id = source_receipt.device_registry_id(),
+                        source_ready_serial = source_receipt.completion_serial(),
+                        source_compact_storage_id = source_ids[0],
+                        source_compact_bytes = source_bytes[0],
+                        source_residual_storage_id = source_ids[1],
+                        source_residual_bytes = source_bytes[1],
+                        instruction_rows_storage_id = source_receipt.instruction_rows_storage_id(),
+                        instruction_rows_bytes = source_receipt.instruction_rows_bytes(),
+                        producer_plane_allocations = 0usize,
+                        producer_device_bytes = 0u64,
+                        additional_command_buffers = 0usize,
+                        additional_waits = 0usize,
+                        additional_dispatches = 0usize,
+                        shared_source_row_scans = 1usize,
+                        additional_source_row_scans = 0usize,
+                        member_upload_bytes = 0u64,
+                        complete_publication = true,
+                    )
+                    .entered();
+                    session.park(lease);
+                }
+                (true, None) => {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "RegistersVal instruction source did not publish its lease",
+                    });
+                }
+                (false, None) => {}
+                (false, Some(_)) => {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "unrequested RegistersVal instruction source was published",
+                    });
+                }
+            }
+            (cpu, Some(resident_input))
         } else {
             (
                 prepare_metal_instruction_read_raf(
@@ -234,7 +640,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 cpu.metal_prepare_booleanity_rows(&self.context)
                     .map(|rows| {
                         let upload_bytes =
-                            (rows.len() * size_of::<super::solinas::BooleanityRow>()) as u64;
+                            (rows.len() * super::solinas::BOOLEANITY_SOURCE_ROW_BYTES) as u64;
                         (rows, upload_bytes, 1, "member_upload_v1", 0, 0, 0)
                     })
             };
@@ -252,7 +658,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                         "MetalBooleanityRows::stage5_prepare",
                         resident_rows_storage_id = rows.allocation_identity(),
                         resident_rows = rows.len(),
-                        resident_row_bytes = size_of::<super::solinas::BooleanityRow>(),
+                        resident_row_bytes = super::solinas::BOOLEANITY_SOURCE_ROW_BYTES,
                         device_registry_id = rows.device_registry_id(),
                         row_allocations,
                         row_upload_bytes,
@@ -281,7 +687,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             self.config.instruction_read_raf,
             use_metal_address,
             retain_lookup_plane,
-            resident_grouped_planes,
+            resident_grouped_input,
         )?))
     }
 }
@@ -315,6 +721,14 @@ enum ResidentAddressSequence {
     Atom(Box<AddressAtomSequence>),
 }
 
+pub(crate) enum ResidentGroupedInput {
+    Planes(Box<InstructionReadRafDenseGroupedPlanes>),
+    Prefetched {
+        sequence: Box<AddressPhaseSequence>,
+        initial_sums: AddressPhaseSums,
+    },
+}
+
 impl MetalInstructionReadRafKernel {
     pub(crate) fn new(
         cpu: OptimizedInstructionReadRafKernel<AkitaField>,
@@ -322,7 +736,7 @@ impl MetalInstructionReadRafKernel {
         config: InstructionReadRafMetalConfig,
         use_metal_address: bool,
         retain_lookup_plane: bool,
-        resident_grouped_planes: Option<InstructionReadRafDenseGroupedPlanes>,
+        resident_grouped_input: Option<ResidentGroupedInput>,
     ) -> Result<Self, SumcheckError<AkitaField>> {
         let mut kernel = Self {
             cpu,
@@ -339,7 +753,7 @@ impl MetalInstructionReadRafKernel {
             metal_address_phases: 0,
         };
         if use_metal_address {
-            if let Some(planes) = resident_grouped_planes {
+            if let Some(input) = resident_grouped_input {
                 if config.address_implementation
                     != InstructionReadRafAddressImplementation::Stage1Grouped
                 {
@@ -347,30 +761,49 @@ impl MetalInstructionReadRafKernel {
                         "Stage-1 grouped planes reached another address implementation",
                     ));
                 }
-                let mut sequence = {
-                    let _span = tracing::info_span!(
-                        "MetalInstructionReadRaf::stage1_grouped_sequence_prepare"
-                    )
-                    .entered();
-                    kernel
-                        .context
-                        .prepare_address_phase_sequence_from_resident_grouped(
-                            planes,
-                            config.address_dispatch,
+                let (mut sequence, initial_sums) = match input {
+                    ResidentGroupedInput::Planes(planes) => {
+                        let _span = tracing::info_span!(
+                            "MetalInstructionReadRaf::stage1_grouped_sequence_prepare"
                         )
-                        .map_err(|error| backend_error(error.to_string()))?
+                        .entered();
+                        (
+                            Box::new(
+                                kernel
+                                    .context
+                                    .prepare_address_phase_sequence_from_resident_grouped(
+                                        *planes,
+                                        config.address_dispatch,
+                                    )
+                                    .map_err(|error| backend_error(error.to_string()))?,
+                            ),
+                            None,
+                        )
+                    }
+                    ResidentGroupedInput::Prefetched {
+                        sequence,
+                        initial_sums,
+                    } => (sequence, Some(initial_sums)),
                 };
                 if retain_lookup_plane {
                     kernel.resident_lookup_plane = Some(sequence.resident_lookup_index_plane());
                 }
                 let (suffix_len, previous) = kernel.cpu.metal_address_phase_request()?;
-                let sums = sequence
-                    .phase(suffix_len, previous.as_ref())
-                    .map_err(|error| backend_error(error.to_string()))?;
+                let sums = if let Some(initial_sums) = initial_sums {
+                    if suffix_len != INITIAL_ADDRESS_SUFFIX_BITS || previous.is_some() {
+                        return Err(backend_error(
+                            "prefetched Instruction Read-RAF address phase has stale geometry",
+                        ));
+                    }
+                    initial_sums
+                } else {
+                    sequence
+                        .phase(suffix_len, previous.as_ref())
+                        .map_err(|error| backend_error(error.to_string()))?
+                };
                 kernel.cpu.metal_install_address_phase(sums)?;
                 kernel.metal_address_phases = 1;
-                kernel.address_sequence =
-                    Some(ResidentAddressSequence::Grouped(Box::new(sequence)));
+                kernel.address_sequence = Some(ResidentAddressSequence::Grouped(sequence));
                 return Ok(kernel);
             }
             let atom = if config.address_implementation
@@ -1008,7 +1441,7 @@ fn backend_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
     }
 }
 
-fn metal_prepare_error(error: super::solinas::MetalError) -> KernelError<AkitaField> {
+fn metal_prepare_error(error: impl ToString) -> KernelError<AkitaField> {
     backend_error(error.to_string()).into()
 }
 

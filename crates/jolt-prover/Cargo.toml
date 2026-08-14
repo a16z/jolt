@@ -129,7 +129,3 @@ required-features = ["profiling"]
 [[example]]
 name = "modular_benchmark"
 required-features = ["prover-fixtures"]
-
-[[example]]
-name = "metal-outer-remainder-eval"
-required-features = ["metal", "prover-fixtures"]

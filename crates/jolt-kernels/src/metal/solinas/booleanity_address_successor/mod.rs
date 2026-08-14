@@ -1,8 +1,6 @@
-//! Isolated first slice for the next BooleanityAddress Metal backend.
+//! Test-only packed Booleanity-address implementation.
 //!
-//! The module is deliberately not registered with the production backend or
-//! Metal source assembler. `WIRING.md` defines the integration and evidence
-//! gates that must be satisfied before either registration is appropriate.
+//! Production uses the resident-row implementation in [`super::booleanity_address`].
 
 mod abi;
 pub mod model;

@@ -21,26 +21,20 @@ mod address_suffix_full;
 mod booleanity;
 mod booleanity_address;
 pub mod booleanity_address_successor;
-#[doc(hidden)]
-pub mod booleanity_address_v2;
 mod bytecode_cycle;
 #[doc(hidden)]
 pub mod bytecode_read_raf;
 #[doc(hidden)]
 pub mod bytecode_read_raf_address;
-#[doc(hidden)]
-pub mod bytecode_read_raf_v3;
 mod bytecode_row;
-pub mod half_width_probe;
 #[cfg(feature = "test-utils")]
 #[doc(hidden)]
 pub mod hamming_weight_claim_reduction;
 #[cfg(not(feature = "test-utils"))]
 mod hamming_weight_claim_reduction;
 pub mod hamming_weight_claim_reduction_successor;
-#[doc(hidden)]
-pub mod hamming_weight_claim_reduction_v2;
 pub mod instruction_claim_reduction;
+mod instruction_claim_reduction_successor;
 mod instruction_input;
 pub mod instruction_input_successor;
 mod instruction_ra_sequence;
@@ -49,31 +43,18 @@ mod instruction_read_raf;
 #[doc(hidden)]
 pub mod instruction_read_raf_producer;
 #[doc(hidden)]
-pub mod instruction_read_raf_v2;
-#[doc(hidden)]
 pub mod instruction_read_raf_v3;
 mod outer_remainder;
 mod product5;
 mod product_remainder;
 mod product_uniskip;
 #[doc(hidden)]
-pub mod ram_cycle_family_v3;
-#[doc(hidden)]
-pub mod ram_family_v2;
-mod ram_output_check;
+pub mod ram_cycle_family;
 pub mod ram_ra_claim_reduction;
 mod ram_raf_evaluation;
 mod ram_val_check;
-pub mod ram_val_check_successor;
-mod registers;
 pub mod registers_claim_reduction;
-mod registers_read_write;
-mod registers_read_write_dense;
-mod registers_read_write_v3;
 mod registers_val;
-#[doc(hidden)]
-pub mod registers_val_claim_v2;
-pub mod registers_val_evaluation_backend;
 mod runtime;
 mod source;
 #[cfg(feature = "test-utils")]
@@ -103,6 +84,7 @@ pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
 };
 pub use booleanity::{BooleanityRows, HammingHotRows};
+pub(crate) use booleanity::{BOOLEANITY_SOURCE_ROW_BYTES, BOOLEANITY_SOURCE_WORDS};
 pub use booleanity_address::{BooleanityAddressPushforward, BooleanityAddressPushforwardConfig};
 pub use booleanity_address_successor::{
     BooleanityAddressSuccessorConfig, BooleanityAddressSuccessorInvocation,
@@ -113,14 +95,13 @@ pub use bytecode_cycle::{
     BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
-pub use half_width_probe::{
-    HalfWidthDomain, HalfWidthOperand, HalfWidthProbe, HalfWidthProbeInvocation,
-    HalfWidthProbeShape, HALF_WIDTH_AKITA_OFFSET, MINIMUM_HALF_WIDTH_PRODUCTS_PER_SECOND,
-    TARGET_CHAIN_ELEMENTS, TARGET_CHAIN_ITERATIONS,
-};
 pub use hamming_weight_claim_reduction::HammingWeightSuccessorError;
 pub use hamming_weight_claim_reduction_successor::{
     HammingWeightRetainedConfig, HammingWeightRetainedInvocation, HammingWeightRetainedRuntimeError,
+};
+pub(crate) use instruction_claim_reduction_successor::{
+    PendingProductInstructionInitialMessage, ProductInstructionInitialMessageStats,
+    ProductInstructionRoundService, ProductInstructionRoundStats,
 };
 pub(crate) use instruction_input::{
     instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
@@ -137,9 +118,7 @@ pub use instruction_input::{
     InstructionInputSuccessorTransitionStats, INSTRUCTION_INPUT_COEFFICIENTS,
     INSTRUCTION_INPUT_TABLES,
 };
-pub(crate) use instruction_ra_sequence::{
-    instruction_ra_weight_capacities, InstructionRaSequenceStorage,
-};
+pub(crate) use instruction_ra_sequence::InstructionRaSequenceStorage;
 pub use instruction_ra_sequence::{
     InstructionRaLookupPlane, InstructionRaMaterializeWidth, InstructionRaSequence,
     InstructionRaSequenceConfig, InstructionRaSequenceScratchLayout,
@@ -149,14 +128,20 @@ pub use instruction_ra_virtualization::{
 };
 #[cfg(test)]
 pub(crate) use instruction_read_raf::validate_bytecode_topology_admission;
+#[cfg(test)]
+pub(crate) use instruction_read_raf::InstructionReadRafPublicationKind;
+#[doc(hidden)]
+pub use instruction_read_raf::InstructionReadRafStage1Owner;
 pub(crate) use instruction_read_raf::{
     instruction_read_raf_claim_and_count_rank, instruction_read_raf_stage1_claim_bytes,
     instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafCountOrder,
     InstructionReadRafDenseGroupedPlanes, InstructionReadRafDenseGroupedReceipt,
-    InstructionReadRafFusedBytecodeReceipt, InstructionReadRafStage1ChunkWriter,
-    InstructionReadRafStage1Lease, InstructionReadRafStage1Owner, InstructionReadRafStage1Receipt,
-    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, INSTRUCTION_READ_RAF_SEGMENTS,
+    InstructionReadRafFusedBytecodeReceipt, InstructionReadRafProducerExecution,
+    InstructionReadRafStage1ChunkWriter, InstructionReadRafStage1Lease,
+    InstructionReadRafStage1Receipt, InstructionReadRafStage1Storage,
+    PendingInstructionReadRafSourcePrimer, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+    INSTRUCTION_READ_RAF_SEGMENTS,
 };
 #[cfg(feature = "test-utils")]
 pub use instruction_read_raf::{
@@ -165,7 +150,9 @@ pub use instruction_read_raf::{
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRegistersClaimCarrier,
-    OuterRegistersClaimCarrierReceipt, OuterRemainderSequenceStorage,
+    OuterRegistersClaimCarrierJoinStats, OuterRegistersClaimCarrierReceipt,
+    OuterRegistersClaimCarrierSubmission, OuterRemainderSequenceStorage,
+    PendingOuterRegistersClaimCarrier,
 };
 pub use outer_remainder::{
     OuterBindingPlan, OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
@@ -181,11 +168,14 @@ pub use product5::{
 };
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;
-pub(crate) use product_remainder::PendingProductRemainderInitialMessage;
+pub(crate) use product_remainder::{
+    PendingProductRemainderInitialMessage, ProductRemainderWorkspacePrimerStats,
+};
 pub use product_remainder::{
     ProductRemainderRow, ProductRemainderRowError, ProductRemainderRows, ProductRemainderSequence,
-    ProductRemainderSequenceConfig, ProductRemainderShapeError, ProductRemainderStorageLayout,
-    PRODUCT_REMAINDER_MESSAGE_COLUMNS, PRODUCT_REMAINDER_OPENINGS, PRODUCT_REMAINDER_SIMD_WIDTH,
+    ProductRemainderSequenceConfig, ProductRemainderShapeError, ProductRemainderSourceKind,
+    ProductRemainderStorageLayout, PRODUCT_REMAINDER_MESSAGE_COLUMNS, PRODUCT_REMAINDER_OPENINGS,
+    PRODUCT_REMAINDER_SIMD_WIDTH,
 };
 #[cfg(feature = "test-utils")]
 pub use product_uniskip::reference as product_uniskip_reference;
@@ -194,22 +184,6 @@ pub use product_uniskip::{
     ProductUniskipInvocation, ProductUniskipKnownNodes, ProductUniskipShapeError,
     ProductUniskipStorageLayout, PRODUCT_UNISKIP_EXTENDED_NODES,
     PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS, PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
-};
-pub use ram_output_check::{
-    fold_low_prefix as ram_output_check_fold_low_prefix,
-    fold_public_segments as ram_output_check_fold_public_segments,
-    fold_u64_low_prefix as ram_output_check_fold_u64_low_prefix,
-    folded_range_mask as ram_output_check_folded_range_mask,
-    low_binding_weights as ram_output_check_low_binding_weights, DenseRamOutputOracle,
-    RamOutputCheckCost, RamOutputCheckFold, RamOutputCheckFoldParams, RamOutputCheckHybridPlan,
-    RamOutputCheckPlanError, RamOutputCheckStorage, RamOutputPublicSegment,
-    ResidentRamFinalMetadata, ResidentRamFinalValues, RAM_OUTPUT_CHECK_COMPONENT_GATE_NS,
-    RAM_OUTPUT_CHECK_FIVE_X_CAP_NS, RAM_OUTPUT_CHECK_FOLD_PIPELINE,
-    RAM_OUTPUT_CHECK_REDUCE_PIPELINE, RAM_OUTPUT_CHECK_RELATION_CPU_NS,
-    RAM_OUTPUT_CHECK_RELATION_FIVE_X_CAP_NS, RAM_OUTPUT_CHECK_SIMD_WIDTH,
-    RAM_OUTPUT_CHECK_TARGET_ADDRESSES, RAM_OUTPUT_CHECK_TARGET_CPU_NS,
-    RAM_OUTPUT_CHECK_TARGET_LOG_K, RAM_OUTPUT_CHECK_TARGET_MASK_END,
-    RAM_OUTPUT_CHECK_TARGET_MASK_START,
 };
 pub use ram_raf_evaluation::{
     address_opening_point as ram_raf_address_opening_point, dense_pushforward_oracle,
@@ -235,28 +209,13 @@ pub use ram_val_check::{
     RAM_VAL_CHECK_FIVE_X_GATE_NS, RAM_VAL_CHECK_MESSAGE_COLUMNS, RAM_VAL_CHECK_NO_ACCESS,
     RAM_VAL_CHECK_SIMD_WIDTH, RAM_VAL_CHECK_TARGET_CPU_NS,
 };
-pub use ram_val_check_successor::{
-    PendingRamValSparseFirstMessage, RamValActivePair, RamValSparseFirstMessage,
-    RamValSparseFirstMessageStats,
-};
-pub use registers::{
-    CertifiedRegisterOwner, RdIncrement, RdIncrementActivity, RegisterCsr256, RegisterCsr256Parts,
-    RegisterCsrCensus, RegisterEventCounts, RegisterOwnerError, RegisterOwnerRead,
-    RegisterOwnerRow, RegisterOwnerWrite, RegisterStateFlowCertificate, REGISTER_CSR_BLOCK_CYCLES,
-    REGISTER_CSR_COLUMNS, REGISTER_CSR_NON_AUTHORITATIVE_LOG_T_26_CENSUS,
-};
-pub use registers_read_write::{
-    RegisterAccessRow, RegistersReadWriteFirstMessageInvocation, RegistersReadWriteMessageConfig,
-    RegistersReadWriteSecondMessageInvocation,
-};
-pub use registers_read_write_dense::{
-    RegistersRwDenseRoundInvocation, RegistersRwDenseRoundStorage, RegistersRwDenseStateWords,
-    REGISTERS_RW_DENSE_COLUMNS,
-};
 pub(crate) use registers_val::{PendingRegistersValFirstMessage, RegistersValFirstMessageStats};
 pub use registers_val::{
     RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
     RegistersValFirstTransitionInvocation, RegistersValSequence, RegistersValTransitionConfig,
+};
+pub(crate) use registers_val::{
+    RegistersValInstructionSourceLease, RegistersValInstructionSourceRequest,
 };
 pub use spartan_outer_uniskip::{
     evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,
@@ -265,7 +224,7 @@ pub use spartan_outer_uniskip::{
 pub(crate) use spartan_outer_uniskip::{
     spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_residual_row_bytes,
     spartan_outer_uniskip_row_bytes, OuterResidualArenaKey, OuterResidualReleaseReceipt,
-    SpartanOuterUniskipResidualRow,
+    PendingSpartanStage1SourcePrimer, SpartanOuterUniskipResidualRow,
 };
 
 pub const OFFSET_275: u32 = 275;
@@ -433,8 +392,6 @@ pub enum MetalError {
     MisalignedElementCount { probe: &'static str, ilp: usize },
     #[error("iteration count must be nonzero")]
     ZeroIterations,
-    #[error(transparent)]
-    HalfWidthProbe(#[from] half_width_probe::HalfWidthProbeError),
     #[error("Spartan outer uni-skip shape mismatch: rows={rows}, e_in={e_in}, e_out={e_out}")]
     SpartanOuterUniskipShape {
         rows: usize,
@@ -485,6 +442,8 @@ pub enum MetalError {
     AddressPhaseLayoutLength { expected: usize, got: usize },
     #[error("invalid grouped InstructionReadRaf state: {0}")]
     InvalidInstructionReadRafGrouped(String),
+    #[error("invalid co-produced RAM access collection: {0}")]
+    InvalidRamAccessCollection(String),
     #[error("invalid bytecode read-RAF address configuration: {0}")]
     InvalidBytecodeReadRafAddressConfig(&'static str),
     #[error("address cycle phase tables contain {got} fields, expected {expected}")]
@@ -550,30 +509,6 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
-    #[error("registers read/write needs a power-of-two row count of at least two, got {0}")]
-    InvalidRegistersReadWriteRows(usize),
-    #[error("registers read/write inc has length {got}, expected {expected}")]
-    RegistersReadWriteIncLength { expected: usize, got: usize },
-    #[error("registers read/write split weights cover {covered} pairs, expected {expected}")]
-    RegistersReadWriteWeightShape { expected: usize, covered: usize },
-    #[error("registers read/write index {0} is outside the 128-register domain")]
-    InvalidRegistersReadWriteIndex(u8),
-    #[error(
-        "registers read/write pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedRegistersReadWriteExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    #[error(transparent)]
-    RegistersReadWriteDenseAbi(#[from] registers_read_write_dense::RegistersRwDenseAbiError),
-    #[error(
-        "registers read/write needs {requested} bytes of threadgroup memory, device limit is {maximum}"
-    )]
-    RegistersReadWriteThreadgroupMemory { requested: u64, maximum: u64 },
-    #[error("invalid resident registers read/write state: {0}")]
-    InvalidRegistersReadWriteState(&'static str),
     #[error(
         "registers value evaluation needs a power-of-two cycle count of at least four, got {0}"
     )]
@@ -629,24 +564,6 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
-    #[error(transparent)]
-    RamOutputCheck(#[from] ram_output_check::RamOutputCheckPlanError),
-    #[error("RAM output-check values belong to Metal device {got}, expected {expected}")]
-    RamOutputCheckValuesDevice { expected: u64, got: u64 },
-    #[error("invalid resident RAM output-check state: {0}")]
-    InvalidRamOutputCheckState(&'static str),
-    #[error(
-        "RAM output-check pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedRamOutputCheckExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    #[error(
-        "RAM output-check fold needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
-    )]
-    RamOutputCheckThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(transparent)]
     SpartanShiftPlan(#[from] spartan_shift::SpartanShiftPlanError),
     #[error(transparent)]

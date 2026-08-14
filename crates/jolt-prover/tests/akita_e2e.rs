@@ -258,6 +258,8 @@ mod muldiv {
                 spartan_product_remainder:
                     jolt_kernels::metal::SpartanProductRemainderMetalConfig {
                         trace_cutoff_elements: 2,
+                        witness_source:
+                            jolt_kernels::metal::SpartanProductWitnessSource::SpartanStage1,
                         ..Default::default()
                     },
                 instruction_claim_reduction:
@@ -266,7 +268,7 @@ mod muldiv {
                         ..Default::default()
                     },
                 instruction_input: jolt_kernels::metal::InstructionInputMetalConfig {
-                    trace_cutoff_elements: 2,
+                    trace_cutoff_elements: 4,
                     cutoff_elements: instruction_input_cutoff_elements,
                     dense_storage_mode:
                         jolt_kernels::metal::InstructionInputDenseStorageMode::OuterResidual,
@@ -279,6 +281,9 @@ mod muldiv {
                         trace_cutoff_elements: 4,
                         ..Default::default()
                     },
+                registers_read_write: jolt_kernels::metal::RegistersReadWriteMetalConfig {
+                    precompute_cutoff_elements: 2,
+                },
                 instruction_read_raf: jolt_kernels::metal::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 8,
                     cutoff_elements: 8,

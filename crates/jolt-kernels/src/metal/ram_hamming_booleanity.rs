@@ -15,7 +15,7 @@ use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
-use super::solinas::ram_cycle_family_v3::{
+use super::solinas::ram_cycle_family::{
     HostSparseRamHammingBooleanity, RamCycleFamilyOwner, RamHammingSparsePlan,
 };
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;

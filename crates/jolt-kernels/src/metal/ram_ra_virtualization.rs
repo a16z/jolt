@@ -16,7 +16,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
 use super::ram_cycle_family::shared_ram_cycle_family_owner;
-use super::solinas::ram_cycle_family_v3::{
+use super::solinas::ram_cycle_family::{
     estimated_ram_ra_virtualization_products, HostSparseRamRaVirtualization, RamCycleFamilyOwner,
 };
 use crate::optimized::ram_trace::RamAccessColumns;
@@ -299,7 +299,11 @@ fn kernel_error(error: impl ToString) -> SumcheckKernelError<AkitaField> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
+#[expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "Metal parity test setup"
+)]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
     use jolt_claims::protocols::jolt::geometry::ram::{
@@ -310,7 +314,7 @@ mod tests {
     use jolt_poly::EqPolynomial;
 
     use super::*;
-    use crate::metal::solinas::ram_cycle_family_v3::RamCycleFamilyOwner;
+    use crate::metal::solinas::ram_cycle_family::RamCycleFamilyOwner;
     use crate::metal::MetalConfig;
     use crate::optimized::harness::run_lockstep;
     use crate::optimized::testing::{with_ram_fixture_backend, FixtureShape, RamOp};

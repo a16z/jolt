@@ -2270,18 +2270,17 @@ fn initialize_storage(
         if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
             return Err(MetalError::InvalidGpuTimestamps { start, end });
         }
-        let gpu_active = Duration::from_secs_f64(end - start);
-        let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
-        let completion = tracing::info_span!(
-            "MetalInstructionInput::storage_initialize_complete",
-            mode = %mode.as_str(),
-            command_completed = true,
-            gpu_active_ns,
-        );
-        let _completed = completion.enter();
-        gpu_active
+        Duration::from_secs_f64(end - start)
     };
     let wall = started.elapsed();
+    let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
+    let completion = tracing::info_span!(
+        "MetalInstructionInput::storage_initialize_complete",
+        mode = %mode.as_str(),
+        command_completed = mode != InstructionInputStorageInitialization::Lazy,
+        gpu_active_ns,
+    );
+    let _completed = completion.enter();
     Ok(InstructionInputStorageInitializationStats {
         mode,
         device_buffers,
@@ -2450,7 +2449,7 @@ mod tests {
         let (e_in_capacity, e_out_capacity) =
             instruction_input_weight_capacities(rows.len()).unwrap();
         let config = InstructionInputSequenceConfig {
-            storage_initialization: InstructionInputStorageInitialization::Minimal,
+            storage_initialization: InstructionInputStorageInitialization::Lazy,
             ..InstructionInputSequenceConfig::default()
         };
         let mut storage = context
@@ -2477,8 +2476,8 @@ mod tests {
 
         assert!(storage.requires_outer_residual_release());
         assert_eq!(storage.owned_bytes(), 480);
-        assert_eq!(storage.initialization.device_buffers, 4);
-        assert_eq!(storage.initialization.bytes, 64);
+        assert_eq!(storage.initialization.device_buffers, 0);
+        assert_eq!(storage.initialization.bytes, 0);
         assert_eq!(
             storage.buffers.dense_a.allocation_identity(),
             key.storage_id
@@ -2979,7 +2978,7 @@ mod tests {
             .prepare_instruction_input_sequence(
                 &rows,
                 InstructionInputSequenceConfig {
-                    storage_initialization: InstructionInputStorageInitialization::Minimal,
+                    storage_initialization: InstructionInputStorageInitialization::Lazy,
                     ..InstructionInputSequenceConfig::default()
                 },
             )

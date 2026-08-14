@@ -27,6 +27,21 @@ struct BytecodeReadRafRowWords {
     ulong packed_pc_and_flags;
 };
 
+inline BytecodeReadRafRowWords bytecode_read_raf_load_row(
+    device const ulong* rows,
+    uint row_count,
+    uint index)
+{
+    BooleanityRow source = booleanity_row_load(rows, row_count, index);
+    BytecodeReadRafRowWords row;
+    row.lookup_lo = source.lookup_lo;
+    row.lookup_hi = source.lookup_hi;
+    row.ram_address_plus_one = source.ram_address_plus_one;
+    row.fused_inc_magnitude = source.fused_inc_magnitude;
+    row.packed_pc_and_flags = source.packed_pc_and_flags;
+    return row;
+}
+
 struct BytecodeReadRafRun {
     uint start;
     uint count;
@@ -272,7 +287,7 @@ inline SolinasFp128 bytecode_address_device_atomic_reduce_5(
 }
 
 kernel void solinas_bytecode_address_build_csr(
-    device const BytecodeReadRafRowWords* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device uint* occurrences [[buffer(1)]],
     device BytecodeReadRafRun* runs [[buffer(2)]],
     device atomic_uint* status [[buffer(3)]],
@@ -316,7 +331,10 @@ kernel void solinas_bytecode_address_build_csr(
     for (uint inner = tid; inner < params.inner_length; inner += threads) {
         uint row_index = outer_base + inner;
         bool valid;
-        uint address = bytecode_address_push_pc(rows[row_index], params.addresses, valid);
+        uint address = bytecode_address_push_pc(
+            bytecode_read_raf_load_row(rows, params.rows, row_index),
+            params.addresses,
+            valid);
         if (!valid) {
             atomic_fetch_add_explicit(
                 &status[BYTECODE_ADDRESS_STATUS_INVALID_ROWS],
@@ -440,7 +458,10 @@ kernel void solinas_bytecode_address_build_csr(
     for (uint inner = tid; inner < params.inner_length; inner += threads) {
         uint row_index = outer_base + inner;
         bool valid;
-        uint address = bytecode_address_push_pc(rows[row_index], params.addresses, valid);
+        uint address = bytecode_address_push_pc(
+            bytecode_read_raf_load_row(rows, params.rows, row_index),
+            params.addresses,
+            valid);
         (void)valid;
         uint destination = atomic_fetch_add_explicit(
             &bins[address],
@@ -523,7 +544,7 @@ inline SolinasFp128 bytecode_address_fused_product(
 
 template <bool use_u64>
 inline void bytecode_address_short_runs_impl(
-    device const BytecodeReadRafRowWords* rows,
+    device const ulong* rows,
     device const uint* occurrences,
     device const BytecodeReadRafRun* runs,
     device const uint* counters,
@@ -544,7 +565,8 @@ inline void bytecode_address_short_runs_impl(
     uint inner_mask = params.inner_length - 1u;
     for (uint offset = 0u; offset < run.count; offset++) {
         uint row_index = occurrences[run.start + offset];
-        BytecodeReadRafRowWords row = rows[row_index];
+        BytecodeReadRafRowWords row = bytecode_read_raf_load_row(
+            rows, params.rows, row_index);
         uint inner = row_index & inner_mask;
         for (uint stage = 0u; stage < BYTECODE_ADDRESS_BASE_STAGES; stage++) {
             sums[stage] = solinas_add(
@@ -573,7 +595,7 @@ inline void bytecode_address_short_runs_impl(
 
 template <bool use_u64>
 inline void bytecode_address_long_runs_impl(
-    device const BytecodeReadRafRowWords* rows,
+    device const ulong* rows,
     device const uint* occurrences,
     device const BytecodeReadRafRun* runs,
     device const uint* counters,
@@ -595,7 +617,8 @@ inline void bytecode_address_long_runs_impl(
     uint inner_mask = params.inner_length - 1u;
     for (uint offset = lane; offset < run.count; offset += BYTECODE_ADDRESS_SIMD_WIDTH) {
         uint row_index = occurrences[run.start + offset];
-        BytecodeReadRafRowWords row = rows[row_index];
+        BytecodeReadRafRowWords row = bytecode_read_raf_load_row(
+            rows, params.rows, row_index);
         uint inner = row_index & inner_mask;
         for (uint stage = 0u; stage < BYTECODE_ADDRESS_BASE_STAGES; stage++) {
             sums[stage] = solinas_add(
@@ -626,7 +649,7 @@ inline void bytecode_address_long_runs_impl(
 }
 
 kernel void solinas_bytecode_address_short_runs_u64(
-    device const BytecodeReadRafRowWords* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const uint* occurrences [[buffer(1)]],
     device const BytecodeReadRafRun* runs [[buffer(2)]],
     device const uint* counters [[buffer(3)]],
@@ -641,7 +664,7 @@ kernel void solinas_bytecode_address_short_runs_u64(
 }
 
 kernel void solinas_bytecode_address_short_runs_full(
-    device const BytecodeReadRafRowWords* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const uint* occurrences [[buffer(1)]],
     device const BytecodeReadRafRun* runs [[buffer(2)]],
     device const uint* counters [[buffer(3)]],
@@ -656,7 +679,7 @@ kernel void solinas_bytecode_address_short_runs_full(
 }
 
 kernel void solinas_bytecode_address_long_runs_u64(
-    device const BytecodeReadRafRowWords* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const uint* occurrences [[buffer(1)]],
     device const BytecodeReadRafRun* runs [[buffer(2)]],
     device const uint* counters [[buffer(3)]],
@@ -675,7 +698,7 @@ kernel void solinas_bytecode_address_long_runs_u64(
 }
 
 kernel void solinas_bytecode_address_long_runs_full(
-    device const BytecodeReadRafRowWords* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const uint* occurrences [[buffer(1)]],
     device const BytecodeReadRafRun* runs [[buffer(2)]],
     device const uint* counters [[buffer(3)]],

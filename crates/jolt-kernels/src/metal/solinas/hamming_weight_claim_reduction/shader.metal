@@ -20,6 +20,21 @@ struct HammingWeightResidentRow {
     ulong packed_pc_and_flags;
 };
 
+inline HammingWeightResidentRow hamming_weight_load_row(
+    device const ulong* rows,
+    uint row_count,
+    uint index)
+{
+    BooleanityRow source = booleanity_row_load(rows, row_count, index);
+    HammingWeightResidentRow row;
+    row.lookup_lo = source.lookup_lo;
+    row.lookup_hi = source.lookup_hi;
+    row.ram_address_plus_one = source.ram_address_plus_one;
+    row.fused_inc_magnitude = source.fused_inc_magnitude;
+    row.packed_pc_and_flags = source.packed_pc_and_flags;
+    return row;
+}
+
 struct HammingWeightHistogramParams {
     uint rows;
     uint inner_length;
@@ -199,7 +214,7 @@ inline SolinasFp128 hamming_weight_stage_weight(
 }
 
 kernel void solinas_hamming_weight_register_histogram(
-    device const HammingWeightResidentRow* rows [[buffer(0)]],
+    device const ulong* rows [[buffer(0)]],
     device const SolinasFp128* e_in [[buffer(1)]],
     device const SolinasFp128* e_out [[buffer(2)]],
     device SolinasFp128* partials [[buffer(3)]],
@@ -247,7 +262,8 @@ kernel void solinas_hamming_weight_register_histogram(
         uint local_retained = 0u;
         if (tid < HAMMING_WEIGHT_STAGE_ROWS) {
             uint inner = inner_base + tid;
-            HammingWeightResidentRow row = rows[row_base + inner];
+            HammingWeightResidentRow row = hamming_weight_load_row(
+                rows, params.rows, row_base + inner);
             hamming_weight_decode_row(
                 row,
                 stage_hot,

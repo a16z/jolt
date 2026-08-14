@@ -7,8 +7,8 @@ use super::{
     oracle::{HostAddressMajorCarrier, Row},
     worklist::{SparseAddressRow, SparseAddressWorklist},
     BytecodeAddressChunkDescriptor, BytecodeAddressFusedScatterRequest, BytecodeAddressMajorConfig,
-    BYTECODE_ADDRESS_MAJOR_BASE_STAGES, BYTECODE_ADDRESS_MAJOR_SIMD_WIDTH,
-    BYTECODE_ADDRESS_MAJOR_STAGES,
+    BytecodeAddressStage1TopologyScratch, BYTECODE_ADDRESS_MAJOR_BASE_STAGES,
+    BYTECODE_ADDRESS_MAJOR_SIMD_WIDTH, BYTECODE_ADDRESS_MAJOR_STAGES,
 };
 use crate::metal::solinas::{
     BooleanityRow, InstructionReadRafCompatibilityScatterConfig, MetalError, SolinasMetal,
@@ -427,6 +427,7 @@ fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
     topology
         .with_chunk_writers(|topology_chunks| {
             source.with_chunk_writers(|source_chunks| {
+                let mut scratch = BytecodeAddressStage1TopologyScratch::new();
                 for (chunk, (source, topology)) in source_chunks
                     .iter_mut()
                     .zip(topology_chunks.iter_mut())
@@ -436,13 +437,13 @@ fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
                     for offset in 0..source.len() {
                         let row = start + offset;
                         let rank = if row < physical_rows {
-                            topology.record(rows[row].mapped_pc.unwrap_or(0))?
+                            topology.record(&mut scratch, rows[row].mapped_pc.unwrap_or(0))?
                         } else {
                             0
                         };
                         source.push_with_bytecode_chunk_rank(resident_rows[row], 0, false, rank)?;
                     }
-                    topology.finish()?;
+                    topology.finish(&mut scratch)?;
                 }
                 Ok(())
             })
@@ -477,7 +478,13 @@ fn fused_stage1_scatter_matches_padded_domain_oracle_across_rank_wraps() {
     let fused = planes.receipt().bytecode().unwrap();
     assert_eq!(fused.physical_rows(), physical_rows);
     assert_eq!(fused.max_pivots_per_chunk(), 15);
-    assert_eq!(fused.max_admitted_descriptors_per_chunk(), 512);
+    let descriptor_capacity = ((fused.threadgroup_memory_limit_bytes() - 336 - 32) / 16 * 2)
+        .saturating_sub(1)
+        .min(4096) as usize;
+    assert_eq!(
+        fused.max_admitted_descriptors_per_chunk(),
+        descriptor_capacity
+    );
     assert_eq!(fused.max_admitted_pivots_per_chunk(), 15);
     assert_eq!(fused.additional_source_row_scans(), 0);
     assert_eq!(fused.member_upload_bytes(), 0);
@@ -529,6 +536,7 @@ fn fused_stage1_scatter_rejects_rank_past_the_exact_chunk_cell() {
     topology
         .with_chunk_writers(|topology_chunks| {
             source.with_chunk_writers(|source_chunks| {
+                let mut scratch = BytecodeAddressStage1TopologyScratch::new();
                 for (chunk, (source, topology)) in source_chunks
                     .iter_mut()
                     .zip(topology_chunks.iter_mut())
@@ -538,13 +546,14 @@ fn fused_stage1_scatter_rejects_rank_past_the_exact_chunk_cell() {
                     for offset in 0..source.len() {
                         let row = start + offset;
                         let rank = if row < physical_rows {
-                            topology.record(resident_rows[row].mapped_pc().unwrap_or(0))?
+                            topology
+                                .record(&mut scratch, resident_rows[row].mapped_pc().unwrap_or(0))?
                         } else {
                             0
                         };
                         source.push_with_bytecode_chunk_rank(resident_rows[row], 0, false, rank)?;
                     }
-                    topology.finish()?;
+                    topology.finish(&mut scratch)?;
                 }
                 Ok(())
             })
@@ -584,14 +593,20 @@ fn fused_stage1_scatter_rejects_rank_past_the_exact_chunk_cell() {
     let corrupt_source = owner
         .lease(padded_rows, context.device_registry_id())
         .unwrap();
-    // SAFETY: no command has been submitted, the shared allocation has exactly
-    // `padded_rows` initialized entries, and the lease keeps it alive.
+    // SAFETY: no command has been submitted, the shared allocation contains
+    // five initialized columns of `padded_rows`, and the lease keeps it alive.
     unsafe {
-        let first = corrupt_source
-            .row_buffer()
-            .contents()
-            .cast::<BooleanityRow>();
-        first.write((*first).with_bytecode_chunk_rank_low7(corrupted_rank));
+        let words = corrupt_source.row_buffer().contents().cast::<u64>();
+        let packed = words.add(4 * padded_rows);
+        let first = BooleanityRow::from_words([
+            *words,
+            *words.add(padded_rows),
+            *words.add(2 * padded_rows),
+            *words.add(3 * padded_rows),
+            *packed,
+        ])
+        .with_bytecode_chunk_rank_low7(corrupted_rank);
+        packed.write(first.words()[4]);
     }
     drop(corrupt_source);
 

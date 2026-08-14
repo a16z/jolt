@@ -1,7 +1,4 @@
-//! Experimental successor kernels for the InstructionInput Metal backend.
-//!
-//! Explicit configuration can select the split transition for experiments.
-//! The production default remains the existing compact transition.
+//! Dense transition used by the production InstructionInput Metal sequence.
 
 mod abi;
 pub mod model;

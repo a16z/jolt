@@ -25,6 +25,13 @@ pub(crate) struct RamAccessTape {
     hamming_exact: bool,
 }
 
+#[cfg_attr(
+    not(all(feature = "metal", target_os = "macos")),
+    expect(
+        dead_code,
+        reason = "the compatibility certificates are consumed by the Metal RAM owner"
+    )
+)]
 impl RamAccessTape {
     pub(crate) fn new(
         log_t: usize,
@@ -69,6 +76,7 @@ impl RamAccessTape {
         expected_log_t: usize,
         address_domain: usize,
     ) -> Result<(), RamAccessTapeError> {
+        let _ = (self.increment_compatible, self.hamming_exact);
         if self.log_t != expected_log_t || self.log_t > u32::BITS as usize {
             return Err(RamAccessTapeError::WrongCycleDomain);
         }

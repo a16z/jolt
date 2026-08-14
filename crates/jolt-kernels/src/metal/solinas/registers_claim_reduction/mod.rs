@@ -1,21 +1,8 @@
 //! Checked geometry, roof model, midpoint-alias contract, and scalar oracle for
 //! registers claim reduction.
 
-mod bcsr_midpoint_runtime;
-mod bcsr_runtime;
-mod resident_bcsr;
 mod runtime;
 
-#[cfg(feature = "test-utils")]
-pub use bcsr_midpoint_runtime::{
-    RegistersClaimBcsrMidpointBenchmarkInvocation, RegistersClaimBcsrMidpointBenchmarkObservation,
-};
-#[cfg(feature = "test-utils")]
-pub use bcsr_runtime::{
-    RegistersClaimBcsrBenchmarkError, RegistersClaimBcsrBenchmarkInvocation,
-    RegistersClaimBcsrBenchmarkObservation,
-};
-pub use resident_bcsr::*;
 pub use runtime::*;
 
 #[cfg(test)]
@@ -33,7 +20,6 @@ use jolt_poly::{EqPolynomial, UnivariatePoly};
 use thiserror::Error;
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
-pub(super) const BCSR_SOURCE: &str = include_str!("bcsr_shader.metal");
 
 pub const REGISTERS_CLAIM_SIMD_WIDTH: usize = 32;
 pub const REGISTERS_CLAIM_OUTPUT_COLUMNS: usize = 3;

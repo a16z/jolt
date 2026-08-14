@@ -233,6 +233,11 @@ impl<'a> RandomAccessRows<'a> {
         self.cycles
     }
 
+    /// Number of source rows before canonical cycle-domain padding begins.
+    pub fn physical_rows(&self) -> usize {
+        self.rows.len()
+    }
+
     /// Extracts the bundle at `index` with the sequential walk's one-row
     /// lookahead window (padding rows at and beyond the physical trace, no
     /// lookahead at the end of the cycle domain). Pure per index — callers

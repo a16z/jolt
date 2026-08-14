@@ -175,7 +175,8 @@ kernel void solinas_outer_remainder_opening_tiles_padded_56(
                  slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
                  slot++) {
                 uint column = simdgroup + slot * simdgroups;
-                if (column < params.columns) {
+                if (column < params.columns &&
+                    !outer_opening_is_replaced_by_registers_claim(params, column)) {
                     SolinasFp128 sum = sums[slot];
                     for (uint tile_row = lane;
                          tile_row < tile_count;
@@ -204,7 +205,8 @@ kernel void solinas_outer_remainder_opening_tiles_padded_56(
              slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
              slot++) {
             uint column = simdgroup + slot * simdgroups;
-            if (column < params.columns) {
+            if (column < params.columns &&
+                !outer_opening_is_replaced_by_registers_claim(params, column)) {
                 SolinasFp128 column_sum = solinas_simd_sum_32(sums[slot]);
                 if (lane == 0u) {
                     uint output = block * params.columns + column;

@@ -25,7 +25,7 @@ use crate::{KernelError, ProofSession};
 /// it types the slot to the remainder relation the parked state becomes, so
 /// the two uni-skip fronts are distinct [`JoltBackend`](crate::JoltBackend)
 /// fields.
-pub trait UniskipKernel<F, R>
+pub trait UniskipKernel<F, R>: Sync
 where
     F: Field,
     R: ConcreteSumcheck<F>,

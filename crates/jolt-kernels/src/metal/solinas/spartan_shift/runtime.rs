@@ -53,6 +53,10 @@ impl SpartanShiftResidentRows {
         ]
     }
 
+    pub(crate) fn source_buffers(&self) -> [&Buffer; 3] {
+        [&self.unexpanded_pc, &self.pc, &self.flags]
+    }
+
     fn validate_for(
         &self,
         context: &SolinasMetal,
@@ -413,10 +417,6 @@ impl SolinasMetal {
                 )?),
             ),
         };
-        if let Some(gamma_powers) = gamma_powers.as_ref() {
-            self.validate_inputs("Spartan shift gamma powers", gamma_powers)?;
-        }
-        self.validate_inputs("Spartan shift high weights", &high_weights)?;
 
         let private_bytes = plan
             .storage

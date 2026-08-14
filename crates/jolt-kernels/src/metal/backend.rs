@@ -12,7 +12,7 @@ use super::bytecode_read_raf::{
 };
 use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_claim_reduction::InstructionClaimReductionMetalConfig;
-use super::instruction_input::InstructionInputMetalConfig;
+use super::instruction_input::{InstructionInputDenseStorageMode, InstructionInputMetalConfig};
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::instruction_read_raf::{
     InstructionReadRafAddressImplementation, InstructionReadRafMetalConfig,
@@ -25,12 +25,18 @@ use super::ram_val_check::RamValCheckMetalConfig;
 use super::registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
 };
-use super::registers_val_evaluation::RegistersValEvaluationMetalConfig;
+use super::registers_read_write::RegistersReadWriteMetalConfig;
+use super::registers_val_evaluation::{
+    RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
+};
 #[cfg(feature = "test-utils")]
 use super::solinas::OuterKernelArtifact;
-use super::solinas::{MetalError, SolinasMetal};
+use super::solinas::{
+    InstructionInputStorageInitialization, MetalError, OuterRemainderStorageInitialization,
+    SolinasMetal,
+};
 use super::spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
-use super::spartan_product::SpartanProductRemainderMetalConfig;
+use super::spartan_product::{SpartanProductRemainderMetalConfig, SpartanProductWitnessSource};
 use super::spartan_shift::SpartanShiftMetalConfig;
 use crate::JoltBackend;
 
@@ -51,6 +57,8 @@ pub struct MetalConfig {
     pub instruction_input: InstructionInputMetalConfig,
     /// Stage-3 registers claim-reduction settings.
     pub registers_claim_reduction: RegistersClaimReductionMetalConfig,
+    /// Challenge-independent Stage-4 registers read-write preparation.
+    pub registers_read_write: RegistersReadWriteMetalConfig,
     /// Stage-5 instruction read-RAF settings.
     pub instruction_read_raf: InstructionReadRafMetalConfig,
     /// Stage-5 registers value-evaluation settings.
@@ -77,6 +85,39 @@ pub struct MetalConfig {
     pub instruction_ra_virtualization: InstructionRaVirtualizationMetalConfig,
     /// Stage-7 Hamming-weight claim-reduction settings.
     pub hamming_weight_claim_reduction: HammingWeightMetalConfig,
+}
+
+impl MetalConfig {
+    /// The retained Akita Metal routes used by the production prover.
+    pub fn production() -> Self {
+        let mut config = Self::default();
+        config.bytecode_read_raf_cycle.cpu_tail_algebra =
+            crate::optimized::bytecode_read_raf::BytecodeCycleAlgebra::Q10;
+        config.bytecode_read_raf_address.implementation =
+            BytecodeReadRafAddressImplementation::AddressMajor;
+        config.bytecode_read_raf_address.dispatch.trace_cutoff = 1 << 26;
+        config.spartan_product_remainder.witness_source =
+            SpartanProductWitnessSource::SpartanStage1;
+        config.spartan_product_remainder.reuse_outer_state_a = true;
+        config.registers_claim_reduction.implementation =
+            RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
+        config.registers_read_write.precompute_cutoff_elements = usize::MAX;
+        config
+            .spartan_outer_remainder
+            .dispatch
+            .registers_claim_carrier = true;
+        config
+            .spartan_outer_remainder
+            .dispatch
+            .storage_initialization = OuterRemainderStorageInitialization::Full;
+        config.instruction_input.dispatch.storage_initialization =
+            InstructionInputStorageInitialization::Lazy;
+        config.instruction_input.dense_storage_mode =
+            InstructionInputDenseStorageMode::OuterResidual;
+        config.registers_val_evaluation.source = RegistersValEvaluationSource::Stage1Resident;
+        config.registers_val_evaluation.trace_cutoff_elements = 1 << 26;
+        config
+    }
 }
 
 /// Shared Metal device state used by the installed sumcheck slots.
@@ -113,6 +154,11 @@ pub struct MetalBackend {
 }
 
 impl MetalBackend {
+    /// Creates the supported Akita Metal backend.
+    pub fn production() -> Result<Self, MetalError> {
+        Self::new(MetalConfig::production())
+    }
+
     /// Compiles the Akita field library and validates the hybrid cutoffs.
     pub fn new(mut config: MetalConfig) -> Result<Self, MetalError> {
         config
@@ -121,7 +167,12 @@ impl MetalBackend {
             .registers_claim_carrier = config.registers_claim_reduction.implementation
             == RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
         Self::validate_config(&config)?;
-        Ok(Self::with_context(&config, SolinasMetal::for_akita()?))
+        let context = if config == MetalConfig::production() {
+            SolinasMetal::for_akita_production()?
+        } else {
+            SolinasMetal::for_akita()?
+        };
+        Ok(Self::with_context(&config, context))
     }
 
     #[cfg(feature = "test-utils")]
@@ -180,6 +231,29 @@ impl MetalBackend {
                 "address-major requires the Stage-1 grouped owner at every admitted trace size",
             ));
         }
+        if config.registers_val_evaluation.source == RegistersValEvaluationSource::Stage1Resident
+            && (config.instruction_read_raf.address_implementation
+                != InstructionReadRafAddressImplementation::Stage1Grouped
+                || config.instruction_read_raf.address_cutoff_elements
+                    > config.registers_val_evaluation.trace_cutoff_elements
+                || !(1 << 26..=1 << 28)
+                    .contains(&config.registers_val_evaluation.trace_cutoff_elements)
+                || config.registers_val_evaluation.cutoff_elements
+                    >= config.registers_val_evaluation.trace_cutoff_elements)
+        {
+            return Err(MetalError::InvalidRegistersValState(
+                "Stage-1 resident RegistersVal requires the grouped owner at logs 26 through 28 and a smaller tail cutoff",
+            ));
+        }
+        if config.instruction_input.dense_storage_mode
+            == InstructionInputDenseStorageMode::OuterResidual
+            && config.spartan_outer_remainder.trace_cutoff_elements
+                > config.instruction_input.trace_cutoff_elements
+        {
+            return Err(MetalError::InvalidInstructionInputState(
+                "Outer-residual InstructionInput storage requires an active OuterRemainder producer",
+            ));
+        }
         let cutoff = config.instruction_read_raf.cutoff_elements;
         if cutoff < 2 || !cutoff.is_power_of_two() {
             return Err(MetalError::InvalidHybridCutoff(cutoff));
@@ -218,6 +292,12 @@ impl MetalBackend {
             if cutoff < 2 || !cutoff.is_power_of_two() {
                 return Err(MetalError::InvalidHybridCutoff(cutoff));
             }
+        }
+        let registers_read_write_cutoff = config.registers_read_write.precompute_cutoff_elements;
+        if registers_read_write_cutoff != usize::MAX
+            && (registers_read_write_cutoff < 2 || !registers_read_write_cutoff.is_power_of_two())
+        {
+            return Err(MetalError::InvalidHybridCutoff(registers_read_write_cutoff));
         }
         let instruction_ra_cutoff = config.instruction_ra_virtualization.trace_cutoff_elements;
         if instruction_ra_cutoff < address_cutoff {
@@ -368,6 +448,8 @@ where
         self.instruction_claim_reduction = Box::new(metal.clone());
         self.instruction_input = Box::new(metal.clone());
         self.registers_claim_reduction = Box::new(metal.clone());
+        self.registers_read_write = Box::new(metal.clone());
+        self.registers_val_evaluation = Box::new(metal.clone());
         self.ram_read_write = Box::new(metal.clone());
         self.ram_raf_evaluation = Box::new(metal.clone());
         self.ram_val_check = Box::new(metal.clone());
@@ -382,5 +464,89 @@ where
         self.instruction_ra_virtualization = Box::new(metal.clone());
         self.hamming_weight_claim_reduction = Box::new(metal.clone());
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_profile_selects_only_retained_routes() {
+        let config = MetalConfig::production();
+
+        assert_eq!(
+            config.bytecode_read_raf_address.implementation,
+            BytecodeReadRafAddressImplementation::AddressMajor
+        );
+        assert_eq!(
+            config.registers_claim_reduction.implementation,
+            RegistersClaimReductionImplementation::OuterCarrierAliasHybrid
+        );
+        assert_eq!(
+            config.spartan_product_remainder.witness_source,
+            SpartanProductWitnessSource::SpartanStage1
+        );
+        assert_eq!(
+            config.registers_val_evaluation.source,
+            RegistersValEvaluationSource::Stage1Resident
+        );
+        assert_eq!(
+            config.registers_val_evaluation.trace_cutoff_elements,
+            1 << 26
+        );
+        assert_eq!(
+            config
+                .spartan_outer_remainder
+                .dispatch
+                .storage_initialization,
+            OuterRemainderStorageInitialization::Full
+        );
+        assert_eq!(
+            config.instruction_input.dispatch.storage_initialization,
+            InstructionInputStorageInitialization::Lazy
+        );
+        assert_eq!(
+            config.instruction_input.dense_storage_mode,
+            InstructionInputDenseStorageMode::OuterResidual
+        );
+        assert!(MetalBackend::validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn production_profile_compiles_its_minimal_metal_library() {
+        let result = MetalBackend::production();
+        assert!(result.is_ok(), "{:#?}", result.err());
+    }
+
+    #[test]
+    fn resident_registers_val_can_use_stage1_without_metal_registers_rw() {
+        let mut config = MetalConfig::default();
+        config.registers_val_evaluation.source = RegistersValEvaluationSource::Stage1Resident;
+        config.registers_val_evaluation.trace_cutoff_elements = 1 << 26;
+        config.instruction_read_raf.address_implementation =
+            InstructionReadRafAddressImplementation::Stage1Grouped;
+
+        let validation = MetalBackend::validate_config(&config);
+        assert!(validation.is_ok(), "{validation:?}");
+
+        config.instruction_read_raf.address_cutoff_elements = 1 << 27;
+        assert!(matches!(
+            MetalBackend::validate_config(&config),
+            Err(MetalError::InvalidRegistersValState(_))
+        ));
+    }
+
+    #[test]
+    fn outer_residual_instruction_input_requires_an_active_outer_producer() {
+        let mut config = MetalConfig::production();
+        config.spartan_outer_remainder.trace_cutoff_elements = 1 << 26;
+        config.instruction_input.trace_cutoff_elements = 1 << 25;
+        config.registers_claim_reduction.trace_cutoff_elements = 1 << 26;
+
+        assert!(matches!(
+            MetalBackend::validate_config(&config),
+            Err(MetalError::InvalidInstructionInputState(_))
+        ));
     }
 }

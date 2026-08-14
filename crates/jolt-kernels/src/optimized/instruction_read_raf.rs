@@ -962,6 +962,8 @@ fn build_cycle_buckets<F: Field>(
                 #[cfg(all(feature = "metal", target_os = "macos"))]
                 let mut bytecode_address_out_of_range = false;
                 for (index, row) in chunk.iter().enumerate() {
+                    #[cfg(not(all(feature = "metal", target_os = "macos")))]
+                    let _ = index;
                     if let Some(table) = row.table_index() {
                         if let Some(count) = counts.get_mut(table) {
                             *count += 1;

@@ -397,12 +397,11 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                 pushforwards,
                 receipt.first_push_pc(),
             )?;
-            let source_rows_bytes =
-                trace_elements
-                    .checked_mul(40)
-                    .ok_or(KernelError::InvariantViolation {
-                        reason: "bytecode address-major source byte count overflow",
-                    })?;
+            let source_rows_bytes = trace_elements
+                .checked_mul(super::solinas::BOOLEANITY_SOURCE_ROW_BYTES)
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "bytecode address-major source byte count overflow",
+                })?;
             let producer_persistent_write_bytes = receipt
                 .occurrence_bytes()
                 .checked_add(receipt.magnitude_bytes())
@@ -1023,6 +1022,10 @@ mod tests {
 
     use super::*;
     use crate::metal::solinas::bytecode_read_raf_address::BytecodeAddressStage1TopologyOwner;
+    use crate::metal::solinas::{InstructionReadRafPublicationKind, InstructionReadRafStage1Owner};
+    use crate::metal::spartan_product::{
+        SpartanProductRemainderMetalConfig, SpartanProductWitnessSource,
+    };
     use crate::optimized::harness::{probe_input_claim, run_lockstep};
     use crate::optimized::instruction_read_raf::{
         collect_instruction_cycle_rows, InstructionCycleRow,
@@ -1174,6 +1177,11 @@ mod tests {
             );
 
             let production = MetalBackend::new(super::super::MetalConfig {
+                spartan_product_remainder: SpartanProductRemainderMetalConfig {
+                    trace_cutoff_elements: 1 << log_t,
+                    witness_source: SpartanProductWitnessSource::SpartanStage1,
+                    ..Default::default()
+                },
                 instruction_read_raf: super::super::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 1 << log_t,
                     ..Default::default()
@@ -1198,6 +1206,15 @@ mod tests {
                 witness,
             )
             .unwrap();
+            let source_receipt = session
+                .state::<InstructionReadRafStage1Owner>()
+                .unwrap()
+                .receipt();
+            assert_eq!(
+                source_receipt.publication_kind(),
+                InstructionReadRafPublicationKind::HostFillV1
+            );
+            assert_eq!(source_receipt.host_row_write_bytes(), 32 * (1 << log_t));
             assert!(session
                 .state::<BytecodeAddressStage1TopologyOwner>()
                 .is_some());

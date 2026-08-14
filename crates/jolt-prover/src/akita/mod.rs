@@ -185,10 +185,8 @@ where
 {
     /// Builds the optimized Akita backend and replaces available slots with
     /// their hybrid Metal implementations.
-    pub fn metal(
-        config: jolt_kernels::metal::MetalConfig,
-    ) -> Result<Self, jolt_kernels::metal::solinas::MetalError> {
-        let metal = jolt_kernels::metal::MetalBackend::new(config)?;
+    pub fn metal() -> Result<Self, jolt_kernels::metal::solinas::MetalError> {
+        let metal = jolt_kernels::metal::MetalBackend::production()?;
         let mut backend = Self::optimized();
         backend.base = backend.base.with_metal_compute(&metal);
         Ok(backend)
@@ -228,7 +226,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F>,
+    W: JoltWitnessPlane<F> + Sync,
 {
     prover::prove::<F, PCS, VC, T, W>(
         backend,

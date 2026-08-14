@@ -49,28 +49,59 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F>,
+    W: JoltWitnessPlane<F> + Sync,
 {
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let mut session = backend.begin_proof();
-    let stage0 = prove_stage0::<F, PCS, VC, T, W>(
-        preprocessing,
-        config,
-        trusted_advice,
-        program_one_hot,
-        witness,
-        public_io,
-    )?;
+    let log_t = config.trace_length.ilog2() as usize;
+    let (stage0, witness_prepare) = std::thread::scope(|scope| {
+        let prepare = scope.spawn(|| {
+            let span = tracing::info_span!(
+                "jolt_prover::backend_witness_prepare_async",
+                log_t,
+                cycles = 1usize << log_t,
+                complete = tracing::field::Empty,
+            );
+            let _entered = span.enter();
+            let result =
+                backend
+                    .base
+                    .spartan_outer_uniskip
+                    .prepare_witness(&mut session, log_t, witness);
+            let _ = span.record("complete", result.is_ok());
+            result
+        });
+        let stage0 = {
+            let _span =
+                tracing::info_span!("jolt_prover::stage0", log_t, cycles = 1usize << log_t,)
+                    .entered();
+            prove_stage0::<F, PCS, VC, T, W>(
+                preprocessing,
+                config,
+                trusted_advice,
+                program_one_hot,
+                witness,
+                public_io,
+            )
+        };
+        let completed_before_join = prepare.is_finished();
+        let _span = tracing::info_span!(
+            "jolt_prover::backend_witness_prepare",
+            completed_before_join
+        )
+        .entered();
+        let witness_prepare = prepare
+            .join()
+            .map_err(|_| ProverError::InvariantViolation {
+                reason: "asynchronous backend witness preparation panicked",
+            })
+            .and_then(|result| result.map_err(ProverError::from));
+        (stage0, witness_prepare)
+    });
+    let stage0 = stage0?;
+    witness_prepare?;
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
-    let log_t = config.trace_length.ilog2() as usize;
-    {
-        let _span = tracing::info_span!("jolt_prover::backend_witness_prepare").entered();
-        backend
-            .base
-            .spartan_outer_uniskip
-            .prepare_witness(&mut session, log_t, witness)?;
-    }
     let piop_span = tracing::info_span!("jolt_prover::piop").entered();
 
     let stage1 = prove_stage1::<F, PCS, VC, T>(

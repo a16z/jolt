@@ -3,15 +3,15 @@ use std::{
     mem::size_of,
     slice,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use jolt_field::signed::{S192, S256, S64};
 use jolt_field::{AkitaField, SignedProductAccumulator as _, WithSignedProductAccumulator};
 use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -28,6 +28,12 @@ const RESIDUAL_ROW_WORDS: usize = 14;
 const SIMD_WIDTH: usize = 32;
 const BLOCKS_PIPELINE: &str = "solinas_spartan_outer_uniskip_blocks";
 const REDUCE_PIPELINE: &str = "solinas_spartan_outer_uniskip_reduce";
+const SOURCE_PRIMER_PIPELINE: &str = "solinas_spartan_stage1_source_primer";
+const SOURCE_PRIMER_PAGE_BYTES: usize = 16 * 1024;
+const SOURCE_PRIMER_THREADS_PER_THREADGROUP: usize = 256;
+const SOURCE_PRIMER_THREADGROUPS: usize = 256;
+const SOURCE_PRIMER_THREADS: usize =
+    SOURCE_PRIMER_THREADS_PER_THREADGROUP * SOURCE_PRIMER_THREADGROUPS;
 static NEXT_OUTER_RESIDUAL_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 const EXTENSION_COEFFICIENTS: [[i64; 10]; SPARTAN_OUTER_EXTENDED_NODES] = [
@@ -180,6 +186,18 @@ impl SpartanOuterUniskipRows {
 
     pub(crate) fn restore_instruction_input_accounting(&mut self) {
         self.accounts_instruction_input_rows = true;
+    }
+
+    pub(crate) fn share_product_remainder_rows(
+        &self,
+    ) -> Result<super::ProductRemainderRows, MetalError> {
+        super::ProductRemainderRows::from_spartan_stage1(
+            self.instruction_input_buffer().clone(),
+            self.residual_buffer.clone(),
+            self.len,
+            self.device_registry_id,
+            self.generation,
+        )
     }
 }
 
@@ -626,6 +644,112 @@ struct Params {
     reserved: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SourcePrimerParams {
+    word_counts: [u64; 5],
+    page_words: u32,
+    total_threads: u32,
+}
+
+const _: [(); 48] = [(); size_of::<SourcePrimerParams>()];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SpartanStage1SourcePrimerObservation {
+    pub wall: Duration,
+    pub submit_wall: Duration,
+    pub overlap_wall: Duration,
+    pub join_wall: Duration,
+    pub gpu_active: Duration,
+    pub completed_before_join: bool,
+    pub source_bytes: u64,
+    pub source_pages: u64,
+}
+
+#[must_use = "the Stage1 source primer must be joined before its source is consumed"]
+pub(crate) struct PendingSpartanStage1SourcePrimer {
+    command: Option<CommandBuffer>,
+    sources: [Buffer; 5],
+    checksums: Buffer,
+    source_identities: [usize; 5],
+    submitted_at: Instant,
+    submit_wall: Duration,
+    source_bytes: u64,
+    source_pages: u64,
+}
+
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for PendingSpartanStage1SourcePrimer {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.enter_self_sized::<Self>().exit();
+    }
+}
+
+impl Drop for PendingSpartanStage1SourcePrimer {
+    fn drop(&mut self) {
+        if let Some(command) = &self.command {
+            command.wait_until_completed();
+        }
+    }
+}
+
+impl PendingSpartanStage1SourcePrimer {
+    pub(crate) const fn source_bytes(&self) -> u64 {
+        self.source_bytes
+    }
+
+    pub(crate) const fn source_pages(&self) -> u64 {
+        self.source_pages
+    }
+
+    pub(crate) const fn submit_wall(&self) -> Duration {
+        self.submit_wall
+    }
+
+    pub(crate) fn join(mut self) -> Result<SpartanStage1SourcePrimerObservation, MetalError> {
+        let source_identities: [usize; 5] =
+            std::array::from_fn(|index| self.sources[index].as_ptr() as usize);
+        if source_identities != self.source_identities
+            || self.checksums.length() != byte_length::<u32>(SOURCE_PRIMER_THREADS)?
+        {
+            return Err(MetalError::InvalidSpartanShiftState(
+                "Stage1 source primer resources changed before completion",
+            ));
+        }
+        let command = self
+            .command
+            .take()
+            .ok_or(MetalError::InvalidSpartanShiftState(
+                "Stage1 source primer command was already joined",
+            ))?;
+        let completed_before_join = command.status() == MTLCommandBufferStatus::Completed;
+        let join_started = Instant::now();
+        let overlap_wall = join_started
+            .saturating_duration_since(self.submitted_at)
+            .saturating_sub(self.submit_wall);
+        command.wait_until_completed();
+        let join_wall = join_started.elapsed();
+        if command.status() != MTLCommandBufferStatus::Completed {
+            return Err(MetalError::CommandFailed(command.status()));
+        }
+        let start = command_buffer_timestamp(&command, "GPUStartTime")?;
+        let end = command_buffer_timestamp(&command, "GPUEndTime")?;
+        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+            return Err(MetalError::InvalidGpuTimestamps { start, end });
+        }
+        Ok(SpartanStage1SourcePrimerObservation {
+            wall: self.submitted_at.elapsed(),
+            submit_wall: self.submit_wall,
+            overlap_wall,
+            join_wall,
+            gpu_active: Duration::from_secs_f64(end - start),
+            completed_before_join,
+            source_bytes: self.source_bytes,
+            source_pages: self.source_pages,
+        })
+    }
+}
+
 struct Buffers {
     instruction_input_rows: Buffer,
     residual_rows: Buffer,
@@ -649,6 +773,118 @@ pub struct SpartanOuterUniskipInvocation<'a> {
 }
 
 impl SolinasMetal {
+    pub(crate) fn submit_spartan_stage1_source_primer(
+        &self,
+        outer: &SpartanOuterUniskipRows,
+        shift: &SpartanShiftResidentRows,
+    ) -> Result<PendingSpartanStage1SourcePrimer, MetalError> {
+        if outer.len() != shift.len()
+            || outer.device_registry_id() != self.device_registry_id()
+            || shift.device_registry_id() != self.device_registry_id()
+        {
+            return Err(MetalError::InvalidSpartanShiftState(
+                "Stage1 source primer received mismatched resident rows",
+            ));
+        }
+
+        let [shift_unexpanded_pc, shift_pc, shift_flags] = shift.source_buffers();
+        let sources = [
+            outer.instruction_input_buffer().clone(),
+            outer.residual_buffer().clone(),
+            shift_unexpanded_pc.clone(),
+            shift_pc.clone(),
+            shift_flags.clone(),
+        ];
+        let expected_device = self.device_registry_id();
+        if sources
+            .iter()
+            .any(|buffer| buffer.device().registry_id() != expected_device)
+        {
+            return Err(MetalError::InvalidSpartanShiftState(
+                "Stage1 source primer received a foreign buffer",
+            ));
+        }
+        let source_identities = std::array::from_fn(|index| sources[index].as_ptr() as usize);
+        let source_bytes = sources.iter().try_fold(0u64, |total, buffer| {
+            total
+                .checked_add(buffer.length())
+                .ok_or(MetalError::InputTooLong(outer.len()))
+        })?;
+        let page_bytes = u64::try_from(SOURCE_PRIMER_PAGE_BYTES)
+            .map_err(|_| MetalError::InputTooLong(SOURCE_PRIMER_PAGE_BYTES))?;
+        let source_pages = sources.iter().try_fold(0u64, |total, buffer| {
+            total
+                .checked_add(buffer.length().div_ceil(page_bytes))
+                .ok_or(MetalError::InputTooLong(outer.len()))
+        })?;
+        let word_counts =
+            std::array::from_fn(|index| sources[index].length() / size_of::<u32>() as u64);
+        let params = SourcePrimerParams {
+            word_counts,
+            page_words: u32::try_from(SOURCE_PRIMER_PAGE_BYTES / size_of::<u32>())
+                .map_err(|_| MetalError::InputTooLong(SOURCE_PRIMER_PAGE_BYTES))?,
+            total_threads: u32::try_from(SOURCE_PRIMER_THREADS)
+                .map_err(|_| MetalError::InputTooLong(SOURCE_PRIMER_THREADS))?,
+        };
+
+        let pipeline = self.compile_named_pipeline(SOURCE_PRIMER_PIPELINE)?;
+        let limits = Self::limits(&pipeline);
+        if limits.thread_execution_width != SIMD_WIDTH
+            || limits.max_total_threads_per_threadgroup < SOURCE_PRIMER_THREADS_PER_THREADGROUP
+        {
+            return Err(MetalError::InvalidSpartanShiftState(
+                "Stage1 source primer pipeline has unsupported limits",
+            ));
+        }
+        let checksum_bytes = byte_length::<u32>(SOURCE_PRIMER_THREADS)?;
+        self.validate_additional_working_set(checksum_bytes)?;
+        let checksums = self
+            .device
+            .new_buffer(checksum_bytes, MTLResourceOptions::StorageModePrivate);
+
+        let submitted_at = Instant::now();
+        let command = self.queue.new_command_buffer().to_owned();
+        autoreleasepool(|| {
+            let encoder = command.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(&pipeline);
+            for (index, source) in sources.iter().enumerate() {
+                encoder.set_buffer(index as u64, Some(source), 0);
+            }
+            encoder.set_buffer(5, Some(&checksums), 0);
+            encoder.set_bytes(
+                6,
+                size_of::<SourcePrimerParams>() as u64,
+                std::ptr::from_ref(&params).cast::<std::ffi::c_void>(),
+            );
+            encoder.dispatch_thread_groups(
+                MTLSize {
+                    width: SOURCE_PRIMER_THREADGROUPS as u64,
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: SOURCE_PRIMER_THREADS_PER_THREADGROUP as u64,
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.end_encoding();
+            command.commit();
+        });
+        let submit_wall = submitted_at.elapsed();
+
+        Ok(PendingSpartanStage1SourcePrimer {
+            command: Some(command),
+            sources,
+            checksums,
+            source_identities,
+            submitted_at,
+            submit_wall,
+            source_bytes,
+            source_pages,
+        })
+    }
+
     pub fn prepare_spartan_outer_uniskip(
         &self,
         rows: &[SpartanOuterUniskipRow],
@@ -1148,6 +1384,32 @@ mod tests {
     }
 
     #[test]
+    fn stage1_source_primer_completes_over_resident_planes() {
+        let context = SolinasMetal::for_akita().unwrap();
+        let outer = context
+            .prepare_spartan_outer_uniskip_rows(&rows(512))
+            .unwrap();
+        let shift = context
+            .prepare_spartan_shift_rows(
+                &vec![3; 512],
+                &vec![5; 512],
+                &[SpartanShiftFlagWord::default(); 16],
+                true,
+            )
+            .unwrap();
+        let pending = context
+            .submit_spartan_stage1_source_primer(&outer, &shift)
+            .unwrap();
+        let expected_bytes = spartan_outer_uniskip_row_bytes(512).unwrap()
+            + u64::try_from(shift.resident_bytes()).unwrap();
+        let observation = pending.join().unwrap();
+
+        assert_eq!(observation.source_bytes, expected_bytes);
+        assert!(observation.source_pages > 0);
+        assert!(observation.wall >= observation.gpu_active);
+    }
+
+    #[test]
     fn packed_row_preserves_is_first_in_sequence() {
         with_sample_backend(|backend| {
             let mut rows: Vec<SpartanOuterRow> = backend.bundles().unwrap();
@@ -1623,6 +1885,7 @@ mod tests {
                 OuterRemainderSequenceConfig {
                     max_threadgroups: 2,
                     cpu_tail_elements: 4,
+                    storage_initialization: OuterRemainderStorageInitialization::Lazy,
                     product_uniskip_carrier: true,
                     ..OuterRemainderSequenceConfig::default()
                 },
@@ -1633,12 +1896,12 @@ mod tests {
         let initialization = sequence.storage_initialization();
         assert_eq!(
             initialization.mode,
-            OuterRemainderStorageInitialization::Full
+            OuterRemainderStorageInitialization::Lazy
         );
-        assert_eq!(initialization.device_buffers, 9);
-        assert_eq!(initialization.bytes, storage_before_export.owned_bytes);
+        assert_eq!(initialization.device_buffers, 0);
+        assert_eq!(initialization.bytes, 0);
         assert!(initialization.wall >= initialization.gpu_active);
-        assert!(initialization.gpu_active > std::time::Duration::ZERO);
+        assert_eq!(initialization.gpu_active, std::time::Duration::ZERO);
         assert_eq!(
             initialization.buffer_identities,
             storage_before_export.buffer_identities

@@ -231,6 +231,7 @@ impl<F: Field> allocative::Allocative for ValEvaluationKernel<F> {
 }
 
 impl<F: Field> ValEvaluationKernel<F> {
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn new_ready(
         inc: Vec<F>,
         rd: Vec<Option<u8>>,

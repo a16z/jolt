@@ -1,13 +1,12 @@
 use std::{mem::size_of, slice, sync::Arc, time::Duration};
 
+use super::{
+    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+};
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
     MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
-};
-
-use super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
 
 const SIMD_WIDTH: usize = 32;
@@ -22,6 +21,13 @@ const PACKED_PC_MASK: u64 = (1 << 56) - 1;
 const PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT: u32 = 56;
 const PACKED_BYTECODE_CHUNK_RANK_LOW_MASK: u64 = 0x7f << PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT;
 const PACKED_INC_SIGN_SHIFT: u32 = 63;
+const INSTRUCTION_SOURCE_RAM_MASK: u64 = u32::MAX as u64;
+const INSTRUCTION_SOURCE_PC_SHIFT: u32 = 32;
+const INSTRUCTION_SOURCE_PC_MASK: u64 = (1 << 14) - 1;
+const INSTRUCTION_SOURCE_RD_SHIFT: u32 = 46;
+const INSTRUCTION_SOURCE_RANK_SHIFT: u32 = 54;
+const INSTRUCTION_SOURCE_FUSED_SIGN_SHIFT: u32 = 61;
+const INSTRUCTION_SOURCE_RD_SIGN_SHIFT: u32 = 62;
 const BYTECODE_ADDRESS_COUNT: usize = 1 << 13;
 const BYTECODE_ADDRESS_INNER_LENGTH: usize = 1 << 15;
 
@@ -79,6 +85,9 @@ pub struct BooleanityRow {
     packed_pc_and_flags: u64,
 }
 
+pub(crate) const BOOLEANITY_SOURCE_WORDS: usize = 4;
+pub(crate) const BOOLEANITY_SOURCE_ROW_BYTES: usize = BOOLEANITY_SOURCE_WORDS * size_of::<u64>();
+
 struct BooleanityRowsInner {
     buffer: Buffer,
     len: usize,
@@ -118,7 +127,7 @@ impl BooleanityRows {
         if len == 0 {
             return Err(MetalError::EmptyInput);
         }
-        let expected_bytes = byte_length::<BooleanityRow>(len)?;
+        let expected_bytes = instruction_source_byte_length(len)?;
         if buffer.length() != expected_bytes {
             return Err(MetalError::BooleanityStorageLength {
                 name: "resident rows",
@@ -143,6 +152,23 @@ impl BooleanityRows {
 
     pub(crate) fn buffer(&self) -> &Buffer {
         &self.0.buffer
+    }
+
+    pub(crate) fn row(&self, index: usize) -> Option<BooleanityRow> {
+        if index >= self.len() {
+            return None;
+        }
+        // SAFETY: BooleanityRows owns a fully initialized column-major buffer
+        // containing four u64 words for every logical row.
+        let words = unsafe {
+            slice::from_raw_parts(
+                self.0.buffer.contents().cast::<u64>(),
+                BOOLEANITY_SOURCE_WORDS * self.len(),
+            )
+        };
+        Some(BooleanityRow::from_instruction_source_words(
+            core::array::from_fn(|word| words[word * self.len() + index]),
+        ))
     }
 
     pub fn len(&self) -> usize {
@@ -232,7 +258,7 @@ impl allocative::Allocative for BooleanityRows {
             );
             shared.visit_simple(
                 allocative::Key::new("device_rows"),
-                self.len() * size_of::<BooleanityRow>(),
+                self.len() * BOOLEANITY_SOURCE_ROW_BYTES,
             );
             shared.visit_simple(
                 allocative::Key::new("bytecode_outer_support"),
@@ -315,6 +341,70 @@ impl BooleanityRow {
             self.fused_inc_magnitude,
             self.packed_pc_and_flags,
         ]
+    }
+
+    pub(crate) fn instruction_source_words(
+        self,
+        rd_write: Option<(u8, u64, u64)>,
+    ) -> Result<[u64; 4], MetalError> {
+        let [fused_inc_magnitude, packed_metadata] = self.instruction_source_aux_words(rd_write)?;
+        Ok([
+            self.lookup_lo,
+            self.lookup_hi,
+            fused_inc_magnitude,
+            packed_metadata,
+        ])
+    }
+
+    pub(crate) fn instruction_source_aux_words(
+        self,
+        rd_write: Option<(u8, u64, u64)>,
+    ) -> Result<[u64; 2], MetalError> {
+        let pc_plus_one = self.packed_pc_and_flags & PACKED_PC_MASK;
+        if pc_plus_one > INSTRUCTION_SOURCE_PC_MASK
+            || self.ram_address_plus_one > INSTRUCTION_SOURCE_RAM_MASK
+        {
+            return Err(MetalError::InvalidBooleanityRow);
+        }
+        let fused_negative = self.packed_pc_and_flags >> PACKED_INC_SIGN_SHIFT;
+        let (rd_plus_one, rd_negative) = match rd_write {
+            Some((register, pre_value, post_value)) if register < 128 => {
+                let increment = i128::from(post_value) - i128::from(pre_value);
+                if increment.unsigned_abs() != u128::from(self.fused_inc_magnitude)
+                    || u64::from(increment < 0) != fused_negative
+                {
+                    return Err(MetalError::InvalidBooleanityRow);
+                }
+                (u64::from(register) + 1, increment < 0)
+            }
+            Some(_) => return Err(MetalError::InvalidBooleanityRow),
+            None => (0, false),
+        };
+        let rank = (self.packed_pc_and_flags & PACKED_BYTECODE_CHUNK_RANK_LOW_MASK)
+            >> PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT;
+        let metadata = self.ram_address_plus_one
+            | (pc_plus_one << INSTRUCTION_SOURCE_PC_SHIFT)
+            | (rd_plus_one << INSTRUCTION_SOURCE_RD_SHIFT)
+            | (rank << INSTRUCTION_SOURCE_RANK_SHIFT)
+            | (fused_negative << INSTRUCTION_SOURCE_FUSED_SIGN_SHIFT)
+            | (u64::from(rd_negative) << INSTRUCTION_SOURCE_RD_SIGN_SHIFT);
+        Ok([self.fused_inc_magnitude, metadata])
+    }
+
+    pub(crate) const fn from_instruction_source_words(words: [u64; 4]) -> Self {
+        let metadata = words[3];
+        let pc_plus_one = (metadata >> INSTRUCTION_SOURCE_PC_SHIFT) & INSTRUCTION_SOURCE_PC_MASK;
+        let rank = (metadata >> INSTRUCTION_SOURCE_RANK_SHIFT) & 0x7f;
+        let fused_negative = (metadata >> INSTRUCTION_SOURCE_FUSED_SIGN_SHIFT) & 1;
+        Self {
+            lookup_lo: words[0],
+            lookup_hi: words[1],
+            ram_address_plus_one: metadata & INSTRUCTION_SOURCE_RAM_MASK,
+            fused_inc_magnitude: words[2],
+            packed_pc_and_flags: pc_plus_one
+                | (rank << PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT)
+                | (fused_negative << PACKED_INC_SIGN_SHIFT),
+        }
     }
 
     pub(crate) const fn mapped_pc(self) -> Option<usize> {
@@ -526,11 +616,17 @@ impl SolinasMetal {
             return Err(MetalError::EmptyInput);
         }
         let len = rows.len();
-        let bytes = byte_length::<BooleanityRow>(len)?;
+        let bytes = instruction_source_byte_length(len)?;
         self.validate_buffer_length(bytes)?;
         self.validate_additional_working_set(bytes)?;
+        let mut column_major = vec![0u64; BOOLEANITY_SOURCE_WORDS * len];
+        for (index, row) in rows.iter().copied().enumerate() {
+            for (word, value) in row.instruction_source_words(None)?.into_iter().enumerate() {
+                column_major[word * len + index] = value;
+            }
+        }
         Ok(BooleanityRows(Arc::new(BooleanityRowsInner {
-            buffer: buffer_from_slice(&self.device, rows),
+            buffer: buffer_from_slice(&self.device, &column_major),
             len,
             device_registry_id: self.device.registry_id(),
             bytecode_outer_support,
@@ -1281,6 +1377,10 @@ fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
         .ok_or(MetalError::InputTooLong(elements))
 }
 
+fn instruction_source_byte_length(rows: usize) -> Result<u64, MetalError> {
+    byte_length::<[u64; BOOLEANITY_SOURCE_WORDS]>(rows)
+}
+
 fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, value: &T) {
     encoder.set_bytes(
         index,
@@ -1290,6 +1390,7 @@ fn set_inline_bytes<T>(encoder: &metal::ComputeCommandEncoderRef, index: u64, va
 }
 
 const _: () = assert!(size_of::<BooleanityRow>() == 40);
+const _: () = assert!(BOOLEANITY_SOURCE_ROW_BYTES == 32);
 const _: () = assert!(size_of::<SelectorAbi>() == 8);
 const _: () = assert!(size_of::<Params>() == 48);
 const _: () = assert!(size_of::<BranchParams>() == 16);
@@ -1347,5 +1448,50 @@ mod tests {
                 row.words()[4] >> 63
             );
         }
+    }
+
+    #[test]
+    fn instruction_source_layout_round_trips_logical_row_and_derives_register_delta() {
+        let row = BooleanityRow::new(7, Some(8191), Some(u32::MAX as u64 - 1), -17)
+            .unwrap()
+            .with_bytecode_chunk_rank_low7(0x7f);
+        let words = row.instruction_source_words(Some((127, 17, 0))).unwrap();
+
+        assert_eq!(BooleanityRow::from_instruction_source_words(words), row);
+        assert_eq!(words.len(), 4);
+        assert_eq!(words[2], 17);
+        assert_eq!((words[3] >> INSTRUCTION_SOURCE_RD_SHIFT) & 0xff, 128);
+        assert_eq!((words[3] >> INSTRUCTION_SOURCE_RD_SIGN_SHIFT) & 1, 1);
+        assert!(matches!(
+            row.instruction_source_words(Some((127, 18, 0))),
+            Err(MetalError::InvalidBooleanityRow)
+        ));
+        assert!(matches!(
+            row.instruction_source_words(Some((127, 0, 17))),
+            Err(MetalError::InvalidBooleanityRow)
+        ));
+        assert!(matches!(
+            row.instruction_source_words(Some((128, 0, 1))),
+            Err(MetalError::InvalidBooleanityRow)
+        ));
+
+        let store = BooleanityRow::new(11, Some(7), Some(9), u64::MAX as i128).unwrap();
+        let store_words = store.instruction_source_words(None).unwrap();
+        assert_eq!(
+            BooleanityRow::from_instruction_source_words(store_words),
+            store
+        );
+        assert_eq!(store_words[2], u64::MAX);
+        assert_eq!((store_words[3] >> INSTRUCTION_SOURCE_RD_SHIFT) & 0xff, 0);
+
+        let extreme = BooleanityRow::new(13, None, None, -(u64::MAX as i128)).unwrap();
+        let extreme_words = extreme
+            .instruction_source_words(Some((0, u64::MAX, 0)))
+            .unwrap();
+        assert_eq!(
+            BooleanityRow::from_instruction_source_words(extreme_words),
+            extreme
+        );
+        assert_eq!(extreme_words[2], u64::MAX);
     }
 }

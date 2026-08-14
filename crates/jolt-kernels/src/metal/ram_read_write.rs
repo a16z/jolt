@@ -521,7 +521,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::metal::solinas::ram_cycle_family_v3::RamCycleFamilyOwner;
+    use crate::metal::solinas::ram_cycle_family::RamCycleFamilyOwner;
     use crate::metal::MetalConfig;
     use crate::optimized::harness::run_lockstep;
     use crate::optimized::testing::{with_ram_fixture_backend, FixtureShape, RamOp};

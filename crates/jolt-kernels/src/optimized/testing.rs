@@ -76,6 +76,7 @@ pub(crate) fn with_ram_fixture<R>(
     with_ram_fixture_init(shape, Vec::new(), ops, f)
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) fn with_ram_fixture_backend<R>(
     shape: FixtureShape,
     ops: Vec<RamOp>,

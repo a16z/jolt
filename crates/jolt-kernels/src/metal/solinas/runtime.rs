@@ -18,7 +18,10 @@ use super::source::{
 };
 #[cfg(feature = "test-utils")]
 use super::OuterKernelArtifact;
-use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
+use super::{
+    source::{library_source, production_library_source},
+    Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PipelineLimits {
@@ -59,6 +62,20 @@ pub struct SolinasMetal {
 impl SolinasMetal {
     pub fn for_akita() -> Result<Self, MetalError> {
         Self::new(AKITA_OFFSET_FFFFA7F7)
+    }
+
+    pub(crate) fn for_akita_production() -> Result<Self, MetalError> {
+        #[cfg(feature = "test-utils")]
+        {
+            let assembly_started = Instant::now();
+            let source = production_library_source(AKITA_OFFSET_FFFFA7F7);
+            Self::new_with_source(AKITA_OFFSET_FFFFA7F7, source, assembly_started.elapsed())
+        }
+        #[cfg(not(feature = "test-utils"))]
+        Self::new_with_source(
+            AKITA_OFFSET_FFFFA7F7,
+            production_library_source(AKITA_OFFSET_FFFFA7F7),
+        )
     }
 
     pub fn for_offset_275() -> Result<Self, MetalError> {
@@ -115,7 +132,6 @@ impl SolinasMetal {
         if offset == 0 {
             return Err(MetalError::InvalidOffset);
         }
-        #[cfg(feature = "test-utils")]
         let source_bytes = source.len();
         #[cfg(feature = "test-utils")]
         let assembled_source_sha256 = Sha256::digest(source.as_bytes()).into();
@@ -123,9 +139,13 @@ impl SolinasMetal {
         let options = CompileOptions::new();
         #[cfg(feature = "test-utils")]
         let compile_started = Instant::now();
-        let library = device
-            .new_library_with_source(&source, &options)
-            .map_err(MetalError::LibraryCompilation)?;
+        let library = {
+            let _span = tracing::info_span!("MetalSolinas::library_compile", source_bytes, offset)
+                .entered();
+            device
+                .new_library_with_source(&source, &options)
+                .map_err(MetalError::LibraryCompilation)?
+        };
         #[cfg(feature = "test-utils")]
         let library_compile_wall = compile_started.elapsed();
         let queue = device.new_command_queue();
@@ -176,6 +196,12 @@ impl SolinasMetal {
         &self,
         name: &'static str,
     ) -> Result<ComputePipelineState, MetalError> {
+        let _span = tracing::info_span!(
+            "MetalSolinas::pipeline_compile",
+            pipeline = name,
+            specialized = false
+        )
+        .entered();
         let function = self
             .library
             .get_function(name, None)

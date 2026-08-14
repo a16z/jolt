@@ -58,6 +58,20 @@ impl allocative::Allocative for MetalRamRafEvaluationKernel {
 }
 
 impl MetalBackend {
+    pub(super) fn ram_raf_witness_requested(
+        &self,
+        log_t: usize,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+    ) -> Result<bool, KernelError<AkitaField>> {
+        let cycles = 1usize << log_t;
+        if cycles < self.config.ram_raf_evaluation.dispatch.trace_cutoff {
+            return Ok(false);
+        }
+        let ram_ra_shape =
+            witness.shape(JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa))?;
+        Ok(ram_ra_shape.log_rows == log_t + RAM_RAF_ADDRESS_DOMAIN.ilog2() as usize)
+    }
+
     pub(super) fn prepare_ram_raf_witness(
         &self,
         session: &mut ProofSession,
@@ -66,19 +80,14 @@ impl MetalBackend {
     ) -> Result<(), KernelError<AkitaField>> {
         let config = self.config.ram_raf_evaluation.dispatch;
         let cycles = 1usize << log_t;
-        if cycles < config.trace_cutoff {
-            return Ok(());
-        }
-        let ram_ra_shape =
-            witness.shape(JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa))?;
-        if ram_ra_shape.log_rows != log_t + RAM_RAF_ADDRESS_DOMAIN.ilog2() as usize {
+        if !self.ram_raf_witness_requested(log_t, witness)? {
             return Ok(());
         }
         let log_k = RAM_RAF_ADDRESS_DOMAIN.ilog2() as usize;
         let source_collection_performed = session.state::<Arc<RamAccessColumns>>().is_none();
         let witness_span = tracing::info_span!(
             "MetalRamCycleFamily::witness_prepare",
-            schema_version = super::solinas::ram_cycle_family_v3::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
+            schema_version = super::solinas::ram_cycle_family::RAM_CYCLE_FAMILY_SCHEMA_VERSION,
             requested = "host_sparse_v1",
             selected = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
@@ -126,7 +135,7 @@ impl MetalBackend {
             return Ok(());
         }
         let columns = RamAccessColumns::shared(session, witness, log_t)?;
-        columns.validate_addresses(RAM_RAF_ADDRESS_DOMAIN)?;
+        let addresses = columns.validated_addresses::<AkitaField>(RAM_RAF_ADDRESS_DOMAIN)?;
         let (access_count, increment_compatible, ram_ra_compatible) = {
             let tape = session
                 .state::<RamAccessTape>()
@@ -148,7 +157,7 @@ impl MetalBackend {
         );
         let plane = match self
             .context
-            .prepare_ram_raf_addresses(&columns.addresses, config)
+            .prepare_ram_raf_certified_addresses(addresses, config)
         {
             Ok(plane) => plane,
             Err(error) if error.is_capacity_error() => {
@@ -172,7 +181,7 @@ impl MetalBackend {
         let _ = witness_span.record("address_plane_bytes", plane.resident_bytes());
         let _ = witness_span.record("address_plane_upload_bytes", plane.resident_bytes());
         let _ = witness_span.record("address_plane_allocations", 1);
-        let _ = witness_span.record("address_validation_passes", 3);
+        let _ = witness_span.record("address_validation_passes", 0);
         let _ = witness_span.record("address_plane_published", true);
         let _ = witness_span.record("complete_publication", owner.is_some());
         session.park(plane);

@@ -8,6 +8,8 @@
 #define OUTER_REMAINDER_SIMD_WIDTH 32u
 #define OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP 9u
 #define OUTER_REMAINDER_REGISTERS_COMPONENTS 3u
+#define OUTER_REMAINDER_FIRST_B_OFFSET 202u
+#define OUTER_REMAINDER_SECOND_B_OFFSET 215u
 
 struct OuterRemainderPhaseParams {
     uint source_elements;
@@ -405,6 +407,79 @@ inline void outer_deferred_s320_fmadd(
         negative ? outer_deferred_s320_negate(product) : product);
 }
 
+inline void outer_deferred_s320_fmadd_u64(
+    thread OuterDeferredSigned320& accumulator,
+    SolinasFp128 weight,
+    ulong value)
+{
+    if (value == 0ul) {
+        return;
+    }
+    uint source[2] = {
+        (uint)value,
+        (uint)(value >> 32),
+    };
+    OuterDeferredSigned320 product = outer_deferred_s320_zero();
+    for (uint i = 0u; i < 2u; i++) {
+        ulong carry = 0ul;
+        for (uint j = 0u; j < 4u; j++) {
+            uint k = i + j;
+            ulong word = (ulong)source[i] * (ulong)weight.limb[j]
+                + (ulong)product.limb[k]
+                + carry;
+            product.limb[k] = (uint)word;
+            carry = word >> 32;
+        }
+        product.limb[i + 4u] = (uint)carry;
+    }
+    outer_deferred_s320_add(accumulator, product);
+}
+
+inline void outer_deferred_s320_fmadd_signed_u128(
+    thread OuterDeferredSigned320& accumulator,
+    SolinasFp128 weight,
+    ulong low,
+    ulong high,
+    bool positive)
+{
+    if (low == 0ul && high == 0ul) {
+        return;
+    }
+    uint source[4] = {
+        (uint)low,
+        (uint)(low >> 32),
+        (uint)high,
+        (uint)(high >> 32),
+    };
+    OuterDeferredSigned320 product = outer_deferred_s320_zero();
+    for (uint i = 0u; i < 4u; i++) {
+        ulong carry = 0ul;
+        for (uint j = 0u; j < 4u; j++) {
+            uint k = i + j;
+            ulong word = (ulong)source[i] * (ulong)weight.limb[j]
+                + (ulong)product.limb[k]
+                + carry;
+            product.limb[k] = (uint)word;
+            carry = word >> 32;
+        }
+        product.limb[i + 4u] = (uint)carry;
+    }
+    outer_deferred_s320_add(
+        accumulator,
+        positive ? product : outer_deferred_s320_negate(product));
+}
+
+inline void outer_deferred_s320_add_field(
+    thread OuterDeferredSigned320& accumulator,
+    SolinasFp128 value)
+{
+    OuterDeferredSigned320 extended = outer_deferred_s320_zero();
+    for (uint i = 0u; i < 4u; i++) {
+        extended.limb[i] = value.limb[i];
+    }
+    outer_deferred_s320_add(accumulator, extended);
+}
+
 inline void outer_deferred_s320_add_carry(
     thread SolinasWide256& value,
     uint index,
@@ -477,6 +552,97 @@ inline SolinasFp128 outer_fold_b(
     return outer_deferred_s320_reduce(sum);
 }
 
+inline SolinasFp128 outer_fold_b_first(
+    device const SpartanOuterUniskipResidualRow& residual,
+    ulong flags,
+    ulong ram_address,
+    ulong rs2,
+    ulong rd_write,
+    ulong ram_read,
+    ulong ram_write,
+    constant const SolinasFp128* coefficients)
+{
+    OuterDeferredSigned320 sum = outer_deferred_s320_zero();
+    outer_deferred_s320_fmadd_u64(sum, coefficients[0], ram_address);
+    outer_deferred_s320_fmadd_u64(sum, coefficients[1], ram_read);
+    outer_deferred_s320_fmadd_u64(sum, coefficients[2], ram_write);
+    outer_deferred_s320_fmadd_u64(sum, coefficients[3], rd_write);
+    outer_deferred_s320_fmadd_u64(sum, coefficients[4], rs2);
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[5], spartan_outer_residual_word(residual, 8u));
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[6], spartan_outer_residual_word(residual, 0u));
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[7], spartan_outer_residual_word(residual, 13u));
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[8], spartan_outer_residual_word(residual, 11u));
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[9], spartan_outer_residual_word(residual, 12u));
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[10], spartan_outer_residual_word(residual, 5u));
+    outer_deferred_s320_add_field(sum, coefficients[11]);
+    if (outer_flag(flags, 15u) != 0) {
+        outer_deferred_s320_add_field(sum, coefficients[12]);
+    }
+    return outer_deferred_s320_reduce(sum);
+}
+
+inline SolinasFp128 outer_fold_b_second(
+    device const InstructionInputRow& compact,
+    device const SpartanOuterUniskipResidualRow& residual,
+    ulong flags,
+    ulong ram_address,
+    ulong rd_write,
+    constant const SolinasFp128* coefficients)
+{
+    OuterDeferredSigned320 sum = outer_deferred_s320_zero();
+    outer_deferred_s320_fmadd_u64(sum, coefficients[0], ram_address);
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[1], instruction_input_row_word(compact, 0u));
+    outer_deferred_s320_fmadd_signed_u128(
+        sum,
+        coefficients[2],
+        instruction_input_row_word(compact, 3u),
+        instruction_input_row_word(compact, 4u),
+        outer_flag(flags, 18u) != 0);
+    outer_deferred_s320_fmadd_signed_u128(
+        sum,
+        coefficients[3],
+        spartan_outer_residual_word(residual, 9u),
+        spartan_outer_residual_word(residual, 10u),
+        true);
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[4], spartan_outer_residual_word(residual, 0u));
+    outer_deferred_s320_fmadd_signed_u128(
+        sum,
+        coefficients[5],
+        spartan_outer_residual_word(residual, 1u),
+        spartan_outer_residual_word(residual, 2u),
+        outer_flag(flags, 17u) != 0);
+    outer_deferred_s320_fmadd_signed_u128(
+        sum,
+        coefficients[6],
+        spartan_outer_residual_word(residual, 3u),
+        spartan_outer_residual_word(residual, 4u),
+        outer_flag(flags, 19u) != 0);
+    outer_deferred_s320_fmadd_u64(sum, coefficients[7], rd_write);
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[8], spartan_outer_residual_word(residual, 13u));
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[9], instruction_input_row_word(compact, 1u));
+    outer_deferred_s320_fmadd_u64(
+        sum, coefficients[10], spartan_outer_residual_word(residual, 11u));
+    outer_deferred_s320_add_field(sum, coefficients[11]);
+    outer_deferred_s320_add_field(sum, coefficients[12]);
+    if (outer_flag(flags, 16u) != 0) {
+        outer_deferred_s320_add_field(sum, coefficients[13]);
+    }
+    if (outer_flag(flags, 15u) != 0) {
+        outer_deferred_s320_add_field(sum, coefficients[14]);
+    }
+    return outer_deferred_s320_reduce(sum);
+}
+
 inline void outer_finish_two_columns(
     SolinasFp128 q_zero,
     SolinasFp128 q_infinity,
@@ -540,10 +706,36 @@ kernel void solinas_outer_remainder_materialize_b_and_message(
                 compact_rows[cycle], a_lookup + 10u);
             SolinasFp128 az_1 = outer_fold_a_lookup(
                 compact_rows[cycle], a_lookup + 106u);
-            SolinasFp128 bz_0 = outer_fold_b(
-                compact_rows[cycle], residual_rows[cycle], a_lookup, false);
-            SolinasFp128 bz_1 = outer_fold_b(
-                compact_rows[cycle], residual_rows[cycle], a_lookup, true);
+            ulong flags = instruction_input_row_word(compact_rows[cycle], 5u);
+            ulong ram_address;
+            ulong rs2;
+            ulong rd_write;
+            ulong ram_read;
+            ulong ram_write;
+            outer_row_memory(
+                compact_rows[cycle],
+                residual_rows[cycle],
+                ram_address,
+                rs2,
+                rd_write,
+                ram_read,
+                ram_write);
+            SolinasFp128 bz_0 = outer_fold_b_first(
+                residual_rows[cycle],
+                flags,
+                ram_address,
+                rs2,
+                rd_write,
+                ram_read,
+                ram_write,
+                a_lookup + OUTER_REMAINDER_FIRST_B_OFFSET);
+            SolinasFp128 bz_1 = outer_fold_b_second(
+                compact_rows[cycle],
+                residual_rows[cycle],
+                flags,
+                ram_address,
+                rd_write,
+                a_lookup + OUTER_REMAINDER_SECOND_B_OFFSET);
             b_state[2u * cycle] = bz_0;
             b_state[2u * cycle + 1u] = bz_1;
             SolinasFp128 weight = e_in[x_in];
@@ -956,6 +1148,14 @@ inline bool outer_opening_is_u64(uint column) {
         (column >= 15u && column <= 16u) || column == 19u;
 }
 
+inline bool outer_opening_is_replaced_by_registers_claim(
+    constant OuterRemainderOpeningParams& params,
+    uint column)
+{
+    return params.reserved_0 != 0u &&
+        (column == 8u || column == 9u || column == 10u);
+}
+
 inline ulong outer_opening_u64(
     threadgroup const ulong* row_words,
     uint row,
@@ -1059,7 +1259,8 @@ kernel void solinas_outer_remainder_opening_tiles(
                  slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
                  slot++) {
                 uint column = simdgroup + slot * simdgroups;
-                if (column < params.columns) {
+                if (column < params.columns &&
+                    !outer_opening_is_replaced_by_registers_claim(params, column)) {
                     SolinasFp128 sum = sums[slot];
                     if (outer_opening_is_boolean(column)) {
                         for (uint tile_row = lane;
@@ -1104,7 +1305,8 @@ kernel void solinas_outer_remainder_opening_tiles(
              slot < OUTER_REMAINDER_MAX_COLUMNS_PER_SIMDGROUP;
              slot++) {
             uint column = simdgroup + slot * simdgroups;
-            if (column < params.columns) {
+            if (column < params.columns &&
+                !outer_opening_is_replaced_by_registers_claim(params, column)) {
                 SolinasFp128 column_sum = solinas_simd_sum_32(sums[slot]);
                 if (lane == 0u) {
                     uint output = block * params.columns + column;

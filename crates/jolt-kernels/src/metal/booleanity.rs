@@ -14,11 +14,11 @@ use super::hamming_weight_claim_reduction::HammingWeightImplementation;
 use super::solinas::{
     BooleanityAddressPushforwardConfig, BooleanityAddressSuccessorConfig,
     BooleanityAddressSuccessorRuntimeError, BooleanityRows, BooleanitySelector, BooleanitySequence,
-    BooleanitySequenceConfig, HammingHotRows, MetalError,
+    BooleanitySequenceConfig, HammingHotRows, MetalError, BOOLEANITY_SOURCE_ROW_BYTES,
 };
 use crate::optimized::booleanity::{
-    prepare_optimized_booleanity_cycle, BooleanityAddressMetalPlan, OptimizedBooleanityAddress,
-    OptimizedBooleanityCycleKernel,
+    prepare_metal_booleanity_cycle, prepare_optimized_booleanity_cycle, BooleanityAddressMetalPlan,
+    OptimizedBooleanityAddress, OptimizedBooleanityCycleKernel,
 };
 use crate::optimized::instruction_read_raf::InstructionCycleRow;
 use crate::{
@@ -115,7 +115,7 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
             _ => return cpu(session),
         };
         let resident_row_identity = resident_rows.allocation_identity();
-        let resident_row_bytes = size_of::<super::solinas::BooleanityRow>();
+        let resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES;
         let resident_span = tracing::info_span!(
             "MetalBooleanityRows::stage6a_address_use",
             resident_rows_storage_id = resident_row_identity,
@@ -186,7 +186,7 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
                 resident_rows_storage_id = resident_row_identity,
                 hot_rows_storage_id = invocation.hot_rows_storage_id(),
                 rows = trace_elements,
-                resident_row_bytes = size_of::<super::solinas::BooleanityRow>(),
+                resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES,
                 hot_bytes = lengths.hot_bytes,
                 validity_bytes = lengths.validity_bytes,
                 e_in_fields = lengths.e_in_fields,
@@ -296,7 +296,7 @@ fn prepare_accepted_booleanity_address(
 > {
     let resident_row_identity = resident_rows.allocation_identity();
     let trace_elements = resident_rows.len();
-    let resident_row_bytes = size_of::<super::solinas::BooleanityRow>();
+    let resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES;
     let e_in_elements = 1usize << config.dispatch.inner_log2;
     let e_out_elements = trace_elements / e_in_elements;
     let selector_bytes = plan.selectors().len() * size_of::<[u32; 2]>();
@@ -425,7 +425,16 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
             hamming_config.admits(trace_elements, dimensions.log_t, dimensions.log_k_chunk);
         let wants_retained_hot = retain_for_hamming
             && hamming_config.implementation == HammingWeightImplementation::RetainedHot;
-        let mut cpu = prepare_optimized_booleanity_cycle(session, witness, inputs)?;
+        let has_resident_rows = trace_elements
+            >= self.config.booleanity_cycle.trace_cutoff_elements
+            && session.state::<BooleanityRows>().is_some_and(|rows| {
+                rows.len() == trace_elements && self.context.validate_booleanity_rows(rows).is_ok()
+            });
+        let mut cpu = if has_resident_rows {
+            prepare_metal_booleanity_cycle(witness, inputs)?
+        } else {
+            prepare_optimized_booleanity_cycle(session, witness, inputs)?
+        };
         if trace_elements < self.config.booleanity_cycle.trace_cutoff_elements {
             let retained_rows = session.state::<BooleanityRows>().cloned();
             let retained_hot = session.state::<HammingHotRows>().cloned().filter(|hot| {
@@ -508,13 +517,13 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
             "MetalBooleanityRows::stage6b_cycle_use",
             resident_rows_storage_id = resident_rows.allocation_identity(),
             resident_rows = resident_rows.len(),
-            resident_row_bytes = size_of::<super::solinas::BooleanityRow>(),
+            resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES,
             device_registry_id = resident_rows.device_registry_id(),
             row_allocations = u64::from(!reused),
             row_upload_bytes = if reused {
                 0u64
             } else {
-                (resident_rows.len() * size_of::<super::solinas::BooleanityRow>()) as u64
+                (resident_rows.len() * BOOLEANITY_SOURCE_ROW_BYTES) as u64
             },
         )
         .entered();
@@ -522,11 +531,11 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
         if retain_for_hamming && !hot_is_valid {
             trace_hamming_row_retention(&resident_rows);
         }
-        let sequence = cpu.metal_offload(
-            &self.context,
-            resident_rows,
-            self.config.booleanity_cycle.dispatch,
-        )?;
+        let mut dispatch = self.config.booleanity_cycle.dispatch;
+        if trace_elements >= 1 << 28 {
+            dispatch.materialize_width = 32;
+        }
+        let sequence = cpu.metal_offload(&self.context, resident_rows, dispatch)?;
         Ok(Box::new(MetalBooleanityKernel::new(
             cpu,
             sequence,
@@ -561,7 +570,7 @@ fn trace_hamming_row_retention(rows: &BooleanityRows) {
         "MetalBooleanityRows::stage6b_retain_for_stage7",
         resident_rows_storage_id = rows.allocation_identity(),
         resident_rows = rows.len(),
-        resident_row_bytes = size_of::<super::solinas::BooleanityRow>(),
+        resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES,
         device_registry_id = rows.device_registry_id(),
         row_allocations = 0u64,
         row_upload_bytes = 0u64,

@@ -16,8 +16,8 @@ use super::backend::MetalBackend;
 use super::solinas::{
     MetalError, PendingRegistersValFirstMessage, RegistersValDenseConfig,
     RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
-    RegistersValFirstMessageStats, RegistersValFirstTransitionInvocation, RegistersValSequence,
-    RegistersValTransitionConfig,
+    RegistersValFirstMessageStats, RegistersValFirstTransitionInvocation,
+    RegistersValInstructionSourceLease, RegistersValSequence, RegistersValTransitionConfig,
 };
 use crate::optimized::registers_read_write::{RegisterCycleRow, SharedRdIndices};
 use crate::optimized::registers_val_evaluation::{
@@ -27,8 +27,16 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RegistersValEvaluationSource {
+    #[default]
+    WitnessUpload,
+    Stage1Resident,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegistersValEvaluationMetalConfig {
+    pub source: RegistersValEvaluationSource,
     pub trace_cutoff_elements: usize,
     pub cutoff_elements: usize,
     pub first_message: RegistersValFirstMessageConfig,
@@ -39,6 +47,7 @@ pub struct RegistersValEvaluationMetalConfig {
 impl Default for RegistersValEvaluationMetalConfig {
     fn default() -> Self {
         Self {
+            source: RegistersValEvaluationSource::WitnessUpload,
             trace_cutoff_elements: 1 << 25,
             cutoff_elements: 1 << 16,
             first_message: RegistersValFirstMessageConfig::default(),
@@ -106,8 +115,32 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
         let config = self.config.registers_val_evaluation;
         let log_t = inputs.relation.trace_dimensions().log_t();
         let cycles = 1usize << log_t;
-        if cycles < config.trace_cutoff_elements || cycles <= config.cutoff_elements {
-            return OptimizedRegistersValEvaluation.prepare(session, witness, inputs);
+        let cpu_inputs = || ProverInputs {
+            relation: inputs.relation,
+            claims: inputs.claims,
+            points: inputs.points,
+            challenges: inputs.challenges,
+        };
+        let resident_from_stage1 = config.source == RegistersValEvaluationSource::Stage1Resident;
+        let resident_requested = resident_from_stage1
+            && cycles >= config.trace_cutoff_elements
+            && (26..=28).contains(&log_t);
+        let resident_route = "instruction_rows_v1";
+        if !resident_requested {
+            if session
+                .state::<RegistersValInstructionSourceLease>()
+                .is_some()
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason: "registers value found an unexpected Stage-1 source lease",
+                });
+            }
+            if resident_from_stage1
+                || cycles < config.trace_cutoff_elements
+                || cycles <= config.cutoff_elements
+            {
+                return OptimizedRegistersValEvaluation.prepare(session, witness, cpu_inputs());
+            }
         }
         let point = &inputs.points.registers_val;
         if point.len() != REGISTER_ADDRESS_BITS + log_t {
@@ -116,6 +149,61 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
             });
         }
         let (r_address, r_cycle) = point.split_at(REGISTER_ADDRESS_BITS);
+        let split_bits = r_cycle.len() / 2;
+        let split_handoff = cycles >> split_bits.saturating_sub(1);
+        let cutoff_elements = config.cutoff_elements.max(split_handoff);
+
+        if resident_requested {
+            let lease = session.take::<RegistersValInstructionSourceLease>().ok_or(
+                KernelError::InvariantViolation {
+                    reason: "RegistersVal stage1 route is missing its instruction-source lease",
+                },
+            )?;
+            if cutoff_elements >= cycles {
+                return Err(KernelError::InvariantViolation {
+                    reason: "registers value resident route cannot hand off before dispatch",
+                });
+            }
+            let receipt = lease.receipt();
+            let prepare_span = tracing::info_span!(
+                "MetalRegistersValEvaluation::prepare",
+                cycles,
+                cutoff_elements,
+                source = "instruction_rows_v1",
+                row_layout = "column_major_packed_u64_v3",
+                source_generation = receipt.generation(),
+                source_device_registry_id = receipt.device_registry_id(),
+                source_ready_serial = receipt.completion_serial(),
+                instruction_rows_storage_id = receipt.instruction_rows_storage_id(),
+                resident_source_bytes = receipt.instruction_rows_bytes(),
+                inc_upload_bytes = 0,
+                rd_upload_bytes = 0,
+            );
+            let invocation = {
+                let _guard = prepare_span.enter();
+                self.context
+                    .prepare_registers_val_first_message_instruction_rows(
+                        lease,
+                        r_address,
+                        r_cycle,
+                        config.first_message,
+                    )
+            }
+            .map_err(metal_prepare_error)?;
+            if invocation.resident_source_receipt() != Some(receipt) {
+                return Err(KernelError::InvariantViolation {
+                    reason: "registers value invocation lost its instruction-source receipt",
+                });
+            }
+            record_route(cycles, resident_route, resident_route, "none");
+            return Ok(self.finish_metal_registers_val_prepare(
+                invocation,
+                r_cycle,
+                cutoff_elements,
+                config,
+            ));
+        }
+
         let inc: Vec<AkitaField> = witness.oracle_table(rd_inc_val_evaluation().polynomial_id())?;
         if inc.len() != cycles {
             return Err(KernelError::TableSizeMismatch {
@@ -131,9 +219,6 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
                 .map(|row| row.rd.map(|(index, ..)| index))
                 .collect(),
         };
-        let split_bits = r_cycle.len() / 2;
-        let split_handoff = cycles >> split_bits.saturating_sub(1);
-        let cutoff_elements = config.cutoff_elements.max(split_handoff);
         if cutoff_elements >= cycles {
             return Ok(Box::new(ValEvaluationKernel::new_ready(
                 inc, rd, r_address, r_cycle,
@@ -170,6 +255,7 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
             }
             Err(error) => return Err(metal_prepare_error(error)),
         };
+        record_route(cycles, "witness_upload", "witness_upload", "none");
         let pending = invocation.submit();
         drop(inc);
         drop(rd);
@@ -189,6 +275,48 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
             next_round: 0,
         }))
     }
+}
+
+impl MetalBackend {
+    fn finish_metal_registers_val_prepare(
+        &self,
+        invocation: RegistersValFirstMessageInvocation,
+        r_cycle: &[AkitaField],
+        cutoff_elements: usize,
+        config: RegistersValEvaluationMetalConfig,
+    ) -> Box<dyn SumcheckKernel<AkitaField, Relation = RegistersValEvaluation<AkitaField>>> {
+        let pending = invocation.submit();
+        let cpu = ValEvaluationKernel::new_offloaded(r_cycle);
+        #[cfg(any(test, feature = "test-utils"))]
+        let _ = self
+            .registers_val_sequences
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Box::new(MetalRegistersValEvaluationKernel {
+            cpu,
+            state: RegistersValState::Submitted(pending),
+            host_tail: vec![[AkitaField::zero(); 2]; cutoff_elements],
+            cutoff_elements,
+            first_transition: config.first_transition,
+            dense_transition: config.dense_transition,
+            next_round: 0,
+        })
+    }
+}
+
+fn record_route(
+    cycles: usize,
+    requested: &'static str,
+    selected: &'static str,
+    fallback_reason: &'static str,
+) {
+    let _span = tracing::info_span!(
+        "MetalRegistersValEvaluation::route",
+        cycles,
+        requested,
+        selected,
+        fallback_reason,
+    )
+    .entered();
 }
 
 impl MetalRegistersValEvaluationKernel {
@@ -501,7 +629,6 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
-
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {
         (0..len as u64)
             .map(|index| AkitaField::from_u64(seed + 37 * index + 5))
@@ -538,6 +665,7 @@ mod tests {
                     .unwrap();
                 let metal = MetalBackend::new(super::super::MetalConfig {
                     registers_val_evaluation: RegistersValEvaluationMetalConfig {
+                        source: RegistersValEvaluationSource::WitnessUpload,
                         trace_cutoff_elements: 2,
                         cutoff_elements: 16,
                         first_message: RegistersValFirstMessageConfig {

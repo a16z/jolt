@@ -8,18 +8,28 @@ use std::{
 use jolt_field::AkitaField;
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use metal::{
-    objc::rc::autoreleasepool, Buffer, CommandBuffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 
 use super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    buffer_from_slice, command_buffer_timestamp, Fp128, InstructionReadRafStage1Lease, MetalError,
+    PipelineLimits, SolinasMetal,
+};
+
+mod stage1;
+
+pub(crate) use stage1::{
+    RegistersValInstructionSourceLease, RegistersValInstructionSourceReceipt,
+    RegistersValInstructionSourceRequest,
 };
 
 const SIMD_WIDTH: usize = 32;
 const SAMPLES: usize = 3;
 const ADDRESS_BITS: usize = 7;
 const ABSENT_REGISTER: u8 = u8::MAX;
+const SOURCE_MATERIALIZED: u32 = 0;
+const SOURCE_INSTRUCTION_ROWS: u32 = 1;
 const MESSAGE_PIPELINE: &str = "solinas_registers_val_first_message_factorized";
 const NATIVE_TRANSITION_PIPELINE: &str = "solinas_registers_val_native_transition";
 const DENSE_TRANSITION_PIPELINE: &str = "solinas_registers_val_dense_transition";
@@ -70,7 +80,7 @@ struct MessageParams {
     cycles: u32,
     high_blocks: u32,
     lt_lo_length: u32,
-    _reserved: u32,
+    source_layout: u32,
 }
 
 #[repr(C)]
@@ -100,6 +110,33 @@ struct Buffers {
     partial_b: Buffer,
 }
 
+enum RegistersValFirstMessageSource<'a> {
+    Uploaded {
+        inc: &'a [Fp128],
+        rd: &'a [u8],
+    },
+    InstructionRows {
+        receipt: Box<RegistersValInstructionSourceReceipt>,
+        source: InstructionReadRafStage1Lease,
+    },
+}
+
+impl RegistersValFirstMessageSource<'_> {
+    fn cycles(&self) -> usize {
+        match self {
+            Self::Uploaded { inc, .. } => inc.len(),
+            Self::InstructionRows { receipt, .. } => receipt.cycles(),
+        }
+    }
+
+    fn resident_receipt(&self) -> Option<RegistersValInstructionSourceReceipt> {
+        match self {
+            Self::Uploaded { .. } => None,
+            Self::InstructionRows { receipt, .. } => Some(**receipt),
+        }
+    }
+}
+
 pub struct RegistersValFirstMessageInvocation {
     context: SolinasMetal,
     message_pipeline: ComputePipelineState,
@@ -117,6 +154,8 @@ pub struct RegistersValFirstMessageInvocation {
     threadgroups: usize,
     threads_per_threadgroup: usize,
     final_in_a: bool,
+    resident_source: Option<RegistersValInstructionSourceReceipt>,
+    instruction_source: Option<InstructionReadRafStage1Lease>,
     completed: Cell<bool>,
 }
 
@@ -211,6 +250,7 @@ pub struct RegistersValFirstTransitionInvocation {
     threadgroups: usize,
     threads_per_threadgroup: usize,
     final_in_a: bool,
+    instruction_source: Option<InstructionReadRafStage1Lease>,
     completed: Cell<bool>,
 }
 
@@ -276,6 +316,84 @@ impl SolinasMetal {
             return Err(MetalError::InvalidRegistersValIndex(index));
         }
 
+        let inc = inc.iter().map(Fp128::from_jolt_field).collect::<Vec<_>>();
+        self.prepare_registers_val_first_message_from_source(
+            RegistersValFirstMessageSource::Uploaded { inc: &inc, rd },
+            r_address,
+            r_cycle,
+            config,
+        )
+    }
+
+    pub(crate) fn prepare_registers_val_first_message_instruction_rows(
+        &self,
+        lease: RegistersValInstructionSourceLease,
+        r_address: &[AkitaField],
+        r_cycle: &[AkitaField],
+        config: RegistersValFirstMessageConfig,
+    ) -> Result<RegistersValFirstMessageInvocation, MetalError> {
+        let cycles = lease.receipt().cycles();
+        let (receipt, source) = lease.into_parts(self, cycles)?;
+        self.prepare_registers_val_first_message_from_source(
+            RegistersValFirstMessageSource::InstructionRows {
+                receipt: Box::new(receipt),
+                source,
+            },
+            r_address,
+            r_cycle,
+            config,
+        )
+    }
+
+    fn prepare_registers_val_first_message_from_source(
+        &self,
+        source: RegistersValFirstMessageSource<'_>,
+        r_address: &[AkitaField],
+        r_cycle: &[AkitaField],
+        config: RegistersValFirstMessageConfig,
+    ) -> Result<RegistersValFirstMessageInvocation, MetalError> {
+        let cycles = source.cycles();
+        if cycles < 4 || !cycles.is_power_of_two() {
+            return Err(MetalError::InvalidRegistersValCycles(cycles));
+        }
+        if r_address.len() != ADDRESS_BITS || r_cycle.len() != cycles.ilog2() as usize {
+            return Err(MetalError::RegistersValPointShape {
+                address_bits: r_address.len(),
+                cycle_bits: r_cycle.len(),
+                cycles,
+            });
+        }
+        let inc_bytes = cycles
+            .checked_mul(size_of::<Fp128>())
+            .ok_or(MetalError::InputTooLong(cycles))?;
+        let rd_bytes = cycles;
+        match &source {
+            RegistersValFirstMessageSource::Uploaded { inc, rd } => {
+                if inc.len() != cycles || rd.len() != cycles {
+                    return Err(MetalError::RegistersValIndexLength {
+                        expected: cycles,
+                        got: rd.len(),
+                    });
+                }
+            }
+            RegistersValFirstMessageSource::InstructionRows { receipt, source } => {
+                if receipt.cycles() != cycles
+                    || receipt.device_registry_id() != self.device_registry_id()
+                    || receipt.instruction_rows_storage_id()
+                        != source.receipt().row_allocation_identity()
+                    || receipt.instruction_rows_bytes() != source.receipt().row_bytes()
+                    || source.row_buffer().device().registry_id() != self.device_registry_id()
+                    || source.row_buffer().as_ptr() as usize
+                        != receipt.instruction_rows_storage_id()
+                    || source.row_buffer().length() != receipt.instruction_rows_bytes()
+                {
+                    return Err(MetalError::InvalidRegistersValState(
+                        "instruction-row source does not match its sealed receipt",
+                    ));
+                }
+            }
+        }
+
         let message_pipeline = self.compile_named_pipeline(MESSAGE_PIPELINE)?;
         let native_transition_pipeline = self.compile_named_pipeline(NATIVE_TRANSITION_PIPELINE)?;
         let dense_transition_pipeline = self.compile_named_pipeline(DENSE_TRANSITION_PIPELINE)?;
@@ -301,7 +419,6 @@ impl SolinasMetal {
         let threads_per_threadgroup =
             Self::resolve_threadgroup_width(config.threads_per_threadgroup, message_limits)?;
 
-        let inc = inc.iter().map(Fp128::from_jolt_field).collect::<Vec<_>>();
         let eq_address = EqPolynomial::<AkitaField>::evals(r_address, None)
             .iter()
             .map(Fp128::from_jolt_field)
@@ -321,7 +438,6 @@ impl SolinasMetal {
             .map(Fp128::from_jolt_field)
             .collect::<Vec<_>>();
         for (name, values) in [
-            ("registers val inc", inc.as_slice()),
             ("registers val eq address", eq_address.as_slice()),
             ("registers val lt lo", lt_lo.as_slice()),
             ("registers val lt hi", lt_hi.as_slice()),
@@ -340,45 +456,51 @@ impl SolinasMetal {
                 .checked_mul(size_of::<Fp128>())
                 .ok_or(MetalError::InputTooLong(elements))
         };
-        let buffer_bytes = [
-            size_of_val(inc.as_slice()),
-            size_of_val(rd),
+        let new_buffer_bytes = [
             size_of_val(eq_address.as_slice()),
             size_of_val(lt_lo.as_slice()),
             size_of_val(lt_hi.as_slice()),
             size_of_val(eq_hi.as_slice()),
-            field_bytes(inc.len())?,
-            field_bytes(inc.len() / 2)?,
+            field_bytes(cycles)?,
+            field_bytes(cycles / 2)?,
             field_bytes(partial_elements)?,
             field_bytes(partial_elements)?,
         ];
-        for &bytes in &buffer_bytes {
+        for &bytes in [inc_bytes, rd_bytes].iter().chain(new_buffer_bytes.iter()) {
             self.validate_buffer_length(
-                u64::try_from(bytes).map_err(|_| MetalError::InputTooLong(inc.len()))?,
+                u64::try_from(bytes).map_err(|_| MetalError::InputTooLong(cycles))?,
             )?;
         }
         self.validate_buffer_length(size_of::<ReductionParams>() as u64)?;
         let reduction_param_bytes = reduction_step_count(partial_count)
             .checked_mul(size_of::<ReductionParams>())
             .ok_or(MetalError::InputTooLong(partial_count))?;
-        let additional_bytes = buffer_bytes
+        let source_allocation_bytes = match &source {
+            RegistersValFirstMessageSource::Uploaded { .. } => inc_bytes + rd_bytes,
+            RegistersValFirstMessageSource::InstructionRows { .. } => 0,
+        };
+        let additional_bytes = new_buffer_bytes
             .into_iter()
             .try_fold(reduction_param_bytes, usize::checked_add)
+            .and_then(|bytes| bytes.checked_add(source_allocation_bytes))
             .and_then(|bytes| u64::try_from(bytes).ok())
-            .ok_or(MetalError::InputTooLong(inc.len()))?;
+            .ok_or(MetalError::InputTooLong(cycles))?;
         self.validate_additional_working_set(additional_bytes)?;
         let params = MessageParams {
-            cycles: u32::try_from(inc.len()).map_err(|_| MetalError::InputTooLong(inc.len()))?,
+            cycles: u32::try_from(cycles).map_err(|_| MetalError::InputTooLong(cycles))?,
             high_blocks: u32::try_from(threadgroups)
                 .map_err(|_| MetalError::InputTooLong(threadgroups))?,
             lt_lo_length: u32::try_from(lt_lo.len())
                 .map_err(|_| MetalError::InputTooLong(lt_lo.len()))?,
-            _reserved: 0,
+            source_layout: match &source {
+                RegistersValFirstMessageSource::InstructionRows { .. } => SOURCE_INSTRUCTION_ROWS,
+                RegistersValFirstMessageSource::Uploaded { .. } => SOURCE_MATERIALIZED,
+            },
         };
         let partial_a = self.new_registers_val_buffer(partial_elements)?;
         let partial_b = self.new_registers_val_buffer(partial_elements)?;
-        let dense_a = self.new_registers_val_buffer(inc.len())?;
-        let dense_b = self.new_registers_val_buffer(inc.len() / 2)?;
+        let dense_a = self.new_registers_val_buffer(cycles)?;
+        let dense_b = self.new_registers_val_buffer(cycles / 2)?;
 
         let mut reduction_steps = Vec::new();
         let mut input_count = partial_count;
@@ -401,6 +523,18 @@ impl SolinasMetal {
             input_a = !input_a;
         }
 
+        let resident_source = source.resident_receipt();
+        let (inc, rd, instruction_source) = match source {
+            RegistersValFirstMessageSource::Uploaded { inc, rd } => (
+                buffer_from_slice(&self.device, inc),
+                buffer_from_slice(&self.device, rd),
+                None,
+            ),
+            RegistersValFirstMessageSource::InstructionRows { source, .. } => {
+                let rows = source.row_buffer().to_owned();
+                (rows.clone(), rows, Some(source))
+            }
+        };
         Ok(RegistersValFirstMessageInvocation {
             context: self.clone(),
             message_pipeline,
@@ -412,8 +546,8 @@ impl SolinasMetal {
             dense_transition_limits,
             reduction_limits,
             buffers: Buffers {
-                inc: buffer_from_slice(&self.device, &inc),
-                rd: buffer_from_slice(&self.device, rd),
+                inc,
+                rd,
                 eq_address: buffer_from_slice(&self.device, &eq_address),
                 lt_lo: buffer_from_slice(&self.device, &lt_lo),
                 lt_hi: buffer_from_slice(&self.device, &lt_hi),
@@ -425,10 +559,12 @@ impl SolinasMetal {
             },
             params,
             reduction_steps,
-            cycles: inc.len(),
+            cycles,
             threadgroups,
             threads_per_threadgroup,
             final_in_a: input_a,
+            resident_source,
+            instruction_source,
             completed: Cell::new(false),
         })
     }
@@ -471,12 +607,12 @@ impl RegistersValFirstMessageInvocation {
             bound_lt_lo,
         )?;
         let params = MessageParams {
-            cycles: u32::try_from(self.cycles / 2)
-                .map_err(|_| MetalError::InputTooLong(self.cycles / 2))?,
+            cycles: u32::try_from(self.cycles)
+                .map_err(|_| MetalError::InputTooLong(self.cycles))?,
             high_blocks: self.params.high_blocks,
             lt_lo_length: u32::try_from(bound_lt_lo.len())
                 .map_err(|_| MetalError::InputTooLong(bound_lt_lo.len()))?,
-            _reserved: 0,
+            source_layout: self.params.source_layout,
         };
         let Buffers {
             inc,
@@ -517,6 +653,7 @@ impl RegistersValFirstMessageInvocation {
             threadgroups: self.threadgroups,
             threads_per_threadgroup,
             final_in_a: self.final_in_a,
+            instruction_source: self.instruction_source,
             completed: Cell::new(false),
         })
     }
@@ -527,6 +664,12 @@ impl RegistersValFirstMessageInvocation {
 
     pub const fn cycles(&self) -> usize {
         self.cycles
+    }
+
+    pub(crate) const fn resident_source_receipt(
+        &self,
+    ) -> Option<RegistersValInstructionSourceReceipt> {
+        self.resident_source
     }
 
     pub const fn threadgroups(&self) -> usize {
@@ -677,6 +820,7 @@ impl RegistersValFirstTransitionInvocation {
             self.dense_transition_limits,
         )?;
         let current_elements = self.current_elements();
+        drop(self.instruction_source);
         let TransitionBuffers {
             inc: _,
             rd: _,
@@ -940,7 +1084,7 @@ impl RegistersValSequence {
                 .map_err(|_| MetalError::InputTooLong(self.threadgroups))?,
             lt_lo_length: u32::try_from(expected_lt_lo_length)
                 .map_err(|_| MetalError::InputTooLong(expected_lt_lo_length))?,
-            _reserved: 0,
+            source_layout: SOURCE_MATERIALIZED,
         };
 
         let (message, active_time) = autoreleasepool(|| {

@@ -32,6 +32,7 @@ pub const PRODUCT_UNISKIP_NODE_ORDER: [i64; PRODUCT_UNISKIP_EXTENDED_NODES] = [-
 pub const PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS: [[i64; 3]; 2] = [[3, -3, 1], [1, -3, 3]];
 
 pub(crate) const BLOCKS_PIPELINE: &str = "solinas_product_uniskip_extended_blocks2";
+pub(crate) const STAGE1_BLOCKS_PIPELINE: &str = "solinas_product_uniskip_stage1_extended_blocks2";
 pub(crate) const REDUCTION_PIPELINE: &str = "solinas_product_uniskip_reduce2";
 
 const _: [(); 40] = [(); size_of::<ProductRemainderRow>()];
@@ -385,12 +386,17 @@ impl SolinasMetal {
             .map_err(|_| MetalError::InputTooLong(layout.scratch_bytes()))?;
         self.validate_additional_working_set(scratch_bytes)?;
 
-        let blocks_pipeline = self.compile_named_pipeline(BLOCKS_PIPELINE)?;
+        let blocks_pipeline_name = if rows.stage1_buffers().is_some() {
+            STAGE1_BLOCKS_PIPELINE
+        } else {
+            BLOCKS_PIPELINE
+        };
+        let blocks_pipeline = self.compile_named_pipeline(blocks_pipeline_name)?;
         let reduction_pipeline = self.compile_named_pipeline(REDUCTION_PIPELINE)?;
         let blocks_limits = Self::limits(&blocks_pipeline);
         let reduction_limits = Self::limits(&reduction_pipeline);
         for (pipeline, limits) in [
-            (BLOCKS_PIPELINE, blocks_limits),
+            (blocks_pipeline_name, blocks_limits),
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != PRODUCT_UNISKIP_SIMD_WIDTH {
@@ -453,11 +459,26 @@ impl ProductUniskipInvocation {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.blocks_pipeline);
-            encoder.set_buffer(0, Some(self.rows.buffer()), 0);
-            encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
-            encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
-            encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
-            set_inline_bytes(encoder, 4, &params);
+            if let Some((compact, residual)) = self.rows.stage1_buffers() {
+                encoder.set_buffer(0, Some(compact), 0);
+                encoder.set_buffer(1, Some(residual), 0);
+                encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+                encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+                encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 5, &params);
+            } else {
+                let rows =
+                    self.rows
+                        .packed_buffer()
+                        .ok_or(MetalError::InvalidProductRemainderState(
+                            "packed product uni-skip lost its row buffer",
+                        ))?;
+                encoder.set_buffer(0, Some(rows), 0);
+                encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+                encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+                encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 4, &params);
+            }
             encoder.set_threadgroup_memory_length(
                 0,
                 product_uniskip_threadgroup_bytes(self.threads_per_threadgroup) as u64,
@@ -499,8 +520,8 @@ impl ProductUniskipInvocation {
         self.layout
     }
 
-    pub const fn resident_buffer_count(&self) -> usize {
-        5
+    pub fn resident_buffer_count(&self) -> usize {
+        self.rows.allocation_identities().len() + 4
     }
 
     pub const fn execute_device_buffer_allocations(&self) -> usize {

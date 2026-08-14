@@ -18,6 +18,7 @@ mod ram_raf_evaluation;
 mod ram_read_write;
 mod ram_val_check;
 mod registers_claim_reduction;
+mod registers_read_write;
 mod registers_val_evaluation;
 pub mod solinas;
 mod spartan_dense;
@@ -49,7 +50,10 @@ pub use ram_val_check::RamValCheckMetalConfig;
 pub use registers_claim_reduction::{
     RegistersClaimReductionImplementation, RegistersClaimReductionMetalConfig,
 };
-pub use registers_val_evaluation::RegistersValEvaluationMetalConfig;
+pub use registers_read_write::RegistersReadWriteMetalConfig;
+pub use registers_val_evaluation::{
+    RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
+};
 #[cfg(feature = "test-utils")]
 #[doc(hidden)]
 pub use spartan_outer::{
@@ -57,5 +61,5 @@ pub use spartan_outer::{
     OuterRemainderEvalSample, OuterRemainderGpuActiveBreakdown,
 };
 pub use spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
-pub use spartan_product::SpartanProductRemainderMetalConfig;
+pub use spartan_product::{SpartanProductRemainderMetalConfig, SpartanProductWitnessSource};
 pub use spartan_shift::SpartanShiftMetalConfig;

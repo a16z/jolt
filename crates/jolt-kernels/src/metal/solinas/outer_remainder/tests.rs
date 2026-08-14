@@ -96,18 +96,18 @@ fn log_26_storage_has_two_two_gib_state_buffers() {
             1 << 27,
             1 << 13,
             1 << 13,
-            202,
+            230,
             16_384,
             2,
             286_720,
             35
         ],
     );
-    assert_eq!(geometry.owned_bytes, 4_300_082_928);
+    assert_eq!(geometry.owned_bytes, 4_300_083_376);
     assert_eq!(field_bytes(1 << 27).unwrap(), 1 << 31);
     assert_eq!(
         outer_remainder_sequence_storage_bytes_with_config(1 << 26, config).unwrap(),
-        4_300_082_928,
+        4_300_083_376,
     );
     assert_eq!(
         outer_remainder_sequence_max_buffer_bytes_with_config(1 << 26, config).unwrap(),

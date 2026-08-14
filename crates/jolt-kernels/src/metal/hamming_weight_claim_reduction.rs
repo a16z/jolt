@@ -8,8 +8,8 @@ use jolt_witness::JoltWitnessPlane;
 use super::backend::MetalBackend;
 use super::booleanity::{booleanity_address_can_fallback, select_packed_hot_masses};
 use super::solinas::{
-    BooleanityAddressPushforwardConfig, BooleanityRow, BooleanityRows, BooleanitySelector,
-    HammingHotRows, HammingWeightRetainedConfig, HammingWeightRetainedRuntimeError,
+    BooleanityAddressPushforwardConfig, BooleanityRows, BooleanitySelector, HammingHotRows,
+    HammingWeightRetainedConfig, HammingWeightRetainedRuntimeError, BOOLEANITY_SOURCE_ROW_BYTES,
 };
 use crate::optimized::hamming_weight_claim_reduction::{
     HammingWeightPreparePlan, OptimizedHammingWeightClaimReduction,
@@ -260,7 +260,7 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
             _ => return cpu(session),
         };
         let resident_row_identity = resident_rows.allocation_identity();
-        let resident_row_bytes = size_of::<BooleanityRow>();
+        let resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES;
         let e_in_elements = 1usize << config.dispatch.inner_log2;
         let e_out_elements = trace_elements / e_in_elements;
         let selector_bytes = selectors.len() * size_of::<[u32; 2]>();

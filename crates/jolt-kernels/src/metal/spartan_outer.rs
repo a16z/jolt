@@ -27,21 +27,24 @@ use super::backend::{MetalBackend, MetalConfig};
 use super::instruction_input::{InstructionInputDenseStorageMode, PreparedInstructionInput};
 use super::instruction_read_raf::InstructionReadRafAddressImplementation;
 use super::registers_claim_reduction::{
-    MetalRegistersClaimOuterSource, MetalRegistersClaimStage1Carry,
+    MetalRegistersClaimAsyncStage1Carry, MetalRegistersClaimOuterSource,
+    MetalRegistersClaimPendingStage1Carry, MetalRegistersClaimStage1Carry,
 };
+use super::registers_val_evaluation::RegistersValEvaluationSource;
 use super::solinas::bytecode_read_raf_address::{
     bytecode_address_stage1_topology_max_bytes, bytecode_address_stage1_topology_max_plane_bytes,
 };
 use super::solinas::spartan_shift::{SpartanShiftFlagWord, SPARTAN_SHIFT_FLAG_ROWS_PER_WORD};
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
-    instruction_input_sequence_storage_bytes, instruction_ra_weight_capacities,
-    instruction_read_raf_stage1_claim_bytes, instruction_read_raf_stage1_device_bytes,
-    instruction_read_raf_stage1_row_bytes, outer_remainder_sequence_max_buffer_bytes_with_config,
+    instruction_input_sequence_storage_bytes, instruction_read_raf_stage1_claim_bytes,
+    instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
+    outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, spartan_outer_uniskip_invocation_bytes,
-    spartan_outer_uniskip_row_bytes, InstructionInputRows, InstructionRaSequenceStorage,
-    MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
-    OuterRemainderSequenceStorage, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
+    spartan_outer_uniskip_row_bytes, InstructionInputRows, MetalError, OuterRemainderPhase,
+    OuterRemainderSequence, OuterRemainderSequenceConfig, OuterRemainderSequenceStorage,
+    PendingSpartanStage1SourcePrimer, RegistersValInstructionSourceLease,
+    RegistersValInstructionSourceRequest, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
 use super::spartan_dense::SpartanDenseResidentOwner;
 use super::spartan_product::MetalProductUniskipEndpointCarrier;
@@ -52,7 +55,8 @@ use crate::optimized::spartan_outer::{
     prepare_metal_spartan_outer_shift_witness_rows,
     prepare_metal_spartan_outer_stage1_owner_witness_rows, prepare_metal_spartan_outer_uniskip,
     prepare_metal_spartan_outer_witness_rows, take_metal_spartan_outer_tau,
-    MetalSpartanDenseRowsError, OptimizedOuterRemainder, OptimizedOuterUniskip,
+    InstructionReadRafStage1Ready, MetalSpartanDenseRowsError, OptimizedOuterRemainder,
+    OptimizedOuterUniskip,
 };
 use crate::optimized::spartan_shift::prepare_metal_spartan_shift_witness_rows;
 use crate::uniskip::UniskipKernel;
@@ -71,6 +75,7 @@ pub use evaluation::{
 
 const OUTER_DOMAIN: usize = OUTER_UNISKIP_DOMAIN_SIZE;
 const OUTER_VARIABLES: usize = 35;
+const STAGE1_SOURCE_PRIMER_CUTOFF_ELEMENTS: usize = 1 << 28;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanOuterUniskipMetalConfig {
@@ -366,6 +371,117 @@ fn outer_remainder_storage_fallback_reason(error: &MetalError) -> Option<&'stati
     }
 }
 
+pub(super) fn publish_instruction_read_raf_stage1(
+    session: &mut ProofSession,
+    ready: InstructionReadRafStage1Ready,
+) -> Result<(), KernelError<AkitaField>> {
+    if let Some(ram_access) = &ready.ram_access {
+        ram_access.validate_publish(session)?;
+    }
+    if session
+        .state::<super::solinas::InstructionReadRafStage1Owner>()
+        .is_some()
+        || (ready.bytecode_topology.is_some()
+            && session
+                .state::<super::solinas::bytecode_read_raf_address::BytecodeAddressStage1TopologyOwner>()
+                .is_some())
+        || (ready.registers_val.is_some()
+            && session
+                .state::<RegistersValInstructionSourceRequest>()
+                .is_some())
+    {
+        return Err(KernelError::InvariantViolation {
+            reason: "InstructionReadRAF Stage-1 publication would replace resident state",
+        });
+    }
+    let receipt = ready.owner.receipt();
+    let _span = tracing::info_span!(
+        "MetalInstructionReadRaf::stage1_source_publish",
+        rows = receipt.rows(),
+        row_bytes = receipt.row_bytes(),
+        row_layout = receipt.row_layout().as_str(),
+        claim_bytes = receipt.claim_bytes(),
+        resident_device_bytes = receipt.resident_device_bytes(),
+        host_row_write_bytes = receipt.host_row_write_bytes(),
+        host_claim_write_bytes = receipt.host_claim_write_bytes(),
+        host_count_update_bytes = receipt.host_count_update_bytes(),
+        count_chunks = receipt.count_chunks(),
+        count_bytes = receipt.count_bytes(),
+        row_allocation_identity = receipt.row_allocation_identity(),
+        claim_allocation_identity = receipt.claim_allocation_identity(),
+        count_allocation_identity = receipt.count_allocation_identity(),
+        device_registry_id = receipt.device_registry_id(),
+        source_generation = receipt.source_generation(),
+        completion_serial = receipt.completion_serial(),
+        count_order = "table_major_then_none_v1",
+        publication_kind = receipt.publication_kind().as_str(),
+        complete_overwrite = receipt.complete_overwrite(),
+        source_windows = receipt.source_windows(),
+        member_upload_bytes = receipt.member_upload_bytes(),
+        projection_dispatches = receipt.projection_dispatches(),
+    )
+    .entered();
+    session.park(ready.owner);
+    if let Some(topology) = ready.bytecode_topology {
+        session.park(topology);
+    }
+    if let Some(request) = ready.registers_val {
+        let source_ids = request.source_storage_ids();
+        let source_bytes = request.source_storage_bytes();
+        let instruction_source = request.instruction_source();
+        let _span = tracing::info_span!(
+            "MetalRegistersValEvaluation::stage1_source_publish",
+            cycles = request.cycles(),
+            explicit_rows = request.explicit_rows(),
+            source = "instruction_read_raf_stage1_rows_v1",
+            row_layout = instruction_source.row_layout().as_str(),
+            source_compact_storage_id = source_ids[0],
+            source_compact_bytes = source_bytes[0],
+            source_residual_storage_id = source_ids[1],
+            source_residual_bytes = source_bytes[1],
+            source_generation = instruction_source.source_generation(),
+            source_device_registry_id = instruction_source.device_registry_id(),
+            source_ready_serial = instruction_source.completion_serial(),
+            producer_plane_allocations = 0usize,
+            retained_plane_allocations = 0usize,
+            producer_device_bytes = 0usize,
+            retained_device_bytes = 0usize,
+            released_auxiliary_device_bytes = 0usize,
+            shared_source_row_scans = 1usize,
+            additional_source_row_scans = 0usize,
+            member_upload_bytes = 0usize,
+            native_rows_private_copy_bytes = 0usize,
+            complete_overwrite = true,
+        )
+        .entered();
+        session.park(request);
+    }
+    if let Some(ram_access) = ready.ram_access {
+        let cycles = ram_access.cycles();
+        let access_count = ram_access.access_count();
+        let increment_count = ram_access.increment_count();
+        let _span = tracing::info_span!(
+            "MetalRamAccessColumns::stage1_publish",
+            source = "stage1_single_projection",
+            cycles,
+            address_elements = cycles,
+            address_bytes = cycles * size_of::<u32>(),
+            pre_value_elements = cycles,
+            pre_value_bytes = cycles * size_of::<u64>(),
+            post_value_elements = cycles,
+            post_value_bytes = cycles * size_of::<u64>(),
+            access_records = access_count,
+            increment_records = increment_count,
+            witness_source_scans = 0usize,
+            additional_witness_source_scans = 0usize,
+            complete_publication = true,
+        )
+        .entered();
+        ram_access.publish(session)?;
+    }
+    Ok(())
+}
+
 impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
     fn prepare_witness(
         &self,
@@ -374,7 +490,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         witness: &dyn JoltWitnessPlane<AkitaField>,
     ) -> Result<(), KernelError<AkitaField>> {
         let cycles = 1usize << log_t;
-        self.prepare_ram_raf_witness(session, log_t, witness)?;
         let (mut stage1_eligible, instruction_input_eligible) =
             resident_row_consumers(cycles, &self.config);
         let instruction_read_raf_owner_requested =
@@ -387,6 +502,35 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 && witness
                     .owned_rows()
                     .is_some_and(|rows| cycles <= rows.cycles());
+        let register_val_owner_requested = self.config.registers_val_evaluation.source
+            == RegistersValEvaluationSource::Stage1Resident
+            && cycles >= self.config.registers_val_evaluation.trace_cutoff_elements;
+        let prepare_registers_val = register_val_owner_requested && (26..=28).contains(&log_t);
+        if prepare_registers_val
+            && witness
+                .owned_rows()
+                .is_none_or(|rows| cycles > rows.cycles())
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "RegistersVal Stage-1 source requires random-access witness rows",
+            });
+        }
+        if prepare_registers_val
+            && (session
+                .state::<RegistersValInstructionSourceRequest>()
+                .is_some()
+                || session
+                    .state::<RegistersValInstructionSourceLease>()
+                    .is_some())
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "RegistersVal Stage-1 owner was already parked",
+            });
+        }
+        let stage1_projection_owner_requested =
+            instruction_read_raf_owner_requested || prepare_registers_val;
+        let prepare_ram_access =
+            stage1_projection_owner_requested && self.ram_raf_witness_requested(log_t, witness)?;
         let prepare_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajor
             && cycles >= self.config.bytecode_read_raf_address.dispatch.trace_cutoff;
@@ -407,32 +551,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         } else {
             None
         };
-        stage1_eligible |= instruction_read_raf_owner_requested;
-        let instruction_ra_dispatch = self.config.instruction_ra_virtualization.dispatch;
-        if cycles
-            >= self
-                .config
-                .instruction_ra_virtualization
-                .trace_cutoff_elements
-            && cycles >= 2 * instruction_ra_dispatch.materialize_width.elements()
-        {
-            let (e_in_capacity, e_out_capacity) =
-                instruction_ra_weight_capacities(cycles).map_err(metal_prepare_error)?;
-            let storage = {
-                let _span =
-                    tracing::info_span!("MetalInstructionRaVirtualization::storage_prepare")
-                        .entered();
-                self.context
-                    .prepare_instruction_ra_sequence_storage(
-                        cycles,
-                        e_in_capacity,
-                        e_out_capacity,
-                        instruction_ra_dispatch,
-                    )
-                    .map_err(metal_prepare_error)?
-            };
-            session.park::<InstructionRaSequenceStorage>(storage);
-        }
+        stage1_eligible |= stage1_projection_owner_requested;
         let mut admitted_plan = None;
         let mut last_admission_error = None;
         if stage1_eligible || instruction_input_eligible {
@@ -442,7 +561,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             for candidate in
                 resident_row_admission_candidates(stage1_eligible, instruction_input_eligible)
             {
-                if prepare_bytecode_carrier && !candidate.stage1 {
+                if (prepare_bytecode_carrier || prepare_registers_val) && !candidate.stage1 {
                     continue;
                 }
                 let borrow_outer_residual = self.config.instruction_input.dense_storage_mode
@@ -466,7 +585,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             validate_resident_row_buffer(residual_bytes, device.max_buffer_length)
                         })
                         .and_then(|()| {
-                            if instruction_read_raf_owner_requested && candidate.stage1 {
+                            if stage1_projection_owner_requested && candidate.stage1 {
                                 validate_resident_row_buffer(
                                     instruction_read_raf_stage1_row_bytes(cycles)?,
                                     device.max_buffer_length,
@@ -507,7 +626,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 cycles,
                                 candidate.stage1,
                                 candidate.instruction_input,
-                                instruction_read_raf_owner_requested && candidate.stage1,
+                                stage1_projection_owner_requested && candidate.stage1,
                                 borrow_outer_residual && candidate.instruction_input,
                                 candidate.stage1
                                     && cycles >= self.config.spartan_shift.trace_cutoff_elements,
@@ -559,17 +678,17 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 }
             }
         }
-        if prepare_bytecode_carrier && admitted_plan.is_none() {
+        if (prepare_bytecode_carrier || prepare_registers_val) && admitted_plan.is_none() {
             return Err(last_admission_error.map_or(
                 KernelError::InvariantViolation {
-                    reason: "bytecode address-major Stage-1 plan was not admitted",
+                    reason: "required Stage-1 owner plan was not admitted",
                 },
                 metal_prepare_error,
             ));
         }
         if let Some(plan) = admitted_plan {
             if plan.stage1 {
-                let (mut rows, instruction_read_raf_owner, bytecode_topology) = if cycles
+                let (mut rows, instruction_read_raf_ready) = if cycles
                     >= self.config.spartan_shift.trace_cutoff_elements
                 {
                     let span = tracing::info_span!(
@@ -585,26 +704,26 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         fallback_reason = tracing::field::Empty,
                     );
                     let _entered = span.enter();
-                    let prepared = if instruction_read_raf_owner_requested {
+                    let prepared = if stage1_projection_owner_requested {
                         prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
                             &self.context,
                             witness,
                             cycles,
                             prepare_bytecode_carrier,
+                            prepare_registers_val,
+                            prepare_ram_access,
                         )
-                        .map(|(rows, shift_rows, owner, topology)| {
-                            (rows, shift_rows, Some(owner), topology)
-                        })
+                        .map(|(rows, shift_rows, prepared)| (rows, shift_rows, Some(prepared)))
                     } else {
                         prepare_metal_spartan_outer_shift_witness_rows(
                             &self.context,
                             witness,
                             cycles,
                         )
-                        .map(|(rows, shift_rows)| (rows, shift_rows, None, None))
+                        .map(|(rows, shift_rows)| (rows, shift_rows, None))
                     };
                     match prepared {
-                        Ok((rows, shift_rows, instruction_read_raf_owner, bytecode_topology)) => {
+                        Ok((rows, shift_rows, instruction_read_raf)) => {
                             let shift_resident_bytes = shift_rows.resident_bytes();
                             let owner =
                                 SpartanDenseResidentOwner::from_co_produced_shift(shift_rows)
@@ -624,9 +743,13 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             let _ = span.record("admitted", true);
                             let _ = span.record("fallback_reason", "none");
                             session.park(owner);
-                            (rows, instruction_read_raf_owner, bytecode_topology)
+                            (rows, instruction_read_raf)
                         }
-                        Err(error) if error.is_capacity_error() && !prepare_bytecode_carrier => {
+                        Err(error)
+                            if error.is_capacity_error()
+                                && !prepare_bytecode_carrier
+                                && !prepare_registers_val =>
+                        {
                             let _ = span.record("admitted", false);
                             let _ = span.record("fallback_reason", "shift_capacity");
                             tracing::warn!(
@@ -634,14 +757,16 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 error = ?error,
                                 "Spartan dense Shift co-production was not admitted; retaining Stage-1 rows only"
                             );
-                            if instruction_read_raf_owner_requested {
+                            if stage1_projection_owner_requested {
                                 prepare_metal_spartan_outer_stage1_owner_witness_rows(
                                     &self.context,
                                     witness,
                                     cycles,
                                     prepare_bytecode_carrier,
+                                    prepare_registers_val,
+                                    prepare_ram_access,
                                 )
-                                .map(|(rows, owner, topology)| (rows, Some(owner), topology))
+                                .map(|(rows, prepared)| (rows, Some(prepared)))
                                 .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
                             } else {
                                 (
@@ -651,59 +776,30 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                         cycles,
                                     )?,
                                     None,
-                                    None,
                                 )
                             }
                         }
                         Err(error) => return Err(error.into_kernel_error()),
                     }
-                } else if instruction_read_raf_owner_requested {
+                } else if stage1_projection_owner_requested {
                     prepare_metal_spartan_outer_stage1_owner_witness_rows(
                         &self.context,
                         witness,
                         cycles,
                         prepare_bytecode_carrier,
+                        prepare_registers_val,
+                        prepare_ram_access,
                     )
-                    .map(|(rows, owner, topology)| (rows, Some(owner), topology))
+                    .map(|(rows, prepared)| (rows, Some(prepared)))
                     .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
                 } else {
                     (
                         prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?,
                         None,
-                        None,
                     )
                 };
-                if let Some(owner) = instruction_read_raf_owner {
-                    let receipt = owner.receipt();
-                    let _span = tracing::info_span!(
-                        "MetalInstructionReadRaf::stage1_source_publish",
-                        rows = receipt.rows(),
-                        row_bytes = receipt.row_bytes(),
-                        claim_bytes = receipt.claim_bytes(),
-                        resident_device_bytes = receipt.resident_device_bytes(),
-                        host_row_write_bytes = receipt.host_row_write_bytes(),
-                        host_claim_write_bytes = receipt.host_claim_write_bytes(),
-                        host_count_update_bytes = receipt.host_count_update_bytes(),
-                        count_chunks = receipt.count_chunks(),
-                        count_bytes = receipt.count_bytes(),
-                        row_allocation_identity = receipt.row_allocation_identity(),
-                        claim_allocation_identity = receipt.claim_allocation_identity(),
-                        count_allocation_identity = receipt.count_allocation_identity(),
-                        device_registry_id = receipt.device_registry_id(),
-                        source_generation = receipt.source_generation(),
-                        completion_serial = receipt.completion_serial(),
-                        count_order = "table_major_then_none_v1",
-                        publication_kind = "host_fill_v1",
-                        complete_overwrite = receipt.complete_overwrite(),
-                        source_windows = receipt.source_windows(),
-                        member_upload_bytes = receipt.member_upload_bytes(),
-                        projection_dispatches = receipt.projection_dispatches(),
-                    )
-                    .entered();
-                    session.park(owner);
-                }
-                if let Some(topology) = bytecode_topology {
-                    session.park(topology);
+                if let Some(ready) = instruction_read_raf_ready {
+                    publish_instruction_read_raf_stage1(session, ready)?;
                 }
                 let compact_rows = plan
                     .instruction_input
@@ -718,7 +814,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 session.park(rows);
             }
         }
-        self.prepare_product_remainder_witness(session, log_t, witness)?;
+        self.prepare_ram_raf_witness(session, log_t, witness)?;
         if cycles >= self.config.spartan_shift.trace_cutoff_elements
             && session.state::<SpartanDenseResidentOwner>().is_none()
             && spartan_shift_measurement_bridge_enabled()
@@ -751,8 +847,15 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 Err(error) => return Err(metal_prepare_error(error)),
             }
         }
-        self.prepare_instruction_input_storage(session, cycles)?;
-        self.prepare_outer_remainder_storage(session, cycles)?;
+        if self.config.spartan_product_remainder.reuse_outer_state_a {
+            self.prepare_instruction_input_storage(session, cycles)?;
+            self.prepare_outer_remainder_storage(session, cycles)?;
+            self.prepare_product_remainder_witness(session, log_t, witness)?;
+        } else {
+            self.prepare_product_remainder_witness(session, log_t, witness)?;
+            self.prepare_instruction_input_storage(session, cycles)?;
+            self.prepare_outer_remainder_storage(session, cycles)?;
+        }
         if session.state::<PreparedInstructionInput>().is_none() {
             drop(session.take::<InstructionInputRows>());
             if let Some(mut rows) = session.take::<SpartanOuterUniskipRows>() {
@@ -770,6 +873,36 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 OuterRemainder<AkitaField>,
             >>::prepare_witness(&OptimizedOuterUniskip, session, log_t, witness)?;
         }
+        self.publish_registers_read_write_prefetch_source(session, witness, cycles)?;
+        if cycles >= STAGE1_SOURCE_PRIMER_CUTOFF_ELEMENTS {
+            let pending = session
+                .state::<SpartanOuterUniskipRows>()
+                .zip(
+                    session
+                        .state::<SpartanDenseResidentOwner>()
+                        .and_then(SpartanDenseResidentOwner::shift_rows),
+                )
+                .map(|(outer, shift)| {
+                    self.context
+                        .submit_spartan_stage1_source_primer(outer, shift)
+                })
+                .transpose()
+                .map_err(metal_prepare_error)?;
+            if let Some(pending) = pending {
+                let span = tracing::info_span!(
+                    "MetalSpartanStage1::source_primer_submit",
+                    source_bytes = pending.source_bytes(),
+                    source_pages = pending.source_pages(),
+                    submit_wall_ns = duration_nanos(pending.submit_wall()),
+                    command_buffers = 1u64,
+                    dispatches = 1u64,
+                    waits = 0u64,
+                    readback_bytes = 0u64,
+                );
+                let _entered = span.enter();
+                session.park(pending);
+            }
+        }
         Ok(())
     }
 
@@ -783,6 +916,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let cycles = 1usize << log_t;
         let resident_rows = session.state::<SpartanOuterUniskipRows>().is_some();
         if !use_metal_stage1(cycles, &self.config, resident_rows) {
+            drop(session.take::<PendingSpartanStage1SourcePrimer>());
             let retain_for_remainder = use_metal_remainder(cycles, &self.config, resident_rows);
             if !retain_for_remainder {
                 drop(session.take::<SpartanOuterUniskipRows>());
@@ -802,6 +936,33 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 OuterRemainder<AkitaField>,
             >>::prepare(&OptimizedOuterUniskip, session, log_t, tau, witness)?;
             return Ok(());
+        }
+        if let Some(primer) = session.take::<PendingSpartanStage1SourcePrimer>() {
+            let span = tracing::info_span!(
+                "MetalSpartanStage1::source_primer_join",
+                source_bytes = primer.source_bytes(),
+                source_pages = primer.source_pages(),
+                completed_before_join = tracing::field::Empty,
+                submit_wall_ns = tracing::field::Empty,
+                overlap_wall_ns = tracing::field::Empty,
+                join_wall_ns = tracing::field::Empty,
+                lifecycle_wall_ns = tracing::field::Empty,
+                gpu_active_ns = tracing::field::Empty,
+                command_buffers = 1u64,
+                dispatches = 1u64,
+                waits = 1u64,
+                readback_bytes = 0u64,
+            );
+            let _entered = span.enter();
+            let observation = primer.join().map_err(metal_prepare_error)?;
+            let _ = span.record("source_bytes", observation.source_bytes);
+            let _ = span.record("source_pages", observation.source_pages);
+            let _ = span.record("completed_before_join", observation.completed_before_join);
+            let _ = span.record("submit_wall_ns", duration_nanos(observation.submit_wall));
+            let _ = span.record("overlap_wall_ns", duration_nanos(observation.overlap_wall));
+            let _ = span.record("join_wall_ns", duration_nanos(observation.join_wall));
+            let _ = span.record("lifecycle_wall_ns", duration_nanos(observation.wall));
+            let _ = span.record("gpu_active_ns", duration_nanos(observation.gpu_active));
         }
         let stage1_compact_rows_storage_id = session
             .state::<SpartanOuterUniskipRows>()
@@ -947,7 +1108,10 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             .spartan_outer_remainder
             .dispatch
             .registers_claim_carrier
-            && session.state::<MetalRegistersClaimStage1Carry>().is_some()
+            && (session.state::<MetalRegistersClaimStage1Carry>().is_some()
+                || session
+                    .state::<MetalRegistersClaimAsyncStage1Carry>()
+                    .is_some())
         {
             return Err(KernelError::InvariantViolation {
                 reason: "Metal outer remainder found a stale registers-claim carry",
@@ -1416,7 +1580,7 @@ struct MetalOuterRemainderKernel {
     cpu_tail_elements: usize,
     gpu_active_breakdown: OuterRemainderGpuActiveBreakdown,
     product_uniskip_endpoint_carrier: Option<MetalProductUniskipEndpointCarrier>,
-    registers_claim_stage1_carry: Option<MetalRegistersClaimStage1Carry>,
+    registers_claim_async_stage1_carry: Option<MetalRegistersClaimAsyncStage1Carry>,
     deferred_release_bytes: Option<MetalOuterDeferredReleaseBytes>,
     #[cfg(feature = "test-utils")]
     completed_gpu_active: Option<Duration>,
@@ -1449,7 +1613,7 @@ impl allocative::Allocative for MetalOuterRemainderKernel {
                 carrier,
             );
         }
-        if let Some(carry) = &self.registers_claim_stage1_carry {
+        if let Some(carry) = &self.registers_claim_async_stage1_carry {
             visitor.visit_field(allocative::Key::new("registers_claim_stage1_carry"), carry);
         }
         visitor.exit();
@@ -1513,7 +1677,7 @@ impl MetalOuterRemainderKernel {
                 ..OuterRemainderGpuActiveBreakdown::default()
             },
             product_uniskip_endpoint_carrier: None,
-            registers_claim_stage1_carry: None,
+            registers_claim_async_stage1_carry: None,
             deferred_release_bytes: None,
             #[cfg(feature = "test-utils")]
             completed_gpu_active: None,
@@ -1724,18 +1888,18 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                 device_registry_id: self.device_registry_id,
             });
         }
-        if self.registers_claim_stage1_carry.is_some() {
+        if self.registers_claim_async_stage1_carry.is_some() {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "Metal outer remainder rebuilt its registers-claim carry",
             });
         }
         let context = sequence.context().clone();
-        let registers_claim_stage1_carry = sequence
-            .take_registers_claim_carrier()
+        let registers_claim_async_stage1_carry = sequence
+            .take_pending_registers_claim_carrier()
             .map_err(metal_output_error)?
-            .map(|carrier| {
-                MetalRegistersClaimStage1Carry::from_outer(
-                    carrier,
+            .map(|pending| {
+                MetalRegistersClaimPendingStage1Carry::from_outer(
+                    pending,
                     MetalRegistersClaimOuterSource {
                         context: &context,
                         product_tau_low: &product_tau_low,
@@ -1743,12 +1907,12 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                         compact_storage_id: self.compact_rows_storage_id,
                         residual_storage_id: self.residual_rows_storage_id,
                         device_registry_id: self.device_registry_id,
-                        openings: &claimed,
                     },
                 )
             })
             .transpose()
-            .map_err(metal_output_error)?;
+            .map_err(metal_output_error)?
+            .map(MetalRegistersClaimPendingStage1Carry::start);
         let completed_gpu_active = sequence.gpu_active_time();
         if self.gpu_active_breakdown.total() != Some(completed_gpu_active) {
             return Err(SumcheckKernelError::InvariantViolation {
@@ -1799,7 +1963,7 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             compact: compact_release_bytes,
             total: deferred_owned_bytes,
         });
-        self.registers_claim_stage1_carry = registers_claim_stage1_carry;
+        self.registers_claim_async_stage1_carry = registers_claim_async_stage1_carry;
         self.host.output_claims(inputs, &claimed)
     }
 
@@ -1852,8 +2016,8 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             .entered();
             session.park(carrier);
         }
-        if let Some(carry) = self.registers_claim_stage1_carry.take() {
-            let receipt = carry.receipt();
+        if let Some(carry) = self.registers_claim_async_stage1_carry.take() {
+            let receipt = carry.submission();
             let _span = tracing::info_span!(
                 "MetalOuterRemainder::registers_claim_carrier_park",
                 rows = receipt.rows,
@@ -1863,7 +2027,7 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                 blocks = receipt.blocks,
                 device_registry_id = receipt.device_registry_id,
                 source_generation = receipt.source_generation,
-                completion_serial = receipt.completion_serial,
+                completion_serial = 0u64,
                 source_compact_storage_id = receipt.source_compact_storage_id as u64,
                 source_residual_storage_id = receipt.source_residual_storage_id as u64,
                 partial_storage_id = receipt.partial_storage_id as u64,
@@ -1876,13 +2040,14 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                 scratch_release_bytes = receipt.partial_bytes + receipt.component_bytes,
                 retained_rd_bytes = receipt.rd_bytes,
                 source_allocations = 3u64,
-                row_scans = receipt.row_scans,
+                row_scans = 2u64,
                 carrier_dispatches = 3u64,
-                command_buffers = receipt.command_buffers,
-                waits = receipt.waits,
-                uploads = receipt.uploads,
-                prezero_dispatches = receipt.prezero_dispatches,
-                complete_overwrite = receipt.complete_overwrite,
+                command_buffers = 1u64,
+                waits = 1u64,
+                uploads = 0u64,
+                prezero_dispatches = 0u64,
+                complete_overwrite = true,
+                pending = true,
                 stage1_carry_parks = 1u64,
             )
             .entered();
@@ -1919,6 +2084,7 @@ mod tests {
     use crate::metal::solinas::{OuterBindingPlan, OuterKernelArtifact};
     use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
     use crate::optimized::harness::run_lockstep;
+
     use crate::optimized::spartan_outer::{
         prepare_metal_spartan_outer_witness_rows, OptimizedOuterRemainder, OptimizedOuterUniskip,
     };
@@ -2031,139 +2197,54 @@ mod tests {
 
     #[test]
     fn aggregate_instruction_input_working_set_matches_production_geometry() {
-        assert_eq!(
+        let working_set = |cycles,
+                           stage1,
+                           instruction_input,
+                           instruction_read_raf,
+                           borrow_outer_residual,
+                           shift,
+                           uniskip,
+                           remainder| {
             resident_row_working_set(
-                1 << 26,
-                true,
-                true,
-                false,
-                false,
-                true,
-                true,
-                true,
+                cycles,
+                stage1,
+                instruction_input,
+                instruction_read_raf,
+                borrow_outer_residual,
+                shift,
+                uniskip,
+                remainder,
                 Default::default(),
             )
-            .unwrap(),
+            .unwrap()
+        };
+
+        assert_eq!(
+            working_set(1 << 26, true, true, false, false, true, true, true),
             22_581_415_824
         );
         assert_eq!(
-            resident_row_working_set(
-                1 << 28,
-                true,
-                true,
-                false,
-                false,
-                true,
-                true,
-                true,
-                Default::default(),
-            )
-            .unwrap(),
+            working_set(1 << 28, true, true, false, false, true, true, true),
             90_305_466_256
         );
         assert_eq!(
-            resident_row_working_set(
-                1 << 26,
-                true,
-                true,
-                false,
-                true,
-                true,
-                true,
-                true,
-                Default::default(),
-            )
-            .unwrap(),
-            16_138_964_880
+            working_set(1 << 26, true, true, true, false, true, true, true),
+            25_332_879_248
         );
         assert_eq!(
-            resident_row_working_set(
-                1 << 28,
-                true,
-                true,
-                false,
-                true,
-                true,
-                true,
-                true,
-                Default::default(),
-            )
-            .unwrap(),
-            64_535_662_480
+            working_set(1 << 27, true, true, true, false, true, true, true),
+            50_659_725_200
         );
         assert_eq!(
-            resident_row_working_set(
-                1 << 26,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                Default::default(),
-            )
-            .unwrap(),
-            18_890_428_304
-        );
-        assert_eq!(
-            resident_row_working_set(
-                1 << 27,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                true,
-                Default::default(),
-            )
-            .unwrap(),
-            37_774_823_312
-        );
-        assert_eq!(
-            resident_row_working_set(
-                1 << 26,
-                false,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                Default::default(),
-            )
-            .unwrap(),
+            working_set(1 << 26, false, true, false, false, false, false, false),
             9_664_659_456
         );
         assert_eq!(
-            resident_row_working_set(
-                1 << 28,
-                false,
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                Default::default(),
-            )
-            .unwrap(),
+            working_set(1 << 28, false, true, false, false, false, false, false),
             38_656_671_744
         );
         assert_eq!(
-            resident_row_working_set(
-                1 << 28,
-                true,
-                false,
-                false,
-                false,
-                true,
-                true,
-                true,
-                Default::default(),
-            )
-            .unwrap(),
+            working_set(1 << 28, true, false, false, false, true, true, true),
             64_533_696_400
         );
     }
@@ -2412,7 +2493,7 @@ mod tests {
                 .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
                 .unwrap();
             device.park_residue(&mut metal_session);
-            let deferred = metal_session.state::<OuterRemainderSequence>().unwrap();
+            let deferred = metal_session.take::<OuterRemainderSequence>().unwrap();
             assert_eq!(deferred.phase(), OuterRemainderPhase::OpeningsComplete);
         });
     }

@@ -53,7 +53,7 @@ pub const FINALIZE_BUFFER_OUTPUT: u64 = 1;
 pub const FINALIZE_BUFFER_PARAMS: u64 = 2;
 
 const FIELD_BYTES: u64 = 16;
-const ROW_BYTES: u64 = 40;
+const ROW_BYTES: u64 = super::super::BOOLEANITY_SOURCE_ROW_BYTES as u64;
 
 const _: () = assert!(BOOLEANITY_ADDRESS_SUCCESSOR_PACKED_SELECTORS == 23);
 const _: () = assert!(BOOLEANITY_ADDRESS_SUCCESSOR_HOT_PLANES == 29);

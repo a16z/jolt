@@ -159,10 +159,6 @@ impl OuterRegistersClaimCarrier {
         })
     }
 
-    pub(crate) const fn receipt(&self) -> OuterRegistersClaimCarrierReceipt {
-        self.receipt
-    }
-
     pub(crate) fn into_parts(
         self,
     ) -> (

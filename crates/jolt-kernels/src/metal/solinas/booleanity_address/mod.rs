@@ -698,9 +698,9 @@ mod tests {
                 state ^= state << 13;
                 state ^= state >> 17;
                 state ^= state << 43;
-                let pc =
-                    (!row.is_multiple_of(7)).then_some(((state >> 61) as u64) & ((1 << 55) - 2));
-                let ram = (!row.is_multiple_of(11)).then_some((state as u64) & (u64::MAX - 1));
+                let pc = (!row.is_multiple_of(7)).then_some(((state >> 61) as u64) & 0x1ffe);
+                let ram =
+                    (!row.is_multiple_of(11)).then_some((state as u64) & (u32::MAX as u64 - 1));
                 let inc = match row % 4 {
                     0 => row as i128,
                     1 => -(row as i128),

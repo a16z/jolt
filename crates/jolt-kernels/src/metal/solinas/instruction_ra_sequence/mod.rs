@@ -131,7 +131,8 @@ impl Default for InstructionRaSequenceConfig {
     }
 }
 
-pub(crate) fn instruction_ra_weight_capacities(rows: usize) -> Result<(usize, usize), MetalError> {
+#[cfg(test)]
+fn instruction_ra_weight_capacities(rows: usize) -> Result<(usize, usize), MetalError> {
     if rows < 32 || !rows.is_power_of_two() {
         return Err(MetalError::InvalidInstructionRaRows(rows));
     }
@@ -393,6 +394,13 @@ impl SolinasMetal {
         name: &'static str,
         width: usize,
     ) -> Result<ComputePipelineState, MetalError> {
+        let _span = tracing::info_span!(
+            "MetalSolinas::pipeline_compile",
+            pipeline = name,
+            specialized = true,
+            width
+        )
+        .entered();
         let width = u32::try_from(width).map_err(|_| MetalError::InputTooLong(width))?;
         let constants = FunctionConstantValues::new();
         constants.set_constant_value_at_index(

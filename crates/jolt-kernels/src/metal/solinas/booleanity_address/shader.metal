@@ -105,11 +105,12 @@ inline void booleanity_address_add_ram(
     uint shift,
     SolinasFp128 weight)
 {
-    if (ram_address_plus_one != 0ul) {
+    ulong plus_one = ram_address_plus_one & 0x00ffFFFFFFFFFFFFul;
+    if (plus_one != 0ul) {
         booleanity_address_add(
             sums,
             local,
-            (uint)((ram_address_plus_one - 1ul) >> shift)
+            (uint)((plus_one - 1ul) >> shift)
                 & (BOOLEANITY_ADDRESS_BINS - 1u),
             weight);
     }
@@ -161,8 +162,7 @@ inline void booleanity_address_add_inc(
 
 template <uint selector>
 inline void booleanity_address_add_production_selector(
-    device const BooleanityRow* rows,
-    uint row_index,
+    BooleanityRow row,
     threadgroup atomic_uint* sums,
     uint local,
     constant BooleanityAddressParams& params,
@@ -171,28 +171,28 @@ inline void booleanity_address_add_production_selector(
     if (selector < 8u) {
         booleanity_address_add_lookup_word(
             sums,
-            rows[row_index].lookup_hi,
+            row.lookup_hi,
             local,
             8u * (7u - selector),
             weight);
     } else if (selector < 16u) {
         booleanity_address_add_lookup_word(
             sums,
-            rows[row_index].lookup_lo,
+            row.lookup_lo,
             local,
             8u * (15u - selector),
             weight);
     } else if (selector < 18u) {
         booleanity_address_add_bytecode(
             sums,
-            rows[row_index].packed_pc_and_flags,
+            row.packed_pc_and_flags,
             local,
             8u * (17u - selector),
             weight);
     } else if (selector < 20u) {
         booleanity_address_add_ram(
             sums,
-            rows[row_index].ram_address_plus_one,
+            row.ram_address_plus_one,
             local,
             8u * (19u - selector),
             weight);
@@ -200,8 +200,8 @@ inline void booleanity_address_add_production_selector(
         ulong biased;
         int carry;
         booleanity_address_inc(
-            rows[row_index].fused_inc_magnitude,
-            rows[row_index].packed_pc_and_flags,
+            row.fused_inc_magnitude,
+            row.packed_pc_and_flags,
             params.inc_bias,
             biased,
             carry);
@@ -220,7 +220,7 @@ inline void booleanity_address_add_production_selector(
 
 template <uint production_offset, uint production_count, bool aggregate_inc>
 inline void booleanity_address_tile_impl(
-    device const BooleanityRow* rows,
+    device const ulong* rows,
     device const BooleanitySelector* selectors,
     device const SolinasFp128* e_in,
     device const SolinasFp128* e_out,
@@ -246,8 +246,8 @@ inline void booleanity_address_tile_impl(
     for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
         uint row_index = row_base + x_in;
         SolinasFp128 weight = e_in[x_in];
+        BooleanityRow row = booleanity_row_load(rows, params.rows, row_index);
         if (production_count == 0u) {
-            BooleanityRow row = rows[row_index];
             for (uint local = 0u; local < params.selectors_in_tile; local++) {
                 uint hot = params.k;
                 BooleanitySelector selector = selectors[params.selector_offset + local];
@@ -260,8 +260,8 @@ inline void booleanity_address_tile_impl(
             ulong biased;
             int carry;
             booleanity_address_inc(
-                rows[row_index].fused_inc_magnitude,
-                rows[row_index].packed_pc_and_flags,
+                row.fused_inc_magnitude,
+                row.packed_pc_and_flags,
                 params.inc_bias,
                 biased,
                 carry);
@@ -289,27 +289,27 @@ inline void booleanity_address_tile_impl(
         } else {
             if (production_count > 0u) {
                 booleanity_address_add_production_selector<production_offset>(
-                    rows, row_index, sums, 0u, params, weight);
+                    row, sums, 0u, params, weight);
             }
             if (production_count > 1u) {
                 booleanity_address_add_production_selector<production_offset + 1u>(
-                    rows, row_index, sums, 1u, params, weight);
+                    row, sums, 1u, params, weight);
             }
             if (production_count > 2u) {
                 booleanity_address_add_production_selector<production_offset + 2u>(
-                    rows, row_index, sums, 2u, params, weight);
+                    row, sums, 2u, params, weight);
             }
             if (production_count > 3u) {
                 booleanity_address_add_production_selector<production_offset + 3u>(
-                    rows, row_index, sums, 3u, params, weight);
+                    row, sums, 3u, params, weight);
             }
             if (production_count > 4u) {
                 booleanity_address_add_production_selector<production_offset + 4u>(
-                    rows, row_index, sums, 4u, params, weight);
+                    row, sums, 4u, params, weight);
             }
             if (production_count > 5u) {
                 booleanity_address_add_production_selector<production_offset + 5u>(
-                    rows, row_index, sums, 5u, params, weight);
+                    row, sums, 5u, params, weight);
             }
         }
     }
@@ -334,7 +334,7 @@ inline void booleanity_address_tile_impl(
 
 #define BOOLEANITY_ADDRESS_TILE_ENTRY(name, offset, count, aggregate_inc)          \
 kernel void name(                                                                 \
-    device const BooleanityRow* rows [[buffer(0)]],                               \
+    device const ulong* rows [[buffer(0)]],                                       \
     device const BooleanitySelector* selectors [[buffer(1)]],                    \
     device const SolinasFp128* e_in [[buffer(2)]],                                \
     device const SolinasFp128* e_out [[buffer(3)]],                               \

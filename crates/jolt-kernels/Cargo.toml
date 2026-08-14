@@ -16,9 +16,9 @@ default = ["parallel"]
 akita = ["jolt-claims/akita", "jolt-field/akita", "jolt-verifier/akita"]
 # Shallow heap visitation of the proof session (profile harness flamegraphs).
 allocative = ["dep:allocative"]
-metal = ["akita", "dep:metal"]
-# The sealed successor evaluator receives the candidate opening source only
-# through a content-addressed runtime artifact.
+metal = ["akita", "dep:metal", "dep:sha2"]
+# Test harnesses may inject a sealed OuterRemainder shader artifact instead of
+# compiling the checked-in production source.
 metal-runtime-artifact-only = []
 parallel = ["dep:rayon", "jolt-poly/parallel", "jolt-witness/parallel"]
 test-utils = ["dep:jolt-transcript", "dep:serde", "dep:serde_json", "dep:sha2"]
@@ -52,7 +52,6 @@ metal = { workspace = true, optional = true }
 
 [dev-dependencies]
 common = { workspace = true, features = ["std"] }
-criterion.workspace = true
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true
 jolt-program.workspace = true
@@ -62,77 +61,3 @@ num-bigint.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true
 serde_json = { workspace = true, features = ["std"] }
-tracing-subscriber.workspace = true
-
-[[bench]]
-name = "metal_solinas"
-harness = false
-required-features = ["metal", "parallel", "test-utils"]
-
-[[example]]
-name = "metal-kernel-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-booleanity-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-spartan-outer-uniskip-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-outer-remainder-successor-eval"
-required-features = ["metal", "parallel", "test-utils"]
-
-[[example]]
-name = "metal-outer-registers-claim-eval"
-required-features = ["metal", "parallel", "test-utils"]
-
-[[example]]
-name = "metal-instruction-ra-first-message-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-instruction-ra-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-bytecode-read-raf-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-bytecode-address-long-worker-eval"
-required-features = ["metal", "parallel", "test-utils"]
-
-[[example]]
-name = "metal-instruction-input-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-instruction-input-residency-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-instruction-input-cold-mechanism-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-booleanity-address-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-hamming-weight-claim-reduction-eval"
-required-features = ["metal", "parallel"]
-
-[[example]]
-name = "metal-hamming-weight-compile-probe"
-required-features = ["metal", "parallel", "test-utils"]
-
-[[example]]
-name = "metal-hamming-weight-successor-eval"
-required-features = ["metal", "parallel", "test-utils"]
-
-[[example]]
-name = "metal-instruction-read-raf-stage1-eval"
-required-features = ["metal", "parallel", "test-utils"]
