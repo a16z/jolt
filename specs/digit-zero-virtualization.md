@@ -174,9 +174,13 @@ every claimed evaluation. The verifier-enforced facts are:
 - (R) the stage-7 recentering equations — for each column, the Booleanity leg
   and the virtualization leg, at two independent address points, both against
   the same committed-row openings and the same activation claims;
-- (X) `RamActivationBooleanity`: the activation value
-  `m(j) := Load(j) + Store(j) ∈ {0, 1}` per cycle (sum-booleanity; the
-  individual columns are unconstrained and unused beyond their sum);
+- (X) `RamActivationBooleanity`: the sum-booleanity zero-check
+  `0 = Σ_j eq(r₁, j)·(B(j)² − B(j))`, `B := Load + Store`, at the stage-1
+  cycle point `r₁`, plus the two flag openings at the 6b point (individual
+  columns unconstrained and unused beyond their sum). In isolation a
+  zero-check over *virtual* columns at a pre-known point is not
+  pointwise-binding — what makes it force `m(j) := B(j) ∈ {0, 1}` is the
+  composite argument spelled out in "Why the zero-check binds" below;
 - (F) the RAF identity `Σ_k unmap(k)·ra(k, j) = RamAddress(j)` with
   `unmap(k) = 8k + ℓ`, `ℓ = lowest remapped address`, enforced fail-closed to
   satisfy `ℓ > 8` (`validate_ram_remap_base`,
@@ -198,14 +202,15 @@ Boolean, so the sum is `w_i(j)·1_F` for an integer weight
 (`K^{1/d} < char F`), so `w_i(j) = m(j)` exactly — every digit of a family
 carries the same weight, the activation value.
 
-**Step 2 — unit-or-zero, no residual freedom.** For the constant-1 families
-`m ≡ 1`: every `ra_i(·, j)` is a unit vector and `ra(·, j)` encodes a unique
-address `raf(j)` on every cycle, padding included. For RAM, (X) gives
-`m(j) ∈ {0, 1}`: `ra(·, j)` is a unit vector at a unique `raf(j)` when
-`m(j) = 1` and identically zero when `m(j) = 0`. The previous construction's
-"one free bit per cycle on cycles whose committed rows are all empty" does
-not exist here — the digit-zero row's value is pinned by the activation, and
-the activation is Boolean by (X), not by a chain.
+**Step 2 — unit-or-zero.** For the constant-1 families `m ≡ 1`: every
+`ra_i(·, j)` is a unit vector and `ra(·, j)` encodes a unique address
+`raf(j)` on every cycle, padding included. For RAM, (X) (via the binding
+argument below) gives `m(j) ∈ {0, 1}`: `ra(·, j)` is a unit vector at a
+unique `raf(j)` when `m(j) = 1` and identically zero when `m(j) = 0`. The
+same one residual freedom as the previous construction remains at this point
+in the argument: on a cycle where every committed RAM row is empty, both
+`m(j) = 0` (no access) and `m(j) = 1` (digit-zero rows hot — an access at
+remapped word 0) are representable; step 3 closes it.
 
 **Step 3 — the activation matches the real access pattern.** The flag
 columns bound in (X) are still prover-materialized; (F) + (S) pin their
@@ -236,7 +241,7 @@ cycle it cannot: the RAF left side is a sum of `m^d ≥ 1` values
 `RamAddress = 0`. On an *access* cycle, however, positivity alone does not
 exclude `m ≥ 2`: the `m^d` unmap values could in principle sum to
 `RamAddress` as integers. The sum-booleanity (X) is what closes that case
-unconditionally (`m ≤ 1` always). This matters most in committed-program
+(`m ≤ 1` always), via the value-set argument below. This matters most in committed-program
 mode: without (X), "the activation is Boolean" would rest on "no bytecode row
 sets both flags" — a property of the bytecode *table*, which a malicious
 committed program controls (`Load = Store = 1`, or non-Boolean flag lanes).
@@ -250,6 +255,42 @@ constrains the activation columns this relation binds, not the Spartan flag
 columns — the two are cross-pinned only through steps 1–3, which is exactly
 enough: the activation's *value* is forced to the true access indicator, and
 the Spartan flags are separately bytecode-bound.
+
+**Why the zero-check binds although its columns are virtual.** A sumcheck
+over never-committed columns is not pointwise-binding by itself: the prover
+knows `r₁` (drawn at stage 1) before it chooses the columns (bound during
+stage 6b), and `Σ_j eq(r₁, j)·(B² − B)(j) = 0` has abundant non-Boolean
+solutions once the weights are known. The same was true of the previous
+`A² = A` gadget. The binding is composite, in three moves:
+
+1. *The gadget's output value is not free.* The two flag openings feed the
+   `2·d` stage-7 RAM baselines — `2·d` equations sharing the single scalar
+   `v = Load@6b + Store@6b` against openings that terminate in the stage-8
+   PCS batch. Overdetermination forces `v = Ã(r_6b)` for the one polynomial
+   `Ã` consistent with the committed rows, which retroactively turns the
+   gadget into a genuine sumcheck for `0 = Σ_j eq(r₁, j)·(Ã² − Ã)(j)`.
+2. *`Ã`'s per-cycle values live in commitment-determined finite sets.* The
+   recentering identities plus (B) make every committed row and every
+   digit-zero row pointwise Boolean and force `Ã(j) − s_i(j) ∈ {0, 1}` for
+   every chunk `i`, where `s_i(j)` is chunk `i`'s committed row sum — all
+   fixed at stage 0. Hence per cycle `(Ã² − Ã)(j)` ranges over a small set
+   fixed at commitment time: exactly `{0}` on cycles whose committed sums are
+   0 or 1 (the free bit contributes `Ã ∈ {0, 1}`, so the quadratic vanishes
+   either way), and a set *excluding 0* on any would-be `m ≥ 2` cycle
+   (e.g. `s = 2` gives `(Ã² − Ã)(j) ∈ {2, 6}`).
+3. *Schwartz–Zippel over those sets.* `r₁` is drawn at stage 1, after the
+   stage-0 commitment fixes the sets — a load-bearing ordering. A prover with
+   any `m ≥ 2` cycle must hit `Σ_j eq(r₁, j)·(Ã² − Ã)(j) = 0` by choosing
+   each `(Ã² − Ã)(j)` from its finite set; with the attack cycles' sets
+   missing 0, this is a nontrivial linear condition on the `eq(r₁, ·)`
+   values, satisfied with probability `O(|sets|/|F|)` over `r₁`.
+
+So the check forces `Ã(j) ∈ {0, 1}` on every cycle; the only per-cycle
+freedom it cannot see is the empty-committed-row bit (whose quadratic is 0
+either way), which is exactly the residual step 3 closes through RAF. A
+γ-batch of per-flag legs enjoys no analogue of move 2 — the *split* between
+the two columns has no commitment-determined value set — which is the deeper
+reason the relation checks only the sum (§4).
 
 **Completeness.** Honest traces are always provable: padding cycles have both
 flags 0 and all-zero tensors (representable — every committed row empty,
