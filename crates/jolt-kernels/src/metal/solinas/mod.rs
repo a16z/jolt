@@ -134,9 +134,8 @@ pub(crate) use outer_remainder::{
     PendingOuterRegistersClaimCarrier,
 };
 pub use outer_remainder::{
-    OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
-    OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
-    OuterRemainderStorageInitializationStats, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
+    OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
+    OuterRemainderStorageInitialization, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
 pub use product5::{Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS};
 #[cfg(feature = "test-utils")]
@@ -165,7 +164,7 @@ pub use ram_raf_evaluation::{
     RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS, RAM_RAF_SIMD_WIDTH,
     RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
 };
-pub(crate) use registers_val::{PendingRegistersValFirstMessage, RegistersValFirstMessageStats};
+pub(crate) use registers_val::PendingRegistersValFirstMessage;
 pub use registers_val::{
     RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
     RegistersValFirstTransitionInvocation, RegistersValSequence, RegistersValTransitionConfig,

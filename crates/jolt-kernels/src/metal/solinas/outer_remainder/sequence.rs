@@ -12,8 +12,7 @@ use super::super::{
 };
 use super::{
     api::{
-        OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequenceConfig,
-        OuterRemainderStorageInitializationStats, OuterRemainderStorageStats,
+        OuterRemainderPhase, OuterRemainderSequenceConfig, OuterRemainderStorageStats,
         OUTER_REMAINDER_A_LOOKUP_FIELDS, OUTER_REMAINDER_COLLAPSED_A_FIELDS,
         OUTER_REMAINDER_FIRST_B_FIELDS, OUTER_REMAINDER_OPENINGS,
         OUTER_REMAINDER_PRODUCT_ENDPOINTS, OUTER_REMAINDER_SECOND_B_FIELDS,
@@ -218,7 +217,6 @@ pub struct OuterRemainderSequence {
     current_elements: usize,
     dense_in_a: bool,
     gpu_active: Duration,
-    dispatch_counts: OuterRemainderDispatchCounts,
     product_uniskip_endpoints: Option<[AkitaField; OUTER_REMAINDER_PRODUCT_ENDPOINTS]>,
     pending_registers_claim_carrier: Option<PendingOuterRegistersClaimCarrier>,
 }
@@ -450,7 +448,6 @@ impl OuterRemainderSequenceStorage {
             current_elements: self.current_elements,
             dense_in_a: true,
             gpu_active: Duration::ZERO,
-            dispatch_counts: OuterRemainderDispatchCounts::default(),
             product_uniskip_endpoints: None,
             pending_registers_claim_carrier: None,
         })
@@ -458,10 +455,6 @@ impl OuterRemainderSequenceStorage {
 }
 
 impl OuterRemainderSequence {
-    pub const fn storage_initialization(&self) -> OuterRemainderStorageInitializationStats {
-        self.storage.initialization
-    }
-
     pub fn materialize_and_first_message(
         &mut self,
         stream_lagrange: &[AkitaField; OUTER_REMAINDER_STREAM_ROWS],
@@ -511,13 +504,11 @@ impl OuterRemainderSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        self.dispatch_counts.command_buffers += 1;
         self.finish_command(command_buffer)?;
         let output = self.storage.buffers.message_output.clone();
         let endpoints = self.read_array::<2>(&output, "outer endpoints")?;
         self.phase = OuterRemainderPhase::BOnly;
         self.dense_in_a = true;
-        self.dispatch_counts.materializations += 1;
         Ok(endpoints)
     }
 
@@ -582,14 +573,12 @@ impl OuterRemainderSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        self.dispatch_counts.command_buffers += 1;
         self.finish_command(command_buffer)?;
         let output = self.storage.buffers.message_output.clone();
         let endpoints = self.read_array::<2>(&output, "outer endpoints")?;
         self.current_elements /= 2;
         self.dense_in_a = false;
         self.phase = OuterRemainderPhase::Interleaved;
-        self.dispatch_counts.stream_transitions += 1;
         Ok(endpoints)
     }
 
@@ -649,13 +638,11 @@ impl OuterRemainderSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        self.dispatch_counts.command_buffers += 1;
         self.finish_command(command_buffer)?;
         let output = self.storage.buffers.message_output.clone();
         let endpoints = self.read_array::<2>(&output, "outer endpoints")?;
         self.current_elements /= 2;
         self.dense_in_a = !self.dense_in_a;
-        self.dispatch_counts.dense_transitions += 1;
         Ok(endpoints)
     }
 
@@ -712,7 +699,6 @@ impl OuterRemainderSequence {
             })?;
         drop(dense);
         self.phase = OuterRemainderPhase::Exported;
-        self.dispatch_counts.cpu_tail_exports += 1;
         Ok(())
     }
 
@@ -738,7 +724,6 @@ impl OuterRemainderSequence {
                 .product_uniskip_carrier
                 .then_some([AkitaField::zero(); OUTER_REMAINDER_PRODUCT_ENDPOINTS]);
             self.phase = OuterRemainderPhase::OpeningsComplete;
-            self.dispatch_counts.opening_scans += 1;
             let mut openings = [AkitaField::zero(); OUTER_REMAINDER_OPENINGS];
             openings[CANONICAL_PADDING_ONE_OPENING] = padding_weight;
             return Ok(openings);
@@ -873,7 +858,6 @@ impl OuterRemainderSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        self.dispatch_counts.command_buffers += 1;
         self.finish_command(&command_buffer)?;
         let output = self.storage.buffers.opening_output.clone();
         // SAFETY: the completed reduction initializes `output_count` fields in
@@ -914,10 +898,8 @@ impl OuterRemainderSequence {
                 source_e_in: self.storage.buffers.e_in.clone(),
                 source_e_out: self.storage.buffers.e_out.clone(),
             });
-            self.dispatch_counts.registers_claim_carriers += 1;
         }
         self.phase = OuterRemainderPhase::OpeningsComplete;
-        self.dispatch_counts.opening_scans += 1;
         Ok(openings)
     }
 
@@ -978,15 +960,10 @@ impl OuterRemainderSequence {
         phase: OuterRemainderPhase,
         current_elements: usize,
         gpu_active_time => gpu_active: Duration,
-        dispatch_counts: OuterRemainderDispatchCounts,
     }}
 
     pub(crate) fn context(&self) -> &SolinasMetal {
         &self.storage.context
-    }
-
-    pub const fn round_device_buffer_allocations(&self) -> usize {
-        0
     }
 
     pub fn storage_stats(&self) -> Result<OuterRemainderStorageStats, MetalError> {

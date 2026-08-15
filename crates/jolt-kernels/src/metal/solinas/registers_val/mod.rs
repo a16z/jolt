@@ -2,7 +2,7 @@ use std::{
     cell::Cell,
     mem::{size_of, size_of_val},
     slice,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use jolt_field::AkitaField;
@@ -161,17 +161,6 @@ pub struct RegistersValFirstMessageInvocation {
 
 struct RegistersValFirstMessageCommand {
     command_buffer: CommandBuffer,
-    submitted_at: Instant,
-    submit_wall: Duration,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RegistersValFirstMessageStats {
-    pub submit_wall: Duration,
-    pub overlap_wall: Duration,
-    pub join_wall: Duration,
-    pub lifecycle_wall: Duration,
-    pub gpu_active: Duration,
 }
 
 #[must_use = "a submitted registers-value message must be joined before use"]
@@ -197,13 +186,7 @@ impl PendingRegistersValFirstMessage {
 
     pub(crate) fn join(
         mut self,
-    ) -> Result<
-        (
-            RegistersValFirstMessageInvocation,
-            RegistersValFirstMessageStats,
-        ),
-        MetalError,
-    > {
+    ) -> Result<(RegistersValFirstMessageInvocation, Duration), MetalError> {
         let invocation = self
             .invocation
             .take()
@@ -216,8 +199,8 @@ impl PendingRegistersValFirstMessage {
             .ok_or(MetalError::InvalidRegistersValState(
                 "submitted first message lost its command",
             ))?;
-        let stats = invocation.complete_first_message(command)?;
-        Ok((invocation, stats))
+        let gpu_active = invocation.complete_first_message(command)?;
+        Ok((invocation, gpu_active))
     }
 }
 
@@ -688,7 +671,6 @@ impl RegistersValFirstMessageInvocation {
     pub fn execute_timed(&self) -> Result<Duration, MetalError> {
         let command = self.submit_first_message();
         self.complete_first_message(command)
-            .map(|stats| stats.gpu_active)
     }
 
     pub(crate) fn submit(self) -> PendingRegistersValFirstMessage {
@@ -701,7 +683,6 @@ impl RegistersValFirstMessageInvocation {
 
     fn submit_first_message(&self) -> RegistersValFirstMessageCommand {
         self.completed.set(false);
-        let submitted_at = Instant::now();
         let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
@@ -739,31 +720,17 @@ impl RegistersValFirstMessageInvocation {
             encoder.end_encoding();
             command_buffer.commit();
         });
-        RegistersValFirstMessageCommand {
-            command_buffer,
-            submitted_at,
-            submit_wall: submitted_at.elapsed(),
-        }
+        RegistersValFirstMessageCommand { command_buffer }
     }
 
     fn complete_first_message(
         &self,
         command: RegistersValFirstMessageCommand,
-    ) -> Result<RegistersValFirstMessageStats, MetalError> {
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(command.submitted_at)
-            .saturating_sub(command.submit_wall);
+    ) -> Result<Duration, MetalError> {
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         self.completed.set(true);
-        Ok(RegistersValFirstMessageStats {
-            submit_wall: command.submit_wall,
-            overlap_wall,
-            join_wall: join_started.elapsed(),
-            lifecycle_wall: command.submitted_at.elapsed(),
-            gpu_active,
-        })
+        Ok(gpu_active)
     }
 
     pub fn read_message(&self) -> Result<[AkitaField; SAMPLES], MetalError> {

@@ -260,31 +260,14 @@ impl MetalBackend {
         let maximum_buffer_bytes =
             outer_remainder_sequence_max_buffer_bytes_with_config(cycles, config.dispatch)
                 .map_err(metal_prepare_error)?;
-        let device = self.context.device_info();
         let span = tracing::info_span!(
             "MetalOuterRemainder::storage_prepare",
             cycles,
             planned_device_bytes,
             maximum_buffer_bytes,
-            current_device_bytes = device.current_allocated_size,
-            recommended_max_working_set_bytes = device.recommended_max_working_set_size,
             initialization_mode = config.dispatch.storage_initialization.as_str(),
             admitted = tracing::field::Empty,
-            initialized = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
-            device_buffers = tracing::field::Empty,
-            initialization_bytes = tracing::field::Empty,
-            initialization_wall_ns = tracing::field::Empty,
-            initialization_gpu_active_ns = tracing::field::Empty,
-            buffer_0 = tracing::field::Empty,
-            buffer_1 = tracing::field::Empty,
-            buffer_2 = tracing::field::Empty,
-            buffer_3 = tracing::field::Empty,
-            buffer_4 = tracing::field::Empty,
-            buffer_5 = tracing::field::Empty,
-            buffer_6 = tracing::field::Empty,
-            buffer_7 = tracing::field::Empty,
-            buffer_8 = tracing::field::Empty,
         );
         let _span = span.enter();
         match self
@@ -292,30 +275,8 @@ impl MetalBackend {
             .prepare_outer_remainder_sequence_storage(cycles, config.dispatch)
         {
             Ok(storage) => {
-                let initialization = storage.initialization();
-                let ids = initialization.buffer_identities;
                 let _ = span.record("admitted", true);
-                let _ = span.record("initialized", initialization.bytes != 0);
                 let _ = span.record("fallback_reason", "none");
-                let _ = span.record("device_buffers", initialization.device_buffers);
-                let _ = span.record("initialization_bytes", initialization.bytes);
-                let _ = span.record(
-                    "initialization_wall_ns",
-                    duration_nanos(initialization.wall),
-                );
-                let _ = span.record(
-                    "initialization_gpu_active_ns",
-                    duration_nanos(initialization.gpu_active),
-                );
-                let _ = span.record("buffer_0", ids[0]);
-                let _ = span.record("buffer_1", ids[1]);
-                let _ = span.record("buffer_2", ids[2]);
-                let _ = span.record("buffer_3", ids[3]);
-                let _ = span.record("buffer_4", ids[4]);
-                let _ = span.record("buffer_5", ids[5]);
-                let _ = span.record("buffer_6", ids[6]);
-                let _ = span.record("buffer_7", ids[7]);
-                let _ = span.record("buffer_8", ids[8]);
                 tracing::info!(
                     target: "jolt::metal",
                     bytes = storage.owned_bytes(),
@@ -327,7 +288,6 @@ impl MetalBackend {
             Err(error) => match outer_remainder_storage_fallback_reason(&error) {
                 Some(reason) => {
                     let _ = span.record("admitted", false);
-                    let _ = span.record("initialized", false);
                     let _ = span.record("fallback_reason", reason);
                     tracing::warn!(
                         target: "jolt::metal",
@@ -1011,13 +971,13 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 reason: "Metal outer remainder storage disappeared after validation",
             },
         )?;
-        let storage_initialization = storage.initialization();
+        let storage_buffer_identities = storage.buffer_identities();
         let _sequence_span =
             tracing::info_span!("MetalOuterRemainder::sequence_prepare", cycles, rounds).entered();
         let sequence = storage.attach(rows).map_err(metal_prepare_error)?;
         let attached = sequence.storage_stats().map_err(metal_prepare_error)?;
         if attached.owned_bytes != planned_device_bytes
-            || attached.buffer_identities != storage_initialization.buffer_identities
+            || attached.buffer_identities != storage_buffer_identities
         {
             return Err(KernelError::InvariantViolation {
                 reason: "attached outer-remainder storage changed allocation identity",
@@ -1338,16 +1298,6 @@ struct MetalOuterRemainderKernel {
     product_uniskip_endpoint_carrier: Option<MetalProductUniskipEndpointCarrier>,
     registers_claim_async_stage1_carry: Option<MetalRegistersClaimAsyncStage1Carry>,
     residue_ready: bool,
-    #[cfg(feature = "test-utils")]
-    completed_gpu_active: Option<Duration>,
-    #[cfg(feature = "test-utils")]
-    completed_gpu_active_breakdown: Option<OuterRemainderGpuActiveBreakdown>,
-    #[cfg(feature = "test-utils")]
-    completed_dispatch_counts: Option<super::solinas::OuterRemainderDispatchCounts>,
-    #[cfg(feature = "test-utils")]
-    completed_tail_elements: Option<usize>,
-    #[cfg(feature = "test-utils")]
-    completed_round_device_buffer_allocations: Option<usize>,
 }
 
 #[cfg(feature = "allocative")]
@@ -1434,16 +1384,6 @@ impl MetalOuterRemainderKernel {
             product_uniskip_endpoint_carrier: None,
             registers_claim_async_stage1_carry: None,
             residue_ready: false,
-            #[cfg(feature = "test-utils")]
-            completed_gpu_active: None,
-            #[cfg(feature = "test-utils")]
-            completed_gpu_active_breakdown: None,
-            #[cfg(feature = "test-utils")]
-            completed_dispatch_counts: None,
-            #[cfg(feature = "test-utils")]
-            completed_tail_elements: None,
-            #[cfg(feature = "test-utils")]
-            completed_round_device_buffer_allocations: None,
         })
     }
 
@@ -1673,15 +1613,6 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "Outer remainder GPU phase timings do not sum to the member total",
             });
-        }
-        #[cfg(feature = "test-utils")]
-        {
-            self.completed_gpu_active = Some(completed_gpu_active);
-            self.completed_gpu_active_breakdown = Some(self.gpu_active_breakdown);
-            self.completed_dispatch_counts = Some(sequence.dispatch_counts());
-            self.completed_tail_elements = Some(sequence.current_elements());
-            self.completed_round_device_buffer_allocations =
-                Some(sequence.round_device_buffer_allocations());
         }
         let storage = sequence.storage_stats().map_err(metal_output_error)?;
         if storage.compact_row_identity != self.compact_rows_storage_id

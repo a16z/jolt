@@ -16,8 +16,8 @@ use super::backend::MetalBackend;
 use super::solinas::{
     MetalError, PendingRegistersValFirstMessage, RegistersValDenseConfig,
     RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
-    RegistersValFirstMessageStats, RegistersValFirstTransitionInvocation,
-    RegistersValInstructionSourceLease, RegistersValSequence, RegistersValTransitionConfig,
+    RegistersValFirstTransitionInvocation, RegistersValInstructionSourceLease,
+    RegistersValSequence, RegistersValTransitionConfig,
 };
 use crate::optimized::registers_read_write::{RegisterCycleRow, SharedRdIndices};
 use crate::optimized::registers_val_evaluation::{
@@ -418,13 +418,17 @@ impl MetalRegistersValEvaluationKernel {
                 let source_elements = pending.cycles().ok_or_else(|| {
                     metal_error("registers value submitted message lost its cycle count")
                 })?;
-                let _span = tracing::info_span!(
+                let span = tracing::info_span!(
                     "MetalRegistersValEvaluation::first_message_join",
                     source_elements,
-                )
-                .entered();
-                let (invocation, stats) = pending.join().map_err(metal_runtime_error)?;
-                record_first_message_stats(stats);
+                    gpu_active_ns = tracing::field::Empty,
+                );
+                let _entered = span.enter();
+                let (invocation, gpu_active) = pending.join().map_err(metal_runtime_error)?;
+                let _ = span.record(
+                    "gpu_active_ns",
+                    u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX),
+                );
                 let message = invocation.read_message().map_err(metal_runtime_error)?;
                 self.state = RegistersValState::FirstJoined(invocation);
                 Ok(message)
@@ -498,18 +502,6 @@ impl MetalRegistersValEvaluationKernel {
             }
         }
     }
-}
-
-fn record_first_message_stats(stats: RegistersValFirstMessageStats) {
-    let _span = tracing::info_span!(
-        "MetalRegistersValEvaluation::first_message_complete",
-        submit_wall_ns = stats.submit_wall.as_nanos() as u64,
-        overlap_wall_ns = stats.overlap_wall.as_nanos() as u64,
-        join_wall_ns = stats.join_wall.as_nanos() as u64,
-        lifecycle_wall_ns = stats.lifecycle_wall.as_nanos() as u64,
-        gpu_active_ns = stats.gpu_active.as_nanos() as u64,
-    )
-    .entered();
 }
 
 impl ProveRounds<AkitaField> for MetalRegistersValEvaluationKernel {

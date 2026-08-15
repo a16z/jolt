@@ -10,8 +10,7 @@ mod storage;
 mod tests;
 
 pub use api::{
-    OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequenceConfig,
-    OuterRemainderStorageInitialization, OuterRemainderStorageInitializationStats,
+    OuterRemainderPhase, OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
     OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
 pub(crate) use plan::{

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 pub const OUTER_REMAINDER_OPENINGS: usize = 35;
 pub(super) const OUTER_REMAINDER_PRODUCT_ENDPOINTS: usize = 2;
 pub(super) const OUTER_REMAINDER_MAX_OUTPUTS: usize =
@@ -81,17 +79,6 @@ impl OuterRemainderPhase {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct OuterRemainderDispatchCounts {
-    pub materializations: usize,
-    pub stream_transitions: usize,
-    pub dense_transitions: usize,
-    pub cpu_tail_exports: usize,
-    pub opening_scans: usize,
-    pub registers_claim_carriers: usize,
-    pub command_buffers: usize,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OuterRemainderStorageStats {
     pub owned_bytes: u64,
@@ -99,14 +86,4 @@ pub struct OuterRemainderStorageStats {
     pub compact_row_identity: usize,
     pub residual_row_identity: usize,
     pub row_device_registry_id: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OuterRemainderStorageInitializationStats {
-    pub mode: OuterRemainderStorageInitialization,
-    pub device_buffers: usize,
-    pub bytes: u64,
-    pub wall: Duration,
-    pub gpu_active: Duration,
-    pub buffer_identities: [usize; DEVICE_BUFFERS],
 }

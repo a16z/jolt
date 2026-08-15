@@ -1,7 +1,4 @@
-use std::{
-    slice,
-    time::{Duration, Instant},
-};
+use std::slice;
 
 use jolt_field::AkitaField;
 use metal::{
@@ -12,8 +9,8 @@ use metal::{
 use super::super::{completed_command_gpu_time, Fp128, MetalError, PipelineLimits, SolinasMetal};
 use super::{
     api::{
-        OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
-        OuterRemainderStorageInitializationStats, DEVICE_BUFFERS, OUTER_REMAINDER_A_LOOKUP_FIELDS,
+        OuterRemainderSequenceConfig, OuterRemainderStorageInitialization, DEVICE_BUFFERS,
+        OUTER_REMAINDER_A_LOOKUP_FIELDS,
     },
     plan::{
         field_bytes, opening_output_count, outer_remainder_sequence_storage_bytes_with_config,
@@ -132,7 +129,6 @@ pub(super) struct Storage {
     pub(super) max_threadgroups: usize,
     pub(super) dense_bytes: u64,
     pub(super) owned_bytes: u64,
-    pub(super) initialization: OuterRemainderStorageInitializationStats,
 }
 
 pub(crate) struct OuterRemainderSequenceStorage {
@@ -323,7 +319,7 @@ impl SolinasMetal {
             opening_output: new_field_buffer(self, opening_outputs)?,
             registers_claim,
         };
-        let initialization = initialize_storage(self, &buffers, config.storage_initialization)?;
+        initialize_storage(self, &buffers, config.storage_initialization)?;
 
         Ok(OuterRemainderSequenceStorage {
             storage: Storage {
@@ -335,7 +331,6 @@ impl SolinasMetal {
                 max_threadgroups,
                 dense_bytes,
                 owned_bytes: geometry.owned_bytes,
-                initialization,
             },
             cycles,
             config,
@@ -360,8 +355,8 @@ impl OuterRemainderSequenceStorage {
         self.storage.owned_bytes
     }
 
-    pub(crate) const fn initialization(&self) -> OuterRemainderStorageInitializationStats {
-        self.storage.initialization
+    pub(crate) fn buffer_identities(&self) -> [usize; DEVICE_BUFFERS] {
+        self.storage.buffers.identities()
     }
 
     pub(crate) fn share_product_state_a(&self) -> Result<Buffer, MetalError> {
@@ -381,8 +376,7 @@ fn initialize_storage(
     context: &SolinasMetal,
     buffers: &Buffers,
     mode: OuterRemainderStorageInitialization,
-) -> Result<OuterRemainderStorageInitializationStats, MetalError> {
-    let buffer_identities = buffers.identities();
+) -> Result<(), MetalError> {
     let buffers = buffers.all()?;
     let bytes = match mode {
         OuterRemainderStorageInitialization::Lazy => 0,
@@ -403,55 +397,22 @@ fn initialize_storage(
         mode = mode.as_str(),
         device_buffers,
         bytes,
-        protocol_dispatches = 0u64,
-        buffer_0 = buffer_identities[0],
-        buffer_1 = buffer_identities[1],
-        buffer_2 = buffer_identities[2],
-        buffer_3 = buffer_identities[3],
-        buffer_4 = buffer_identities[4],
-        buffer_5 = buffer_identities[5],
-        buffer_6 = buffer_identities[6],
-        buffer_7 = buffer_identities[7],
-        buffer_8 = buffer_identities[8],
     );
     let _entered = span.enter();
-    let started = Instant::now();
-    let gpu_active = match mode {
-        OuterRemainderStorageInitialization::Lazy => Duration::ZERO,
-        OuterRemainderStorageInitialization::Full => {
-            let command_buffer = context.queue.new_command_buffer();
-            autoreleasepool(|| {
-                let encoder = command_buffer.new_blit_command_encoder();
-                for buffer in buffers {
-                    encoder.fill_buffer(buffer, NSRange::new(0, buffer.length()), 0);
-                }
-                encoder.end_encoding();
-                command_buffer.commit();
-                command_buffer.wait_until_completed();
-            });
-            completed_command_gpu_time(command_buffer)?
-        }
-    };
-    let wall = started.elapsed();
-    let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
-    let wall_ns = u64::try_from(wall.as_nanos()).unwrap_or(u64::MAX);
-    let completion = tracing::info_span!(
-        "MetalOuterRemainder::storage_initialize_complete",
-        mode = mode.as_str(),
-        command_completed = mode == OuterRemainderStorageInitialization::Full,
-        bytes,
-        wall_ns,
-        gpu_active_ns,
-    );
-    let _completed = completion.enter();
-    Ok(OuterRemainderStorageInitializationStats {
-        mode,
-        device_buffers,
-        bytes,
-        wall,
-        gpu_active,
-        buffer_identities,
-    })
+    if mode == OuterRemainderStorageInitialization::Full {
+        let command_buffer = context.queue.new_command_buffer();
+        autoreleasepool(|| {
+            let encoder = command_buffer.new_blit_command_encoder();
+            for buffer in buffers {
+                encoder.fill_buffer(buffer, NSRange::new(0, buffer.length()), 0);
+            }
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+        let _ = completed_command_gpu_time(command_buffer)?;
+    }
+    Ok(())
 }
 
 pub(super) fn write_fields(

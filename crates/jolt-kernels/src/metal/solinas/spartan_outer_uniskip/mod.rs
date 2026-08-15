@@ -1780,25 +1780,12 @@ mod tests {
             .unwrap();
         assert!(sequence.instruction_input_arena_release_receipt().is_err());
         let storage_before_export = sequence.storage_stats().unwrap();
-        let initialization = sequence.storage_initialization();
-        assert_eq!(
-            initialization.mode,
-            OuterRemainderStorageInitialization::Lazy
-        );
-        assert_eq!(initialization.device_buffers, 0);
-        assert_eq!(initialization.bytes, 0);
-        assert!(initialization.wall >= initialization.gpu_active);
-        assert_eq!(initialization.gpu_active, std::time::Duration::ZERO);
-        assert_eq!(
-            initialization.buffer_identities,
-            storage_before_export.buffer_identities
-        );
-        assert!(initialization
+        assert!(storage_before_export
             .buffer_identities
             .iter()
             .enumerate()
             .all(|(index, identity)| *identity != 0
-                && !initialization.buffer_identities[..index].contains(identity)));
+                && !storage_before_export.buffer_identities[..index].contains(identity)));
         assert!(storage_before_export.buffer_identities[..2]
             .iter()
             .all(|identity| *identity != 0));
