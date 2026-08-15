@@ -4,6 +4,7 @@ use jolt_openings::CommitmentScheme;
 use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
+mod booleanity_cycle;
 mod common;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
@@ -48,6 +49,7 @@ where
         if !device_available() {
             return backend;
         }
+        backend.booleanity_cycle = Box::new(CudaBackend);
         backend.instruction_ra_virtualization = Box::new(CudaBackend);
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);

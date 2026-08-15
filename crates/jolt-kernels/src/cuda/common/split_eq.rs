@@ -17,13 +17,35 @@ impl<F: Field> DeviceSplitEq<F> {
         point: &[F],
         binding_order: BindingOrder,
     ) -> Result<Self, CudaError> {
+        Self::with_host(context, point, binding_order, |point, binding_order| {
+            GruenSplitEqPolynomial::<F>::new(point, binding_order)
+        })
+    }
+
+    pub fn new_with_scaling(
+        context: &CudaKernelContext,
+        point: &[F],
+        binding_order: BindingOrder,
+        scaling: F,
+    ) -> Result<Self, CudaError> {
+        Self::with_host(context, point, binding_order, |point, binding_order| {
+            GruenSplitEqPolynomial::<F>::new_with_scaling(point, binding_order, Some(scaling))
+        })
+    }
+
+    fn with_host(
+        context: &CudaKernelContext,
+        point: &[F],
+        binding_order: BindingOrder,
+        host: impl FnOnce(&[F], BindingOrder) -> GruenSplitEqPolynomial<F>,
+    ) -> Result<Self, CudaError> {
         if binding_order != BindingOrder::LowToHigh {
             return Err(CudaError::NotImplemented {
                 kernel: "the device split-eq covers LowToHigh binding only; add the \
                          HighToLow stack split and extend its equivalence test",
             });
         }
-        let host = GruenSplitEqPolynomial::<F>::new(point, binding_order);
+        let host = host(point, binding_order);
         let (out_point, in_point) = if point.is_empty() {
             (&point[..0], &point[..0])
         } else {

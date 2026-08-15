@@ -162,6 +162,41 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    pub fn bind_rows(
+        &self,
+        values: &DeviceFrVec,
+        row_len: usize,
+        challenge: Fr,
+    ) -> Result<DeviceFrVec, CudaError> {
+        if row_len < 2 || !row_len.is_power_of_two() || !values.len().is_multiple_of(row_len) {
+            return Err(CudaError::LengthMismatch {
+                expected: row_len.next_power_of_two().max(2),
+                got: values.len(),
+            });
+        }
+        let half = values.len() / 2;
+        let mut output = self.alloc(half)?;
+        let limbs = crate::cuda::common::device::fr_limbs(challenge);
+        let count = Self::count_of(half)?;
+        let mut builder = self.stream().launch_builder(&self.bind_low_to_high);
+        let _ = builder.arg(values.limbs());
+        let _ = builder.arg(&limbs[0]);
+        let _ = builder.arg(&limbs[1]);
+        let _ = builder.arg(&limbs[2]);
+        let _ = builder.arg(&limbs[3]);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < half` writes only `out[i]` and reads the pair
+        // (`in[2i]`,`in[2i+1]`), both within `in`'s `2 * half * LIMBS` u64s. `row_len`
+        // is an even divisor of `in`'s length, so no pair straddles a row boundary and
+        // this is exactly a per-row low-to-high bind whose result is contiguous with
+        // stride `row_len / 2`. The challenge arrives as four by-value limbs, so no
+        // device buffer backs it. `out` is a fresh allocation distinct from `in`, so
+        // the reads cannot observe a partially written `out`.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        Ok(output)
+    }
+
     pub fn sum(&self, values: &DeviceFrVec) -> Result<Fr, CudaError> {
         if values.is_empty() {
             return Ok(Fr::default());

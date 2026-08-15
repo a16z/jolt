@@ -64,6 +64,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("../kernels/instruction_ra_virtualization.cu"),
     "\n",
     include_str!("../kernels/ram_ra_virtualization.cu"),
+    "\n",
+    include_str!("../kernels/booleanity_cycle.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -152,6 +154,10 @@ pub struct CudaKernelContext {
     rrv_gather: CudaFunction,
     rrv_message_sparse: CudaFunction,
     rrv_message_dense: CudaFunction,
+    brc_tables_init: CudaFunction,
+    brc_gather: CudaFunction,
+    brc_message_sparse: CudaFunction,
+    brc_message_dense: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -250,6 +256,10 @@ impl CudaKernelContext {
             rrv_gather: module.load_function("rrv_gather_kernel")?,
             rrv_message_sparse: module.load_function("rrv_message_sparse_kernel")?,
             rrv_message_dense: module.load_function("rrv_message_dense_kernel")?,
+            brc_tables_init: module.load_function("brc_tables_init_kernel")?,
+            brc_gather: module.load_function("brc_gather_kernel")?,
+            brc_message_sparse: module.load_function("brc_message_sparse_kernel")?,
+            brc_message_dense: module.load_function("brc_message_dense_kernel")?,
         })
     }
 
@@ -403,6 +413,22 @@ impl CudaKernelContext {
 
     pub(crate) const fn rrv_message_dense(&self) -> &CudaFunction {
         &self.rrv_message_dense
+    }
+
+    pub(crate) const fn brc_tables_init(&self) -> &CudaFunction {
+        &self.brc_tables_init
+    }
+
+    pub(crate) const fn brc_gather(&self) -> &CudaFunction {
+        &self.brc_gather
+    }
+
+    pub(crate) const fn brc_message_sparse(&self) -> &CudaFunction {
+        &self.brc_message_sparse
+    }
+
+    pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {
+        &self.brc_message_dense
     }
 
     pub(crate) const fn ra_split_tables(&self) -> &CudaFunction {
