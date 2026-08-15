@@ -1,6 +1,5 @@
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
-use std::time::Instant;
 
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::AkitaField;
@@ -104,26 +103,15 @@ impl Drop for PendingInstructionReadRafScatter {
 }
 
 impl PendingInstructionReadRafScatter {
-    fn join(
-        mut self,
-    ) -> Result<(PrefetchedInstructionReadRafScatter, bool, u64), KernelError<AkitaField>> {
+    fn join(mut self) -> Result<PrefetchedInstructionReadRafScatter, KernelError<AkitaField>> {
         let _ = self.start_sender.send(());
-        let completed_before_join = self
-            .handle
-            .as_ref()
-            .is_some_and(std::thread::JoinHandle::is_finished);
-        let started = Instant::now();
         let handle = self.handle.take().ok_or(KernelError::InvariantViolation {
             reason: "Instruction Read-RAF scatter prefetch was already consumed",
         })?;
         let result = handle.join().map_err(|_| KernelError::InvariantViolation {
             reason: "Instruction Read-RAF scatter prefetch worker panicked",
         })?;
-        Ok((
-            result.map_err(metal_prepare_error)?,
-            completed_before_join,
-            duration_ns(started.elapsed()),
-        ))
+        result.map_err(metal_prepare_error)
     }
 }
 
@@ -280,16 +268,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             .context
             .submit_instruction_read_raf_source_primer(&owner)
             .map_err(metal_prepare_error)?;
-        let span = tracing::info_span!(
-            "MetalInstructionReadRaf::source_primer_submit",
-            source_bytes = pending.source_bytes(),
-            source_pages = pending.source_pages(),
-            submit_wall_ns = duration_ns(pending.submit_wall()),
-            command_buffers = 1u64,
-            dispatches = 1u64,
-            waits = 0u64,
-            readback_bytes = 0u64,
-        );
+        let span = tracing::info_span!("MetalInstructionReadRaf::source_primer_submit",);
         let _entered = span.enter();
         session.park(pending);
         Ok(())
@@ -305,29 +284,9 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
         KernelError<AkitaField>,
     > {
         if let Some(primer) = session.take::<PendingInstructionReadRafSourcePrimer>() {
-            let span = tracing::info_span!(
-                "MetalInstructionReadRaf::source_primer_join",
-                source_bytes = primer.source_bytes(),
-                source_pages = primer.source_pages(),
-                completed_before_join = tracing::field::Empty,
-                submit_wall_ns = tracing::field::Empty,
-                overlap_wall_ns = tracing::field::Empty,
-                join_wall_ns = tracing::field::Empty,
-                lifecycle_wall_ns = tracing::field::Empty,
-                gpu_active_ns = tracing::field::Empty,
-                command_buffers = 1u64,
-                dispatches = 1u64,
-                waits = 1u64,
-                readback_bytes = 0u64,
-            );
+            let span = tracing::info_span!("MetalInstructionReadRaf::source_primer_join");
             let _entered = span.enter();
-            let observation = primer.join().map_err(metal_prepare_error)?;
-            let _ = span.record("completed_before_join", observation.completed_before_join);
-            let _ = span.record("submit_wall_ns", duration_ns(observation.submit_wall));
-            let _ = span.record("overlap_wall_ns", duration_ns(observation.overlap_wall));
-            let _ = span.record("join_wall_ns", duration_ns(observation.join_wall));
-            let _ = span.record("lifecycle_wall_ns", duration_ns(observation.wall));
-            let _ = span.record("gpu_active_ns", duration_ns(observation.gpu_active));
+            primer.join().map_err(metal_prepare_error)?;
         }
         let dimensions = inputs.relation.dimensions();
         let trace_elements = 1usize << dimensions.log_t();
@@ -343,16 +302,9 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 let span = tracing::info_span!(
                     "MetalInstructionReadRaf::scatter_prefetch_join",
                     rows = trace_elements,
-                    completed_before_join = tracing::field::Empty,
-                    join_wall_ns = tracing::field::Empty,
-                    complete = tracing::field::Empty,
                 );
                 let _entered = span.enter();
-                let (prefetched, completed_before_join, join_wall_ns) = pending.join()?;
-                let _ = span.record("completed_before_join", completed_before_join);
-                let _ = span.record("join_wall_ns", join_wall_ns);
-                let _ = span.record("complete", true);
-                Some(prefetched)
+                Some(pending.join()?)
             } else {
                 None
             };
@@ -1055,10 +1007,6 @@ fn backend_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
 
 fn metal_prepare_error(error: impl ToString) -> KernelError<AkitaField> {
     backend_error(error.to_string()).into()
-}
-
-fn duration_ns(duration: std::time::Duration) -> u64 {
-    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

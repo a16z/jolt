@@ -29,12 +29,13 @@ use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+#[cfg(test)]
+use super::solinas::ProductRemainderRow;
 use super::solinas::{
     MetalError, OuterRemainderSequenceStorage, PendingProductInstructionInitialMessage,
-    PendingProductRemainderInitialMessage, ProductInstructionInitialMessageStats,
-    ProductInstructionRoundService, ProductInstructionRoundStats, ProductRemainderRow,
-    ProductRemainderRows, ProductRemainderSequence, ProductRemainderSequenceConfig,
-    ProductRemainderWorkspacePrimerStats, SpartanOuterUniskipRows,
+    PendingProductRemainderInitialMessage, ProductInstructionRoundService,
+    ProductInstructionRoundStats, ProductRemainderRows, ProductRemainderSequence,
+    ProductRemainderSequenceConfig, SpartanOuterUniskipRows,
 };
 #[cfg(test)]
 use crate::optimized::spartan_product::SpartanProductRow;
@@ -92,7 +93,6 @@ pub(super) struct MetalInstructionClaimHandoff {
 pub(super) struct MetalInstructionClaimPrefetchedInitial {
     pub(super) service: Arc<Mutex<ProductInstructionRoundService>>,
     pub(super) endpoints: [AkitaField; 2],
-    pub(super) stats: ProductInstructionInitialMessageStats,
 }
 
 #[cfg(feature = "allocative")]
@@ -142,34 +142,6 @@ impl MetalBackend {
         let span = tracing::info_span!(
             "MetalProductRemainder::witness_prepare",
             cycles,
-            row_bytes = cycles.saturating_mul(std::mem::size_of::<ProductRemainderRow>()),
-            lookup_companion_bytes = 0u64,
-            residual_witness_scan_rows = tracing::field::Empty,
-            additional_source_row_scans = tracing::field::Empty,
-            source_upload_bytes = tracing::field::Empty,
-            source_allocation_count = tracing::field::Empty,
-            source_compact_storage_id = tracing::field::Empty,
-            source_residual_storage_id = tracing::field::Empty,
-            collect_wall_ns = tracing::field::Empty,
-            upload_wall_ns = tracing::field::Empty,
-            lookup_upload_wall_ns = tracing::field::Empty,
-            sequence_prepare_wall_ns = tracing::field::Empty,
-            workspace_bytes = tracing::field::Empty,
-            primer_mode = "state_arenas_blit_v1",
-            primer_dispatches = 0u64,
-            primer_command_buffers = 1u64,
-            primer_waits = 1u64,
-            primer_readback_bytes = 0u64,
-            primer_bytes = tracing::field::Empty,
-            primer_buffers = tracing::field::Empty,
-            primer_wall_ns = tracing::field::Empty,
-            primer_gpu_active_ns = tracing::field::Empty,
-            primer_state_a_storage_id = tracing::field::Empty,
-            primer_state_b_storage_id = tracing::field::Empty,
-            resident_rows_storage_id = tracing::field::Empty,
-            owner_generation = tracing::field::Empty,
-            source_generation = tracing::field::Empty,
-            row_source = tracing::field::Empty,
             admitted = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
         );
@@ -188,27 +160,11 @@ impl MetalBackend {
             let _ = span.record("fallback_reason", "stage1_source_missing");
             return Ok(());
         };
-        let identities = rows.allocation_identities();
-        let _ = span.record("residual_witness_scan_rows", 0u64);
-        let _ = span.record("additional_source_row_scans", 0u64);
-        let _ = span.record("source_upload_bytes", 0u64);
-        let _ = span.record("source_allocation_count", 0u64);
-        let _ = span.record("collect_wall_ns", 0u64);
-        let _ = span.record("upload_wall_ns", 0u64);
-        let _ = span.record("lookup_upload_wall_ns", 0u64);
-        let _ = span.record("source_compact_storage_id", identities[0] as u64);
-        let _ = span.record("source_residual_storage_id", identities[1] as u64);
-        let _ = span.record("row_source", rows.source_kind().as_str());
         let row_storage_id = rows.allocation_identity();
-        if let Some(source_generation) = rows.source_generation() {
-            let _ = span.record("source_generation", source_generation);
-        }
-        let _ = span.record("resident_rows_storage_id", row_storage_id as u64);
 
         let e_in_capacity = 1usize << (log_t / 2);
         let e_out_capacity = cycles / e_in_capacity;
         let instruction_product_rows = rows.clone();
-        let started = Instant::now();
         let state_a = self
             .config
             .spartan_product_remainder
@@ -233,10 +189,6 @@ impl MetalBackend {
                 self.config.spartan_product_remainder.dispatch,
                 state_a,
             );
-        let _ = span.record(
-            "sequence_prepare_wall_ns",
-            duration_nanos(started.elapsed()),
-        );
         let sequence = match sequence {
             Ok(sequence) => sequence,
             Err(error) if error.is_capacity_error() => {
@@ -251,18 +203,7 @@ impl MetalBackend {
             }
             Err(error) => return Err(metal_prepare_error(error)),
         };
-        let primer: ProductRemainderWorkspacePrimerStats =
-            sequence.prime_workspace().map_err(metal_prepare_error)?;
-        let _ = span.record("primer_bytes", primer.bytes);
-        let _ = span.record("primer_buffers", primer.buffers);
-        let _ = span.record("primer_wall_ns", duration_nanos(primer.wall));
-        let _ = span.record("primer_gpu_active_ns", duration_nanos(primer.gpu_active));
-        let _ = span.record("primer_state_a_storage_id", primer.state_a_identity as u64);
-        let _ = span.record("primer_state_b_storage_id", primer.state_b_identity as u64);
-        let _ = span.record(
-            "workspace_bytes",
-            sequence.storage_layout().workspace_bytes(),
-        );
+        sequence.prime_workspace().map_err(metal_prepare_error)?;
         if !sequence.is_ready() || sequence.row_allocation_identity() != row_storage_id {
             return Err(KernelError::InvariantViolation {
                 reason: "product-remainder witness preparation ended in the wrong state",
@@ -420,17 +361,6 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                     reason: "stage-1 product uni-skip endpoint carrier has stale provenance",
                 });
             }
-            let _span = tracing::info_span!(
-                "MetalProductUniskip::outer_opening_carrier",
-                cycles,
-                source_rows_storage_id = carrier.source_row_storage_id as u64,
-                product_rows_storage_id = row_storage_id as u64,
-                row_upload_bytes = 0u64,
-                dispatches = 0u64,
-                command_buffers = 0u64,
-                readback_bytes = 0u64,
-            )
-            .entered();
             #[cfg(any(test, feature = "test-utils"))]
             let _ = self
                 .test_counters
@@ -445,16 +375,10 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             let span = tracing::info_span!(
                 "MetalProductUniskip::prepare",
                 cycles,
-                resident_rows_storage_id = row_storage_id as u64,
-                row_upload_bytes = 0u64,
-                round_device_buffer_allocations = 0u64,
-                dispatch_wall_ns = tracing::field::Empty,
                 gpu_active_ns = tracing::field::Empty,
             );
             let _entered = span.enter();
-            let started = Instant::now();
             let endpoints = sequence.uniskip_message_timed(&e_in, &e_out);
-            let dispatch_wall = started.elapsed();
             let (endpoints, gpu_active) = match endpoints {
                 Ok(result) => result,
                 Err(error) if product_prepare_fallback_reason(&error).is_some() => {
@@ -467,7 +391,6 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                 }
                 Err(error) => return Err(metal_prepare_error(error)),
             };
-            let _ = span.record("dispatch_wall_ns", duration_nanos(dispatch_wall));
             let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
             #[cfg(any(test, feature = "test-utils"))]
             let _ = self
@@ -660,15 +583,9 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             "MetalProductRemainder::prefetch_submit",
             cycles,
             rounds,
-            resident_rows_storage_id = row_storage_id as u64,
-            row_upload_bytes = 0u64,
             joint_product_instruction = joint.is_some(),
-            command_committed = true,
-            protocol_state_advanced = false,
-            submit_wall_ns = tracing::field::Empty,
         );
         let _entered = span.enter();
-        let started = Instant::now();
         let (command, instruction_rows) = if let Some((instruction, rows)) = joint {
             let pending = self
                 .context
@@ -687,7 +604,6 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                 None,
             )
         };
-        let _ = span.record("submit_wall_ns", duration_nanos(started.elapsed()));
         session.park(MetalProductRemainderPrefetch {
             command,
             instruction_rows,
@@ -779,80 +695,26 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                     "MetalProductRemainder::prepare",
                     cycles,
                     rounds,
-                    resident_rows_storage_id = carry_row_storage_id as u64,
-                    row_upload_bytes = 0u64,
-                    round_device_buffer_allocations = 0u64,
-                    sequence_prepare_wall_ns = 0u64,
                     prefetched = true,
-                    materialize_wall_ns = tracing::field::Empty,
-                    materialize_submit_wall_ns = tracing::field::Empty,
-                    materialize_overlap_wall_ns = tracing::field::Empty,
-                    materialize_join_wall_ns = tracing::field::Empty,
-                    materialize_gpu_active_ns = tracing::field::Empty,
-                    completed_before_join = tracing::field::Empty,
                     joint_product_instruction = matches!(
                         &prefetched.command,
                         MetalProductRemainderPrefetchCommand::ProductInstruction(_)
                     ),
-                    joint_threads_per_threadgroup = tracing::field::Empty,
-                    joint_threadgroup_bytes = tracing::field::Empty,
                 );
                 let _entered = prepare_span.enter();
                 match prefetched.command {
                     MetalProductRemainderPrefetchCommand::Product(pending) => {
-                        let (sequence, first_message, stats) =
+                        let (sequence, first_message, _stats) =
                             (*pending).join().map_err(metal_prepare_error)?;
-                        let _ = prepare_span
-                            .record("materialize_wall_ns", duration_nanos(stats.lifecycle_wall));
-                        let _ = prepare_span.record(
-                            "materialize_submit_wall_ns",
-                            duration_nanos(stats.submit_wall),
-                        );
-                        let _ = prepare_span.record(
-                            "materialize_overlap_wall_ns",
-                            duration_nanos(stats.overlap_wall),
-                        );
-                        let _ = prepare_span
-                            .record("materialize_join_wall_ns", duration_nanos(stats.join_wall));
-                        let _ = prepare_span.record(
-                            "materialize_gpu_active_ns",
-                            duration_nanos(stats.gpu_active),
-                        );
-                        let _ = prepare_span
-                            .record("completed_before_join", stats.completed_before_join);
                         (sequence, first_message, None, None)
                     }
                     MetalProductRemainderPrefetchCommand::ProductInstruction(pending) => {
-                        let (sequence, first_message, instruction, endpoints, stats) =
+                        let (sequence, first_message, instruction, endpoints) =
                             (*pending).join().map_err(metal_prepare_error)?;
-                        let _ =
-                            prepare_span.record("materialize_wall_ns", duration_nanos(stats.wall));
-                        let _ = prepare_span.record(
-                            "materialize_submit_wall_ns",
-                            duration_nanos(stats.submit_wall),
-                        );
-                        let _ = prepare_span.record(
-                            "materialize_overlap_wall_ns",
-                            duration_nanos(stats.overlap_wall),
-                        );
-                        let _ = prepare_span
-                            .record("materialize_join_wall_ns", duration_nanos(stats.join_wall));
-                        let _ = prepare_span.record(
-                            "materialize_gpu_active_ns",
-                            duration_nanos(stats.gpu_active),
-                        );
-                        let _ = prepare_span
-                            .record("completed_before_join", stats.completed_before_join);
-                        let _ = prepare_span.record(
-                            "joint_threads_per_threadgroup",
-                            stats.threads_per_threadgroup as u64,
-                        );
-                        let _ = prepare_span
-                            .record("joint_threadgroup_bytes", stats.threadgroup_bytes as u64);
                         (
                             sequence,
                             first_message,
-                            Some((instruction, endpoints, stats)),
+                            Some((instruction, endpoints)),
                             prefetched.instruction_rows,
                         )
                     }
@@ -874,31 +736,21 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                         "Metal product-remainder sequence has the wrong state, shape, device, or rows",
                 });
                 }
-                let row_storage_id = sequence.row_allocation_identity();
                 let (e_in, e_out) = host.current_weights()?;
                 let prepare_span = tracing::info_span!(
                     "MetalProductRemainder::prepare",
                     cycles,
                     rounds,
-                    resident_rows_storage_id = row_storage_id as u64,
-                    row_upload_bytes = 0u64,
-                    round_device_buffer_allocations = 0u64,
-                    primed_device_bytes = sequence.storage_layout().workspace_bytes(),
-                    sequence_prepare_wall_ns = 0u64,
                     prefetched = false,
-                    materialize_wall_ns = tracing::field::Empty,
                     materialize_gpu_active_ns = tracing::field::Empty,
                 );
                 let _entered = prepare_span.enter();
                 sequence
                     .set_lagrange_weights(host.lagrange_weights)
                     .map_err(metal_prepare_error)?;
-                let started = Instant::now();
                 let (first_message, materialize_gpu_active) = sequence
                     .restart_message_timed(&e_in, &e_out)
                     .map_err(metal_prepare_error)?;
-                let _ =
-                    prepare_span.record("materialize_wall_ns", duration_nanos(started.elapsed()));
                 let _ = prepare_span.record(
                     "materialize_gpu_active_ns",
                     duration_nanos(materialize_gpu_active),
@@ -916,18 +768,14 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         }
         let row_storage_id = sequence.row_allocation_identity();
         let (state, prefetched_instruction) =
-            if let Some((instruction, endpoints, stats)) = prefetched_instruction_parts {
+            if let Some((instruction, endpoints)) = prefetched_instruction_parts {
                 let service = Arc::new(Mutex::new(
                     ProductInstructionRoundService::new(sequence, instruction, &tau_low)
                         .map_err(metal_prepare_error)?,
                 ));
                 (
                     MetalProductRemainderState::Joint(Arc::clone(&service)),
-                    Some(MetalInstructionClaimPrefetchedInitial {
-                        service,
-                        endpoints,
-                        stats,
-                    }),
+                    Some(MetalInstructionClaimPrefetchedInitial { service, endpoints }),
                 )
             } else {
                 (
@@ -1213,10 +1061,6 @@ enum MetalProductRemainderState {
 }
 
 impl MetalProductRemainderState {
-    const fn is_joint(&self) -> bool {
-        matches!(self, Self::Joint(_))
-    }
-
     fn current_elements(&self) -> Result<usize, SumcheckError<AkitaField>> {
         match self {
             Self::Standalone(sequence) => Ok(sequence.current_elements()),
@@ -1358,16 +1202,10 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
                     "MetalProductRemainder::cpu_tail_handoff",
                     round,
                     source_elements,
-                    readback_bytes = source_elements
-                        .saturating_mul(2)
-                        .saturating_mul(std::mem::size_of::<AkitaField>()),
-                    wall_ns = tracing::field::Empty,
                 );
                 let _entered = span.enter();
-                let started = Instant::now();
                 let (left, right) = self.state.read_current_state()?;
                 self.cpu_tail = Some(ProductRemainderCpuTail::new(left, right)?);
-                let _ = span.record("wall_ns", duration_nanos(started.elapsed()));
             }
             self.host.bind(challenge);
             if self.host.challenges.len() != round {
@@ -1382,28 +1220,20 @@ impl ProveRounds<AkitaField> for MetalProductRemainderKernel {
                     "MetalProductRemainder::cpu_tail_round",
                     round,
                     source_elements,
-                    wall_ns = tracing::field::Empty,
                 );
                 let _entered = span.enter();
-                let started = Instant::now();
-                let message = cpu_tail.bind_and_message(challenge, &e_in, &e_out)?;
-                let _ = span.record("wall_ns", duration_nanos(started.elapsed()));
-                message
+                cpu_tail.bind_and_message(challenge, &e_in, &e_out)?
             } else {
                 let span = tracing::info_span!(
                     "MetalProductRemainder::bind_and_message",
                     round,
                     source_elements,
-                    joint_product_instruction = self.state.is_joint(),
-                    resident_rows_storage_id = self.row_storage_id as u64,
-                    dispatch_wall_ns = tracing::field::Empty,
                     gpu_active_ns = tracing::field::Empty,
                 );
                 let _entered = span.enter();
                 let (message, stats) = self
                     .state
                     .bind_and_message(round, challenge, &e_in, &e_out)?;
-                let _ = span.record("dispatch_wall_ns", duration_nanos(stats.wall));
                 let _ = span.record("gpu_active_ns", duration_nanos(stats.gpu_active));
                 message
             }
@@ -1457,18 +1287,13 @@ impl SumcheckKernel<AkitaField> for MetalProductRemainderKernel {
         let (e_in, e_out) = self.host.opening_weights();
         let span = tracing::info_span!(
             "MetalProductRemainder::output_claims",
-            resident_rows_storage_id = self.row_storage_id as u64,
-            row_upload_bytes = 0u64,
-            dispatch_wall_ns = tracing::field::Empty,
             gpu_active_ns = tracing::field::Empty,
         );
         let _entered = span.enter();
-        let started = Instant::now();
         let (values, gpu_active) = self
             .state
             .openings(self.cpu_tail.is_some(), &e_in, &e_out)
             .map_err(metal_output_error)?;
-        let _ = span.record("dispatch_wall_ns", duration_nanos(started.elapsed()));
         let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
         if let Some(slot) = &self.instruction_aliases {
             let mut slot = slot

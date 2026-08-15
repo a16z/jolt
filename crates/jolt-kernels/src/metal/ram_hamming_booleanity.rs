@@ -41,15 +41,6 @@ impl Default for RamHammingBooleanityMetalConfig {
 struct HostSparseRamHammingKernel {
     sequence: HostSparseRamHammingBooleanity<AkitaField>,
     next_round: usize,
-    source_generation: u64,
-    source_fingerprint: u64,
-    access_leaves: usize,
-    parent_nodes: usize,
-    middle_nodes: usize,
-    estimated_products: u64,
-    topology_bytes: usize,
-    member_heap_bytes_including_topology: usize,
-    non_topology_heap_bytes: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -123,22 +114,6 @@ impl SumcheckKernel<AkitaField> for HostSparseRamHammingKernel {
         _inputs: &SumcheckInputClaims<AkitaField, Self::Relation>,
     ) -> Result<RamHammingBooleanityOutputClaims<AkitaField>, SumcheckKernelError<AkitaField>> {
         let terminal = self.sequence.terminal().map_err(kernel_error)?;
-        let _span = tracing::info_span!(
-            "MetalRamHammingBooleanity::sparse_complete",
-            selected = "host_sparse_v1",
-            source_generation = self.source_generation,
-            source_fingerprint = self.source_fingerprint,
-            access_leaves = self.access_leaves,
-            parent_nodes = self.parent_nodes,
-            middle_nodes = self.middle_nodes,
-            estimated_products = self.estimated_products,
-            topology_bytes = self.topology_bytes,
-            member_heap_bytes_including_topology = self.member_heap_bytes_including_topology,
-            non_topology_heap_bytes = self.non_topology_heap_bytes,
-            terminal_ready = true,
-            output_claim_emitted = true,
-        )
-        .entered();
         Ok(RamHammingBooleanityOutputClaims {
             ram_hamming_weight: terminal.ram_hamming_weight(),
         })
@@ -163,13 +138,6 @@ impl SumcheckKernel<AkitaField> for HostSparseRamHammingKernel {
         if got != expected {
             return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
         }
-        let _span = tracing::info_span!(
-            "MetalRamHammingBooleanity::sparse_derived_validate",
-            source_generation = self.source_generation,
-            source_fingerprint = self.source_fingerprint,
-            derived_claim_valid = true,
-        )
-        .entered();
         Ok(())
     }
 }
@@ -319,15 +287,6 @@ impl PrepareKernel<AkitaField, RamHammingBooleanity<AkitaField>> for MetalBacken
         Ok(Box::new(HostSparseRamHammingKernel {
             sequence,
             next_round: 0,
-            source_generation,
-            source_fingerprint,
-            access_leaves,
-            parent_nodes,
-            middle_nodes,
-            estimated_products,
-            topology_bytes,
-            member_heap_bytes_including_topology,
-            non_topology_heap_bytes,
         }))
     }
 }

@@ -789,9 +789,8 @@ fn stage1_sequence_matches_standalone_sequence() {
     let direct_pending = direct
         .submit_initial_message(gruen.e_in_current(), gruen.e_out_current())
         .unwrap();
-    let (mut direct, direct_message, stats) = direct_pending.join().unwrap();
-    assert!(stats.wall >= stats.submit_wall);
-    assert!(stats.wall >= stats.join_wall);
+    let (mut direct, direct_message, timing) = direct_pending.join().unwrap();
+    assert!(timing.wall >= timing.gpu_active);
     assert_eq!(
         direct_message,
         standalone

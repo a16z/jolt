@@ -286,22 +286,12 @@ impl MetalBackend {
         }
         let sequence = storage.attach(resident_rows).map_err(metal_prepare_error)?;
         let resident_rows_storage_id = sequence.resident_row_identity();
-        let initialization = sequence.storage_initialization();
-        let buffer_identities = initialization.buffer_identities;
         let submit_span = tracing::info_span!(
             "MetalInstructionInput::native_primer_submit",
             source_elements = INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
             e_in_elements = INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
             e_out_elements = INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
             resident_rows_storage_id,
-            storage_buffer_0 = buffer_identities[0],
-            storage_buffer_1 = buffer_identities[1],
-            storage_buffer_2 = buffer_identities[2],
-            storage_buffer_3 = buffer_identities[3],
-            storage_buffer_4 = buffer_identities[4],
-            storage_buffer_5 = buffer_identities[5],
-            command_committed = true,
-            protocol_state_advanced = false,
         );
         let pending = {
             let _span = submit_span.enter();
@@ -417,34 +407,13 @@ impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
                 .ok_or(KernelError::InvariantViolation {
                     reason: "InstructionInput Metal sequence lost its resident row identity",
                 })?;
-        let initialization =
-            device
-                .storage_initialization()
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "InstructionInput Metal sequence lost its initialization record",
-                })?;
-        let buffer_identities = initialization.buffer_identities;
-        let buffer_offsets = initialization.buffer_offsets;
-        let buffer_lengths = initialization.buffer_lengths;
         let _prepare_span = tracing::info_span!(
             "MetalInstructionInput::prepare",
             resident_rows_reused = true,
             round_device_buffer_allocations = 0,
             resident_rows_storage_id = resident_identity,
             resident_rows = trace_elements,
-            storage_initialization = %initialization.mode.as_str(),
-            storage_initialization_bytes = initialization.bytes,
             native_primer = %device.primer_mode(),
-            dense_a_offset_bytes = buffer_offsets[0],
-            dense_a_length_bytes = buffer_lengths[0],
-            dense_b_offset_bytes = buffer_offsets[1],
-            dense_b_length_bytes = buffer_lengths[1],
-            storage_buffer_0 = buffer_identities[0],
-            storage_buffer_1 = buffer_identities[1],
-            storage_buffer_2 = buffer_identities[2],
-            storage_buffer_3 = buffer_identities[3],
-            storage_buffer_4 = buffer_identities[4],
-            storage_buffer_5 = buffer_identities[5],
         )
         .entered();
         let alias_publisher = if self.config.registers_claim_reduction.implementation
@@ -496,15 +465,6 @@ impl PreparedMetalSequence {
         match self {
             Self::Ready(sequence) => Some(sequence.resident_row_identity()),
             Self::Priming(pending) => pending.resident_row_identity(),
-        }
-    }
-
-    fn storage_initialization(
-        &self,
-    ) -> Option<super::solinas::InstructionInputStorageInitializationStats> {
-        match self {
-            Self::Ready(sequence) => Some(sequence.storage_initialization()),
-            Self::Priming(pending) => pending.storage_initialization(),
         }
     }
 
@@ -635,65 +595,18 @@ impl MetalInstructionInputKernel {
                 "InstructionInput Metal primer must join before the first unbound message",
             ));
         }
-        let resident_rows_storage_id = pending.resident_row_identity().ok_or_else(|| {
-            metal_error("InstructionInput Metal primer lost its resident row identity")
-        })?;
-        let initialization = pending.storage_initialization().ok_or_else(|| {
-            metal_error("InstructionInput Metal primer lost its storage identities")
-        })?;
-        let buffer_identities = initialization.buffer_identities;
-        let (sequence, stats) = {
-            let _span = tracing::info_span!(
-                "MetalInstructionInput::native_primer_join",
-                source_elements = INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
-                e_in_elements = INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
-                e_out_elements = INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
-                resident_rows_storage_id,
-                storage_buffer_0 = buffer_identities[0],
-                storage_buffer_1 = buffer_identities[1],
-                storage_buffer_2 = buffer_identities[2],
-                storage_buffer_3 = buffer_identities[3],
-                storage_buffer_4 = buffer_identities[4],
-                storage_buffer_5 = buffer_identities[5],
-            )
-            .entered();
+        let sequence = {
+            let _span = tracing::info_span!("MetalInstructionInput::native_primer_join").entered();
             pending
                 .join()
                 .map_err(|error| metal_error(error.to_string()))?
         };
-        if stats.resident_row_identity != resident_rows_storage_id
-            || stats.storage_buffer_identities != buffer_identities
-            || sequence.is_dense()
+        if sequence.is_dense()
             || sequence.current_elements() < INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS
         {
             return Err(metal_error(
                 "InstructionInput Metal primer changed its resources or protocol state",
             ));
-        }
-        {
-            let _span = tracing::info_span!(
-                "MetalInstructionInput::native_primer_complete",
-                source_elements = stats.source_elements,
-                e_in_elements = stats.e_in_elements,
-                e_out_elements = stats.e_out_elements,
-                resident_rows_storage_id = stats.resident_row_identity,
-                storage_buffer_0 = stats.storage_buffer_identities[0],
-                storage_buffer_1 = stats.storage_buffer_identities[1],
-                storage_buffer_2 = stats.storage_buffer_identities[2],
-                storage_buffer_3 = stats.storage_buffer_identities[3],
-                storage_buffer_4 = stats.storage_buffer_identities[4],
-                storage_buffer_5 = stats.storage_buffer_identities[5],
-                command_completed = true,
-                produced_zero = true,
-                protocol_state_advanced = false,
-                completed_before_join = stats.completed_before_join,
-                submit_wall_ns = stats.submit_wall.as_nanos() as u64,
-                overlap_wall_ns = stats.overlap_wall.as_nanos() as u64,
-                join_wall_ns = stats.join_wall.as_nanos() as u64,
-                lifecycle_wall_ns = stats.wall.as_nanos() as u64,
-                gpu_active_ns = stats.gpu_active.as_nanos() as u64,
-            )
-            .entered();
         }
         self.sequence = Some(sequence);
         Ok(())

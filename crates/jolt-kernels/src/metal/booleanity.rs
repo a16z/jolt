@@ -101,19 +101,6 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
             }
             _ => return cpu(session),
         };
-        let resident_row_identity = resident_rows.allocation_identity();
-        let resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES;
-        let resident_span = tracing::info_span!(
-            "MetalBooleanityRows::stage6a_address_use",
-            resident_rows_storage_id = resident_row_identity,
-            resident_rows = trace_elements,
-            resident_row_bytes,
-            device_registry_id = resident_rows.device_registry_id(),
-            row_allocations = 0u64,
-            row_upload_bytes = 0u64,
-        )
-        .entered();
-        drop(resident_span);
         let _span = tracing::info_span!("MetalBooleanityAddressPhase::prepare").entered();
         let plan = BooleanityAddressMetalPlan::new(witness, inputs.relation, inputs.challenges)?;
         prepare_accepted_booleanity_address(self, session, resident_rows, plan, config, cpu)
@@ -281,10 +268,7 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
                 Some(rows)
                     if retain_for_hamming
                         && rows.len() == trace_elements
-                        && self.context.validate_booleanity_rows(&rows).is_ok() =>
-                {
-                    trace_hamming_row_retention(&rows);
-                }
+                        && self.context.validate_booleanity_rows(&rows).is_ok() => {}
                 Some(_) => {
                     let _ = session.take::<BooleanityRows>();
                 }
@@ -292,12 +276,12 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
             }
             return Ok(Box::new(cpu));
         }
-        let (resident_rows, reused) = match session.state::<BooleanityRows>().cloned() {
+        let resident_rows = match session.state::<BooleanityRows>().cloned() {
             Some(rows)
                 if rows.len() == trace_elements
                     && self.context.validate_booleanity_rows(&rows).is_ok() =>
             {
-                (rows, true)
+                rows
             }
             _ => {
                 let _ = session.take::<BooleanityRows>();
@@ -306,7 +290,7 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
                     .context
                     .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(source))
                 {
-                    Ok(rows) => (rows, false),
+                    Ok(rows) => rows,
                     Err(error) if error.is_capacity_error() => {
                         tracing::warn!(
                             target: "jolt::metal",
@@ -324,24 +308,6 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
         } else {
             let _ = session.take::<BooleanityRows>();
         }
-        let lifecycle_span = tracing::info_span!(
-            "MetalBooleanityRows::stage6b_cycle_use",
-            resident_rows_storage_id = resident_rows.allocation_identity(),
-            resident_rows = resident_rows.len(),
-            resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES,
-            device_registry_id = resident_rows.device_registry_id(),
-            row_allocations = u64::from(!reused),
-            row_upload_bytes = if reused {
-                0u64
-            } else {
-                (resident_rows.len() * BOOLEANITY_SOURCE_ROW_BYTES) as u64
-            },
-        )
-        .entered();
-        drop(lifecycle_span);
-        if retain_for_hamming {
-            trace_hamming_row_retention(&resident_rows);
-        }
         let mut dispatch = self.config.booleanity_cycle.dispatch;
         if trace_elements >= 1 << 28 {
             dispatch.materialize_width = 32;
@@ -353,20 +319,6 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
             self.config.booleanity_cycle.cutoff_elements,
         )?))
     }
-}
-
-fn trace_hamming_row_retention(rows: &BooleanityRows) {
-    let span = tracing::info_span!(
-        "MetalBooleanityRows::stage6b_retain_for_stage7",
-        resident_rows_storage_id = rows.allocation_identity(),
-        resident_rows = rows.len(),
-        resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES,
-        device_registry_id = rows.device_registry_id(),
-        row_allocations = 0u64,
-        row_upload_bytes = 0u64,
-    )
-    .entered();
-    drop(span);
 }
 
 pub(crate) struct MetalBooleanityKernel {

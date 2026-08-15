@@ -1,13 +1,8 @@
-use std::{
-    mem::size_of,
-    slice,
-    time::{Duration, Instant},
-};
+use std::{mem::size_of, slice, time::Duration};
 
 use jolt_field::AkitaField;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    MTLCommandBufferStatus, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer, MTLSize,
 };
 
 use super::super::spartan_outer_uniskip::OuterResidualReleaseReceipt;
@@ -247,14 +242,6 @@ pub(crate) struct OuterRegistersClaimCarrierSubmission {
     pub(crate) rd_bytes: u64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct OuterRegistersClaimCarrierJoinStats {
-    pub(crate) lifecycle_wall: Duration,
-    pub(crate) join_wall: Duration,
-    pub(crate) gpu_active: Duration,
-    pub(crate) completed_before_join: bool,
-}
-
 #[must_use = "a submitted outer registers-claim carrier must be joined"]
 pub(crate) struct PendingOuterRegistersClaimCarrier {
     context: SolinasMetal,
@@ -262,8 +249,6 @@ pub(crate) struct PendingOuterRegistersClaimCarrier {
     buffers: Option<RegistersClaimBuffers>,
     source: super::super::spartan_outer_uniskip::OuterResidualArenaKey,
     explicit_rows: usize,
-    submitted_at: Instant,
-    gpu_active_accounted_by_outer: bool,
     source_instruction_input: Buffer,
     source_residual: Buffer,
     source_e_in: Buffer,
@@ -319,26 +304,14 @@ impl PendingOuterRegistersClaimCarrier {
         })
     }
 
-    pub(crate) fn join(
-        mut self,
-    ) -> Result<
-        (
-            OuterRegistersClaimCarrier,
-            OuterRegistersClaimCarrierJoinStats,
-        ),
-        MetalError,
-    > {
+    pub(crate) fn join(mut self) -> Result<OuterRegistersClaimCarrier, MetalError> {
         let command_buffer =
             self.command_buffer
                 .take()
                 .ok_or(MetalError::InvalidOuterRemainderConfig(
                     "pending registers-claim carrier lost its command buffer",
                 ))?;
-        let completed_before_join = command_buffer.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
         command_buffer.wait_until_completed();
-        let join_wall = join_started.elapsed();
-        let gpu_active = completed_command_gpu_time(&command_buffer)?;
         let buffers = self
             .buffers
             .take()
@@ -415,19 +388,7 @@ impl PendingOuterRegistersClaimCarrier {
         let carrier = OuterRegistersClaimCarrier::new(receipt, components, buffers.rd_write_value)?;
         drop(buffers.partials);
         drop(buffers.components);
-        Ok((
-            carrier,
-            OuterRegistersClaimCarrierJoinStats {
-                lifecycle_wall: self.submitted_at.elapsed(),
-                join_wall,
-                gpu_active: if self.gpu_active_accounted_by_outer {
-                    Duration::ZERO
-                } else {
-                    gpu_active
-                },
-                completed_before_join,
-            },
-        ))
+        Ok(carrier)
     }
 }
 
@@ -842,7 +803,6 @@ impl OuterRemainderSequence {
                 got: self.phase.name(),
             });
         }
-        let carrier_submitted_at = Instant::now();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.storage.pipelines.opening);
@@ -949,8 +909,6 @@ impl OuterRemainderSequence {
                 buffers: Some(carrier),
                 source,
                 explicit_rows,
-                submitted_at: carrier_submitted_at,
-                gpu_active_accounted_by_outer: true,
                 source_instruction_input,
                 source_residual,
                 source_e_in: self.storage.buffers.e_in.clone(),

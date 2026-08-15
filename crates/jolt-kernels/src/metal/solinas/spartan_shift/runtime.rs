@@ -1,9 +1,9 @@
-use std::{mem::size_of, slice, time::Duration, time::Instant};
+use std::{mem::size_of, slice, time::Duration};
 
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    ComputePipelineState, MTLResourceOptions, MTLSize,
 };
 
 use super::super::{
@@ -100,12 +100,7 @@ pub struct SpartanShiftPrefixInvocation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpartanShiftPrefixObservation {
     pub q: [Vec<AkitaField>; SPARTAN_SHIFT_PREFIX_PAIRS],
-    pub wall: Duration,
-    pub submit_wall: Duration,
-    pub overlap_wall: Duration,
-    pub join_wall: Duration,
     pub gpu_active: Duration,
-    pub completed_before_join: bool,
 }
 
 struct SpartanShiftFoldBuffers {
@@ -126,18 +121,11 @@ pub struct SpartanShiftFoldInvocation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpartanShiftFoldObservation {
     pub outputs: SpartanShiftOutputs<Vec<AkitaField>>,
-    pub wall: Duration,
-    pub submit_wall: Duration,
-    pub overlap_wall: Duration,
-    pub join_wall: Duration,
     pub gpu_active: Duration,
-    pub completed_before_join: bool,
 }
 
 struct SpartanShiftSubmittedCommand {
     command_buffer: CommandBuffer,
-    submitted_at: Instant,
-    submit_wall: Duration,
     source_allocation_identities: [usize; 3],
     output_allocation_identity: usize,
 }
@@ -541,7 +529,6 @@ impl SpartanShiftPrefixInvocation {
 
     fn submit_command(&self) -> Result<SpartanShiftSubmittedCommand, MetalError> {
         self.rows.validate_for(&self.context, &self.plan)?;
-        let submitted_at = Instant::now();
         let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| -> Result<(), MetalError> {
             let encoder = command_buffer.new_compute_command_encoder();
@@ -592,8 +579,6 @@ impl SpartanShiftPrefixInvocation {
         })?;
         Ok(SpartanShiftSubmittedCommand {
             command_buffer,
-            submitted_at,
-            submit_wall: submitted_at.elapsed(),
             source_allocation_identities: self.rows.allocation_identities(),
             output_allocation_identity: self.buffers.q.as_ptr() as usize,
         })
@@ -609,12 +594,6 @@ impl SpartanShiftPrefixInvocation {
             &command,
             "prefix resources changed before completion",
         )?;
-        let completed_before_join =
-            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(command.submitted_at)
-            .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let q = read_field_columns(
@@ -623,17 +602,7 @@ impl SpartanShiftPrefixInvocation {
             self.plan.geometry.prefix_elements(),
             "Spartan shift prefix Q",
         )?;
-        let join_wall = join_started.elapsed();
-        let wall = command.submitted_at.elapsed();
-        Ok(SpartanShiftPrefixObservation {
-            q,
-            wall,
-            submit_wall: command.submit_wall,
-            overlap_wall,
-            join_wall,
-            gpu_active,
-            completed_before_join,
-        })
+        Ok(SpartanShiftPrefixObservation { q, gpu_active })
     }
 
     copy_field_getters! { pub, { plan: SpartanShiftPlan }}
@@ -663,7 +632,6 @@ impl SpartanShiftFoldInvocation {
 
     fn submit_command(&self) -> Result<SpartanShiftSubmittedCommand, MetalError> {
         self.rows.validate_for(&self.context, &self.plan)?;
-        let submitted_at = Instant::now();
         let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
@@ -692,8 +660,6 @@ impl SpartanShiftFoldInvocation {
         });
         Ok(SpartanShiftSubmittedCommand {
             command_buffer,
-            submitted_at,
-            submit_wall: submitted_at.elapsed(),
             source_allocation_identities: self.rows.allocation_identities(),
             output_allocation_identity: self.buffers.dense_outputs.as_ptr() as usize,
         })
@@ -709,12 +675,6 @@ impl SpartanShiftFoldInvocation {
             &command,
             "fold resources changed before completion",
         )?;
-        let completed_before_join =
-            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(command.submitted_at)
-            .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let columns: [Vec<AkitaField>; SPARTAN_SHIFT_OUTPUT_COLUMNS] = read_field_columns(
@@ -724,8 +684,6 @@ impl SpartanShiftFoldInvocation {
             "Spartan shift dense outputs",
         )?;
         let [unexpanded_pc, pc, is_virtual, is_first_in_sequence, is_noop] = columns;
-        let join_wall = join_started.elapsed();
-        let wall = command.submitted_at.elapsed();
         Ok(SpartanShiftFoldObservation {
             outputs: SpartanShiftOutputs {
                 unexpanded_pc,
@@ -734,12 +692,7 @@ impl SpartanShiftFoldInvocation {
                 is_first_in_sequence,
                 is_noop,
             },
-            wall,
-            submit_wall: command.submit_wall,
-            overlap_wall,
-            join_wall,
             gpu_active,
-            completed_before_join,
         })
     }
 

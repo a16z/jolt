@@ -1,9 +1,4 @@
-use std::{
-    cell::Cell,
-    mem::size_of,
-    slice,
-    time::{Duration, Instant},
-};
+use std::{cell::Cell, mem::size_of, slice};
 
 use jolt_field::AkitaField;
 use metal::{
@@ -18,13 +13,12 @@ use super::{
     worklist_owner::{BytecodeAddressSparseStage1Carrier, BytecodeAddressSparseStage1Receipt},
 };
 use crate::metal::solinas::{
-    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
+    buffer_from_slice, set_inline_bytes, validate_completed_command, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
 
 const WORKER_PIPELINE: &str = "solinas_bytecode_address_sparse_worker_packed_4_5_4";
 const REDUCE_PIPELINE: &str = "solinas_bytecode_address_sparse_reduce";
-const WORKER_VARIANT: &str = "packed4_halfwidth_v1";
 const WORKER_THREADS: usize = 128;
 const WORKER_ITEMS_PER_THREADGROUP: usize = 4;
 const REDUCE_THREADS: usize = 256;
@@ -49,27 +43,7 @@ const _: [(); 32] = [(); size_of::<BytecodeAddressSparseParams>()];
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BytecodeAddressSparseObservation {
     pub(crate) output: Vec<AkitaField>,
-    pub(crate) gpu_active: Duration,
-    pub(crate) resident_wall: Duration,
-    pub(crate) source_rows_storage_id: usize,
-    pub(crate) source_device_registry_id: u64,
-    pub(crate) source_generation: u64,
-    pub(crate) source_completion_serial: u64,
-    pub(crate) physical_rows: usize,
-    pub(crate) work_items: usize,
-    pub(crate) worker_variant: &'static str,
-    pub(crate) worker_simd_width: usize,
-    pub(crate) worker_threads: usize,
-    pub(crate) worker_items_per_threadgroup: usize,
-    pub(crate) worker_threadgroups: usize,
-    pub(crate) worker_tail_slots: usize,
-    pub(crate) worker_dynamic_threadgroup_bytes: usize,
-    pub(crate) worker_static_threadgroup_bytes: u64,
-    pub(crate) worker_threadgroup_bytes: u64,
-    pub(crate) reducer_threads: usize,
-    pub(crate) reducer_threadgroups: usize,
-    pub(crate) reducer_static_threadgroup_bytes: u64,
-    pub(crate) static_buffer_identities: [usize; 8],
+    pub(crate) receipt: BytecodeAddressSparseStage1Receipt,
 }
 
 struct BytecodeAddressSparseBuffers {
@@ -99,11 +73,8 @@ pub(crate) struct BytecodeAddressSparseInvocation {
     context: SolinasMetal,
     worker_pipeline: ComputePipelineState,
     reduce_pipeline: ComputePipelineState,
-    worker_limits: PipelineLimits,
-    reduce_limits: PipelineLimits,
     buffers: BytecodeAddressSparseBuffers,
     params: BytecodeAddressSparseParams,
-    threadgroup_memory_bytes: usize,
     source_rows_storage_id: usize,
     source_device_registry_id: u64,
     source_generation: u64,
@@ -251,8 +222,6 @@ impl SolinasMetal {
             context: self.clone(),
             worker_pipeline,
             reduce_pipeline,
-            worker_limits,
-            reduce_limits,
             buffers: BytecodeAddressSparseBuffers {
                 occurrences: input.occurrences,
                 magnitudes: input.magnitudes,
@@ -269,7 +238,6 @@ impl SolinasMetal {
                     .new_buffer(output_bytes as u64, MTLResourceOptions::StorageModeShared),
             },
             params,
-            threadgroup_memory_bytes: THREADGROUP_BYTES,
             source_rows_storage_id,
             source_device_registry_id,
             source_generation,
@@ -284,7 +252,6 @@ impl BytecodeAddressSparseInvocation {
     pub(crate) fn execute_timed(
         &self,
     ) -> Result<BytecodeAddressSparseObservation, BytecodeAddressSparseRuntimeError> {
-        let resident_started = Instant::now();
         autoreleasepool(|| {
             self.validate_source()?;
             self.completed.set(false);
@@ -292,43 +259,12 @@ impl BytecodeAddressSparseInvocation {
             self.encode(command_buffer);
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            let gpu_active = completed_gpu_active(command_buffer)?;
+            validate_completed_command(command_buffer)?;
             self.validate_source()?;
             self.completed.set(true);
             Ok(BytecodeAddressSparseObservation {
                 output: self.read_output()?,
-                gpu_active,
-                resident_wall: resident_started.elapsed(),
-                source_rows_storage_id: self.source_rows_storage_id,
-                source_device_registry_id: self.source_device_registry_id,
-                source_generation: self.source_generation,
-                source_completion_serial: self.source_completion_serial,
-                physical_rows: self.params.physical_rows as usize,
-                work_items: self.params.work_items as usize,
-                worker_variant: WORKER_VARIANT,
-                worker_simd_width: self.worker_limits.thread_execution_width,
-                worker_threads: WORKER_THREADS,
-                worker_items_per_threadgroup: WORKER_ITEMS_PER_THREADGROUP,
-                worker_threadgroups: (self.params.work_items as usize)
-                    .div_ceil(WORKER_ITEMS_PER_THREADGROUP),
-                worker_tail_slots: (self.params.work_items as usize)
-                    .div_ceil(WORKER_ITEMS_PER_THREADGROUP)
-                    * WORKER_ITEMS_PER_THREADGROUP
-                    - self.params.work_items as usize,
-                worker_dynamic_threadgroup_bytes: self.threadgroup_memory_bytes,
-                worker_static_threadgroup_bytes: self
-                    .worker_limits
-                    .static_threadgroup_memory_length,
-                worker_threadgroup_bytes: self.worker_limits.static_threadgroup_memory_length
-                    + self.threadgroup_memory_bytes as u64,
-                reducer_threads: REDUCE_THREADS,
-                reducer_threadgroups: (self.params.stages as usize
-                    * self.params.addresses as usize)
-                    .div_ceil(REDUCE_THREADS),
-                reducer_static_threadgroup_bytes: self
-                    .reduce_limits
-                    .static_threadgroup_memory_length,
-                static_buffer_identities: self.static_buffer_identities(),
+                receipt: self.stage1_receipt,
             })
         })
     }
@@ -422,19 +358,6 @@ impl BytecodeAddressSparseInvocation {
             .iter()
             .map(|value| (*value).into_jolt_field())
             .collect())
-    }
-
-    fn static_buffer_identities(&self) -> [usize; 8] {
-        [
-            self.buffers.occurrences.as_ptr() as usize,
-            self.buffers.magnitudes.as_ptr() as usize,
-            self.buffers.work_items.as_ptr() as usize,
-            self.buffers.address_offsets.as_ptr() as usize,
-            self.buffers.e_lo.as_ptr() as usize,
-            self.buffers.e_hi.as_ptr() as usize,
-            self.buffers.partials.as_ptr() as usize,
-            self.buffers.output.as_ptr() as usize,
-        ]
     }
 }
 
@@ -577,12 +500,6 @@ fn validate_pipeline(
         });
     }
     Ok(())
-}
-
-fn completed_gpu_active(
-    command_buffer: &metal::CommandBufferRef,
-) -> Result<Duration, BytecodeAddressSparseRuntimeError> {
-    completed_command_gpu_time(command_buffer).map_err(Into::into)
 }
 
 fn field_bytes(fields: usize) -> Result<usize, BytecodeAddressSparseRuntimeError> {

@@ -278,20 +278,7 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                 "bytecode address-major completion failed: {error}"
             )))
         })?;
-        let source_buffers = [
-            receipt.occurrence_storage_id(),
-            receipt.magnitude_storage_id(),
-            receipt.work_item_storage_id(),
-            receipt.address_offset_storage_id(),
-        ];
-        if observation.source_rows_storage_id != receipt.source_rows_storage_id()
-            || observation.source_device_registry_id != receipt.device_registry_id()
-            || observation.source_generation != receipt.source_generation()
-            || observation.source_completion_serial != receipt.source_completion_serial()
-            || observation.physical_rows != receipt.physical_rows()
-            || observation.work_items != receipt.work_items()
-            || observation.static_buffer_identities[..4] != source_buffers
-        {
+        if observation.receipt != receipt {
             return Err(KernelError::InvariantViolation {
                 reason: "bytecode address-major source identity changed",
             });

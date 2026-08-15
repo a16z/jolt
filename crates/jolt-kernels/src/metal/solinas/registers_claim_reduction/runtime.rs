@@ -1,8 +1,4 @@
-use std::{
-    mem::size_of,
-    slice,
-    time::{Duration, Instant},
-};
+use std::{mem::size_of, slice, time::Duration};
 
 use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
@@ -84,10 +80,6 @@ impl RegistersClaimResidentRdPlane {
         self.metadata.geometry
     }
 
-    pub(crate) const fn resident_bytes(&self) -> u64 {
-        self.metadata.plane_bytes
-    }
-
     pub(crate) const fn device_registry_id(&self) -> u64 {
         self.metadata.device_registry_id
     }
@@ -143,9 +135,7 @@ pub(crate) struct RegistersClaimAliasFoldInvocation {
 
 pub(crate) struct RegistersClaimAliasFoldObservation {
     pub(crate) rd_write_value: Vec<AkitaField>,
-    pub(crate) useful_half_width_terms: u64,
     pub(crate) gpu_active: Duration,
-    pub(crate) resident_wall: Duration,
 }
 
 impl SolinasMetal {
@@ -277,7 +267,6 @@ impl RegistersClaimAliasFoldInvocation {
     pub(crate) fn execute_timed(
         &self,
     ) -> Result<RegistersClaimAliasFoldObservation, RegistersClaimError> {
-        let wall_started = Instant::now();
         self.validate_state()?;
         autoreleasepool(|| {
             let command_buffer = self.context.queue.new_command_buffer();
@@ -322,9 +311,7 @@ impl RegistersClaimAliasFoldInvocation {
                     .iter()
                     .map(|&value| value.into_jolt_field())
                     .collect(),
-                useful_half_width_terms: self.geometry.rows() as u64,
                 gpu_active,
-                resident_wall: wall_started.elapsed(),
             })
         })
     }

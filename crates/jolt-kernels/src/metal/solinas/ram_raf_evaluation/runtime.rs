@@ -1,13 +1,9 @@
-use std::{
-    mem::size_of,
-    slice,
-    time::{Duration, Instant},
-};
+use std::{mem::size_of, slice, time::Duration};
 
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
+    ComputePipelineState, MTLResourceOptions, MTLSize, NSRange,
 };
 
 use super::super::{
@@ -86,19 +82,7 @@ pub struct RamRafSequence {
 
 struct RamRafCommand {
     command_buffer: CommandBuffer,
-    submitted_at: Instant,
-    submit_wall: Duration,
     resource_identities: [usize; 6],
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RamRafSubmissionStats {
-    pub submit_wall: Duration,
-    pub overlap_wall: Duration,
-    pub join_wall: Duration,
-    pub lifecycle_wall: Duration,
-    pub gpu_active: Duration,
-    pub completed_before_join: bool,
 }
 
 #[must_use = "a submitted RAM RAF sequence must be joined before its output is used"]
@@ -151,7 +135,7 @@ impl PendingRamRafSequence {
         }
     }
 
-    pub fn join(mut self) -> Result<(RamRafObservation, RamRafSubmissionStats), MetalError> {
+    pub fn join(mut self) -> Result<RamRafObservation, MetalError> {
         let sequence = self.sequence.take().ok_or(MetalError::NotExecuted)?;
         let command = self.command.take().ok_or(MetalError::NotExecuted)?;
         sequence.complete(command)
@@ -344,7 +328,7 @@ impl RamRafSequence {
 
     pub fn execute_timed(&self) -> Result<RamRafObservation, MetalError> {
         let command = self.submit_command();
-        self.complete(command).map(|(observation, _)| observation)
+        self.complete(command)
     }
 
     pub fn submit(self) -> PendingRamRafSequence {
@@ -367,7 +351,6 @@ impl RamRafSequence {
     }
 
     fn submit_command(&self) -> RamRafCommand {
-        let submitted_at = Instant::now();
         let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
             let blit = command_buffer.new_blit_command_encoder();
@@ -429,25 +412,14 @@ impl RamRafSequence {
         });
         RamRafCommand {
             command_buffer,
-            submitted_at,
-            submit_wall: submitted_at.elapsed(),
             resource_identities: self.resource_identities(),
         }
     }
 
-    fn complete(
-        &self,
-        command: RamRafCommand,
-    ) -> Result<(RamRafObservation, RamRafSubmissionStats), MetalError> {
+    fn complete(&self, command: RamRafCommand) -> Result<RamRafObservation, MetalError> {
         if command.resource_identities != self.resource_identities() {
             return Err(MetalError::NotExecuted);
         }
-        let completed_before_join =
-            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(command.submitted_at)
-            .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let counters = self.read_counters();
@@ -457,20 +429,11 @@ impl RamRafSequence {
                 unsupported_dispatches: counters.unsupported_dispatches,
             });
         }
-        let observation = RamRafObservation {
+        Ok(RamRafObservation {
             masses: self.read_masses()?,
             counters,
             gpu_active,
-        };
-        let stats = RamRafSubmissionStats {
-            submit_wall: command.submit_wall,
-            overlap_wall,
-            join_wall: join_started.elapsed(),
-            lifecycle_wall: command.submitted_at.elapsed(),
-            gpu_active,
-            completed_before_join,
-        };
-        Ok((observation, stats))
+        })
     }
 
     fn read_counters(&self) -> RamRafCounters {

@@ -3,7 +3,7 @@ use std::{
     mem::size_of,
     slice,
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use jolt_field::signed::{S192, S256, S64};
@@ -11,7 +11,7 @@ use jolt_field::{AkitaField, SignedProductAccumulator as _, WithSignedProductAcc
 use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    ComputePipelineState, MTLResourceOptions, MTLSize,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -646,28 +646,12 @@ struct SourcePrimerParams {
 
 const _: [(); 48] = [(); size_of::<SourcePrimerParams>()];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct SpartanStage1SourcePrimerObservation {
-    pub wall: Duration,
-    pub submit_wall: Duration,
-    pub overlap_wall: Duration,
-    pub join_wall: Duration,
-    pub gpu_active: Duration,
-    pub completed_before_join: bool,
-    pub source_bytes: u64,
-    pub source_pages: u64,
-}
-
 #[must_use = "the Stage1 source primer must be joined before its source is consumed"]
 pub(crate) struct PendingSpartanStage1SourcePrimer {
     command: Option<CommandBuffer>,
     sources: [Buffer; 5],
     checksums: Buffer,
     source_identities: [usize; 5],
-    submitted_at: Instant,
-    submit_wall: Duration,
-    source_bytes: u64,
-    source_pages: u64,
 }
 
 #[cfg(feature = "allocative")]
@@ -686,7 +670,7 @@ impl Drop for PendingSpartanStage1SourcePrimer {
 }
 
 impl PendingSpartanStage1SourcePrimer {
-    pub(crate) fn join(mut self) -> Result<SpartanStage1SourcePrimerObservation, MetalError> {
+    pub(crate) fn join(mut self) -> Result<(), MetalError> {
         let source_identities: [usize; 5] =
             std::array::from_fn(|index| self.sources[index].as_ptr() as usize);
         if source_identities != self.source_identities
@@ -702,24 +686,9 @@ impl PendingSpartanStage1SourcePrimer {
             .ok_or(MetalError::InvalidSpartanShiftState(
                 "Stage1 source primer command was already joined",
             ))?;
-        let completed_before_join = command.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(self.submitted_at)
-            .saturating_sub(self.submit_wall);
         command.wait_until_completed();
-        let join_wall = join_started.elapsed();
-        let gpu_active = completed_command_gpu_time(&command)?;
-        Ok(SpartanStage1SourcePrimerObservation {
-            wall: self.submitted_at.elapsed(),
-            submit_wall: self.submit_wall,
-            overlap_wall,
-            join_wall,
-            gpu_active,
-            completed_before_join,
-            source_bytes: self.source_bytes,
-            source_pages: self.source_pages,
-        })
+        let _gpu_active = completed_command_gpu_time(&command)?;
+        Ok(())
     }
 }
 
@@ -776,18 +745,6 @@ impl SolinasMetal {
             ));
         }
         let source_identities = std::array::from_fn(|index| sources[index].as_ptr() as usize);
-        let source_bytes = sources.iter().try_fold(0u64, |total, buffer| {
-            total
-                .checked_add(buffer.length())
-                .ok_or(MetalError::InputTooLong(outer.len()))
-        })?;
-        let page_bytes = u64::try_from(SOURCE_PRIMER_PAGE_BYTES)
-            .map_err(|_| MetalError::InputTooLong(SOURCE_PRIMER_PAGE_BYTES))?;
-        let source_pages = sources.iter().try_fold(0u64, |total, buffer| {
-            total
-                .checked_add(buffer.length().div_ceil(page_bytes))
-                .ok_or(MetalError::InputTooLong(outer.len()))
-        })?;
         let word_counts =
             std::array::from_fn(|index| sources[index].length() / size_of::<u32>() as u64);
         let params = SourcePrimerParams {
@@ -813,7 +770,6 @@ impl SolinasMetal {
             .device
             .new_buffer(checksum_bytes, MTLResourceOptions::StorageModePrivate);
 
-        let submitted_at = Instant::now();
         let command = self.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
             let encoder = command.new_compute_command_encoder();
@@ -842,17 +798,11 @@ impl SolinasMetal {
             encoder.end_encoding();
             command.commit();
         });
-        let submit_wall = submitted_at.elapsed();
-
         Ok(PendingSpartanStage1SourcePrimer {
             command: Some(command),
             sources,
             checksums,
             source_identities,
-            submitted_at,
-            submit_wall,
-            source_bytes,
-            source_pages,
         })
     }
 
@@ -1343,13 +1293,7 @@ mod tests {
         let pending = context
             .submit_spartan_stage1_source_primer(&outer, &shift)
             .unwrap();
-        let expected_bytes = spartan_outer_uniskip_row_bytes(512).unwrap()
-            + u64::try_from(shift.resident_bytes()).unwrap();
-        let observation = pending.join().unwrap();
-
-        assert_eq!(observation.source_bytes, expected_bytes);
-        assert!(observation.source_pages > 0);
-        assert!(observation.wall >= observation.gpu_active);
+        pending.join().unwrap();
     }
 
     #[test]

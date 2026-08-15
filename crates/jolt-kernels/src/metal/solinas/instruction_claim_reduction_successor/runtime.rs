@@ -6,7 +6,7 @@ use std::{
 
 use jolt_field::AkitaField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
-use metal::{objc::rc::autoreleasepool, Buffer, CommandBuffer, MTLCommandBufferStatus, MTLSize};
+use metal::{objc::rc::autoreleasepool, Buffer, CommandBuffer, MTLSize};
 
 use super::super::{
     completed_command_gpu_time,
@@ -56,26 +56,11 @@ impl allocative::Allocative for ProductInstructionRoundService {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ProductInstructionInitialMessageStats {
-    pub(crate) wall: Duration,
-    pub(crate) submit_wall: Duration,
-    pub(crate) overlap_wall: Duration,
-    pub(crate) join_wall: Duration,
-    pub(crate) gpu_active: Duration,
-    pub(crate) completed_before_join: bool,
-    pub(crate) threads_per_threadgroup: usize,
-    pub(crate) threadgroup_bytes: usize,
-}
-
 struct ProductInstructionInitialMessageCommand {
     command_buffer: CommandBuffer,
     product_output: Buffer,
     instruction_output: Buffer,
     submitted_at: Instant,
-    submit_wall: Duration,
-    threads_per_threadgroup: usize,
-    threadgroup_bytes: usize,
 }
 
 #[must_use = "a submitted joint Product/Instruction message must be joined"]
@@ -127,12 +112,6 @@ impl PendingProductInstructionInitialMessage {
             .ok_or(MetalError::InvalidProductRemainderState(
                 "joint first message lost its command buffer",
             ))?;
-        let completed_before_join =
-            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(command.submitted_at)
-            .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let product_values = unsafe {
@@ -158,25 +137,10 @@ impl PendingProductInstructionInitialMessage {
         let product_message = std::array::from_fn(|index| product_values[index].into_jolt_field());
         let instruction_message =
             std::array::from_fn(|index| instruction_values[index].into_jolt_field());
-        let stats = ProductInstructionInitialMessageStats {
-            wall: command.submitted_at.elapsed(),
-            submit_wall: command.submit_wall,
-            overlap_wall,
-            join_wall: join_started.elapsed(),
-            gpu_active,
-            completed_before_join,
-            threads_per_threadgroup: command.threads_per_threadgroup,
-            threadgroup_bytes: command.threadgroup_bytes,
-        };
+        let wall = command.submitted_at.elapsed();
         product.complete_joint_materialize()?;
-        instruction.complete_joint_materialize(stats.wall, stats.gpu_active)?;
-        Ok((
-            product,
-            product_message,
-            instruction,
-            instruction_message,
-            stats,
-        ))
+        instruction.complete_joint_materialize(wall, gpu_active)?;
+        Ok((product, product_message, instruction, instruction_message))
     }
 }
 
@@ -218,10 +182,6 @@ impl ProductInstructionRoundService {
 
     pub(crate) fn instruction_allocation_identities(&self) -> Option<[usize; 2]> {
         self.instruction.joint_stage1_allocation_identities()
-    }
-
-    pub(crate) const fn instruction_workspace_bytes(&self) -> usize {
-        self.instruction.storage_layout().workspace_bytes()
     }
 
     pub(crate) fn read_product_current_state(
@@ -491,9 +451,6 @@ impl SolinasMetal {
                     product_output,
                     instruction_output,
                     submitted_at,
-                    submit_wall: submitted_at.elapsed(),
-                    threads_per_threadgroup: threads,
-                    threadgroup_bytes,
                 }),
             })
         })
@@ -520,7 +477,6 @@ type ProductInstructionInitialResult = (
     [AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS],
     InstructionClaimSequence,
     [AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
-    ProductInstructionInitialMessageStats,
 );
 
 #[cfg(test)]
@@ -625,7 +581,7 @@ mod tests {
         let pending = context
             .submit_product_instruction_initial_message(product, instruction, e_in, e_out)
             .expect("joint materialization should submit");
-        let (product, product_message, instruction, instruction_message, stats) =
+        let (product, product_message, instruction, instruction_message) =
             pending.join().expect("joint materialization should join");
 
         assert_eq!(product_message, expected_product);
@@ -638,10 +594,6 @@ mod tests {
             instruction.read_current_state().unwrap(),
             instruction_control.read_current_state().unwrap()
         );
-        assert_eq!(stats.threads_per_threadgroup, 128);
-        assert_eq!(stats.threadgroup_bytes, 256);
-        assert!(stats.gpu_active > std::time::Duration::ZERO);
-
         let mut service = ProductInstructionRoundService::new(product, instruction, &point)
             .expect("joint round service should adopt both sequences");
         for round in 1..point.len() {

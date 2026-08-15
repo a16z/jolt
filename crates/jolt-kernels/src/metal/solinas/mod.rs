@@ -91,8 +91,8 @@ pub use bytecode_cycle::{
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
 pub(crate) use instruction_claim_reduction_successor::{
-    PendingProductInstructionInitialMessage, ProductInstructionInitialMessageStats,
-    ProductInstructionRoundService, ProductInstructionRoundStats,
+    PendingProductInstructionInitialMessage, ProductInstructionRoundService,
+    ProductInstructionRoundStats,
 };
 pub(crate) use instruction_input::{
     instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
@@ -102,9 +102,8 @@ pub(crate) use instruction_input::{
     INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
 };
 pub use instruction_input::{
-    InstructionInputPrimerStats, InstructionInputRow, InstructionInputRows,
-    InstructionInputSequence, InstructionInputSequenceConfig,
-    InstructionInputStorageInitialization, InstructionInputStorageInitializationStats,
+    InstructionInputRow, InstructionInputRows, InstructionInputSequence,
+    InstructionInputSequenceConfig, InstructionInputStorageInitialization,
     INSTRUCTION_INPUT_COEFFICIENTS, INSTRUCTION_INPUT_TABLES,
 };
 pub(crate) use instruction_ra_sequence::InstructionRaSequenceStorage;
@@ -131,8 +130,8 @@ pub(crate) use outer_remainder::OuterRegistersClaimCarrierSubmission;
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRegistersClaimCarrier,
-    OuterRegistersClaimCarrierJoinStats, OuterRegistersClaimCarrierReceipt,
-    OuterRemainderSequenceStorage, PendingOuterRegistersClaimCarrier,
+    OuterRegistersClaimCarrierReceipt, OuterRemainderSequenceStorage,
+    PendingOuterRegistersClaimCarrier,
 };
 pub use outer_remainder::{
     OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
@@ -142,9 +141,7 @@ pub use outer_remainder::{
 pub use product5::{Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS};
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;
-pub(crate) use product_remainder::{
-    PendingProductRemainderInitialMessage, ProductRemainderWorkspacePrimerStats,
-};
+pub(crate) use product_remainder::PendingProductRemainderInitialMessage;
 pub use product_remainder::{
     ProductRemainderRow, ProductRemainderRowError, ProductRemainderRows, ProductRemainderSequence,
     ProductRemainderSequenceConfig, ProductRemainderShapeError, ProductRemainderSourceKind,
@@ -162,8 +159,8 @@ pub use ram_raf_evaluation::{
     dense_pushforward_oracle, split_equality as ram_raf_split_equality, split_pushforward_oracle,
     PendingRamRafSequence, RamRafAddress, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
     RamRafCounters, RamRafDeviceLimits, RamRafError, RamRafFoldParams, RamRafObservation,
-    RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan, RamRafSubmissionStats,
-    RamRafTailOutput, ValidatedRamRafAddressPlane, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_AKITA_OFFSET,
+    RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan, RamRafTailOutput,
+    ValidatedRamRafAddressPlane, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_AKITA_OFFSET,
     RAM_RAF_DEFAULT_TRACE_CUTOFF, RAM_RAF_FINALIZE_PIPELINE, RAM_RAF_FOLD_PIPELINE,
     RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS, RAM_RAF_SIMD_WIDTH,
     RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,

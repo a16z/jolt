@@ -795,7 +795,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         }
         if let Some(primer) = session.take::<PendingSpartanStage1SourcePrimer>() {
             let _span = tracing::info_span!("MetalSpartanStage1::source_primer_join").entered();
-            let _ = primer.join().map_err(metal_prepare_error)?;
+            primer.join().map_err(metal_prepare_error)?;
         }
         let stage1_compact_rows_storage_id = session
             .state::<SpartanOuterUniskipRows>()

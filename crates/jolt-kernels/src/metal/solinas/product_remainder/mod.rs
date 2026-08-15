@@ -1,13 +1,13 @@
 use std::{
     mem::{align_of, size_of},
     slice,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use jolt_field::{AkitaField, Field};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
+    ComputePipelineState, MTLResourceOptions, MTLSize, NSRange,
 };
 use thiserror::Error;
 
@@ -20,7 +20,8 @@ use super::product_uniskip::{
 };
 use super::{
     buffer_from_slice, completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
-    spartan_outer_uniskip_residual_row_bytes, Fp128, InstructionInputRow, MetalError, SolinasMetal,
+    spartan_outer_uniskip_residual_row_bytes, validate_completed_command, Fp128,
+    InstructionInputRow, MetalError, SolinasMetal,
 };
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
@@ -689,29 +690,7 @@ pub struct ProductRemainderSequence {
 struct ProductRemainderInitialMessageCommand {
     command_buffer: CommandBuffer,
     output: Buffer,
-    submitted_at: Instant,
-    submit_wall: Duration,
     sequence_identity: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ProductRemainderInitialMessageStats {
-    pub(crate) lifecycle_wall: Duration,
-    pub(crate) submit_wall: Duration,
-    pub(crate) overlap_wall: Duration,
-    pub(crate) join_wall: Duration,
-    pub(crate) gpu_active: Duration,
-    pub(crate) completed_before_join: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ProductRemainderWorkspacePrimerStats {
-    pub(crate) bytes: u64,
-    pub(crate) buffers: usize,
-    pub(crate) state_a_identity: usize,
-    pub(crate) state_b_identity: usize,
-    pub(crate) wall: Duration,
-    pub(crate) gpu_active: Duration,
 }
 
 #[must_use = "a submitted product-remainder message must be joined"]
@@ -746,7 +725,7 @@ impl PendingProductRemainderInitialMessage {
         (
             ProductRemainderSequence,
             [AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS],
-            ProductRemainderInitialMessageStats,
+            Duration,
         ),
         MetalError,
     > {
@@ -767,8 +746,8 @@ impl PendingProductRemainderInitialMessage {
             .ok_or(MetalError::InvalidProductRemainderState(
                 "the pending first message lost its command buffer",
             ))?;
-        let (message, stats) = sequence.complete_initial_message(command)?;
-        Ok((sequence, message, stats))
+        let (message, gpu_active) = sequence.complete_initial_message(command)?;
+        Ok((sequence, message, gpu_active))
     }
 }
 
@@ -1153,9 +1132,7 @@ impl ProductRemainderSequence {
         &self.context
     }
 
-    pub(crate) fn prime_workspace(
-        &self,
-    ) -> Result<ProductRemainderWorkspacePrimerStats, MetalError> {
+    pub(crate) fn prime_workspace(&self) -> Result<(), MetalError> {
         if !self.is_ready() {
             return Err(MetalError::InvalidProductRemainderState(
                 "workspace priming requires a ready sequence",
@@ -1173,11 +1150,6 @@ impl ProductRemainderSequence {
         } else {
             [&self.buffers.state_a, &self.buffers.state_b].to_vec()
         };
-        let bytes = buffers.iter().try_fold(0u64, |sum, buffer| {
-            sum.checked_add(buffer.length())
-                .ok_or(MetalError::InputTooLong(self.layout.state_a_fields()))
-        })?;
-        let started = Instant::now();
         let command_buffer = self.context.queue.new_command_buffer();
         autoreleasepool(|| {
             let encoder = command_buffer.new_blit_command_encoder();
@@ -1188,15 +1160,7 @@ impl ProductRemainderSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        let gpu_active = completed_command_gpu_time(command_buffer)?;
-        Ok(ProductRemainderWorkspacePrimerStats {
-            bytes,
-            buffers: buffers.len(),
-            state_a_identity,
-            state_b_identity,
-            wall: started.elapsed(),
-            gpu_active,
-        })
+        validate_completed_command(command_buffer)
     }
 
     pub(crate) fn set_lagrange_weights(
@@ -1318,8 +1282,7 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
         let command = self.submit_materialize_message_command(e_in, e_out)?;
-        let (message, stats) = self.complete_initial_message(command)?;
-        Ok((message, stats.gpu_active))
+        self.complete_initial_message(command)
     }
 
     pub(crate) fn submit_initial_message(
@@ -1342,24 +1305,12 @@ impl ProductRemainderSequence {
     fn complete_initial_message(
         &mut self,
         command: ProductRemainderInitialMessageCommand,
-    ) -> Result<
-        (
-            [AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS],
-            ProductRemainderInitialMessageStats,
-        ),
-        MetalError,
-    > {
+    ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
         if command.sequence_identity != self.buffers.state_a.as_ptr() as usize {
             return Err(MetalError::InvalidProductRemainderState(
                 "the pending first message belongs to a different product sequence",
             ));
         }
-        let completed_before_join =
-            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(command.submitted_at)
-            .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         // SAFETY: completion makes the two reduced fields at the front of the
@@ -1373,18 +1324,10 @@ impl ProductRemainderSequence {
         self.context
             .validate_inputs("product remainder first message", values)?;
         let message = std::array::from_fn(|index| values[index].into_jolt_field());
-        let stats = ProductRemainderInitialMessageStats {
-            lifecycle_wall: command.submitted_at.elapsed(),
-            submit_wall: command.submit_wall,
-            overlap_wall,
-            join_wall: join_started.elapsed(),
-            gpu_active,
-            completed_before_join,
-        };
         self.current_elements = self.layout.rows();
         self.source_in_a = true;
         self.phase = ProductRemainderPhase::Materialized;
-        Ok((message, stats))
+        Ok((message, gpu_active))
     }
 
     fn execute_materialize_message(
@@ -1416,7 +1359,6 @@ impl ProductRemainderSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<ProductRemainderInitialMessageCommand, MetalError> {
-        let submitted_at = Instant::now();
         let params =
             ProductRemainderPhaseParams::materialize(self.layout.rows(), e_in.len(), e_out.len())?;
         self.write_weights(e_in, e_out)?;
@@ -1477,8 +1419,6 @@ impl ProductRemainderSequence {
             Ok(ProductRemainderInitialMessageCommand {
                 command_buffer,
                 output,
-                submitted_at,
-                submit_wall: submitted_at.elapsed(),
                 sequence_identity: self.buffers.state_a.as_ptr() as usize,
             })
         })
@@ -2148,16 +2088,15 @@ mod tests {
         let pending = sequence
             .submit_initial_message(&e_in, &e_out)
             .expect("the materialization should submit");
-        let (sequence, actual, stats) = pending.join().expect("the materialization should join");
+        let (sequence, actual, gpu_active) =
+            pending.join().expect("the materialization should join");
         let (left, right) = sequence
             .read_current_state()
             .expect("the materialized state should be readable");
 
         assert_eq!(actual, expected.endpoints);
         assert_eq!([left, right].concat(), expected.state);
-        assert!(stats.lifecycle_wall >= stats.submit_wall);
-        assert!(stats.lifecycle_wall >= stats.join_wall);
-        assert!(stats.gpu_active > Duration::ZERO);
+        assert!(gpu_active > Duration::ZERO);
         assert_eq!(sequence.current_elements(), row_count);
         assert_eq!(sequence.round_device_buffer_allocations(), 0);
     }

@@ -1,16 +1,10 @@
-use std::{
-    ffi::c_void,
-    mem::size_of,
-    ops::Deref,
-    slice,
-    time::{Duration, Instant},
-};
+use std::{ffi::c_void, mem::size_of, ops::Deref, slice};
 
 use jolt_field::AkitaField;
 use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize, NSRange,
+    ComputePipelineState, MTLResourceOptions, MTLSize, NSRange,
 };
 
 use super::{
@@ -189,37 +183,8 @@ impl InstructionInputStorageInitialization {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InstructionInputStorageInitializationStats {
-    pub mode: InstructionInputStorageInitialization,
-    pub device_buffers: usize,
-    pub bytes: u64,
-    pub wall: Duration,
-    pub gpu_active: Duration,
-    pub buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
-    pub buffer_offsets: [u64; INSTRUCTION_INPUT_DEVICE_BUFFERS],
-    pub buffer_lengths: [u64; INSTRUCTION_INPUT_DEVICE_BUFFERS],
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InstructionInputPrimerStats {
-    pub source_elements: usize,
-    pub e_in_elements: usize,
-    pub e_out_elements: usize,
-    pub wall: Duration,
-    pub submit_wall: Duration,
-    pub overlap_wall: Duration,
-    pub join_wall: Duration,
-    pub gpu_active: Duration,
-    pub completed_before_join: bool,
-    pub resident_row_identity: usize,
-    pub storage_buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
-}
-
 struct InstructionInputNativePrimerCommand {
     command_buffer: CommandBuffer,
-    submitted_at: Instant,
-    submit_wall: Duration,
     resident_row_identity: usize,
     storage_buffer_identities: [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS],
 }
@@ -271,17 +236,7 @@ impl PendingInstructionInputPrimer {
             .map(InstructionInputSequence::resident_row_identity)
     }
 
-    pub(crate) fn storage_initialization(
-        &self,
-    ) -> Option<InstructionInputStorageInitializationStats> {
-        self.sequence
-            .as_ref()
-            .map(InstructionInputSequence::storage_initialization)
-    }
-
-    pub(crate) fn join(
-        mut self,
-    ) -> Result<(InstructionInputSequence, InstructionInputPrimerStats), MetalError> {
+    pub(crate) fn join(mut self) -> Result<InstructionInputSequence, MetalError> {
         let sequence = self
             .sequence
             .take()
@@ -294,10 +249,10 @@ impl PendingInstructionInputPrimer {
             .ok_or(MetalError::InvalidInstructionInputState(
                 "native pipeline primer lost its command",
             ))?;
-        let stats = sequence
+        sequence
             .storage
             .complete_native_pipeline_primer(&sequence.resident_rows, command)?;
-        Ok((sequence, stats))
+        Ok(sequence)
     }
 }
 
@@ -557,7 +512,6 @@ pub(crate) struct InstructionInputSequenceStorage {
     native_transition_threads: usize,
     dense_transition_threads: usize,
     config: InstructionInputSequenceConfig,
-    initialization: InstructionInputStorageInitializationStats,
     owned_bytes: u64,
 }
 
@@ -822,8 +776,7 @@ impl SolinasMetal {
                 "allocated storage lengths disagree with the plan",
             ));
         }
-        let initialization =
-            initialize_storage(self, &buffers, config.storage_initialization, !borrowed)?;
+        initialize_storage(self, &buffers, config.storage_initialization, !borrowed)?;
 
         Ok(InstructionInputSequenceStorage {
             context: self.clone(),
@@ -838,7 +791,6 @@ impl SolinasMetal {
             native_transition_threads,
             dense_transition_threads,
             config,
-            initialization,
             owned_bytes,
         })
     }
@@ -918,7 +870,6 @@ impl InstructionInputSequenceStorage {
             });
         }
 
-        let submitted_at = Instant::now();
         let zeros_in = [AkitaField::zero(); INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS];
         let zeros_out = [AkitaField::zero(); INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS];
         write_fields(&self.buffers.e_in, self.e_in_capacity, &zeros_in)?;
@@ -973,8 +924,6 @@ impl InstructionInputSequenceStorage {
         })?;
         Ok(InstructionInputNativePrimerCommand {
             command_buffer,
-            submitted_at,
-            submit_wall: submitted_at.elapsed(),
             resident_row_identity: resident_rows.allocation_identity(),
             storage_buffer_identities: self.buffers.identities(),
         })
@@ -984,7 +933,7 @@ impl InstructionInputSequenceStorage {
         &self,
         resident_rows: &InstructionInputRows,
         primer: InstructionInputNativePrimerCommand,
-    ) -> Result<InstructionInputPrimerStats, MetalError> {
+    ) -> Result<(), MetalError> {
         if resident_rows.allocation_identity() != primer.resident_row_identity
             || self.buffers.identities() != primer.storage_buffer_identities
         {
@@ -992,14 +941,8 @@ impl InstructionInputSequenceStorage {
                 "native pipeline primer resources changed before completion",
             ));
         }
-        let completed_before_join =
-            primer.command_buffer.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(primer.submitted_at)
-            .saturating_sub(primer.submit_wall);
         primer.command_buffer.wait_until_completed();
-        let gpu_active = completed_command_gpu_time(&primer.command_buffer)?;
+        let _ = completed_command_gpu_time(&primer.command_buffer)?;
         // SAFETY: the completed final primer reduction wrote three fields at
         // the start of partial_b, and no protocol command has started.
         let output = unsafe {
@@ -1018,20 +961,7 @@ impl InstructionInputSequenceStorage {
                 "instruction input pipeline primer produced a nonzero message",
             ));
         }
-        let join_wall = join_started.elapsed();
-        Ok(InstructionInputPrimerStats {
-            source_elements: INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
-            e_in_elements: INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
-            e_out_elements: INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
-            wall: primer.submitted_at.elapsed(),
-            submit_wall: primer.submit_wall,
-            overlap_wall,
-            join_wall,
-            gpu_active,
-            completed_before_join,
-            resident_row_identity: primer.resident_row_identity,
-            storage_buffer_identities: primer.storage_buffer_identities,
-        })
+        Ok(())
     }
 
     pub(crate) fn attach(
@@ -1171,10 +1101,6 @@ impl InstructionInputSequence {
 
     pub fn static_buffer_identity(&self) -> [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
         self.storage.buffers.identities()
-    }
-
-    pub const fn storage_initialization(&self) -> InstructionInputStorageInitializationStats {
-        self.storage.initialization
     }
 
     fn execute(
@@ -1381,8 +1307,7 @@ fn initialize_storage(
     buffers: &Buffers,
     mode: InstructionInputStorageInitialization,
     initialize_dense: bool,
-) -> Result<InstructionInputStorageInitializationStats, MetalError> {
-    let buffer_identities = buffers.identities();
+) -> Result<(), MetalError> {
     let fill_lengths: [u64; INSTRUCTION_INPUT_DEVICE_BUFFERS] = std::array::from_fn(|index| {
         let buffer = buffers.all()[index];
         if index < 2 && !initialize_dense {
@@ -1407,19 +1332,9 @@ fn initialize_storage(
         mode = %mode.as_str(),
         device_buffers,
         bytes,
-        protocol_dispatches = 0,
-        buffer_0 = buffer_identities[0],
-        buffer_1 = buffer_identities[1],
-        buffer_2 = buffer_identities[2],
-        buffer_3 = buffer_identities[3],
-        buffer_4 = buffer_identities[4],
-        buffer_5 = buffer_identities[5],
     );
     let _entered = span.enter();
-    let started = Instant::now();
-    let gpu_active = if mode == InstructionInputStorageInitialization::Lazy {
-        Duration::ZERO
-    } else {
+    if mode != InstructionInputStorageInitialization::Lazy {
         let command_buffer = context.queue.new_command_buffer();
         autoreleasepool(|| {
             let encoder = command_buffer.new_blit_command_encoder();
@@ -1437,27 +1352,9 @@ fn initialize_storage(
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        completed_command_gpu_time(command_buffer)?
-    };
-    let wall = started.elapsed();
-    let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
-    let completion = tracing::info_span!(
-        "MetalInstructionInput::storage_initialize_complete",
-        mode = %mode.as_str(),
-        command_completed = mode != InstructionInputStorageInitialization::Lazy,
-        gpu_active_ns,
-    );
-    let _completed = completion.enter();
-    Ok(InstructionInputStorageInitializationStats {
-        mode,
-        device_buffers,
-        bytes,
-        wall,
-        gpu_active,
-        buffer_identities,
-        buffer_offsets: buffers.all().map(BufferRegion::offset_bytes),
-        buffer_lengths: buffers.all().map(BufferRegion::length),
-    })
+        let _ = completed_command_gpu_time(command_buffer)?;
+    }
+    Ok(())
 }
 
 fn write_fields(
@@ -1512,7 +1409,7 @@ const _: () = assert!(std::mem::align_of::<InstructionInputRow>() == 16);
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used, reason = "test module")]
 mod tests {
-    use std::{mem::size_of, slice, time::Duration};
+    use std::{mem::size_of, slice};
 
     use jolt_field::AkitaField;
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
@@ -1523,7 +1420,7 @@ mod tests {
         instruction_input_sequence_storage_bytes, instruction_input_storage_layout,
         instruction_input_weight_capacities, validate_u32_element_count, InstructionInputParams,
         InstructionInputRow, InstructionInputSequenceConfig, InstructionInputStorageInitialization,
-        INSTRUCTION_INPUT_DEVICE_BUFFERS, INSTRUCTION_INPUT_TABLES,
+        INSTRUCTION_INPUT_TABLES,
     };
     use crate::metal::solinas::{
         MetalError, OuterResidualReleaseReceipt, SolinasMetal, SpartanOuterUniskipRow,
@@ -1626,8 +1523,6 @@ mod tests {
 
         assert!(storage.requires_outer_residual_release());
         assert_eq!(storage.owned_bytes(), 480);
-        assert_eq!(storage.initialization.device_buffers, 0);
-        assert_eq!(storage.initialization.bytes, 0);
         assert_eq!(
             storage.buffers.dense_a.allocation_identity(),
             key.storage_id
@@ -1986,21 +1881,9 @@ mod tests {
         let pending = sequence
             .submit_native_pipeline_primer()
             .expect("native pipeline primer should submit");
-        let (mut sequence, primer) = pending
+        let mut sequence = pending
             .join()
             .expect("native pipeline primer should complete");
-
-        assert_eq!(primer.source_elements, 64);
-        assert_eq!(primer.e_in_elements, 1);
-        assert_eq!(primer.e_out_elements, 32);
-        assert_eq!(primer.resident_row_identity, resident_identity);
-        assert_eq!(primer.storage_buffer_identities, storage_identities);
-        assert!(primer.submit_wall <= primer.wall);
-        assert!(primer.overlap_wall <= primer.wall);
-        assert!(primer.join_wall <= primer.wall);
-        assert!(primer.submit_wall + primer.overlap_wall + primer.join_wall <= primer.wall);
-        assert!(primer.gpu_active > Duration::ZERO);
-        assert!(primer.gpu_active <= primer.wall);
         assert_eq!(sequence.resident_row_identity(), resident_identity);
         assert_eq!(sequence.static_buffer_identity(), storage_identities);
 
@@ -2042,7 +1925,7 @@ mod tests {
             bytes.fill(0xA5);
         }
 
-        let stats = initialize_storage(
+        initialize_storage(
             &context,
             &storage.buffers,
             InstructionInputStorageInitialization::Full,
@@ -2050,10 +1933,6 @@ mod tests {
         )
         .expect("full initialization should complete");
 
-        assert_eq!(stats.device_buffers, INSTRUCTION_INPUT_DEVICE_BUFFERS);
-        assert_eq!(stats.bytes, storage.owned_bytes());
-        assert_eq!(stats.buffer_identities, identities);
-        assert!(stats.gpu_active <= stats.wall);
         assert_eq!(storage.buffers.identities(), identities);
         for buffer in storage.buffers.all() {
             let length = usize::try_from(buffer.length()).unwrap();

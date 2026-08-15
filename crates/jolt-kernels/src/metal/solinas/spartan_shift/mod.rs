@@ -1468,13 +1468,6 @@ mod tests {
         );
         assert_eq!(observation.q, expected_prefix.q);
         assert!(!observation.gpu_active.is_zero());
-        assert!(observation.submit_wall <= observation.wall);
-        assert!(observation.overlap_wall <= observation.wall);
-        assert!(observation.join_wall <= observation.wall);
-        assert!(
-            observation.submit_wall + observation.overlap_wall + observation.join_wall
-                <= observation.wall
-        );
 
         let prefix_challenges = point(geometry.prefix_vars, 0xD44F_2004);
         let expected_fold = fold_native_prefix(geometry, planes, &prefix_challenges).unwrap();
@@ -1492,12 +1485,5 @@ mod tests {
         assert_eq!(fold.source_allocation_identities(), source_allocations);
         assert_eq!(observation.outputs, expected_fold);
         assert!(!observation.gpu_active.is_zero());
-        assert!(observation.submit_wall <= observation.wall);
-        assert!(observation.overlap_wall <= observation.wall);
-        assert!(observation.join_wall <= observation.wall);
-        assert!(
-            observation.submit_wall + observation.overlap_wall + observation.join_wall
-                <= observation.wall
-        );
     }
 }

@@ -1,11 +1,10 @@
 use std::{
-    mem::{self, size_of},
+    mem,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
     thread::JoinHandle,
-    time::{Duration, Instant},
 };
 
 use super::backend::MetalBackend;
@@ -16,8 +15,8 @@ use super::solinas::registers_claim_reduction::{
 #[cfg(feature = "allocative")]
 use super::solinas::OuterRegistersClaimCarrierSubmission;
 use super::solinas::{
-    OuterRegistersClaimCarrier, OuterRegistersClaimCarrierJoinStats,
-    OuterRegistersClaimCarrierReceipt, PendingOuterRegistersClaimCarrier, SolinasMetal,
+    OuterRegistersClaimCarrier, OuterRegistersClaimCarrierReceipt,
+    PendingOuterRegistersClaimCarrier, SolinasMetal,
 };
 use crate::optimized::registers_claim_reduction::OptimizedRegistersClaimReduction;
 use crate::{
@@ -84,17 +83,7 @@ pub(super) struct MetalRegistersClaimPendingStage1Carry {
 pub(super) struct MetalRegistersClaimAsyncStage1Carry {
     #[cfg(feature = "allocative")]
     submission: OuterRegistersClaimCarrierSubmission,
-    handle: Option<
-        JoinHandle<
-            Result<
-                (
-                    MetalRegistersClaimStage1Carry,
-                    OuterRegistersClaimCarrierJoinStats,
-                ),
-                String,
-            >,
-        >,
-    >,
+    handle: Option<JoinHandle<Result<MetalRegistersClaimStage1Carry, String>>>,
 }
 
 #[cfg(feature = "allocative")]
@@ -120,32 +109,16 @@ impl Drop for MetalRegistersClaimAsyncStage1Carry {
 }
 
 impl MetalRegistersClaimAsyncStage1Carry {
-    fn join(
-        mut self,
-    ) -> Result<
-        (
-            MetalRegistersClaimStage1Carry,
-            OuterRegistersClaimCarrierJoinStats,
-            bool,
-            Duration,
-        ),
-        KernelError<AkitaField>,
-    > {
-        let completed_before_join = self
-            .handle
-            .as_ref()
-            .is_some_and(std::thread::JoinHandle::is_finished);
+    fn join(mut self) -> Result<MetalRegistersClaimStage1Carry, KernelError<AkitaField>> {
         let handle = self.handle.take().ok_or(KernelError::InvariantViolation {
             reason: "registers claim-reduction carrier worker was already consumed",
         })?;
-        let join_started = Instant::now();
-        let (carry, stats) = handle
+        handle
             .join()
             .map_err(|_| KernelError::InvariantViolation {
                 reason: "registers claim-reduction carrier worker panicked",
             })?
-            .map_err(metal_prepare_error)?;
-        Ok((carry, stats, completed_before_join, join_started.elapsed()))
+            .map_err(metal_prepare_error)
     }
 }
 
@@ -202,16 +175,8 @@ impl MetalRegistersClaimPendingStage1Carry {
         }
     }
 
-    fn join(
-        self,
-    ) -> Result<
-        (
-            MetalRegistersClaimStage1Carry,
-            OuterRegistersClaimCarrierJoinStats,
-        ),
-        KernelError<AkitaField>,
-    > {
-        let (carrier, stats) = self.pending.join().map_err(metal_prepare_error)?;
+    fn join(self) -> Result<MetalRegistersClaimStage1Carry, KernelError<AkitaField>> {
+        let carrier = self.pending.join().map_err(metal_prepare_error)?;
         let carry = MetalRegistersClaimStage1Carry::from_outer(
             carrier,
             MetalRegistersClaimOuterSource {
@@ -224,7 +189,7 @@ impl MetalRegistersClaimPendingStage1Carry {
             },
         )
         .map_err(metal_prepare_error)?;
-        Ok((carry, stats))
+        Ok(carry)
     }
 }
 
@@ -405,10 +370,6 @@ impl RegistersClaimAliasPublisher {
 }
 
 impl RegistersClaimAliasReceiver {
-    fn generation(&self) -> u64 {
-        self.0.generation
-    }
-
     fn take(
         &self,
         expected_rows: usize,
@@ -475,19 +436,10 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
             .ok_or(KernelError::InvariantViolation {
                 reason: "registers claim-reduction trace domain overflows usize",
             })?;
-        let pending_stage1_carry_present = session
-            .state::<MetalRegistersClaimAsyncStage1Carry>()
-            .is_some();
-        let stage1_carry_present = session.state::<MetalRegistersClaimStage1Carry>().is_some()
-            || pending_stage1_carry_present;
-        let alias_receiver_present = session.state::<RegistersClaimAliasReceiver>().is_some();
         let route_span = tracing::info_span!(
             "MetalRegistersClaimReduction::route",
             cycles,
             requested = config.implementation.as_str(),
-            stage1_carry_present,
-            pending_stage1_carry_present,
-            alias_receiver_present,
             realized_route = tracing::field::Empty,
             fallback_reason = tracing::field::Empty,
         );
@@ -535,21 +487,7 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
         }
 
         let geometry = RegistersClaimGeometry::new(cycles).map_err(metal_prepare_error)?;
-        let prepare_span = tracing::info_span!(
-            "MetalRegistersClaimReduction::prepare",
-            cycles,
-            requested = config.implementation.as_str(),
-            realized_route = tracing::field::Empty,
-            fallback_reason = tracing::field::Empty,
-            resident_bytes = tracing::field::Empty,
-            source_allocations = tracing::field::Empty,
-            source_upload_bytes = tracing::field::Empty,
-            source_host_write_bytes = tracing::field::Empty,
-            source_generation = tracing::field::Empty,
-            source_compact_storage_id = tracing::field::Empty,
-            source_rd_storage_id = tracing::field::Empty,
-            alias_generation = tracing::field::Empty,
-        );
+        let prepare_span = tracing::info_span!("MetalRegistersClaimReduction::prepare", cycles);
         let _entered = prepare_span.enter();
         let (midpoint_source, prefix) = match config.implementation {
             RegistersClaimReductionImplementation::Cpu => {
@@ -562,29 +500,10 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
                 let carry = match (carry, pending) {
                     (Some(carry), None) => Some(carry),
                     (None, Some(pending)) => {
-                        let join_span = tracing::info_span!(
-                            "MetalRegistersClaimReduction::carrier_join",
-                            completed_before_join = tracing::field::Empty,
-                            lifecycle_wall_ns = tracing::field::Empty,
-                            join_wall_ns = tracing::field::Empty,
-                            gpu_active_ns = tracing::field::Empty,
-                        );
+                        let join_span =
+                            tracing::info_span!("MetalRegistersClaimReduction::carrier_join");
                         let _join_guard = join_span.enter();
-                        let (carry, stats, completed_before_join, join_wall) = pending.join()?;
-                        let _ = join_span.record("completed_before_join", completed_before_join);
-                        let _ = join_span.record(
-                            "lifecycle_wall_ns",
-                            u64::try_from(stats.lifecycle_wall.as_nanos()).unwrap_or(u64::MAX),
-                        );
-                        let _ = join_span.record(
-                            "join_wall_ns",
-                            u64::try_from(join_wall.as_nanos()).unwrap_or(u64::MAX),
-                        );
-                        let _ = join_span.record(
-                            "gpu_active_ns",
-                            u64::try_from(stats.gpu_active.as_nanos()).unwrap_or(u64::MAX),
-                        );
-                        Some(carry)
+                        Some(pending.join()?)
                     }
                     (None, None) => None,
                     (Some(_), Some(_)) => {
@@ -596,8 +515,6 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
                 let (Some(carry), Some(aliases)) = (carry, aliases) else {
                     let _ = route_span.record("realized_route", "optimized_cpu");
                     let _ = route_span.record("fallback_reason", "missing_carrier");
-                    let _ = prepare_span.record("realized_route", "optimized_cpu");
-                    let _ = prepare_span.record("fallback_reason", "missing_carrier");
                     tracing::warn!(
                         target: "jolt::metal",
                         "registers claim-reduction carriers were unavailable; using optimized CPU"
@@ -615,11 +532,6 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
                         reason: "registers claim-reduction stage-1 carry changed provenance",
                     });
                 }
-                let resident_bytes = carry.rd.resident_bytes();
-                let source_generation = carry.receipt.source_generation;
-                let source_compact_storage_id = carry.receipt.source_compact_storage_id;
-                let source_rd_storage_id = carry.receipt.rd_storage_id;
-                let alias_generation = aliases.0.generation;
                 let prefix = carry
                     .partial_q
                     .stage3_prefix_tables(
@@ -631,19 +543,6 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
                     .map_err(metal_prepare_error)?;
                 let _ = route_span.record("realized_route", "outer_carrier_alias_hybrid");
                 let _ = route_span.record("fallback_reason", "none");
-                let _ = prepare_span.record("realized_route", "outer_carrier_alias_hybrid");
-                let _ = prepare_span.record("fallback_reason", "none");
-                let _ = prepare_span.record("resident_bytes", resident_bytes);
-                let _ = prepare_span.record("source_allocations", 0_u64);
-                let _ = prepare_span.record("source_upload_bytes", 0_u64);
-                let _ = prepare_span.record("source_host_write_bytes", 0_u64);
-                let _ = prepare_span.record("source_generation", source_generation);
-                let _ = prepare_span.record(
-                    "source_compact_storage_id",
-                    source_compact_storage_id as u64,
-                );
-                let _ = prepare_span.record("source_rd_storage_id", source_rd_storage_id as u64);
-                let _ = prepare_span.record("alias_generation", alias_generation);
                 (
                     RegistersClaimMidpointSource::OuterCarrier {
                         rd: carry.rd,
@@ -806,28 +705,11 @@ impl MetalRegistersClaimReductionKernel {
                 aliases,
                 source_compact_storage_id,
             } => {
-                let alias_generation = aliases.generation();
                 let phase = tracing::info_span!(
                     "MetalRegistersClaimReduction::midpoint_projection",
-                    source = "outer_carrier_alias",
                     round = self.geometry.prefix_vars(),
                     rows = self.geometry.rows(),
-                    source_generation = rd.source_generation(),
-                    device_registry_id = rd.device_registry_id(),
-                    source_compact_storage_id = source_compact_storage_id as u64,
-                    source_rd_storage_id = rd.allocation_identity() as u64,
-                    alias_generation,
-                    rd_source_bytes = rd.resident_bytes(),
-                    eq_upload_bytes = self.geometry.prefix_elements() * size_of::<AkitaField>(),
-                    readback_bytes = self.geometry.suffix_elements() * size_of::<AkitaField>(),
-                    device_allocations = 2u64,
-                    dispatches = 1u64,
-                    command_buffers = 1u64,
-                    waits = 1u64,
-                    alias_takes = 1u64,
-                    useful_half_width_terms = tracing::field::Empty,
                     gpu_active_ns = tracing::field::Empty,
-                    resident_wall_ns = tracing::field::Empty,
                 );
                 let _phase_guard = phase.enter();
                 let aliases = aliases.take(
@@ -840,15 +722,7 @@ impl MetalRegistersClaimReductionKernel {
                     .prepare_registers_claim_alias_fold(&rd, &self.bound_challenges, self.config)
                     .map_err(metal_round_error)?;
                 let observation = invocation.execute_timed().map_err(metal_round_error)?;
-                let _ = phase.record(
-                    "useful_half_width_terms",
-                    observation.useful_half_width_terms,
-                );
                 let _ = phase.record("gpu_active_ns", duration_nanos(observation.gpu_active));
-                let _ = phase.record(
-                    "resident_wall_ns",
-                    duration_nanos(observation.resident_wall),
-                );
                 #[cfg(any(test, feature = "test-utils"))]
                 let _ = self
                     .test_counters

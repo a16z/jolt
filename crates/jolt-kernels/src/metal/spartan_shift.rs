@@ -249,17 +249,13 @@ impl MetalSpartanShiftKernel {
         let phase = mem::replace(&mut self.phase, MetalSpartanShiftPhase::Poisoned);
         match phase {
             MetalSpartanShiftPhase::PrefixPending { pending, p } => {
-                let (_invocation, observation) = pending.join().map_err(metal_round_error)?;
                 let span = tracing::info_span!(
                     "MetalSpartanShift::prefix",
-                    wall_ns = duration_nanos(observation.wall),
-                    submit_ns = duration_nanos(observation.submit_wall),
-                    overlap_ns = duration_nanos(observation.overlap_wall),
-                    join_ns = duration_nanos(observation.join_wall),
-                    gpu_active_ns = duration_nanos(observation.gpu_active),
-                    completed_before_join = observation.completed_before_join,
+                    gpu_active_ns = tracing::field::Empty,
                 );
                 let _entered = span.enter();
+                let (_invocation, observation) = pending.join().map_err(metal_round_error)?;
+                let _ = span.record("gpu_active_ns", duration_nanos(observation.gpu_active));
                 self.phase = MetalSpartanShiftPhase::Prefix(SpartanShiftPrefixTables {
                     p,
                     q: observation.q,
@@ -300,17 +296,13 @@ impl MetalSpartanShiftKernel {
         let phase = mem::replace(&mut self.phase, MetalSpartanShiftPhase::Poisoned);
         match phase {
             MetalSpartanShiftPhase::FoldPending(pending) => {
-                let (_invocation, observation) = pending.join().map_err(metal_round_error)?;
                 let span = tracing::info_span!(
                     "MetalSpartanShift::fold",
-                    wall_ns = duration_nanos(observation.wall),
-                    submit_ns = duration_nanos(observation.submit_wall),
-                    overlap_ns = duration_nanos(observation.overlap_wall),
-                    join_ns = duration_nanos(observation.join_wall),
-                    gpu_active_ns = duration_nanos(observation.gpu_active),
-                    completed_before_join = observation.completed_before_join,
+                    gpu_active_ns = tracing::field::Empty,
                 );
                 let _entered = span.enter();
+                let (_invocation, observation) = pending.join().map_err(metal_round_error)?;
+                let _ = span.record("gpu_active_ns", duration_nanos(observation.gpu_active));
                 let state = build_dense_state(
                     self.geometry,
                     observation.outputs,

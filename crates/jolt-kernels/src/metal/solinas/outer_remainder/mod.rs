@@ -22,6 +22,6 @@ pub(crate) use registers_claim::{OuterRegistersClaimCarrier, OuterRegistersClaim
 #[cfg(feature = "allocative")]
 pub(crate) use sequence::OuterRegistersClaimCarrierSubmission;
 pub use sequence::OuterRemainderSequence;
-pub(crate) use sequence::{OuterRegistersClaimCarrierJoinStats, PendingOuterRegistersClaimCarrier};
+pub(crate) use sequence::PendingOuterRegistersClaimCarrier;
 pub(super) use shader::SOURCE;
 pub(crate) use storage::OuterRemainderSequenceStorage;

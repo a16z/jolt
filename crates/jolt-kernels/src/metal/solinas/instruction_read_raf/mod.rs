@@ -2,11 +2,10 @@ use std::mem::{size_of, MaybeUninit};
 use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLResourceOptions, MTLSize,
 };
 
 use super::{
@@ -96,28 +95,12 @@ struct SourcePrimerParams {
 
 const _: [(); 24] = [(); size_of::<SourcePrimerParams>()];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct InstructionReadRafSourcePrimerObservation {
-    pub wall: Duration,
-    pub submit_wall: Duration,
-    pub overlap_wall: Duration,
-    pub join_wall: Duration,
-    pub gpu_active: Duration,
-    pub completed_before_join: bool,
-    pub source_bytes: u64,
-    pub source_pages: u64,
-}
-
 #[must_use = "the source primer must be joined before Instruction Read-RAF"]
 pub(crate) struct PendingInstructionReadRafSourcePrimer {
     source: InstructionReadRafStage1Lease,
     command: Option<CommandBuffer>,
     checksums: Buffer,
     source_identities: [usize; 2],
-    submitted_at: Instant,
-    submit_wall: Duration,
-    source_bytes: u64,
-    source_pages: u64,
 }
 
 #[cfg(feature = "allocative")]
@@ -455,13 +438,7 @@ impl InstructionReadRafStage1Lease {
 }
 
 impl PendingInstructionReadRafSourcePrimer {
-    copy_field_getters! { pub(crate), {
-        source_bytes: u64,
-        source_pages: u64,
-        submit_wall: Duration,
-    }}
-
-    pub(crate) fn join(mut self) -> Result<InstructionReadRafSourcePrimerObservation, MetalError> {
+    pub(crate) fn join(mut self) -> Result<(), MetalError> {
         let source_identities = [
             self.source.row_buffer().as_ptr() as usize,
             self.source.claim_buffer().as_ptr() as usize,
@@ -477,24 +454,9 @@ impl PendingInstructionReadRafSourcePrimer {
             .command
             .take()
             .ok_or_else(|| invalid_source("source primer command was already joined"))?;
-        let completed_before_join = command.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(self.submitted_at)
-            .saturating_sub(self.submit_wall);
         command.wait_until_completed();
-        let join_wall = join_started.elapsed();
-        let gpu_active = completed_command_gpu_time(&command)?;
-        Ok(InstructionReadRafSourcePrimerObservation {
-            wall: self.submitted_at.elapsed(),
-            submit_wall: self.submit_wall,
-            overlap_wall,
-            join_wall,
-            gpu_active,
-            completed_before_join,
-            source_bytes: self.source_bytes,
-            source_pages: self.source_pages,
-        })
+        let _ = completed_command_gpu_time(&command)?;
+        Ok(())
     }
 }
 
@@ -507,17 +469,6 @@ impl SolinasMetal {
         let source = owner.lease(receipt.rows(), self.device_registry_id())?;
         let sources = [source.row_buffer(), source.claim_buffer()];
         let source_identities = sources.map(|buffer| buffer.as_ptr() as usize);
-        let source_bytes = sources.iter().try_fold(0u64, |total, buffer| {
-            total
-                .checked_add(buffer.length())
-                .ok_or(MetalError::InputTooLong(receipt.rows()))
-        })?;
-        let page_bytes = SOURCE_PRIMER_PAGE_BYTES as u64;
-        let source_pages = sources.iter().try_fold(0u64, |total, buffer| {
-            total
-                .checked_add(buffer.length().div_ceil(page_bytes))
-                .ok_or(MetalError::InputTooLong(receipt.rows()))
-        })?;
         let params = SourcePrimerParams {
             word_counts: sources.map(|buffer| buffer.length() / size_of::<u32>() as u64),
             page_words: (SOURCE_PRIMER_PAGE_BYTES / size_of::<u32>()) as u32,
@@ -534,7 +485,6 @@ impl SolinasMetal {
             .device
             .new_buffer(checksum_bytes, MTLResourceOptions::StorageModePrivate);
 
-        let submitted_at = Instant::now();
         let command = self.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
             let encoder = command.new_compute_command_encoder();
@@ -562,16 +512,11 @@ impl SolinasMetal {
             encoder.end_encoding();
             command.commit();
         });
-        let submit_wall = submitted_at.elapsed();
         Ok(PendingInstructionReadRafSourcePrimer {
             source,
             command: Some(command),
             checksums,
             source_identities,
-            submitted_at,
-            submit_wall,
-            source_bytes,
-            source_pages,
         })
     }
 }

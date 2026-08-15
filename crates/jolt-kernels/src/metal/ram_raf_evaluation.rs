@@ -294,21 +294,15 @@ impl MetalRamRafEvaluationKernel {
             .pending
             .take()
             .ok_or_else(|| metal_error("RAM RAF pushforward is missing"))?;
-        let (observation, stats) = {
-            let _span = tracing::info_span!("MetalRamRafEvaluation::join").entered();
-            pending.join().map_err(metal_tail_error)?
-        };
-        tracing::info!(
-            target: "jolt::metal",
-            submit_wall_ns = stats.submit_wall.as_nanos() as u64,
-            overlap_wall_ns = stats.overlap_wall.as_nanos() as u64,
-            join_wall_ns = stats.join_wall.as_nanos() as u64,
-            lifecycle_wall_ns = stats.lifecycle_wall.as_nanos() as u64,
-            gpu_active_ns = stats.gpu_active.as_nanos() as u64,
-            completed_before_join = stats.completed_before_join,
-            accessed_rows = observation.counters.accessed_rows,
-            live_subtotals = observation.counters.nonzero_subtotals,
-            "Metal RAM RAF pushforward joined"
+        let span = tracing::info_span!(
+            "MetalRamRafEvaluation::join",
+            gpu_active_ns = tracing::field::Empty,
+        );
+        let _entered = span.enter();
+        let observation = pending.join().map_err(metal_tail_error)?;
+        let _ = span.record(
+            "gpu_active_ns",
+            u64::try_from(observation.gpu_active.as_nanos()).unwrap_or(u64::MAX),
         );
         let tail = RamRafAffineTail::new(observation.masses, self.lowest_address)
             .map_err(metal_tail_error)?;

@@ -7,7 +7,7 @@ use std::{
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    ComputePipelineState, MTLResourceOptions, MTLSize,
 };
 
 use super::super::{
@@ -33,21 +33,10 @@ pub struct InstructionClaimTiming {
     pub gpu_active: Duration,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct InstructionClaimInitialMessageStats {
-    pub wall: Duration,
-    pub submit_wall: Duration,
-    pub overlap_wall: Duration,
-    pub join_wall: Duration,
-    pub gpu_active: Duration,
-    pub completed_before_join: bool,
-}
-
 struct InstructionClaimInitialMessageCommand {
     command_buffer: CommandBuffer,
     output: Buffer,
     submitted_at: Instant,
-    submit_wall: Duration,
     sequence_identity: usize,
     generation: u64,
 }
@@ -78,20 +67,13 @@ impl Drop for PendingInstructionClaimInitialMessage {
 }
 
 impl PendingInstructionClaimInitialMessage {
-    pub const fn submit_wall(&self) -> Duration {
-        match &self.command {
-            Some(command) => command.submit_wall,
-            None => Duration::ZERO,
-        }
-    }
-
     pub fn join(
         mut self,
     ) -> Result<
         (
             InstructionClaimSequence,
             [AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
-            InstructionClaimInitialMessageStats,
+            InstructionClaimTiming,
         ),
         MetalError,
     > {
@@ -107,8 +89,8 @@ impl PendingInstructionClaimInitialMessage {
             .ok_or(MetalError::InvalidInstructionClaimState(
                 "the pending first message lost its command buffer",
             ))?;
-        let (message, stats) = sequence.complete_initial_message(command)?;
-        Ok((sequence, message, stats))
+        let (message, timing) = sequence.complete_initial_message(command)?;
+        Ok((sequence, message, timing))
     }
 }
 
@@ -612,11 +594,7 @@ impl InstructionClaimSequence {
         MetalError,
     > {
         let command = self.submit_initial_message_command(e_in, e_out)?;
-        let (message, stats) = self.complete_initial_message(command)?;
-        let timing = InstructionClaimTiming {
-            wall: stats.wall,
-            gpu_active: stats.gpu_active,
-        };
+        let (message, timing) = self.complete_initial_message(command)?;
         Ok((message, timing))
     }
 
@@ -714,7 +692,6 @@ impl InstructionClaimSequence {
                 command_buffer,
                 output,
                 submitted_at,
-                submit_wall: submitted_at.elapsed(),
                 sequence_identity: self.buffers.gamma_powers.as_ptr() as usize,
                 generation: self.generation,
             })
@@ -727,7 +704,7 @@ impl InstructionClaimSequence {
     ) -> Result<
         (
             [AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS],
-            InstructionClaimInitialMessageStats,
+            InstructionClaimTiming,
         ),
         MetalError,
     > {
@@ -739,12 +716,6 @@ impl InstructionClaimSequence {
                 "the pending first message belongs to a different sequence generation",
             ));
         }
-        let completed_before_join =
-            command.command_buffer.status() == MTLCommandBufferStatus::Completed;
-        let join_started = Instant::now();
-        let overlap_wall = join_started
-            .saturating_duration_since(command.submitted_at)
-            .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let values = unsafe {
@@ -768,18 +739,14 @@ impl InstructionClaimSequence {
                     "the first-message output column count changed",
                 )
             })?;
-        let stats = InstructionClaimInitialMessageStats {
+        let timing = InstructionClaimTiming {
             wall: command.submitted_at.elapsed(),
-            submit_wall: command.submit_wall,
-            overlap_wall,
-            join_wall: join_started.elapsed(),
             gpu_active,
-            completed_before_join,
         };
         self.phase = InstructionClaimPhase::Materialized;
-        self.timing.wall += stats.wall;
-        self.timing.gpu_active += stats.gpu_active;
-        Ok((message, stats))
+        self.timing.wall += timing.wall;
+        self.timing.gpu_active += timing.gpu_active;
+        Ok((message, timing))
     }
 
     pub fn bind_and_message(
