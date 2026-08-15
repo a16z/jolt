@@ -13,8 +13,8 @@ use metal::{
 };
 
 use super::{
-    set_inline_bytes, validate_completed_command, Fp128, MetalError, PipelineLimits,
-    ResidentLookupIndexPlane, SolinasMetal,
+    encode_column_reductions, set_inline_bytes, validate_completed_command, Fp128, MetalError,
+    PipelineLimits, ResidentLookupIndexPlane, SolinasMetal,
 };
 
 const FACTORS: usize = 16;
@@ -170,14 +170,6 @@ struct MaterializeParams {
     e_in_length: u32,
     e_out_length: u32,
     _reserved: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct ReductionParams {
-    input_count: u32,
-    output_count: u32,
-    _reserved: [u32; 2],
 }
 
 struct Pipelines {
@@ -663,7 +655,7 @@ impl InstructionRaSequence {
 
         let queue = self.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
-        autoreleasepool(|| {
+        let final_in_a = autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             let mut message_branches_in_a = self.branches_in_a;
             if let Some(challenge) = challenge {
@@ -724,14 +716,22 @@ impl InstructionRaSequence {
                     self.message_threads_per_threadgroup,
                 );
             }
-            self.encode_reductions(encoder, e_out.len());
+            let final_in_a = encode_column_reductions(
+                encoder,
+                &self.pipelines.reduce,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                SAMPLES,
+                self.reduction_limits.thread_execution_width,
+            )?;
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            Ok::<(), MetalError>(())
+            Ok::<bool, MetalError>(final_in_a)
         })?;
 
-        let message = self.finish_command(command_buffer, e_out.len())?;
+        let message = self.finish_command(command_buffer, final_in_a)?;
         if challenge.is_some() {
             self.branch_width = next_width;
             self.branches_in_a = !self.branches_in_a;
@@ -783,7 +783,7 @@ impl InstructionRaSequence {
 
         let queue = self.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
-        autoreleasepool(|| {
+        let final_in_a = autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipelines.dense_transition);
             encoder.set_buffer(0, Some(self.dense_source_buffer()?), 0);
@@ -798,14 +798,22 @@ impl InstructionRaSequence {
                 e_out.len(),
                 self.message_threads_per_threadgroup,
             );
-            self.encode_reductions(encoder, e_out.len());
+            let final_in_a = encode_column_reductions(
+                encoder,
+                &self.pipelines.reduce,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                SAMPLES,
+                self.reduction_limits.thread_execution_width,
+            )?;
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            Ok::<(), MetalError>(())
+            Ok::<bool, MetalError>(final_in_a)
         })?;
 
-        let message = self.finish_command(command_buffer, e_out.len())?;
+        let message = self.finish_command(command_buffer, final_in_a)?;
         self.dense_elements /= 2;
         self.dense_in_a = !self.dense_in_a;
         Ok(message)
@@ -878,53 +886,12 @@ impl InstructionRaSequence {
         );
     }
 
-    fn encode_reductions(&self, encoder: &metal::ComputeCommandEncoderRef, mut count: usize) {
-        let mut input_a = true;
-        while count > 1 {
-            let output_count = count.div_ceil(self.reduction_limits.thread_execution_width);
-            let params = ReductionParams {
-                input_count: count as u32,
-                output_count: output_count as u32,
-                _reserved: [0; 2],
-            };
-            encoder.set_compute_pipeline_state(&self.pipelines.reduce);
-            let (input, output) = if input_a {
-                (&self.buffers.partial_a, &self.buffers.partial_b)
-            } else {
-                (&self.buffers.partial_b, &self.buffers.partial_a)
-            };
-            encoder.set_buffer(0, Some(input), 0);
-            encoder.set_buffer(1, Some(output), 0);
-            set_inline_bytes(encoder, 2, &params);
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: output_count as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: self.reduction_limits.thread_execution_width as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            count = output_count;
-            input_a = !input_a;
-        }
-    }
-
     fn finish_command(
         &mut self,
         command_buffer: &metal::CommandBufferRef,
-        reduction_input_count: usize,
+        final_in_a: bool,
     ) -> Result<[AkitaField; SAMPLES], MetalError> {
         validate_completed_command(command_buffer)?;
-        let mut count = reduction_input_count;
-        let mut final_in_a = true;
-        while count > 1 {
-            count = count.div_ceil(self.reduction_limits.thread_execution_width);
-            final_in_a = !final_in_a;
-        }
         let buffer = if final_in_a {
             &self.buffers.partial_a
         } else {
@@ -1054,7 +1021,6 @@ fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
 const _: () = assert!(size_of::<MessageParams>() == 16);
 const _: () = assert!(size_of::<BranchParams>() == 16);
 const _: () = assert!(size_of::<MaterializeParams>() == 16);
-const _: () = assert!(size_of::<ReductionParams>() == 16);
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "test assertions")]

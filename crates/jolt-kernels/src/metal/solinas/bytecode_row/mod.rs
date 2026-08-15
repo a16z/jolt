@@ -328,7 +328,7 @@ impl BytecodeCycleRowSequence {
                     "row-derived buffers were released",
                 ))?;
         let command_buffer = self.context.queue.new_command_buffer();
-        autoreleasepool(|| {
+        let final_in_a = autoreleasepool(|| {
             if let Some(challenge) = challenge {
                 let root_encoder = command_buffer.new_compute_command_encoder();
                 root_encoder.set_compute_pipeline_state(&self.pipelines.bind_roots);
@@ -372,15 +372,16 @@ impl BytecodeCycleRowSequence {
                 set_inline_bytes(encoder, 7, &self.params);
                 self.encode_row_dispatch(encoder, self.first_message_threads);
             }
-            self.dense
-                .encode_reductions(encoder, self.params.hi_length as usize);
+            let final_in_a = self
+                .dense
+                .encode_reductions(encoder, self.params.hi_length as usize)?;
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-        });
+            Ok::<bool, MetalError>(final_in_a)
+        })?;
         validate_completed_command(command_buffer)?;
-        self.dense
-            .read_reduced_message(self.params.hi_length as usize)
+        self.dense.read_reduced_message(final_in_a)
     }
 
     fn encode_row_inputs(

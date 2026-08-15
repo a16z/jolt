@@ -68,7 +68,10 @@ mod source;
 mod spartan_outer_uniskip;
 pub mod spartan_shift;
 
-use runtime::{buffer_from_slice, completed_command_gpu_time, validate_completed_command};
+use runtime::{
+    buffer_from_slice, completed_command_gpu_time, encode_column_reductions,
+    validate_completed_command, ReductionBuffer,
+};
 pub(crate) use runtime::{set_inline_bytes, validate_working_set};
 pub use runtime::{DeviceInfo, PipelineLimits, SolinasMetal};
 

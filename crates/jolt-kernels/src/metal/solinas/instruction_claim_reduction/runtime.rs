@@ -11,17 +11,16 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
-    ProductRemainderRows, ProductRemainderSourceKind, SolinasMetal,
+    buffer_from_slice, completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
+    Fp128, MetalError, ProductRemainderRows, ProductRemainderSourceKind, SolinasMetal,
 };
 use super::{
     finalize_openings, finish_bind, nontrivial_gamma_powers, InstructionClaimGeometry,
     InstructionClaimKernelConfig, InstructionClaimOpeningMode, InstructionClaimOpeningParams,
     InstructionClaimOpenings, InstructionClaimOperandPlanes, InstructionClaimPhaseParams,
-    InstructionClaimReductionParams, InstructionClaimReductionPlan, InstructionClaimStorageLayout,
-    ALIASED_OPENING_PIPELINE, INSTRUCTION_CLAIM_ALIASED_OPENINGS,
-    INSTRUCTION_CLAIM_MESSAGE_COLUMNS, INSTRUCTION_CLAIM_SIMD_WIDTH, MATERIALIZE_PIPELINE,
-    REDUCTION_PIPELINE, TRANSITION_PIPELINE,
+    InstructionClaimReductionPlan, InstructionClaimStorageLayout, ALIASED_OPENING_PIPELINE,
+    INSTRUCTION_CLAIM_ALIASED_OPENINGS, INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
+    INSTRUCTION_CLAIM_SIMD_WIDTH, MATERIALIZE_PIPELINE, REDUCTION_PIPELINE, TRANSITION_PIPELINE,
 };
 
 const STAGE1_ROWS_MATERIALIZE_PIPELINE: &str = "solinas_instruction_claim_materialize_stage1_rows";
@@ -1354,39 +1353,19 @@ fn encode_reductions(
     pipeline: &ComputePipelineState,
     partial_a: &Buffer,
     partial_b: &Buffer,
-    mut input_count: usize,
+    input_count: usize,
     columns: usize,
 ) -> Result<bool, MetalError> {
-    let plan = InstructionClaimReductionPlan::new(input_count, columns)?;
-    let mut input_a = true;
-    for pass in plan.passes() {
-        let params = InstructionClaimReductionParams::new(pass.input_count(), columns)?;
-        encoder.set_compute_pipeline_state(pipeline);
-        let (input, output) = if input_a {
-            (partial_a, partial_b)
-        } else {
-            (partial_b, partial_a)
-        };
-        encoder.set_buffer(0, Some(input), 0);
-        encoder.set_buffer(1, Some(output), 0);
-        set_inline_bytes(encoder, 2, &params);
-        encoder.dispatch_thread_groups(
-            MTLSize {
-                width: pass.output_count() as u64,
-                height: 1,
-                depth: 1,
-            },
-            MTLSize {
-                width: INSTRUCTION_CLAIM_SIMD_WIDTH as u64,
-                height: 1,
-                depth: 1,
-            },
-        );
-        input_count = pass.output_count();
-        input_a = !input_a;
-    }
-    debug_assert_eq!(input_count, 1);
-    Ok(input_a)
+    let _ = InstructionClaimReductionPlan::new(input_count, columns)?;
+    encode_column_reductions(
+        encoder,
+        pipeline,
+        partial_a,
+        partial_b,
+        input_count,
+        columns,
+        INSTRUCTION_CLAIM_SIMD_WIDTH,
+    )
 }
 
 fn finish_command<const COLUMNS: usize>(

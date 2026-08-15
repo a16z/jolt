@@ -4,8 +4,8 @@ use jolt_field::AkitaField;
 use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
 use super::{
-    set_inline_bytes, validate_completed_command, Fp128, MetalError, PipelineLimits, SolinasMetal,
-    AKITA_OFFSET_FFFFA7F7,
+    encode_column_reductions, set_inline_bytes, validate_completed_command, Fp128, MetalError,
+    PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
 };
 
 pub const BYTECODE_CYCLE_TABLES: usize = 5;
@@ -114,14 +114,6 @@ struct Params {
     message_pairs: u32,
     threadgroups: u32,
     reserved: u32,
-}
-
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct ReductionParams {
-    input_count: u32,
-    output_count: u32,
-    reserved: [u32; 2],
 }
 
 struct Pipelines {
@@ -383,7 +375,7 @@ impl BytecodeCycleSequence {
 
         let queue = self.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
-        autoreleasepool(|| {
+        let final_in_a = autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&pipeline);
             for (index, buffer) in self.source_buffers().iter().enumerate() {
@@ -416,13 +408,14 @@ impl BytecodeCycleSequence {
                     depth: 1,
                 },
             );
-            self.encode_reductions(encoder, threadgroups);
+            let final_in_a = self.encode_reductions(encoder, threadgroups)?;
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-        });
+            Ok::<bool, MetalError>(final_in_a)
+        })?;
         validate_completed_command(command_buffer)?;
-        let message = self.read_reduced_message(threadgroups)?;
+        let message = self.read_reduced_message(final_in_a)?;
         if challenge.is_some() {
             self.current_elements /= 2;
             self.source_in_a = !self.source_in_a;
@@ -433,51 +426,23 @@ impl BytecodeCycleSequence {
     pub(super) fn encode_reductions(
         &self,
         encoder: &metal::ComputeCommandEncoderRef,
-        mut input_count: usize,
-    ) {
-        let mut input_a = true;
-        while input_count > 1 {
-            let output_count = input_count.div_ceil(self.reduction_limits.thread_execution_width);
-            let params = ReductionParams {
-                input_count: input_count as u32,
-                output_count: output_count as u32,
-                reserved: [0; 2],
-            };
-            encoder.set_compute_pipeline_state(&self.pipelines.reduce);
-            let (input, output) = if input_a {
-                (&self.buffers.partial_a, &self.buffers.partial_b)
-            } else {
-                (&self.buffers.partial_b, &self.buffers.partial_a)
-            };
-            encoder.set_buffer(0, Some(input), 0);
-            encoder.set_buffer(1, Some(output), 0);
-            set_inline_bytes(encoder, 2, &params);
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: output_count as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: self.reduction_limits.thread_execution_width as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            input_count = output_count;
-            input_a = !input_a;
-        }
+        input_count: usize,
+    ) -> Result<bool, MetalError> {
+        encode_column_reductions(
+            encoder,
+            &self.pipelines.reduce,
+            &self.buffers.partial_a,
+            &self.buffers.partial_b,
+            input_count,
+            BYTECODE_CYCLE_SAMPLES,
+            self.reduction_limits.thread_execution_width,
+        )
     }
 
     pub(super) fn read_reduced_message(
         &self,
-        mut input_count: usize,
+        final_in_a: bool,
     ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
-        let mut final_in_a = true;
-        while input_count > 1 {
-            input_count = input_count.div_ceil(self.reduction_limits.thread_execution_width);
-            final_in_a = !final_in_a;
-        }
         let final_buffer = if final_in_a {
             &self.buffers.partial_a
         } else {
@@ -538,7 +503,6 @@ fn byte_length(elements: usize) -> Result<u64, MetalError> {
 }
 
 const _: () = assert!(size_of::<Params>() == 16);
-const _: () = assert!(size_of::<ReductionParams>() == 16);
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]

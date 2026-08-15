@@ -1,8 +1,8 @@
 use std::{mem::size_of, slice, sync::Arc};
 
 use super::{
-    buffer_from_slice, set_inline_bytes, validate_completed_command, Fp128, MetalError,
-    PipelineLimits, SolinasMetal,
+    buffer_from_slice, encode_column_reductions, set_inline_bytes, validate_completed_command,
+    Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
 use jolt_field::AkitaField;
 use metal::{
@@ -327,14 +327,6 @@ struct BranchParams {
     k: u32,
     branch_width: u32,
     reserved: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct ReductionParams {
-    input_count: u32,
-    output_count: u32,
-    reserved: [u32; 2],
 }
 
 struct Buffers {
@@ -775,7 +767,7 @@ impl BooleanitySequence {
 
         let queue = self.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
-        autoreleasepool(|| {
+        let final_in_a = autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             let mut message_branches_in_a = self.branches_in_a;
             if let Some(challenge) = challenge {
@@ -819,12 +811,21 @@ impl BooleanitySequence {
             encoder.set_buffer(9, Some(&self.buffers.initial_leading), 0);
             set_inline_bytes(encoder, 10, &params);
             Self::encode_message_dispatch(encoder, e_out.len(), self.threads_per_threadgroup);
-            self.encode_reductions(encoder, e_out.len());
+            let final_in_a = encode_column_reductions(
+                encoder,
+                &self.reduction_pipeline,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                MESSAGE_LANES,
+                self.reduction_limits.thread_execution_width,
+            )?;
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-        });
-        let message = self.finish_command(command_buffer, e_out.len())?;
+            Ok::<bool, MetalError>(final_in_a)
+        })?;
+        let message = self.finish_command(command_buffer, final_in_a)?;
         if challenge.is_some() {
             self.branch_width = next_width;
             self.branches_in_a = !self.branches_in_a;
@@ -861,7 +862,7 @@ impl BooleanitySequence {
 
         let queue = self.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
-        autoreleasepool(|| {
+        let final_in_a = autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.dense_pipeline);
             encoder.set_buffer(0, Some(self.dense_source_buffer()), 0);
@@ -873,12 +874,21 @@ impl BooleanitySequence {
             set_inline_bytes(encoder, 6, &challenge);
             set_inline_bytes(encoder, 7, &params);
             Self::encode_message_dispatch(encoder, e_out.len(), self.dense_threads_per_threadgroup);
-            self.encode_reductions(encoder, e_out.len());
+            let final_in_a = encode_column_reductions(
+                encoder,
+                &self.reduction_pipeline,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                MESSAGE_LANES,
+                self.reduction_limits.thread_execution_width,
+            )?;
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-        });
-        let message = self.finish_command(command_buffer, e_out.len())?;
+            Ok::<bool, MetalError>(final_in_a)
+        })?;
+        let message = self.finish_command(command_buffer, final_in_a)?;
         self.dense_elements /= 2;
         self.dense_source_in_a = !self.dense_source_in_a;
         Ok(message)
@@ -960,53 +970,12 @@ impl BooleanitySequence {
         );
     }
 
-    fn encode_reductions(&self, encoder: &metal::ComputeCommandEncoderRef, mut input_count: usize) {
-        let mut input_a = true;
-        while input_count > 1 {
-            let output_count = input_count.div_ceil(self.reduction_limits.thread_execution_width);
-            let params = ReductionParams {
-                input_count: input_count as u32,
-                output_count: output_count as u32,
-                reserved: [0; 2],
-            };
-            encoder.set_compute_pipeline_state(&self.reduction_pipeline);
-            let (input, output) = if input_a {
-                (&self.buffers.partial_a, &self.buffers.partial_b)
-            } else {
-                (&self.buffers.partial_b, &self.buffers.partial_a)
-            };
-            encoder.set_buffer(0, Some(input), 0);
-            encoder.set_buffer(1, Some(output), 0);
-            set_inline_bytes(encoder, 2, &params);
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: output_count as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: self.reduction_limits.thread_execution_width as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            input_count = output_count;
-            input_a = !input_a;
-        }
-    }
-
     fn finish_command(
         &mut self,
         command_buffer: &metal::CommandBufferRef,
-        reduction_input_count: usize,
+        final_in_a: bool,
     ) -> Result<[AkitaField; MESSAGE_LANES], MetalError> {
         validate_completed_command(command_buffer)?;
-        let mut reductions = reduction_input_count;
-        let mut final_in_a = true;
-        while reductions > 1 {
-            reductions = reductions.div_ceil(self.reduction_limits.thread_execution_width);
-            final_in_a = !final_in_a;
-        }
         let buffer = if final_in_a {
             &self.buffers.partial_a
         } else {
@@ -1168,7 +1137,6 @@ const _: () = assert!(BOOLEANITY_SOURCE_ROW_BYTES == 32);
 const _: () = assert!(size_of::<SelectorAbi>() == 8);
 const _: () = assert!(size_of::<Params>() == 48);
 const _: () = assert!(size_of::<BranchParams>() == 16);
-const _: () = assert!(size_of::<ReductionParams>() == 16);
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal resident-row validation setup")]

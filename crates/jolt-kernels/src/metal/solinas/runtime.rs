@@ -1,11 +1,10 @@
-use std::ffi::c_void;
-use std::time::Duration;
+use std::{ffi::c_void, mem::size_of, time::Duration};
 
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
 use metal::{
     objc::{runtime::Sel, Message},
-    Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, Library,
-    MTLCommandBufferStatus, MTLResourceOptions,
+    Buffer, CommandQueue, CompileOptions, ComputeCommandEncoderRef, ComputePipelineState, Device,
+    Library, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -20,6 +19,75 @@ pub(crate) fn set_inline_bytes<T>(
         std::mem::size_of::<T>() as u64,
         std::ptr::from_ref(value).cast::<c_void>(),
     );
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ColumnReductionParams {
+    input_count: u32,
+    output_count: u32,
+    columns: u32,
+    reserved: u32,
+}
+
+const _: [(); 16] = [(); size_of::<ColumnReductionParams>()];
+
+pub(crate) trait ReductionBuffer {
+    fn bind_reduction(&self, encoder: &ComputeCommandEncoderRef, index: u64);
+}
+
+impl ReductionBuffer for Buffer {
+    fn bind_reduction(&self, encoder: &ComputeCommandEncoderRef, index: u64) {
+        encoder.set_buffer(index, Some(self), 0);
+    }
+}
+
+pub(crate) fn encode_column_reductions<B: ReductionBuffer>(
+    encoder: &ComputeCommandEncoderRef,
+    pipeline: &ComputePipelineState,
+    partial_a: &B,
+    partial_b: &B,
+    mut input_count: usize,
+    columns: usize,
+    width: usize,
+) -> Result<bool, MetalError> {
+    let columns = u32::try_from(columns).map_err(|_| MetalError::InputTooLong(columns))?;
+    let mut input_a = true;
+    while input_count > 1 {
+        let output_count = input_count.div_ceil(width);
+        let params = ColumnReductionParams {
+            input_count: u32::try_from(input_count)
+                .map_err(|_| MetalError::InputTooLong(input_count))?,
+            output_count: u32::try_from(output_count)
+                .map_err(|_| MetalError::InputTooLong(output_count))?,
+            columns,
+            reserved: 0,
+        };
+        encoder.set_compute_pipeline_state(pipeline);
+        let (input, output) = if input_a {
+            (partial_a, partial_b)
+        } else {
+            (partial_b, partial_a)
+        };
+        input.bind_reduction(encoder, 0);
+        output.bind_reduction(encoder, 1);
+        set_inline_bytes(encoder, 2, &params);
+        encoder.dispatch_thread_groups(
+            MTLSize {
+                width: output_count as u64,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: width as u64,
+                height: 1,
+                depth: 1,
+            },
+        );
+        input_count = output_count;
+        input_a = !input_a;
+    }
+    Ok(input_a)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

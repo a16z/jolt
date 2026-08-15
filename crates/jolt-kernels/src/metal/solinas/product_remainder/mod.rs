@@ -19,7 +19,7 @@ use super::product_uniskip::{
     PRODUCT_UNISKIP_SIMD_WIDTH, STAGE1_BLOCKS_PIPELINE as PRODUCT_UNISKIP_STAGE1_PIPELINE,
 };
 use super::{
-    buffer_from_slice, completed_command_gpu_time, set_inline_bytes,
+    buffer_from_slice, completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
     spartan_outer_uniskip_residual_row_bytes, Fp128, InstructionInputRow, MetalError, SolinasMetal,
 };
 
@@ -1785,38 +1785,19 @@ fn encode_product_remainder_reductions(
     pipeline: &ComputePipelineState,
     partial_a: &Buffer,
     partial_b: &Buffer,
-    mut input_count: usize,
+    input_count: usize,
     columns: usize,
 ) -> Result<bool, MetalError> {
-    let mut input_a = true;
-    while input_count > 1 {
-        let params = ProductRemainderReductionParams::new(input_count, columns)?;
-        let output_count = params.output_count as usize;
-        encoder.set_compute_pipeline_state(pipeline);
-        let (input, output) = if input_a {
-            (partial_a, partial_b)
-        } else {
-            (partial_b, partial_a)
-        };
-        encoder.set_buffer(0, Some(input), 0);
-        encoder.set_buffer(1, Some(output), 0);
-        set_inline_bytes(encoder, 2, &params);
-        encoder.dispatch_thread_groups(
-            MTLSize {
-                width: output_count as u64,
-                height: 1,
-                depth: 1,
-            },
-            MTLSize {
-                width: PRODUCT_REMAINDER_SIMD_WIDTH as u64,
-                height: 1,
-                depth: 1,
-            },
-        );
-        input_count = output_count;
-        input_a = !input_a;
-    }
-    Ok(input_a)
+    let _ = ProductRemainderReductionParams::new(input_count, columns)?;
+    encode_column_reductions(
+        encoder,
+        pipeline,
+        partial_a,
+        partial_b,
+        input_count,
+        columns,
+        PRODUCT_REMAINDER_SIMD_WIDTH,
+    )
 }
 
 fn finish_product_remainder_command<const COLUMNS: usize>(

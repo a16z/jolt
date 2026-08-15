@@ -6,7 +6,8 @@ use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResource
 use rayon::prelude::*;
 
 use super::{
-    set_inline_bytes, validate_completed_command, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    encode_column_reductions, set_inline_bytes, validate_completed_command, Fp128, MetalError,
+    PipelineLimits, SolinasMetal,
 };
 
 pub const PRODUCT5_FACTORS: usize = 5;
@@ -64,14 +65,6 @@ struct Product5Params {
     e_in_length: u32,
     e_out_length: u32,
     _reserved: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct ReductionParams {
-    input_count: u32,
-    output_count: u32,
-    _reserved: [u32; 2],
 }
 
 fn buffer_bytes(elements: usize) -> Result<u64, MetalError> {
@@ -490,45 +483,20 @@ impl Product5Sequence {
                 },
             );
 
-            let mut input_count = e_out.len();
-            let mut input_a = true;
-            while input_count > 1 {
-                let output_count =
-                    input_count.div_ceil(self.reduction_limits.thread_execution_width);
-                let reduction_params = ReductionParams {
-                    input_count: input_count as u32,
-                    output_count: output_count as u32,
-                    _reserved: [0; 2],
-                };
-                encoder.set_compute_pipeline_state(&self.reduction_pipeline);
-                let (input, output) = if input_a {
-                    (&self.buffers.partial_a, &self.buffers.partial_b)
-                } else {
-                    (&self.buffers.partial_b, &self.buffers.partial_a)
-                };
-                encoder.set_buffer(0, Some(input), 0);
-                encoder.set_buffer(1, Some(output), 0);
-                set_inline_bytes(encoder, 2, &reduction_params);
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: output_count as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: self.reduction_limits.thread_execution_width as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-                input_count = output_count;
-                input_a = !input_a;
-            }
+            let final_in_a = encode_column_reductions(
+                encoder,
+                &self.reduction_pipeline,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                e_out.len(),
+                PRODUCT5_FACTORS,
+                self.reduction_limits.thread_execution_width,
+            )?;
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
             validate_completed_command(command_buffer)?;
-            let final_buffer = if input_a {
+            let final_buffer = if final_in_a {
                 &self.buffers.partial_a
             } else {
                 &self.buffers.partial_b

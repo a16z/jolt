@@ -14,9 +14,10 @@ use metal::{
 };
 
 use super::{
-    completed_command_gpu_time, set_inline_bytes, spartan_outer_uniskip_residual_row_bytes,
-    validate_completed_command, Fp128, MetalError, OuterResidualArenaKey,
-    OuterResidualReleaseReceipt, PipelineLimits, SolinasMetal, SpartanOuterUniskipRows,
+    completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
+    spartan_outer_uniskip_residual_row_bytes, validate_completed_command, Fp128, MetalError,
+    OuterResidualArenaKey, OuterResidualReleaseReceipt, PipelineLimits, ReductionBuffer,
+    SolinasMetal, SpartanOuterUniskipRows,
 };
 
 pub const INSTRUCTION_INPUT_TABLES: usize = 8;
@@ -339,14 +340,6 @@ struct InstructionInputParams {
     reserved: u32,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct ReductionParams {
-    input_count: u32,
-    output_count: u32,
-    reserved: [u32; 2],
-}
-
 struct Pipelines {
     native_message: ComputePipelineState,
     native_transition: ComputePipelineState,
@@ -413,6 +406,12 @@ impl BufferRegion {
 
     fn bind(&self, encoder: &metal::ComputeCommandEncoderRef, index: u64) {
         encoder.set_buffer(index, Some(&self.buffer), self.offset_bytes);
+    }
+}
+
+impl ReductionBuffer for BufferRegion {
+    fn bind_reduction(&self, encoder: &metal::ComputeCommandEncoderRef, index: u64) {
+        self.bind(encoder, index);
     }
 }
 
@@ -930,11 +929,6 @@ impl InstructionInputSequenceStorage {
             e_out_length: INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS as u32,
             reserved: 0,
         };
-        let reduction_params = ReductionParams {
-            input_count: INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS as u32,
-            output_count: 1,
-            reserved: [0; 2],
-        };
         let gamma = Fp128::from_jolt_field(&AkitaField::zero());
         let command_buffer = self.context.queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
@@ -964,25 +958,19 @@ impl InstructionInputSequenceStorage {
                     depth: 1,
                 },
             );
-            encoder.set_compute_pipeline_state(&self.pipelines.reduction);
-            self.buffers.partial_a.bind(encoder, 0);
-            self.buffers.partial_b.bind(encoder, 1);
-            set_inline_bytes(encoder, 2, &reduction_params);
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: 1,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: self.reduction_limits.thread_execution_width as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
+            let _ = encode_column_reductions(
+                encoder,
+                &self.pipelines.reduction,
+                &self.buffers.partial_a,
+                &self.buffers.partial_b,
+                INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
+                INSTRUCTION_INPUT_COEFFICIENTS,
+                self.reduction_limits.thread_execution_width,
+            )?;
             encoder.end_encoding();
             command_buffer.commit();
-        });
+            Ok::<(), MetalError>(())
+        })?;
         Ok(InstructionInputNativePrimerCommand {
             command_buffer,
             submitted_at,
@@ -1256,7 +1244,7 @@ impl InstructionInputSequence {
 
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
-        autoreleasepool(|| {
+        let final_in_a = autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&pipeline);
             match kind {
@@ -1322,15 +1310,27 @@ impl InstructionInputSequence {
                     depth: 1,
                 },
             );
-            self.encode_reductions(encoder, e_out.len());
+            let final_in_a = encode_column_reductions(
+                encoder,
+                &self.storage.pipelines.reduction,
+                &self.storage.buffers.partial_a,
+                &self.storage.buffers.partial_b,
+                e_out.len(),
+                INSTRUCTION_INPUT_COEFFICIENTS,
+                self.storage.reduction_limits.thread_execution_width,
+            )?;
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            Ok::<(), MetalError>(())
+            Ok::<bool, MetalError>(final_in_a)
         })?;
 
         validate_completed_command(command_buffer)?;
-        let final_buffer = self.final_partial_buffer(e_out.len());
+        let final_buffer = if final_in_a {
+            &self.storage.buffers.partial_a
+        } else {
+            &self.storage.buffers.partial_b
+        };
         // SAFETY: the completed reduction leaves three canonical fields at the
         // start of the selected partial buffer.
         let values = unsafe {
@@ -1357,60 +1357,6 @@ impl InstructionInputSequence {
             }
         }
         Ok(message)
-    }
-
-    fn encode_reductions(&self, encoder: &metal::ComputeCommandEncoderRef, mut count: usize) {
-        let mut input_a = true;
-        while count > 1 {
-            let output_count = count.div_ceil(SIMD_WIDTH);
-            let params = ReductionParams {
-                input_count: count as u32,
-                output_count: output_count as u32,
-                reserved: [0; 2],
-            };
-            encoder.set_compute_pipeline_state(&self.storage.pipelines.reduction);
-            let (input, output) = if input_a {
-                (
-                    &self.storage.buffers.partial_a,
-                    &self.storage.buffers.partial_b,
-                )
-            } else {
-                (
-                    &self.storage.buffers.partial_b,
-                    &self.storage.buffers.partial_a,
-                )
-            };
-            input.bind(encoder, 0);
-            output.bind(encoder, 1);
-            set_inline_bytes(encoder, 2, &params);
-            encoder.dispatch_thread_groups(
-                MTLSize {
-                    width: output_count as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: self.storage.reduction_limits.thread_execution_width as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            count = output_count;
-            input_a = !input_a;
-        }
-    }
-
-    fn final_partial_buffer(&self, mut count: usize) -> &BufferRegion {
-        let mut input_a = true;
-        while count > 1 {
-            count = count.div_ceil(SIMD_WIDTH);
-            input_a = !input_a;
-        }
-        if input_a {
-            &self.storage.buffers.partial_a
-        } else {
-            &self.storage.buffers.partial_b
-        }
     }
 
     fn dense_source_buffer(&self) -> &BufferRegion {
@@ -1577,7 +1523,7 @@ mod tests {
         instruction_input_sequence_storage_bytes, instruction_input_storage_layout,
         instruction_input_weight_capacities, validate_u32_element_count, InstructionInputParams,
         InstructionInputRow, InstructionInputSequenceConfig, InstructionInputStorageInitialization,
-        ReductionParams, INSTRUCTION_INPUT_DEVICE_BUFFERS, INSTRUCTION_INPUT_TABLES,
+        INSTRUCTION_INPUT_DEVICE_BUFFERS, INSTRUCTION_INPUT_TABLES,
     };
     use crate::metal::solinas::{
         MetalError, OuterResidualReleaseReceipt, SolinasMetal, SpartanOuterUniskipRow,
@@ -1818,7 +1764,6 @@ mod tests {
     #[test]
     fn shader_parameter_abi_is_four_words() {
         assert_eq!(size_of::<InstructionInputParams>(), 16);
-        assert_eq!(size_of::<ReductionParams>(), 16);
     }
 
     fn relation(values: &[AkitaField; INSTRUCTION_INPUT_TABLES], gamma: AkitaField) -> AkitaField {
