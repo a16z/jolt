@@ -4,14 +4,16 @@
     reason = "test scaffolding: device operations and fixture errors fail loudly"
 )]
 
-use common::jolt_device::MemoryLayout;
+use common::jolt_device::{MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
 };
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_poly::UnivariatePoly;
-use jolt_program::execution::{JoltProgram, OwnedTrace, RegisterRead, RegisterState, TraceOutput};
+use jolt_program::execution::{
+    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, TraceOutput,
+};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -328,6 +330,133 @@ pub fn with_instruction_witness<R>(
     );
     let backend = TraceBackend::new(
         JoltVmWitnessConfig::new(log_t, 64, one_hot),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+    );
+    body(&backend)
+}
+
+const RAM_FIXTURE_PATTERN: usize = 6;
+
+const fn ram_fixture_padding(log_t: usize) -> usize {
+    let cycles = 1usize << log_t;
+    if cycles < 8 {
+        1
+    } else {
+        cycles / 8
+    }
+}
+
+pub const fn ram_fixture_is_cold(log_t: usize, cycle: usize) -> bool {
+    cycle >= (1usize << log_t) - ram_fixture_padding(log_t)
+        || matches!(cycle % RAM_FIXTURE_PATTERN, 0 | 4 | 5)
+}
+
+fn ram_rows(
+    instruction: JoltInstructionRow,
+    log_t: usize,
+    layout: &MemoryLayout,
+    ram_k: usize,
+    seed: u64,
+) -> Vec<TraceRow> {
+    let cycles = 1usize << log_t;
+    let padding_start = cycles - ram_fixture_padding(log_t);
+    let lowest = layout.get_lowest_address();
+    let below_lowest = lowest.saturating_sub(8);
+    let mut last_hot = lowest + 8;
+    let mut rows = Vec::with_capacity(cycles);
+
+    for cycle in 0..cycles {
+        let mix = seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(cycle as u64 + 1);
+        let word = (mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29)) % ram_k as u64;
+        let address = lowest + 8 * word;
+        let value = 900 + cycle as u64;
+
+        let access = if cycle >= padding_start {
+            RamAccess::NoOp
+        } else if ram_fixture_is_cold(log_t, cycle) {
+            match cycle % RAM_FIXTURE_PATTERN {
+                4 => RamAccess::Read(RamRead { address: 0, value }),
+                5 => RamAccess::Read(RamRead {
+                    address: below_lowest,
+                    value,
+                }),
+                _ => RamAccess::NoOp,
+            }
+        } else {
+            match cycle % RAM_FIXTURE_PATTERN {
+                2 => {
+                    last_hot = address;
+                    RamAccess::Write(RamWrite {
+                        address,
+                        pre_value: value,
+                        post_value: value + 1,
+                    })
+                }
+                3 => RamAccess::Read(RamRead {
+                    address: last_hot,
+                    value,
+                }),
+                _ => {
+                    last_hot = address;
+                    RamAccess::Read(RamRead { address, value })
+                }
+            }
+        };
+
+        rows.push(TraceRow {
+            instruction,
+            ram_access: access,
+            ..TraceRow::default()
+        });
+    }
+    rows
+}
+
+pub fn with_ram_witness<R>(
+    log_t: usize,
+    ram_k: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
+    let instruction = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::XOR,
+        address: 0x8000_0000,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    };
+    let memory_layout = MemoryLayout::new(&MemoryConfig {
+        program_size: Some(1 << 12),
+        ..MemoryConfig::default()
+    });
+    let preprocessing = JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(
+            vec![instruction],
+            instruction.address as u64,
+            RV64IMAC_JOLT,
+        )
+        .expect("ram bytecode fixture"),
+        ram: RAMPreprocessing::default(),
+        memory_layout: memory_layout.clone(),
+        max_padded_trace_length: 1usize << log_t,
+    };
+    let program = JoltProgram::default();
+    let trace = TraceOutput::new(
+        OwnedTrace::new(ram_rows(instruction, log_t, &memory_layout, ram_k, seed)),
+        Default::default(),
+        None,
+    );
+    let backend = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, ram_k, one_hot),
         JoltVmWitnessInputs::new(&program, &preprocessing, trace),
     );
     body(&backend)

@@ -8,6 +8,7 @@ mod common;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
 mod ram_ra_claim_reduction;
+mod ram_ra_virtualization;
 mod ram_read_write;
 mod ram_val_check;
 mod registers_read_write;
@@ -51,6 +52,7 @@ where
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
+        backend.ram_ra_virtualization = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);
         backend.registers_read_write = Box::new(CudaBackend);
         backend.ram_read_write = Box::new(CudaBackend);
