@@ -66,6 +66,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("../kernels/ram_ra_virtualization.cu"),
     "\n",
     include_str!("../kernels/booleanity_cycle.cu"),
+    "\n",
+    include_str!("../kernels/bytecode_read_raf.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -158,6 +160,10 @@ pub struct CudaKernelContext {
     brc_gather: CudaFunction,
     brc_message_sparse: CudaFunction,
     brc_message_dense: CudaFunction,
+    brr_coefficient: CudaFunction,
+    brr_gather: CudaFunction,
+    brr_message_sparse: CudaFunction,
+    brr_message_dense: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -260,6 +266,10 @@ impl CudaKernelContext {
             brc_gather: module.load_function("brc_gather_kernel")?,
             brc_message_sparse: module.load_function("brc_message_sparse_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
+            brr_coefficient: module.load_function("brr_coefficient_kernel")?,
+            brr_gather: module.load_function("brr_gather_kernel")?,
+            brr_message_sparse: module.load_function("brr_message_sparse_kernel")?,
+            brr_message_dense: module.load_function("brr_message_dense_kernel")?,
         })
     }
 
@@ -425,6 +435,22 @@ impl CudaKernelContext {
 
     pub(crate) const fn brc_message_sparse(&self) -> &CudaFunction {
         &self.brc_message_sparse
+    }
+
+    pub(crate) const fn brr_coefficient(&self) -> &CudaFunction {
+        &self.brr_coefficient
+    }
+
+    pub(crate) const fn brr_gather(&self) -> &CudaFunction {
+        &self.brr_gather
+    }
+
+    pub(crate) const fn brr_message_sparse(&self) -> &CudaFunction {
+        &self.brr_message_sparse
+    }
+
+    pub(crate) const fn brr_message_dense(&self) -> &CudaFunction {
+        &self.brr_message_dense
     }
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {

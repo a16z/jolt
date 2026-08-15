@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use common::constants::XLEN as RISCV_XLEN;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::ram::RamValCheckInit;
 use jolt_claims::protocols::jolt::relations::instruction::{
@@ -32,6 +33,11 @@ use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_verifier::stages::stage6b::booleanity::{
     Booleanity, BooleanityCyclePhaseChallenges, BooleanityInputClaims,
 };
+use jolt_verifier::stages::stage6b::bytecode_read_raf::{
+    BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycle,
+    BytecodeReadRafCyclePhaseCommittedChallenges, BytecodeReadRafInputClaims,
+    READ_RAF_CYCLE_STAGES,
+};
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
     InstructionRaVirtualizationInputClaims,
@@ -49,6 +55,7 @@ const SAFETY_MARGIN: f64 = 0.9;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerticalRelation {
     BooleanityCycle,
+    BytecodeReadRafCycle,
     InstructionRaVirtualization,
     InstructionReadRaf,
     RamRaVirtualization,
@@ -61,6 +68,7 @@ impl VerticalRelation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BooleanityCycle => "booleanity-cycle",
+            Self::BytecodeReadRafCycle => "bytecode-read-raf-cycle",
             Self::InstructionRaVirtualization => "instruction-ra-virtualization",
             Self::InstructionReadRaf => "instruction-read-raf",
             Self::RamRaVirtualization => "ram-ra-virtualization",
@@ -193,6 +201,9 @@ pub fn run(args: &VerticalArgs) -> Vec<VerticalTiming> {
         let timing = match args.relation {
             VerticalRelation::BooleanityCycle => {
                 measure_booleanity_cycle(args.name, scale, args.backend)
+            }
+            VerticalRelation::BytecodeReadRafCycle => {
+                measure_bytecode_read_raf_cycle(args.name, scale, args.backend)
             }
             VerticalRelation::InstructionRaVirtualization => {
                 measure_instruction_ra_virtualization(args.name, scale, args.backend)
@@ -577,6 +588,127 @@ fn measure_booleanity_cycle(
         .booleanity_cycle
         .prepare(&mut session, &witness, inputs())
         .expect("prepare the stage-6b booleanity cycle-phase kernel");
+    let prepare = start.elapsed();
+
+    drive_rounds(&mut *kernel, &claims, log_t, log_t, prepare, |_| {
+        RoundPhase::Cycle
+    })
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+fn measure_bytecode_read_raf_cycle(
+    workload: Workload,
+    scale: u32,
+    backend: BackendKind,
+) -> VerticalTiming {
+    let bench_name = workload.as_str();
+    let max_trace_length = 1usize << scale;
+    let input = workload.input((max_trace_length as f64 * SAFETY_MARGIN) as usize);
+
+    let mut program = host::Program::new(&format!("{bench_name}-guest"));
+    let (bytecode, init_memory_state, _, entry_address) = program.decode();
+    let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
+    drop(legacy_trace);
+    let elf_contents = program.get_elf_contents().expect("elf contents");
+    let memory_layout = io_device.memory_layout.clone();
+
+    let program_data =
+        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
+            .expect("legacy preprocess");
+    let shared =
+        JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
+    let legacy = LegacyProverPreprocessing::<
+        jolt_prover_legacy::ark_bn254::Fr,
+        jolt_prover_legacy::curve::Bn254Curve,
+        DoryCommitmentScheme,
+    >::new(shared);
+    let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy);
+    let program_preprocessing = verifier_preprocessing
+        .program
+        .as_full()
+        .expect("full program preprocessing")
+        .clone();
+    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+
+    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    let config = ProverConfig::derive::<Fr>(
+        trace_output.trace.rows(),
+        &memory_layout,
+        verifier_preprocessing.program.min_bytecode_address(),
+        verifier_preprocessing.program.program_image_len_words(),
+        max_trace_length,
+    )
+    .expect("derive config");
+    let padded = pad_trace(trace_output, config.trace_length);
+    let log_t = config.trace_length.ilog2() as usize;
+
+    let witness = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
+        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
+    );
+
+    let chunk_bits = config.one_hot_config.committed_chunk_bits();
+    let dimensions = formula_dimensions_from_parts(
+        config.one_hot_config,
+        log_t,
+        verifier_preprocessing.program.bytecode_len(),
+        config.ram_K,
+        JoltRelationId::BytecodeReadRaf,
+    )
+    .expect("formula dimensions")
+    .bytecode_read_raf;
+    let log_k = dimensions.log_k();
+
+    let r_address: Vec<Fr> = (0..log_k)
+        .map(|i| Fr::from_u64(23 + 3 * i as u64))
+        .collect();
+    let stage_cycle_points: [Vec<Fr>; READ_RAF_CYCLE_STAGES] = core::array::from_fn(|stage| {
+        (0..log_t)
+            .map(|i| Fr::from_u64(37 + 7 * i as u64 + 101 * stage as u64))
+            .collect()
+    });
+    let relation = BytecodeReadRafCycle::<Fr>::committed(BytecodeReadRafCommittedCycleInputs {
+        dimensions,
+        r_address: r_address.clone(),
+        stage_cycle_points,
+        entry_bytecode_index: (1usize << log_k) - 2,
+        committed_chunk_bits: chunk_bits,
+        val_stages: (0..NUM_BYTECODE_VAL_STAGES)
+            .map(|stage| Fr::from_u64(53 + 11 * stage as u64))
+            .collect(),
+    });
+
+    let claims = BytecodeReadRafInputClaims {
+        address_phase: Fr::from_u64(0),
+    };
+    let points = BytecodeReadRafInputClaims {
+        address_phase: r_address,
+    };
+    let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {
+        gamma: Fr::from_u64(101),
+    };
+    let inputs = || ProverInputs {
+        relation: &relation,
+        claims: &claims,
+        points: &points,
+        challenges: &challenges,
+    };
+
+    let selected = match backend {
+        BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        #[cfg(feature = "cuda")]
+        BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
+    };
+
+    let mut session = ProofSession::default();
+    let start = Instant::now();
+    let mut kernel = selected
+        .bytecode_read_raf_cycle
+        .prepare(&mut session, &witness, inputs())
+        .expect("prepare the stage-6b bytecode read-RAF cycle-phase kernel");
     let prepare = start.elapsed();
 
     drive_rounds(&mut *kernel, &claims, log_t, log_t, prepare, |_| {

@@ -5,6 +5,7 @@ use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
 mod booleanity;
+mod bytecode_read_raf;
 mod common;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
@@ -50,6 +51,7 @@ where
             return backend;
         }
         backend.booleanity_cycle = Box::new(CudaBackend);
+        backend.bytecode_read_raf_cycle = Box::new(CudaBackend);
         backend.instruction_ra_virtualization = Box::new(CudaBackend);
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
