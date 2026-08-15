@@ -686,12 +686,6 @@ impl Drop for PendingSpartanStage1SourcePrimer {
 }
 
 impl PendingSpartanStage1SourcePrimer {
-    copy_field_getters! { pub(crate), {
-        source_bytes: u64,
-        source_pages: u64,
-        submit_wall: Duration,
-    }}
-
     pub(crate) fn join(mut self) -> Result<SpartanStage1SourcePrimerObservation, MetalError> {
         let source_identities: [usize; 5] =
             std::array::from_fn(|index| self.sources[index].as_ptr() as usize);

@@ -66,13 +66,6 @@ impl BytecodeAddressSparseStage1Receipt {
         additional_source_scans: usize,
         member_upload_bytes: usize,
     } }
-
-    pub(crate) const fn persistent_bytes(self) -> usize {
-        self.occurrence_bytes
-            + self.magnitude_bytes
-            + self.work_item_bytes
-            + self.address_offset_bytes
-    }
 }
 
 pub(crate) struct BytecodeAddressSparseStage1Carrier {
@@ -228,7 +221,7 @@ impl BytecodeAddressFusedScatterRequest {
             source_completion_serial: source.completion_serial(),
             source_rows_storage_id: source.row_allocation_identity(),
             source_claim_storage_id: source.claim_allocation_identity(),
-            source_windows: source.source_windows(),
+            source_windows: source.rows(),
             completion_serial,
             occurrence_storage_id: ids[0],
             occurrence_bytes,
@@ -260,7 +253,10 @@ impl allocative::Allocative for BytecodeAddressSparseStage1Carrier {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("device_buffers"),
-            self.receipt.persistent_bytes(),
+            self.receipt.occurrence_bytes
+                + self.receipt.magnitude_bytes
+                + self.receipt.work_item_bytes
+                + self.receipt.address_offset_bytes,
         );
         visitor.exit();
     }

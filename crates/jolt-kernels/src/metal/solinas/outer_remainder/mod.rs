@@ -19,10 +19,9 @@ pub(crate) use plan::{
     outer_remainder_sequence_storage_bytes_with_config,
 };
 pub(crate) use registers_claim::{OuterRegistersClaimCarrier, OuterRegistersClaimCarrierReceipt};
+#[cfg(feature = "allocative")]
+pub(crate) use sequence::OuterRegistersClaimCarrierSubmission;
 pub use sequence::OuterRemainderSequence;
-pub(crate) use sequence::{
-    OuterRegistersClaimCarrierJoinStats, OuterRegistersClaimCarrierSubmission,
-    PendingOuterRegistersClaimCarrier,
-};
+pub(crate) use sequence::{OuterRegistersClaimCarrierJoinStats, PendingOuterRegistersClaimCarrier};
 pub(super) use shader::SOURCE;
 pub(crate) use storage::OuterRemainderSequenceStorage;

@@ -1199,7 +1199,7 @@ fn record_bytecode_stage1_topology_span(
         "source_claim_storage_id",
         source.claim_allocation_identity(),
     );
-    let _ = span.record("source_windows", source.source_windows());
+    let _ = span.record("source_windows", source.rows());
     let _ = span.record("shared_source_row_scans", 1usize);
     let _ = span.record("additional_source_row_scans", 0usize);
     let _ = span.record("extra_source_scans", 0usize);

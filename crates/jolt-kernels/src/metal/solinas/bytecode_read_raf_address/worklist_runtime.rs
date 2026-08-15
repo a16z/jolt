@@ -46,24 +46,6 @@ struct BytecodeAddressSparseParams {
 
 const _: [(); 32] = [(); size_of::<BytecodeAddressSparseParams>()];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[expect(
-    clippy::struct_field_names,
-    reason = "the storage ledger keeps byte units explicit at every accounting seam"
-)]
-pub(crate) struct BytecodeAddressSparseStorage {
-    pub(crate) occurrence_bytes: usize,
-    pub(crate) magnitude_bytes: usize,
-    pub(crate) work_item_bytes: usize,
-    pub(crate) address_offset_bytes: usize,
-    pub(crate) equality_bytes: usize,
-    pub(crate) padding_bytes: usize,
-    pub(crate) partial_bytes: usize,
-    pub(crate) output_bytes: usize,
-    pub(crate) carrier_bytes: usize,
-    pub(crate) member_owned_bytes: usize,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BytecodeAddressSparseObservation {
     pub(crate) output: Vec<AkitaField>,
@@ -121,7 +103,6 @@ pub(crate) struct BytecodeAddressSparseInvocation {
     reduce_limits: PipelineLimits,
     buffers: BytecodeAddressSparseBuffers,
     params: BytecodeAddressSparseParams,
-    storage: BytecodeAddressSparseStorage,
     threadgroup_memory_bytes: usize,
     source_rows_storage_id: usize,
     source_device_registry_id: u64,
@@ -209,20 +190,6 @@ impl SolinasMetal {
             ))?;
         let partial_bytes = field_bytes(partial_fields)?;
         let output_bytes = field_bytes(output_fields)?;
-        let carrier_bytes = [
-            occurrence_bytes,
-            magnitude_bytes,
-            work_item_bytes,
-            address_offset_bytes,
-        ]
-        .into_iter()
-        .try_fold(0usize, |total, bytes| {
-            total
-                .checked_add(bytes)
-                .ok_or(BytecodeAddressSparseRuntimeError::SizeOverflow(
-                    "carrier bytes",
-                ))
-        })?;
         let member_owned_bytes = [equality_bytes, padding_bytes, partial_bytes, output_bytes]
             .into_iter()
             .try_fold(0usize, |total, bytes| {
@@ -302,18 +269,6 @@ impl SolinasMetal {
                     .new_buffer(output_bytes as u64, MTLResourceOptions::StorageModeShared),
             },
             params,
-            storage: BytecodeAddressSparseStorage {
-                occurrence_bytes,
-                magnitude_bytes,
-                work_item_bytes,
-                address_offset_bytes,
-                equality_bytes,
-                padding_bytes,
-                partial_bytes,
-                output_bytes,
-                carrier_bytes,
-                member_owned_bytes,
-            },
             threadgroup_memory_bytes: THREADGROUP_BYTES,
             source_rows_storage_id,
             source_device_registry_id,
@@ -468,8 +423,6 @@ impl BytecodeAddressSparseInvocation {
             .map(|value| (*value).into_jolt_field())
             .collect())
     }
-
-    copy_field_getters! { pub(crate), { storage: BytecodeAddressSparseStorage }}
 
     fn static_buffer_identities(&self) -> [usize; 8] {
         [

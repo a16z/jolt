@@ -378,89 +378,14 @@ pub(super) fn publish_instruction_read_raf_stage1(
             reason: "InstructionReadRAF Stage-1 publication would replace resident state",
         });
     }
-    let receipt = ready.owner.receipt();
-    let _span = tracing::info_span!(
-        "MetalInstructionReadRaf::stage1_source_publish",
-        rows = receipt.rows(),
-        row_bytes = receipt.row_bytes(),
-        row_layout = receipt.row_layout().as_str(),
-        claim_bytes = receipt.claim_bytes(),
-        resident_device_bytes = receipt.resident_device_bytes(),
-        host_row_write_bytes = receipt.host_row_write_bytes(),
-        host_claim_write_bytes = receipt.host_claim_write_bytes(),
-        host_count_update_bytes = receipt.host_count_update_bytes(),
-        count_chunks = receipt.count_chunks(),
-        count_bytes = receipt.count_bytes(),
-        row_allocation_identity = receipt.row_allocation_identity(),
-        claim_allocation_identity = receipt.claim_allocation_identity(),
-        count_allocation_identity = receipt.count_allocation_identity(),
-        device_registry_id = receipt.device_registry_id(),
-        source_generation = receipt.source_generation(),
-        completion_serial = receipt.completion_serial(),
-        count_order = "table_major_then_none_v1",
-        publication_kind = receipt.publication_kind().as_str(),
-        complete_overwrite = receipt.complete_overwrite(),
-        source_windows = receipt.source_windows(),
-        member_upload_bytes = receipt.member_upload_bytes(),
-        projection_dispatches = receipt.projection_dispatches(),
-    )
-    .entered();
     session.park(ready.owner);
     if let Some(topology) = ready.bytecode_topology {
         session.park(topology);
     }
     if let Some(request) = ready.registers_val {
-        let source_ids = request.source_storage_ids();
-        let source_bytes = request.source_storage_bytes();
-        let instruction_source = request.instruction_source();
-        let _span = tracing::info_span!(
-            "MetalRegistersValEvaluation::stage1_source_publish",
-            cycles = request.cycles(),
-            explicit_rows = request.explicit_rows(),
-            source = "instruction_read_raf_stage1_rows_v1",
-            row_layout = instruction_source.row_layout().as_str(),
-            source_compact_storage_id = source_ids[0],
-            source_compact_bytes = source_bytes[0],
-            source_residual_storage_id = source_ids[1],
-            source_residual_bytes = source_bytes[1],
-            source_generation = instruction_source.source_generation(),
-            source_device_registry_id = instruction_source.device_registry_id(),
-            source_ready_serial = instruction_source.completion_serial(),
-            producer_plane_allocations = 0usize,
-            retained_plane_allocations = 0usize,
-            producer_device_bytes = 0usize,
-            retained_device_bytes = 0usize,
-            released_auxiliary_device_bytes = 0usize,
-            shared_source_row_scans = 1usize,
-            additional_source_row_scans = 0usize,
-            member_upload_bytes = 0usize,
-            native_rows_private_copy_bytes = 0usize,
-            complete_overwrite = true,
-        )
-        .entered();
         session.park(request);
     }
     if let Some(ram_access) = ready.ram_access {
-        let cycles = ram_access.cycles();
-        let access_count = ram_access.access_count();
-        let increment_count = ram_access.increment_count();
-        let _span = tracing::info_span!(
-            "MetalRamAccessColumns::stage1_publish",
-            source = "stage1_single_projection",
-            cycles,
-            address_elements = cycles,
-            address_bytes = cycles * size_of::<u32>(),
-            pre_value_elements = cycles,
-            pre_value_bytes = cycles * size_of::<u64>(),
-            post_value_elements = cycles,
-            post_value_bytes = cycles * size_of::<u64>(),
-            access_records = access_count,
-            increment_records = increment_count,
-            witness_source_scans = 0usize,
-            additional_witness_source_scans = 0usize,
-            complete_publication = true,
-        )
-        .entered();
         ram_access.publish(session)?;
     }
     Ok(())
@@ -831,17 +756,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 .transpose()
                 .map_err(metal_prepare_error)?;
             if let Some(pending) = pending {
-                let span = tracing::info_span!(
-                    "MetalSpartanStage1::source_primer_submit",
-                    source_bytes = pending.source_bytes(),
-                    source_pages = pending.source_pages(),
-                    submit_wall_ns = duration_nanos(pending.submit_wall()),
-                    command_buffers = 1u64,
-                    dispatches = 1u64,
-                    waits = 0u64,
-                    readback_bytes = 0u64,
-                );
-                let _entered = span.enter();
                 session.park(pending);
             }
         }
@@ -880,31 +794,8 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             return Ok(());
         }
         if let Some(primer) = session.take::<PendingSpartanStage1SourcePrimer>() {
-            let span = tracing::info_span!(
-                "MetalSpartanStage1::source_primer_join",
-                source_bytes = primer.source_bytes(),
-                source_pages = primer.source_pages(),
-                completed_before_join = tracing::field::Empty,
-                submit_wall_ns = tracing::field::Empty,
-                overlap_wall_ns = tracing::field::Empty,
-                join_wall_ns = tracing::field::Empty,
-                lifecycle_wall_ns = tracing::field::Empty,
-                gpu_active_ns = tracing::field::Empty,
-                command_buffers = 1u64,
-                dispatches = 1u64,
-                waits = 1u64,
-                readback_bytes = 0u64,
-            );
-            let _entered = span.enter();
-            let observation = primer.join().map_err(metal_prepare_error)?;
-            let _ = span.record("source_bytes", observation.source_bytes);
-            let _ = span.record("source_pages", observation.source_pages);
-            let _ = span.record("completed_before_join", observation.completed_before_join);
-            let _ = span.record("submit_wall_ns", duration_nanos(observation.submit_wall));
-            let _ = span.record("overlap_wall_ns", duration_nanos(observation.overlap_wall));
-            let _ = span.record("join_wall_ns", duration_nanos(observation.join_wall));
-            let _ = span.record("lifecycle_wall_ns", duration_nanos(observation.wall));
-            let _ = span.record("gpu_active_ns", duration_nanos(observation.gpu_active));
+            let _span = tracing::info_span!("MetalSpartanStage1::source_primer_join").entered();
+            let _ = primer.join().map_err(metal_prepare_error)?;
         }
         let stage1_compact_rows_storage_id = session
             .state::<SpartanOuterUniskipRows>()
@@ -1091,7 +982,6 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             });
         }
         let dispatch = self.config.spartan_outer_remainder.dispatch;
-        let device = self.context.device_info();
         let planned_device_bytes =
             outer_remainder_sequence_storage_bytes_with_config(cycles, dispatch)
                 .map_err(metal_prepare_error)?;
@@ -1107,78 +997,23 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 reason: "prepared outer-remainder storage disagrees with the relation geometry",
             });
         }
-        let existing_resident_bytes =
-            spartan_outer_uniskip_row_bytes(cycles).map_err(metal_prepare_error)?;
-        let _allocation_span = tracing::info_span!(
-            "MetalOuterRemainder::allocation_plan",
-            admitted = true,
-            storage_reused = true,
-            existing_resident_bytes,
-            preallocated_device_bytes = planned_device_bytes,
-            additional_working_set_bytes = 0u64,
-            current_device_bytes = device.current_allocated_size,
-            recommended_max_working_set_bytes = device.recommended_max_working_set_size,
-        )
-        .entered();
-        drop(_allocation_span);
-
         let compact_rows_storage_id = rows.instruction_input_allocation_identity();
         let residual_rows_storage_id = rows.allocation_identity();
         let device_registry_id = rows.device_registry_id();
-        let compact_retained = session.state::<InstructionInputRows>().is_some();
-        let rows = {
-            let _row_handoff = tracing::info_span!(
-                "MetalOuterRemainder::row_handoff",
-                compact_rows_storage_id,
-                residual_rows_storage_id,
-                device_registry_id,
-                resident_rows = cycles,
-                row_upload_bytes = 0u64,
-                device_allocations = 0u64,
-            )
-            .entered();
+        let rows =
             session
                 .take::<SpartanOuterUniskipRows>()
                 .ok_or(KernelError::InvariantViolation {
                     reason: "Metal outer remainder rows disappeared after admission",
-                })?
-        };
+                })?;
         let storage = session.take::<OuterRemainderSequenceStorage>().ok_or(
             KernelError::InvariantViolation {
                 reason: "Metal outer remainder storage disappeared after validation",
             },
         )?;
         let storage_initialization = storage.initialization();
-        let sequence_span = tracing::info_span!(
-            "MetalOuterRemainder::sequence_prepare",
-            resident_rows = cycles,
-            rounds,
-            cutoff_elements = dispatch.cpu_tail_elements,
-            trace_cutoff_elements = self.config.spartan_outer_remainder.trace_cutoff_elements,
-            planned_device_bytes,
-            compact_rows_storage_id,
-            residual_rows_storage_id,
-            device_registry_id,
-            storage_reused = true,
-            storage_initialization_mode = dispatch.storage_initialization.as_str(),
-            preinitialized_device_bytes = storage_initialization.bytes,
-            initialization_bytes = storage_initialization.bytes,
-            attached_owned_bytes = tracing::field::Empty,
-            storage_buffer_0 = tracing::field::Empty,
-            storage_buffer_1 = tracing::field::Empty,
-            storage_buffer_2 = tracing::field::Empty,
-            storage_buffer_3 = tracing::field::Empty,
-            storage_buffer_4 = tracing::field::Empty,
-            storage_buffer_5 = tracing::field::Empty,
-            storage_buffer_6 = tracing::field::Empty,
-            storage_buffer_7 = tracing::field::Empty,
-            storage_buffer_8 = tracing::field::Empty,
-            row_upload_bytes = 0u64,
-            full_domain_copy_dispatches = 0u64,
-            sequence_device_buffer_allocations = 0u64,
-            round_device_buffer_allocations = 0u64,
-        );
-        let _sequence_span = sequence_span.enter();
+        let _sequence_span =
+            tracing::info_span!("MetalOuterRemainder::sequence_prepare", cycles, rounds).entered();
         let sequence = storage.attach(rows).map_err(metal_prepare_error)?;
         let attached = sequence.storage_stats().map_err(metal_prepare_error)?;
         if attached.owned_bytes != planned_device_bytes
@@ -1188,17 +1023,6 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 reason: "attached outer-remainder storage changed allocation identity",
             });
         }
-        let attached_ids = attached.buffer_identities;
-        let _ = sequence_span.record("attached_owned_bytes", attached.owned_bytes);
-        let _ = sequence_span.record("storage_buffer_0", attached_ids[0]);
-        let _ = sequence_span.record("storage_buffer_1", attached_ids[1]);
-        let _ = sequence_span.record("storage_buffer_2", attached_ids[2]);
-        let _ = sequence_span.record("storage_buffer_3", attached_ids[3]);
-        let _ = sequence_span.record("storage_buffer_4", attached_ids[4]);
-        let _ = sequence_span.record("storage_buffer_5", attached_ids[5]);
-        let _ = sequence_span.record("storage_buffer_6", attached_ids[6]);
-        let _ = sequence_span.record("storage_buffer_7", attached_ids[7]);
-        let _ = sequence_span.record("storage_buffer_8", attached_ids[8]);
         drop(_sequence_span);
 
         // Prepared storage and resident rows have now been consumed together.
@@ -1215,7 +1039,6 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             residual_rows_storage_id,
             device_registry_id,
             resident_rows: cycles,
-            compact_retained,
         };
         Ok(Box::new(MetalOuterRemainderKernel::from_attached_sequence(
             log_t,
@@ -1498,15 +1321,6 @@ struct MetalOuterResidentMetadata {
     residual_rows_storage_id: usize,
     device_registry_id: u64,
     resident_rows: usize,
-    compact_retained: bool,
-}
-
-#[derive(Clone, Copy)]
-struct MetalOuterDeferredReleaseBytes {
-    sequence_storage: u64,
-    residual_rows: u64,
-    compact: u64,
-    total: u64,
 }
 
 struct MetalOuterRemainderKernel {
@@ -1519,12 +1333,11 @@ struct MetalOuterRemainderKernel {
     residual_rows_storage_id: usize,
     device_registry_id: u64,
     resident_rows: usize,
-    compact_retained: bool,
     cpu_tail_elements: usize,
     gpu_active_breakdown: OuterRemainderGpuActiveBreakdown,
     product_uniskip_endpoint_carrier: Option<MetalProductUniskipEndpointCarrier>,
     registers_claim_async_stage1_carry: Option<MetalRegistersClaimAsyncStage1Carry>,
-    deferred_release_bytes: Option<MetalOuterDeferredReleaseBytes>,
+    residue_ready: bool,
     #[cfg(feature = "test-utils")]
     completed_gpu_active: Option<Duration>,
     #[cfg(feature = "test-utils")]
@@ -1613,7 +1426,6 @@ impl MetalOuterRemainderKernel {
             residual_rows_storage_id: metadata.residual_rows_storage_id,
             device_registry_id: metadata.device_registry_id,
             resident_rows: metadata.resident_rows,
-            compact_retained: metadata.compact_retained,
             cpu_tail_elements: tail_elements,
             gpu_active_breakdown: OuterRemainderGpuActiveBreakdown {
                 materialize: materialize_gpu_active,
@@ -1621,7 +1433,7 @@ impl MetalOuterRemainderKernel {
             },
             product_uniskip_endpoint_carrier: None,
             registers_claim_async_stage1_carry: None,
-            deferred_release_bytes: None,
+            residue_ready: false,
             #[cfg(feature = "test-utils")]
             completed_gpu_active: None,
             #[cfg(feature = "test-utils")]
@@ -1880,32 +1692,7 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                 reason: "Metal outer remainder changed its resident row allocation",
             });
         }
-        let remaining_sequence_storage_bytes = storage.owned_bytes;
-        let compact_row_bytes =
-            instruction_input_row_bytes(self.resident_rows).map_err(metal_output_error)?;
-        let residual_row_bytes = spartan_outer_uniskip_row_bytes(self.resident_rows)
-            .map_err(metal_output_error)?
-            .checked_sub(compact_row_bytes)
-            .ok_or(SumcheckKernelError::InvariantViolation {
-                reason: "outer-remainder residual row accounting underflowed",
-            })?;
-        let compact_release_bytes = if self.compact_retained {
-            0
-        } else {
-            compact_row_bytes
-        };
-        let deferred_owned_bytes = remaining_sequence_storage_bytes
-            .checked_add(residual_row_bytes)
-            .and_then(|bytes| bytes.checked_add(compact_release_bytes))
-            .ok_or(SumcheckKernelError::InvariantViolation {
-                reason: "outer-remainder deferred byte count overflowed",
-            })?;
-        self.deferred_release_bytes = Some(MetalOuterDeferredReleaseBytes {
-            sequence_storage: remaining_sequence_storage_bytes,
-            residual_rows: residual_row_bytes,
-            compact: compact_release_bytes,
-            total: deferred_owned_bytes,
-        });
+        self.residue_ready = true;
         self.registers_claim_async_stage1_carry = registers_claim_async_stage1_carry;
         self.host.output_claims(inputs, &claimed)
     }
@@ -1922,78 +1709,15 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
     }
 
     fn park_residue(mut self: Box<Self>, session: &mut ProofSession) {
-        if let (Some(sequence), Some(deferred)) =
-            (self.sequence.take(), self.deferred_release_bytes.take())
-        {
-            let release = tracing::info_span!(
-                "MetalOuterRemainder::row_release",
-                compact_rows_storage_id = self.compact_rows_storage_id,
-                residual_rows_storage_id = self.residual_rows_storage_id,
-                device_registry_id = self.device_registry_id,
-                resident_rows = self.resident_rows,
-                row_upload_bytes = 0u64,
-                device_allocations = 0u64,
-                residual_row_bytes = deferred.residual_rows,
-                remaining_sequence_storage_bytes = deferred.sequence_storage,
-                compact_release_bytes = deferred.compact,
-                deferred_owned_bytes = deferred.total,
-                release_mode = "proof_session_deferred",
-                cleanup_scope = "proof_session",
-                ownership_transfer_completed = tracing::field::Empty,
-                physical_release_completed = false,
-                residual_released = false,
-                residual_deferred = true,
-                compact_retained = self.compact_retained,
-            );
-            let _release = release.enter();
-            session.park(sequence);
-            let _ = release.record("ownership_transfer_completed", true);
+        if self.residue_ready {
+            if let Some(sequence) = self.sequence.take() {
+                session.park(sequence);
+            }
         }
         if let Some(carrier) = self.product_uniskip_endpoint_carrier.take() {
-            let _span = tracing::info_span!(
-                "MetalOuterRemainder::product_uniskip_carrier_park",
-                rows = carrier.source_rows,
-                source_rows_storage_id = carrier.source_row_storage_id as u64,
-                endpoint_elements = carrier.endpoints.len(),
-            )
-            .entered();
             session.park(carrier);
         }
         if let Some(carry) = self.registers_claim_async_stage1_carry.take() {
-            let receipt = carry.submission();
-            let _span = tracing::info_span!(
-                "MetalOuterRemainder::registers_claim_carrier_park",
-                rows = receipt.rows,
-                explicit_rows = receipt.explicit_rows,
-                prefix_elements = receipt.prefix_elements,
-                suffix_elements = receipt.suffix_elements,
-                blocks = receipt.blocks,
-                device_registry_id = receipt.device_registry_id,
-                source_generation = receipt.source_generation,
-                completion_serial = 0u64,
-                source_compact_storage_id = receipt.source_compact_storage_id as u64,
-                source_residual_storage_id = receipt.source_residual_storage_id as u64,
-                partial_storage_id = receipt.partial_storage_id as u64,
-                component_storage_id = receipt.component_storage_id as u64,
-                rd_storage_id = receipt.rd_storage_id as u64,
-                partial_bytes = receipt.partial_bytes,
-                component_bytes = receipt.component_bytes,
-                component_host_read_bytes = receipt.component_bytes,
-                rd_bytes = receipt.rd_bytes,
-                scratch_release_bytes = receipt.partial_bytes + receipt.component_bytes,
-                retained_rd_bytes = receipt.rd_bytes,
-                source_allocations = 3u64,
-                row_scans = 2u64,
-                carrier_dispatches = 3u64,
-                command_buffers = 1u64,
-                waits = 1u64,
-                uploads = 0u64,
-                prezero_dispatches = 0u64,
-                complete_overwrite = true,
-                pending = true,
-                stage1_carry_parks = 1u64,
-            )
-            .entered();
             session.park(carry);
         }
     }

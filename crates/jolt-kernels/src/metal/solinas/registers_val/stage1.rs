@@ -65,14 +65,6 @@ pub(crate) struct RegistersValInstructionSourceRequest {
 }
 
 impl RegistersValInstructionSourceRequest {
-    copy_field_getters! { pub(crate), {
-        cycles: usize,
-        explicit_rows: usize,
-        instruction_source: InstructionReadRafStage1Receipt,
-        source_storage_ids: [usize; 2],
-        source_storage_bytes: [u64; 2],
-    } }
-
     pub(crate) fn publish(
         self,
         context: &SolinasMetal,
@@ -248,14 +240,13 @@ mod tests {
                 instruction.receipt(),
             )
             .unwrap();
-        assert_eq!(request.explicit_rows(), 4097);
-        assert_eq!(request.cycles(), cycles);
-
         let source = instruction
             .lease(cycles, context.device_registry_id())
             .unwrap();
         let lease = request.publish(&context, source).unwrap();
         let receipt = lease.receipt();
+        assert_eq!(receipt.explicit_rows(), 4097);
+        assert_eq!(receipt.cycles(), cycles);
         assert_eq!(
             receipt.instruction_rows_storage_id(),
             instruction.receipt().row_allocation_identity()

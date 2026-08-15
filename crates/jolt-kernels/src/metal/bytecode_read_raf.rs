@@ -261,11 +261,6 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             },
         )?;
         let receipt = carrier.receipt();
-        let topology = carrier
-            .fused_topology_receipt()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "bytecode address-major carrier lacks fused Stage-1 topology",
-            })?;
         let invocation = self
             .context
             .prepare_bytecode_address_sparse_resident(carrier, &tables.e_lo, &tables.e_hi)
@@ -274,7 +269,6 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
                     "bytecode address-major carrier preparation failed: {error}"
                 )))
             })?;
-        let storage = invocation.storage();
         drop(prepare_span);
 
         let _join_span =
@@ -326,129 +320,6 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             pushforwards,
             receipt.first_push_pc(),
         )?;
-        let source_rows_bytes = trace_elements
-            .checked_mul(super::solinas::BOOLEANITY_SOURCE_ROW_BYTES)
-            .ok_or(KernelError::InvariantViolation {
-                reason: "bytecode address-major source byte count overflow",
-            })?;
-        let producer_persistent_write_bytes = receipt
-            .occurrence_bytes()
-            .checked_add(receipt.magnitude_bytes())
-            .ok_or(KernelError::InvariantViolation {
-                reason: "bytecode address-major producer traffic overflow",
-            })?;
-        let producer_topology_read_bytes = topology
-            .descriptor_bytes()
-            .checked_add(topology.pivot_bytes())
-            .and_then(|bytes| bytes.checked_add(topology.chunk_offset_bytes()))
-            .ok_or(KernelError::InvariantViolation {
-                reason: "bytecode address-major topology traffic overflow",
-            })?;
-        let producer_logical_movement_bytes = producer_persistent_write_bytes
-            .checked_add(producer_topology_read_bytes)
-            .ok_or(KernelError::InvariantViolation {
-                reason: "bytecode address-major producer movement overflow",
-            })?;
-        let topology_publication_bytes = producer_topology_read_bytes
-            .checked_add(topology.work_item_bytes())
-            .and_then(|bytes| bytes.checked_add(topology.address_offset_bytes()))
-            .ok_or(KernelError::InvariantViolation {
-                reason: "bytecode address-major topology publication overflow",
-            })?;
-        {
-            let _complete_span = tracing::info_span!(
-                "MetalBytecodeReadRafAddress::address_major_complete",
-                cycles = trace_elements,
-                addresses = address_elements,
-                stages = stage_points.len(),
-                requested = "address_major",
-                realized_route = "address_major_fused_stage1_grouped_v1",
-                fallback_reason = "none",
-                physical_rows = receipt.physical_rows(),
-                work_items = receipt.work_items(),
-                source_generation = receipt.source_generation(),
-                source_completion_serial = receipt.source_completion_serial(),
-                source_rows_storage_id = receipt.source_rows_storage_id(),
-                source_rows_bytes,
-                source_claim_storage_id = receipt.source_claim_storage_id(),
-                source_device_registry_id = receipt.device_registry_id(),
-                carrier_completion_serial = receipt.completion_serial(),
-                carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
-                carrier_occurrence_bytes = receipt.occurrence_bytes(),
-                carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
-                carrier_magnitude_bytes = receipt.magnitude_bytes(),
-                carrier_work_item_storage_id = receipt.work_item_storage_id(),
-                carrier_work_item_bytes = receipt.work_item_bytes(),
-                carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
-                carrier_address_offset_bytes = receipt.address_offset_bytes(),
-                carrier_resident_bytes = receipt.persistent_bytes(),
-                bytecode_descriptor_storage_id = topology.descriptor_allocation_identity(),
-                bytecode_descriptor_bytes = topology.descriptor_bytes(),
-                bytecode_pivot_storage_id = topology.pivot_allocation_identity(),
-                bytecode_pivot_bytes = topology.pivot_bytes(),
-                bytecode_chunk_offset_storage_id = topology.chunk_offset_allocation_identity(),
-                bytecode_chunk_offset_bytes = topology.chunk_offset_bytes(),
-                topology_publication_bytes,
-                producer_persistent_write_bytes,
-                producer_logical_movement_bytes,
-                producer_topology_read_bytes,
-                member_carrier_owned_bytes = 0usize,
-                member_source_scans = 0usize,
-                member_source_upload_bytes = 0usize,
-                equality_bytes = storage.equality_bytes,
-                padding_bytes = storage.padding_bytes,
-                partial_bytes = storage.partial_bytes,
-                output_readback_bytes = storage.output_bytes,
-                member_owned_bytes = storage.member_owned_bytes,
-                command_buffers = 1usize,
-                waits = 1usize,
-                worker_dispatches = 1usize,
-                worker_variant = observation.worker_variant,
-                worker_simd_width = observation.worker_simd_width,
-                worker_threads = observation.worker_threads,
-                worker_items_per_threadgroup = observation.worker_items_per_threadgroup,
-                worker_threadgroups = observation.worker_threadgroups,
-                worker_tail_slots = observation.worker_tail_slots,
-                worker_dynamic_threadgroup_bytes = observation.worker_dynamic_threadgroup_bytes,
-                worker_static_threadgroup_bytes = observation.worker_static_threadgroup_bytes,
-                worker_threadgroup_bytes = observation.worker_threadgroup_bytes,
-                reducer_dispatches = 1usize,
-                reducer_threads = observation.reducer_threads,
-                reducer_threadgroups = observation.reducer_threadgroups,
-                reducer_static_threadgroup_bytes = observation.reducer_static_threadgroup_bytes,
-                output_fields = expected_fields,
-                submit_ns = 0u64,
-                overlap_ns = 0u64,
-                join_ns = observation.resident_wall.as_nanos() as u64,
-                resident_wall_ns = observation.resident_wall.as_nanos() as u64,
-                gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-                completed_before_join = false,
-                complete_overwrite = receipt.complete_overwrite(),
-                carrier_released = true,
-            )
-            .entered();
-        }
-        tracing::info!(
-            target: "jolt::metal",
-            submit_ns = 0u64,
-            overlap_ns = 0u64,
-            join_ns = observation.resident_wall.as_nanos() as u64,
-            total_ns = observation.resident_wall.as_nanos() as u64,
-            gpu_active_ns = observation.gpu_active.as_nanos() as u64,
-            completed_before_join = false,
-            source_generation = receipt.source_generation(),
-            source_rows_storage_id = receipt.source_rows_storage_id(),
-            source_device_registry_id = receipt.device_registry_id(),
-            carrier_occurrence_storage_id = receipt.occurrence_storage_id(),
-            carrier_magnitude_storage_id = receipt.magnitude_storage_id(),
-            carrier_work_item_storage_id = receipt.work_item_storage_id(),
-            carrier_address_offset_storage_id = receipt.address_offset_storage_id(),
-            carrier_bytes = storage.carrier_bytes as u64,
-            member_carrier_owned_bytes = 0u64,
-            member_source_scans = 0u64,
-            member_source_upload_bytes = 0u64,
-            "Metal bytecode address-major carrier produced authoritative pushforwards"
-        );
         Ok(Box::new(prepared))
     }
 }
@@ -720,7 +591,7 @@ mod tests {
 
     use super::*;
     use crate::metal::solinas::bytecode_read_raf_address::BytecodeAddressStage1TopologyOwner;
-    use crate::metal::solinas::{InstructionReadRafPublicationKind, InstructionReadRafStage1Owner};
+    use crate::metal::solinas::InstructionReadRafStage1Owner;
     use crate::metal::spartan_product::SpartanProductRemainderMetalConfig;
     use crate::optimized::harness::{probe_input_claim, run_lockstep};
     use crate::optimized::instruction_read_raf::{
@@ -855,11 +726,7 @@ mod tests {
                 .state::<InstructionReadRafStage1Owner>()
                 .unwrap()
                 .receipt();
-            assert_eq!(
-                source_receipt.publication_kind(),
-                InstructionReadRafPublicationKind::HostFillV1
-            );
-            assert_eq!(source_receipt.host_row_write_bytes(), 32 * (1 << log_t));
+            assert_eq!(source_receipt.row_bytes(), 32 * (1 << log_t));
             assert!(session
                 .state::<BytecodeAddressStage1TopologyOwner>()
                 .is_some());

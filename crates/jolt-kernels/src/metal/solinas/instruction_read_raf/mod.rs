@@ -22,7 +22,6 @@ pub(crate) use scatter::validate_bytecode_topology_admission;
 pub(crate) use scatter::{
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
     InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
-    InstructionReadRafProducerExecution,
 };
 
 pub(crate) const INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS: usize = 1 << 12;
@@ -44,32 +43,6 @@ pub(crate) enum InstructionReadRafCountOrder {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum InstructionReadRafPublicationKind {
-    HostFillV1,
-}
-
-impl InstructionReadRafPublicationKind {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::HostFillV1 => "host_fill_v1",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum InstructionReadRafRowLayout {
-    ColumnMajorPackedU64V3,
-}
-
-impl InstructionReadRafRowLayout {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::ColumnMajorPackedU64V3 => "column_major_packed_u64_v3",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct InstructionReadRafStage1Receipt {
     rows: usize,
     row_bytes: u64,
@@ -80,45 +53,21 @@ pub(crate) struct InstructionReadRafStage1Receipt {
     source_generation: u64,
     completion_serial: u64,
     count_order: InstructionReadRafCountOrder,
-    publication_kind: InstructionReadRafPublicationKind,
-    row_layout: InstructionReadRafRowLayout,
     count_chunks: usize,
     count_bytes: usize,
     count_allocation_identity: usize,
-    resident_device_bytes: u64,
-    host_row_write_bytes: u64,
-    host_claim_write_bytes: u64,
-    host_count_update_bytes: u64,
-    complete_overwrite: bool,
-    source_windows: usize,
-    member_upload_bytes: u64,
-    projection_dispatches: usize,
 }
 
 impl InstructionReadRafStage1Receipt {
     copy_field_getters! { pub(crate), {
         rows: usize,
         row_bytes: u64,
-        claim_bytes: u64,
         row_allocation_identity: usize,
         claim_allocation_identity: usize,
         device_registry_id: u64,
         source_generation: u64,
         completion_serial: u64,
         count_order: InstructionReadRafCountOrder,
-        publication_kind: InstructionReadRafPublicationKind,
-        count_chunks: usize,
-        row_layout: InstructionReadRafRowLayout,
-        count_bytes: usize,
-        count_allocation_identity: usize,
-        resident_device_bytes: u64,
-        host_row_write_bytes: u64,
-        host_claim_write_bytes: u64,
-        host_count_update_bytes: u64,
-        complete_overwrite: bool,
-        source_windows: usize,
-        member_upload_bytes: u64,
-        projection_dispatches: usize,
     } }
 }
 
@@ -319,22 +268,9 @@ impl InstructionReadRafStage1Storage {
             source_generation,
             completion_serial,
             count_order: InstructionReadRafCountOrder::TableMajorThenNoneV1,
-            publication_kind: InstructionReadRafPublicationKind::HostFillV1,
-            row_layout: InstructionReadRafRowLayout::ColumnMajorPackedU64V3,
             count_chunks: self.counts.len(),
             count_bytes,
             count_allocation_identity,
-            resident_device_bytes: row_bytes + claim_bytes,
-            host_row_write_bytes: row_bytes,
-            host_claim_write_bytes: claim_bytes,
-            host_count_update_bytes: u64::try_from(self.rows)
-                .ok()
-                .and_then(|rows| rows.checked_mul(size_of::<u32>() as u64))
-                .ok_or(MetalError::InputTooLong(self.rows))?,
-            complete_overwrite: true,
-            source_windows: self.rows,
-            member_upload_bytes: 0,
-            projection_dispatches: 0,
         };
         let rows = BooleanityRows::from_initialized_buffer(
             self.row_buffer,
@@ -734,18 +670,7 @@ fn validate_owner(
             "source receipt belongs to another Metal device",
         ));
     }
-    if receipt.source_generation == 0
-        || receipt.completion_serial == 0
-        || !receipt.complete_overwrite
-        || receipt.publication_kind != InstructionReadRafPublicationKind::HostFillV1
-        || receipt.row_layout != InstructionReadRafRowLayout::ColumnMajorPackedU64V3
-        || receipt.source_windows != expected_rows
-        || receipt.member_upload_bytes != 0
-        || receipt.projection_dispatches != 0
-        || receipt.resident_device_bytes != receipt.row_bytes + receipt.claim_bytes
-        || receipt.host_row_write_bytes != receipt.row_bytes
-        || receipt.host_claim_write_bytes != receipt.claim_bytes
-    {
+    if receipt.source_generation == 0 || receipt.completion_serial == 0 {
         return Err(invalid_source(
             "source receipt has no publication generation",
         ));

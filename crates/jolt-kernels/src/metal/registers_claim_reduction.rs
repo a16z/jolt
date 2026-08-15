@@ -13,10 +13,11 @@ use super::solinas::registers_claim_reduction::{
     RegistersClaimAliasSnapshot, RegistersClaimDenseOutputs, RegistersClaimGeometry,
     RegistersClaimKernelConfig, RegistersClaimPartialQHandoff, RegistersClaimResidentRdPlane,
 };
+#[cfg(feature = "allocative")]
+use super::solinas::OuterRegistersClaimCarrierSubmission;
 use super::solinas::{
     OuterRegistersClaimCarrier, OuterRegistersClaimCarrierJoinStats,
-    OuterRegistersClaimCarrierReceipt, OuterRegistersClaimCarrierSubmission,
-    PendingOuterRegistersClaimCarrier, SolinasMetal,
+    OuterRegistersClaimCarrierReceipt, PendingOuterRegistersClaimCarrier, SolinasMetal,
 };
 use crate::optimized::registers_claim_reduction::OptimizedRegistersClaimReduction;
 use crate::{
@@ -70,6 +71,7 @@ pub(super) struct MetalRegistersClaimStage1Carry {
 
 pub(super) struct MetalRegistersClaimPendingStage1Carry {
     pending: PendingOuterRegistersClaimCarrier,
+    #[cfg(feature = "allocative")]
     submission: OuterRegistersClaimCarrierSubmission,
     context: SolinasMetal,
     product_tau_low: Vec<AkitaField>,
@@ -80,6 +82,7 @@ pub(super) struct MetalRegistersClaimPendingStage1Carry {
 }
 
 pub(super) struct MetalRegistersClaimAsyncStage1Carry {
+    #[cfg(feature = "allocative")]
     submission: OuterRegistersClaimCarrierSubmission,
     handle: Option<
         JoinHandle<
@@ -117,10 +120,6 @@ impl Drop for MetalRegistersClaimAsyncStage1Carry {
 }
 
 impl MetalRegistersClaimAsyncStage1Carry {
-    pub(super) const fn submission(&self) -> OuterRegistersClaimCarrierSubmission {
-        self.submission
-    }
-
     fn join(
         mut self,
     ) -> Result<
@@ -181,6 +180,7 @@ impl MetalRegistersClaimPendingStage1Carry {
         }
         Ok(Self {
             pending,
+            #[cfg(feature = "allocative")]
             submission,
             context: source.context.clone(),
             product_tau_low: source.product_tau_low.to_vec(),
@@ -192,9 +192,11 @@ impl MetalRegistersClaimPendingStage1Carry {
     }
 
     pub(super) fn start(self) -> MetalRegistersClaimAsyncStage1Carry {
+        #[cfg(feature = "allocative")]
         let submission = self.submission;
         let handle = std::thread::spawn(move || self.join().map_err(|error| error.to_string()));
         MetalRegistersClaimAsyncStage1Carry {
+            #[cfg(feature = "allocative")]
             submission,
             handle: Some(handle),
         }

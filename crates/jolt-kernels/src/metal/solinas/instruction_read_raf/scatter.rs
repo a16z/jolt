@@ -1,7 +1,6 @@
 use std::mem::size_of;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
 use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
@@ -21,7 +20,7 @@ use crate::metal::solinas::{
         BytecodeAddressFusedScatterRequest, BytecodeAddressSparseStage1Carrier,
         BytecodeAddressStage1TopologyReceipt,
     },
-    completed_command_gpu_time, Fp128, MetalError, SolinasMetal,
+    Fp128, MetalError, SolinasMetal,
 };
 
 const PIPELINE: &str = "solinas_instruction_read_raf_compatibility_scatter";
@@ -61,14 +60,6 @@ impl Default for InstructionReadRafCompatibilityScatterConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct InstructionReadRafProducerExecution {
-    pub(crate) preparation_wall: Duration,
-    pub(crate) command_wall: Duration,
-    pub(crate) gpu_active: Duration,
-    pub(crate) status_readback_bytes: u64,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct InstructionReadRafDenseGroupedReceipt {
     source: InstructionReadRafStage1Receipt,
@@ -86,14 +77,6 @@ pub(crate) struct InstructionReadRafDenseGroupedReceipt {
     completion_serial: u64,
     e_in_length: usize,
     e_out_length: usize,
-    additional_allocation_bytes: u64,
-    threadgroups: usize,
-    threads_per_threadgroup: usize,
-    dynamic_threadgroup_bytes: u64,
-    static_threadgroup_bytes: u64,
-    command_buffers: usize,
-    waits: usize,
-    encoders: usize,
     dispatches: usize,
     source_copy_bytes: u64,
     full_plane_readback_bytes: u64,
@@ -146,14 +129,6 @@ impl InstructionReadRafDenseGroupedReceipt {
         completion_serial: u64,
         e_in_length: usize,
         e_out_length: usize,
-        additional_allocation_bytes: u64,
-        threadgroups: usize,
-        threads_per_threadgroup: usize,
-        dynamic_threadgroup_bytes: u64,
-        static_threadgroup_bytes: u64,
-        command_buffers: usize,
-        waits: usize,
-        encoders: usize,
         dispatches: usize,
         source_copy_bytes: u64,
         full_plane_readback_bytes: u64,
@@ -215,7 +190,6 @@ pub(crate) struct InstructionReadRafDenseGroupedPlanes {
     inverse: Buffer,
     weights: Buffer,
     receipt: InstructionReadRafDenseGroupedReceipt,
-    execution: InstructionReadRafProducerExecution,
     bytecode_carrier: Option<BytecodeAddressSparseStage1Carrier>,
 }
 
@@ -231,8 +205,6 @@ impl InstructionReadRafDenseGroupedPlanes {
     pub(crate) fn receipt(&self) -> &InstructionReadRafDenseGroupedReceipt {
         &self.receipt
     }
-
-    copy_field_getters! { pub(crate), { execution: InstructionReadRafProducerExecution }}
 
     pub(crate) fn into_parts(self) -> InstructionReadRafDenseGroupedParts {
         InstructionReadRafDenseGroupedParts {
@@ -287,7 +259,6 @@ impl SolinasMetal {
         config: InstructionReadRafCompatibilityScatterConfig,
         bytecode: Option<BytecodeAddressFusedScatterRequest>,
     ) -> Result<InstructionReadRafDenseGroupedPlanes, MetalError> {
-        let preparation_start = Instant::now();
         let source_receipt = source.receipt();
         let rows = source_receipt.rows();
         let log_rows = rows.ilog2() as usize;
@@ -507,9 +478,6 @@ impl SolinasMetal {
             )?,
         };
         let params = buffer_from_slice(&self.device, std::slice::from_ref(&params));
-        let preparation_wall = preparation_start.elapsed();
-
-        let command_start = Instant::now();
         let command_buffer = self.queue.new_command_buffer();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
@@ -564,8 +532,6 @@ impl SolinasMetal {
         });
         command_buffer.commit();
         command_buffer.wait_until_completed();
-        let command_wall = command_start.elapsed();
-        let gpu_active = completed_command_gpu_time(command_buffer)?;
         let status_value = read_status(&status);
         if status_value != 0 {
             return Err(invalid_scatter(
@@ -650,14 +616,6 @@ impl SolinasMetal {
             completion_serial,
             e_in_length,
             e_out_length,
-            additional_allocation_bytes: additional,
-            threadgroups: chunks,
-            threads_per_threadgroup: threads,
-            dynamic_threadgroup_bytes: threadgroup_bytes,
-            static_threadgroup_bytes: limits.static_threadgroup_memory_length,
-            command_buffers: 1,
-            waits: 1,
-            encoders: 1,
             dispatches: 1,
             source_copy_bytes: 0,
             full_plane_readback_bytes: 0,
@@ -670,12 +628,6 @@ impl SolinasMetal {
             inverse,
             weights,
             receipt,
-            execution: InstructionReadRafProducerExecution {
-                preparation_wall,
-                command_wall,
-                gpu_active,
-                status_readback_bytes: STATUS_BYTES,
-            },
             bytecode_carrier,
         })
     }
@@ -793,7 +745,7 @@ fn validate_bytecode_request(
         && receipt.source_completion_serial() == source.completion_serial()
         && receipt.source_rows_storage_id() == source.row_allocation_identity()
         && receipt.source_claim_storage_id() == source.claim_allocation_identity()
-        && receipt.source_windows() == source.source_windows();
+        && receipt.source_windows() == source.rows();
     let topology_shape = receipt.padded_rows() == padded_rows
         && receipt.shape().rows().is_ok_and(|rows| rows == padded_rows)
         && physical_rows != 0

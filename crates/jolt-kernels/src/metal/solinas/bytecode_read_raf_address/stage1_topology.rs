@@ -907,7 +907,7 @@ impl BytecodeAddressStage1TopologyStorage {
             source_completion_serial: source_receipt.completion_serial(),
             source_rows_storage_id: source_receipt.row_allocation_identity(),
             source_claim_storage_id: source_receipt.claim_allocation_identity(),
-            source_windows: source_receipt.source_windows(),
+            source_windows: source_receipt.rows(),
             completion_serial: next_nonzero()?,
             complete_overwrite: true,
             covered_rows: data.physical_rows,
@@ -991,7 +991,7 @@ fn validate_owner(
         || receipt.source_completion_serial != source_receipt.completion_serial()
         || receipt.source_rows_storage_id != source_receipt.row_allocation_identity()
         || receipt.source_claim_storage_id != source_receipt.claim_allocation_identity()
-        || receipt.source_windows != source_receipt.source_windows()
+        || receipt.source_windows != source_receipt.rows()
         || receipt.padded_rows != source_receipt.rows()
         || receipt.device_registry_id != source_receipt.device_registry_id()
     {

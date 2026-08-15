@@ -471,18 +471,6 @@ impl RamAccessCollectionChunkWriter<'_> {
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl RamAccessCollection {
-    pub(crate) fn cycles(&self) -> usize {
-        self.columns.addresses.len()
-    }
-
-    pub(crate) fn access_count(&self) -> usize {
-        self.tape.access_count()
-    }
-
-    pub(crate) fn increment_count(&self) -> usize {
-        self.activity.len()
-    }
-
     pub(crate) fn validate_publish<F: Field>(
         &self,
         session: &ProofSession,

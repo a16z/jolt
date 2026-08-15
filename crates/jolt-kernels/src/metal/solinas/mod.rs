@@ -114,8 +114,6 @@ pub use instruction_ra_sequence::{
 };
 #[cfg(test)]
 pub(crate) use instruction_read_raf::validate_bytecode_topology_admission;
-#[cfg(test)]
-pub(crate) use instruction_read_raf::InstructionReadRafPublicationKind;
 #[doc(hidden)]
 pub use instruction_read_raf::InstructionReadRafStage1Owner;
 pub(crate) use instruction_read_raf::{
@@ -123,18 +121,18 @@ pub(crate) use instruction_read_raf::{
     instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafCountOrder,
     InstructionReadRafDenseGroupedPlanes, InstructionReadRafDenseGroupedReceipt,
-    InstructionReadRafFusedBytecodeReceipt, InstructionReadRafProducerExecution,
-    InstructionReadRafStage1ChunkWriter, InstructionReadRafStage1Lease,
-    InstructionReadRafStage1Receipt, InstructionReadRafStage1Storage,
-    PendingInstructionReadRafSourcePrimer, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
-    INSTRUCTION_READ_RAF_SEGMENTS,
+    InstructionReadRafFusedBytecodeReceipt, InstructionReadRafStage1ChunkWriter,
+    InstructionReadRafStage1Lease, InstructionReadRafStage1Receipt,
+    InstructionReadRafStage1Storage, PendingInstructionReadRafSourcePrimer,
+    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, INSTRUCTION_READ_RAF_SEGMENTS,
 };
+#[cfg(feature = "allocative")]
+pub(crate) use outer_remainder::OuterRegistersClaimCarrierSubmission;
 pub(crate) use outer_remainder::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, OuterRegistersClaimCarrier,
     OuterRegistersClaimCarrierJoinStats, OuterRegistersClaimCarrierReceipt,
-    OuterRegistersClaimCarrierSubmission, OuterRemainderSequenceStorage,
-    PendingOuterRegistersClaimCarrier,
+    OuterRemainderSequenceStorage, PendingOuterRegistersClaimCarrier,
 };
 pub use outer_remainder::{
     OuterRemainderDispatchCounts, OuterRemainderPhase, OuterRemainderSequence,
