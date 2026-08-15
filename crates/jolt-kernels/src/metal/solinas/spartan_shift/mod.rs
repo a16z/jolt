@@ -578,6 +578,7 @@ impl SpartanShiftProducerPlan {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy)]
 pub struct SpartanShiftNativePlanes<'a> {
     geometry: SpartanShiftGeometry,
@@ -586,6 +587,7 @@ pub struct SpartanShiftNativePlanes<'a> {
     flags: &'a [SpartanShiftFlagWord],
 }
 
+#[cfg(test)]
 impl<'a> SpartanShiftNativePlanes<'a> {
     pub fn new(
         geometry: SpartanShiftGeometry,
@@ -634,6 +636,7 @@ impl<'a> SpartanShiftNativePlanes<'a> {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanShiftNativeRow {
     pub unexpanded_pc: u64,
@@ -643,7 +646,8 @@ pub struct SpartanShiftNativeRow {
     pub is_noop: bool,
 }
 
-pub fn pack_flag_words(
+#[cfg(test)]
+pub(crate) fn pack_flag_words(
     geometry: SpartanShiftGeometry,
     is_virtual: &[bool],
     is_first_in_sequence: &[bool],
@@ -679,7 +683,8 @@ pub fn pack_flag_words(
 ///
 /// A parallel producer assigns each chunk to one worker, which avoids atomic
 /// updates to `SpartanShiftFlagWord` while the two value planes are filled.
-pub fn pack_flag_word(
+#[cfg(test)]
+fn pack_flag_word(
     is_virtual: &[bool],
     is_first_in_sequence: &[bool],
     is_noop: &[bool],
@@ -762,7 +767,8 @@ pub fn mixed_high_weights<F: Field>(
     clippy::needless_range_loop,
     reason = "the low index addresses all four output tables"
 )]
-pub fn build_prefix_rank_one<F: Field>(
+#[cfg(test)]
+pub(crate) fn build_prefix_reference<F: Field>(
     geometry: SpartanShiftGeometry,
     planes: SpartanShiftNativePlanes<'_>,
     r_outer: &[F],
@@ -799,112 +805,7 @@ pub fn build_prefix_rank_one<F: Field>(
     })
 }
 
-/// Oracle matching the shader's current/successor high-row accumulation.
-#[expect(
-    clippy::needless_range_loop,
-    reason = "the low index addresses all four output tables"
-)]
-pub fn build_prefix_successor<F: Field>(
-    geometry: SpartanShiftGeometry,
-    planes: SpartanShiftNativePlanes<'_>,
-    r_outer: &[F],
-    r_product: &[F],
-    gamma: F,
-) -> Result<SpartanShiftPrefixTables<F>, SpartanShiftOracleError> {
-    validate_oracle_inputs(geometry, planes, r_outer, r_product)?;
-    let outer = EqPlusOnePrefixSuffix::new(r_outer);
-    let product = EqPlusOnePrefixSuffix::new(r_product);
-    let (r_outer_hi, _) = split_point(geometry, r_outer)?;
-    let (r_product_hi, _) = split_point(geometry, r_product)?;
-    let eq_outer = EqPolynomial::<F>::evals(r_outer_hi, None);
-    let eq_product = EqPolynomial::<F>::evals(r_product_hi, None);
-    let gamma_powers = gamma_powers(gamma);
-    let mut q: [Vec<F>; SPARTAN_SHIFT_PREFIX_PAIRS] =
-        std::array::from_fn(|_| vec![F::zero(); geometry.prefix_elements]);
-
-    for x_hi in 0..geometry.suffix_elements {
-        for x_lo in 0..geometry.prefix_elements {
-            let row = planes.row(geometry.row_index(x_hi, x_lo)?);
-            q[0][x_lo] += eq_outer[x_hi] * outer_value(row, gamma_powers);
-            q[2][x_lo] += eq_product[x_hi] * product_value(row, gamma_powers[4]);
-            if x_hi + 1 < geometry.suffix_elements {
-                let next = planes.row(geometry.row_index(x_hi + 1, x_lo)?);
-                q[1][x_lo] += eq_outer[x_hi] * outer_value(next, gamma_powers);
-                q[3][x_lo] += eq_product[x_hi] * product_value(next, gamma_powers[4]);
-            }
-        }
-    }
-
-    Ok(SpartanShiftPrefixTables {
-        p: [
-            outer.prefix_0,
-            outer.prefix_1,
-            product.prefix_0,
-            product.prefix_1,
-        ],
-        q,
-    })
-}
-
-/// Host oracle for the shader's tiled current/successor traversal.
-#[expect(
-    clippy::needless_range_loop,
-    reason = "the low index addresses all four output tables"
-)]
-pub fn build_prefix_successor_tiled<F: Field>(
-    geometry: SpartanShiftGeometry,
-    planes: SpartanShiftNativePlanes<'_>,
-    r_outer: &[F],
-    r_product: &[F],
-    gamma: F,
-    high_tile_elements: usize,
-) -> Result<SpartanShiftPrefixTables<F>, SpartanShiftOracleError> {
-    validate_oracle_inputs(geometry, planes, r_outer, r_product)?;
-    let config = SpartanShiftKernelConfig {
-        high_tile_elements,
-        ..SpartanShiftKernelConfig::default()
-    };
-    let _ = geometry.params(config)?;
-
-    let outer = EqPlusOnePrefixSuffix::new(r_outer);
-    let product = EqPlusOnePrefixSuffix::new(r_product);
-    let (r_outer_hi, _) = split_point(geometry, r_outer)?;
-    let (r_product_hi, _) = split_point(geometry, r_product)?;
-    let eq_outer = EqPolynomial::<F>::evals(r_outer_hi, None);
-    let eq_product = EqPolynomial::<F>::evals(r_product_hi, None);
-    let gamma_powers = gamma_powers(gamma);
-    let mut q: [Vec<F>; SPARTAN_SHIFT_PREFIX_PAIRS] =
-        std::array::from_fn(|_| vec![F::zero(); geometry.prefix_elements]);
-
-    for high_start in (0..geometry.suffix_elements).step_by(high_tile_elements) {
-        let high_end = high_start + high_tile_elements;
-        for x_lo in 0..geometry.prefix_elements {
-            let mut current = planes.row(geometry.row_index(high_start, x_lo)?);
-            for x_hi in high_start..high_end {
-                q[0][x_lo] += eq_outer[x_hi] * outer_value(current, gamma_powers);
-                q[2][x_lo] += eq_product[x_hi] * product_value(current, gamma_powers[4]);
-                if x_hi + 1 < geometry.suffix_elements {
-                    let next = planes.row(geometry.row_index(x_hi + 1, x_lo)?);
-                    q[1][x_lo] += eq_outer[x_hi] * outer_value(next, gamma_powers);
-                    q[3][x_lo] += eq_product[x_hi] * product_value(next, gamma_powers[4]);
-                    current = next;
-                }
-            }
-        }
-    }
-
-    Ok(SpartanShiftPrefixTables {
-        p: [
-            outer.prefix_0,
-            outer.prefix_1,
-            product.prefix_0,
-            product.prefix_1,
-        ],
-        q,
-    })
-}
-
-pub fn prefix_round_endpoints<F: Field>(
+fn prefix_round_endpoints<F: Field>(
     tables: &SpartanShiftPrefixTables<F>,
 ) -> Result<[F; 2], SpartanShiftOracleError> {
     let length = tables.p[0].len();
@@ -955,7 +856,8 @@ pub fn bind_prefix_tables<F: Field>(
     Ok(())
 }
 
-pub fn fold_native_prefix<F: Field>(
+#[cfg(test)]
+fn fold_native_prefix<F: Field>(
     geometry: SpartanShiftGeometry,
     planes: SpartanShiftNativePlanes<'_>,
     prefix_challenges: &[F],
@@ -1023,7 +925,7 @@ pub fn build_dense_state<F: Field>(
     })
 }
 
-pub fn dense_round_endpoints<F: Field>(
+fn dense_round_endpoints<F: Field>(
     state: &SpartanShiftDenseState<F>,
     gamma: F,
 ) -> Result<[F; 2], SpartanShiftOracleError> {
@@ -1099,6 +1001,7 @@ pub fn final_outputs<F: Field>(
     })
 }
 
+#[cfg(test)]
 fn validate_oracle_inputs<F: Field>(
     geometry: SpartanShiftGeometry,
     planes: SpartanShiftNativePlanes<'_>,
@@ -1172,6 +1075,7 @@ fn partially_bound_eq_plus_one<F: Field>(
         .collect())
 }
 
+#[cfg(test)]
 fn outer_value<F: Field>(row: SpartanShiftNativeRow, gamma_powers: [F; 5]) -> F {
     let mut value = F::from_u64(row.unexpanded_pc) + gamma_powers[1] * F::from_u64(row.pc);
     if row.is_virtual {
@@ -1183,6 +1087,7 @@ fn outer_value<F: Field>(row: SpartanShiftNativeRow, gamma_powers: [F; 5]) -> F 
     value
 }
 
+#[cfg(test)]
 fn product_value<F: Field>(row: SpartanShiftNativeRow, gamma_four: F) -> F {
     if row.is_noop {
         F::zero()
@@ -1526,56 +1431,6 @@ mod tests {
     }
 
     #[test]
-    fn tiled_successor_oracle_preserves_internal_halos() {
-        let geometry = SpartanShiftGeometry::new(1 << 18).unwrap();
-        let mut unexpanded_pc = vec![0u64; geometry.rows];
-        let mut pc = vec![0u64; geometry.rows];
-        let mut is_virtual = vec![false; geometry.rows];
-        let mut is_first = vec![false; geometry.rows];
-        let mut is_noop = vec![true; geometry.rows];
-        let high_markers = [63usize, 64, 65, 127, 128, 129, 255, 256, 257];
-        let low_markers = [0usize, 31, 32, 511];
-
-        for (high_index, &x_hi) in high_markers.iter().enumerate() {
-            for (low_index, &x_lo) in low_markers.iter().enumerate() {
-                let row = geometry.row_index(x_hi, x_lo).unwrap();
-                let marker = (high_index * low_markers.len() + low_index + 1) as u64;
-                unexpanded_pc[row] = marker.wrapping_mul(0x1_0000_0001);
-                pc[row] = u64::MAX - marker;
-                is_virtual[row] = marker & 1 != 0;
-                is_first[row] = marker & 2 != 0;
-                is_noop[row] = false;
-            }
-        }
-
-        let flags = pack_flag_words(geometry, &is_virtual, &is_first, &is_noop).unwrap();
-        let planes = SpartanShiftNativePlanes::new(geometry, &unexpanded_pc, &pc, &flags).unwrap();
-        let r_outer = point(geometry.log_t, 0xA11C_E001);
-        let r_product = point(geometry.log_t, 0xB22D_F002);
-        let gamma = AkitaField::from_u64(0xC33E_1003);
-        let direct = build_prefix_rank_one(geometry, planes, &r_outer, &r_product, gamma).unwrap();
-        let successor =
-            build_prefix_successor(geometry, planes, &r_outer, &r_product, gamma).unwrap();
-        assert_eq!(successor, direct);
-
-        for high_tile_elements in [64, 128, 256] {
-            let tiled = build_prefix_successor_tiled(
-                geometry,
-                planes,
-                &r_outer,
-                &r_product,
-                gamma,
-                high_tile_elements,
-            )
-            .unwrap();
-            assert_eq!(
-                tiled, direct,
-                "tiled successor mismatch at high tile {high_tile_elements}"
-            );
-        }
-    }
-
-    #[test]
     fn metal_runtime_matches_prefix_and_fold_oracles() {
         let Ok(context) = super::super::SolinasMetal::for_akita() else {
             return;
@@ -1609,7 +1464,7 @@ mod tests {
         let r_product = point(geometry.log_t, 0xB22D_F002);
         let gamma = AkitaField::from_u64(0xC33E_1003);
         let expected_prefix =
-            build_prefix_successor(geometry, planes, &r_outer, &r_product, gamma).unwrap();
+            build_prefix_reference(geometry, planes, &r_outer, &r_product, gamma).unwrap();
 
         let invocation = context
             .prepare_spartan_shift_prefix(

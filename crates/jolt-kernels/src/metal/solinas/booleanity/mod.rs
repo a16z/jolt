@@ -1,10 +1,13 @@
 use std::{mem::size_of, slice, sync::Arc};
 
-use super::{buffer_from_slice, set_inline_bytes, Fp128, MetalError, PipelineLimits, SolinasMetal};
+use super::{
+    buffer_from_slice, set_inline_bytes, validate_completed_command, Fp128, MetalError,
+    PipelineLimits, SolinasMetal,
+};
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLResourceOptions, MTLSize,
 };
 
 const SIMD_WIDTH: usize = 32;
@@ -1000,9 +1003,7 @@ impl BooleanitySequence {
         command_buffer: &metal::CommandBufferRef,
         reduction_input_count: usize,
     ) -> Result<[AkitaField; MESSAGE_LANES], MetalError> {
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
+        validate_completed_command(command_buffer)?;
         let mut reductions = reduction_input_count;
         let mut final_in_a = true;
         while reductions > 1 {

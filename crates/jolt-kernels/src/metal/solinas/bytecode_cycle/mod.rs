@@ -1,13 +1,11 @@
 use std::{mem::size_of, slice};
 
 use jolt_field::AkitaField;
-use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
-};
+use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
 use super::{
-    set_inline_bytes, Fp128, MetalError, PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
+    set_inline_bytes, validate_completed_command, Fp128, MetalError, PipelineLimits, SolinasMetal,
+    AKITA_OFFSET_FFFFA7F7,
 };
 
 pub const BYTECODE_CYCLE_TABLES: usize = 5;
@@ -425,9 +423,7 @@ impl BytecodeCycleSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
+        validate_completed_command(command_buffer)?;
         let message = self.read_reduced_message(threadgroups)?;
         if challenge.is_some() {
             self.current_elements /= 2;

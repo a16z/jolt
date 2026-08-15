@@ -2,17 +2,14 @@ use std::mem::size_of;
 
 use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
-use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
-};
+use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
 #[cfg(test)]
 use super::PipelineLimits;
 use super::{
-    buffer_from_slice, set_inline_bytes, BooleanityRows, BytecodeCycleSequence,
-    BytecodeCycleSequenceConfig, BytecodeCycleTablesMut, Fp128, MetalError, SolinasMetal,
-    BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
+    buffer_from_slice, set_inline_bytes, validate_completed_command, BooleanityRows,
+    BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTablesMut, Fp128, MetalError,
+    SolinasMetal, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 
 pub(crate) const BYTECODE_ROW_STAGES: usize = 9;
@@ -385,9 +382,7 @@ impl BytecodeCycleRowSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
+        validate_completed_command(command_buffer)?;
         self.dense
             .read_reduced_message(self.params.hi_length as usize)
     }

@@ -4,12 +4,12 @@ use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLResourceOptions, MTLSize,
 };
 
 use super::booleanity::{balanced_bias, selector_abi, write_fields};
 use super::{
-    command_buffer_timestamp, set_inline_bytes, BooleanityRows, BooleanitySelector, Fp128,
+    completed_command_gpu_time, set_inline_bytes, BooleanityRows, BooleanitySelector, Fp128,
     MetalError, PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
 };
 
@@ -346,44 +346,23 @@ impl SolinasMetal {
 }
 
 impl BooleanityAddressPushforward {
-    pub const fn tile_threads_per_threadgroup(&self) -> usize {
-        self.tile_threads_per_threadgroup
-    }
-
-    pub const fn finalize_threads_per_threadgroup(&self) -> usize {
-        self.finalize_threads_per_threadgroup
-    }
+    copy_field_getters! { pub, {
+        tile_threads_per_threadgroup: usize,
+        finalize_threads_per_threadgroup: usize,
+        uses_production_specialization => production_specialized: bool,
+        row_count => rows: usize,
+        polys: usize,
+        selectors_per_tile: usize,
+        e_in_length: usize,
+        e_out_length: usize,
+    }}
 
     pub const fn selector_tiles(&self) -> usize {
         self.polys.div_ceil(self.selectors_per_tile)
     }
 
-    pub const fn uses_production_specialization(&self) -> bool {
-        self.production_specialized
-    }
-
     pub fn resident_row_identity(&self) -> usize {
         self.buffers.rows.allocation_identity()
-    }
-
-    pub const fn row_count(&self) -> usize {
-        self.rows
-    }
-
-    pub const fn polys(&self) -> usize {
-        self.polys
-    }
-
-    pub const fn selectors_per_tile(&self) -> usize {
-        self.selectors_per_tile
-    }
-
-    pub const fn e_in_length(&self) -> usize {
-        self.e_in_length
-    }
-
-    pub const fn e_out_length(&self) -> usize {
-        self.e_out_length
     }
 
     pub const fn output_elements(&self) -> usize {
@@ -491,17 +470,9 @@ impl BooleanityAddressPushforward {
 
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            let status = command_buffer.status();
-            if status != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(status));
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
+            let gpu_active = completed_command_gpu_time(command_buffer)?;
             self.completed.set(true);
-            Ok(Duration::from_secs_f64(end - start))
+            Ok(gpu_active)
         })
     }
 

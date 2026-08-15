@@ -4,7 +4,7 @@ use jolt_field::AkitaField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLResourceOptions, MTLSize,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -12,10 +12,10 @@ use rayon::prelude::*;
 use super::{
     address_raf::{AddressRafScanRow, AddressRafSums},
     address_suffix_full::AddressSuffixFullSums,
-    buffer_from_slice, set_inline_bytes, Fp128, InstructionReadRafCountOrder,
-    InstructionReadRafDenseGroupedPlanes, MetalError, PipelineLimits, Product5Sequence,
-    Product5SequenceConfig, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES, ADDRESS_SUFFIX_BINS,
-    ADDRESS_SUFFIX_TABLES, INSTRUCTION_READ_RAF_SEGMENTS, PRODUCT5_FACTORS,
+    buffer_from_slice, set_inline_bytes, validate_completed_command, Fp128,
+    InstructionReadRafCountOrder, InstructionReadRafDenseGroupedPlanes, MetalError, PipelineLimits,
+    Product5Sequence, Product5SequenceConfig, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
+    ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES, INSTRUCTION_READ_RAF_SEGMENTS, PRODUCT5_FACTORS,
 };
 
 const RAF_KEYS: usize = 2 * ADDRESS_RAF_BINS;
@@ -943,10 +943,7 @@ impl AddressPhaseSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        let status = command_buffer.status();
-        if status != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(status));
-        }
+        validate_completed_command(command_buffer)?;
         self.phases_executed += 1;
 
         let raf_elements = ADDRESS_RAF_LANES * ADDRESS_RAF_BINS;
@@ -1107,9 +1104,7 @@ impl AddressPhaseSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
+        validate_completed_command(command_buffer)?;
         Ok(())
     }
 
@@ -1273,9 +1268,7 @@ impl AddressPhaseSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
+        validate_completed_command(command_buffer)?;
         let output = if final_in_a {
             &self.buffers.cycle_partial_a
         } else {

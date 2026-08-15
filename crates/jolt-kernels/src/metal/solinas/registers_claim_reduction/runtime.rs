@@ -8,12 +8,12 @@ use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLResourceOptions, MTLSize,
 };
 use thiserror::Error;
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
 use super::{
@@ -306,14 +306,7 @@ impl RegistersClaimAliasFoldInvocation {
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            if command_buffer.status() != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(command_buffer.status()).into());
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end }.into());
-            }
+            let gpu_active = completed_command_gpu_time(command_buffer)?;
             // SAFETY: command completion initializes exactly one field per
             // suffix row in the shared output allocation.
             let fields = unsafe {
@@ -330,7 +323,7 @@ impl RegistersClaimAliasFoldInvocation {
                     .map(|&value| value.into_jolt_field())
                     .collect(),
                 useful_half_width_terms: self.geometry.rows() as u64,
-                gpu_active: Duration::from_secs_f64(end - start),
+                gpu_active,
                 resident_wall: wall_started.elapsed(),
             })
         })

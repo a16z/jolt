@@ -6,8 +6,7 @@ use std::time::{Duration, Instant};
 use jolt_field::AkitaField;
 use jolt_poly::EqPolynomial;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, MTLResourceOptions, MTLSize,
 };
 
 use super::{
@@ -22,7 +21,7 @@ use crate::metal::solinas::{
         BytecodeAddressFusedScatterRequest, BytecodeAddressSparseStage1Carrier,
         BytecodeAddressStage1TopologyReceipt,
     },
-    command_buffer_timestamp, Fp128, MetalError, SolinasMetal,
+    completed_command_gpu_time, Fp128, MetalError, SolinasMetal,
 };
 
 const PIPELINE: &str = "solinas_instruction_read_raf_compatibility_scatter";
@@ -568,18 +567,7 @@ impl SolinasMetal {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         let command_wall = command_start.elapsed();
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let gpu_start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let gpu_end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_end < gpu_start {
-            return Err(MetalError::InvalidGpuTimestamps {
-                start: gpu_start,
-                end: gpu_end,
-            });
-        }
-        let gpu_active = Duration::from_secs_f64(gpu_end - gpu_start);
+        let gpu_active = completed_command_gpu_time(command_buffer)?;
         let status_value = read_status(&status);
         if status_value != 0 {
             return Err(invalid_scatter(

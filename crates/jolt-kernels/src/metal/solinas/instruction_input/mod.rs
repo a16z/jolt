@@ -14,9 +14,9 @@ use metal::{
 };
 
 use super::{
-    command_buffer_timestamp, set_inline_bytes, spartan_outer_uniskip_residual_row_bytes, Fp128,
-    MetalError, OuterResidualArenaKey, OuterResidualReleaseReceipt, PipelineLimits, SolinasMetal,
-    SpartanOuterUniskipRows,
+    completed_command_gpu_time, set_inline_bytes, spartan_outer_uniskip_residual_row_bytes,
+    validate_completed_command, Fp128, MetalError, OuterResidualArenaKey,
+    OuterResidualReleaseReceipt, PipelineLimits, SolinasMetal, SpartanOuterUniskipRows,
 };
 
 pub const INSTRUCTION_INPUT_TABLES: usize = 8;
@@ -1016,18 +1016,7 @@ impl InstructionInputSequenceStorage {
             .saturating_duration_since(primer.submitted_at)
             .saturating_sub(primer.submit_wall);
         primer.command_buffer.wait_until_completed();
-        if primer.command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(primer.command_buffer.status()));
-        }
-        let gpu_start = command_buffer_timestamp(&primer.command_buffer, "GPUStartTime")?;
-        let gpu_end = command_buffer_timestamp(&primer.command_buffer, "GPUEndTime")?;
-        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
-        {
-            return Err(MetalError::InvalidGpuTimestamps {
-                start: gpu_start,
-                end: gpu_end,
-            });
-        }
+        let gpu_active = completed_command_gpu_time(&primer.command_buffer)?;
         // SAFETY: the completed final primer reduction wrote three fields at
         // the start of partial_b, and no protocol command has started.
         let output = unsafe {
@@ -1055,7 +1044,7 @@ impl InstructionInputSequenceStorage {
             submit_wall: primer.submit_wall,
             overlap_wall,
             join_wall,
-            gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
+            gpu_active,
             completed_before_join,
             resident_row_identity: primer.resident_row_identity,
             storage_buffer_identities: primer.storage_buffer_identities,
@@ -1347,9 +1336,7 @@ impl InstructionInputSequence {
             Ok::<(), MetalError>(())
         })?;
 
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
+        validate_completed_command(command_buffer)?;
         let final_buffer = self.final_partial_buffer(e_out.len());
         // SAFETY: the completed reduction leaves three canonical fields at the
         // start of the selected partial buffer.
@@ -1511,15 +1498,7 @@ fn initialize_storage(
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        Duration::from_secs_f64(end - start)
+        completed_command_gpu_time(command_buffer)?
     };
     let wall = started.elapsed();
     let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);

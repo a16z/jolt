@@ -18,8 +18,8 @@ use rayon::prelude::*;
 
 use super::spartan_shift::{SpartanShiftFlagWord, SpartanShiftGeometry, SpartanShiftResidentRows};
 use super::{
-    buffer_from_slice, command_buffer_timestamp, Fp128, InstructionInputRow, InstructionInputRows,
-    MetalError, SolinasMetal,
+    buffer_from_slice, completed_command_gpu_time, Fp128, InstructionInputRow,
+    InstructionInputRows, MetalError, SolinasMetal,
 };
 
 pub const SPARTAN_OUTER_EXTENDED_NODES: usize = 9;
@@ -125,16 +125,14 @@ pub struct SpartanOuterUniskipRows {
 }
 
 impl SpartanOuterUniskipRows {
-    pub const fn len(&self) -> usize {
-        self.len
-    }
+    copy_field_getters! { pub, {
+        len: usize,
+        explicit_rows: usize,
+        device_registry_id: u64,
+    }}
 
     pub const fn is_empty(&self) -> bool {
         self.len == 0
-    }
-
-    pub const fn explicit_rows(&self) -> usize {
-        self.explicit_rows
     }
 
     pub(crate) fn with_explicit_rows(mut self, explicit_rows: usize) -> Result<Self, MetalError> {
@@ -154,10 +152,6 @@ impl SpartanOuterUniskipRows {
 
     pub(crate) fn residual_buffer(&self) -> &Buffer {
         &self.residual_buffer
-    }
-
-    pub const fn device_registry_id(&self) -> u64 {
-        self.device_registry_id
     }
 
     pub fn allocation_identity(&self) -> usize {
@@ -694,17 +688,11 @@ impl Drop for PendingSpartanStage1SourcePrimer {
 }
 
 impl PendingSpartanStage1SourcePrimer {
-    pub(crate) const fn source_bytes(&self) -> u64 {
-        self.source_bytes
-    }
-
-    pub(crate) const fn source_pages(&self) -> u64 {
-        self.source_pages
-    }
-
-    pub(crate) const fn submit_wall(&self) -> Duration {
-        self.submit_wall
-    }
+    copy_field_getters! { pub(crate), {
+        source_bytes: u64,
+        source_pages: u64,
+        submit_wall: Duration,
+    }}
 
     pub(crate) fn join(mut self) -> Result<SpartanStage1SourcePrimerObservation, MetalError> {
         let source_identities: [usize; 5] =
@@ -729,20 +717,13 @@ impl PendingSpartanStage1SourcePrimer {
             .saturating_sub(self.submit_wall);
         command.wait_until_completed();
         let join_wall = join_started.elapsed();
-        if command.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command.status()));
-        }
-        let start = command_buffer_timestamp(&command, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command)?;
         Ok(SpartanStage1SourcePrimerObservation {
             wall: self.submitted_at.elapsed(),
             submit_wall: self.submit_wall,
             overlap_wall,
             join_wall,
-            gpu_active: Duration::from_secs_f64(end - start),
+            gpu_active,
             completed_before_join,
             source_bytes: self.source_bytes,
             source_pages: self.source_pages,
@@ -1190,9 +1171,7 @@ impl SolinasMetal {
 }
 
 impl SpartanOuterUniskipInvocation<'_> {
-    pub const fn threads_per_threadgroup(&self) -> usize {
-        self.threads_per_threadgroup
-    }
+    copy_field_getters! { pub, { threads_per_threadgroup: usize }}
 
     pub fn execute(&self) -> Result<(), MetalError> {
         self.execute_timed().map(|_| ())
@@ -1252,17 +1231,9 @@ impl SpartanOuterUniskipInvocation<'_> {
 
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            let status = command_buffer.status();
-            if status != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(status));
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
+            let gpu_active = completed_command_gpu_time(command_buffer)?;
             self.completed.set(true);
-            Ok(Duration::from_secs_f64(end - start))
+            Ok(gpu_active)
         })
     }
 

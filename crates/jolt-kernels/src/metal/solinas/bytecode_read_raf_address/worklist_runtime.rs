@@ -8,7 +8,7 @@ use std::{
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    MTLResourceOptions, MTLSize,
 };
 use thiserror::Error;
 
@@ -18,7 +18,7 @@ use super::{
     worklist_owner::{BytecodeAddressSparseStage1Carrier, BytecodeAddressSparseStage1Receipt},
 };
 use crate::metal::solinas::{
-    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
 
@@ -631,16 +631,7 @@ fn validate_pipeline(
 fn completed_gpu_active(
     command_buffer: &metal::CommandBufferRef,
 ) -> Result<Duration, BytecodeAddressSparseRuntimeError> {
-    let status = command_buffer.status();
-    if status != MTLCommandBufferStatus::Completed {
-        return Err(MetalError::CommandFailed(status).into());
-    }
-    let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-    let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-    if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-        return Err(MetalError::InvalidGpuTimestamps { start, end }.into());
-    }
-    Ok(Duration::from_secs_f64(end - start))
+    completed_command_gpu_time(command_buffer).map_err(Into::into)
 }
 
 fn field_bytes(fields: usize) -> Result<usize, BytecodeAddressSparseRuntimeError> {

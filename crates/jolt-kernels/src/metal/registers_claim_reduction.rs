@@ -668,7 +668,7 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
             next_round: 0,
             finished: false,
             #[cfg(any(test, feature = "test-utils"))]
-            registers_claim_alias_sequences: self.registers_claim_alias_sequences.clone(),
+            test_counters: self.test_counters.clone(),
         }))
     }
 }
@@ -715,7 +715,7 @@ struct MetalRegistersClaimReductionKernel {
     next_round: usize,
     finished: bool,
     #[cfg(any(test, feature = "test-utils"))]
-    registers_claim_alias_sequences: Arc<std::sync::atomic::AtomicUsize>,
+    test_counters: Arc<super::backend::MetalTestCounters>,
 }
 
 #[cfg(feature = "allocative")]
@@ -849,6 +849,7 @@ impl MetalRegistersClaimReductionKernel {
                 );
                 #[cfg(any(test, feature = "test-utils"))]
                 let _ = self
+                    .test_counters
                     .registers_claim_alias_sequences
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 RegistersClaimDenseOutputs {

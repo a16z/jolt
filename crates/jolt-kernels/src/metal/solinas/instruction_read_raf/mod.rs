@@ -10,7 +10,7 @@ use metal::{
 };
 
 use super::{
-    command_buffer_timestamp, BooleanityRow, BooleanityRows, MetalError, SolinasMetal,
+    completed_command_gpu_time, BooleanityRow, BooleanityRows, MetalError, SolinasMetal,
     BOOLEANITY_SOURCE_ROW_BYTES, BOOLEANITY_SOURCE_WORDS,
 };
 
@@ -554,20 +554,13 @@ impl PendingInstructionReadRafSourcePrimer {
             .saturating_sub(self.submit_wall);
         command.wait_until_completed();
         let join_wall = join_started.elapsed();
-        if command.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command.status()));
-        }
-        let start = command_buffer_timestamp(&command, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command)?;
         Ok(InstructionReadRafSourcePrimerObservation {
             wall: self.submitted_at.elapsed(),
             submit_wall: self.submit_wall,
             overlap_wall,
             join_wall,
-            gpu_active: Duration::from_secs_f64(end - start),
+            gpu_active,
             completed_before_join,
             source_bytes: self.source_bytes,
             source_pages: self.source_pages,

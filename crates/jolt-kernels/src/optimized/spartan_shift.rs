@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn metal_witness_projection_matches_the_prefix_oracle() {
         use crate::metal::solinas::spartan_shift::{
-            build_prefix_successor, pack_flag_words, SpartanShiftGeometry,
+            build_prefix_reference, pack_flag_words, SpartanShiftGeometry,
             SpartanShiftKernelConfig, SpartanShiftNativePlanes,
         };
         use crate::metal::solinas::SolinasMetal;
@@ -912,7 +912,7 @@ mod tests {
             let r_product = point(0xB22D_F002);
             let gamma = jolt_field::AkitaField::from_u64(0xC33E_1003);
             let expected =
-                build_prefix_successor(geometry, planes, &r_outer, &r_product, gamma).unwrap();
+                build_prefix_reference(geometry, planes, &r_outer, &r_product, gamma).unwrap();
             let observed = context
                 .prepare_spartan_shift_prefix(
                     &resident,

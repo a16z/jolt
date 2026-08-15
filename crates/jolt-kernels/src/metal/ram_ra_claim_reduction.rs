@@ -220,6 +220,7 @@ impl PrepareKernel<AkitaField, RamRaClaimReduction<AkitaField>> for MetalBackend
         .map_err(|error| prepare_error(error.to_string()))?;
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
+            .test_counters
             .ram_ra_claim_sparse_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         tracing::info!(

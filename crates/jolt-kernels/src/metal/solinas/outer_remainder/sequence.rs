@@ -12,7 +12,7 @@ use metal::{
 
 use super::super::spartan_outer_uniskip::OuterResidualReleaseReceipt;
 use super::super::{
-    command_buffer_timestamp, set_inline_bytes, Fp128, InstructionInputRows, MetalError,
+    completed_command_gpu_time, set_inline_bytes, Fp128, InstructionInputRows, MetalError,
     SolinasMetal, SpartanOuterUniskipRows,
 };
 use super::{
@@ -338,18 +338,7 @@ impl PendingOuterRegistersClaimCarrier {
         let join_started = Instant::now();
         command_buffer.wait_until_completed();
         let join_wall = join_started.elapsed();
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let gpu_start = command_buffer_timestamp(&command_buffer, "GPUStartTime")?;
-        let gpu_end = command_buffer_timestamp(&command_buffer, "GPUEndTime")?;
-        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
-        {
-            return Err(MetalError::InvalidGpuTimestamps {
-                start: gpu_start,
-                end: gpu_end,
-            });
-        }
+        let gpu_active = completed_command_gpu_time(&command_buffer)?;
         let buffers = self
             .buffers
             .take()
@@ -434,7 +423,7 @@ impl PendingOuterRegistersClaimCarrier {
                 gpu_active: if self.gpu_active_accounted_by_outer {
                     Duration::ZERO
                 } else {
-                    Duration::from_secs_f64(gpu_end - gpu_start)
+                    gpu_active
                 },
                 completed_before_join,
             },
@@ -1195,24 +1184,10 @@ impl OuterRemainderSequence {
         command_buffer: &metal::CommandBufferRef,
     ) -> Result<(), MetalError> {
         command_buffer.wait_until_completed();
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
+        let gpu_active = completed_command_gpu_time(command_buffer).inspect_err(|_| {
             self.phase = OuterRemainderPhase::Poisoned;
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let start = command_buffer_timestamp(command_buffer, "GPUStartTime");
-        let end = command_buffer_timestamp(command_buffer, "GPUEndTime");
-        let (start, end) = match (start, end) {
-            (Ok(start), Ok(end)) => (start, end),
-            (Err(error), _) | (_, Err(error)) => {
-                self.phase = OuterRemainderPhase::Poisoned;
-                return Err(error);
-            }
-        };
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            self.phase = OuterRemainderPhase::Poisoned;
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
-        self.gpu_active += Duration::from_secs_f64(end - start);
+        })?;
+        self.gpu_active += gpu_active;
         Ok(())
     }
 

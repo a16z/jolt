@@ -9,7 +9,7 @@ use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 use metal::{objc::rc::autoreleasepool, Buffer, CommandBuffer, MTLCommandBufferStatus, MTLSize};
 
 use super::super::{
-    command_buffer_timestamp,
+    completed_command_gpu_time,
     instruction_claim_reduction::{
         InstructionClaimPhaseParams, InstructionClaimSequence, INSTRUCTION_CLAIM_MESSAGE_COLUMNS,
     },
@@ -134,15 +134,7 @@ impl PendingProductInstructionInitialMessage {
             .saturating_duration_since(command.submitted_at)
             .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
-        let status = command.command_buffer.status();
-        if status != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(status));
-        }
-        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let product_values = unsafe {
             // SAFETY: command completion makes the two reduced product fields visible.
             slice::from_raw_parts(
@@ -171,7 +163,7 @@ impl PendingProductInstructionInitialMessage {
             submit_wall: command.submit_wall,
             overlap_wall,
             join_wall: join_started.elapsed(),
-            gpu_active: Duration::from_secs_f64(end - start),
+            gpu_active,
             completed_before_join,
             threads_per_threadgroup: command.threads_per_threadgroup,
             threadgroup_bytes: command.threadgroup_bytes,
@@ -288,15 +280,7 @@ impl ProductInstructionRoundService {
             Ok::<_, MetalError>((product_output, instruction_output, command_buffer))
         })?;
         command_buffer.wait_until_completed();
-        let status = command_buffer.status();
-        if status != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(status));
-        }
-        let start = command_buffer_timestamp(&command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command_buffer)?;
         let product_values = unsafe {
             // SAFETY: the completed command reduced the product columns into this shared buffer.
             slice::from_raw_parts(
@@ -320,7 +304,7 @@ impl ProductInstructionRoundService {
             std::array::from_fn(|index| instruction_values[index].into_jolt_field());
         let stats = ProductInstructionRoundStats {
             wall: started.elapsed(),
-            gpu_active: Duration::from_secs_f64(end - start),
+            gpu_active,
             joint: true,
         };
         self.product.complete_joint_transition()?;

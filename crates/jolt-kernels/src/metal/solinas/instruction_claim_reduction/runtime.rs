@@ -11,7 +11,7 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
     ProductRemainderRows, ProductRemainderSourceKind, SolinasMetal,
 };
 use super::{
@@ -749,15 +749,7 @@ impl InstructionClaimSequence {
             .saturating_duration_since(command.submitted_at)
             .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
-        let status = command.command_buffer.status();
-        if status != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(status));
-        }
-        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let values = unsafe {
             // SAFETY: the completed reduction wrote two fields at the front
             // of the selected shared output buffer.
@@ -784,7 +776,7 @@ impl InstructionClaimSequence {
             submit_wall: command.submit_wall,
             overlap_wall,
             join_wall: join_started.elapsed(),
-            gpu_active: Duration::from_secs_f64(end - start),
+            gpu_active,
             completed_before_join,
         };
         self.phase = InstructionClaimPhase::Materialized;
@@ -1210,13 +1202,11 @@ impl InstructionClaimSequence {
         self.timing = InstructionClaimTiming::default();
     }
 
-    pub const fn current_elements(&self) -> usize {
-        self.current_elements
-    }
-
-    pub const fn storage_layout(&self) -> InstructionClaimStorageLayout {
-        self.layout
-    }
+    copy_field_getters! { pub, {
+        current_elements: usize,
+        storage_layout => layout: InstructionClaimStorageLayout,
+        timing: InstructionClaimTiming,
+    }}
 
     pub fn resident_buffer_count(&self) -> usize {
         self.buffers.rows.allocation_identities().len() + 7
@@ -1224,10 +1214,6 @@ impl InstructionClaimSequence {
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0
-    }
-
-    pub const fn timing(&self) -> InstructionClaimTiming {
-        self.timing
     }
 
     pub fn allocation_identities(&self) -> Vec<usize> {
@@ -1427,15 +1413,7 @@ fn finish_command_vec(
 ) -> Result<(Vec<AkitaField>, Duration), MetalError> {
     command_buffer.commit();
     command_buffer.wait_until_completed();
-    let status = command_buffer.status();
-    if status != MTLCommandBufferStatus::Completed {
-        return Err(MetalError::CommandFailed(status));
-    }
-    let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-    let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-    if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-        return Err(MetalError::InvalidGpuTimestamps { start, end });
-    }
+    let gpu_active = completed_command_gpu_time(command_buffer)?;
     let values = unsafe {
         // SAFETY: the completed reduction leaves `columns` fields at the
         // front of the selected shared output buffer.
@@ -1444,7 +1422,7 @@ fn finish_command_vec(
     context.validate_inputs(label, values)?;
     Ok((
         values.iter().copied().map(Fp128::into_jolt_field).collect(),
-        Duration::from_secs_f64(end - start),
+        gpu_active,
     ))
 }
 

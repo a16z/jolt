@@ -263,6 +263,7 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
         let cpu = ValEvaluationKernel::new_offloaded(r_cycle);
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
+            .test_counters
             .registers_val_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(Box::new(MetalRegistersValEvaluationKernel {
@@ -289,6 +290,7 @@ impl MetalBackend {
         let cpu = ValEvaluationKernel::new_offloaded(r_cycle);
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
+            .test_counters
             .registers_val_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Box::new(MetalRegistersValEvaluationKernel {

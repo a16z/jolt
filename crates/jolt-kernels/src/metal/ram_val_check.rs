@@ -163,6 +163,7 @@ impl PrepareKernel<AkitaField, RamValCheck<AkitaField>> for MetalBackend {
                 let _ = session.take::<RamIncrementActivity>();
                 #[cfg(any(test, feature = "test-utils"))]
                 let _ = self
+                    .test_counters
                     .ram_val_sparse_sequences
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return Ok(Box::new(sequence));

@@ -83,37 +83,16 @@ impl RamHammingSparsePlan {
         })
     }
 
-    pub const fn source_generation(&self) -> u64 {
-        self.source_generation
-    }
-
-    pub const fn source_fingerprint(&self) -> u64 {
-        self.source_fingerprint
-    }
-
-    pub const fn log_t(&self) -> usize {
-        self.log_t
-    }
-
-    pub const fn access_leaves(&self) -> usize {
-        self.access_leaves
-    }
-
-    pub const fn parent_nodes(&self) -> usize {
-        self.parent_nodes
-    }
-
-    pub const fn middle_nodes(&self) -> usize {
-        self.middle_nodes
-    }
-
-    pub const fn estimated_products(&self) -> u128 {
-        self.estimated_products
-    }
-
-    pub const fn topology_bytes(&self) -> usize {
-        self.topology_bytes
-    }
+    copy_field_getters! { pub, {
+        source_generation: u64,
+        source_fingerprint: u64,
+        log_t: usize,
+        access_leaves: usize,
+        parent_nodes: usize,
+        middle_nodes: usize,
+        estimated_products: u128,
+        topology_bytes: usize,
+    }}
 }
 
 impl<F: Copy> RamHammingTerminal<F> {

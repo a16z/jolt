@@ -52,7 +52,7 @@ mod source;
 mod spartan_outer_uniskip;
 pub mod spartan_shift;
 
-use runtime::{buffer_from_slice, command_buffer_timestamp};
+use runtime::{buffer_from_slice, completed_command_gpu_time, validate_completed_command};
 pub(crate) use runtime::{set_inline_bytes, validate_working_set};
 pub use runtime::{DeviceInfo, PipelineLimits, SolinasMetal};
 
@@ -142,15 +142,14 @@ pub use product_uniskip::{
     PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
 };
 pub use ram_raf_evaluation::{
-    address_opening_point as ram_raf_address_opening_point, dense_pushforward_oracle,
-    split_equality as ram_raf_split_equality, split_pushforward_oracle, tiled_pushforward_oracle,
+    dense_pushforward_oracle, split_equality as ram_raf_split_equality, split_pushforward_oracle,
     PendingRamRafSequence, RamRafAddress, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
-    RamRafCounters, RamRafDeviceLimits, RamRafError, RamRafExecution, RamRafFoldParams,
-    RamRafObservation, RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan,
-    RamRafSubmissionStats, RamRafTailOutput, ValidatedRamRafAddressPlane, RAM_RAF_ADDRESS_DOMAIN,
-    RAM_RAF_AKITA_OFFSET, RAM_RAF_DEFAULT_TRACE_CUTOFF, RAM_RAF_FINALIZE_PIPELINE,
-    RAM_RAF_FOLD_PIPELINE, RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS,
-    RAM_RAF_SIMD_WIDTH, RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
+    RamRafCounters, RamRafDeviceLimits, RamRafError, RamRafFoldParams, RamRafObservation,
+    RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan, RamRafSubmissionStats,
+    RamRafTailOutput, ValidatedRamRafAddressPlane, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_AKITA_OFFSET,
+    RAM_RAF_DEFAULT_TRACE_CUTOFF, RAM_RAF_FINALIZE_PIPELINE, RAM_RAF_FOLD_PIPELINE,
+    RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS, RAM_RAF_SIMD_WIDTH,
+    RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
 };
 pub(crate) use registers_val::{PendingRegistersValFirstMessage, RegistersValFirstMessageStats};
 pub use registers_val::{

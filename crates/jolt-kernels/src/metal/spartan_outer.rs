@@ -1207,6 +1207,7 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let tau = take_metal_spartan_outer_tau(session, log_t)?;
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
+            .test_counters
             .outer_remainder_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let metadata = MetalOuterResidentMetadata {

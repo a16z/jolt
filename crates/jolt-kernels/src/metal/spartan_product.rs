@@ -433,6 +433,7 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             .entered();
             #[cfg(any(test, feature = "test-utils"))]
             let _ = self
+                .test_counters
                 .product_uniskip_carrier_hits
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             carrier.endpoints
@@ -470,6 +471,7 @@ impl UniskipKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
             let _ = span.record("gpu_active_ns", duration_nanos(gpu_active));
             #[cfg(any(test, feature = "test-utils"))]
             let _ = self
+                .test_counters
                 .product_uniskip_dispatches
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             endpoints.as_array()
@@ -950,6 +952,7 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
         }
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
+            .test_counters
             .product_remainder_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 

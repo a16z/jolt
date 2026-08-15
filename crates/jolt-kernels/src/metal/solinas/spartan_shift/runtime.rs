@@ -7,7 +7,7 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
 use super::{
@@ -616,8 +616,7 @@ impl SpartanShiftPrefixInvocation {
             .saturating_duration_since(command.submitted_at)
             .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
-        validate_command_buffer(&command.command_buffer)?;
-        let gpu_active = gpu_duration(&command.command_buffer)?;
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let q = read_field_columns(
             &self.context,
             &self.buffers.q,
@@ -637,9 +636,7 @@ impl SpartanShiftPrefixInvocation {
         })
     }
 
-    pub const fn plan(&self) -> SpartanShiftPlan {
-        self.plan
-    }
+    copy_field_getters! { pub, { plan: SpartanShiftPlan }}
 
     pub const fn execute_device_buffer_allocations(&self) -> usize {
         0
@@ -719,8 +716,7 @@ impl SpartanShiftFoldInvocation {
             .saturating_duration_since(command.submitted_at)
             .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
-        validate_command_buffer(&command.command_buffer)?;
-        let gpu_active = gpu_duration(&command.command_buffer)?;
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let columns: [Vec<AkitaField>; SPARTAN_SHIFT_OUTPUT_COLUMNS] = read_field_columns(
             &self.context,
             &self.buffers.dense_outputs,
@@ -747,17 +743,11 @@ impl SpartanShiftFoldInvocation {
         })
     }
 
-    pub const fn plan(&self) -> SpartanShiftPlan {
-        self.plan
-    }
-
-    pub const fn pipeline_limits(&self) -> PipelineLimits {
-        self.limits
-    }
-
-    pub const fn dynamic_threadgroup_bytes(&self) -> usize {
-        self.dynamic_threadgroup_bytes
-    }
+    copy_field_getters! { pub, {
+        plan: SpartanShiftPlan,
+        pipeline_limits => limits: PipelineLimits,
+        dynamic_threadgroup_bytes: usize,
+    }}
 
     pub const fn execute_device_buffer_allocations(&self) -> usize {
         0
@@ -814,22 +804,6 @@ fn validate_command_resources(
         return Err(MetalError::InvalidSpartanShiftState(error));
     }
     Ok(())
-}
-
-fn validate_command_buffer(command_buffer: &metal::CommandBufferRef) -> Result<(), MetalError> {
-    if command_buffer.status() != MTLCommandBufferStatus::Completed {
-        return Err(MetalError::CommandFailed(command_buffer.status()));
-    }
-    Ok(())
-}
-
-fn gpu_duration(command_buffer: &metal::CommandBufferRef) -> Result<Duration, MetalError> {
-    let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-    let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-    if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-        return Err(MetalError::InvalidGpuTimestamps { start, end });
-    }
-    Ok(Duration::from_secs_f64(end - start))
 }
 
 fn read_field_columns<const COLUMNS: usize>(

@@ -6,10 +6,10 @@ use std::{
 use jolt_field::AkitaField;
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLCommandBufferStatus, MTLResourceOptions, NSRange,
+    MTLResourceOptions, NSRange,
 };
 
-use super::super::{command_buffer_timestamp, Fp128, MetalError, PipelineLimits, SolinasMetal};
+use super::super::{completed_command_gpu_time, Fp128, MetalError, PipelineLimits, SolinasMetal};
 use super::{
     api::{
         OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
@@ -429,15 +429,7 @@ fn initialize_storage(
                 command_buffer.commit();
                 command_buffer.wait_until_completed();
             });
-            if command_buffer.status() != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(command_buffer.status()));
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
-            Duration::from_secs_f64(end - start)
+            completed_command_gpu_time(command_buffer)?
         }
     };
     let wall = started.elapsed();

@@ -111,36 +111,42 @@ impl MetalConfig {
 }
 
 /// Shared Metal device state used by the installed sumcheck slots.
+#[cfg(any(test, feature = "test-utils"))]
+#[derive(Default)]
+pub(super) struct MetalTestCounters {
+    pub(super) hamming_dispatches: AtomicUsize,
+    pub(super) outer_remainder_sequences: AtomicUsize,
+    pub(super) product_remainder_sequences: AtomicUsize,
+    pub(super) product_uniskip_dispatches: AtomicUsize,
+    pub(super) product_uniskip_carrier_hits: AtomicUsize,
+    pub(super) instruction_claim_sequences: AtomicUsize,
+    pub(super) registers_claim_alias_sequences: AtomicUsize,
+    pub(super) registers_val_sequences: AtomicUsize,
+    pub(super) ram_val_sparse_sequences: AtomicUsize,
+    pub(super) ram_read_write_sparse_sequences: AtomicUsize,
+    pub(super) ram_ra_claim_sparse_sequences: AtomicUsize,
+    pub(super) ram_ra_virtualization_sparse_sequences: AtomicUsize,
+    pub(super) ram_hamming_sparse_sequences: AtomicUsize,
+}
+
+macro_rules! test_counter_getters {
+    ($($name:ident),* $(,)?) => {
+        $(
+            #[cfg(any(test, feature = "test-utils"))]
+            #[doc(hidden)]
+            pub fn $name(&self) -> usize {
+                self.test_counters.$name.load(std::sync::atomic::Ordering::Relaxed)
+            }
+        )*
+    };
+}
+
 #[derive(Clone)]
 pub struct MetalBackend {
     pub(super) context: Arc<SolinasMetal>,
     pub(super) config: MetalConfig,
     #[cfg(any(test, feature = "test-utils"))]
-    pub(super) hamming_dispatches: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) outer_remainder_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) product_remainder_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) product_uniskip_dispatches: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) product_uniskip_carrier_hits: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) instruction_claim_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) registers_claim_alias_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) registers_val_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) ram_val_sparse_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) ram_read_write_sparse_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) ram_ra_claim_sparse_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) ram_ra_virtualization_sparse_sequences: Arc<AtomicUsize>,
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) ram_hamming_sparse_sequences: Arc<AtomicUsize>,
+    pub(super) test_counters: Arc<MetalTestCounters>,
 }
 
 impl MetalBackend {
@@ -272,123 +278,24 @@ impl MetalBackend {
             context: Arc::new(context),
             config: *config,
             #[cfg(any(test, feature = "test-utils"))]
-            hamming_dispatches: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            outer_remainder_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            product_remainder_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            product_uniskip_dispatches: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            product_uniskip_carrier_hits: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            instruction_claim_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            registers_claim_alias_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            registers_val_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            ram_val_sparse_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            ram_read_write_sparse_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            ram_ra_claim_sparse_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            ram_ra_virtualization_sparse_sequences: Arc::new(AtomicUsize::new(0)),
-            #[cfg(any(test, feature = "test-utils"))]
-            ram_hamming_sparse_sequences: Arc::new(AtomicUsize::new(0)),
+            test_counters: Arc::default(),
         }
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn hamming_dispatches(&self) -> usize {
-        self.hamming_dispatches
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn outer_remainder_sequences(&self) -> usize {
-        self.outer_remainder_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn product_remainder_sequences(&self) -> usize {
-        self.product_remainder_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn product_uniskip_dispatches(&self) -> usize {
-        self.product_uniskip_dispatches
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn product_uniskip_carrier_hits(&self) -> usize {
-        self.product_uniskip_carrier_hits
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn instruction_claim_sequences(&self) -> usize {
-        self.instruction_claim_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn registers_claim_alias_sequences(&self) -> usize {
-        self.registers_claim_alias_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn registers_val_sequences(&self) -> usize {
-        self.registers_val_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn ram_val_sparse_sequences(&self) -> usize {
-        self.ram_val_sparse_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn ram_read_write_sparse_sequences(&self) -> usize {
-        self.ram_read_write_sparse_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn ram_ra_claim_sparse_sequences(&self) -> usize {
-        self.ram_ra_claim_sparse_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn ram_ra_virtualization_sparse_sequences(&self) -> usize {
-        self.ram_ra_virtualization_sparse_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    #[doc(hidden)]
-    pub fn ram_hamming_sparse_sequences(&self) -> usize {
-        self.ram_hamming_sparse_sequences
-            .load(std::sync::atomic::Ordering::Relaxed)
+    test_counter_getters! {
+        hamming_dispatches,
+        outer_remainder_sequences,
+        product_remainder_sequences,
+        product_uniskip_dispatches,
+        product_uniskip_carrier_hits,
+        instruction_claim_sequences,
+        registers_claim_alias_sequences,
+        registers_val_sequences,
+        ram_val_sparse_sequences,
+        ram_read_write_sparse_sequences,
+        ram_ra_claim_sparse_sequences,
+        ram_ra_virtualization_sparse_sequences,
+        ram_hamming_sparse_sequences,
     }
 }
 

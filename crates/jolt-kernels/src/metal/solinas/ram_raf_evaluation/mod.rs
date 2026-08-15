@@ -114,20 +114,6 @@ impl Default for RamRafConfig {
 }
 
 impl RamRafConfig {
-    pub fn execution(self, rows: usize) -> Result<RamRafExecution, RamRafError> {
-        validate_power_of_two("rows", rows)?;
-        if !self.trace_cutoff.is_power_of_two() || self.trace_cutoff < RAM_RAF_INNER_LENGTH {
-            return Err(RamRafError::InvalidTraceCutoff {
-                got: self.trace_cutoff,
-            });
-        }
-        if rows < self.trace_cutoff {
-            Ok(RamRafExecution::OptimizedCpu)
-        } else {
-            Ok(RamRafExecution::MetalHybrid)
-        }
-    }
-
     pub fn validate_metal(self, rows: usize, addresses: usize) -> Result<RamRafShape, RamRafError> {
         if self.inner_log2 != RAM_RAF_INNER_LOG2 {
             return Err(RamRafError::UnsupportedInnerLog2 {
@@ -179,12 +165,6 @@ impl RamRafConfig {
             no_access: RAM_RAF_NO_ACCESS,
         })
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RamRafExecution {
-    OptimizedCpu,
-    MetalHybrid,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -494,60 +474,6 @@ pub fn split_pushforward_oracle<F: Field>(
     Ok(output)
 }
 
-/// CPU model of the shader: subtotal first, then one outer-weight product.
-pub fn tiled_pushforward_oracle<F: Field>(
-    raw: &[u32],
-    e_lo: &[F],
-    e_hi: &[F],
-    addresses: usize,
-    tile_addresses: usize,
-) -> Result<Vec<F>, RamRafError> {
-    if tile_addresses == 0 {
-        return Err(RamRafError::InvalidTileWidth { got: 0 });
-    }
-    if e_lo.is_empty() || e_hi.is_empty() {
-        return Err(RamRafError::EmptyEqualityTable);
-    }
-    let expected = checked_product("tiled equality rows", e_lo.len(), e_hi.len())?;
-    if raw.len() != expected {
-        return Err(RamRafError::Length {
-            label: "address plane",
-            expected,
-            got: raw.len(),
-        });
-    }
-    let mut output = vec![F::zero(); addresses];
-    let tiles = addresses.div_ceil(tile_addresses);
-    for (outer, block) in raw.chunks_exact(e_lo.len()).enumerate() {
-        for tile in 0..tiles {
-            let start = tile * tile_addresses;
-            let active = tile_addresses.min(addresses - start);
-            let mut subtotal = vec![F::zero(); active];
-            let mut touched = vec![false; active];
-            for (inner, &address) in block.iter().enumerate() {
-                if address == RAM_RAF_NO_ACCESS {
-                    continue;
-                }
-                let address_index = address as usize;
-                if address_index >= addresses {
-                    return Err(RamRafError::AddressOutsideDomain { address });
-                }
-                if (start..start + active).contains(&address_index) {
-                    let local = address_index - start;
-                    subtotal[local] += e_lo[inner];
-                    touched[local] = true;
-                }
-            }
-            for local in 0..active {
-                if touched[local] {
-                    output[start + local] += subtotal[local] * e_hi[outer];
-                }
-            }
-        }
-    }
-    Ok(output)
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RamRafQuadraticMessage<F> {
     pub at_zero: F,
@@ -681,10 +607,6 @@ impl<F: Field> RamRafAffineTail<F> {
 pub struct RamRafTailOutput<F> {
     pub ram_ra: F,
     pub unmap_address: F,
-}
-
-pub fn address_opening_point<F: Field>(challenges: &[F]) -> Vec<F> {
-    challenges.iter().rev().copied().collect()
 }
 
 #[derive(Debug, Error, Clone, Eq, PartialEq)]

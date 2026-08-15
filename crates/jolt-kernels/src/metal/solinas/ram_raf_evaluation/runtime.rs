@@ -11,7 +11,8 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128, MetalError, SolinasMetal,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
+    SolinasMetal,
 };
 use super::{
     split_equality, RamRafAddress, RamRafConfig, RamRafCounters, RamRafDeviceLimits, RamRafError,
@@ -453,15 +454,7 @@ impl RamRafSequence {
             .saturating_duration_since(command.submitted_at)
             .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
-        let status = command.command_buffer.status();
-        if status != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(status));
-        }
-        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let counters = self.read_counters();
         if counters.invalid_rows != 0 || counters.unsupported_dispatches != 0 {
             return Err(MetalError::RamRafDispatch {
@@ -469,7 +462,6 @@ impl RamRafSequence {
                 unsupported_dispatches: counters.unsupported_dispatches,
             });
         }
-        let gpu_active = Duration::from_secs_f64(end - start);
         let observation = RamRafObservation {
             masses: self.read_masses()?,
             counters,

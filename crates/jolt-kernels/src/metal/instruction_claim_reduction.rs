@@ -194,6 +194,7 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
         };
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
+            .test_counters
             .instruction_claim_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 

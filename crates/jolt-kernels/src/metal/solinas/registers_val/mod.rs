@@ -9,11 +9,11 @@ use jolt_field::AkitaField;
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLCommandBufferStatus, MTLResourceOptions, MTLSize,
+    ComputePipelineState, MTLResourceOptions, MTLSize,
 };
 
 use super::{
-    buffer_from_slice, command_buffer_timestamp, set_inline_bytes, Fp128,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128,
     InstructionReadRafStage1Lease, MetalError, PipelineLimits, SolinasMetal,
 };
 
@@ -661,31 +661,17 @@ impl RegistersValFirstMessageInvocation {
         MESSAGE_PIPELINE
     }
 
-    pub const fn cycles(&self) -> usize {
-        self.cycles
-    }
+    copy_field_getters! { pub, {
+        cycles: usize,
+        threadgroups: usize,
+        threads_per_threadgroup: usize,
+        pipeline_limits => message_limits: PipelineLimits,
+        reduction_pipeline_limits => reduction_limits: PipelineLimits,
+    }}
 
-    pub(crate) const fn resident_source_receipt(
-        &self,
-    ) -> Option<RegistersValInstructionSourceReceipt> {
-        self.resident_source
-    }
-
-    pub const fn threadgroups(&self) -> usize {
-        self.threadgroups
-    }
-
-    pub const fn threads_per_threadgroup(&self) -> usize {
-        self.threads_per_threadgroup
-    }
-
-    pub const fn pipeline_limits(&self) -> PipelineLimits {
-        self.message_limits
-    }
-
-    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
-        self.reduction_limits
-    }
+    copy_field_getters! { pub(crate), {
+        resident_source_receipt => resident_source: Option<RegistersValInstructionSourceReceipt>,
+    }}
 
     pub const fn execute_device_buffer_allocations(&self) -> usize {
         0
@@ -769,22 +755,14 @@ impl RegistersValFirstMessageInvocation {
             .saturating_duration_since(command.submitted_at)
             .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
-        let status = command.command_buffer.status();
-        if status != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(status));
-        }
-        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         self.completed.set(true);
         Ok(RegistersValFirstMessageStats {
             submit_wall: command.submit_wall,
             overlap_wall,
             join_wall: join_started.elapsed(),
             lifecycle_wall: command.submitted_at.elapsed(),
-            gpu_active: Duration::from_secs_f64(end - start),
+            gpu_active,
         })
     }
 
@@ -863,25 +841,16 @@ impl RegistersValFirstTransitionInvocation {
         NATIVE_TRANSITION_PIPELINE
     }
 
-    pub const fn source_cycles(&self) -> usize {
-        self.cycles
-    }
-
     pub const fn current_elements(&self) -> usize {
         self.cycles / 2
     }
 
-    pub const fn threads_per_threadgroup(&self) -> usize {
-        self.threads_per_threadgroup
-    }
-
-    pub const fn pipeline_limits(&self) -> PipelineLimits {
-        self.transition_limits
-    }
-
-    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
-        self.reduction_limits
-    }
+    copy_field_getters! { pub, {
+        source_cycles => cycles: usize,
+        threads_per_threadgroup: usize,
+        pipeline_limits => transition_limits: PipelineLimits,
+        reduction_pipeline_limits => reduction_limits: PipelineLimits,
+    }}
 
     pub const fn execute_device_buffer_allocations(&self) -> usize {
         0
@@ -939,17 +908,9 @@ impl RegistersValFirstTransitionInvocation {
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            let status = command_buffer.status();
-            if status != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(status));
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
+            let gpu_active = completed_command_gpu_time(command_buffer)?;
             self.completed.set(true);
-            Ok(Duration::from_secs_f64(end - start))
+            Ok(gpu_active)
         })
     }
 
@@ -1109,15 +1070,7 @@ impl RegistersValSequence {
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            let status = command_buffer.status();
-            if status != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(status));
-            }
-            let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-            let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-            if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-                return Err(MetalError::InvalidGpuTimestamps { start, end });
-            }
+            let gpu_active = completed_command_gpu_time(command_buffer)?;
             let final_buffer = if self.final_in_a {
                 &self.buffers.partial_a
             } else {
@@ -1130,31 +1083,19 @@ impl RegistersValSequence {
             self.context
                 .validate_inputs("registers val dense message", values)?;
             let message = std::array::from_fn(|index| values[index].into_jolt_field());
-            Ok((message, Duration::from_secs_f64(end - start)))
+            Ok::<_, MetalError>((message, gpu_active))
         })?;
 
         Ok((message, active_time, next_elements, expected_lt_lo_length))
     }
 
-    pub const fn current_elements(&self) -> usize {
-        self.current_elements
-    }
-
-    pub const fn current_lt_lo_length(&self) -> usize {
-        self.current_lt_lo_length
-    }
-
-    pub const fn threads_per_threadgroup(&self) -> usize {
-        self.threads_per_threadgroup
-    }
-
-    pub const fn pipeline_limits(&self) -> PipelineLimits {
-        self.transition_limits
-    }
-
-    pub const fn reduction_pipeline_limits(&self) -> PipelineLimits {
-        self.reduction_limits
-    }
+    copy_field_getters! { pub, {
+        current_elements: usize,
+        current_lt_lo_length: usize,
+        threads_per_threadgroup: usize,
+        pipeline_limits => transition_limits: PipelineLimits,
+        reduction_pipeline_limits => reduction_limits: PipelineLimits,
+    }}
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0

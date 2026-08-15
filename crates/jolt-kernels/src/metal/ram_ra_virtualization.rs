@@ -221,6 +221,7 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
         terminal_take_ram_cycle_family(session, &owner, "host_sparse_v1", "none", true)?;
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
+            .test_counters
             .ram_ra_virtualization_sparse_sequences
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         tracing::info!(

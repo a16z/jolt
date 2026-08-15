@@ -250,6 +250,7 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
         let kernel = plan.finish_flat(masses)?;
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
+            .test_counters
             .hamming_dispatches
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(kernel)

@@ -19,7 +19,7 @@ use super::product_uniskip::{
     PRODUCT_UNISKIP_SIMD_WIDTH, STAGE1_BLOCKS_PIPELINE as PRODUCT_UNISKIP_STAGE1_PIPELINE,
 };
 use super::{
-    buffer_from_slice, command_buffer_timestamp, set_inline_bytes,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes,
     spartan_outer_uniskip_residual_row_bytes, Fp128, InstructionInputRow, MetalError, SolinasMetal,
 };
 
@@ -290,16 +290,13 @@ pub struct ProductRemainderRows {
 }
 
 impl ProductRemainderRows {
-    pub const fn len(&self) -> usize {
-        self.len
-    }
+    copy_field_getters! { pub, {
+        len: usize,
+        device_registry_id: u64,
+    }}
 
     pub const fn is_empty(&self) -> bool {
         self.len == 0
-    }
-
-    pub const fn device_registry_id(&self) -> u64 {
-        self.device_registry_id
     }
 
     pub fn allocation_identity(&self) -> usize {
@@ -1217,25 +1214,14 @@ impl ProductRemainderSequence {
             command_buffer.commit();
             command_buffer.wait_until_completed();
         });
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
-        let gpu_start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-        let gpu_end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-        if !gpu_start.is_finite() || !gpu_end.is_finite() || gpu_start <= 0.0 || gpu_end < gpu_start
-        {
-            return Err(MetalError::InvalidGpuTimestamps {
-                start: gpu_start,
-                end: gpu_end,
-            });
-        }
+        let gpu_active = completed_command_gpu_time(command_buffer)?;
         Ok(ProductRemainderWorkspacePrimerStats {
             bytes,
             buffers: buffers.len(),
             state_a_identity,
             state_b_identity,
             wall: started.elapsed(),
-            gpu_active: Duration::from_secs_f64(gpu_end - gpu_start),
+            gpu_active,
         })
     }
 
@@ -1401,15 +1387,7 @@ impl ProductRemainderSequence {
             .saturating_duration_since(command.submitted_at)
             .saturating_sub(command.submit_wall);
         command.command_buffer.wait_until_completed();
-        let status = command.command_buffer.status();
-        if status != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(status));
-        }
-        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         // SAFETY: completion makes the two reduced fields at the front of the
         // selected shared output buffer visible to the host.
         let values = unsafe {
@@ -1426,7 +1404,7 @@ impl ProductRemainderSequence {
             submit_wall: command.submit_wall,
             overlap_wall,
             join_wall: join_started.elapsed(),
-            gpu_active: Duration::from_secs_f64(end - start),
+            gpu_active,
             completed_before_join,
         };
         self.current_elements = self.layout.rows();
@@ -1442,15 +1420,7 @@ impl ProductRemainderSequence {
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
         let command = self.submit_materialize_message_command(e_in, e_out)?;
         command.command_buffer.wait_until_completed();
-        let status = command.command_buffer.status();
-        if status != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(status));
-        }
-        let start = command_buffer_timestamp(&command.command_buffer, "GPUStartTime")?;
-        let end = command_buffer_timestamp(&command.command_buffer, "GPUEndTime")?;
-        if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-            return Err(MetalError::InvalidGpuTimestamps { start, end });
-        }
+        let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         // SAFETY: the completed reduction leaves two fields at the front of
         // the selected shared output buffer.
         let values = unsafe {
@@ -1463,7 +1433,7 @@ impl ProductRemainderSequence {
             .validate_inputs("product remainder first message", values)?;
         Ok((
             std::array::from_fn(|index| values[index].into_jolt_field()),
-            Duration::from_secs_f64(end - start),
+            gpu_active,
         ))
     }
 
@@ -1732,13 +1702,10 @@ impl ProductRemainderSequence {
         })
     }
 
-    pub const fn current_elements(&self) -> usize {
-        self.current_elements
-    }
-
-    pub const fn storage_layout(&self) -> ProductRemainderStorageLayout {
-        self.layout
-    }
+    copy_field_getters! { pub, {
+        current_elements: usize,
+        storage_layout => layout: ProductRemainderStorageLayout,
+    }}
 
     pub fn resident_buffer_count(&self) -> usize {
         self.buffers.rows.allocation_identities().len() + 7
@@ -1886,22 +1853,14 @@ fn finish_product_remainder_command<const COLUMNS: usize>(
 ) -> Result<([AkitaField; COLUMNS], Duration), MetalError> {
     command_buffer.commit();
     command_buffer.wait_until_completed();
-    let status = command_buffer.status();
-    if status != MTLCommandBufferStatus::Completed {
-        return Err(MetalError::CommandFailed(status));
-    }
-    let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
-    let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
-    if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
-        return Err(MetalError::InvalidGpuTimestamps { start, end });
-    }
+    let gpu_active = completed_command_gpu_time(command_buffer)?;
     // SAFETY: the completed recursive reduction leaves `COLUMNS` fields at
     // the front of the selected shared buffer.
     let values = unsafe { slice::from_raw_parts(output.contents().cast::<Fp128>(), COLUMNS) };
     context.validate_inputs(label, values)?;
     Ok((
         std::array::from_fn(|index| values[index].into_jolt_field()),
-        Duration::from_secs_f64(end - start),
+        gpu_active,
     ))
 }
 

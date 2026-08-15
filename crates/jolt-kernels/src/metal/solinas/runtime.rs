@@ -1,10 +1,11 @@
 use std::ffi::c_void;
+use std::time::Duration;
 
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
 use metal::{
     objc::{runtime::Sel, Message},
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, Library,
-    MTLResourceOptions,
+    MTLCommandBufferStatus, MTLResourceOptions,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -235,4 +236,26 @@ pub(super) fn command_buffer_timestamp(
             message: error.to_string(),
         }
     })
+}
+
+pub(super) fn completed_command_gpu_time(
+    command_buffer: &metal::CommandBufferRef,
+) -> Result<Duration, MetalError> {
+    validate_completed_command(command_buffer)?;
+    let start = command_buffer_timestamp(command_buffer, "GPUStartTime")?;
+    let end = command_buffer_timestamp(command_buffer, "GPUEndTime")?;
+    if !start.is_finite() || !end.is_finite() || start <= 0.0 || end < start {
+        return Err(MetalError::InvalidGpuTimestamps { start, end });
+    }
+    Ok(Duration::from_secs_f64(end - start))
+}
+
+pub(super) fn validate_completed_command(
+    command_buffer: &metal::CommandBufferRef,
+) -> Result<(), MetalError> {
+    let status = command_buffer.status();
+    if status != MTLCommandBufferStatus::Completed {
+        return Err(MetalError::CommandFailed(status));
+    }
+    Ok(())
 }

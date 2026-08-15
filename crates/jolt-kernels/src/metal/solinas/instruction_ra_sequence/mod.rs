@@ -8,12 +8,13 @@ use std::{ffi::c_void, mem::size_of, slice};
 
 use jolt_field::AkitaField;
 use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, FunctionConstantValues,
-    MTLCommandBufferStatus, MTLDataType, MTLResourceOptions, MTLSize,
+    objc::rc::autoreleasepool, Buffer, ComputePipelineState, FunctionConstantValues, MTLDataType,
+    MTLResourceOptions, MTLSize,
 };
 
 use super::{
-    set_inline_bytes, Fp128, MetalError, PipelineLimits, ResidentLookupIndexPlane, SolinasMetal,
+    set_inline_bytes, validate_completed_command, Fp128, MetalError, PipelineLimits,
+    ResidentLookupIndexPlane, SolinasMetal,
 };
 
 const FACTORS: usize = 16;
@@ -920,9 +921,7 @@ impl InstructionRaSequence {
         command_buffer: &metal::CommandBufferRef,
         reduction_input_count: usize,
     ) -> Result<[AkitaField; SAMPLES], MetalError> {
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            return Err(MetalError::CommandFailed(command_buffer.status()));
-        }
+        validate_completed_command(command_buffer)?;
         let mut count = reduction_input_count;
         let mut final_in_a = true;
         while count > 1 {

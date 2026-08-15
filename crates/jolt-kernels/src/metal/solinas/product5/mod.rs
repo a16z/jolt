@@ -1,14 +1,13 @@
 use std::{mem::size_of, slice};
 
 use jolt_field::AkitaField;
-use metal::{
-    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLCommandBufferStatus,
-    MTLResourceOptions, MTLSize,
-};
+use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{set_inline_bytes, Fp128, MetalError, PipelineLimits, SolinasMetal};
+use super::{
+    set_inline_bytes, validate_completed_command, Fp128, MetalError, PipelineLimits, SolinasMetal,
+};
 
 pub const PRODUCT5_FACTORS: usize = 5;
 
@@ -530,9 +529,7 @@ impl Product5Sequence {
             encoder.end_encoding();
             command_buffer.commit();
             command_buffer.wait_until_completed();
-            if command_buffer.status() != MTLCommandBufferStatus::Completed {
-                return Err(MetalError::CommandFailed(command_buffer.status()));
-            }
+            validate_completed_command(command_buffer)?;
             let final_buffer = if input_a {
                 &self.buffers.partial_a
             } else {
