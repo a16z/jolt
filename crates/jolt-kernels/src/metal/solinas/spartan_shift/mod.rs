@@ -146,33 +146,15 @@ impl SpartanShiftGeometry {
         }
     }
 
-    pub const fn rows(self) -> usize {
-        self.rows
-    }
-
-    pub const fn log_t(self) -> usize {
-        self.log_t
-    }
-
-    pub const fn prefix_vars(self) -> usize {
-        self.prefix_vars
-    }
-
-    pub const fn suffix_vars(self) -> usize {
-        self.suffix_vars
-    }
-
-    pub const fn prefix_elements(self) -> usize {
-        self.prefix_elements
-    }
-
-    pub const fn suffix_elements(self) -> usize {
-        self.suffix_elements
-    }
-
-    pub const fn flag_words(self) -> usize {
-        self.flag_words
-    }
+    copy_field_getters! { pub, {
+        rows: usize,
+        log_t: usize,
+        prefix_vars: usize,
+        suffix_vars: usize,
+        prefix_elements: usize,
+        suffix_elements: usize,
+        flag_words: usize,
+    }}
 
     pub fn row_index(self, x_hi: usize, x_lo: usize) -> Result<usize, SpartanShiftPlanError> {
         if x_hi >= self.suffix_elements || x_lo >= self.prefix_elements {
@@ -631,9 +613,7 @@ impl<'a> SpartanShiftNativePlanes<'a> {
         }
     }
 
-    pub const fn geometry(self) -> SpartanShiftGeometry {
-        self.geometry
-    }
+    copy_field_getters! { pub, { geometry: SpartanShiftGeometry }}
 }
 
 #[cfg(test)]

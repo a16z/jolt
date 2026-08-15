@@ -145,13 +145,10 @@ impl<F: Field> HostSparseRamRaVirtualization<F> {
             + self.cycle_point.capacity() * std::mem::size_of::<F>()
     }
 
-    pub const fn num_rounds(&self) -> usize {
-        self.rounds
-    }
-
-    pub const fn round(&self) -> usize {
-        self.round
-    }
+    copy_field_getters! { pub, {
+        num_rounds => rounds: usize,
+        round: usize,
+    }}
 
     pub fn message(&mut self) -> Result<RamRaVirtualizationMessage<F>, RamRaVirtualizationError> {
         if self.round >= self.rounds {

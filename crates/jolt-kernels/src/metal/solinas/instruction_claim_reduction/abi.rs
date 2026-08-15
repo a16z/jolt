@@ -86,9 +86,7 @@ impl InstructionClaimCoreRow {
         Self { words }
     }
 
-    pub const fn words(self) -> [u64; INSTRUCTION_CLAIM_CORE_WORDS] {
-        self.words
-    }
+    copy_field_getters! { pub, { words: [u64; INSTRUCTION_CLAIM_CORE_WORDS] }}
 
     pub const fn lookup_output(self) -> u64 {
         self.words[CORE_LOOKUP_OUTPUT]
@@ -140,9 +138,7 @@ impl InstructionClaimRightInput {
         Self { words }
     }
 
-    pub const fn words(self) -> [u64; INSTRUCTION_CLAIM_RIGHT_INPUT_WORDS] {
-        self.words
-    }
+    copy_field_getters! { pub, { words: [u64; INSTRUCTION_CLAIM_RIGHT_INPUT_WORDS] }}
 
     pub const fn value(self) -> i128 {
         (self.words[0] as u128 | ((self.words[1] as u128) << 64)) as i128
@@ -164,9 +160,7 @@ impl InstructionClaimRightLookup {
         Self { words }
     }
 
-    pub const fn words(self) -> [u64; 2] {
-        self.words
-    }
+    copy_field_getters! { pub, { words: [u64; 2] }}
 
     pub const fn value(self) -> u128 {
         self.words[0] as u128 | ((self.words[1] as u128) << 64)

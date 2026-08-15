@@ -469,9 +469,7 @@ impl BytecodeAddressSparseInvocation {
             .collect())
     }
 
-    pub(crate) const fn storage(&self) -> BytecodeAddressSparseStorage {
-        self.storage
-    }
+    copy_field_getters! { pub(crate), { storage: BytecodeAddressSparseStorage }}
 
     fn static_buffer_identities(&self) -> [usize; 8] {
         [

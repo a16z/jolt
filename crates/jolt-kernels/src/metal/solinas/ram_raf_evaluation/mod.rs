@@ -198,29 +198,14 @@ impl RamRafShape {
         })
     }
 
-    pub const fn rows(self) -> usize {
-        self.rows
-    }
-
-    pub const fn addresses(self) -> usize {
-        self.addresses
-    }
-
-    pub const fn inner_length(self) -> usize {
-        self.inner_length
-    }
-
-    pub const fn outer_length(self) -> usize {
-        self.outer_length
-    }
-
-    pub const fn tile_addresses(self) -> usize {
-        self.tile_addresses
-    }
-
-    pub const fn tiles(self) -> usize {
-        self.tiles
-    }
+    copy_field_getters! { pub, {
+        rows: usize,
+        addresses: usize,
+        inner_length: usize,
+        outer_length: usize,
+        tile_addresses: usize,
+        tiles: usize,
+    }}
 }
 
 /// Metadata proving that a shared address allocation was checked once by its producer.
@@ -273,17 +258,11 @@ impl ValidatedRamRafAddressPlane {
         Ok(())
     }
 
-    pub const fn byte_length(self) -> usize {
-        self.byte_length
-    }
-
-    pub const fn storage_id(self) -> usize {
-        self.storage_id
-    }
-
-    pub const fn device_registry_id(self) -> u64 {
-        self.device_registry_id
-    }
+    copy_field_getters! { pub, {
+        byte_length: usize,
+        storage_id: usize,
+        device_registry_id: u64,
+    }}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

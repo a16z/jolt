@@ -340,9 +340,7 @@ impl BytecodeCycleSequence {
         Ok(())
     }
 
-    pub const fn current_elements(&self) -> usize {
-        self.current_elements
-    }
+    copy_field_getters! { pub, { current_elements: usize }}
 
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0

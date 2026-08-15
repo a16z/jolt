@@ -605,13 +605,10 @@ impl InstructionRaSequence {
         }
     }
 
-    pub const fn branch_width(&self) -> usize {
-        self.branch_width
-    }
-
-    pub const fn is_dense(&self) -> bool {
-        self.dense
-    }
+    copy_field_getters! { pub, {
+        branch_width: usize,
+        is_dense => dense: bool,
+    }}
 
     fn execute_lazy(
         &mut self,

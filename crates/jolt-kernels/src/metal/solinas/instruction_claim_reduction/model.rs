@@ -85,13 +85,10 @@ pub struct InstructionClaimWeightGeometry {
 }
 
 impl InstructionClaimWeightGeometry {
-    pub const fn e_in_length(self) -> usize {
-        self.e_in_length
-    }
-
-    pub const fn e_out_length(self) -> usize {
-        self.e_out_length
-    }
+    copy_field_getters! { pub, {
+        e_in_length: usize,
+        e_out_length: usize,
+    }}
 }
 
 /// One message's state and equality-table geometry.
@@ -104,21 +101,12 @@ pub struct InstructionClaimMessageGeometry {
 }
 
 impl InstructionClaimMessageGeometry {
-    pub const fn round(self) -> usize {
-        self.round
-    }
-
-    pub const fn source_elements(self) -> usize {
-        self.source_elements
-    }
-
-    pub const fn state_elements(self) -> usize {
-        self.state_elements
-    }
-
-    pub const fn weights(self) -> InstructionClaimWeightGeometry {
-        self.weights
-    }
+    copy_field_getters! { pub, {
+        round: usize,
+        source_elements: usize,
+        state_elements: usize,
+        weights: InstructionClaimWeightGeometry,
+    }}
 }
 
 /// Low-to-high Gruen geometry fixed by the trace row count.
@@ -140,13 +128,10 @@ impl InstructionClaimGeometry {
         })
     }
 
-    pub const fn rows(self) -> usize {
-        self.rows
-    }
-
-    pub const fn log_t(self) -> usize {
-        self.log_t
-    }
+    copy_field_getters! { pub, {
+        rows: usize,
+        log_t: usize,
+    }}
 
     pub fn message(
         self,
@@ -427,17 +412,11 @@ pub struct InstructionClaimReductionPass {
 }
 
 impl InstructionClaimReductionPass {
-    pub const fn input_count(self) -> usize {
-        self.input_count
-    }
-
-    pub const fn output_count(self) -> usize {
-        self.output_count
-    }
-
-    pub const fn dispatched_threads(self) -> usize {
-        self.dispatched_threads
-    }
+    copy_field_getters! { pub, {
+        input_count: usize,
+        output_count: usize,
+        dispatched_threads: usize,
+    }}
 }
 
 /// Checked recursive-reduction schedule. No dispatch is needed for one input.
@@ -468,9 +447,7 @@ impl InstructionClaimReductionPlan {
         Ok(Self { columns, passes })
     }
 
-    pub const fn columns(&self) -> usize {
-        self.columns
-    }
+    copy_field_getters! { pub, { columns: usize }}
 
     pub fn passes(&self) -> &[InstructionClaimReductionPass] {
         &self.passes
@@ -609,37 +586,24 @@ impl InstructionClaimStorageLayout {
         })
     }
 
-    pub const fn rows(self) -> usize {
-        self.rows
-    }
-
-    pub const fn lookup_output_bytes(self) -> usize {
-        self.lookup_output_bytes
-    }
-
-    pub const fn left_lookup_operand_bytes(self) -> usize {
-        self.left_lookup_operand_bytes
-    }
-
-    pub const fn right_lookup_operand_bytes(self) -> usize {
-        self.right_lookup_operand_bytes
-    }
-
-    pub const fn left_instruction_input_bytes(self) -> usize {
-        self.left_instruction_input_bytes
-    }
-
-    pub const fn right_input_bytes(self) -> usize {
-        self.right_input_bytes
-    }
-
-    pub const fn maximum_operand_plane_bytes(self) -> usize {
-        self.maximum_operand_plane_bytes
-    }
-
-    pub const fn maximum_buffer_bytes(self) -> usize {
-        self.maximum_buffer_bytes
-    }
+    copy_field_getters! { pub, {
+        rows: usize,
+        lookup_output_bytes: usize,
+        left_lookup_operand_bytes: usize,
+        right_lookup_operand_bytes: usize,
+        left_instruction_input_bytes: usize,
+        right_input_bytes: usize,
+        maximum_operand_plane_bytes: usize,
+        maximum_buffer_bytes: usize,
+        gamma_power_fields: usize,
+        state_a_fields: usize,
+        state_b_fields: usize,
+        e_in_fields: usize,
+        e_out_fields: usize,
+        partial_fields: usize,
+        workspace_bytes: usize,
+        resident_bytes: usize,
+    }}
 
     pub fn validate_max_buffer_length(
         self,
@@ -652,38 +616,6 @@ impl InstructionClaimStorageLayout {
             });
         }
         Ok(self)
-    }
-
-    pub const fn gamma_power_fields(self) -> usize {
-        self.gamma_power_fields
-    }
-
-    pub const fn state_a_fields(self) -> usize {
-        self.state_a_fields
-    }
-
-    pub const fn state_b_fields(self) -> usize {
-        self.state_b_fields
-    }
-
-    pub const fn e_in_fields(self) -> usize {
-        self.e_in_fields
-    }
-
-    pub const fn e_out_fields(self) -> usize {
-        self.e_out_fields
-    }
-
-    pub const fn partial_fields(self) -> usize {
-        self.partial_fields
-    }
-
-    pub const fn workspace_bytes(self) -> usize {
-        self.workspace_bytes
-    }
-
-    pub const fn resident_bytes(self) -> usize {
-        self.resident_bytes
     }
 }
 

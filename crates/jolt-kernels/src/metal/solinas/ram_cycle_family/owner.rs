@@ -27,21 +27,12 @@ impl RamAccessRecord {
         }
     }
 
-    pub const fn cycle(self) -> u32 {
-        self.cycle
-    }
-
-    pub const fn address(self) -> u32 {
-        self.address
-    }
-
-    pub const fn pre_value(self) -> u64 {
-        self.pre_value
-    }
-
-    pub const fn post_value(self) -> u64 {
-        self.post_value
-    }
+    copy_field_getters! { pub, {
+        cycle: u32,
+        address: u32,
+        pre_value: u64,
+        post_value: u64,
+    }}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,13 +46,10 @@ impl RamIncrementRecord {
         Self { cycle, increment }
     }
 
-    pub const fn cycle(self) -> u64 {
-        self.cycle
-    }
-
-    pub const fn increment(self) -> i128 {
-        self.increment
-    }
+    copy_field_getters! { pub, {
+        cycle: u64,
+        increment: i128,
+    }}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,21 +89,12 @@ impl OwnerConfig {
         })
     }
 
-    pub const fn log_t(self) -> usize {
-        self.log_t
-    }
-
-    pub const fn log_k(self) -> usize {
-        self.log_k
-    }
-
-    pub const fn source_generation(self) -> u64 {
-        self.source_generation
-    }
-
-    pub const fn max_sparse_records(self) -> usize {
-        self.max_sparse_records
-    }
+    copy_field_getters! { pub, {
+        log_t: usize,
+        log_k: usize,
+        source_generation: u64,
+        max_sparse_records: usize,
+    }}
 }
 
 pub struct RamCycleFamilyReceipt {

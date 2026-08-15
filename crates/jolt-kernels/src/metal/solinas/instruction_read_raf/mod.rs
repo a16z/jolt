@@ -519,17 +519,11 @@ impl InstructionReadRafStage1Lease {
 }
 
 impl PendingInstructionReadRafSourcePrimer {
-    pub(crate) const fn source_bytes(&self) -> u64 {
-        self.source_bytes
-    }
-
-    pub(crate) const fn source_pages(&self) -> u64 {
-        self.source_pages
-    }
-
-    pub(crate) const fn submit_wall(&self) -> Duration {
-        self.submit_wall
-    }
+    copy_field_getters! { pub(crate), {
+        source_bytes: u64,
+        source_pages: u64,
+        submit_wall: Duration,
+    }}
 
     pub(crate) fn join(mut self) -> Result<InstructionReadRafSourcePrimerObservation, MetalError> {
         let source_identities = [

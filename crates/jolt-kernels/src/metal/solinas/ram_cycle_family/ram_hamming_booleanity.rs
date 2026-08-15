@@ -96,13 +96,10 @@ impl RamHammingSparsePlan {
 }
 
 impl<F: Copy> RamHammingTerminal<F> {
-    pub const fn ram_hamming_weight(self) -> F {
-        self.ram_hamming_weight
-    }
-
-    pub const fn eq_cycle(self) -> F {
-        self.eq_cycle
-    }
+    copy_field_getters! { pub, {
+        ram_hamming_weight: F,
+        eq_cycle: F,
+    }}
 }
 
 pub struct HostSparseRamHammingBooleanity<F> {
@@ -199,13 +196,10 @@ impl<F: Field> HostSparseRamHammingBooleanity<F> {
             + self.cycle_binding.capacity() * std::mem::size_of::<F>()
     }
 
-    pub const fn num_rounds(&self) -> usize {
-        self.rounds
-    }
-
-    pub const fn round(&self) -> usize {
-        self.round
-    }
+    copy_field_getters! { pub, {
+        num_rounds => rounds: usize,
+        round: usize,
+    }}
 
     pub fn message(&mut self) -> Result<RamHammingMessage<F>, RamHammingError> {
         if self.round >= self.rounds {

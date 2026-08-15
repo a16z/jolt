@@ -104,29 +104,14 @@ impl RegistersClaimGeometry {
         })
     }
 
-    pub const fn rows(self) -> usize {
-        self.rows
-    }
-
-    pub const fn log_t(self) -> usize {
-        self.log_t
-    }
-
-    pub const fn prefix_vars(self) -> usize {
-        self.prefix_vars
-    }
-
-    pub const fn suffix_vars(self) -> usize {
-        self.suffix_vars
-    }
-
-    pub const fn prefix_elements(self) -> usize {
-        self.prefix_elements
-    }
-
-    pub const fn suffix_elements(self) -> usize {
-        self.suffix_elements
-    }
+    copy_field_getters! { pub, {
+        rows: usize,
+        log_t: usize,
+        prefix_vars: usize,
+        suffix_vars: usize,
+        prefix_elements: usize,
+        suffix_elements: usize,
+    }}
 
     pub fn params(self) -> Result<RegistersClaimParams, RegistersClaimPlanError> {
         Ok(RegistersClaimParams {
@@ -188,17 +173,11 @@ impl<F: Field> RegistersClaimPartialQHandoff<F> {
         })
     }
 
-    pub const fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub fn product_tau_low(&self) -> &[F] {
-        &self.product_tau_low
-    }
-
-    pub fn components(&self) -> &RegistersClaimLinearComponents<F> {
-        &self.components
-    }
+    copy_field_getters! { pub, { generation: u64 }}
+    ref_field_getters! { pub, {
+        product_tau_low: [F],
+        components: RegistersClaimLinearComponents<F>,
+    }}
 
     pub fn validate_identity(
         &self,

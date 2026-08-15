@@ -218,9 +218,7 @@ impl SpartanOuterUniskipRow {
         Self { words }
     }
 
-    pub const fn words(self) -> [u64; ROW_WORDS] {
-        self.words
-    }
+    copy_field_getters! { pub, { words: [u64; ROW_WORDS] }}
 
     pub fn from_spartan_outer(row: &SpartanOuterRow) -> Self {
         let load = row.load.0;

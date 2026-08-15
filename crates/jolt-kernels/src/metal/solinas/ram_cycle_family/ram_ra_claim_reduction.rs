@@ -27,13 +27,10 @@ pub struct RamRaClaimTerminal<F> {
 }
 
 impl<F: Field> RamRaClaimTerminal<F> {
-    pub const fn ram_ra(self) -> F {
-        self.ram_ra
-    }
-
-    pub const fn eq_cycles(self) -> [F; TERMS] {
-        self.eq_cycles
-    }
+    copy_field_getters! { pub, {
+        ram_ra: F,
+        eq_cycles: [F; TERMS],
+    }}
 }
 
 #[derive(Clone, Copy)]
@@ -123,13 +120,10 @@ impl<F: Field> HostSparseRamRaClaimReduction<F> {
                 .sum::<usize>()
     }
 
-    pub const fn num_rounds(&self) -> usize {
-        self.rounds
-    }
-
-    pub const fn round(&self) -> usize {
-        self.round
-    }
+    copy_field_getters! { pub, {
+        num_rounds => rounds: usize,
+        round: usize,
+    }}
 
     pub fn message(&mut self) -> Result<RamRaClaimMessage<F>, RamRaClaimError> {
         if self.round >= self.rounds {

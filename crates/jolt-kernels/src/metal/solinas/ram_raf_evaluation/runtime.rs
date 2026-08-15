@@ -49,9 +49,7 @@ impl RamRafAddressPlane {
         self.metadata.device_registry_id()
     }
 
-    pub(crate) fn buffer(&self) -> &Buffer {
-        &self.buffer
-    }
+    ref_field_getters! { pub(crate), { buffer: Buffer }}
 }
 
 #[cfg(feature = "allocative")]
@@ -327,13 +325,10 @@ impl RamRafAddressPlane {
 }
 
 impl RamRafSequence {
-    pub const fn fold_threads(&self) -> usize {
-        self.fold_threads
-    }
-
-    pub const fn finalize_threads(&self) -> usize {
-        self.finalize_threads
-    }
+    copy_field_getters! { pub, {
+        fold_threads: usize,
+        finalize_threads: usize,
+    }}
 
     pub const fn address_storage_id(&self) -> usize {
         self.addresses.storage_id()

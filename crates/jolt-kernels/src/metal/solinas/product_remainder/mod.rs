@@ -136,9 +136,7 @@ impl ProductRemainderRow {
         Ok(row)
     }
 
-    pub const fn words(self) -> [u64; PRODUCT_REMAINDER_ROW_WORDS] {
-        self.words
-    }
+    copy_field_getters! { pub, { words: [u64; PRODUCT_REMAINDER_ROW_WORDS] }}
 
     pub const fn left_instruction_input(self) -> u64 {
         self.words[ROW_LEFT_INPUT]
@@ -639,41 +637,17 @@ impl ProductRemainderStorageLayout {
         })
     }
 
-    pub const fn rows(self) -> usize {
-        self.rows
-    }
-
-    pub const fn row_bytes(self) -> usize {
-        self.row_bytes
-    }
-
-    pub const fn state_a_fields(self) -> usize {
-        self.state_a_fields
-    }
-
-    pub const fn state_b_fields(self) -> usize {
-        self.state_b_fields
-    }
-
-    pub const fn e_in_fields(self) -> usize {
-        self.e_in_fields
-    }
-
-    pub const fn e_out_fields(self) -> usize {
-        self.e_out_fields
-    }
-
-    pub const fn partial_fields(self) -> usize {
-        self.partial_fields
-    }
-
-    pub const fn workspace_bytes(self) -> usize {
-        self.workspace_bytes
-    }
-
-    pub const fn resident_bytes(self) -> usize {
-        self.resident_bytes
-    }
+    copy_field_getters! { pub, {
+        rows: usize,
+        row_bytes: usize,
+        state_a_fields: usize,
+        state_b_fields: usize,
+        e_in_fields: usize,
+        e_out_fields: usize,
+        partial_fields: usize,
+        workspace_bytes: usize,
+        resident_bytes: usize,
+    }}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -24,6 +24,22 @@ macro_rules! copy_field_getters {
     };
 }
 
+macro_rules! ref_field_getters {
+    ($visibility:vis, { $($method:ident $(=> $field:ident)?: $type:ty),* $(,)? }) => {
+        $(
+            $visibility fn $method(&self) -> &$type {
+                ref_field_getters!(@get self, $method $(=> $field)?)
+            }
+        )*
+    };
+    (@get $self:ident, $method:ident) => {
+        &$self.$method
+    };
+    (@get $self:ident, $method:ident => $field:ident) => {
+        &$self.$field
+    };
+}
+
 mod address_raf;
 mod address_sequence;
 mod address_suffix_full;
@@ -200,9 +216,7 @@ impl Fp128 {
         }
     }
 
-    pub const fn limbs(self) -> [u32; 4] {
-        self.limbs
-    }
+    copy_field_getters! { pub, { limbs: [u32; 4] }}
 
     pub const fn to_u128(self) -> u128 {
         (self.limbs[0] as u128)

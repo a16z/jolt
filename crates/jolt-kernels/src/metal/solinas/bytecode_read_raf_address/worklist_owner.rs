@@ -97,9 +97,7 @@ pub(crate) struct BytecodeAddressFusedScatterRequest {
 }
 
 impl BytecodeAddressSparseStage1Carrier {
-    pub(crate) const fn receipt(&self) -> BytecodeAddressSparseStage1Receipt {
-        self.receipt
-    }
+    copy_field_getters! { pub(crate), { receipt: BytecodeAddressSparseStage1Receipt }}
 
     pub(crate) const fn fused_topology_receipt(
         &self,

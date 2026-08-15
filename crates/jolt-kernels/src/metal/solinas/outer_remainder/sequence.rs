@@ -1016,24 +1016,15 @@ impl OuterRemainderSequence {
         Ok(rows.share_instruction_input_rows())
     }
 
-    pub const fn phase(&self) -> OuterRemainderPhase {
-        self.phase
-    }
-
-    pub const fn current_elements(&self) -> usize {
-        self.current_elements
-    }
+    copy_field_getters! { pub, {
+        phase: OuterRemainderPhase,
+        current_elements: usize,
+        gpu_active_time => gpu_active: Duration,
+        dispatch_counts: OuterRemainderDispatchCounts,
+    }}
 
     pub(crate) fn context(&self) -> &SolinasMetal {
         &self.storage.context
-    }
-
-    pub const fn gpu_active_time(&self) -> Duration {
-        self.gpu_active
-    }
-
-    pub const fn dispatch_counts(&self) -> OuterRemainderDispatchCounts {
-        self.dispatch_counts
     }
 
     pub const fn round_device_buffer_allocations(&self) -> usize {

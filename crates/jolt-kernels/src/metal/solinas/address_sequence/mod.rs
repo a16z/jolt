@@ -120,21 +120,14 @@ impl ResidentLookupIndexPlane {
         }
     }
 
-    pub(crate) const fn len(&self) -> usize {
-        self.rows
-    }
-
-    pub(crate) const fn device_registry_id(&self) -> u64 {
-        self.device_registry_id
-    }
-
-    pub(crate) const fn lookups(&self) -> &Buffer {
-        &self.lookups
-    }
-
-    pub(crate) const fn cycle_to_table_major(&self) -> &Buffer {
-        &self.cycle_to_table_major
-    }
+    copy_field_getters! { pub(crate), {
+        len => rows: usize,
+        device_registry_id: u64,
+    }}
+    ref_field_getters! { pub(crate), {
+        lookups: Buffer,
+        cycle_to_table_major: Buffer,
+    }}
 }
 
 #[cfg(feature = "allocative")]
@@ -1283,9 +1276,7 @@ impl AddressPhaseSequence {
         Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
     }
 
-    pub const fn phases_executed(&self) -> usize {
-        self.phases_executed
-    }
+    copy_field_getters! { pub, { phases_executed: usize }}
 
     pub const fn resident_buffer_count(&self) -> usize {
         21

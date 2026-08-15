@@ -389,9 +389,7 @@ impl Product5Sequence {
         Ok(())
     }
 
-    pub const fn current_elements(&self) -> usize {
-        self.current_elements
-    }
+    copy_field_getters! { pub, { current_elements: usize }}
 
     pub const fn resident_buffer_count(&self) -> usize {
         6

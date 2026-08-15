@@ -232,9 +232,7 @@ impl InstructionReadRafDenseGroupedPlanes {
         &self.receipt
     }
 
-    pub(crate) const fn execution(&self) -> InstructionReadRafProducerExecution {
-        self.execution
-    }
+    copy_field_getters! { pub(crate), { execution: InstructionReadRafProducerExecution }}
 
     pub(crate) fn into_parts(self) -> InstructionReadRafDenseGroupedParts {
         InstructionReadRafDenseGroupedParts {

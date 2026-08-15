@@ -312,14 +312,10 @@ impl BytecodeCycleRowSequence {
     }
 
     #[cfg(test)]
-    pub(crate) const fn first_message_pipeline_limits(&self) -> PipelineLimits {
-        self.first_message_limits
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn first_bind_pipeline_limits(&self) -> PipelineLimits {
-        self.first_bind_limits
-    }
+    copy_field_getters! { pub(crate), {
+        first_message_pipeline_limits => first_message_limits: PipelineLimits,
+        first_bind_pipeline_limits => first_bind_limits: PipelineLimits,
+    }}
 
     fn execute_row_round(
         &mut self,

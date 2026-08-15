@@ -95,9 +95,7 @@ impl InstructionInputRow {
         }
     }
 
-    pub const fn words(self) -> [u64; INSTRUCTION_INPUT_ROW_WORDS] {
-        self.words
-    }
+    copy_field_getters! { pub, { words: [u64; INSTRUCTION_INPUT_ROW_WORDS] }}
 
     pub fn fields<F: jolt_field::Field>(&self) -> [F; INSTRUCTION_INPUT_TABLES] {
         let flags = self.words[ROW_FLAGS];
@@ -124,9 +122,10 @@ impl InstructionInputRow {
 }
 
 impl InstructionInputRows {
-    pub const fn len(&self) -> usize {
-        self.len
-    }
+    copy_field_getters! { pub, {
+        len: usize,
+        device_registry_id: u64,
+    }}
 
     pub const fn is_empty(&self) -> bool {
         self.len == 0
@@ -134,10 +133,6 @@ impl InstructionInputRows {
 
     pub(crate) fn buffer(&self) -> &Buffer {
         &self.buffer
-    }
-
-    pub const fn device_registry_id(&self) -> u64 {
-        self.device_registry_id
     }
 
     pub fn allocation_identity(&self) -> usize {
@@ -1078,9 +1073,7 @@ impl InstructionInputSequenceStorage {
         })
     }
 
-    pub(crate) const fn owned_bytes(&self) -> u64 {
-        self.owned_bytes
-    }
+    copy_field_getters! { pub(crate), { owned_bytes: u64 }}
 }
 
 impl InstructionInputSequence {

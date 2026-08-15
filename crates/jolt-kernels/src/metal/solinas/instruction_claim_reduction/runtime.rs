@@ -591,9 +591,7 @@ impl InstructionClaimSequence {
         self.context.device_registry_id()
     }
 
-    pub(crate) const fn joint_gamma(&self) -> AkitaField {
-        self.gamma
-    }
+    copy_field_getters! { pub(crate), { joint_gamma => gamma: AkitaField }}
 
     pub fn message(
         &mut self,

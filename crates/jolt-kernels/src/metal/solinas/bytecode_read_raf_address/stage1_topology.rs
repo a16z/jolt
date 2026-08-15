@@ -950,9 +950,7 @@ impl BytecodeAddressStage1TopologyLease {
         self.owner.0.receipt
     }
 
-    pub(crate) const fn source(&self) -> &InstructionReadRafStage1Lease {
-        &self.source
-    }
+    ref_field_getters! { pub(crate), { source: InstructionReadRafStage1Lease }}
 
     pub(crate) fn descriptors_buffer(&self) -> &Buffer {
         &self.owner.0.descriptors

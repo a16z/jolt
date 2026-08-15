@@ -60,17 +60,11 @@ impl AddressMajorShape {
         Ok(self.rows()? / self.inner_length()?)
     }
 
-    pub const fn log_rows(self) -> u32 {
-        self.log_rows
-    }
-
-    pub const fn log_addresses(self) -> u32 {
-        self.log_addresses
-    }
-
-    pub const fn inner_log2(self) -> u32 {
-        self.inner_log2
-    }
+    copy_field_getters! { pub, {
+        log_rows: u32,
+        log_addresses: u32,
+        inner_log2: u32,
+    }}
 
     fn validate_exponents(self) -> Result<(), CarrierError> {
         if self.inner_log2 == 0

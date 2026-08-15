@@ -37,9 +37,7 @@ pub(crate) struct RegistersValInstructionSourceLease {
 }
 
 impl RegistersValInstructionSourceLease {
-    pub(crate) const fn receipt(&self) -> RegistersValInstructionSourceReceipt {
-        self.receipt
-    }
+    copy_field_getters! { pub(crate), { receipt: RegistersValInstructionSourceReceipt }}
 
     pub(crate) fn into_parts(
         self,

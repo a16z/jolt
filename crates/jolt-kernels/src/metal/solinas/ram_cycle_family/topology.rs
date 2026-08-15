@@ -12,9 +12,7 @@ pub struct LevelCensus {
 }
 
 impl LevelCensus {
-    pub const fn entries(self) -> u64 {
-        self.entries
-    }
+    copy_field_getters! { pub, { entries: u64 }}
 }
 
 #[repr(C)]
@@ -67,9 +65,7 @@ pub struct RamBlockTopology {
 }
 
 impl RamBlockTopology {
-    pub const fn log_t(&self) -> usize {
-        self.log_t
-    }
+    copy_field_getters! { pub, { log_t: usize }}
 
     pub fn leaf_cycles(&self) -> &[u32] {
         &self.leaf_cycles

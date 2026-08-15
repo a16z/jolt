@@ -18,17 +18,11 @@ pub struct RamValMessage<F> {
 }
 
 impl<F: Field> RamValMessage<F> {
-    pub const fn at_zero(self) -> F {
-        self.at_zero
-    }
-
-    pub const fn at_two(self) -> F {
-        self.at_two
-    }
-
-    pub const fn at_three(self) -> F {
-        self.at_three
-    }
+    copy_field_getters! { pub, {
+        at_zero: F,
+        at_two: F,
+        at_three: F,
+    }}
 
     pub const fn sampled_evaluations(self) -> [F; 3] {
         [self.at_zero, self.at_two, self.at_three]
@@ -60,17 +54,11 @@ pub struct RamValTerminalFactors<F> {
 }
 
 impl<F: Field> RamValTerminalFactors<F> {
-    pub const fn ram_increment(self) -> F {
-        self.ram_increment
-    }
-
-    pub const fn ram_ra(self) -> F {
-        self.ram_ra
-    }
-
-    pub const fn lt_cycle_plus_gamma(self) -> F {
-        self.lt_cycle_plus_gamma
-    }
+    copy_field_getters! { pub, {
+        ram_increment: F,
+        ram_ra: F,
+        lt_cycle_plus_gamma: F,
+    }}
 
     pub(crate) const fn new(ram_increment: F, ram_ra: F, lt_cycle_plus_gamma: F) -> Self {
         Self {
@@ -90,17 +78,11 @@ pub struct RamValFrontierEntry<F> {
 }
 
 impl<F: Field> RamValFrontierEntry<F> {
-    pub const fn block(self) -> u64 {
-        self.block
-    }
-
-    pub const fn ram_increment(self) -> F {
-        self.ram_increment
-    }
-
-    pub const fn ram_ra(self) -> F {
-        self.ram_ra
-    }
+    copy_field_getters! { pub, {
+        block: u64,
+        ram_increment: F,
+        ram_ra: F,
+    }}
 }
 
 /// Authoritative sparse sequence over the access/increment union topology.
@@ -176,13 +158,10 @@ impl<F: Field> HostSparseRamValCheck<F> {
         })
     }
 
-    pub const fn num_rounds(&self) -> usize {
-        self.rounds
-    }
-
-    pub const fn round(&self) -> usize {
-        self.round
-    }
+    copy_field_getters! { pub, {
+        num_rounds => rounds: usize,
+        round: usize,
+    }}
 
     pub fn frontier_len(&self) -> usize {
         self.frontier.len()
