@@ -234,36 +234,34 @@ impl DeviceDenseProduct {
 
     pub(crate) fn reduce_lanes(
         context: &CudaKernelContext,
-        mut partials: DeviceFrVec,
+        partials: DeviceFrVec,
         lanes: u32,
-        mut width: u32,
+        width: u32,
     ) -> Result<DeviceFrVec, CudaError> {
-        while width > 1 {
-            let next = width.div_ceil(2);
-            let mut folded = context.alloc(lanes as usize * next as usize)?;
-            let mut builder = context.stream().launch_builder(context.lane_sum_reduce());
-            let _ = builder.arg(partials.limbs());
-            let _ = builder.arg(folded.limbs_mut());
-            let _ = builder.arg(&lanes);
-            let _ = builder.arg(&width);
-            let _ = builder.arg(&next);
-            // SAFETY: thread `(i < next, lane < lanes)` reads
-            // `in[lane * width + i]` and, when `i + next < width`, its mate at
-            // `+ next` — both inside `in`'s `lanes * width` elements — and writes
-            // only `out[lane * next + i]` of `lanes * next`. Index sets are
-            // pairwise disjoint and `out` is a distinct allocation.
-            let _ = unsafe {
-                builder.launch(LaunchConfig {
-                    grid_dim: (next.div_ceil(BLOCK), lanes, 1),
-                    block_dim: (BLOCK, 1, 1),
-                    shared_mem_bytes: 0,
-                })
-            }?;
-            context.stream().synchronize()?;
-            partials = folded;
-            width = next;
+        if width <= 1 {
+            return Ok(partials);
         }
-        Ok(partials)
+        let mut totals = context.alloc(lanes as usize)?;
+        let mut builder = context.stream().launch_builder(context.lane_sum_total());
+        let _ = builder.arg(partials.limbs());
+        let _ = builder.arg(totals.limbs_mut());
+        let _ = builder.arg(&width);
+        // SAFETY: block `lane = blockIdx.x < lanes` reads `in[lane * width + i]`
+        // for `i` striding from `threadIdx.x` by `blockDim.x` while `i < width`,
+        // so every read is inside `in`'s `lanes * width` elements, and writes only
+        // `out[lane]` of `lanes`. Shared memory is `BLOCK * LIMBS` u64s, matching
+        // `shared_mem_bytes`, every thread reaches each `__syncthreads()` because
+        // the strided loop and the tree are outside any early return, and `BLOCK`
+        // is a power of two so the tree covers the whole block.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (lanes, 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+        context.stream().synchronize()?;
+        Ok(totals)
     }
 
     pub fn bind<F: Field>(

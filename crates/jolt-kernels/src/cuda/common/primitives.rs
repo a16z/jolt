@@ -136,7 +136,7 @@ impl CudaKernelContext {
         }
         let half = len / 2;
         let mut output = self.alloc(half)?;
-        let challenge = self.upload(&[challenge])?;
+        let limbs = crate::cuda::common::device::fr_limbs(challenge);
         let count = Self::count_of(half)?;
         let kernel = match order {
             BindingOrder::LowToHigh => &self.bind_low_to_high,
@@ -144,15 +144,19 @@ impl CudaKernelContext {
         };
         let mut builder = self.stream().launch_builder(kernel);
         let _ = builder.arg(values.limbs());
-        let _ = builder.arg(challenge.limbs());
+        let _ = builder.arg(&limbs[0]);
+        let _ = builder.arg(&limbs[1]);
+        let _ = builder.arg(&limbs[2]);
+        let _ = builder.arg(&limbs[3]);
         let _ = builder.arg(output.limbs_mut());
         let _ = builder.arg(&count);
         // SAFETY: thread `i < half` writes only `out[i]` and reads the pair
         // (`in[2i]`,`in[2i+1]`) for LowToHigh or (`in[i]`,`in[i+half]`) for
-        // HighToLow — both within `in`'s `2 * half * LIMBS` u64s — plus the
-        // single-element `challenge` buffer. `out` holds `half * LIMBS` u64s and
-        // is a fresh allocation distinct from `in`, so the reads cannot observe a
-        // partially written `out`. Threads with `i >= half` return first.
+        // HighToLow — both within `in`'s `2 * half * LIMBS` u64s. The challenge
+        // arrives as four by-value limbs, so no device buffer backs it. `out`
+        // holds `half * LIMBS` u64s and is a fresh allocation distinct from `in`,
+        // so the reads cannot observe a partially written `out`. Threads with
+        // `i >= half` return first.
         let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
         self.stream().synchronize()?;
         Ok(output)

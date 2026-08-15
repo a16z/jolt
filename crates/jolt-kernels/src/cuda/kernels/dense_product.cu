@@ -95,6 +95,40 @@ extern "C" __global__ void lane_sum_reduce_kernel(const u64 *__restrict__ in,
     store4(out + (lane * out_width + i) * LIMBS, acc);
 }
 
+extern "C" __global__ void lane_sum_total_kernel(const u64 *__restrict__ in,
+                                                 u64 *__restrict__ out, unsigned int width) {
+    extern __shared__ u64 scratch[];
+    unsigned int lane = blockIdx.x;
+    unsigned int tid = threadIdx.x;
+
+    u64 acc[LIMBS];
+    for (int l = 0; l < LIMBS; l++) acc[l] = 0;
+    for (unsigned int i = tid; i < width; i += blockDim.x) {
+        u64 value[LIMBS], sum[LIMBS];
+        load4(in + ((unsigned long long)lane * width + i) * LIMBS, value);
+        fr_add(acc, value, sum);
+        for (int l = 0; l < LIMBS; l++) acc[l] = sum[l];
+    }
+
+    store4(scratch + tid * LIMBS, acc);
+    __syncthreads();
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            u64 a[LIMBS], b[LIMBS], sum[LIMBS];
+            load4(scratch + tid * LIMBS, a);
+            load4(scratch + (tid + stride) * LIMBS, b);
+            fr_add(a, b, sum);
+            store4(scratch + tid * LIMBS, sum);
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        u64 total[LIMBS];
+        load4(scratch, total);
+        store4(out + (unsigned long long)lane * LIMBS, total);
+    }
+}
+
 extern "C" __global__ void weighted_combine_kernel(const u64 *__restrict__ weights,
                                                   const u64 *__restrict__ coefficient,
                                                   u64 *__restrict__ accumulator,

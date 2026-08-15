@@ -357,7 +357,6 @@ impl DevicePackedRamRa {
             // outside the `g < half` guard.
             let _ = unsafe { builder.launch(config) }?;
         }
-        context.stream().synchronize()?;
 
         let totals = crate::cuda::common::dense_product::DeviceDenseProduct::reduce_lanes(
             context, partials, lanes, blocks,

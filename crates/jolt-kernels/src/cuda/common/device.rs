@@ -15,6 +15,11 @@ fn fr_to_limbs(value: Fr) -> [u64; LIMBS] {
 }
 
 #[inline]
+pub(crate) fn fr_limbs(value: Fr) -> [u64; LIMBS] {
+    fr_to_limbs(value)
+}
+
+#[inline]
 fn limbs_to_fr(limbs: [u64; LIMBS]) -> Fr {
     Fr::from_bigint_unchecked(Limbs(limbs))
 }

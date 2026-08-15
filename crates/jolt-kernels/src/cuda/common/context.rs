@@ -87,6 +87,7 @@ pub struct CudaKernelContext {
     pub(super) scan_u32_add_offsets: CudaFunction,
     dense_product_round: CudaFunction,
     lane_sum_reduce: CudaFunction,
+    lane_sum_total: CudaFunction,
     weighted_combine: CudaFunction,
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
@@ -184,6 +185,7 @@ impl CudaKernelContext {
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
             dense_product_round: module.load_function("dense_product_round_kernel")?,
             lane_sum_reduce: module.load_function("lane_sum_reduce_kernel")?,
+            lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             weighted_combine: module.load_function("weighted_combine_kernel")?,
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
@@ -361,6 +363,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn lane_sum_reduce(&self) -> &CudaFunction {
         &self.lane_sum_reduce
+    }
+
+    pub(crate) const fn lane_sum_total(&self) -> &CudaFunction {
+        &self.lane_sum_total
     }
 
     pub(crate) const fn weighted_combine(&self) -> &CudaFunction {

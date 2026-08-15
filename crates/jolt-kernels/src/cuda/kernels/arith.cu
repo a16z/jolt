@@ -76,7 +76,7 @@ extern "C" __global__ void fma_kernel(const u64 *__restrict__ acc,
 }
 
 extern "C" __global__ void bind_low_to_high_kernel(const u64 *__restrict__ in,
-                                                  const u64 *__restrict__ challenge,
+                                                  u64 c0, u64 c1, u64 c2, u64 c3,
                                                   u64 *__restrict__ out,
                                                   unsigned int half) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -84,7 +84,10 @@ extern "C" __global__ void bind_low_to_high_kernel(const u64 *__restrict__ in,
     u64 lo[LIMBS], hi[LIMBS], c[LIMBS], d[LIMBS], t[LIMBS], r[LIMBS];
     load4(in + (2 * i) * LIMBS, lo);
     load4(in + (2 * i + 1) * LIMBS, hi);
-    load4(challenge, c);
+    c[0] = c0;
+    c[1] = c1;
+    c[2] = c2;
+    c[3] = c3;
     fr_sub(hi, lo, d);
     fr_mul(c, d, t);
     fr_add(lo, t, r);
@@ -92,7 +95,7 @@ extern "C" __global__ void bind_low_to_high_kernel(const u64 *__restrict__ in,
 }
 
 extern "C" __global__ void bind_high_to_low_kernel(const u64 *__restrict__ in,
-                                                  const u64 *__restrict__ challenge,
+                                                  u64 c0, u64 c1, u64 c2, u64 c3,
                                                   u64 *__restrict__ out,
                                                   unsigned int half) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -100,7 +103,10 @@ extern "C" __global__ void bind_high_to_low_kernel(const u64 *__restrict__ in,
     u64 lo[LIMBS], hi[LIMBS], c[LIMBS], d[LIMBS], t[LIMBS], r[LIMBS];
     load4(in + i * LIMBS, lo);
     load4(in + (i + half) * LIMBS, hi);
-    load4(challenge, c);
+    c[0] = c0;
+    c[1] = c1;
+    c[2] = c2;
+    c[3] = c3;
     fr_sub(hi, lo, d);
     fr_mul(c, d, t);
     fr_add(lo, t, r);
