@@ -12,10 +12,13 @@ use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_poly::UnivariatePoly;
 use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, TraceOutput,
+    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
+    RegisterWrite, TraceOutput,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+use jolt_riscv::{
+    JoltInstruction, JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT,
+};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
@@ -623,6 +626,174 @@ pub fn with_one_hot_witness<R>(
     body(&backend, bytecode_len)
 }
 
+const R1CS_FIXTURE_STRIDE: usize = 5;
+
+const R1CS_FIXTURE_SEQUENCE: u16 = 3;
+
+fn r1cs_bytecode() -> Vec<JoltInstructionRow> {
+    let kinds = [
+        JoltInstructionKind::XOR,
+        JoltInstructionKind::ADD,
+        JoltInstructionKind::SUB,
+        JoltInstructionKind::MUL,
+        JoltInstructionKind::LD,
+        JoltInstructionKind::SD,
+        JoltInstructionKind::JAL,
+        JoltInstructionKind::BEQ,
+        JoltInstructionKind::ADDI,
+        JoltInstructionKind::LUI,
+        JoltInstructionKind::VirtualAssertEQ,
+        JoltInstruction::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
+        JoltInstructionKind::VirtualMULI,
+        JoltInstructionKind::VirtualMovsign,
+    ];
+
+    kinds
+        .iter()
+        .enumerate()
+        .map(|(slot, &instruction_kind)| JoltInstructionRow {
+            instruction_kind,
+            address: 0x8000_0000 + 4 * slot,
+            operands: r1cs_fixture_operands(instruction_kind, slot),
+            virtual_sequence_remaining: r1cs_fixture_sequence(slot),
+            is_first_in_sequence: r1cs_fixture_sequence(slot) == Some(R1CS_FIXTURE_SEQUENCE),
+            is_compressed: slot % 5 == 4,
+        })
+        .collect()
+}
+
+fn r1cs_fixture_operands(kind: JoltInstructionKind, slot: usize) -> NormalizedOperands {
+    let magnitude = 13 + 5 * slot as i128;
+    let imm = if slot % 2 == 0 { -magnitude } else { magnitude };
+    let (rd, rs1, rs2) = match kind {
+        JoltInstructionKind::SD => (None, Some(2), Some(3)),
+        JoltInstructionKind::BEQ => (None, Some(2), Some(3)),
+        JoltInstructionKind::VirtualAssertEQ => (None, Some(2), Some(3)),
+        JoltInstructionKind::LD => (Some(1), Some(2), None),
+        JoltInstructionKind::ADDI
+        | JoltInstructionKind::VirtualMULI
+        | JoltInstructionKind::VirtualMovsign => (Some(1), Some(2), None),
+        JoltInstructionKind::LUI | JoltInstructionKind::JAL => (Some(1), None, None),
+        _ if kind
+            == JoltInstruction::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())) =>
+        {
+            (Some(1), None, None)
+        }
+        _ => (Some(1), Some(2), Some(3)),
+    };
+    NormalizedOperands { rd, rs1, rs2, imm }
+}
+
+const fn r1cs_fixture_sequence(slot: usize) -> Option<u16> {
+    let kinds = 14;
+    if slot + 4 < kinds {
+        None
+    } else {
+        Some((kinds - 1 - slot) as u16)
+    }
+}
+
+fn r1cs_rows(
+    bytecode: &[JoltInstructionRow],
+    log_t: usize,
+    layout: &MemoryLayout,
+    ram_k: usize,
+    seed: u64,
+) -> Vec<TraceRow> {
+    let cycles = 1usize << log_t;
+    let lowest = layout.get_lowest_address();
+    let mut rows = Vec::with_capacity(cycles);
+
+    for cycle in 0..cycles {
+        if cycle + 1 == cycles {
+            rows.push(TraceRow::default());
+            continue;
+        }
+
+        let mix = seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(cycle as u64 + 1);
+        let rs1 = mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29);
+        let rs2 = mix.wrapping_mul(0x94D0_49BB_1331_11EB) ^ (mix >> 31);
+        let rd = mix.wrapping_mul(0x2545_F491_4F6C_DD1D) ^ (mix >> 23);
+        let address = lowest + 8 * (rs1 % ram_k as u64);
+        let value = 900 + cycle as u64;
+
+        let instruction = bytecode[cycle.wrapping_mul(R1CS_FIXTURE_STRIDE) % bytecode.len()];
+        let access = match instruction.instruction_kind {
+            JoltInstructionKind::LD => RamAccess::Read(RamRead { address, value }),
+            JoltInstructionKind::SD => RamAccess::Write(RamWrite {
+                address,
+                pre_value: value,
+                post_value: value + 7,
+            }),
+            _ => RamAccess::NoOp,
+        };
+
+        let rs2 = if (cycle / bytecode.len()).is_multiple_of(2) {
+            rs1
+        } else {
+            rs2
+        };
+
+        let mut row = TraceRow {
+            instruction,
+            ram_access: access,
+            ..TraceRow::default()
+        };
+        row.registers = RegisterState {
+            rs1: Some(RegisterRead {
+                register: 2,
+                value: rs1,
+            }),
+            rs2: Some(RegisterRead {
+                register: 3,
+                value: rs2,
+            }),
+            rd: Some(RegisterWrite {
+                register: 1,
+                pre_value: rd,
+                post_value: rd ^ 0x5555,
+            }),
+        };
+        rows.push(row);
+    }
+    rows
+}
+
+pub fn with_r1cs_witness<R>(
+    log_t: usize,
+    ram_k: usize,
+    one_hot: JoltOneHotConfig,
+    seed: u64,
+    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+) -> R {
+    let bytecode = r1cs_bytecode();
+    let entry_address = bytecode[0].address as u64;
+    let memory_layout = MemoryLayout::new(&MemoryConfig {
+        program_size: Some(1 << 12),
+        ..MemoryConfig::default()
+    });
+    let preprocessing = JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(bytecode.clone(), entry_address, RV64IMAC_JOLT)
+            .expect("r1cs bytecode fixture"),
+        ram: RAMPreprocessing::default(),
+        memory_layout: memory_layout.clone(),
+        max_padded_trace_length: 1usize << log_t,
+    };
+    let program = JoltProgram::default();
+    let trace = TraceOutput::new(
+        OwnedTrace::new(r1cs_rows(&bytecode, log_t, &memory_layout, ram_k, seed)),
+        Default::default(),
+        None,
+    );
+    let backend = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, ram_k, one_hot),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+    );
+    body(&backend)
+}
+
 pub fn hot_addresses(
     witness: &dyn JoltWitnessOracle<Fr>,
     polynomial: JoltCommittedPolynomial,
@@ -670,7 +841,11 @@ where
     let mut probe = ReferenceBackend
         .prepare(&mut ProofSession::default(), witness, make_inputs())
         .expect("reference prepare for the input-claim probe");
-    probe.prove_round(None, 0, Fr::from_u64(0)).map_or_else(
+    probe_input_claim(&mut *probe)
+}
+
+pub fn probe_input_claim<K: ProveRounds<Fr> + ?Sized>(kernel: &mut K) -> Fr {
+    kernel.prove_round(None, 0, Fr::from_u64(0)).map_or_else(
         |error| claim_from_round_check(&error),
         |poly| poly.evaluate(Fr::from_u64(0)) + poly.evaluate(Fr::from_u64(1)),
     )

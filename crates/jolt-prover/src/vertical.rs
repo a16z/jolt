@@ -5,12 +5,13 @@ use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::ram::RamValCheckInit;
+use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafChallenges, InstructionReadRafInputClaims,
 };
 use jolt_claims::protocols::jolt::relations::ram::{RamValCheckChallenges, RamValCheckInputClaims};
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltRelationId, TraceDimensions};
-use jolt_claims::NoChallenges;
+use jolt_claims::{NoChallenges, SymbolicSumcheck as _};
 use jolt_dory::DoryScheme;
 use jolt_field::{Fr, FromPrimitiveInt};
 use jolt_kernels::{JoltBackend, ProofSession, ProverInputs};
@@ -23,6 +24,9 @@ use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
 use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::formula_dimensions_from_parts;
+use jolt_verifier::stages::stage1::outer_remainder::{
+    outer_remainder_input_values_from_uniskip_output, OuterRemainder, OuterRemainderInputClaims,
+};
 use jolt_verifier::stages::stage2::ram_read_write_checking::{
     RamReadWriteChallenges, RamReadWriteChecking, RamReadWriteInputClaims,
 };
@@ -62,6 +66,7 @@ pub enum VerticalRelation {
     RamReadWrite,
     RamValCheck,
     RegistersReadWrite,
+    SpartanOuter,
 }
 
 impl VerticalRelation {
@@ -75,6 +80,7 @@ impl VerticalRelation {
             Self::RamReadWrite => "ram-read-write",
             Self::RamValCheck => "ram-val-check",
             Self::RegistersReadWrite => "registers-read-write",
+            Self::SpartanOuter => "spartan-outer",
         }
     }
 }
@@ -221,6 +227,7 @@ pub fn run(args: &VerticalArgs) -> Vec<VerticalTiming> {
             VerticalRelation::RegistersReadWrite => {
                 measure_registers_read_write(args.name, scale, args.backend)
             }
+            VerticalRelation::SpartanOuter => measure_spartan_outer(args.name, scale, args.backend),
         };
         println!(
             "{:>6}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}  {:>11.3?}",
@@ -1148,4 +1155,116 @@ fn measure_registers_read_write(
             RoundPhase::Address
         }
     })
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "measurement harness: fixture and kernel errors fail loudly"
+)]
+fn measure_spartan_outer(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
+    let bench_name = workload.as_str();
+    let max_trace_length = 1usize << scale;
+    let input = workload.input((max_trace_length as f64 * SAFETY_MARGIN) as usize);
+
+    let mut program = host::Program::new(&format!("{bench_name}-guest"));
+    let (bytecode, init_memory_state, _, entry_address) = program.decode();
+    let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
+    drop(legacy_trace);
+    let elf_contents = program.get_elf_contents().expect("elf contents");
+    let memory_layout = io_device.memory_layout.clone();
+
+    let program_data =
+        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
+            .expect("legacy preprocess");
+    let shared =
+        JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
+    let legacy = LegacyProverPreprocessing::<
+        jolt_prover_legacy::ark_bn254::Fr,
+        jolt_prover_legacy::curve::Bn254Curve,
+        DoryCommitmentScheme,
+    >::new(shared);
+    let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy);
+    let program_preprocessing = verifier_preprocessing
+        .program
+        .as_full()
+        .expect("full program preprocessing")
+        .clone();
+    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+
+    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    let config = ProverConfig::derive::<Fr>(
+        trace_output.trace.rows(),
+        &memory_layout,
+        verifier_preprocessing.program.min_bytecode_address(),
+        verifier_preprocessing.program.program_image_len_words(),
+        max_trace_length,
+    )
+    .expect("derive config");
+    let padded = pad_trace(trace_output, config.trace_length);
+    let log_t = config.trace_length.ilog2() as usize;
+
+    let witness = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
+        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
+    );
+
+    let tau: Vec<Fr> = (0..log_t + 2)
+        .map(|i| Fr::from_u64(37 + 7 * i as u64))
+        .collect();
+    let uniskip_challenge = Fr::from_u64(101);
+
+    let selected = match backend {
+        BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        #[cfg(feature = "cuda")]
+        BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
+    };
+
+    let mut session = ProofSession::default();
+    let start = Instant::now();
+    selected
+        .spartan_outer_uniskip
+        .prepare(&mut session, log_t, &tau, &witness)
+        .expect("prepare the stage-1 Spartan outer uni-skip kernel");
+    let prepare = start.elapsed();
+
+    let start = Instant::now();
+    let _ = selected
+        .spartan_outer_uniskip
+        .first_round_poly(&mut session, &[])
+        .expect("the stage-1 Spartan outer uni-skip first-round polynomial");
+    let uniskip_poly = start.elapsed();
+
+    let relation = OuterRemainder::new(
+        SpartanOuterDimensions::rv64(log_t),
+        tau.clone(),
+        uniskip_challenge,
+    );
+    let claims = outer_remainder_input_values_from_uniskip_output(Fr::from_u64(0));
+    let points = OuterRemainderInputClaims {
+        outer_uniskip: Vec::new(),
+    };
+    let challenges = NoChallenges::default();
+    let inputs = ProverInputs {
+        relation: &relation,
+        claims: &claims,
+        points: &points,
+        challenges: &challenges,
+    };
+
+    let start = Instant::now();
+    let mut kernel = selected
+        .spartan_outer_remainder
+        .prepare(&mut session, &witness, inputs)
+        .expect("prepare the stage-1 Spartan outer remainder kernel");
+    let remainder_prepare = start.elapsed();
+
+    let rounds = jolt_claims::SymbolicSumcheck::rounds(
+        jolt_verifier::stages::relations::ConcreteSumcheck::symbolic(&relation),
+    );
+    let mut timing = drive_rounds(&mut *kernel, &claims, rounds, log_t, prepare, |_| {
+        RoundPhase::Cycle
+    });
+    timing.handoff = uniskip_poly;
+    timing.address = remainder_prepare;
+    timing
 }

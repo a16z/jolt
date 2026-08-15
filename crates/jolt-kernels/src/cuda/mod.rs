@@ -15,6 +15,7 @@ mod ram_read_write;
 mod ram_val_check;
 mod registers_read_write;
 mod registers_val_evaluation;
+mod spartan_outer;
 
 pub use common::context::{shared_context, CudaKernelContext};
 pub use common::device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
@@ -60,6 +61,8 @@ where
         backend.ram_val_check = Box::new(CudaBackend);
         backend.registers_read_write = Box::new(CudaBackend);
         backend.ram_read_write = Box::new(CudaBackend);
+        backend.spartan_outer_uniskip = Box::new(CudaBackend);
+        backend.spartan_outer_remainder = Box::new(CudaBackend);
         backend
     }
 }

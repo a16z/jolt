@@ -68,6 +68,8 @@ const KERNEL_SRC: &str = concat!(
     include_str!("../kernels/booleanity_cycle.cu"),
     "\n",
     include_str!("../kernels/bytecode_read_raf.cu"),
+    "\n",
+    include_str!("../kernels/spartan_outer.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -164,6 +166,11 @@ pub struct CudaKernelContext {
     brr_gather: CudaFunction,
     brr_message_sparse: CudaFunction,
     brr_message_dense: CudaFunction,
+    so_shift: CudaFunction,
+    so_uniskip: CudaFunction,
+    so_factors: CudaFunction,
+    so_message: CudaFunction,
+    so_claims: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -270,6 +277,11 @@ impl CudaKernelContext {
             brr_gather: module.load_function("brr_gather_kernel")?,
             brr_message_sparse: module.load_function("brr_message_sparse_kernel")?,
             brr_message_dense: module.load_function("brr_message_dense_kernel")?,
+            so_shift: module.load_function("so_shift_kernel")?,
+            so_uniskip: module.load_function("so_uniskip_kernel")?,
+            so_factors: module.load_function("so_factors_kernel")?,
+            so_message: module.load_function("so_message_kernel")?,
+            so_claims: module.load_function("so_claims_kernel")?,
         })
     }
 
@@ -451,6 +463,26 @@ impl CudaKernelContext {
 
     pub(crate) const fn brr_message_dense(&self) -> &CudaFunction {
         &self.brr_message_dense
+    }
+
+    pub(crate) const fn so_shift(&self) -> &CudaFunction {
+        &self.so_shift
+    }
+
+    pub(crate) const fn so_uniskip(&self) -> &CudaFunction {
+        &self.so_uniskip
+    }
+
+    pub(crate) const fn so_factors(&self) -> &CudaFunction {
+        &self.so_factors
+    }
+
+    pub(crate) const fn so_message(&self) -> &CudaFunction {
+        &self.so_message
+    }
+
+    pub(crate) const fn so_claims(&self) -> &CudaFunction {
+        &self.so_claims
     }
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {

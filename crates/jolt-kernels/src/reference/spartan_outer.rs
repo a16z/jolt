@@ -321,7 +321,7 @@ impl<F: Field> SpartanOuterKernel<F> {
 
 /// Materialize the 35 R1CS input polynomials (cycle-indexed, big-endian) in
 /// the relation's variable order.
-fn materialize_input_tables<F: Field>(
+pub(crate) fn materialize_input_tables<F: Field>(
     witness: &dyn JoltWitnessOracle<F>,
     dimensions: &SpartanOuterDimensions,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
@@ -335,7 +335,7 @@ fn materialize_input_tables<F: Field>(
 /// Per-constraint-row Az/Bz value tables over the cycle domain:
 /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]` with `z_t[0] = 1` and
 /// `z_t[1 + k] = input_tables[k][t]`.
-fn row_value_tables<F: Field>(
+pub(crate) fn row_value_tables<F: Field>(
     matrices: &ConstraintMatrices<F>,
     input_tables: &[Vec<F>],
 ) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
