@@ -436,7 +436,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::{DeviceBooleanityRa, COLLAPSE_AFTER_ROUNDS};
-    use crate::cuda::booleanity_cycle::witness::{PackedColumns, COLD};
+    use crate::cuda::booleanity::witness::{PackedColumns, COLD};
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{arb_point, fr};
 

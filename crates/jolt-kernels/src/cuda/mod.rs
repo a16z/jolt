@@ -4,7 +4,7 @@ use jolt_openings::CommitmentScheme;
 use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
-mod booleanity_cycle;
+mod booleanity;
 mod common;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;

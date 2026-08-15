@@ -227,8 +227,9 @@ mod tests {
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{
-        arb_point, booleanity_fixture_bytecode_is_cold, booleanity_fixture_is_padding, drive, fr,
-        ram_fixture_is_cold, reference_input_claim, with_booleanity_witness,
+        arb_point, drive, fr, hot_addresses, one_hot_fixture_bytecode_is_cold,
+        one_hot_fixture_is_padding, ram_fixture_is_cold, reference_input_claim,
+        with_one_hot_witness, ONE_HOT_BYTECODE_LEN,
     };
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
@@ -244,46 +245,14 @@ mod tests {
         }
     }
 
-    fn hot_addresses(
-        witness: &dyn JoltWitnessOracle<Fr>,
-        polynomial: JoltCommittedPolynomial,
-        addresses: usize,
-        cycles: usize,
-    ) -> Vec<Option<usize>> {
-        let grid =
-            JoltWitnessOracle::<Fr>::oracle_table(witness, JoltPolynomialId::Committed(polynomial))
-                .expect("committed one-hot column");
-        assert_eq!(grid.len(), addresses * cycles, "{polynomial:?} grid size");
-
-        (0..cycles)
-            .map(|cycle| {
-                let mut found = None;
-                for address in 0..addresses {
-                    if grid[address * cycles + cycle] != Fr::from_u64(0) {
-                        assert_eq!(
-                            grid[address * cycles + cycle],
-                            Fr::from_u64(1),
-                            "{polynomial:?} cycle {cycle}: one-hot entry is not 1",
-                        );
-                        assert!(
-                            found.is_none(),
-                            "{polynomial:?} cycle {cycle}: two hot addresses",
-                        );
-                        found = Some(address);
-                    }
-                }
-                found
-            })
-            .collect()
-    }
-
     #[test]
     fn fixture_booleanity_columns_are_one_hot_per_family() {
         let cycles = 1usize << LOG_T;
         for (chunk_bits, ram_log_k) in CONFIGS {
             let addresses = 1usize << chunk_bits;
-            with_booleanity_witness(
+            with_one_hot_witness(
                 LOG_T,
+                ONE_HOT_BYTECODE_LEN,
                 1usize << ram_log_k,
                 one_hot(chunk_bits),
                 7,
@@ -330,7 +299,7 @@ mod tests {
                             for (cycle, address) in hot.iter().enumerate() {
                                 let cold = match family {
                                     "instruction" => false,
-                                    "bytecode" => booleanity_fixture_bytecode_is_cold(LOG_T, cycle),
+                                    "bytecode" => one_hot_fixture_bytecode_is_cold(LOG_T, cycle),
                                     _ => ram_fixture_is_cold(LOG_T, cycle),
                                 };
                                 assert_eq!(
@@ -353,17 +322,17 @@ mod tests {
                     }
 
                     let padding = (0..cycles)
-                        .filter(|&cycle| booleanity_fixture_is_padding(LOG_T, cycle))
+                        .filter(|&cycle| one_hot_fixture_is_padding(LOG_T, cycle))
                         .count();
                     let bytecode_cold = (0..cycles)
-                        .filter(|&cycle| booleanity_fixture_bytecode_is_cold(LOG_T, cycle))
+                        .filter(|&cycle| one_hot_fixture_bytecode_is_cold(LOG_T, cycle))
                         .count();
                     let ram_cold = (0..cycles)
                         .filter(|&cycle| ram_fixture_is_cold(LOG_T, cycle))
                         .count();
                     let disagree = (0..cycles)
                         .filter(|&cycle| {
-                            booleanity_fixture_bytecode_is_cold(LOG_T, cycle)
+                            one_hot_fixture_bytecode_is_cold(LOG_T, cycle)
                                 != ram_fixture_is_cold(LOG_T, cycle)
                         })
                         .count();
@@ -402,8 +371,9 @@ mod tests {
             let Some(_) = shared_context() else { return Ok(()); };
 
             for (chunk_bits, ram_log_k) in CONFIGS {
-                with_booleanity_witness(
+                with_one_hot_witness(
                     LOG_T,
+                    ONE_HOT_BYTECODE_LEN,
                     1usize << ram_log_k,
                     one_hot(chunk_bits),
                     seed,

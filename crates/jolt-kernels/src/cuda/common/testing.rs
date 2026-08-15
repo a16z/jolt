@@ -462,22 +462,24 @@ pub fn with_ram_witness<R>(
     body(&backend)
 }
 
-const BOOLEANITY_BYTECODE_LEN: usize = 20;
+pub const ONE_HOT_BYTECODE_LEN: usize = 20;
 
-const BOOLEANITY_BYTECODE_PATTERN: usize = 5;
+const ONE_HOT_BYTECODE_PATTERN: usize = 5;
 
-const BOOLEANITY_UNMAPPED_SEQUENCE: u16 = 9;
+const ONE_HOT_BYTECODE_STRIDE: usize = 1237;
 
-pub const fn booleanity_fixture_is_padding(log_t: usize, cycle: usize) -> bool {
+const ONE_HOT_UNMAPPED_SEQUENCE: u16 = 9;
+
+pub const fn one_hot_fixture_is_padding(log_t: usize, cycle: usize) -> bool {
     cycle >= (1usize << log_t) - ram_fixture_padding(log_t)
 }
 
-pub const fn booleanity_fixture_bytecode_is_cold(log_t: usize, cycle: usize) -> bool {
-    !booleanity_fixture_is_padding(log_t, cycle) && cycle % BOOLEANITY_BYTECODE_PATTERN == 3
+pub const fn one_hot_fixture_bytecode_is_cold(log_t: usize, cycle: usize) -> bool {
+    !one_hot_fixture_is_padding(log_t, cycle) && cycle % ONE_HOT_BYTECODE_PATTERN == 3
 }
 
-fn booleanity_bytecode() -> Vec<JoltInstructionRow> {
-    (0..BOOLEANITY_BYTECODE_LEN)
+fn one_hot_bytecode(len: usize) -> Vec<JoltInstructionRow> {
+    (0..len)
         .map(|slot| JoltInstructionRow {
             instruction_kind: JoltInstructionKind::XOR,
             address: 0x8000_0000 + 4 * slot,
@@ -494,8 +496,14 @@ fn booleanity_bytecode() -> Vec<JoltInstructionRow> {
         .collect()
 }
 
-fn booleanity_rows(log_t: usize, layout: &MemoryLayout, ram_k: usize, seed: u64) -> Vec<TraceRow> {
-    let bytecode = booleanity_bytecode();
+fn one_hot_rows(
+    log_t: usize,
+    bytecode_len: usize,
+    layout: &MemoryLayout,
+    ram_k: usize,
+    seed: u64,
+) -> Vec<TraceRow> {
+    let bytecode = one_hot_bytecode(bytecode_len);
     let cycles = 1usize << log_t;
     let lowest = layout.get_lowest_address();
     let below_lowest = lowest.saturating_sub(8);
@@ -503,7 +511,7 @@ fn booleanity_rows(log_t: usize, layout: &MemoryLayout, ram_k: usize, seed: u64)
     let mut rows = Vec::with_capacity(cycles);
 
     for cycle in 0..cycles {
-        if booleanity_fixture_is_padding(log_t, cycle) {
+        if one_hot_fixture_is_padding(log_t, cycle) {
             rows.push(TraceRow::default());
             continue;
         }
@@ -517,9 +525,10 @@ fn booleanity_rows(log_t: usize, layout: &MemoryLayout, ram_k: usize, seed: u64)
         let address = lowest + 8 * word;
         let value = 900 + cycle as u64;
 
-        let mut instruction = bytecode[cycle % bytecode.len()];
-        if booleanity_fixture_bytecode_is_cold(log_t, cycle) {
-            instruction.virtual_sequence_remaining = Some(BOOLEANITY_UNMAPPED_SEQUENCE);
+        let mut instruction =
+            bytecode[cycle.wrapping_mul(ONE_HOT_BYTECODE_STRIDE) % bytecode.len()];
+        if one_hot_fixture_bytecode_is_cold(log_t, cycle) {
+            instruction.virtual_sequence_remaining = Some(ONE_HOT_UNMAPPED_SEQUENCE);
         }
 
         let access = if ram_fixture_is_cold(log_t, cycle) {
@@ -573,14 +582,15 @@ fn booleanity_rows(log_t: usize, layout: &MemoryLayout, ram_k: usize, seed: u64)
     rows
 }
 
-pub fn with_booleanity_witness<R>(
+pub fn with_one_hot_witness<R>(
     log_t: usize,
+    bytecode_rows: usize,
     ram_k: usize,
     one_hot: JoltOneHotConfig,
     seed: u64,
     body: impl FnOnce(&TraceBackend<'_, OwnedTrace>, usize) -> R,
 ) -> R {
-    let bytecode = booleanity_bytecode();
+    let bytecode = one_hot_bytecode(bytecode_rows);
     let entry_address = bytecode[0].address as u64;
     let memory_layout = MemoryLayout::new(&MemoryConfig {
         program_size: Some(1 << 12),
@@ -588,7 +598,7 @@ pub fn with_booleanity_witness<R>(
     });
     let preprocessing = JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(bytecode, entry_address, RV64IMAC_JOLT)
-            .expect("booleanity bytecode fixture"),
+            .expect("one-hot bytecode fixture"),
         ram: RAMPreprocessing::default(),
         memory_layout: memory_layout.clone(),
         max_padded_trace_length: 1usize << log_t,
@@ -596,7 +606,13 @@ pub fn with_booleanity_witness<R>(
     let bytecode_len = preprocessing.bytecode.code_size;
     let program = JoltProgram::default();
     let trace = TraceOutput::new(
-        OwnedTrace::new(booleanity_rows(log_t, &memory_layout, ram_k, seed)),
+        OwnedTrace::new(one_hot_rows(
+            log_t,
+            bytecode_rows,
+            &memory_layout,
+            ram_k,
+            seed,
+        )),
         Default::default(),
         None,
     );
@@ -605,6 +621,39 @@ pub fn with_booleanity_witness<R>(
         JoltVmWitnessInputs::new(&program, &preprocessing, trace),
     );
     body(&backend, bytecode_len)
+}
+
+pub fn hot_addresses(
+    witness: &dyn JoltWitnessOracle<Fr>,
+    polynomial: JoltCommittedPolynomial,
+    addresses: usize,
+    cycles: usize,
+) -> Vec<Option<usize>> {
+    let grid =
+        JoltWitnessOracle::<Fr>::oracle_table(witness, JoltPolynomialId::Committed(polynomial))
+            .expect("committed one-hot column");
+    assert_eq!(grid.len(), addresses * cycles, "{polynomial:?} grid size");
+
+    (0..cycles)
+        .map(|cycle| {
+            let mut found = None;
+            for address in 0..addresses {
+                if grid[address * cycles + cycle] != Fr::from_u64(0) {
+                    assert_eq!(
+                        grid[address * cycles + cycle],
+                        Fr::from_u64(1),
+                        "{polynomial:?} cycle {cycle}: one-hot entry is not 1",
+                    );
+                    assert!(
+                        found.is_none(),
+                        "{polynomial:?} cycle {cycle}: two hot addresses",
+                    );
+                    found = Some(address);
+                }
+            }
+            found
+        })
+        .collect()
 }
 
 pub fn reference_input_claim<'a, R>(
