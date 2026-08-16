@@ -188,7 +188,7 @@ extern "C" __global__ void so_factors_kernel(
     }
 }
 
-extern "C" __global__ void so_message_kernel(const u64 *__restrict__ az,
+extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
                                              const u64 *__restrict__ bz,
                                              const u64 *__restrict__ e_in,
                                              const u64 *__restrict__ e_out, unsigned int e_in_len,

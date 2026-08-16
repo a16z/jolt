@@ -2,15 +2,16 @@ use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_field::Field;
 use jolt_poly::lagrange::{centered_lagrange_evals, interpolate_to_coeffs, poly_mul};
-use jolt_poly::{EqPolynomial, UnivariatePoly};
+use jolt_poly::UnivariatePoly;
 use jolt_r1cs::constraint::ConstraintMatrices;
 use jolt_r1cs::constraints::jolt::spartan_outer_row_weights;
 
 use super::columns::{DeviceR1csInputs, LinearForms};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::dense_product::DeviceDenseProduct;
-use crate::cuda::common::device::{require_fr_slice, LIMBS};
+use crate::cuda::common::device::LIMBS;
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::split_eq::split_eq_tables;
 
 pub const EXTENDED_SIZE: usize = 2 * OUTER_UNISKIP_DOMAIN_SIZE - 1;
 
@@ -139,30 +140,6 @@ pub fn extended_evals<F: Field>(
             })?;
     }
     Ok(values)
-}
-
-pub fn split_eq_tables<F: Field>(
-    context: &CudaKernelContext,
-    point: &[F],
-) -> Result<
-    (
-        crate::cuda::common::device::DeviceFrVec,
-        crate::cuda::common::device::DeviceFrVec,
-        usize,
-    ),
-    CudaError,
-> {
-    if point.is_empty() {
-        return Err(CudaError::InvariantViolation {
-            reason: "an eq factor pair needs at least one variable",
-        });
-    }
-    let split = point.len() / 2;
-    let in_bits = point.len() - split;
-    let (outer, inner) = point.split_at(split);
-    let e_out = context.upload(require_fr_slice(&EqPolynomial::<F>::evals(outer, None))?)?;
-    let e_in = context.upload(require_fr_slice(&EqPolynomial::<F>::evals(inner, None))?)?;
-    Ok((e_in, e_out, in_bits))
 }
 
 pub fn first_round_poly<F: Field>(

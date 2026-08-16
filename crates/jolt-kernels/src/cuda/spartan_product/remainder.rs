@@ -141,7 +141,9 @@ impl<F: Field> DeviceProductRemainder<F> {
         let bits = CudaKernelContext::count_of(in_bits as usize)?;
         let count = CudaKernelContext::count_of(half)?;
         let strip = CudaKernelContext::count_of(MESSAGE_STRIP)?;
-        let mut builder = context.stream().launch_builder(context.so_message());
+        let mut builder = context
+            .stream()
+            .launch_builder(context.gruen_pair_message());
         let _ = builder.arg(self.left.limbs());
         let _ = builder.arg(self.right.limbs());
         let _ = builder.arg(self.eq.e_in_current().limbs());

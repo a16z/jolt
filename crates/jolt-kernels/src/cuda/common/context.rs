@@ -187,7 +187,7 @@ pub struct CudaKernelContext {
     so_shift: CudaFunction,
     so_uniskip: CudaFunction,
     so_factors: CudaFunction,
-    so_message: CudaFunction,
+    gruen_pair_message: CudaFunction,
     so_claims: CudaFunction,
     sop_round: CudaFunction,
     hf_half_fold: CudaFunction,
@@ -317,7 +317,7 @@ impl CudaKernelContext {
             so_shift: module.load_function("so_shift_kernel")?,
             so_uniskip: module.load_function("so_uniskip_kernel")?,
             so_factors: module.load_function("so_factors_kernel")?,
-            so_message: module.load_function("so_message_kernel")?,
+            gruen_pair_message: module.load_function("gruen_pair_message_kernel")?,
             so_claims: module.load_function("so_claims_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
@@ -533,8 +533,8 @@ impl CudaKernelContext {
         &self.so_factors
     }
 
-    pub(crate) const fn so_message(&self) -> &CudaFunction {
-        &self.so_message
+    pub(crate) const fn gruen_pair_message(&self) -> &CudaFunction {
+        &self.gruen_pair_message
     }
 
     pub(crate) const fn so_claims(&self) -> &CudaFunction {

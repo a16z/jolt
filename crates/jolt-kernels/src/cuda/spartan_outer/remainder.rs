@@ -10,12 +10,13 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use std::collections::BTreeMap;
 
 use super::columns::{DeviceR1csInputs, LinearForms};
-use super::uniskip::{push_forms, split_eq_tables};
+use super::uniskip::push_forms;
 use super::witness::VARIABLES;
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::dense_product::DeviceDenseProduct;
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::split_eq::split_eq_tables;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
 pub const CLAIM_LANES: usize = 4;
@@ -126,7 +127,9 @@ impl<F: Field> DeviceRemainder<F> {
         let bits = CudaKernelContext::count_of(in_bits as usize)?;
         let count = CudaKernelContext::count_of(half)?;
         let strip = CudaKernelContext::count_of(MESSAGE_STRIP)?;
-        let mut builder = context.stream().launch_builder(context.so_message());
+        let mut builder = context
+            .stream()
+            .launch_builder(context.gruen_pair_message());
         let _ = builder.arg(self.az.limbs());
         let _ = builder.arg(self.bz.limbs());
         let _ = builder.arg(self.eq.e_in_current().limbs());
