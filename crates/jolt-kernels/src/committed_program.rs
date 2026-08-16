@@ -40,7 +40,7 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
 ];
 
 /// The sparse `(lane, value)` encoding of one committed bytecode row.
-fn for_each_active_lane_value<F: Field>(
+pub(crate) fn for_each_active_lane_value<F: Field>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
 ) {

@@ -5,8 +5,9 @@
 )]
 
 use common::jolt_device::{MemoryConfig, MemoryLayout};
+use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
+    JoltAdviceKind, JoltChallengeId, JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
 };
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, FromPrimitiveInt};
@@ -27,7 +28,8 @@ use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::{Extract, ToField, WitnessEnv};
 use jolt_witness::{
     ChunkVisitor, FixedBackend, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
-    JoltWitnessPlane, OneHotSource, ProgramSource, RowSource, Shape, TraceBackend, WitnessError,
+    JoltWitnessPlane, OneHotSource, PolynomialEncoding, ProgramSource, RowSource, Shape,
+    TraceBackend, WitnessError,
 };
 use proptest::prelude::*;
 
@@ -55,10 +57,11 @@ impl FixedPlane {
         label: &'static str,
         log_t: Option<usize>,
     ) -> Self {
-        Self {
+        Self::with_program(
             columns,
+            label,
             log_t,
-            program: JoltProgramPreprocessing {
+            JoltProgramPreprocessing {
                 bytecode: BytecodePreprocessing::preprocess(
                     vec![JoltInstructionRow::default()],
                     0,
@@ -69,7 +72,20 @@ impl FixedPlane {
                 memory_layout: MemoryLayout::default(),
                 max_padded_trace_length: 1,
             },
+        )
+    }
+
+    pub fn with_program(
+        columns: FixedBackend<Fr>,
+        label: &'static str,
+        log_t: Option<usize>,
+        program: JoltProgramPreprocessing,
+    ) -> Self {
+        Self {
+            columns,
+            program,
             label,
+            log_t,
         }
     }
 }
@@ -1052,4 +1068,149 @@ pub fn drive<K: ProveRounds<Fr> + ?Sized>(
         .finish_rounds(challenges[challenges.len() - 1])
         .expect("finish_rounds must succeed");
     polys
+}
+
+pub struct AdviceFixture {
+    pub plane: FixedPlane,
+    pub trusted: Vec<Fr>,
+    pub untrusted: Vec<Fr>,
+}
+
+pub fn advice_plane(advice_bytes: usize, seed: u64) -> AdviceFixture {
+    let words = (advice_bytes / 8).next_power_of_two().max(1);
+    let log_words = words.trailing_zeros() as usize;
+    let column = |salt: u64| -> Vec<Fr> {
+        (0..words)
+            .map(|index| fr(seed ^ salt.wrapping_mul(index as u64 + 1).wrapping_add(salt)))
+            .collect()
+    };
+    let trusted = column(0x9E37_79B9_7F4A_7C15);
+    let untrusted = column(0x85EB_CA6B_C2B2_AE35);
+
+    let mut backend = FixedBackend::new();
+    for (kind, values) in [
+        (JoltAdviceKind::Trusted, &trusted),
+        (JoltAdviceKind::Untrusted, &untrusted),
+    ] {
+        backend
+            .insert(
+                ram_val_check_advice_opening(kind).polynomial_id(),
+                Shape::new(log_words, PolynomialEncoding::Dense),
+                values.clone(),
+            )
+            .expect("insert advice column");
+    }
+    AdviceFixture {
+        plane: FixedPlane::with_log_t(backend, "cuda advice_claim_reduction fixture", None),
+        trusted,
+        untrusted,
+    }
+}
+
+fn committed_bytecode(rows: usize) -> Vec<JoltInstructionRow> {
+    let kinds = [
+        JoltInstructionKind::XOR,
+        JoltInstructionKind::ADD,
+        JoltInstructionKind::SUB,
+        JoltInstructionKind::MUL,
+        JoltInstructionKind::LD,
+        JoltInstructionKind::SD,
+        JoltInstructionKind::JAL,
+        JoltInstructionKind::BEQ,
+        JoltInstructionKind::ADDI,
+        JoltInstructionKind::LUI,
+    ];
+    (0..rows)
+        .map(|slot| {
+            let instruction_kind = kinds[slot % kinds.len()];
+            JoltInstructionRow {
+                instruction_kind,
+                address: 0x8000_0000 + 4 * slot,
+                operands: r1cs_fixture_operands(instruction_kind, slot),
+                virtual_sequence_remaining: None,
+                is_first_in_sequence: false,
+                is_compressed: false,
+            }
+        })
+        .collect()
+}
+
+pub struct CommittedProgramFixture {
+    pub plane: FixedPlane,
+    pub bytecode_len: usize,
+    pub image_words: Vec<u64>,
+}
+
+pub fn committed_program_plane(
+    bytecode_rows: usize,
+    image_words: usize,
+    min_bytecode_address: u64,
+    seed: u64,
+) -> CommittedProgramFixture {
+    let bytecode = BytecodePreprocessing::preprocess(
+        committed_bytecode(bytecode_rows),
+        0x8000_0000,
+        RV64IMAC_JOLT,
+    )
+    .expect("committed bytecode fixture");
+    let bytecode_len = bytecode.bytecode.len();
+    let words: Vec<u64> = (0..image_words)
+        .map(|index| {
+            seed.wrapping_mul(0x2545_F491_4F6C_DD1D)
+                ^ (index as u64)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .wrapping_add(index as u64 + 1)
+        })
+        .collect();
+    let program = JoltProgramPreprocessing {
+        bytecode,
+        ram: RAMPreprocessing {
+            min_bytecode_address,
+            bytecode_words: words.clone(),
+        },
+        memory_layout: MemoryLayout::default(),
+        max_padded_trace_length: 1,
+    };
+    CommittedProgramFixture {
+        plane: FixedPlane::with_program(
+            FixedBackend::new(),
+            "cuda committed-program claim-reduction fixture",
+            None,
+            program,
+        ),
+        bytecode_len,
+        image_words: words,
+    }
+}
+
+pub fn precommitted_synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
+    (0..len)
+        .map(|index| {
+            fr(seed
+                ^ 0x2545_F491_4F6C_DD1D_u64
+                    .wrapping_mul(index as u64 + 1)
+                    .wrapping_add(3))
+        })
+        .collect()
+}
+
+pub fn precommitted_round_challenges(rounds: usize, seed: u64) -> Vec<Fr> {
+    (0..rounds)
+        .map(|round| {
+            fr(seed
+                ^ 0x27D4_EB2F_1656_67C5_u64
+                    .wrapping_mul(round as u64 + 1)
+                    .wrapping_add(11))
+        })
+        .collect()
+}
+
+pub fn precommitted_cycle_variables(
+    reduction: &jolt_claims::protocols::jolt::PrecommittedClaimReduction,
+    seed: u64,
+) -> Vec<Fr> {
+    let challenges = precommitted_round_challenges(reduction.cycle_phase_total_rounds(), seed);
+    reduction
+        .cycle_phase_variable_challenges(&challenges)
+        .expect("cycle-phase variable challenges")
 }

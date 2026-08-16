@@ -63,14 +63,14 @@ use crate::{KernelError, ProofSession, SumcheckKernel, SumcheckKernelError};
 
 /// The bound-table state both phase kernels drive: the summand tables, the
 /// aux tables riding alongside, and the running inactive-round scale.
-struct PrecommittedTables<F> {
-    value: Vec<F>,
-    eq: Vec<F>,
-    aux: Vec<Vec<F>>,
+pub(crate) struct PrecommittedTables<F> {
+    pub(crate) value: Vec<F>,
+    pub(crate) eq: Vec<F>,
+    pub(crate) aux: Vec<Vec<F>>,
     /// `(1/2)^k` over the `k` inactive rounds ingested so far — the factor the
     /// running claim accumulated relative to the true bound product.
-    scale: F,
-    scale_inv: F,
+    pub(crate) scale: F,
+    pub(crate) scale_inv: F,
     two_inv: F,
 }
 
@@ -193,8 +193,8 @@ fn is_active(active_rounds: &[usize], round: usize) -> bool {
 /// parked once, reclaimed once — keyed in the [`ProofSession`] by the
 /// address-phase relation `R` it becomes.
 pub struct PrecommittedReductionCarry<F, R> {
-    reduction: PrecommittedClaimReduction,
-    tables: PrecommittedTables<F>,
+    pub(crate) reduction: PrecommittedClaimReduction,
+    pub(crate) tables: PrecommittedTables<F>,
     _relation: PhantomData<fn() -> R>,
 }
 

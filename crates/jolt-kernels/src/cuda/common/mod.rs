@@ -8,6 +8,7 @@ pub(crate) mod lt_poly;
 pub(crate) mod one_hot_fold;
 pub(crate) mod one_hot_witness;
 pub(crate) mod pack;
+pub(crate) mod precommitted_reduction;
 pub(crate) mod prefix_suffix;
 pub(crate) mod primitives;
 pub(crate) mod product_accum;

@@ -4,7 +4,9 @@ use jolt_openings::CommitmentScheme;
 use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
+mod advice_claim_reduction;
 mod booleanity;
+mod bytecode_claim_reduction;
 mod bytecode_read_raf;
 mod common;
 mod hamming_weight_claim_reduction;
@@ -13,6 +15,7 @@ mod instruction_claim_reduction;
 mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
+mod program_image_claim_reduction;
 mod ram_hamming_booleanity;
 mod ram_output_check;
 mod ram_ra_claim_reduction;
@@ -86,6 +89,14 @@ where
         backend.spartan_shift = Box::new(CudaBackend);
         backend.spartan_product_uniskip = Box::new(CudaBackend);
         backend.spartan_product_remainder = Box::new(CudaBackend);
+        backend.trusted_advice_cycle = Box::new(CudaBackend);
+        backend.untrusted_advice_cycle = Box::new(CudaBackend);
+        backend.bytecode_reduction_cycle = Box::new(CudaBackend);
+        backend.program_image_reduction_cycle = Box::new(CudaBackend);
+        backend.trusted_advice_address = Box::new(CudaBackend);
+        backend.untrusted_advice_address = Box::new(CudaBackend);
+        backend.bytecode_reduction_address = Box::new(CudaBackend);
+        backend.program_image_reduction_address = Box::new(CudaBackend);
         backend
     }
 }

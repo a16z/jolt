@@ -25,6 +25,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/sumcheck_common.cu"),
     "\n",
+    include_str!("../kernels/precommitted_reduction.cu"),
+    "\n",
     include_str!("../kernels/scan.cu"),
     "\n",
     include_str!("../kernels/lt_poly.cu"),
@@ -191,6 +193,12 @@ pub struct CudaKernelContext {
     gruen_pair_message: CudaFunction,
     so_claims: CudaFunction,
     sop_round: CudaFunction,
+    pcr_round: CudaFunction,
+    pcr_scatter: CudaFunction,
+    pcr_value_fold: CudaFunction,
+    pcr_lane_eq: CudaFunction,
+    pcr_shift_eq: CudaFunction,
+    pcr_place_row: CudaFunction,
     hf_half_fold: CudaFunction,
     hf_row_fold: CudaFunction,
     sopg_round: CudaFunction,
@@ -321,6 +329,12 @@ impl CudaKernelContext {
             gruen_pair_message: module.load_function("gruen_pair_message_kernel")?,
             so_claims: module.load_function("so_claims_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
+            pcr_round: module.load_function("pcr_round_kernel")?,
+            pcr_scatter: module.load_function("pcr_scatter_kernel")?,
+            pcr_value_fold: module.load_function("pcr_value_fold_kernel")?,
+            pcr_lane_eq: module.load_function("pcr_lane_eq_kernel")?,
+            pcr_shift_eq: module.load_function("pcr_shift_eq_kernel")?,
+            pcr_place_row: module.load_function("pcr_place_row_kernel")?,
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
             sopg_round: module.load_function("sopg_round_kernel")?,
@@ -597,6 +611,30 @@ impl CudaKernelContext {
 
     pub(crate) const fn sop_round(&self) -> &CudaFunction {
         &self.sop_round
+    }
+
+    pub(crate) const fn pcr_round(&self) -> &CudaFunction {
+        &self.pcr_round
+    }
+
+    pub(crate) const fn pcr_scatter(&self) -> &CudaFunction {
+        &self.pcr_scatter
+    }
+
+    pub(crate) const fn pcr_value_fold(&self) -> &CudaFunction {
+        &self.pcr_value_fold
+    }
+
+    pub(crate) const fn pcr_lane_eq(&self) -> &CudaFunction {
+        &self.pcr_lane_eq
+    }
+
+    pub(crate) const fn pcr_shift_eq(&self) -> &CudaFunction {
+        &self.pcr_shift_eq
+    }
+
+    pub(crate) const fn pcr_place_row(&self) -> &CudaFunction {
+        &self.pcr_place_row
     }
 
     pub(crate) const fn hf_half_fold(&self) -> &CudaFunction {
