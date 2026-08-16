@@ -1,0 +1,294 @@
+use jolt_field::Field;
+use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
+use jolt_witness::JoltWitnessPlane;
+
+use super::CudaBackend;
+use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+
+#[expect(
+    clippy::todo,
+    reason = "phase 1 stub: the equivalence test drives this until the kernels land"
+)]
+impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
+    fn prepare(
+        &self,
+        _session: &mut ProofSession,
+        _witness: &dyn JoltWitnessPlane<F>,
+        _inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
+        todo!("CUDA RAM RAF-evaluation kernel")
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test module: device operations and fixture errors fail loudly"
+)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
+    use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
+    use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
+    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial};
+    use jolt_claims::{NoChallenges, OutputClaims};
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_program::execution::{
+        JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, TraceOutput, TraceRow,
+    };
+    use jolt_program::preprocess::{
+        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
+    };
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_verifier::stages::stage2::ram_raf_evaluation::{
+        RamRafEvaluation, RamRafEvaluationInputClaims,
+    };
+    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, OneHotSource, TraceBackend};
+    use proptest::prelude::*;
+
+    use super::CudaBackend;
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::{arb_point, drive, reference_input_claim};
+    use crate::reference::ReferenceBackend;
+    use crate::{PrepareKernel, ProofSession, ProverInputs};
+
+    const LOG_T: usize = 7;
+
+    const RAM_LOG_KS: [usize; 2] = [4, 6];
+
+    const RAF_PATTERN: usize = 5;
+
+    const RAF_REPEATED_WORD: u64 = 3;
+
+    fn one_hot() -> JoltOneHotConfig {
+        JoltOneHotConfig {
+            log_k_chunk: 4,
+            lookups_ra_virtual_log_k_chunk: 16,
+        }
+    }
+
+    const fn raf_fixture_is_cold(cycle: usize) -> bool {
+        matches!(cycle % RAF_PATTERN, 0 | 1)
+    }
+
+    fn raf_rows(
+        instruction: JoltInstructionRow,
+        layout: &MemoryLayout,
+        ram_k: usize,
+        seed: u64,
+    ) -> Vec<TraceRow> {
+        let cycles = 1usize << LOG_T;
+        let lowest = layout.get_lowest_address();
+        let mut rows = Vec::with_capacity(cycles);
+
+        for cycle in 0..cycles {
+            let mix = seed
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(cycle as u64 + 1);
+            let word = if cycle % 4 == 3 {
+                RAF_REPEATED_WORD % ram_k as u64
+            } else {
+                (mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29)) % ram_k as u64
+            };
+            let address = lowest + 8 * word;
+            let value = 900 + cycle as u64;
+
+            let access = if raf_fixture_is_cold(cycle) {
+                match cycle % RAF_PATTERN {
+                    0 => RamAccess::NoOp,
+                    _ => RamAccess::Read(RamRead { address: 0, value }),
+                }
+            } else if cycle % RAF_PATTERN == 2 {
+                RamAccess::Write(RamWrite {
+                    address,
+                    pre_value: value,
+                    post_value: value + 1,
+                })
+            } else {
+                RamAccess::Read(RamRead { address, value })
+            };
+
+            rows.push(TraceRow {
+                instruction,
+                ram_access: access,
+                ..TraceRow::default()
+            });
+        }
+        rows
+    }
+
+    fn with_raf_witness<R>(
+        ram_k: usize,
+        seed: u64,
+        body: impl FnOnce(&TraceBackend<'_, OwnedTrace>, u64) -> R,
+    ) -> R {
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::XOR,
+            address: 0x8000_0000,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: Some(3),
+                imm: 0,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let memory_layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1 << 12),
+            ..MemoryConfig::default()
+        });
+        let lowest_address = memory_layout.get_lowest_address();
+        let preprocessing = JoltProgramPreprocessing {
+            bytecode: BytecodePreprocessing::preprocess(
+                vec![instruction],
+                instruction.address as u64,
+                RV64IMAC_JOLT,
+            )
+            .expect("raf bytecode fixture"),
+            ram: RAMPreprocessing::default(),
+            memory_layout: memory_layout.clone(),
+            max_padded_trace_length: 1usize << LOG_T,
+        };
+        let program = JoltProgram::default();
+        let trace = TraceOutput::new(
+            OwnedTrace::new(raf_rows(instruction, &memory_layout, ram_k, seed)),
+            Default::default(),
+            None,
+        );
+        let backend = TraceBackend::new(
+            JoltVmWitnessConfig::new(LOG_T, ram_k, one_hot()),
+            JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+        );
+        body(&backend, lowest_address)
+    }
+
+    fn dimensions(ram_log_k: usize) -> ReadWriteDimensions {
+        ReadWriteDimensions::new(LOG_T, ram_log_k, LOG_T, ram_log_k)
+    }
+
+    #[test]
+    fn fixture_raf_fold_accumulates_over_cold_and_hot_cycles() {
+        let cycles = 1usize << LOG_T;
+        for ram_log_k in RAM_LOG_KS {
+            let ram_k = 1usize << ram_log_k;
+            with_raf_witness(ram_k, 7, |witness, _| {
+                let hot = OneHotSource::hot_indices(
+                    witness,
+                    JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa),
+                )
+                .expect("the fixture serves the RAM one-hot indices");
+                assert_eq!(hot.len(), cycles);
+
+                let mut counts = vec![0usize; ram_k];
+                for address in hot.iter().flatten() {
+                    counts[*address] += 1;
+                }
+                let occupied = counts.iter().filter(|count| **count > 0).count();
+                assert!(
+                    occupied > 1,
+                    "ram_log_k {ram_log_k}: the fold lands on {occupied} address(es), so the \
+                     folded table cannot detect a wrong address",
+                );
+                assert!(
+                    counts.iter().any(|count| *count > 1),
+                    "ram_log_k {ram_log_k}: no address is hot at two cycles, so a fold that \
+                     OVERWRITES instead of accumulating would still pass",
+                );
+
+                let cold = hot.iter().filter(|address| address.is_none()).count();
+                assert!(
+                    cold > 0 && cold < cycles,
+                    "ram_log_k {ram_log_k}: {cold} of {cycles} cycles are cold, so one of the two \
+                     fold paths is unexercised",
+                );
+                for (cycle, address) in hot.iter().enumerate() {
+                    assert_eq!(
+                        address.is_none(),
+                        raf_fixture_is_cold(cycle),
+                        "ram_log_k {ram_log_k} cycle {cycle}: the RAM one-hot column disagrees \
+                         with the fixture on whether the cycle is cold",
+                    );
+                }
+
+                let distinct: BTreeSet<usize> = hot.iter().flatten().copied().collect();
+                assert!(
+                    distinct.len() > 1,
+                    "ram_log_k {ram_log_k}: the hot address is constant across every hot cycle",
+                );
+            });
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4))]
+        #[test]
+        fn ram_raf_evaluation_matches_reference_round_for_round(
+            seed in any::<u64>(),
+            tau_low in arb_point(LOG_T),
+            challenges in arb_point(RAM_LOG_KS[1]),
+        ) {
+            let Some(_) = shared_context() else { return Ok(()); };
+
+            for ram_log_k in RAM_LOG_KS {
+                let read_write = dimensions(ram_log_k);
+                let raf_dimensions = RamRafEvaluationDimensions::try_from(read_write)
+                    .expect("RAM RAF evaluation dimensions");
+
+                with_raf_witness(1usize << ram_log_k, seed, |witness, lowest_address| {
+                    let relation = RamRafEvaluation::<Fr>::new(
+                        read_write,
+                        raf_dimensions,
+                        ram_log_k,
+                        lowest_address,
+                        tau_low.clone(),
+                    );
+                    let claims = RamRafEvaluationInputClaims {
+                        ram_address: Fr::from_u64(0),
+                    };
+                    let points = RamRafEvaluationInputClaims {
+                        ram_address: Vec::new(),
+                    };
+                    let challenge_set = NoChallenges::<Fr>::default();
+                    let make_inputs = || ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenge_set,
+                    };
+
+                    let input_claim = reference_input_claim(witness, make_inputs);
+                    let mut expected_kernel = ReferenceBackend
+                        .prepare(&mut ProofSession::default(), witness, make_inputs())
+                        .expect("reference prepare");
+                    let mut got_kernel = CudaBackend
+                        .prepare(&mut ProofSession::default(), witness, make_inputs())
+                        .expect("cuda prepare");
+
+                    let expected =
+                        drive(&mut *expected_kernel, input_claim, &challenges[..ram_log_k]);
+                    let got = drive(&mut *got_kernel, input_claim, &challenges[..ram_log_k]);
+                    prop_assert_eq!(
+                        got,
+                        expected,
+                        "round polynomials diverged at ram_log_k {}",
+                        ram_log_k
+                    );
+
+                    let expected_claims =
+                        expected_kernel.output_claims(&claims).expect("reference claims");
+                    let got_claims = got_kernel.output_claims(&claims).expect("cuda claims");
+                    prop_assert_eq!(
+                        got_claims.opening_values(),
+                        expected_claims.opening_values(),
+                        "output claims diverged at ram_log_k {}",
+                        ram_log_k
+                    );
+                    Ok(())
+                })?;
+            }
+        }
+    }
+}
