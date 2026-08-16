@@ -927,7 +927,10 @@ mod muldiv {
         // The full-proof ratchet: the top-level prove() runs the same stage
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.
+        #[cfg(not(feature = "cuda"))]
         let backend = JoltBackend::reference();
+        #[cfg(feature = "cuda")]
+        let backend = JoltBackend::cuda();
         let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -1049,7 +1052,10 @@ mod advice_consumer {
             committed_program: None,
         };
 
+        #[cfg(not(feature = "cuda"))]
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        #[cfg(feature = "cuda")]
+        let backend = JoltBackend::<Fr, DoryScheme>::cuda();
         let trusted_advice_commitment = support::modular_trusted_advice_commitment(
             &backend,
             &witness,
@@ -1245,7 +1251,10 @@ mod committed_muldiv {
             }),
         };
 
+        #[cfg(not(feature = "cuda"))]
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        #[cfg(feature = "cuda")]
+        let backend = JoltBackend::<Fr, DoryScheme>::cuda();
         let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -1366,7 +1375,10 @@ mod address_major {
             committed_program: None,
         };
 
+        #[cfg(not(feature = "cuda"))]
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        #[cfg(feature = "cuda")]
+        let backend = JoltBackend::<Fr, DoryScheme>::cuda();
         let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
             &backend,
             &prover_preprocessing,
@@ -1534,7 +1546,10 @@ mod advice_committed {
             }),
         };
 
+        #[cfg(not(feature = "cuda"))]
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        #[cfg(feature = "cuda")]
+        let backend = JoltBackend::<Fr, DoryScheme>::cuda();
         let trusted_advice_commitment = support::modular_trusted_advice_commitment(
             &backend,
             &witness,
