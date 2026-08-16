@@ -70,6 +70,14 @@ const KERNEL_SRC: &str = concat!(
     include_str!("../kernels/bytecode_read_raf.cu"),
     "\n",
     include_str!("../kernels/spartan_outer.cu"),
+    "\n",
+    include_str!("../kernels/one_hot_fold.cu"),
+    "\n",
+    include_str!("../kernels/hamming_weight_claim_reduction.cu"),
+    "\n",
+    include_str!("../kernels/ram_output_check.cu"),
+    "\n",
+    include_str!("../kernels/spartan_product.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -171,6 +179,15 @@ pub struct CudaKernelContext {
     so_factors: CudaFunction,
     so_message: CudaFunction,
     so_claims: CudaFunction,
+    sp_matrix: CudaFunction,
+    sp_factors: CudaFunction,
+    sp_claims: CudaFunction,
+    ohf_fold: CudaFunction,
+    ohf_reduce: CudaFunction,
+    ohf_affine: CudaFunction,
+    hwr_weights: CudaFunction,
+    hwr_message: CudaFunction,
+    roc_message: CudaFunction,
 }
 
 impl CudaKernelContext {
@@ -282,6 +299,15 @@ impl CudaKernelContext {
             so_factors: module.load_function("so_factors_kernel")?,
             so_message: module.load_function("so_message_kernel")?,
             so_claims: module.load_function("so_claims_kernel")?,
+            sp_matrix: module.load_function("sp_matrix_kernel")?,
+            sp_factors: module.load_function("sp_factors_kernel")?,
+            sp_claims: module.load_function("sp_claims_kernel")?,
+            ohf_fold: module.load_function("ohf_fold_kernel")?,
+            ohf_reduce: module.load_function("ohf_reduce_kernel")?,
+            ohf_affine: module.load_function("ohf_affine_kernel")?,
+            hwr_weights: module.load_function("hwr_weights_kernel")?,
+            hwr_message: module.load_function("hwr_message_kernel")?,
+            roc_message: module.load_function("roc_message_kernel")?,
         })
     }
 
@@ -483,6 +509,42 @@ impl CudaKernelContext {
 
     pub(crate) const fn so_claims(&self) -> &CudaFunction {
         &self.so_claims
+    }
+
+    pub(crate) const fn ohf_fold(&self) -> &CudaFunction {
+        &self.ohf_fold
+    }
+
+    pub(crate) const fn ohf_reduce(&self) -> &CudaFunction {
+        &self.ohf_reduce
+    }
+
+    pub(crate) const fn ohf_affine(&self) -> &CudaFunction {
+        &self.ohf_affine
+    }
+
+    pub(crate) const fn hwr_weights(&self) -> &CudaFunction {
+        &self.hwr_weights
+    }
+
+    pub(crate) const fn hwr_message(&self) -> &CudaFunction {
+        &self.hwr_message
+    }
+
+    pub(crate) const fn roc_message(&self) -> &CudaFunction {
+        &self.roc_message
+    }
+
+    pub(crate) const fn sp_matrix(&self) -> &CudaFunction {
+        &self.sp_matrix
+    }
+
+    pub(crate) const fn sp_factors(&self) -> &CudaFunction {
+        &self.sp_factors
+    }
+
+    pub(crate) const fn sp_claims(&self) -> &CudaFunction {
+        &self.sp_claims
     }
 
     pub(crate) const fn brc_message_dense(&self) -> &CudaFunction {

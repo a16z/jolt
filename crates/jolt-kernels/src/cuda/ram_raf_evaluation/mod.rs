@@ -1,22 +1,131 @@
+use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
+use jolt_claims::protocols::jolt::relations::ram::{
+    RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
+};
+use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
-use super::CudaBackend;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use super::{require_context, CudaBackend};
+use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
+use crate::cuda::common::one_hot_fold::{affine_table, DeviceOneHotColumns, FoldTuning};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence test drives this until the kernels land"
-)]
+const RAM_WORD_BYTES: u64 = 8;
+
 impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
-        todo!("CUDA RAM RAF-evaluation kernel")
+        let context = require_context()?;
+        let relation = inputs.relation;
+        let ram_log_k = relation.ram_log_k();
+        if relation.read_write_dimensions().raf_evaluation_rounds() != ram_log_k {
+            return Err(KernelError::Unsupported {
+                reason: "the CUDA RAM RAF evaluation supports only the default read-write config \
+                         (phase 1 = all cycle rounds)",
+            });
+        }
+        if relation.tau_low().is_empty() {
+            return Err(KernelError::InvariantViolation {
+                reason: "the RAM RAF evaluation cycle point has no variables",
+            });
+        }
+
+        let hot = witness.hot_indices(ram_ra_raf_evaluation().polynomial_id())?;
+        if hot.len() != 1usize << relation.tau_low().len() {
+            return Err(KernelError::InvariantViolation {
+                reason: "the RAM one-hot column length disagrees with the RAF cycle point",
+            });
+        }
+        let columns = DeviceOneHotColumns::from_hot_indices(context, &hot, ram_log_k)?;
+        drop(hot);
+
+        let folded = columns.fold_cycles(context, relation.tau_low(), FoldTuning::default())?;
+        drop(columns);
+        let unmap = affine_table(
+            context,
+            relation.lowest_address(),
+            RAM_WORD_BYTES,
+            1usize << ram_log_k,
+        )?;
+
+        let state = DeviceDenseProduct::from_device_factors(
+            None,
+            vec![folded, unmap],
+            None,
+            None,
+            ram_log_k,
+            relation.degree(),
+        )?;
+        Ok(Box::new(DenseProductKernel {
+            state,
+            relation: relation.clone(),
+            context,
+            field: core::marker::PhantomData,
+        }))
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamRafEvaluation<F>> {
+    type Relation = RamRafEvaluation<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &RamRafEvaluationInputClaims<F>,
+    ) -> Result<RamRafEvaluationOutputClaims<F>, SumcheckKernelError<F>> {
+        let remaining = self.relation.symbolic().rounds() - self.state.rounds_bound();
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        let finals: Vec<F> =
+            self.finals()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA RAM RAF evaluation factor readback failed",
+                })?;
+        let [ram_ra, _unmap] = finals.as_slice() else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "the RAM RAF evaluation expects exactly two bound factors",
+            });
+        };
+        Ok(RamRafEvaluationOutputClaims { ram_ra: *ram_ra })
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &RamRafEvaluation<F>,
+        input_points: &RamRafEvaluationInputClaims<Vec<F>>,
+        output_points: &RamRafEvaluationOutputClaims<Vec<F>>,
+        challenges: &NoChallenges<F>,
+    ) -> Result<(), SumcheckKernelError<F>> {
+        let id = JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress);
+        let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
+        let finals: Vec<F> =
+            self.finals()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA RAM RAF evaluation factor readback failed",
+                })?;
+        let [_ram_ra, unmap] = finals.as_slice() else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "the RAM RAF evaluation expects exactly two bound factors",
+            });
+        };
+        if *unmap != expected {
+            return Err(SumcheckKernelError::DerivedTableDrift {
+                id,
+                expected,
+                got: *unmap,
+            });
+        }
+        Ok(())
     }
 }
 

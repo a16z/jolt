@@ -1,23 +1,212 @@
+use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::{
+    HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
+    HammingWeightClaimReductionOutputClaims,
+};
+use jolt_claims::protocols::jolt::{HammingWeightClaimReductionPublic, JoltDerivedId};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use super::CudaBackend;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use super::{require_context, CudaBackend};
+use crate::cuda::booleanity::witness::{packed_columns, BooleanityCycleWitness};
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
+use reduction::DeviceHammingWeightReduction;
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence test drives this until the kernels land"
-)]
+mod reduction;
+
+pub struct HammingWeightClaimReductionKernel<F: Field> {
+    context: &'static CudaKernelContext,
+    relation: HammingWeightClaimReduction<F>,
+    state: DeviceHammingWeightReduction,
+    rounds_bound: usize,
+}
+
+impl<F: Field> HammingWeightClaimReductionKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        self.state.bind(self.context, challenge).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
+                kind: "cuda hamming reduction bind",
+            }
+        })?;
+        self.rounds_bound += 1;
+        Ok(())
+    }
+}
+
+impl<F: Field> ProveRounds<F> for HammingWeightClaimReductionKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.relation.symbolic().rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        let (at_one, at_infinity) = self.state.round_lanes(self.context).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
+                kind: "cuda hamming reduction round",
+            }
+        })?;
+        let at_zero = previous_claim - at_one;
+        Ok(UnivariatePoly::from_evals_toom(&[
+            at_zero,
+            at_one,
+            at_infinity,
+        ]))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for HammingWeightClaimReductionKernel<F> {
+    type Relation = HammingWeightClaimReduction<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &HammingWeightClaimReductionInputClaims<F>,
+    ) -> Result<HammingWeightClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
+        let remaining = self.relation.symbolic().rounds() - self.rounds_bound;
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        let layout = self.relation.dimensions().layout;
+        let claims: Vec<F> =
+            self.state
+                .reduced_claims()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA hamming reduction claim readback failed",
+                })?;
+        if claims.len() != layout.total() {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA hamming reduction produces one claim per checked polynomial",
+            });
+        }
+        let mut claims = claims.into_iter();
+        Ok(HammingWeightClaimReductionOutputClaims {
+            instruction_ra: claims.by_ref().take(layout.instruction()).collect(),
+            bytecode_ra: claims.by_ref().take(layout.bytecode()).collect(),
+            ram_ra: claims.take(layout.ram()).collect(),
+        })
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &HammingWeightClaimReduction<F>,
+        input_points: &HammingWeightClaimReductionInputClaims<Vec<F>>,
+        output_points: &HammingWeightClaimReductionOutputClaims<Vec<F>>,
+        challenges: &HammingWeightClaimReductionChallenges<F>,
+    ) -> Result<(), SumcheckKernelError<F>> {
+        let layout = relation.dimensions().layout;
+        let booleanity_id = JoltDerivedId::from(HammingWeightClaimReductionPublic::EqBooleanity);
+        let booleanity =
+            relation.derive_output_term(&booleanity_id, input_points, output_points, challenges)?;
+
+        let mut expected = F::zero();
+        let mut power = F::one();
+        for index in 0..layout.total() {
+            let id =
+                JoltDerivedId::from(HammingWeightClaimReductionPublic::EqVirtualization(index));
+            let virtualization =
+                relation.derive_output_term(&id, input_points, output_points, challenges)?;
+            expected += power;
+            power *= challenges.gamma;
+            expected += power * booleanity;
+            power *= challenges.gamma;
+            expected += power * virtualization;
+            power *= challenges.gamma;
+        }
+
+        let weights: Vec<F> =
+            self.state
+                .weight_claims()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA hamming reduction weight readback failed",
+                })?;
+        let got = weights
+            .into_iter()
+            .fold(F::zero(), |accumulator, value| accumulator + value);
+        if got != expected {
+            return Err(SumcheckKernelError::DerivedTableDrift {
+                id: booleanity_id,
+                expected,
+                got,
+            });
+        }
+        Ok(())
+    }
+}
+
 impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
     {
-        todo!("CUDA Hamming-weight claim-reduction kernel")
+        let context = require_context()?;
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let layout = dimensions.layout;
+        if relation.r_address().len() != dimensions.log_k_chunk
+            || relation.virtualization_points().len() != layout.total()
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "hamming reduction point shapes disagree with the layout",
+            });
+        }
+
+        let cycles = 1usize << relation.r_cycle().len();
+        let rows = collect_bundles::<BooleanityCycleWitness>(witness, cycles)?;
+        let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
+            reason: "the CUDA hamming reduction packs the bytecode PC and the remapped RAM word \
+                     address into one 32-bit word each, reserving the all-ones word for a cold \
+                     cycle",
+        })?;
+        drop(rows);
+
+        let device_columns = DeviceOneHotColumns::new(
+            context,
+            &columns.lookup,
+            &columns.pc,
+            &columns.ram,
+            [layout.instruction(), layout.bytecode(), layout.ram()],
+            dimensions.log_k_chunk,
+            cycles,
+        )?;
+        drop(columns);
+
+        let state = DeviceHammingWeightReduction::new(
+            context,
+            &device_columns,
+            relation.r_cycle(),
+            relation.r_address(),
+            relation.virtualization_points(),
+            inputs.challenges.gamma,
+        )?;
+        drop(device_columns);
+
+        Ok(Box::new(HammingWeightClaimReductionKernel {
+            context,
+            relation: relation.clone(),
+            state,
+            rounds_bound: 0,
+        }))
     }
 }
 

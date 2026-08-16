@@ -66,6 +66,10 @@ where
         backend.instruction_ra_virtualization = Box::new(CudaBackend);
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
+        backend.hamming_weight_claim_reduction = Box::new(CudaBackend);
+        backend.ram_hamming_booleanity = Box::new(CudaBackend);
+        backend.ram_output_check = Box::new(CudaBackend);
+        backend.ram_raf_evaluation = Box::new(CudaBackend);
         backend.ram_ra_claim_reduction = Box::new(CudaBackend);
         backend.ram_ra_virtualization = Box::new(CudaBackend);
         backend.ram_val_check = Box::new(CudaBackend);
@@ -73,6 +77,8 @@ where
         backend.ram_read_write = Box::new(CudaBackend);
         backend.spartan_outer_uniskip = Box::new(CudaBackend);
         backend.spartan_outer_remainder = Box::new(CudaBackend);
+        backend.spartan_product_uniskip = Box::new(CudaBackend);
+        backend.spartan_product_remainder = Box::new(CudaBackend);
         backend
     }
 }

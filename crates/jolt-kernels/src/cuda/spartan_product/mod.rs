@@ -1,50 +1,146 @@
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use crate::cuda::CudaBackend;
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::{require_context, CudaBackend};
 use crate::uniskip::UniskipKernel;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence tests drive it until the kernels land, and the \
-              expectation becomes an unfulfilled-expectation error the moment they do"
-)]
+pub(crate) mod columns;
+pub(crate) mod remainder;
+pub(crate) mod uniskip;
+pub(crate) mod witness;
+
+use columns::DeviceProductColumns;
+use remainder::{DeviceProductRemainder, SpartanProductRemainderKernel};
+use witness::SpartanProductWitness;
+
+pub struct SpartanProductState<F: Field> {
+    context: &'static CudaKernelContext,
+    columns: DeviceProductColumns,
+    tau_low: Vec<F>,
+    log_t: usize,
+    matrix: Vec<F>,
+}
+
 impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
-        _log_t: usize,
-        _tau_low: &[F],
-        _witness: &dyn JoltWitnessPlane<F>,
+        session: &mut ProofSession,
+        log_t: usize,
+        tau_low: &[F],
+        witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        todo!("the CUDA Spartan product uni-skip prepare")
+        let context = require_context::<F>()?;
+        if log_t == 0 || tau_low.len() != log_t {
+            return Err(KernelError::InvariantViolation {
+                reason: "the Spartan product tau_low spans the cycle variables",
+            });
+        }
+
+        let rows = collect_bundles::<SpartanProductWitness>(witness, 1usize << log_t)?;
+        let packed = witness::pack(&rows);
+        let columns = DeviceProductColumns::new(context, &packed)?;
+        let matrix = uniskip::product_matrix(context, &columns, tau_low)?;
+
+        session.park(SpartanProductState {
+            context,
+            columns,
+            tau_low: tau_low.to_vec(),
+            log_t,
+            matrix,
+        });
+        Ok(())
     }
 
     fn first_round_poly(
         &self,
-        _session: &mut ProofSession,
-        _late_tau: &[F],
+        session: &mut ProofSession,
+        late_tau: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
-        todo!("the CUDA Spartan product uni-skip first-round polynomial")
+        let &[tau_high] = late_tau else {
+            return Err(KernelError::InvariantViolation {
+                reason: "the product uni-skip first-round polynomial expects exactly one late \
+                         challenge (tau_high)",
+            });
+        };
+        let state =
+            session
+                .state::<SpartanProductState<F>>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason:
+                        "the product uni-skip slot parked no kernel for the first-round polynomial",
+                })?;
+        Ok(uniskip::first_round_poly(&state.matrix, tau_high)?)
     }
 }
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence tests drive it until the kernels land, and the \
-              expectation becomes an unfulfilled-expectation error the moment they do"
-)]
 impl<F: Field> PrepareKernel<F, ProductRemainder<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, ProductRemainder<F>>,
+        inputs: ProverInputs<'_, F, ProductRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = ProductRemainder<F>>>, KernelError<F>> {
-        todo!("the CUDA Spartan product remainder prepare")
+        let state =
+            session
+                .take::<SpartanProductState<F>>()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "the product uni-skip slot parked no kernel for the remainder member",
+                })?;
+        let symbolic = inputs.relation.symbolic();
+        if symbolic.rounds() != state.log_t {
+            return Err(KernelError::Unsupported {
+                reason: "the CUDA Spartan product remainder covers the cycle domain the uni-skip \
+                         slot prepared",
+            });
+        }
+        let device = DeviceProductRemainder::new(
+            state.context,
+            state.columns,
+            &state.tau_low,
+            inputs.relation.tau_high(),
+            inputs.relation.uniskip_challenge(),
+            state.log_t,
+        )?;
+        Ok(Box::new(SpartanProductRemainderKernel::new(
+            state.context,
+            device,
+            symbolic.degree(),
+        )))
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for SpartanProductRemainderKernel<F> {
+    type Relation = ProductRemainder<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &jolt_verifier::stages::relations::SumcheckInputClaims<F, ProductRemainder<F>>,
+    ) -> Result<
+        jolt_verifier::stages::relations::SumcheckOutputClaims<F, ProductRemainder<F>>,
+        SumcheckKernelError<F>,
+    > {
+        let bound = self.bound_rounds();
+        let expected = <Self as jolt_sumcheck::ProveRounds<F>>::num_rounds(self);
+        if bound != expected {
+            return Err(SumcheckKernelError::NotFullyBound {
+                remaining: expected.saturating_sub(bound),
+            });
+        }
+        let openings = self
+            .openings()
+            .map_err(|_| SumcheckKernelError::InvariantViolation {
+                reason: "the CUDA Spartan product claim pass failed",
+            })?;
+        jolt_claims::OutputClaims::from_opening_values(|id| openings.get(id).copied())
+            .map_err(SumcheckKernelError::MissingOpeningValue)
     }
 }
 

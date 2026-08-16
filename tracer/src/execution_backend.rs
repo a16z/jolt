@@ -62,7 +62,7 @@ impl ExecutionBackend for TracerBackend {
     }
 }
 
-fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
+pub fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
     Ok(TraceRow {
         instruction: jolt_instruction_row(&cycle)?,
         registers: register_state(&cycle),

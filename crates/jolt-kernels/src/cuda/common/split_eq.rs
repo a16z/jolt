@@ -11,6 +11,27 @@ pub struct DeviceSplitEq<F: Field> {
     e_out: Vec<DeviceFrVec>,
 }
 
+pub fn split_eq_tables<F: Field>(
+    context: &CudaKernelContext,
+    point: &[F],
+) -> Result<(DeviceFrVec, DeviceFrVec, usize), CudaError> {
+    if point.is_empty() {
+        return Err(CudaError::InvariantViolation {
+            reason: "an eq factor pair needs at least one variable",
+        });
+    }
+    let split = point.len() / 2;
+    let in_bits = point.len() - split;
+    let (outer, inner) = point.split_at(split);
+    let e_out = context.upload(super::device::require_fr_slice(&EqPolynomial::<F>::evals(
+        outer, None,
+    ))?)?;
+    let e_in = context.upload(super::device::require_fr_slice(&EqPolynomial::<F>::evals(
+        inner, None,
+    ))?)?;
+    Ok((e_in, e_out, in_bits))
+}
+
 impl<F: Field> DeviceSplitEq<F> {
     pub fn new(
         context: &CudaKernelContext,

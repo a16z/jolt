@@ -1,22 +1,178 @@
+use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
+use jolt_claims::protocols::jolt::relations::ram::{
+    RamOutputCheckChallenges, RamOutputCheckInputClaims, RamOutputCheckOutputClaims,
+};
+use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_witness::JoltWitnessPlane;
 
-use super::CudaBackend;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use super::{require_context, CudaBackend};
+use crate::cuda::common::context::CudaKernelContext;
+use crate::reference::views::dense_view;
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
+use rounds::DeviceOutputCheck;
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence test drives this until the kernels land"
-)]
+mod rounds;
+
+pub struct RamOutputCheckKernel<F: Field> {
+    context: &'static CudaKernelContext,
+    relation: RamOutputCheck<F>,
+    state: DeviceOutputCheck<F>,
+    rounds_bound: usize,
+}
+
+impl<F: Field> RamOutputCheckKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        self.state.bind(self.context, challenge).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
+                kind: "cuda RAM output-check bind",
+            }
+        })?;
+        self.rounds_bound += 1;
+        Ok(())
+    }
+}
+
+impl<F: Field> ProveRounds<F> for RamOutputCheckKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.relation.symbolic().rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        let mut coefficients = self
+            .state
+            .round_message(self.context, previous_claim)
+            .map_err(|_| SumcheckError::MissingEvaluationSource {
+                kind: "cuda RAM output-check round",
+            })?
+            .into_coefficients();
+        coefficients.resize(self.relation.degree() + 1, F::zero());
+        Ok(UnivariatePoly::new(coefficients))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for RamOutputCheckKernel<F> {
+    type Relation = RamOutputCheck<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &RamOutputCheckInputClaims<F>,
+    ) -> Result<RamOutputCheckOutputClaims<F>, SumcheckKernelError<F>> {
+        let remaining = self.relation.symbolic().rounds() - self.rounds_bound;
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        let [_io_mask, val_final, _val_io] =
+            self.state
+                .finals()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA RAM output-check table readback failed",
+                })?;
+        Ok(RamOutputCheckOutputClaims { val_final })
+    }
+
+    fn validate_derived_tables(
+        &self,
+        relation: &RamOutputCheck<F>,
+        input_points: &RamOutputCheckInputClaims<Vec<F>>,
+        output_points: &RamOutputCheckOutputClaims<Vec<F>>,
+        challenges: &RamOutputCheckChallenges<F>,
+    ) -> Result<(), SumcheckKernelError<F>> {
+        let [io_mask, _val_final, val_io] =
+            self.state
+                .finals()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA RAM output-check table readback failed",
+                })?;
+        for (id, got) in [
+            (JoltDerivedId::from(RamOutputCheckPublic::IoMask), io_mask),
+            (JoltDerivedId::from(RamOutputCheckPublic::ValIo), val_io),
+        ] {
+            let expected =
+                relation.derive_output_term(&id, input_points, output_points, challenges)?;
+            if got != expected {
+                return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, RamOutputCheck<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamOutputCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamOutputCheck<F>>>, KernelError<F>> {
-        todo!("CUDA RAM output-check kernel")
+        let context = require_context()?;
+        let relation = inputs.relation;
+        let address_point = inputs.challenges.output_address.as_slice();
+        let ram_log_k = address_point.len();
+        if relation.read_write_dimensions().output_check_rounds() != ram_log_k {
+            return Err(KernelError::Unsupported {
+                reason: "the CUDA RAM output check supports only the default read-write config \
+                         (phase 1 = all cycle rounds)",
+            });
+        }
+
+        let addresses = 1usize << ram_log_k;
+        let public_memory = relation.public_memory();
+        let mut val_io = vec![F::zero(); addresses];
+        for segment in &public_memory.segments {
+            for (offset, &word) in segment.words.iter().enumerate() {
+                let index = segment.start_index as usize + offset;
+                if index < addresses {
+                    val_io[index] = F::from_u64(word);
+                }
+            }
+        }
+        let io_mask: Vec<F> = (0..addresses)
+            .map(|k| {
+                let inside = (k as u128) >= public_memory.io_mask_start
+                    && (k as u128) < public_memory.io_mask_end;
+                if inside {
+                    F::one()
+                } else {
+                    F::zero()
+                }
+            })
+            .collect();
+        let val_final = dense_view(witness, ram_val_final())?;
+        if val_final.len() != addresses {
+            return Err(KernelError::TableSizeMismatch {
+                table: format!("{:?}", ram_val_final()),
+                expected: addresses,
+                got: val_final.len(),
+            });
+        }
+
+        let state = DeviceOutputCheck::new(context, &io_mask, &val_final, &val_io, address_point)?;
+        Ok(Box::new(RamOutputCheckKernel {
+            context,
+            relation: relation.clone(),
+            state,
+            rounds_bound: 0,
+        }))
     }
 }
 

@@ -60,7 +60,6 @@ RELATIONS = {
     "inc-claim-reduction": ("IncClaimReductionSumcheckProver", "cycle"),
     "ram-hamming-booleanity": ("RamHammingBooleanitySumcheckProver", "cycle"),
     "hamming-weight-claim-reduction": ("HammingWeightClaimReductionProver", "address"),
-    "booleanity-address": ("BooleanityAddressSumcheckProver", "address"),
     "ram-raf-evaluation": ("RamRafEvaluationSumcheckProver", "address"),
     "ram-output-check": ("OutputSumcheckProver", "address"),
 }
@@ -95,6 +94,21 @@ BUCKETED = {
             ],
         ),
         ("claims", ["ProductVirtualEval::compute_claimed_factors"]),
+    ],
+    # booleanity-address cannot use the round-split model: its `initialize` carries no
+    # `#[tracing::instrument]`, so the stack walk skips it and the O(T) G-fold it calls
+    # appears as a direct child of `prove_stage6a`. Reading `prepare` as 0.0 understated
+    # this relation by ~128x. The stage-7 `shared_ra_polys::compute_all_G` is a DIFFERENT
+    # call (hamming-weight's) — never add it to a booleanity total.
+    "booleanity-address": [
+        ("prepare", ["shared_ra_polys::compute_all_G_and_ra_indices"]),
+        (
+            "address",
+            [
+                "BooleanityAddressSumcheckProver::compute_message",
+                "BooleanityAddressSumcheckProver::ingest_challenge",
+            ],
+        ),
     ],
 }
 

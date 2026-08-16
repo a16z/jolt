@@ -95,6 +95,66 @@ impl DeviceDenseProduct {
         })
     }
 
+    pub fn from_device_factors(
+        weight: Option<DeviceFrVec>,
+        factors: Vec<DeviceFrVec>,
+        one_hot: Option<DeviceRaPolynomial>,
+        lt: Option<DeviceLtPolynomial>,
+        rounds: usize,
+        degree: usize,
+    ) -> Result<Self, CudaError> {
+        let expected = 1usize << rounds;
+        for table in weight.as_ref().into_iter().chain(factors.iter()) {
+            if table.len() != expected {
+                return Err(CudaError::LengthMismatch {
+                    expected,
+                    got: table.len(),
+                });
+            }
+        }
+        if weight.is_none() && lt.is_none() && one_hot.is_none() && factors.is_empty() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a dense product needs at least one factor",
+            });
+        }
+        if let Some(one_hot) = &one_hot {
+            if one_hot.len() != expected {
+                return Err(CudaError::LengthMismatch {
+                    expected,
+                    got: one_hot.len(),
+                });
+            }
+            if one_hot.order() != BindingOrder::LowToHigh {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a dense product binds LowToHigh, so its one-hot factor must too",
+                });
+            }
+        }
+        if let Some(lt) = &lt {
+            if lt.len() != expected {
+                return Err(CudaError::LengthMismatch {
+                    expected,
+                    got: lt.len(),
+                });
+            }
+            if lt.order() != BindingOrder::LowToHigh {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a dense product binds LowToHigh, so its LT factor must too",
+                });
+            }
+        }
+
+        Ok(Self {
+            weight,
+            factors,
+            one_hot,
+            lt,
+            degree,
+            rounds,
+            rounds_bound: 0,
+        })
+    }
+
     fn combine_weights<F: Field>(
         context: &CudaKernelContext,
         weights: &[(F, Vec<F>)],

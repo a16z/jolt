@@ -1,23 +1,144 @@
+use jolt_claims::protocols::jolt::relations::ram::{
+    RamHammingBooleanityInputClaims, RamHammingBooleanityOutputClaims,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
+use jolt_poly::{BindingOrder, UnivariatePoly};
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use super::CudaBackend;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use super::{require_context, CudaBackend};
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::split_eq::DeviceSplitEq;
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
+use hamming_weight::DeviceHammingWeight;
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence test drives this until the kernels land"
-)]
+pub(crate) mod hamming_weight;
+pub(crate) mod witness;
+
+pub struct RamHammingBooleanityKernel<F: Field> {
+    context: &'static CudaKernelContext,
+    relation: RamHammingBooleanity<F>,
+    weights: DeviceHammingWeight,
+    eq: DeviceSplitEq<F>,
+    rounds_bound: usize,
+    final_claim: Option<F>,
+}
+
+impl<F: Field> RamHammingBooleanityKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let failed = || SumcheckError::MissingEvaluationSource {
+            kind: "cuda RAM Hamming-booleanity bind",
+        };
+        self.weights
+            .bind(self.context, challenge)
+            .map_err(|_| failed())?;
+        self.eq.bind(challenge);
+        self.rounds_bound += 1;
+        if self.rounds_bound == self.relation.symbolic().rounds() {
+            self.final_claim = Some(self.weights.final_claim().map_err(|_| failed())?);
+        }
+        Ok(())
+    }
+}
+
+impl<F: Field> ProveRounds<F> for RamHammingBooleanityKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.relation.symbolic().rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        let (constant, quadratic) = self
+            .weights
+            .round_coefficients(self.context, &self.eq)
+            .map_err(|_| SumcheckError::MissingEvaluationSource {
+                kind: "cuda RAM Hamming-booleanity round",
+            })?;
+        let mut coefficients = self
+            .eq
+            .gruen_poly_deg_3(constant, quadratic, previous_claim)
+            .into_coefficients();
+        coefficients.resize(self.relation.degree() + 1, F::from_u64(0));
+        Ok(UnivariatePoly::new(coefficients))
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for RamHammingBooleanityKernel<F> {
+    type Relation = RamHammingBooleanity<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &RamHammingBooleanityInputClaims<F>,
+    ) -> Result<RamHammingBooleanityOutputClaims<F>, SumcheckKernelError<F>> {
+        let remaining = self.relation.symbolic().rounds() - self.rounds_bound;
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        let ram_hamming_weight =
+            self.final_claim
+                .ok_or(SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA RAM Hamming booleanity never read back its bound claim",
+                })?;
+        Ok(RamHammingBooleanityOutputClaims { ram_hamming_weight })
+    }
+}
+
 impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, RamHammingBooleanity<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RamHammingBooleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamHammingBooleanity<F>>>, KernelError<F>>
     {
-        todo!("CUDA RAM Hamming-booleanity kernel")
+        let context = require_context()?;
+        let relation = inputs.relation;
+        let log_t = relation.trace_dimensions().log_t();
+        if relation.stage1_cycle_binding().len() != log_t {
+            return Err(KernelError::InvariantViolation {
+                reason: "stage-1 cycle binding has the wrong variable count",
+            });
+        }
+
+        let cycles = 1usize << log_t;
+        let rows = collect_bundles::<witness::RamHammingBooleanityWitness>(witness, cycles)?;
+        let column = witness::packed_weights(&rows);
+        drop(rows);
+        let weights = DeviceHammingWeight::new(context, &column)?;
+        drop(column);
+
+        let eq_point: Vec<F> = relation
+            .stage1_cycle_binding()
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        let eq = DeviceSplitEq::new(context, &eq_point, BindingOrder::LowToHigh)?;
+
+        Ok(Box::new(RamHammingBooleanityKernel {
+            context,
+            relation: relation.clone(),
+            weights,
+            eq,
+            rounds_bound: 0,
+            final_claim: None,
+        }))
     }
 }
 
