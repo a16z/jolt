@@ -29,6 +29,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/dense_product.cu"),
     "\n",
+    include_str!("../kernels/half_fold.cu"),
+    "\n",
     include_str!("../kernels/ra_poly.cu"),
     "\n",
     include_str!("../kernels/ram_ra_reduction.cu"),
@@ -179,6 +181,8 @@ pub struct CudaKernelContext {
     so_factors: CudaFunction,
     so_message: CudaFunction,
     so_claims: CudaFunction,
+    sop_round: CudaFunction,
+    hf_half_fold: CudaFunction,
     sp_matrix: CudaFunction,
     sp_factors: CudaFunction,
     sp_claims: CudaFunction,
@@ -299,6 +303,8 @@ impl CudaKernelContext {
             so_factors: module.load_function("so_factors_kernel")?,
             so_message: module.load_function("so_message_kernel")?,
             so_claims: module.load_function("so_claims_kernel")?,
+            sop_round: module.load_function("sop_round_kernel")?,
+            hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             sp_matrix: module.load_function("sp_matrix_kernel")?,
             sp_factors: module.load_function("sp_factors_kernel")?,
             sp_claims: module.load_function("sp_claims_kernel")?,
@@ -533,6 +539,14 @@ impl CudaKernelContext {
 
     pub(crate) const fn roc_message(&self) -> &CudaFunction {
         &self.roc_message
+    }
+
+    pub(crate) const fn sop_round(&self) -> &CudaFunction {
+        &self.sop_round
+    }
+
+    pub(crate) const fn hf_half_fold(&self) -> &CudaFunction {
+        &self.hf_half_fold
     }
 
     pub(crate) const fn sp_matrix(&self) -> &CudaFunction {

@@ -3,14 +3,17 @@ pub(crate) mod context;
 pub(crate) mod dense_product;
 pub(crate) mod device;
 pub(crate) mod error;
+pub(crate) mod half_fold;
 pub(crate) mod lt_poly;
 pub(crate) mod one_hot_fold;
+pub(crate) mod prefix_suffix;
 pub(crate) mod primitives;
 pub(crate) mod product_accum;
 pub(crate) mod ra_poly;
 pub(crate) mod read_write_matrix;
 pub(crate) mod split_eq;
 pub(crate) mod staging;
+pub(crate) mod sum_of_products;
 #[cfg(test)]
 pub(crate) mod testing;
 pub(crate) mod unreduced;
