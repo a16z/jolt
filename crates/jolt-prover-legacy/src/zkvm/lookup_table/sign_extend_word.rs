@@ -6,12 +6,12 @@ use super::prefixes::{PrefixEval, Prefixes};
 use super::suffixes::{SuffixEval, Suffixes};
 use super::JoltLookupTable;
 
-/// SignExtendHalfWord table - sign-extends the lower half of a word to full word
+/// SignExtendWord table - sign-extends the lower half of a word to full word
 /// For XLEN=64, this sign-extends a 32-bit value to 64-bit
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SignExtendHalfWordTable<const XLEN: usize>;
+pub struct SignExtendWordTable<const XLEN: usize>;
 
-impl<const XLEN: usize> JoltLookupTable for SignExtendHalfWordTable<XLEN> {
+impl<const XLEN: usize> JoltLookupTable for SignExtendWordTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let half_word_size = XLEN / 2;
         let lower_half = (index % (1u128 << half_word_size)) as u64;
@@ -54,7 +54,7 @@ impl<const XLEN: usize> JoltLookupTable for SignExtendHalfWordTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTable<XLEN> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendWordTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
         vec![
             Suffixes::One,
@@ -82,20 +82,20 @@ mod test {
     };
     use common::constants::XLEN;
 
-    use super::SignExtendHalfWordTable;
+    use super::SignExtendWordTable;
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<XLEN, Fr, SignExtendHalfWordTable<XLEN>>();
+        prefix_suffix_test::<XLEN, Fr, SignExtendWordTable<XLEN>>();
     }
 
     #[test]
     fn mle_full_hypercube() {
-        lookup_table_mle_full_hypercube_test::<Fr, SignExtendHalfWordTable<8>>();
+        lookup_table_mle_full_hypercube_test::<Fr, SignExtendWordTable<8>>();
     }
 
     #[test]
     fn mle_random() {
-        lookup_table_mle_random_test::<Fr, SignExtendHalfWordTable<XLEN>>();
+        lookup_table_mle_random_test::<Fr, SignExtendWordTable<XLEN>>();
     }
 }

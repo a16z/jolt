@@ -49,6 +49,43 @@ impl<G: GuestConfig> TraceGenObjective<G> {
         Self { guest, name }
     }
 
+    /// One eager trace with the AOT x86-64 backend (record mode).
+    ///
+    /// Only present on x86_64 Linux; elsewhere `NativeBackend` is the
+    /// interpreter and this arm would duplicate `run_reference`.
+    ///
+    /// The backend is a parameter (not constructed here) so its compile
+    /// cache survives across bench iterations: a fresh backend would pay
+    /// the one-time AOT compile inside the measured region, which for the
+    /// small guests is on the order of the fast pass itself. Callers warm
+    /// the cache with one un-timed run (the phase3_baseline pattern).
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    pub fn run_x86(
+        &self,
+        backend: &mut jolt_tracer_x86::X86TracerBackend,
+        setup: &TraceGenSetup,
+    ) -> usize {
+        let output = setup
+            .program
+            .trace_with(backend, setup.inputs.clone())
+            .expect("x86 trace failed");
+        std::hint::black_box(output.trace.rows().len())
+    }
+
+    /// One fast (non-recording) pass with the AOT x86-64 backend. See
+    /// [`Self::run_x86`] for why the backend is a parameter.
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    pub fn run_x86_fast(
+        &self,
+        backend: &mut jolt_tracer_x86::X86TracerBackend,
+        setup: &TraceGenSetup,
+    ) -> usize {
+        let output = backend
+            .fast_run(&setup.program, setup.inputs.clone())
+            .expect("x86 fast run failed");
+        std::hint::black_box(output.trace_len)
+    }
+
     /// One eager trace with the reference interpreter backend.
     pub fn run_reference(&self, setup: &TraceGenSetup) -> usize {
         let mut backend = TracerBackend::new();

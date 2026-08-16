@@ -1,0 +1,76 @@
+# Nightly Z3 verification of the jolt-program virtual-sequence expansions and
+# the Jolt CPU R1CS constraints (z3-verifier), against a hermetic Z3 built from
+# pinned vendored source (`vendored-z3`), so results don't depend on runner
+# packages or on whatever z3-src happens to be current.
+#
+# SCOPE — this suite is narrower than "the expansion pipeline". It runs 83 of
+# the crate's 103 tests:
+#   * 32 virtual-sequence proofs (16 mnemonics x correctness+consistency):
+#     ADDIW ADDW MULW SUBW and the twelve shifts. Exhaustive over register
+#     values, but at one fixed operand assignment (rd=x1, rs1=x2, rs2=x3,
+#     imm=1234), so immediate-form sequences are proved at a single shift
+#     amount and the rd=x0 expansion path is never taken.
+#   * 51 per-instruction R1CS/product-constraint determinism checks.
+# NOT covered: the 10 #[ignore]d div/rem/mulh sequences (non-terminating under
+# the 64-bit model), all memory/atomic/LR-SC/CSR/trap expansions, and the
+# registered inlines.
+#
+# Nightly-only by design: the vendored Z3 build is too slow for the PR-blocking
+# path, and the obligations only move when expansions or the z3 model change.
+# `workflow_dispatch` allows on-demand runs (e.g. after landing a PR that
+# touches tracer/, crates/jolt-program/, or z3-verifier/).
+name: Z3 Formal Verification
+
+on:
+  schedule:
+    # 07:13 UTC nightly (off the top of the hour to dodge scheduler congestion)
+    - cron: "13 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  z3-formal-verification:
+    runs-on: ubuntu-latest
+    # Backstop only. The real bound is the step-level timeout below: a job-level
+    # timeout CANCELS the job, which skips the `if: failure()` reporting step, so
+    # a hang would go unreported. Keep this comfortably above the step budget.
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Cache the expensive vendored-Z3 CMake build across nightly runs.
+          shared-key: z3-nightly
+      - name: Run Z3 formal verification suite
+        # Step-level (not job-level) so an obligation that stops terminating
+        # fails this step and the reporting step below still runs.
+        timeout-minutes: 75
+        # --locked so the pinned z3-src in Cargo.lock is what actually gets built.
+        run: cargo nextest run -p z3-verifier --features vendored-z3 --locked --cargo-quiet --no-fail-fast
+      - name: File failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --state open --search "in:title \"Nightly Z3 formal verification failed\"" \
+            --json number --jq 'length')
+          if [ "$existing" -eq 0 ]; then
+            body=$(printf '%s\n\n%s\n\n%s' \
+              "The scheduled z3-verifier run failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              "A z3-verifier obligation regressed, or the hand-written z3 model drifted from an expansion change. Within its scope (see the header comment in .github/workflows/z3-nightly.yml) the suite quantifies over all register values, so treat failures as potential soundness signals, not flakes." \
+              "Two non-soundness causes worth ruling out first: a test reporting 'Solver failed/timed out, result inconclusive' hit the per-solver-call budget rather than finding a counterexample; and a step timeout means an obligation stopped terminating altogether.")
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Nightly Z3 formal verification failed" \
+              --body "$body"
+          else
+            echo "Open failure issue already exists; not filing a duplicate."
+          fi

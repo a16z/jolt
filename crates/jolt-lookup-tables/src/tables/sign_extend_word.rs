@@ -10,9 +10,9 @@ use crate::traits::LookupTable;
 /// Sign-extends the lower half of a word to the full word width.
 /// For XLEN=64, sign-extends a 32-bit value to 64 bits.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct SignExtendHalfWordTable<const XLEN: usize>;
+pub struct SignExtendWordTable<const XLEN: usize>;
 
-impl<const XLEN: usize> LookupTable for SignExtendHalfWordTable<XLEN> {
+impl<const XLEN: usize> LookupTable for SignExtendWordTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let half_word_size = XLEN / 2;
         let lower_half = (index % (1u128 << half_word_size)) as u64;
@@ -49,7 +49,7 @@ impl<const XLEN: usize> LookupTable for SignExtendHalfWordTable<XLEN> {
     }
 }
 
-impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTable<XLEN> {
+impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendWordTable<XLEN> {
     fn prefixes(&self) -> &'static [Prefixes] {
         &[Prefixes::LowerHalfWord, Prefixes::SignExtensionUpperHalf]
     }
@@ -80,16 +80,16 @@ mod tests {
 
     #[test]
     fn mle_full_hypercube() {
-        mle_full_hypercube_test::<8, Fr, SignExtendHalfWordTable<8>>();
+        mle_full_hypercube_test::<8, Fr, SignExtendWordTable<8>>();
     }
 
     #[test]
     fn mle_random() {
-        mle_random_test::<XLEN, Fr, SignExtendHalfWordTable<XLEN>>();
+        mle_random_test::<XLEN, Fr, SignExtendWordTable<XLEN>>();
     }
 
     #[test]
     fn prefix_suffix() {
-        prefix_suffix_test::<XLEN, Fr, SignExtendHalfWordTable<XLEN>>();
+        prefix_suffix_test::<XLEN, Fr, SignExtendWordTable<XLEN>>();
     }
 }

@@ -53,11 +53,21 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
+use jolt_sumcheck::RoundScheduler;
+
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::uniskip::UniskipKernel;
 use crate::KernelError;
+
+/// Factory behind [`JoltBackend::round_scheduler`]: stage fronts mint one
+/// scheduler per stage via `build`. Takes [`ProofSession`] so a device
+/// traversal shares the carry its kernels park in `prepare`, and so
+/// per-proof state cannot leak onto the long-lived backend.
+pub trait BuildRoundScheduler<F: Field> {
+    fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
+}
 
 /// The universal backend trait behind [`JoltBackend`]'s naive-served slots:
 /// mint the [`SumcheckKernel`] that proves `R`, from the proof session, the
@@ -109,7 +119,8 @@ where
 /// `Box<dyn PrepareKernel<F, R>>`, reached by type through the
 /// `#[derive(KernelSlots)]`-emitted delegating [`PrepareKernel`] impls; the
 /// remaining slots are the bespoke non-sumcheck duties (commit streaming, the
-/// uni-skip fronts, the advice opening evaluation, the joint opening).
+/// uni-skip fronts, the advice opening evaluation, the joint opening, and the
+/// round-traversal factory).
 #[derive(KernelSlots)]
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
@@ -118,6 +129,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
+    pub round_scheduler: Box<dyn BuildRoundScheduler<F>>,
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
     pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,

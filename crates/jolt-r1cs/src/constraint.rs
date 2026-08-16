@@ -155,10 +155,10 @@ impl<F: Field> ConstraintMatrices<F> {
     /// Returns `Ok(())` if Az ∘ Bz = Cz for every row, or the index
     /// of the first violated constraint.
     pub fn check_witness(&self, witness: &[F]) -> Result<(), usize> {
-        for k in 0..self.num_constraints {
-            let az = dot(&self.a[k], witness);
-            let bz = dot(&self.b[k], witness);
-            let cz = dot(&self.c[k], witness);
+        for (k, ((a_row, b_row), c_row)) in self.a.iter().zip(&self.b).zip(&self.c).enumerate() {
+            let az = dot(a_row, witness);
+            let bz = dot(b_row, witness);
+            let cz = dot(c_row, witness);
             if az * bz != cz {
                 return Err(k);
             }
@@ -253,6 +253,10 @@ impl<F: Field> ConstraintMatrices<F> {
 }
 
 #[inline]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "column indices are below num_vars by the ConstraintMatrices invariant; callers supply witnesses covering num_vars"
+)]
 fn dot<F: Field>(row: &[(usize, F)], witness: &[F]) -> F {
     let mut acc = F::zero();
     for &(col, coeff) in row {
@@ -315,7 +319,13 @@ fn matrix_bilinear_eval_columns<F: Field>(
     for (row, &row_weight) in rows.iter().zip(row_weights) {
         for &(col, coeff) in row {
             if (start_col..end_col).contains(&col) {
-                acc += row_weight * column_weights[col - start_col] * coeff;
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "col lies in [start_col, end_col) and column_weights.len() == end_col - start_col is checked above"
+                )]
+                {
+                    acc += row_weight * column_weights[col - start_col] * coeff;
+                }
             }
         }
     }

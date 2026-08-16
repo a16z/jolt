@@ -101,7 +101,7 @@ use jolt_claims::{
     Expr, OutputClaims, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::{Field, FromPrimitiveInt, RingCore};
+use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
@@ -120,7 +120,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
 };
-use num_traits::{One, Zero};
+use num_traits::Zero;
 
 use super::{inputs::BlindFoldInputs, outputs::CommittedOutputClaimOutput};
 use crate::stages::{
@@ -234,13 +234,26 @@ where
             ),
         });
     }
-    let input_claim = claims.iter().zip(&consistency.batching_coefficients).fold(
-        VerifierExpr::zero(),
-        |acc, ((rounds, input_expr, _), coefficient)| {
-            let scale = *coefficient * F::pow2(consistency.max_num_vars - *rounds);
-            acc + scale_expr(input_expr.clone(), scale)
-        },
-    );
+    let input_claim = claims
+        .iter()
+        .zip(&consistency.batching_coefficients)
+        .try_fold(
+            VerifierExpr::zero(),
+            |acc, ((rounds, input_expr, _), coefficient)| {
+                let extra_vars =
+                    consistency
+                        .max_num_vars
+                        .checked_sub(*rounds)
+                        .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
+                            reason: format!(
+                                "{name}: claim rounds {rounds} exceed the batch's {} variables",
+                                consistency.max_num_vars
+                            ),
+                        })?;
+                let scale = *coefficient * F::pow2(extra_vars);
+                Ok::<_, VerifierError>(acc + scale_expr(input_expr.clone(), scale))
+            },
+        )?;
     let output_claim = claims.iter().zip(&consistency.batching_coefficients).fold(
         VerifierExpr::zero(),
         |acc, ((_, _, output_expr), coefficient)| {
@@ -397,7 +410,7 @@ where
         input.proof,
         input.preprocessing,
         input.checked,
-        input.checked.trace_length.ilog2() as usize,
+        crate::num::ilog2(input.checked.trace_length),
         JoltRelationId::BytecodeReadRaf,
     )
 }
@@ -428,21 +441,23 @@ where
     )
 }
 
-fn ram_val_check_init<PCS, VC, ZkProof>(
+// Binding the scalar field to a bare `F` parameter (rather than spelling
+// `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
+// recognize the side-effect-free field negations in the body.
+fn ram_val_check_init<F, PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-) -> Result<ram::RamValCheckInit<PCS::Field>, VerifierError>
+) -> Result<ram::RamValCheckInit<F>, VerifierError>
 where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
 {
     let r_address = ram_val_check_address(input)?;
     // WARNING: contribution order and selectors must stay in lockstep with the
     // clear-path decomposition in stage4/verify.rs.
     let mut contributions = Vec::new();
     if input.checked.precommitted.program_image.is_some() {
-        contributions.push(ram::RamValCheckInitContribution::program_image(
-            -PCS::Field::one(),
-        ));
+        contributions.push(ram::RamValCheckInitContribution::program_image(-F::one()));
     }
     if input.proof.untrusted_advice_commitment.is_some() {
         let selector = advice_selector(input, JoltAdviceKind::Untrusted, &r_address)?;
@@ -465,7 +480,7 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let log_k = input.checked.ram_K.ilog2() as usize;
+    let log_k = crate::num::ilog2(input.checked.ram_K);
     input
         .stage2
         .output_points
@@ -495,11 +510,23 @@ where
             layout.max_untrusted_advice_size,
         ),
     };
-    let start_index = layout
-        .remapped_word_address(start_address)
-        .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?
-        as u128;
-    let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
+    let start_index = u128::from(
+        layout
+            .remapped_word_address(start_address)
+            .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?,
+    );
+    let max_size =
+        usize::try_from(max_size).map_err(|_| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamValCheck,
+            reason: format!("{kind:?} advice size {max_size} exceeds usize"),
+        })?;
+    // Floor division mirrors the shared advice geometry in jolt-claims
+    // (`geometry/dimensions.rs`): the advice block holds `max_size / 8` words.
+    #[expect(
+        clippy::integer_division,
+        reason = "floor division bytes -> words matches the prover-shared advice geometry"
+    )]
+    let advice_num_vars = crate::num::ilog2((max_size / 8).next_power_of_two());
     let selector = block_selector_mle_msb(start_index, advice_num_vars, r_address)
         .map_err(|error| public_error(JoltRelationId::RamValCheck, error))?;
     let opening_point = r_address
@@ -563,8 +590,8 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    let log_t = input.checked.trace_length.ilog2() as usize;
-    let log_k = input.checked.ram_K.ilog2() as usize;
+    let log_t = crate::num::ilog2(input.checked.trace_length);
+    let log_k = crate::num::ilog2(input.checked.ram_K);
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
 
     let bytecode_challenges = &input.stage6a.challenges.bytecode_read_raf;
@@ -646,10 +673,16 @@ where
         .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let stage3_cycle = stage3_shift_point.iter().rev().copied().collect::<Vec<_>>();
-    let stage4_cycle =
-        &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..];
-    let stage5_cycle =
-        &input.stage5.output_points.registers_opening_point()[REGISTER_ADDRESS_BITS..];
+    let stage4_cycle = point_suffix(
+        input.stage4.output_points.registers_read_write_point(),
+        REGISTER_ADDRESS_BITS,
+        JoltRelationId::BytecodeReadRaf,
+    )?;
+    let stage5_cycle = point_suffix(
+        input.stage5.output_points.registers_opening_point(),
+        REGISTER_ADDRESS_BITS,
+        JoltRelationId::BytecodeReadRaf,
+    )?;
     let entry_bytecode_index = input
         .preprocessing
         .program
@@ -658,72 +691,75 @@ where
             stage: JoltRelationId::BytecodeReadRaf,
             reason: "entry address was not found in bytecode preprocessing".to_string(),
         })?;
-    let (spartan_outer_raf, spartan_shift_raf, entry) = if input
-        .checked
-        .precommitted
-        .bytecode
-        .is_some()
-    {
-        let v = bytecode::read_raf_committed_public_values::<PCS::Field>(
-            BytecodeReadRafCommittedEvaluationInputs {
-                r_address: &bytecode_r_address,
-                r_cycle: &bytecode_r_cycle,
-                stage_cycle_points: [
-                    stage1_cycle.as_slice(),
-                    stage2_cycle.as_slice(),
-                    stage3_cycle.as_slice(),
-                    stage4_cycle,
-                    stage5_cycle,
-                ],
-                entry_bytecode_index,
-            },
-        );
-        for (index, stage_cycle_eq) in v.stage_cycle_eqs.iter().enumerate() {
-            values.public(
-                JoltDerivedId::from(BytecodeReadRafPublic::StageCycleEq(index)),
-                *stage_cycle_eq,
-            )?;
-        }
-        (v.spartan_outer_raf, v.spartan_shift_raf, v.entry)
-    } else {
-        let full_program = input.preprocessing.program.as_full().ok_or_else(|| {
-            VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: "full bytecode table is unavailable".to_string(),
+    let (spartan_outer_raf, spartan_shift_raf, entry) =
+        if input.checked.precommitted.bytecode.is_some() {
+            let v = bytecode::read_raf_committed_public_values::<PCS::Field>(
+                BytecodeReadRafCommittedEvaluationInputs {
+                    r_address: &bytecode_r_address,
+                    r_cycle: &bytecode_r_cycle,
+                    stage_cycle_points: [
+                        stage1_cycle.as_slice(),
+                        stage2_cycle.as_slice(),
+                        stage3_cycle.as_slice(),
+                        stage4_cycle,
+                        stage5_cycle,
+                    ],
+                    entry_bytecode_index,
+                },
+            );
+            for (index, stage_cycle_eq) in v.stage_cycle_eqs.iter().enumerate() {
+                values.public(
+                    JoltDerivedId::from(BytecodeReadRafPublic::StageCycleEq(index)),
+                    *stage_cycle_eq,
+                )?;
             }
-        })?;
-        let stage_gamma_powers = bytecode_challenges.stage_gamma_powers();
-        let v = bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
-            bytecode: &full_program.bytecode.bytecode,
-            r_address: &bytecode_r_address,
-            r_cycle: &bytecode_r_cycle,
-            stage_cycle_points: [
-                &stage1_cycle,
-                &stage2_cycle,
-                &stage3_cycle,
-                stage4_cycle,
-                stage5_cycle,
-            ],
-            register_read_write_point: &input.stage4.output_points.registers_read_write_point()
-                [..REGISTER_ADDRESS_BITS],
-            register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
-                [..REGISTER_ADDRESS_BITS],
-            entry_bytecode_index,
-            stage1_gammas: &stage_gamma_powers[0],
-            stage2_gammas: &stage_gamma_powers[1],
-            stage3_gammas: &stage_gamma_powers[2],
-            stage4_gammas: &stage_gamma_powers[3],
-            stage5_gammas: &stage_gamma_powers[4],
-        })
-        .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
-        for (index, stage_value) in v.stage_values.iter().enumerate() {
-            values.public(
-                JoltDerivedId::from(BytecodeReadRafPublic::StageValue(index)),
-                *stage_value,
-            )?;
-        }
-        (v.spartan_outer_raf, v.spartan_shift_raf, v.entry)
-    };
+            (v.spartan_outer_raf, v.spartan_shift_raf, v.entry)
+        } else {
+            let full_program = input.preprocessing.program.as_full().ok_or_else(|| {
+                VerifierError::StageClaimPublicInputFailed {
+                    stage: JoltRelationId::BytecodeReadRaf,
+                    reason: "full bytecode table is unavailable".to_string(),
+                }
+            })?;
+            let stage_gamma_powers = bytecode_challenges.stage_gamma_powers();
+            let v =
+                bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
+                    bytecode: &full_program.bytecode.bytecode,
+                    r_address: &bytecode_r_address,
+                    r_cycle: &bytecode_r_cycle,
+                    stage_cycle_points: [
+                        &stage1_cycle,
+                        &stage2_cycle,
+                        &stage3_cycle,
+                        stage4_cycle,
+                        stage5_cycle,
+                    ],
+                    register_read_write_point: point_prefix(
+                        input.stage4.output_points.registers_read_write_point(),
+                        REGISTER_ADDRESS_BITS,
+                        JoltRelationId::BytecodeReadRaf,
+                    )?,
+                    register_val_evaluation_point: point_prefix(
+                        input.stage5.output_points.registers_opening_point(),
+                        REGISTER_ADDRESS_BITS,
+                        JoltRelationId::BytecodeReadRaf,
+                    )?,
+                    entry_bytecode_index,
+                    stage1_gammas: &stage_gamma_powers[0],
+                    stage2_gammas: &stage_gamma_powers[1],
+                    stage3_gammas: &stage_gamma_powers[2],
+                    stage4_gammas: &stage_gamma_powers[3],
+                    stage5_gammas: &stage_gamma_powers[4],
+                })
+                .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
+            for (index, stage_value) in v.stage_values.iter().enumerate() {
+                values.public(
+                    JoltDerivedId::from(BytecodeReadRafPublic::StageValue(index)),
+                    *stage_value,
+                )?;
+            }
+            (v.spartan_outer_raf, v.spartan_shift_raf, v.entry)
+        };
     values.public(
         JoltDerivedId::from(BytecodeReadRafPublic::SpartanOuterRaf),
         spartan_outer_raf,
@@ -772,7 +808,11 @@ where
         .batch_consistency
         .try_instance_point(ram_hamming_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
-    let stage1_cycle_binding = &stage1_remainder_challenges[1..];
+    let stage1_cycle_binding = point_suffix(
+        &stage1_remainder_challenges,
+        1,
+        JoltRelationId::RamHammingBooleanity,
+    )?;
     values.public(
         JoltDerivedId::from(RamHammingBooleanityPublic::EqCycle),
         try_eq_mle(&ram_hamming_point, stage1_cycle_binding)
@@ -787,7 +827,11 @@ where
     let ram_ra_cycle = trace_dimensions
         .cycle_opening_point(&ram_ra_point)
         .map_err(|error| public_error(JoltRelationId::RamRaVirtualization, error))?;
-    let ram_reduced_cycle = &input.stage5.output_points.ram_reduced_opening_point()[log_k..];
+    let ram_reduced_cycle = point_suffix(
+        input.stage5.output_points.ram_reduced_opening_point(),
+        log_k,
+        JoltRelationId::RamRaVirtualization,
+    )?;
     values.public(
         JoltDerivedId::from(RamRaVirtualizationPublic::EqCycle),
         try_eq_mle(ram_reduced_cycle, &ram_ra_cycle)
@@ -825,7 +869,11 @@ where
         JoltDerivedId::from(IncClaimReductionPublic::EqRamReadWrite),
         try_eq_mle(
             &inc_opening_point,
-            &input.stage2.output_points.ram_read_write_point()[log_k..],
+            point_suffix(
+                input.stage2.output_points.ram_read_write_point(),
+                log_k,
+                JoltRelationId::IncClaimReduction,
+            )?,
         )
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
@@ -833,7 +881,11 @@ where
         JoltDerivedId::from(IncClaimReductionPublic::EqRamValCheck),
         try_eq_mle(
             &inc_opening_point,
-            &input.stage4.output_points.ram_val_check_point()[log_k..],
+            point_suffix(
+                input.stage4.output_points.ram_val_check_point(),
+                log_k,
+                JoltRelationId::IncClaimReduction,
+            )?,
         )
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
@@ -841,7 +893,11 @@ where
         JoltDerivedId::from(IncClaimReductionPublic::EqRegistersReadWrite),
         try_eq_mle(
             &inc_opening_point,
-            &input.stage4.output_points.registers_read_write_point()[REGISTER_ADDRESS_BITS..],
+            point_suffix(
+                input.stage4.output_points.registers_read_write_point(),
+                REGISTER_ADDRESS_BITS,
+                JoltRelationId::IncClaimReduction,
+            )?,
         )
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
@@ -849,7 +905,11 @@ where
         JoltDerivedId::from(IncClaimReductionPublic::EqRegistersValEvaluation),
         try_eq_mle(
             &inc_opening_point,
-            &input.stage5.output_points.registers_opening_point()[REGISTER_ADDRESS_BITS..],
+            point_suffix(
+                input.stage5.output_points.registers_opening_point(),
+                REGISTER_ADDRESS_BITS,
+                JoltRelationId::IncClaimReduction,
+            )?,
         )
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
@@ -886,10 +946,16 @@ where
             stage3_gammas: &stage_gamma_powers[2],
             stage4_gammas: &stage_gamma_powers[3],
             stage5_gammas: &stage_gamma_powers[4],
-            register_read_write_point: &input.stage4.output_points.registers_read_write_point()
-                [..REGISTER_ADDRESS_BITS],
-            register_val_evaluation_point: &input.stage5.output_points.registers_opening_point()
-                [..REGISTER_ADDRESS_BITS],
+            register_read_write_point: point_prefix(
+                input.stage4.output_points.registers_read_write_point(),
+                REGISTER_ADDRESS_BITS,
+                JoltRelationId::BytecodeClaimReduction,
+            )?,
+            register_val_evaluation_point: point_prefix(
+                input.stage5.output_points.registers_opening_point(),
+                REGISTER_ADDRESS_BITS,
+                JoltRelationId::BytecodeClaimReduction,
+            )?,
         },
         &input.stage6a.output_points.bytecode_read_raf.intermediate,
     )
@@ -1153,6 +1219,41 @@ fn public_error(stage: JoltRelationId, error: impl ToString) -> VerifierError {
         stage,
         reason: error.to_string(),
     }
+}
+
+/// The first `prefix_len` variables of an `address ++ cycle` opening point.
+fn point_prefix<F: Field>(
+    point: &[F],
+    prefix_len: usize,
+    stage: JoltRelationId,
+) -> Result<&[F], VerifierError> {
+    point.get(..prefix_len).ok_or_else(|| {
+        public_error(
+            stage,
+            format!(
+                "opening point is too short: expected at least {prefix_len} variables, got {}",
+                point.len()
+            ),
+        )
+    })
+}
+
+/// The variables past the first `prefix_len` of an `address ++ cycle` opening
+/// point (the cycle sub-point).
+fn point_suffix<F: Field>(
+    point: &[F],
+    prefix_len: usize,
+    stage: JoltRelationId,
+) -> Result<&[F], VerifierError> {
+    point.get(prefix_len..).ok_or_else(|| {
+        public_error(
+            stage,
+            format!(
+                "opening point is too short: expected at least {prefix_len} variables, got {}",
+                point.len()
+            ),
+        )
+    })
 }
 
 fn blindfold_error(error: impl ToString) -> VerifierError {
