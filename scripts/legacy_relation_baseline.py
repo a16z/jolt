@@ -15,8 +15,12 @@ Two relation models:
 
 1. ROUND-SPLIT (the default): one span owner whose `initialize` /
    `compute_message` / `ingest_challenge` / `cache_openings` map onto
-   prepare/cycle/address/claims. Relations with a `phase1_num_rounds = log_T`
-   split run log_T cycle rounds then log_K address rounds.
+   prepare/cycle/address/claims. Each entry names its round DOMAIN, which must
+   match the phase closure its vertical arm passes to drive_rounds: "split"
+   (phase1_num_rounds = log_T, so log_T cycle rounds then log_K address rounds,
+   needs --log-t), "cycle" (every round a cycle round), or "address" (every
+   round an address round, over a scale-invariant chunk or RAM address space —
+   the round count does not track log_T, so --log-t must not split it).
 
 2. EXPLICIT BUCKETS: a list of (bucket, [span names]) for relations that do not
    fit model 1 — several span owners, or buckets that are not the four method
@@ -32,16 +36,33 @@ import json
 import sys
 from collections import defaultdict
 
-# relation -> (span prefix, cycle-rounds-first?) for the round-split model.
+# relation -> (span prefix, round domain) for the round-split model. The domain
+# says which harness bucket the rounds belong in, and must match the phase
+# closure the relation's vertical arm passes to drive_rounds:
+#   "split"   log_T cycle rounds then the rest address (needs --log-t)
+#   "cycle"   every round is a cycle round
+#   "address" every round is an address round (a scale-invariant domain: a
+#             chunk or RAM address space, so the count does not track log_T)
 RELATIONS = {
-    "instruction-ra-virtualization": ("InstructionRaSumcheckProver", True),
-    "ram-ra-virtualization": ("RamRaVirtualSumcheckProver", True),
-    "booleanity-cycle": ("BooleanityCycleSumcheckProver", True),
-    "bytecode-read-raf-cycle": ("BytecodeReadRafCycleSumcheckProver", True),
-    "ram-read-write": ("RamReadWriteCheckingProver", True),
-    "registers-read-write": ("RegistersReadWriteCheckingProver", True),
-    "ram-val-check": ("RamValEvaluationProver", True),
-    "registers-val-evaluation": ("RegistersValEvaluationProver", True),
+    "instruction-ra-virtualization": ("InstructionRaSumcheckProver", "split"),
+    "ram-ra-virtualization": ("RamRaVirtualSumcheckProver", "split"),
+    "booleanity-cycle": ("BooleanityCycleSumcheckProver", "split"),
+    "bytecode-read-raf-cycle": ("BytecodeReadRafCycleSumcheckProver", "split"),
+    "ram-read-write": ("RamReadWriteCheckingProver", "split"),
+    "registers-read-write": ("RegistersReadWriteCheckingProver", "split"),
+    "ram-val-check": ("RamValEvaluationProver", "split"),
+    "registers-val-evaluation": ("RegistersValEvaluationProver", "split"),
+    "ram-ra-claim-reduction": ("RamRaClaimReductionSumcheckProver", "split"),
+    "spartan-shift": ("ShiftSumcheckProver", "cycle"),
+    "instruction-input": ("InstructionInputSumcheckProver", "cycle"),
+    "instruction-claim-reduction": ("InstructionClaimReductionSumcheckProver", "cycle"),
+    "registers-claim-reduction": ("RegistersClaimReductionSumcheckProver", "cycle"),
+    "inc-claim-reduction": ("IncClaimReductionSumcheckProver", "cycle"),
+    "ram-hamming-booleanity": ("RamHammingBooleanitySumcheckProver", "cycle"),
+    "hamming-weight-claim-reduction": ("HammingWeightClaimReductionProver", "address"),
+    "booleanity-address": ("BooleanityAddressSumcheckProver", "address"),
+    "ram-raf-evaluation": ("RamRafEvaluationSumcheckProver", "address"),
+    "ram-output-check": ("OutputSumcheckProver", "address"),
 }
 
 # relation -> [(bucket, [span names])] for the explicit-bucket model. Bucket
@@ -61,6 +82,19 @@ BUCKETED = {
             ],
         ),
         ("claims", ["OuterLinearStage::cache_openings"]),
+    ],
+    "spartan-product": [
+        ("prepare", ["ProductVirtualUniSkipInstanceProver::initialize"]),
+        ("handoff", ["ProductVirtualUniSkipInstanceProver::compute_message"]),
+        ("address", ["ProductVirtualRemainderProver::initialize"]),
+        (
+            "cycle",
+            [
+                "ProductVirtualRemainderProver::ingest_challenge",
+                "ProductVirtualRemainderProver::compute_message",
+            ],
+        ),
+        ("claims", ["ProductVirtualEval::compute_claimed_factors"]),
     ],
 }
 
@@ -128,7 +162,7 @@ def report_buckets(name, spec, inclusive, instances, ancestors):
     print(f"    {'TOTAL':8s} {total:9.1f} ms")
 
 
-def report(name, prefix, inclusive, instances, log_t):
+def report(name, prefix, domain, inclusive, instances, log_t):
     messages = sorted(instances.get(f"{prefix}::compute_message", []))
     binds = sorted(instances.get(f"{prefix}::ingest_challenge", []))
     if not messages:
@@ -145,10 +179,14 @@ def report(name, prefix, inclusive, instances, log_t):
         return
     total_us = lambda xs: sum(duration for _, duration in xs) / 1e3
     rounds = len(messages)
-    if log_t is None or log_t >= rounds:
+    if domain == "address":
+        cycle = 0.0
+        address = total_us(messages) + total_us(binds)
+        split = f"{rounds} address rounds"
+    elif domain == "cycle" or log_t is None or log_t >= rounds:
         cycle = total_us(messages) + total_us(binds)
         address = 0.0
-        split = f"{rounds} rounds, unsplit"
+        split = f"{rounds} cycle rounds"
     else:
         cycle = total_us(messages[:log_t]) + total_us(binds[: log_t - 1])
         address = total_us(messages[log_t:]) + total_us(binds[log_t - 1 :])
@@ -179,8 +217,8 @@ def main():
         if name in BUCKETED:
             report_buckets(name, BUCKETED[name], inclusive, instances, ancestors)
         elif name in RELATIONS:
-            prefix, _ = RELATIONS[name]
-            report(name, prefix, inclusive, instances, log_t)
+            prefix, domain = RELATIONS[name]
+            report(name, prefix, domain, inclusive, instances, log_t)
         else:
             print(f"unknown relation {name}; known: {', '.join(known)}")
 
