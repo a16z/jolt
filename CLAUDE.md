@@ -239,12 +239,18 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 - Codebase uses `non_snake_case` convention for math variables: `log_T`, `ram_K`, `log_K`, etc.
 - Import types and structs, then reference them by short names; use fully qualified paths only to resolve ambiguity.
 
+### Testing Guidelines
+
+- Do not add old-vs-new equivalence tests that reimplement the pre-change logic as the oracle. Transition-validation belongs in the PR process (byte-parity CI vs a living reference, one-off scripts), not the permanent suite. Permanent tests must assert against independent ground truth: spec vectors, golden fixtures, live reference paths (e.g. `jolt-kernels`' reference tier, the legacy-prover byte-parity suites), or properties. If the old code is deleted, its reimplementation in a test is dead weight — delete the test rather than keep the old logic alive inside it. A `#[cfg(test)]` copy of superseded production code "kept as the oracle" is the same anti-pattern.
+
 ### Lint Policy
 
 - Workspace enforces `allow_attributes = "deny"` — use `#[expect(...)]` instead of `#[allow(...)]`
+- The jolt-verifier runtime closure (19 crates, listed in `specs/verifier-closure-lints.md`) carries stricter crate-root lints: panic-source denies (`indexing_slicing` in control-plane crates, `panic_in_result_fn`, `wildcard_enum_match_arm`, ...), `forbid(unsafe_code)` where a crate has no unsafe, and numeric-discipline denies in jolt-verifier itself — which additionally denies `unreachable`, the only abort macro that escapes both `panic` and `panic_in_result_fn`. New code in those crates must fix the lint or add `#[expect(clippy::..., reason = "...")]` at the narrowest scope with a real justification
 - `.unwrap()` and `.expect()` are fine in tests. In non-test code, avoid them unless the alternative significantly hurts readability (e.g., infallible fixed-size array conversions). When used, annotate the function with `#[expect(clippy::unwrap_used)]` or `#[expect(clippy::expect_used)]`
 - Use `#[expect(clippy::...)]` on test modules to blanket-suppress test-inappropriate lints rather than per-function annotations
 
 ### Comments
 
 Match the codebase's low comment density. Worth writing: WHY comments, WARNING for non-obvious gotchas, SAFETY on unsafe blocks, algorithm explanations (link to paper if applicable), public API docs stating behavior or invariants. TODOs need issue links.
+Do not narrate code or test assertions. If a comment only restates an expression, make the code self-documenting instead.

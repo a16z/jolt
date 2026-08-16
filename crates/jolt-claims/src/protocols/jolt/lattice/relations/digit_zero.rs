@@ -1,15 +1,17 @@
-//! Lattice-mode digit-zero claim reduction, extended with the fused
-//! increment's one-hot decomposition (`specs/digit-zero-virtualization.md`).
+//! Lattice stage-7 claim reduction for digit-zero virtualization and the fused
+//! increment decode (`specs/digit-zero-virtualization.md`).
 //!
-//! The committed columns omit the digit-zero row, defined as
-//! `ra_i(0, t) := M_µ(t) − Σ_{k≠0} ra_i(k, t)` for the family's activation
-//! `M_µ` — constant 1 everywhere except RAM, whose activation is
-//! `Load + Store` (the flag openings produced by `RamActivationBooleanity`).
-//! This reduction recenters each Booleanity/virtualization claim on a
-//! semantic (digit-zero-inclusive) column into a claim on the committed
-//! nonzero-digit rows: `Σ_k (w(k) − w(0))·ra_i(k) = c − w(0)·M̃_µ(r_cycle)`.
-//! The weight identity `Σ_k ra_i(k, t) = M_µ(t)` holds by construction, so
-//! there is no Hamming-weight leg of any kind.
+//! Instruction and bytecode implement the note's public
+//! `M_mu(r_cycle) = 1` specialization. The commitment omits `ra_i(0, j)`, and
+//! stage 7 applies the reconstruction coefficient
+//! `eq(r_address, k_i) - eq(r_address, 0)` to the committed nonzero rows. The
+//! balanced-increment columns use the same algebra with one Booleanity leg per
+//! column; their decode weight is zero at digit zero. RAM is deliberately not
+//! virtualized in this change and retains its fully committed three-leg base
+//! reduction.
+//!
+//! The gamma layout uses two powers per virtualized RA polynomial, three per
+//! RAM polynomial, one per increment column, then the decode power.
 //!
 //! WARNING: the decode leg is not a range check on `FusedInc`. One-hotness pins
 //! each digit and the carry only to `[-K/2, K/2)`, so the reachable set is the
@@ -20,14 +22,13 @@
 //! `specs/lattice-claims.md`. Do not treat this reduction as bounding `Inc`.
 
 use jolt_field::RingCore;
-use jolt_riscv::CircuitFlags;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
-    booleanity_claim, reduced_claim,
+    booleanity_claim, reduced_claim, virtualization_claim,
 };
 use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
-use crate::protocols::jolt::geometry::ram::{ram_activation_load, ram_activation_store};
+use crate::protocols::jolt::geometry::ram::ram_hamming_weight;
 use crate::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltExpr,
@@ -66,29 +67,22 @@ impl LatticeDigitZeroClaimReductionDimensions {
     }
 }
 
-/// The family's activation evaluation `M̃_µ(r_cycle)`: constant 1 for the
-/// always-active families, `Load + Store` (the `RamActivationBooleanity`
-/// openings at the shared stage-6b cycle point) for RAM.
-fn activation_claim<F: RingCore>(polynomial: JoltRaPolynomial) -> JoltExpr<F> {
+/// Number of γ powers a family's RA polynomial occupies: RAM takes the base
+/// three legs (Hamming, Booleanity, virtualization); the digit-zero families
+/// take two (Booleanity, virtualization).
+fn ra_leg_count(polynomial: JoltRaPolynomial) -> usize {
     match polynomial {
-        JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => JoltExpr::one(),
-        JoltRaPolynomial::Ram(_) => {
-            opening(ram_activation_load()) + opening(ram_activation_store())
-        }
+        JoltRaPolynomial::Ram(_) => 3,
+        JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => 2,
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct LatticeDigitZeroClaimReductionInputClaims<C> {
-    /// The RAM activation `M_RAM = Load + Store` — the digit-zero
-    /// reconstruction coefficient. Each `RamRa` leg's digit-zero baseline
-    /// `w(0)·M̃_RAM` is folded into the input claim, so these claims enter with
-    /// a negative `eq(0, ·)`-weighted coefficient. Only their sum is
-    /// constrained (see `RamActivationBooleanity`).
-    #[opening(OpFlags(CircuitFlags::Load), from = RamActivationBooleanity)]
-    pub ram_activation_load: C,
-    #[opening(OpFlags(CircuitFlags::Store), from = RamActivationBooleanity)]
-    pub ram_activation_store: C,
+    /// The RAM access indicator produced by `RamHammingBooleanity`. RAM is not
+    /// virtualized, so this remains the base Hamming-weight leg.
+    #[opening(RamHammingWeight, from = RamHammingBooleanity)]
+    pub ram_hamming_weight: C,
     #[opening(committed = InstructionRa, from = Booleanity)]
     pub instruction_booleanity: Vec<C>,
     #[opening(committed = BytecodeRa, from = Booleanity)]
@@ -129,20 +123,18 @@ pub struct LatticeDigitZeroClaimReductionOutputClaims<C> {
     pub balanced_inc_carry: C,
 }
 
-/// The lattice instantiation of the stage-7 reduction slot. It keeps base
-/// mode's `HammingWeightClaimReduction` relation id (the shared final-opening
-/// map keys on it) but performs no Hamming-weight check: under digit-zero
-/// virtualization the weight identity holds by construction, so the γ layout
-/// is two powers per RA family (Booleanity, virtualization), one per
-/// increment column (Booleanity), and the decode power.
+/// The lattice instantiation of the stage-7 reduction slot. It keeps the base
+/// `HammingWeightClaimReduction` relation id because RAM still uses that leg.
 #[derive(Clone)]
 pub struct LatticeDigitZeroClaimReduction {
     shape: LatticeDigitZeroClaimReductionDimensions,
 }
 
 impl LatticeDigitZeroClaimReduction {
+    /// Total γ powers consumed by the RA legs (variable: 3 per RAM poly, 2
+    /// per virtualized poly). The increment columns and decode power follow.
     fn ra_terms(&self) -> usize {
-        2 * self.shape.layout.total()
+        self.shape.layout.polynomials().map(ra_leg_count).sum()
     }
 
     fn inc_column_count(&self) -> usize {
@@ -185,32 +177,45 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
         let eq_booleanity_digit_zero =
             derived(HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero);
         let mut input = JoltExpr::zero();
-        // Each leg's digit-zero baseline `w(0)·M̃_µ` is folded into the input
-        // claim, so the sumcheck runs over the committed nonzero-digit rows
-        // alone: `Σ_k (w(k) − w(0))·ra_i(k) = c − w(0)·M̃_µ`.
+        let mut power = 0usize;
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
-            let eq_virtualization_digit_zero =
-                derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));
-            let activation = activation_claim(polynomial);
-            input = input
-                + gamma.clone().pow(2 * i)
-                    * (opening(booleanity_claim(polynomial))
-                        - eq_booleanity_digit_zero.clone() * activation.clone())
-                + gamma.clone().pow(2 * i + 1)
-                    * (opening(crate::protocols::jolt::geometry::claim_reductions::hamming_weight::virtualization_claim(polynomial))
-                        - eq_virtualization_digit_zero * activation);
+            match polynomial {
+                // RAM: base three legs, no reconstruction. The committed column
+                // includes the digit-zero lane.
+                JoltRaPolynomial::Ram(_) => {
+                    input = input
+                        + gamma.clone().pow(power) * opening(ram_hamming_weight())
+                        + gamma.clone().pow(power + 1) * opening(booleanity_claim(polynomial))
+                        + gamma.clone().pow(power + 2) * opening(virtualization_claim(polynomial));
+                    power += 3;
+                }
+                // Public M_mu = 1: fold eq(r_address, 0) into each input claim.
+                JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
+                    let eq_virtualization_digit_zero =
+                        derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));
+                    input = input
+                        + gamma.clone().pow(power)
+                            * (opening(booleanity_claim(polynomial))
+                                - eq_booleanity_digit_zero.clone())
+                        + gamma.clone().pow(power + 1)
+                            * (opening(virtualization_claim(polynomial))
+                                - eq_virtualization_digit_zero);
+                    power += 2;
+                }
+            }
         }
         for index in 0..self.shape.chunking.chunk_count() {
-            let offset = self.ra_terms() + index;
             input = input
-                + gamma.clone().pow(offset)
+                + gamma.clone().pow(power)
                     * (opening(booleanity_balanced_inc_digit_opening(index))
                         - eq_booleanity_digit_zero.clone());
+            power += 1;
         }
-        let carry_offset = self.ra_terms() + self.shape.chunking.chunk_count();
         input = input
-            + gamma.clone().pow(carry_offset)
+            + gamma.clone().pow(power)
                 * (opening(booleanity_balanced_inc_carry_opening()) - eq_booleanity_digit_zero);
+        power += 1;
+        debug_assert_eq!(power, self.decode_power());
         input + gamma.pow(self.decode_power()) * opening(fused_inc_read_raf_opening())
     }
 
@@ -222,30 +227,43 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
         let inc_value = derived(HammingWeightClaimReductionPublic::BalancedIncValueAtAddress);
         let decode_scale = gamma.clone().pow(self.decode_power());
         let mut output = JoltExpr::zero();
+        let mut power = 0usize;
 
-        // Purely sparse: every leg's digit-zero baseline lives in
-        // `input_expression`, so each coefficient here is `w(ρ) − w(0)` (the
-        // decode leg's `w(0)` is zero already: `balanced_inc_value(0) = 0`).
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
             let eq_virtualization = derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
-            let eq_virtualization_digit_zero =
-                derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));
-            let coefficient = gamma.clone().pow(2 * i)
-                * (eq_booleanity.clone() - eq_booleanity_digit_zero.clone())
-                + gamma.clone().pow(2 * i + 1) * (eq_virtualization - eq_virtualization_digit_zero);
+            let coefficient = match polynomial {
+                // RAM: base Hamming, Booleanity, and virtualization legs.
+                JoltRaPolynomial::Ram(_) => {
+                    let c = gamma.clone().pow(power)
+                        + gamma.clone().pow(power + 1) * eq_booleanity.clone()
+                        + gamma.clone().pow(power + 2) * eq_virtualization;
+                    power += 3;
+                    c
+                }
+                // The committed rows use eq(r_address, k_i) - eq(r_address, 0).
+                JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
+                    let eq_virtualization_digit_zero =
+                        derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));
+                    let c = gamma.clone().pow(power)
+                        * (eq_booleanity.clone() - eq_booleanity_digit_zero.clone())
+                        + gamma.clone().pow(power + 1)
+                            * (eq_virtualization - eq_virtualization_digit_zero);
+                    power += 2;
+                    c
+                }
+            };
             output = output + coefficient * opening(reduced_claim(polynomial));
         }
         for index in 0..self.shape.chunking.chunk_count() {
-            let offset = self.ra_terms() + index;
-            let coefficient = gamma.clone().pow(offset)
+            let coefficient = gamma.clone().pow(power)
                 * (eq_booleanity.clone() - eq_booleanity_digit_zero.clone())
                 + decode_scale.clone()
                     * constant(self.shape.chunking.place_value::<F>(index))
                     * inc_value.clone();
             output = output + coefficient * opening(reduced_balanced_inc_digit_opening(index));
+            power += 1;
         }
-        let carry_offset = self.ra_terms() + self.shape.chunking.chunk_count();
-        let coefficient = gamma.pow(carry_offset) * (eq_booleanity - eq_booleanity_digit_zero)
+        let coefficient = gamma.pow(power) * (eq_booleanity - eq_booleanity_digit_zero)
             + decode_scale * constant(F::pow2(FUSED_INC_BITS)) * inc_value;
         output + coefficient * opening(reduced_balanced_inc_carry_opening())
     }
@@ -270,20 +288,119 @@ pub fn reduced_balanced_inc_carry_opening() -> JoltOpeningId {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{
-        HammingWeightClaimReductionChallenge, JoltChallengeId, JoltCommittedPolynomial,
-        JoltDerivedId,
+        HammingWeightClaimReductionChallenge, JoltChallengeId, JoltDerivedId,
     };
     use jolt_field::{Fr, FromPrimitiveInt};
 
     #[test]
-    fn fused_increment_terms_extend_the_ra_reduction() {
+    fn public_unit_activation_ra_is_reconstructed_but_ram_keeps_base_legs() {
+        let layout = JoltRaPolynomialLayout::new(1, 1, 1).unwrap();
+        let relation = LatticeDigitZeroClaimReduction::new(
+            LatticeDigitZeroClaimReductionDimensions::new(layout, 32).unwrap(),
+        );
+        assert_eq!(relation.decode_power(), 10);
+
+        let gamma = Fr::from_u64(3);
+        let eq_bool = Fr::from_u64(13);
+        let eq_bool_zero = Fr::from_u64(17);
+        let eq_virt = [Fr::from_u64(19), Fr::from_u64(23), Fr::from_u64(29)];
+        let eq_virt_zero = [Fr::from_u64(31), Fr::from_u64(37)];
+        let inst_bool = Fr::from_u64(41);
+        let inst_virt = Fr::from_u64(43);
+        let bytecode_bool = Fr::from_u64(47);
+        let bytecode_virt = Fr::from_u64(53);
+        let ram_hamming = Fr::from_u64(59);
+        let ram_bool = Fr::from_u64(61);
+        let ram_virt = Fr::from_u64(67);
+        let out = [Fr::from_u64(71), Fr::from_u64(73), Fr::from_u64(79)];
+        let zero = Fr::from_u64(0);
+        let power = |exponent: usize| {
+            (0..exponent).fold(Fr::from_u64(1), |accumulator, _| accumulator * gamma)
+        };
+
+        let opening_value = |id: &JoltOpeningId| match *id {
+            id if id == booleanity_claim(JoltRaPolynomial::Instruction(0)) => inst_bool,
+            id if id == virtualization_claim(JoltRaPolynomial::Instruction(0)) => inst_virt,
+            id if id == booleanity_claim(JoltRaPolynomial::Bytecode(0)) => bytecode_bool,
+            id if id == virtualization_claim(JoltRaPolynomial::Bytecode(0)) => bytecode_virt,
+            id if id == ram_hamming_weight() => ram_hamming,
+            id if id == booleanity_claim(JoltRaPolynomial::Ram(0)) => ram_bool,
+            id if id == virtualization_claim(JoltRaPolynomial::Ram(0)) => ram_virt,
+            id if id == reduced_claim(JoltRaPolynomial::Instruction(0)) => out[0],
+            id if id == reduced_claim(JoltRaPolynomial::Bytecode(0)) => out[1],
+            id if id == reduced_claim(JoltRaPolynomial::Ram(0)) => out[2],
+            id if id == booleanity_balanced_inc_digit_opening(0)
+                || id == booleanity_balanced_inc_digit_opening(1)
+                || id == booleanity_balanced_inc_carry_opening() =>
+            {
+                eq_bool_zero
+            }
+            _ => zero,
+        };
+        let challenge_value = |id: &JoltChallengeId| match *id {
+            JoltChallengeId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionChallenge::Gamma,
+            ) => gamma,
+            _ => zero,
+        };
+        let derived_value = |id: &JoltDerivedId| match *id {
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::EqBooleanity,
+            ) => eq_bool,
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero,
+            ) => eq_bool_zero,
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::EqVirtualization(index),
+            ) => eq_virt[index],
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(index),
+            ) => eq_virt_zero[index],
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::BalancedIncValueAtAddress,
+            ) => zero,
+            _ => zero,
+        };
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            opening_value,
+            challenge_value,
+            derived_value,
+        );
+        let expected_input = power(0) * (inst_bool - eq_bool_zero)
+            + power(1) * (inst_virt - eq_virt_zero[0])
+            + power(2) * (bytecode_bool - eq_bool_zero)
+            + power(3) * (bytecode_virt - eq_virt_zero[1])
+            + power(4) * ram_hamming
+            + power(5) * ram_bool
+            + power(6) * ram_virt;
+        assert_eq!(input, expected_input);
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            opening_value,
+            challenge_value,
+            derived_value,
+        );
+        let expected_output = out[0]
+            * (power(0) * (eq_bool - eq_bool_zero) + power(1) * (eq_virt[0] - eq_virt_zero[0]))
+            + out[1]
+                * (power(2) * (eq_bool - eq_bool_zero) + power(3) * (eq_virt[1] - eq_virt_zero[1]))
+            + out[2] * (power(4) + power(5) * eq_bool + power(6) * eq_virt[2]);
+        assert_eq!(output, expected_output);
+    }
+
+    #[test]
+    fn ram_base_legs_and_fused_increment_terms() {
+        // One RAM polynomial (base 3-leg) plus two increment digits and a carry.
         let layout = JoltRaPolynomialLayout::new(0, 0, 1).unwrap();
         let relation = LatticeDigitZeroClaimReduction::new(
             LatticeDigitZeroClaimReductionDimensions::new(layout, 32).unwrap(),
         );
+        // RAM occupies powers 0,1,2; inc digits 3,4; carry 5; decode 6.
+        assert_eq!(relation.decode_power(), 6);
         let gamma = Fr::from_u64(3);
-        let values = (2..=13).map(Fr::from_u64).collect::<Vec<_>>();
-        let [load, store, bool_ra, virt_ra, bool_0, bool_1, bool_msb, fused, out_ra, out_0, out_1, out_msb] =
+        let values = (2..=12).map(Fr::from_u64).collect::<Vec<_>>();
+        let [hamming, bool_ra, virt_ra, bool_0, bool_1, bool_msb, fused, out_ra, out_0, out_1, out_msb] =
             values.as_slice()
         else {
             unreachable!()
@@ -291,22 +408,16 @@ mod tests {
         let eq_bool = Fr::from_u64(17);
         let eq_bool_digit_zero = Fr::from_u64(19);
         let eq_virt = Fr::from_u64(23);
-        let eq_virt_digit_zero = Fr::from_u64(29);
         let inc_value = Fr::from_u64(31);
         let power = |exponent: usize| {
             (0..exponent).fold(Fr::from_u64(1), |accumulator, _| accumulator * gamma)
         };
         let zero = Fr::from_u64(0);
 
-        let opening_value = |id: &JoltOpeningId| {
-            match *id {
-            id if id == ram_activation_load() => *load,
-            id if id == ram_activation_store() => *store,
+        let opening_value = |id: &JoltOpeningId| match *id {
+            id if id == ram_hamming_weight() => *hamming,
             id if id == booleanity_claim(JoltRaPolynomial::Ram(0)) => *bool_ra,
-            id if id
-                == crate::protocols::jolt::geometry::claim_reductions::hamming_weight::virtualization_claim(
-                    JoltRaPolynomial::Ram(0),
-                ) => *virt_ra,
+            id if id == virtualization_claim(JoltRaPolynomial::Ram(0)) => *virt_ra,
             id if id == booleanity_balanced_inc_digit_opening(0) => *bool_0,
             id if id == booleanity_balanced_inc_digit_opening(1) => *bool_1,
             id if id == booleanity_balanced_inc_carry_opening() => *bool_msb,
@@ -316,7 +427,6 @@ mod tests {
             id if id == reduced_balanced_inc_digit_opening(1) => *out_1,
             id if id == reduced_balanced_inc_carry_opening() => *out_msb,
             _ => zero,
-        }
         };
         let challenge_value = |id: &JoltChallengeId| match *id {
             JoltChallengeId::HammingWeightClaimReduction(
@@ -335,9 +445,6 @@ mod tests {
                 HammingWeightClaimReductionPublic::EqVirtualization(0),
             ) => eq_virt,
             JoltDerivedId::HammingWeightClaimReduction(
-                HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(0),
-            ) => eq_virt_digit_zero,
-            JoltDerivedId::HammingWeightClaimReduction(
                 HammingWeightClaimReductionPublic::BalancedIncValueAtAddress,
             ) => inc_value,
             _ => zero,
@@ -348,18 +455,15 @@ mod tests {
             challenge_value,
             derived_value,
         );
-        // No Hamming legs and no reserved powers: the RA legs sit at
-        // `γ^{2i}`/`γ^{2i+1}`, the increment columns at consecutive powers,
-        // and each claim carries its digit-zero baseline `c − w(0)·M̃_µ`, with
-        // `M̃_RAM = load + store` for the RAM family and 1 for the increment
-        // columns.
-        let activation = *load + *store;
-        let expected_input = power(0) * (*bool_ra - eq_bool_digit_zero * activation)
-            + power(1) * (*virt_ra - eq_virt_digit_zero * activation)
-            + power(2) * (*bool_0 - eq_bool_digit_zero)
-            + power(3) * (*bool_1 - eq_bool_digit_zero)
-            + power(4) * (*bool_msb - eq_bool_digit_zero)
-            + power(5) * *fused;
+        // RAM base 3-leg (no recentering) at powers 0,1,2; increment
+        // booleanity legs (recentered) at 3,4; carry at 5; decode at 6.
+        let expected_input = power(0) * *hamming
+            + power(1) * *bool_ra
+            + power(2) * *virt_ra
+            + power(3) * (*bool_0 - eq_bool_digit_zero)
+            + power(4) * (*bool_1 - eq_bool_digit_zero)
+            + power(5) * (*bool_msb - eq_bool_digit_zero)
+            + power(6) * *fused;
         assert_eq!(input, expected_input);
 
         let output = relation.output_expression::<Fr>().evaluate(
@@ -367,23 +471,12 @@ mod tests {
             challenge_value,
             derived_value,
         );
-        // Purely sparse: no baseline terms.
-        let expected_output = *out_ra
-            * (power(0) * (eq_bool - eq_bool_digit_zero)
-                + power(1) * (eq_virt - eq_virt_digit_zero))
-            + *out_0 * (power(2) * (eq_bool - eq_bool_digit_zero) + power(5) * inc_value)
+        let expected_output = *out_ra * (power(0) + power(1) * eq_bool + power(2) * eq_virt)
+            + *out_0 * (power(3) * (eq_bool - eq_bool_digit_zero) + power(6) * inc_value)
             + *out_1
-                * (power(3) * (eq_bool - eq_bool_digit_zero) + power(5) * Fr::pow2(32) * inc_value)
+                * (power(4) * (eq_bool - eq_bool_digit_zero) + power(6) * Fr::pow2(32) * inc_value)
             + *out_msb
-                * (power(4) * (eq_bool - eq_bool_digit_zero) + power(5) * Fr::pow2(64) * inc_value);
+                * (power(5) * (eq_bool - eq_bool_digit_zero) + power(6) * Fr::pow2(64) * inc_value);
         assert_eq!(output, expected_output);
-
-        assert_eq!(
-            reduced_balanced_inc_carry_opening(),
-            JoltOpeningId::committed(
-                JoltCommittedPolynomial::BalancedIncCarry,
-                JoltRelationId::HammingWeightClaimReduction,
-            )
-        );
     }
 }

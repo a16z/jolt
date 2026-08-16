@@ -424,17 +424,8 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
             return Some(opening_claim);
         }
     }
-    #[cfg(not(feature = "akita"))]
     if id == ram::ram_hamming_weight() {
         return Some(&mut stage6b.ram_hamming_booleanity.ram_hamming_weight);
-    }
-    #[cfg(feature = "akita")]
-    if id == ram::ram_activation_load() {
-        return Some(&mut stage6b.ram_activation_booleanity.load);
-    }
-    #[cfg(feature = "akita")]
-    if id == ram::ram_activation_store() {
-        return Some(&mut stage6b.ram_activation_booleanity.store);
     }
     for (index, opening_claim) in stage6b.ram_ra_virtualization.ram_ra.iter_mut().enumerate() {
         if id == ram::committed_ram_ra(index) {

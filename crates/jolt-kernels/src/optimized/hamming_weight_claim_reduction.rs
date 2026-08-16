@@ -12,14 +12,16 @@
 //!   against ONE shared `eq(r_cycle)` table (every stage-6b claim family
 //!   lives at the same cycle point), replacing the reference tier's `N`
 //!   independent `O(K_chunk·T)` folds over materialized one-hot grids.
-//! - **One-hot weight fusion**: the three per-polynomial claim weights
-//!   `γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k)` are one combined
-//!   multilinear `W_i(k)` (the Hamming-weight leg's constant-1 rides the
-//!   constant term), so the round summand is `Σ_i G_i·W_i` — `2N` bound
+//! - **One-hot weight fusion**: the base protocol's three per-polynomial claim
+//!   weights `γ^{3i} + γ^{3i+1}·eq_bool(k) + γ^{3i+2}·eq_virt_i(k)` are one
+//!   combined multilinear `W_i(k)` (the Hamming-weight leg's constant-1 rides
+//!   the constant term), so the round summand is `Σ_i G_i·W_i` — `2N` bound
 //!   tables instead of `2N + 1` and one fused multiply per pair per point.
 //! - **Eval-at-1 recovery** and **rayon walks** (module docs on
 //!   [`crate::optimized`]).
 
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
@@ -210,8 +212,15 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
         #[cfg(feature = "akita")]
         let mut g_evals = g_evals;
         #[cfg(feature = "akita")]
-        for table in &mut g_evals {
-            table[0] = F::zero();
+        {
+            let (ra_evals, increment_evals) = g_evals.split_at_mut(layout.total());
+            for table in ra_evals
+                .iter_mut()
+                .take(layout.instruction() + layout.bytecode())
+                .chain(increment_evals)
+            {
+                table[0] = F::zero();
+            }
         }
         let g_tables = g_evals.into_iter().map(Polynomial::new).collect();
 
@@ -246,14 +255,19 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             })
             .collect::<Result<_, _>>()?;
 
-        // Digit-zero layout (`specs/digit-zero-virtualization.md`): two powers
-        // per RA polynomial, one per increment column, then the decode power.
-        // Every digit-zero baseline is folded into the relation's input claim,
-        // so the summand is purely sparse — no baseline table.
+        // Instruction and bytecode use the paper's digit-zero recentering;
+        // RAM keeps the base three-leg reduction. Increment columns are
+        // recentered and followed by the fused decode power.
         #[cfg(feature = "akita")]
         let weight_tables: Vec<Polynomial<F>> = {
             let chunk_count = dimensions.chunking().chunk_count();
-            let ra_terms = 2 * layout.total();
+            let ra_terms = layout
+                .polynomials()
+                .map(|polynomial| match polynomial {
+                    JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => 2,
+                    JoltRaPolynomial::Ram(_) => 3,
+                })
+                .sum::<usize>();
             let decode_power = ra_terms + chunk_count + 1;
             let mut gamma_powers = vec![F::one(); decode_power + 1];
             for i in 1..gamma_powers.len() {
@@ -266,7 +280,8 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             };
             let eq_bool_digit_zero = at_digit_zero(r_address);
             let mut weights = Vec::with_capacity(layout.total() + chunk_count + 1);
-            for (i, _polynomial) in layout.polynomials().enumerate() {
+            let mut power = 0;
+            for (i, polynomial) in layout.polynomials().enumerate() {
                 let point = &virtualization_points[i];
                 if point.len() != dimensions.log_k_chunk {
                     return Err(KernelError::InvariantViolation {
@@ -274,16 +289,35 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
                     });
                 }
                 let eq_virt = eq_table(point);
-                let eq_virt_digit_zero = at_digit_zero(point);
-                weights.push(Polynomial::new(
-                    (0..k_chunk)
-                        .map(|k| {
-                            gamma_powers[2 * i] * (eq_bool[k] - eq_bool_digit_zero)
-                                + gamma_powers[2 * i + 1] * (eq_virt[k] - eq_virt_digit_zero)
-                        })
-                        .collect(),
-                ));
+                match polynomial {
+                    JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
+                        let eq_virt_digit_zero = at_digit_zero(point);
+                        weights.push(Polynomial::new(
+                            (0..k_chunk)
+                                .map(|k| {
+                                    gamma_powers[power] * (eq_bool[k] - eq_bool_digit_zero)
+                                        + gamma_powers[power + 1]
+                                            * (eq_virt[k] - eq_virt_digit_zero)
+                                })
+                                .collect(),
+                        ));
+                        power += 2;
+                    }
+                    JoltRaPolynomial::Ram(_) => {
+                        weights.push(Polynomial::new(
+                            (0..k_chunk)
+                                .map(|k| {
+                                    gamma_powers[power]
+                                        + gamma_powers[power + 1] * eq_bool[k]
+                                        + gamma_powers[power + 2] * eq_virt[k]
+                                })
+                                .collect(),
+                        ));
+                        power += 3;
+                    }
+                }
             }
+            debug_assert_eq!(power, ra_terms);
             let balanced_values = (0..k_chunk)
                 .map(|lane| {
                     balanced_inc_value(&boolean_point_msb::<F>(dimensions.log_k_chunk, lane))

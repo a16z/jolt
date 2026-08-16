@@ -381,22 +381,20 @@ The stage-7 reduction slot (`LatticeDigitZeroClaimReduction`, keeping base
 mode's `HammingWeightClaimReduction` relation id) batches, in one sumcheck
 over the `b = log_K` address bits:
 
-- **claim reduction**: reduces the Booleanity/virtualization openings of every
-  one-hot column to Stage 7's bound address point, recentering each around the
-  omitted digit-zero row (there is no Hamming-weight leg of any kind: with the
-  digit-zero row defined as `ra_i(0,·) := M_µ − Σ_{k≠0} ra_i(k,·)` the weight
-  identity holds by construction — `specs/digit-zero-virtualization.md`; the γ
-  layout is two powers per RA polynomial, one per increment column, then the
-  decode power), and
+- **claim reduction**: for instruction, bytecode, and balanced-increment
+  columns, reduces the Booleanity/virtualization openings using the paper's
+  `M_µ ≡ 1` reconstruction
+  `ra_i(0,j) := 1 − Σ_{k_i≠0} ra_i(k_i,j)`. These columns use two powers per RA
+  polynomial and one per increment column, with no Hamming-weight leg. `RamRa`
+  commits digit zero and keeps the base three powers (Hamming, Booleanity,
+  virtualization), and
 - **value reconstruction**:
   `Σ_j 2^(b*j) * value(digit_j) + 2^64 * value(carry) = FusedInc`, where
    `value(k) = k` for `k < K/2` and `k - K` otherwise.
 
-- **Inputs**: `FusedInc@BytecodeReadRaf` (the read-raf cycle phase's own
-  output, already at the shared 6b cycle point),
-  `OpFlags(Load)/OpFlags(Store)@RamActivationBooleanity` (the RAM activation
-  `M_RAM = Load + Store`, entering the two RamRa baselines),
-  `BalancedIncCarry@Booleanity`, `BalancedIncDigit(j)@Booleanity`.
+- **Inputs**: every RA Booleanity/virtualization opening,
+  `RamHammingWeight@RamHammingBooleanity`, `FusedInc@BytecodeReadRaf`,
+  `BalancedIncCarry@Booleanity`, and `BalancedIncDigit(j)@Booleanity`.
 - **Outputs**: every RA, increment digit, and carry opening at the same full
   `(r_address, r_cycle)` point.
 - degree 2, `b` rounds, using the existing stage-7 batching challenge.
@@ -528,29 +526,16 @@ must sum to its activation over the full Boolean hypercube (the digit-zero
 definition makes this an identity; Booleanity makes it one-hot-or-zero). Which
 cells that puts in the commitment differs by object:
 
-- **OneHotTrace columns** omit the digit-zero row: it is reconstructed from
-  the column's activation, so a row whose semantic hot cell is digit zero is
-  physically empty and the weight identity is discharged by the reconstruction
-  rather than by committed cells. The balanced digit encoding is chosen so
-  that a zero fused increment lands every digit and the carry on digit zero,
-  making padding rows free. The prover must not invent a nonzero digit for
-  them.
-
-**The RAM activation.** `RamRa` is the one OneHotTrace family whose activation
-is not the constant 1: `M_RAM = Load + Store`, the two flag openings the
-stage-6b `RamActivationBooleanity` member produces (binding the flag columns
-and proving the activation sum Boolean — deliberately a single booleanity on
-the sum, never a γ-batch of per-flag legs, because the columns are virtual and
-chosen after the draws). Each `RamRa` leg's digit-zero baseline
-`w(0)·M̃_RAM` is folded into the input claim
-(`γ^(2i)·(c_bool − eq(0, r_bool)·M̃) + γ^(2i+1)·(c_virt − eq(0, r_virt)·M̃)`),
-so the relation reduces `{c_bool_i, c_virt_i, Load, Store}` to the committed
-opening. The full soundness accounting — weights equal the activation,
-unit-or-zero tensors, the RAF/rv64-rows-0/1 pinning of the activation to the
-true access pattern, and why `validate_ram_remap_base` (`unmap(0) =
-lowest_address > 8`, fail-closed in `validate_inputs`) is load-bearing in the
-fabrication direction — lives in `specs/digit-zero-virtualization.md` §5,
-which supersedes the earlier five-hop-chain / one-free-bit argument here.
+- **Instruction, bytecode, and balanced-increment columns** omit the
+  digit-zero row. For these public-unit-activation columns,
+  `ra_i(0,j) := 1 − Σ_{k_i≠0} ra_i(k_i,j)`. A semantic digit-zero hot cell is
+  therefore physically empty. The balanced encoding sends a zero fused
+  increment to digit zero in every digit and carry column, making padding rows
+  free.
+- **RAM columns** retain digit zero. Active cycles commit the selected lane,
+  including lane zero, while inactive cycles remain empty. RAM keeps
+  `RamHammingBooleanity` and the base Hamming-weight leg; the note's separate
+  `M_RAM = Load + Store` optimization is not part of this change.
 
 - **Auxiliary prefix-packed objects** (advice bytes, precommitted bytecode
   lanes) still commit lane zero, so their padding rows must be hot-lane-zero
@@ -605,8 +590,8 @@ base stage-8 RLC order for lattice mode.
   the `FusedInc` factor and produces its opening at the shared cycle point —
   there is no separate fused-inc member.
 - Stage 7 runs the digit-zero claim reduction (base's stage-7 slot) with
-  Booleanity and balanced-decode terms for all increment one-hot columns;
-  Stage 6b's `RamActivationBooleanity` member supplies the RAM activation.
+  Booleanity and balanced-decode terms for all increment one-hot columns. RAM
+  retains `RamHammingBooleanity` and its base Hamming-weight term.
 - Stage 8 selector-reduces `OneHotTrace` and every present auxiliary object,
   then runs one direct Akita opening per physical polynomial.
 - The Dory build instantiates the original Booleanity, increment claim
@@ -622,9 +607,10 @@ base stage-8 RLC order for lattice mode.
   `Σ 2^(b*j)·value(digit_j) + 2^64·value(carry)`
   round-trips the value.
 - Semantic integration tests (`tests/lattice_semantics.rs`) over concrete
-  witness data: every OneHotTrace column is a uniform `K x T` one-hot polynomial;
-  the digit/carry decomposition reconstructs signed increments including
-  padding; auxiliary lane/advice reconstruction terms reproduce the committed
+  witness data: instruction/bytecode/increment columns are one-hot, RAM is
+  one-hot-or-zero, the physical digit-zero policy matches each family, the
+  digit/carry decomposition reconstructs signed increments including padding,
+  and auxiliary lane/advice reconstruction terms reproduce the committed
   evaluations.
 - Determinism: `one_hot_trace_columns`/`precommitted_packing_plan` are pure functions of
   shape (golden test), and every packed proof column has a claim source.

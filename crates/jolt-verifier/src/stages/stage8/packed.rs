@@ -520,6 +520,11 @@ pub fn leaf_claims<F: Field>(
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
@@ -859,8 +864,13 @@ mod tests {
                 .packing()
                 .ids()
                 .iter()
-                .map(|id| (*id, leaves.get(id).unwrap().clone()))
+                .filter_map(|id| leaves.get(id).cloned().map(|claim| (*id, claim)))
                 .collect::<BTreeMap<_, _>>();
+            assert_eq!(
+                claims.len(),
+                object.packing().ids().len(),
+                "every packing id must have a reconstructed leaf claim"
+            );
             let packed = object.packed_claims(&claims).unwrap();
             assert_eq!(packed.evaluations().len(), object.packing().ids().len());
             assert_eq!(packed.point().len(), object.packing().logical_num_vars());

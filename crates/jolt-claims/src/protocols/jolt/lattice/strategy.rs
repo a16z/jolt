@@ -173,7 +173,7 @@ fn layout_digest(
     packing: &PrefixPackedLayout<JoltCommittedPolynomial>,
 ) -> Result<[u8; 32], OpeningsError> {
     let mut hasher = Blake2b::<U32>::new();
-    hasher.update(b"jolt/akita/one_hot_trace/digit-zero-balanced-inc/v6");
+    hasher.update(b"jolt/akita/one_hot_trace/digit-zero-mu-one-full-ram/v7");
     append_usize(&mut hasher, packing.logical_num_vars());
     append_usize(&mut hasher, packing.packed_num_vars());
     append_usize(&mut hasher, packing.slot_capacity());

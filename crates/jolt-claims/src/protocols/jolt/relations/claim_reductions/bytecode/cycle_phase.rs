@@ -117,7 +117,7 @@ mod tests {
     fn cycle_phase_batches_staged_openings_by_eta() {
         let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
         let eta = fr(31);
-        let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13)];
+        let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13), fr(17)];
         let zero = fr(0);
 
         let cycle = CyclePhase::new((dimensions, 2));
@@ -137,8 +137,8 @@ mod tests {
         );
         let mut expected_input = zero;
         let mut eta_power = fr(1);
-        for claim in stage_claims {
-            expected_input += eta_power * claim;
+        for claim in stage_claims.iter().take(NUM_BYTECODE_VAL_STAGES) {
+            expected_input += eta_power * *claim;
             eta_power *= eta;
         }
         assert_eq!(input, expected_input);

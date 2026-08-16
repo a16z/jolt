@@ -15,6 +15,9 @@
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 
+use jolt_sumcheck::{RoundScheduler, SequentialRounds};
+
+use crate::backend::{BuildRoundScheduler, ProofSession};
 use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
@@ -37,7 +40,6 @@ pub mod naive;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod program_image_claim_reduction;
-pub mod ram_activation_booleanity;
 pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
@@ -69,6 +71,12 @@ pub(crate) fn lattice_shape() -> bool {
         == jolt_claims::protocols::jolt::lattice::LATTICE_BYTECODE_VAL_STAGES
 }
 
+impl<F: Field> BuildRoundScheduler<F> for ReferenceBackend {
+    fn build(&self, _session: &mut ProofSession) -> Box<dyn RoundScheduler<F>> {
+        Box::new(SequentialRounds)
+    }
+}
+
 impl<F, PCS> JoltBackend<F, PCS>
 where
     F: Field,
@@ -85,6 +93,7 @@ where
     {
         Self {
             commit: Box::new(ReferenceBackend),
+            round_scheduler: Box::new(ReferenceBackend),
             spartan_outer_uniskip: Box::new(ReferenceBackend),
             spartan_outer_remainder: Box::new(ReferenceOuterRemainder),
             spartan_product_uniskip: Box::new(ReferenceBackend),
@@ -107,7 +116,6 @@ where
             bytecode_read_raf_cycle: Box::new(ReferenceBackend),
             booleanity_cycle: Box::new(ReferenceBackend),
             ram_hamming_booleanity: Box::new(ReferenceBackend),
-            ram_activation_booleanity: Box::new(ReferenceBackend),
             ram_ra_virtualization: Box::new(ReferenceBackend),
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),

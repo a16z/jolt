@@ -1,12 +1,12 @@
 //! The Hamming-weight claim-reduction (stage 7) kernel: a naive member over
 //! the committed chunk domain.
 //!
-//! The summand is
-//! `Σ_i G_i(k) · (γ^{3i} + γ^{3i+1}·eq(r_addr_bool, k) + γ^{3i+2}·eq(r_addr_virt_i, k))`
-//! — reducing each checked one-hot polynomial's Hamming-weight, booleanity,
-//! and virtualization claims to one fresh opening. Each `G_i(k) =
-//! Σ_j eq(r_cycle, j) · ra_i(k, j)` is the cycle fold of the committed one-hot
-//! grid at the shared stage-6b cycle point (the booleanity opening point's
+//! In the base protocol, the summand is
+//! `Σ_i G_i(k) · (γ^{3i} + γ^{3i+1}·eq(r_addr_bool, k) + γ^{3i+2}·eq(r_addr_virt_i, k))`.
+//! The lattice relation keeps those three legs for RAM and uses the
+//! digit-zero-recentered two-leg form for instruction and bytecode RA. Each
+//! `G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)` is the cycle fold of the committed
+//! one-hot grid at the shared stage-6b cycle point (the booleanity opening point's
 //! cycle suffix — every stage-6b member bound the same cycle challenges, so
 //! all three reduced claim families live at that cycle). The eq publics are
 //! one multilinear each over the chunk domain.
@@ -61,7 +61,15 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for ReferenceBac
             .openings(JoltRelationId::HammingWeightClaimReduction)
         {
             let mut table = cycle_fold(witness, opening, dimensions.log_k_chunk, r_cycle)?;
-            if crate::reference::lattice_shape() {
+            if crate::reference::lattice_shape()
+                && matches!(
+                    opening.polynomial_id(),
+                    JoltPolynomialId::Committed(
+                        JoltCommittedPolynomial::InstructionRa(_)
+                            | JoltCommittedPolynomial::BytecodeRa(_)
+                    )
+                )
+            {
                 table[0] = F::zero();
             }
             let _ = opening_tables.insert(opening, Polynomial::new(table));

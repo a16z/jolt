@@ -181,11 +181,6 @@ pub enum SumcheckId {
     /// Lattice/packed mode: the program-image byte reconstruction of the
     /// stage-8 reconstruction phase.
     ProgramImageReconstruction,
-    /// Lattice/packed mode: binds the `Load`/`Store` activation columns at
-    /// the stage-6b cycle point and proves the RAM activation sum Boolean —
-    /// the digit-zero virtualization replacement for `RamHammingBooleanity`
-    /// (`specs/digit-zero-virtualization.md`). Appended for codec stability.
-    RamActivationBooleanity,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

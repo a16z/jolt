@@ -749,6 +749,7 @@ impl ZkBatchOpeningScheme for AkitaNativeBatching {
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
     #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
+    #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
@@ -979,6 +980,7 @@ mod flavor_bench {
         reason = "bench unwraps successful PCS operations"
     )]
     #![expect(clippy::print_stderr, reason = "bench reports timings to stderr")]
+    #![expect(clippy::indexing_slicing, reason = "bench indexes fixture data")]
     #![expect(
         clippy::unimplemented,
         reason = "the bench stand-in exposes only the one-hot polynomial interface"

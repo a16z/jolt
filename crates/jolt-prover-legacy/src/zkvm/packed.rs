@@ -73,11 +73,11 @@ use crate::zkvm::instruction_lookups::ra_virtual::{
     InstructionRaSumcheckParams, InstructionRaSumcheckProver as LookupsRaSumcheckProver,
 };
 use crate::zkvm::packed_witness::{
-    pack_one_hot_columns, FusedIncValue, SparseUnitPolynomial, FUSED_INC_BITS,
+    pack_one_hot_columns, DigitZeroRow, FusedIncValue, SparseUnitPolynomial, FUSED_INC_BITS,
 };
 use crate::zkvm::prover::JoltCpuProver;
-use crate::zkvm::ram::activation_booleanity::{
-    ActivationBooleanitySumcheckParams, ActivationBooleanitySumcheckProver,
+use crate::zkvm::ram::hamming_booleanity::{
+    HammingBooleanitySumcheckParams, HammingBooleanitySumcheckProver,
 };
 use crate::zkvm::ram::populate_memory_states;
 use crate::zkvm::ram::ra_virtual::{RamRaVirtualParams, RamRaVirtualSumcheckProver};
@@ -715,9 +715,9 @@ impl AkitaPackedProver<'_> {
         .expect("Jolt always commits at least one RA polynomial")
     }
 
-    /// Builds the physical prefix-packed `OneHotTrace` polynomial. The
-    /// digit-zero row is omitted; Stage 7 reconstructs it from the column's
-    /// activation (`specs/digit-zero-virtualization.md`).
+    /// Builds the physical prefix-packed `OneHotTrace` polynomial.
+    /// Instruction, bytecode, and increment columns omit digit zero; RAM
+    /// commits every lane (`specs/digit-zero-virtualization.md`).
     #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
     fn assemble_one_hot_trace(
         &self,
@@ -749,6 +749,14 @@ impl AkitaPackedProver<'_> {
             .ids()
             .par_iter()
             .map(|polynomial| {
+                let digit_zero_row = match polynomial {
+                    JoltCommittedPolynomial::InstructionRa(_)
+                    | JoltCommittedPolynomial::BytecodeRa(_)
+                    | JoltCommittedPolynomial::BalancedIncDigit(_)
+                    | JoltCommittedPolynomial::BalancedIncCarry => DigitZeroRow::Virtualized,
+                    JoltCommittedPolynomial::RamRa(_) => DigitZeroRow::Committed,
+                    _ => unreachable!("OneHotTrace plan contains only canonical columns"),
+                };
                 let indices = cycle_data
                     .iter()
                     .zip(fused_inc)
@@ -775,7 +783,7 @@ impl AkitaPackedProver<'_> {
                         })
                     })
                     .collect::<Vec<_>>();
-                indices
+                (indices, digit_zero_row)
             })
             .collect();
         pack_one_hot_columns(k, plan.packing().slot_capacity(), columns)
@@ -920,8 +928,8 @@ impl AkitaPackedProver<'_> {
         AkitaNoCurve,
         AkitaTranscript,
     > {
-        let ram_activation_booleanity_params =
-            ActivationBooleanitySumcheckParams::new(&self.opening_accumulator);
+        let ram_hamming_booleanity_params =
+            HammingBooleanitySumcheckParams::new(&self.opening_accumulator);
         let ram_ra_virtual_params = RamRaVirtualParams::new(
             self.trace.len(),
             &self.one_hot_params,
@@ -949,10 +957,8 @@ impl AkitaPackedProver<'_> {
             booleanity_cycle_input,
             &self.opening_accumulator,
         );
-        let mut ram_activation_booleanity = ActivationBooleanitySumcheckProver::initialize(
-            ram_activation_booleanity_params,
-            &self.trace,
-        );
+        let mut ram_hamming_booleanity =
+            HammingBooleanitySumcheckProver::initialize(ram_hamming_booleanity_params, &self.trace);
         let mut ram_ra_virtual = RamRaVirtualSumcheckProver::initialize(
             ram_ra_virtual_params,
             &self.trace,
@@ -1077,7 +1083,7 @@ impl AkitaPackedProver<'_> {
         > = vec![
             &mut bytecode_read_raf,
             &mut booleanity,
-            &mut ram_activation_booleanity,
+            &mut ram_hamming_booleanity,
             &mut ram_ra_virtual,
             &mut lookups_ra_virtual,
         ];

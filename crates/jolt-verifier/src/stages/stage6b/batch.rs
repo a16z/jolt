@@ -42,9 +42,6 @@ use super::instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
 };
 use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
-#[cfg(feature = "akita")]
-use super::ram_activation_booleanity::RamActivationBooleanity;
-#[cfg(not(feature = "akita"))]
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
@@ -195,7 +192,7 @@ impl<F: Field> Stage6bSumchecks<F> {
 
         Self::build_from_parts(Stage6bBuildParts {
             formula_dimensions,
-            ram_log_k: checked.ram_K.ilog2() as usize,
+            ram_log_k: crate::num::ilog2(checked.ram_K),
             committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
             precommitted: &checked.precommitted,
             entry_bytecode_index,
@@ -267,17 +264,29 @@ impl<F: Field> Stage6bSumchecks<F> {
             stage4_points,
             stage5_points,
         )?;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "bytecode_stage_points validated both register points against REGISTER_ADDRESS_BITS via stage6_checked_split"
+        )]
         let register_read_write_address =
             &stage_points.register_read_write_point[..REGISTER_ADDRESS_BITS];
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "bytecode_stage_points validated both register points against REGISTER_ADDRESS_BITS via stage6_checked_split"
+        )]
         let register_val_evaluation_address =
             &stage_points.register_val_evaluation_point[..REGISTER_ADDRESS_BITS];
         let ram_reduced = stage5_points.ram_reduced_opening_point();
-        if ram_reduced.len() != log_k + log_t {
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "log_k and log_t are ilog2 results (< 64); the sum cannot overflow usize"
+        )]
+        let ram_reduced_len = log_k + log_t;
+        if ram_reduced.len() != ram_reduced_len {
             return Err(VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::RamRaVirtualization,
                 reason: format!(
-                    "Stage 6 RAM RA reduction opening point length mismatch: expected {}, got {}",
-                    log_k + log_t,
+                    "Stage 6 RAM RA reduction opening point length mismatch: expected {ram_reduced_len}, got {}",
                     ram_reduced.len()
                 ),
             });
@@ -396,12 +405,8 @@ impl<F: Field> Stage6bSumchecks<F> {
             carried.booleanity.reference_address.clone(),
             stage5_instruction_cycle.iter().rev().copied().collect(),
         );
-        #[cfg(not(feature = "akita"))]
         let ram_hamming_booleanity =
             RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding);
-        #[cfg(feature = "akita")]
-        let ram_activation_booleanity =
-            RamActivationBooleanity::new(trace_dimensions, stage1_cycle_binding);
         let ram_ra_virtualization = RamRaVirtualization::new(
             formula_dimensions.ram_ra_virtualization,
             ram_reduced_address.to_vec(),
@@ -437,10 +442,7 @@ impl<F: Field> Stage6bSumchecks<F> {
         Ok(Self {
             bytecode_read_raf,
             booleanity,
-            #[cfg(not(feature = "akita"))]
             ram_hamming_booleanity,
-            #[cfg(feature = "akita")]
-            ram_activation_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
             #[cfg(not(feature = "akita"))]
@@ -470,10 +472,7 @@ impl<F: Field> Stage6bSumchecks<F> {
             booleanity: BooleanityCyclePhaseChallenges {
                 gamma: carried.booleanity.gamma,
             },
-            #[cfg(not(feature = "akita"))]
             ram_hamming_booleanity: NoChallenges::default(),
-            #[cfg(feature = "akita")]
-            ram_activation_booleanity: NoChallenges::default(),
             ram_ra_virtualization: NoChallenges::default(),
             instruction_ra_virtualization: InstructionRaVirtualizationChallenges {
                 gamma: draws.instruction_ra_gamma,

@@ -179,6 +179,8 @@ struct PackedTraceRows {
     num_rows: usize,
     num_columns: usize,
     lanes: Vec<u8>,
+    ram_active_rows: Vec<u64>,
+    ram_digit_zero_mask: u64,
 }
 
 impl jolt_akita::TraceOneHotRows for PackedTraceRows {
@@ -200,13 +202,30 @@ impl jolt_akita::TraceOneHotRows for PackedTraceRows {
         let start = row_start * self.num_columns;
         hot_lanes.copy_from_slice(&self.lanes[start..start + hot_lanes.len()]);
     }
+
+    fn committed_digit_zero_mask(&self, row: usize) -> u64 {
+        let active = self.ram_active_rows[row / u64::BITS as usize]
+            & (1u64 << (row % u64::BITS as usize))
+            != 0;
+        if active {
+            self.ram_digit_zero_mask
+        } else {
+            0
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TraceLaneStatus {
+    bytecode_valid: bool,
+    ram_active: bool,
 }
 
 fn fill_trace_lanes(
     row: OneHotTraceSourceRow,
     columns: &[OneHotTraceColumn],
     lanes: &mut [u8],
-) -> bool {
+) -> TraceLaneStatus {
     debug_assert_eq!(columns.len(), lanes.len());
     let mut valid = true;
     for (column, lane) in columns.iter().zip(lanes) {
@@ -229,7 +248,10 @@ fn fill_trace_lanes(
         debug_assert!(hot <= u8::MAX as usize);
         *lane = hot as u8;
     }
-    valid
+    TraceLaneStatus {
+        bytecode_valid: valid,
+        ram_active: row.ram_address.0.is_some(),
+    }
 }
 
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
@@ -243,6 +265,11 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
 ) -> Result<std::sync::Arc<dyn jolt_akita::TraceOneHotRows>, ProverError<F>> {
     let num_rows = 1usize << log_t;
     let num_columns = plan.packing().ids().len();
+    let ram_digit_zero_mask = plan
+        .ranges()
+        .ram
+        .clone()
+        .fold(0u64, |mask, column| mask | (1u64 << column));
     let mut columns = Vec::with_capacity(num_columns);
     for polynomial in plan.packing().ids() {
         match polynomial {
@@ -278,25 +305,36 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
     }
 
     let mut lanes = jolt_utils::unsafe_allocate_zero_vec(num_rows * num_columns);
+    let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
     #[cfg(feature = "parallel")]
     if let Some(access) = witness.random_access() {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
             let bytecode_rows_valid = std::sync::atomic::AtomicBool::new(true);
             lanes
-                .par_chunks_exact_mut(num_columns)
+                .par_chunks_mut(num_columns * u64::BITS as usize)
+                .zip(ram_active_rows.par_iter_mut())
                 .enumerate()
-                .for_each(|(row_index, row_lanes)| {
-                    match access.window::<OneHotTraceSourceRow>(row_index) {
-                        Ok(row) => {
-                            if !fill_trace_lanes(row, &columns, row_lanes) {
-                                bytecode_rows_valid
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                .for_each(|(word_index, (word_lanes, ram_active_word))| {
+                    for (row_offset, row_lanes) in
+                        word_lanes.chunks_exact_mut(num_columns).enumerate()
+                    {
+                        let row_index = word_index * u64::BITS as usize + row_offset;
+                        match access.window::<OneHotTraceSourceRow>(row_index) {
+                            Ok(row) => {
+                                let status = fill_trace_lanes(row, &columns, row_lanes);
+                                if !status.bytecode_valid {
+                                    bytecode_rows_valid
+                                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                if status.ram_active {
+                                    *ram_active_word |= 1u64 << row_offset;
+                                }
                             }
-                        }
-                        Err(error) => {
-                            if let Ok(mut guard) = extraction_error.try_lock() {
-                                let _ = guard.get_or_insert(error);
+                            Err(error) => {
+                                if let Ok(mut guard) = extraction_error.try_lock() {
+                                    let _ = guard.get_or_insert(error);
+                                }
                             }
                         }
                     }
@@ -314,22 +352,35 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
                 num_rows,
                 num_columns,
                 lanes,
+                ram_active_rows,
+                ram_digit_zero_mask,
             }));
         }
     }
 
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
-    for (row, row_lanes) in rows.into_iter().zip(lanes.chunks_exact_mut(num_columns)) {
-        if !fill_trace_lanes(row, &columns, row_lanes) {
+    for (row_index, (row, row_lanes)) in rows
+        .into_iter()
+        .zip(lanes.chunks_exact_mut(num_columns))
+        .enumerate()
+    {
+        let status = fill_trace_lanes(row, &columns, row_lanes);
+        if !status.bytecode_valid {
             return Err(ProverError::InvariantViolation {
                 reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
             });
+        }
+        if status.ram_active {
+            ram_active_rows[row_index / u64::BITS as usize] |=
+                1u64 << (row_index % u64::BITS as usize);
         }
     }
     Ok(std::sync::Arc::new(PackedTraceRows {
         num_rows,
         num_columns,
         lanes,
+        ram_active_rows,
+        ram_digit_zero_mask,
     }))
 }
 

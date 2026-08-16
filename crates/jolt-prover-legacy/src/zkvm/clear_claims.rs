@@ -650,7 +650,7 @@ mod packed {
     use jolt_verifier::proof::ClearProofClaims;
     use jolt_verifier::stages::stage1::outputs::Stage1OutputClaims;
     use jolt_verifier::stages::stage6b::outputs::{
-        RamActivationBooleanityOutputClaims, Stage6bOutputClaims,
+        RamHammingBooleanityOutputClaims, Stage6bOutputClaims,
     };
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
@@ -778,9 +778,8 @@ mod packed {
                 balanced_inc_digits,
                 balanced_inc_carry,
             },
-            ram_activation_booleanity: RamActivationBooleanityOutputClaims {
-                load: claims.require(ram::ram_activation_load())?,
-                store: claims.require(ram::ram_activation_store())?,
+            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+                ram_hamming_weight: claims.require(ram::ram_hamming_weight())?,
             },
             ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
             instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {

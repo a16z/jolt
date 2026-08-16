@@ -39,7 +39,8 @@ pub const MIN_AUXILIARY_PACKED_NUM_VARS: usize = 14;
 
 /// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
 /// `Ra` families, balanced increment chunks, and signed carry as semantic
-/// columns of one packed polynomial with the public digit-zero row omitted.
+/// columns of one packed polynomial. Instruction, bytecode, and increment
+/// columns omit digit zero; RAM commits every lane.
 /// Advice byte columns are their own commitment objects
 /// ([`advice_bytes_packing_plan`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

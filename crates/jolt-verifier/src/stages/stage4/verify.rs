@@ -85,21 +85,33 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
-    let log_k = checked.ram_K.ilog2() as usize;
+    let log_t = crate::num::ilog2(checked.trace_length);
+    let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);
     let register_dimensions = proof
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
+    // Eager: the proof-supplied phase split feeds round-count subtractions
+    // (`phase3_cycle_rounds` etc.) before any lazy point-derivation check.
+    register_dimensions
+        .validate_phase_split()
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RegistersReadWriteChecking,
+            reason: error.to_string(),
+        })?;
 
     let ram_read_write_opening_point = stage2.batch_output_points().ram_read_write_point();
     let ram_output_check_opening_point = stage2.batch_output_points().ram_output_check_point();
-    if ram_read_write_opening_point.len() != log_k + log_t {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "log_k and log_t are ilog2 results (< 64); the sum cannot overflow usize"
+    )]
+    let ram_read_write_len = log_k + log_t;
+    if ram_read_write_opening_point.len() != ram_read_write_len {
         return Err(VerifierError::StageClaimPublicInputFailed {
             stage: JoltRelationId::RamValCheck,
             reason: format!(
-                "RAM read-write opening point length mismatch: expected {}, got {}",
-                log_k + log_t,
+                "RAM read-write opening point length mismatch: expected {ram_read_write_len}, got {}",
                 ram_read_write_opening_point.len()
             ),
         });
@@ -228,18 +240,7 @@ where
         stage: JoltRelationId::RamValCheck,
         reason: error.to_string(),
     })?;
-    for segment in &public_initial_ram.segments {
-        let end = segment.start_index + segment.words.len() as u128;
-        if end > checked.ram_K as u128 {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::RamValCheck,
-                reason: format!(
-                    "public initial RAM segment [{}, {}) exceeds RAM domain {}",
-                    segment.start_index, end, checked.ram_K
-                ),
-            });
-        }
-    }
+    validate_segments_in_domain(&public_initial_ram.segments, checked.ram_K)?;
 
     Ok(sparse_segments_mle_msb(
         public_initial_ram
@@ -248,4 +249,64 @@ where
             .map(|segment| (segment.start_index, segment.words.as_slice())),
         r_address,
     ))
+}
+
+/// Rejects any public segment whose word range leaves `[0, ram_K)`. The
+/// `checked_add` is load-bearing: a `start_index` near `u128::MAX` would
+/// otherwise wrap `start + len` back into the domain and bypass the bound.
+#[expect(non_snake_case, reason = "ram_K is the codebase's math-variable name")]
+fn validate_segments_in_domain(
+    segments: &[jolt_program::preprocess::PublicMemorySegment],
+    ram_K: usize,
+) -> Result<(), VerifierError> {
+    for segment in segments {
+        let words_len = u128::from(crate::num::u64_from_usize(segment.words.len()));
+        let in_domain = segment
+            .start_index
+            .checked_add(words_len)
+            .is_some_and(|end| end <= u128::from(crate::num::u64_from_usize(ram_K)));
+        if !in_domain {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::RamValCheck,
+                reason: format!(
+                    "public initial RAM segment [{}, ..+{words_len}) exceeds RAM domain {ram_K}",
+                    segment.start_index
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_program::preprocess::PublicMemorySegment;
+
+    use super::validate_segments_in_domain;
+
+    /// Regression: `start + len` computed with wrapping arithmetic would fold
+    /// a `start_index` near `u128::MAX` back into `[0, ram_K)` and admit an
+    /// out-of-domain segment; the checked form must reject it.
+    #[test]
+    #[expect(non_snake_case, reason = "ram_K is the codebase's math-variable name")]
+    fn segment_domain_check_rejects_wrapping_start_index() {
+        let ram_K = 65536;
+        let in_domain = PublicMemorySegment {
+            start_index: 65528,
+            words: vec![0; 8],
+        };
+        assert!(validate_segments_in_domain(std::slice::from_ref(&in_domain), ram_K).is_ok());
+
+        let wrapping = PublicMemorySegment {
+            start_index: u128::MAX,
+            words: vec![0; 8],
+        };
+        assert!(validate_segments_in_domain(&[in_domain, wrapping], ram_K).is_err());
+
+        let past_end = PublicMemorySegment {
+            start_index: 65536,
+            words: vec![0; 1],
+        };
+        assert!(validate_segments_in_domain(&[past_end], ram_K).is_err());
+    }
 }

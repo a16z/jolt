@@ -129,9 +129,11 @@ where
     };
 
     let challenges = sumchecks.draw_challenges(transcript)?;
+    let mut scheduler = backend.base.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        scheduler.as_mut(),
         witness,
         &input_values,
         &input_points,

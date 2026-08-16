@@ -262,7 +262,7 @@ mod muldiv {
         verify(&proof).expect("packed verifier should accept the packed proof");
 
         // Live tampers on the fused-inc pipeline's claim wires: the fused
-        // increment's reduced claim and the hamming-reduction chunk/msb
+        // increment's reduced claim and the hamming-reduction digit/carry
         // finals each participate in a batched output fold — an offset on
         // any of them must be rejected.
         let tamper = |mutate: &dyn Fn(&mut ClearProofClaims<AkitaField>)| {
@@ -286,17 +286,17 @@ mod muldiv {
             verify(&tamper(&|claims| claims
                 .stage7
                 .hamming_weight_claim_reduction
-                .unsigned_inc_chunks[0] += one))
+                .balanced_inc_digits[0] += one))
             .is_err(),
-            "tampered unsigned-inc chunk final must be rejected"
+            "tampered balanced-inc digit final must be rejected"
         );
         assert!(
             verify(&tamper(&|claims| claims
                 .stage7
                 .hamming_weight_claim_reduction
-                .unsigned_inc_msb += one))
+                .balanced_inc_carry += one))
             .is_err(),
-            "tampered unsigned-inc msb final must be rejected"
+            "tampered balanced-inc carry final must be rejected"
         );
     }
 

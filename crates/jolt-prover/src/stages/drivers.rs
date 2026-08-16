@@ -103,9 +103,6 @@ mod stage6b {
         Stage6bChallenges, Stage6bInputClaims, Stage6bInputPoints, Stage6bOutputClaims,
         Stage6bOutputPoints, Stage6bSumchecks,
     };
-    #[cfg(feature = "akita")]
-    use jolt_verifier::stages::stage6b::ram_activation_booleanity::RamActivationBooleanity;
-    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
     use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
     use jolt_verifier::stages::stage6b::stage6b_opening_values;
@@ -180,7 +177,8 @@ mod twin_tests {
     };
     use jolt_poly::UnivariatePoly;
     use jolt_sumcheck::{
-        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, SumcheckError,
+        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, RoundScheduler,
+        SequentialRounds, SumcheckError,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
@@ -763,6 +761,7 @@ mod twin_tests {
             .prove(
                 &kernels,
                 &mut session,
+                &mut SequentialRounds,
                 &NoWitness,
                 &inputs,
                 &input_points,
@@ -867,6 +866,7 @@ mod twin_tests {
             .prove(
                 &kernels,
                 &mut session,
+                &mut SequentialRounds,
                 &NoWitness,
                 &inputs,
                 &input_points,
@@ -929,6 +929,7 @@ mod twin_tests {
         let result = sumchecks.prove(
             &kernels,
             &mut session,
+            &mut SequentialRounds,
             &NoWitness,
             &inputs,
             &input_points,
@@ -982,6 +983,7 @@ mod twin_tests {
         sumchecks: &ToyDriverSumchecks<Fr>,
         kernels: &ToyKernels,
         session: &mut ProofSession,
+        scheduler: &mut dyn RoundScheduler<Fr>,
         inputs: &ToyDriverInputClaims<Fr>,
         input_points: &ToyDriverInputPoints<Fr>,
         challenges: &ToyDriverChallenges<Fr>,
@@ -996,6 +998,7 @@ mod twin_tests {
         sumchecks.prove(
             kernels,
             session,
+            scheduler,
             &NoWitness,
             inputs,
             input_points,

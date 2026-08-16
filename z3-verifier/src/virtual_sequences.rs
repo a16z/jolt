@@ -55,6 +55,7 @@ use tracer::{
         virtual_change_divisor_w::VirtualChangeDivisorW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
+        virtual_muliw::VirtualMULIW,
         virtual_pow2::VirtualPow2,
         virtual_pow2_w::VirtualPow2W,
         virtual_shift_right_bitmask::VirtualShiftRightBitmask,
@@ -74,8 +75,8 @@ use z3::{
     Params, SatResult, Solver,
 };
 
-const _Z3_TIMEOUT_MS: u32 = 30_000;
-const Z3_RANDOM_SEED: u32 = 42;
+use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
+
 const DEFAULT_BV_BITS: u32 = 64;
 const BV_BITS_ENV: &str = "Z3_VERIFIER_BV_BITS";
 
@@ -263,6 +264,26 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 - rs2));
         }
+        Instruction::ADDW(ADDW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 + rs2)));
+        }
+        Instruction::ADDIW(ADDIW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 + imm)));
+        }
+        Instruction::SUBW(SUBW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 - rs2)));
+        }
+        Instruction::MULW(MULW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 * rs2)));
+        }
         Instruction::VirtualAssertEQ(VirtualAssertEQ { operands, .. }) => {
             let val1 = cpu.x[operands.rs1 as usize].clone();
             let val2 = cpu.x[operands.rs2 as usize].clone();
@@ -397,6 +418,11 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let imm = scale_imm_u64(operands.imm, cpu);
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 * imm));
         }
+        Instruction::VirtualMULIW(VirtualMULIW { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = scale_imm_u64(operands.imm, cpu);
+            cpu.x[operands.rd as usize] = cpu.sign_ext_word(&cpu.word_extract(&(rs1 * imm)));
+        }
         Instruction::VirtualSRLI(VirtualSRLI { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             // Bitmask immediate: compute trailing_zeros, then scale the shift amount
@@ -454,7 +480,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     RISCVCycle<I>: Into<Cycle>,
 {
     let mut solver_params = Params::default();
-    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();
@@ -519,7 +545,7 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
 
 fn test_consistency(instr: &Instruction) {
     let mut solver_params = Params::default();
-    //solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
+    solver_params.set_u32("timeout", Z3_TIMEOUT_MS);
     solver_params.set_u32("random_seed", Z3_RANDOM_SEED);
 
     let mut solver = Solver::new();

@@ -110,6 +110,7 @@ where
         Self {
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
+                round_scheduler: Box::new(ReferenceBackend),
                 spartan_outer_uniskip: Box::new(ReferenceBackend),
                 spartan_outer_remainder: Box::new(jolt_kernels::reference::spartan_outer::ReferenceOuterRemainder),
                 spartan_product_uniskip: Box::new(ReferenceBackend),
@@ -132,7 +133,6 @@ where
                 bytecode_read_raf_cycle: Box::new(ReferenceBackend),
                 booleanity_cycle: Box::new(ReferenceBackend),
                 ram_hamming_booleanity: Box::new(ReferenceBackend),
-                ram_activation_booleanity: Box::new(ReferenceBackend),
                 ram_ra_virtualization: Box::new(ReferenceBackend),
                 instruction_ra_virtualization: Box::new(ReferenceBackend),
                 inc_claim_reduction: Box::new(ReferenceBackend),
