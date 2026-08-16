@@ -46,12 +46,7 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> HammingWeightClaimReductionInputClaims<F> {
     HammingWeightClaimReductionInputClaims {
-        #[cfg(not(feature = "akita"))]
         ram_hamming_weight: cycle_phase.ram_hamming_booleanity.ram_hamming_weight,
-        #[cfg(feature = "akita")]
-        ram_activation_load: cycle_phase.ram_activation_booleanity.load,
-        #[cfg(feature = "akita")]
-        ram_activation_store: cycle_phase.ram_activation_booleanity.store,
         instruction_booleanity: cycle_phase.booleanity.instruction_ra.clone(),
         bytecode_booleanity: cycle_phase.booleanity.bytecode_ra.clone(),
         ram_booleanity: cycle_phase.booleanity.ram_ra.clone(),

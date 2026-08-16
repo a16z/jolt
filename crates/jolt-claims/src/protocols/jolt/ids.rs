@@ -42,11 +42,6 @@ pub enum JoltRelationId {
     TrustedAdviceReconstruction,
     ProgramImageReconstruction,
     BytecodeChunkReconstruction,
-    /// Packed path: binds the `Load`/`Store` activation columns at the
-    /// stage-6b cycle point and proves the activation sum Boolean — the
-    /// digit-zero virtualization replacement for `RamHammingBooleanity`.
-    /// Appended for codec stability.
-    RamActivationBooleanity,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -90,11 +85,6 @@ pub enum RamRaVirtualizationPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RamHammingBooleanityPublic {
-    EqCycle,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum RamActivationBooleanityPublic {
     EqCycle,
 }
 
@@ -613,7 +603,6 @@ pub enum JoltDerivedId {
     TrustedAdviceReconstruction(TrustedAdviceReconstructionPublic),
     ProgramImageReconstruction(ProgramImageReconstructionPublic),
     BytecodeChunkReconstruction(BytecodeChunkReconstructionPublic),
-    RamActivationBooleanity(RamActivationBooleanityPublic),
     /// Test-only derived id for toy relations that define their own
     /// `derive_output_term`. Gated on `any(test, feature = "test-utils")`
     /// rather than `test` alone because `cfg(test)` is per-crate: a downstream

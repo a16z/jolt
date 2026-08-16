@@ -42,9 +42,6 @@ use super::instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
 };
 use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
-#[cfg(feature = "akita")]
-use super::ram_activation_booleanity::RamActivationBooleanity;
-#[cfg(not(feature = "akita"))]
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
@@ -396,12 +393,8 @@ impl<F: Field> Stage6bSumchecks<F> {
             carried.booleanity.reference_address.clone(),
             stage5_instruction_cycle.iter().rev().copied().collect(),
         );
-        #[cfg(not(feature = "akita"))]
         let ram_hamming_booleanity =
             RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding);
-        #[cfg(feature = "akita")]
-        let ram_activation_booleanity =
-            RamActivationBooleanity::new(trace_dimensions, stage1_cycle_binding);
         let ram_ra_virtualization = RamRaVirtualization::new(
             formula_dimensions.ram_ra_virtualization,
             ram_reduced_address.to_vec(),
@@ -437,10 +430,7 @@ impl<F: Field> Stage6bSumchecks<F> {
         Ok(Self {
             bytecode_read_raf,
             booleanity,
-            #[cfg(not(feature = "akita"))]
             ram_hamming_booleanity,
-            #[cfg(feature = "akita")]
-            ram_activation_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
             #[cfg(not(feature = "akita"))]
@@ -470,10 +460,7 @@ impl<F: Field> Stage6bSumchecks<F> {
             booleanity: BooleanityCyclePhaseChallenges {
                 gamma: carried.booleanity.gamma,
             },
-            #[cfg(not(feature = "akita"))]
             ram_hamming_booleanity: NoChallenges::default(),
-            #[cfg(feature = "akita")]
-            ram_activation_booleanity: NoChallenges::default(),
             ram_ra_virtualization: NoChallenges::default(),
             instruction_ra_virtualization: InstructionRaVirtualizationChallenges {
                 gamma: draws.instruction_ra_gamma,

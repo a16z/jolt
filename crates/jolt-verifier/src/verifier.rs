@@ -1539,14 +1539,8 @@ mod tests {
                         balanced_inc_digits: Vec::new(),
                         balanced_inc_carry: zero,
                     },
-                #[cfg(not(feature = "akita"))]
                 ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
-                },
-                #[cfg(feature = "akita")]
-                ram_activation_booleanity: stage6b::outputs::RamActivationBooleanityOutputClaims {
-                    load: zero,
-                    store: zero,
                 },
                 ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
                     ram_ra: Vec::new(),

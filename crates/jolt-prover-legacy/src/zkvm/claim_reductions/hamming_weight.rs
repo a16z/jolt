@@ -39,25 +39,26 @@
 //! `RamHammingWeight` claim for RAM — the γ^{3i} leg is the anchor tying that
 //! claim to the committed column.
 //!
-//! ## Lattice mode: digit-zero claim reduction (2 legs per ra_i)
+//! ## Lattice mode: digit-zero virtualization for public unit activation
 //!
-//! The commitment omits the digit-zero row, defined as
-//! `ra_i(0, t) := M_µ(t) − Σ_{k≠0} ra_i(k, t)` for the family's activation
-//! `M_µ` (`specs/digit-zero-virtualization.md`; `M_RAM = Load + Store`, the
-//! `RamActivationBooleanity` openings). The weight identity holds by
-//! construction, so there is no HammingWeight leg; each remaining leg's
-//! digit-zero baseline `w(0)·M̃_µ` folds into the input claim and the sumcheck
-//! runs over the committed rows alone with coefficients `w(k) − w(0)`:
+//! Instruction and bytecode use the note's public `M_mu = 1` case and omit the
+//! digit-zero row, `ra_i(0, j) := 1 - sum_{k_i != 0} ra_i(k_i, j)`. Their
+//! Hamming-weight identity holds by construction. Each remaining leg follows
+//! the reconstruction coefficient
+//! `eq(r_address, k_i) - eq(r_address, 0)`:
 //!
 //! ```text
 //!   Σ_k Σ_i G_i(k) · [ γ^{2i}·(eq(r_addr_bool, k) − eq(r_addr_bool, 0))
 //!                    + γ^{2i+1}·(eq(r_addr_virt_i, k) − eq(r_addr_virt_i, 0)) ]
-//!   = Σ_i [ γ^{2i}·(claim_bool_i − eq(r_addr_bool, 0)·M̃_µ)
-//!         + γ^{2i+1}·(claim_virt_i − eq(r_addr_virt_i, 0)·M̃_µ) ]
+//!   = Σ_i [ γ^{2i}·(claim_bool_i − eq(r_addr_bool, 0))
+//!         + γ^{2i+1}·(claim_virt_i − eq(r_addr_virt_i, 0)) ]
 //! ```
 //!
-//! plus one Booleanity leg per balanced-increment column (activation 1) and
-//! the fused-increment decode leg, at consecutive γ powers after the RA legs.
+//! Balanced-increment columns use the same public-unit reconstruction, with one
+//! Booleanity leg per column and the fused-increment decode leg. RAM is outside
+//! this optimization and keeps its fully committed column plus the base three
+//! legs (Hamming, Booleanity, virtualization). See
+//! `specs/digit-zero-virtualization.md`.
 
 use allocative::Allocative;
 #[cfg(feature = "prover")]
@@ -97,7 +98,6 @@ use crate::transcripts::Transcript;
 use crate::zkvm::prover::JoltProverPreprocessing;
 use crate::zkvm::{
     config::OneHotParams,
-    instruction::CircuitFlags,
     witness::{CommittedPolynomial, VirtualPolynomial},
 };
 
@@ -116,10 +116,9 @@ const DEGREE_BOUND: usize = 2;
 /// After this sumcheck, each ra_i has a single opening at (ρ, r_cycle_stage6).
 #[derive(Allocative, Clone)]
 pub struct HammingWeightClaimReductionParams<F: JoltField> {
-    /// Batching powers γ^0, γ^1, …. Base layout: 3 per ra polynomial
-    /// (γ^{3i} = HW, γ^{3i+1} = Bool, γ^{3i+2} = Virt). Digit-zero (lattice)
-    /// layout: 2 per ra polynomial (γ^{2i} = Bool, γ^{2i+1} = Virt), then one
-    /// per increment column, then the decode power.
+    /// Batching powers γ^0, γ^1, …. Base layout uses three per RA polynomial.
+    /// Lattice layout uses two for instruction/bytecode, three for RAM, then
+    /// one per increment column and the decode power.
     pub gamma_powers: Vec<F>,
     /// Shared r_cycle from Booleanity (all ra claims share this)
     pub r_cycle: Vec<F::Challenge>,
@@ -128,10 +127,8 @@ pub struct HammingWeightClaimReductionParams<F: JoltField> {
     /// r_address values from Virtualization/ReadRaf sumcheck for each ra_i (N total)
     /// Each ra_i has different r_addr because chunks are bound sequentially
     pub r_addr_virt: Vec<Vec<F::Challenge>>,
-    /// Per-family activation `M̃_µ(r_cycle)`: 1 for instruction/bytecode; for
-    /// RAM, base mode uses the `RamHammingWeight` claim (also the HammingWeight
-    /// leg's expected sum) and digit-zero mode uses `Load + Store` (the
-    /// `RamActivationBooleanity` openings).
+    /// Per-family activation: 1 for instruction/bytecode and the
+    /// `RamHammingWeight` claim for RAM.
     pub activations: Vec<F>,
     /// Booleanity claims for each ra_i
     pub claims_bool: Vec<F>,
@@ -147,12 +144,9 @@ pub struct HammingWeightClaimReductionParams<F: JoltField> {
     pub fused_inc_claim: Option<F>,
     /// Place weights for the increment columns, chunks followed by `2^64` for carry.
     pub inc_weights: Vec<F>,
-    /// Lattice-only: the digit-zero row is omitted from the commitment and
-    /// reconstructed from the activation, so each leg's digit-zero baseline
-    /// `w(0)·M̃_µ` is folded into the input claim and there is no HammingWeight
-    /// leg (`Σ_k ra_i(k,t) = M_µ(t)` holds by construction —
-    /// `specs/digit-zero-virtualization.md`). Base mode keeps the plain form.
-    pub digit_zero: bool,
+    /// Enables digit-zero virtualization for the constant-activation RA
+    /// families. RAM remains fully committed.
+    pub digit_zero_virtualization: bool,
     /// Lattice-only `eq(0, r_addr_bool)` — the booleanity legs' `w(0)`.
     pub eq_bool_at_digit_zero: F,
     /// Lattice-only `eq(0, r_addr_virt[i])` per polynomial — the
@@ -181,17 +175,21 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
                 SumcheckId::RamHammingBooleanity,
             )
             .1;
-        Self::build(one_hot_params, accumulator, transcript, ram_activation, 3)
+        Self::build(
+            one_hot_params,
+            accumulator,
+            transcript,
+            ram_activation,
+            false,
+        )
     }
 
-    /// Shared constructor body; `powers_per_ra` is 3 in base mode (HW, Bool,
-    /// Virt) and 2 in digit-zero mode (Bool, Virt — no HammingWeight leg).
     fn build(
         one_hot_params: &OneHotParams,
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
         ram_activation: F,
-        powers_per_ra: usize,
+        digit_zero_virtualization: bool,
     ) -> Self {
         let instruction_d = one_hot_params.instruction_d;
         let bytecode_d = one_hot_params.bytecode_d;
@@ -213,9 +211,24 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
 
         // Sample batching challenge γ and compute powers
         let gamma: F = transcript.challenge_scalar();
-        let mut gamma_powers = Vec::with_capacity(powers_per_ra * N);
+        let ra_terms: usize = polynomial_types
+            .iter()
+            .map(|polynomial| {
+                if digit_zero_virtualization
+                    && matches!(
+                        polynomial,
+                        CommittedPolynomial::InstructionRa(_) | CommittedPolynomial::BytecodeRa(_)
+                    )
+                {
+                    2
+                } else {
+                    3
+                }
+            })
+            .sum();
+        let mut gamma_powers = Vec::with_capacity(ra_terms);
         let mut power = F::one();
-        for _ in 0..(powers_per_ra * N) {
+        for _ in 0..ra_terms {
             gamma_powers.push(power);
             power *= gamma;
         }
@@ -280,7 +293,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
             inc_booleanity_claims: Vec::new(),
             fused_inc_claim: None,
             inc_weights: Vec::new(),
-            digit_zero: false,
+            digit_zero_virtualization,
             eq_bool_at_digit_zero: F::zero(),
             eq_virt_at_digit_zero: Vec::new(),
         }
@@ -291,23 +304,19 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         accumulator: &dyn OpeningAccumulator<F>,
         transcript: &mut impl Transcript,
     ) -> Self {
-        // The RAM activation is `M_RAM = Load + Store` — the two flag openings
-        // the `RamActivationBooleanity` member produced at the stage-6b cycle
-        // point (`specs/digit-zero-virtualization.md`).
-        let load = accumulator
+        let ram_hamming_weight = accumulator
             .get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(CircuitFlags::Load),
-                SumcheckId::RamActivationBooleanity,
+                VirtualPolynomial::RamHammingWeight,
+                SumcheckId::RamHammingBooleanity,
             )
             .1;
-        let store = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(CircuitFlags::Store),
-                SumcheckId::RamActivationBooleanity,
-            )
-            .1;
-        let mut params = Self::build(one_hot_params, accumulator, transcript, load + store, 2);
-        params.digit_zero = true;
+        let mut params = Self::build(
+            one_hot_params,
+            accumulator,
+            transcript,
+            ram_hamming_weight,
+            true,
+        );
         params.eq_bool_at_digit_zero = EqPolynomial::<F>::evals(&params.r_addr_bool)[0];
         params.eq_virt_at_digit_zero = params
             .r_addr_virt
@@ -349,8 +358,7 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         // Extend to the digit-zero layout: one Booleanity power per increment
         // column, then the decode power.
         let gamma = params.gamma_powers[1];
-        let total_powers =
-            2 * params.polynomial_types.len() + params.inc_booleanity_claims.len() + 1;
+        let total_powers = params.ra_terms() + params.inc_booleanity_claims.len() + 1;
         let mut power = params.gamma_powers.last().copied().unwrap_or(F::one()) * gamma;
         while params.gamma_powers.len() < total_powers {
             params.gamma_powers.push(power);
@@ -358,36 +366,52 @@ impl<F: JoltField> HammingWeightClaimReductionParams<F> {
         }
         params
     }
+
+    fn virtualizes_digit_zero(&self, polynomial: CommittedPolynomial) -> bool {
+        self.digit_zero_virtualization
+            && matches!(
+                polynomial,
+                CommittedPolynomial::InstructionRa(_) | CommittedPolynomial::BytecodeRa(_)
+            )
+    }
+
+    fn ra_terms(&self) -> usize {
+        self.polynomial_types
+            .iter()
+            .map(|polynomial| {
+                if self.virtualizes_digit_zero(*polynomial) {
+                    2
+                } else {
+                    3
+                }
+            })
+            .sum()
+    }
 }
 
 impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionParams<F> {
     fn input_claim(&self, _accumulator: &dyn OpeningAccumulator<F>) -> F {
-        // Base: Σ_i (γ^{3i}·A_i + γ^{3i+1}·claim_bool_i + γ^{3i+2}·claim_virt_i).
-        // Digit-zero (lattice): no HammingWeight leg — each remaining leg's
-        // digit-zero baseline `w(0)·M̃_µ` is folded in:
-        // γ^{2i}·(claim_bool_i − eq(0,r_bool)·M̃_µ) +
-        // γ^{2i+1}·(claim_virt_i − eq(0,r_virt_i)·M̃_µ).
         let mut claim = F::zero();
+        let mut power = 0;
         for i in 0..self.polynomial_types.len() {
-            if self.digit_zero {
-                claim += self.gamma_powers[2 * i]
-                    * (self.claims_bool[i] - self.eq_bool_at_digit_zero * self.activations[i]);
-                claim += self.gamma_powers[2 * i + 1]
-                    * (self.claims_virt[i] - self.eq_virt_at_digit_zero[i] * self.activations[i]);
+            if self.virtualizes_digit_zero(self.polynomial_types[i]) {
+                claim +=
+                    self.gamma_powers[power] * (self.claims_bool[i] - self.eq_bool_at_digit_zero);
+                claim += self.gamma_powers[power + 1]
+                    * (self.claims_virt[i] - self.eq_virt_at_digit_zero[i]);
+                power += 2;
             } else {
-                claim += self.gamma_powers[3 * i] * self.activations[i];
-                claim += self.gamma_powers[3 * i + 1] * self.claims_bool[i];
-                claim += self.gamma_powers[3 * i + 2] * self.claims_virt[i];
+                claim += self.gamma_powers[power] * self.activations[i];
+                claim += self.gamma_powers[power + 1] * self.claims_bool[i];
+                claim += self.gamma_powers[power + 2] * self.claims_virt[i];
+                power += 3;
             }
         }
-        let offset = 2 * self.polynomial_types.len();
         for (index, booleanity) in self.inc_booleanity_claims.iter().enumerate() {
-            // Increment columns are lattice-only, so `digit_zero` holds here;
-            // their activation is the constant 1.
-            claim += self.gamma_powers[offset + index] * (*booleanity - self.eq_bool_at_digit_zero);
+            claim += self.gamma_powers[power + index] * (*booleanity - self.eq_bool_at_digit_zero);
         }
         if let Some(fused_inc) = self.fused_inc_claim {
-            claim += self.gamma_powers[offset + self.inc_booleanity_claims.len()] * fused_inc;
+            claim += self.gamma_powers[power + self.inc_booleanity_claims.len()] * fused_inc;
         }
         claim
     }
@@ -534,7 +558,6 @@ impl<F: JoltField> SumcheckInstanceParams<F> for HammingWeightClaimReductionPara
 /// Memory optimization: eq_bool is shared across all families (1 polynomial, thanks
 /// to Booleanity), while eq_virt requires one per ra_i (N polynomials).
 #[cfg(feature = "prover")]
-#[cfg(feature = "prover")]
 #[derive(Allocative)]
 pub struct HammingWeightClaimReductionProver<F: JoltField> {
     /// G_i polynomials (pushforward of ra_i over r_cycle)
@@ -545,8 +568,8 @@ pub struct HammingWeightClaimReductionProver<F: JoltField> {
     /// eq(r_addr_virt_i, ·) for each ra polynomial (N total)
     eq_virt: Vec<MultilinearPolynomial<F>>,
     /// Lattice-only decode-weight table: the centered digit value
-    /// `balanced_inc_value` over the `k_chunk` digit values. Present iff
-    /// `params.digit_zero`.
+    /// `balanced_inc_value` over the `k_chunk` digit values. Present in the
+    /// lattice reduction.
     inc_value: Option<MultilinearPolynomial<F>>,
     #[allocative(skip)]
     pub params: HammingWeightClaimReductionParams<F>,
@@ -621,7 +644,7 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
             || EqPolynomial::<F>::evals(r_hi),
             || EqPolynomial::<F>::evals(r_lo),
         );
-        let increment_g = crate::subprotocols::booleanity::one_hot_pushforwards(
+        let mut increment_g = crate::subprotocols::booleanity::one_hot_pushforwards(
             one_hot_columns,
             &e_hi,
             &e_lo,
@@ -634,14 +657,15 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
             one_hot_params,
             &params.r_cycle,
         );
-        G.extend(increment_g);
-        // The commitment omits the digit-zero row; the sumcheck runs over the
-        // committed nonzero-digit rows, so the pushforwards must agree (the
-        // digit-zero baselines live in the input claim instead — see
-        // `input_claim`).
-        for polynomial in &mut G {
-            polynomial[0] = F::zero();
+        for (G_i, polynomial) in G.iter_mut().zip(&params.polynomial_types) {
+            if params.virtualizes_digit_zero(*polynomial) {
+                G_i[0] = F::zero();
+            }
         }
+        for G_i in &mut increment_g {
+            G_i[0] = F::zero();
+        }
+        G.extend(increment_g);
 
         let k_chunk = 1usize << params.log_k_chunk;
         let half = k_chunk / 2;
@@ -679,6 +703,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 .eq_bool
                 .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
 
+            let mut power = 0;
             for i in 0..N {
                 let g_evals =
                     self.G[i].sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
@@ -686,28 +711,35 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                     .sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
 
                 for k in 0..DEGREE_BOUND {
-                    // Digit-zero: `w(k) − w(0)` at γ^{2i}/γ^{2i+1} — every
-                    // digit-zero baseline is folded into the input claim, so
-                    // the summand is purely sparse. Base: γ^{3i}·1 (HW) +
-                    // γ^{3i+1}·eq_bool + γ^{3i+2}·eq_virt.
-                    let coefficient = if self.params.digit_zero {
-                        self.params.gamma_powers[2 * i]
+                    let coefficient = if self
+                        .params
+                        .virtualizes_digit_zero(self.params.polynomial_types[i])
+                    {
+                        self.params.gamma_powers[power]
                             * (eq_b_evals[k] - self.params.eq_bool_at_digit_zero)
-                            + self.params.gamma_powers[2 * i + 1]
+                            + self.params.gamma_powers[power + 1]
                                 * (eq_v_evals[k] - self.params.eq_virt_at_digit_zero[i])
                     } else {
-                        self.params.gamma_powers[3 * i]
-                            + self.params.gamma_powers[3 * i + 1] * eq_b_evals[k]
-                            + self.params.gamma_powers[3 * i + 2] * eq_v_evals[k]
+                        self.params.gamma_powers[power]
+                            + self.params.gamma_powers[power + 1] * eq_b_evals[k]
+                            + self.params.gamma_powers[power + 2] * eq_v_evals[k]
                     };
                     evals[k] += g_evals[k] * coefficient;
                 }
+                power += if self
+                    .params
+                    .virtualizes_digit_zero(self.params.polynomial_types[i])
+                {
+                    2
+                } else {
+                    3
+                };
             }
 
             if let Some(inc_value) = &self.inc_value {
                 let inc_value_evals =
                     inc_value.sumcheck_evals_array::<DEGREE_BOUND>(j, BindingOrder::LowToHigh);
-                let offset = 2 * N;
+                let offset = self.params.ra_terms();
                 let decode =
                     self.params.gamma_powers[offset + self.params.inc_booleanity_claims.len()];
                 for index in 0..self.params.inc_booleanity_claims.len() {

@@ -1,13 +1,11 @@
 # Digit-zero virtualization for the packed one-hot trace
 
-Status 2026-08-14: **Digit-zero virtualization applies to the instruction,
-bytecode, and balanced-increment families only. RAM is NOT virtualized** — it
-stays on the base treatment (all lanes committed, `RamHammingBooleanity` + the
-base Hamming-weight leg). This was decided after an adversarial review
-*confirmed* a soundness break in every virtualized-RAM form (§5.RAM). Source:
-"Digit-Zero Virtualization for Twist and Shout"
-(`~/akita-paper/ra-virtualization-note.pdf`); the note virtualizes RAM too, but
-that is unsound in this system.
+Scope 2026-08-16: digit-zero virtualization applies to the instruction,
+bytecode, and balanced-increment families only. RAM stays on the base treatment
+(all lanes committed, `RamHammingBooleanity`, and the Hamming-weight leg) so it
+can be reviewed in a separate change. This document makes no claim about the
+note's nonconstant-activation RAM construction. Source: "Digit-Zero
+Virtualization for Twist and Shout" (`~/akita-paper/ra-virtualization-note.tex`).
 
 Base (Dory) mode is untouched: it commits full one-hot columns for every
 family, keeps all Hamming-weight legs and `RamHammingBooleanity`, and must keep
@@ -27,18 +25,18 @@ ra(k, j) := Π_{i=1..d} ra_i(k_i, j),
 and `r̃a_i` denotes the multilinear extension. `ẽq` is the multilinear equality
 polynomial; evaluation points are written `(r_address, r_cycle)`.
 
-The technique applies to the committed coordinate read-address polynomials of
-the **instruction and bytecode** memories, and (an extension beyond the note,
-§6) to the balanced-increment value columns — every family whose activation
-(§2) is the public constant 1. **RAM and registers are excluded**: RAM because
-its activation is not constant and no sound in-protocol proof of it exists on
-the virtualized path (§5.RAM); registers because `Rs1Ra`, `Rs2Ra`, `RdWa` are
-full-domain virtual polynomials already bound by the bytecode read-RAF.
+The technique applies here to the committed coordinate read-address
+polynomials of the **instruction and bytecode** memories, and (an extension
+beyond the note, §6) to the balanced-increment value columns. Each has public
+unit activation (§2). **RAM and registers are excluded from this change**: RAM
+requires the note's separate nonconstant activation treatment, while
+`Rs1Ra`, `Rs2Ra`, and `RdWa` are full-domain virtual polynomials already bound
+by the bytecode read-RAF.
 
-Notation ↔ code: digit position `i` = chunk index; digit value `k_i` = lane;
-digit-zero row `ra_i(0,·)` = lane zero / "default"; nonzero-digit rows = the
-committed lanes; digit-zero baseline `ẽq(r_address,0)·M̃_µ(r_cycle)` = the
-`w(0)·A` recentering term.
+Notation to code: digit position `i` is a chunk index; digit value `k_i` is a
+lane; `ra_i(0,·)` is the digit-zero row; and the nonzero-digit rows are the
+committed lanes. Code comments use the paper's reconstruction term
+`ẽq(r_address,0)·M̃_µ(r_cycle)` rather than the earlier `w(0)·A` shorthand.
 
 ## 2. Memory activation (Definition 1) — constant 1 for every virtualized family
 
@@ -53,11 +51,12 @@ padding rows are free):
 | `BytecodeRa` | `≡ 1` (one fetch per cycle) |
 | `BalancedIncDigit/Carry` | `≡ 1` (every cycle has a possibly-zero fused increment) |
 
-Because every virtualized family has `M_µ ≡ 1` — a public constant plugged
-directly into the recentering — the reconstruction forces `Σ_k L(k,j) = 1`
-*identically*, and with Booleanity this gives exactly-one-hot per cycle with no
-auxiliary check (Theorem 1, §5). This constant-activation property is the
-entire reason the technique is sound here and not for RAM.
+Because every virtualized family has `M_µ ≡ 1`, reconstruction forces
+`Σ_{k_i} ra_i(k_i,j) = 1` identically. Booleanity then gives an exactly-one-hot
+column per cycle without a Hamming-weight leg. For balanced increments, read
+`ra_i` as the corresponding digit or carry one-hot column. Public unit
+activation is what lets this change avoid the additional RAM-specific proof
+obligations.
 
 ## 3. Digit-zero virtualization (Definition 2)
 
@@ -74,13 +73,14 @@ r̃a_i(r_address, r_cycle) = ẽq(r_address, 0)
 ```
 
 An input claim `c` on a semantic (digit-zero-inclusive) column becomes a claim
-on committed rows only: `c − ẽq(r_address, 0) = Σ_{k_i≥1} (ẽq(k_i) − ẽq(0))·⟨committed openings⟩`.
+on committed rows only:
+`c − ẽq(r_address, 0) = Σ_{k_i≥1} (ẽq(r_address,k_i) − ẽq(r_address,0))·r̃a_i(k_i,r_cycle)`.
 Both sides live in the stage-7 reduction
 (`jolt-claims/src/protocols/jolt/lattice/relations/digit_zero.rs`): the
 constant baseline `ẽq(r_address, 0)` folds into the input claim, the prover
-zeroes the digit-zero row of every pushforward so the sumcheck runs over
-committed rows alone, and the verifier supplies the `ẽq(·, 0)` weights as the
-`…AtDigitZero` publics.
+zeroes the digit-zero row of each virtualized pushforward so the sumcheck runs
+over committed rows alone, and the verifier supplies the `ẽq(·, 0)` values as
+the `…AtDigitZero` publics. The RAM pushforwards remain unchanged.
 
 Booleanity binds the digit-zero-*inclusive* semantic columns (digit-zero row
 included; `subprotocols/booleanity.rs`), and the stage-7 recentering ties those
@@ -106,54 +106,27 @@ use the 2-leg recentered form (Booleanity, virtualization) plus, for the
 increment columns, the decode leg. The stage-7 reduction is therefore
 per-family hybrid.
 
-## 5. Soundness
+## 5. Proof obligations
 
-### Virtualized families (instruction, bytecode, increment) — Theorem 1
+### Virtualized families
 
-Given Booleanity of all reconstructed rows: each row's weight `w` satisfies
-`w·1_F = M_µ(j) = 1`, and injectivity of `m ↦ m·1_F` below `char F` forces
-`w = 1`. So every `ra_i(·,j)` is a unit vector and `ra(·,j)` encodes a unique
-address on every cycle, padding included. The activation is a public constant,
-so there is no activation to forge and nothing rests on a prover-supplied
-value. Sound unconditionally, in full and committed-program modes alike.
+For instruction and bytecode, the note's theorem applies directly. Given
+Booleanity of the reconstructed rows, their sum is one by definition, so each
+`ra_i(·,j)` is a unit vector and `ra(·,j)` encodes a unique address. The same
+argument applies column-by-column to the balanced-increment extension because
+each digit and carry column also has public activation one.
 
-### RAM — sound by full commitment; the virtualized path was a confirmed break
+### RAM is deferred
 
-**Why the virtualized RAM path is unsound.** Virtualizing `RamRa` needs an
-activation `M_RAM` (the per-cycle access indicator) that is not a public
-constant, so `M_RAM ∈ {0,1}` must be *proved* in-protocol. Every form tried is
-unsound for the same structural reason: `M_RAM` (whether the prover-supplied
-`RamHammingWeight` claim of the original PR, pinned by a five-hop RAF chain, or
-a `Load+Store` flag sum) is a virtual column the prover materializes at
-stage 6b, while its booleanity check's reference point is the stage-1 Spartan
-cycle binding, drawn five stages earlier. A booleanity zero-check
-`Σ_j eq(r₁,j)·(M²−M)(j) = 0` forces `M` Boolean only when `r₁` postdates `M`;
-here it predates it, so a prover that knows `r₁` can pass with a non-Boolean
-`M`.
+The note proposes `M_RAM = Load + Store`, which is not the public unit case
+implemented here. Integrating that construction requires a separate mapping
+of the activation claims, their evaluation points, and their binding to the
+existing RAM relations. This patch deliberately does not settle those details.
 
-An adversarial review then *confirmed* (not conjectured) that nothing
-downstream rescues it: the Twist read/write + val-check + output-check chain is
-**linear in `ra` and contains no multiset or one-hot check**
-(`relations/ram/{read_write_checking,val_check,output_check}.rs`; reference
-kernels), so a weight-≥2 RAM tensor on an access cycle is accepted end-to-end.
-RAF (`Σ_k unmap(k)·ra = RamAddress`) and Spartan rows 0/1 constrain only the
-*sum* of the two addresses, not the weight. Concretely, a malicious committed
-program can set `M_RAM = 2` on a load, produce a weight-2 tensor whose two
-`unmap` values sum to the honest address, commit `inc = 0`, and make the load
-return an attacker-chosen `T = Val(k1) + Val(k2)` — with Booleanity, RAF,
-Spartan, read/write, val-check, and output-check all satisfied. This break is
-latent in any virtualized-RAM form.
-
-**Why full commitment is sound.** Committing all of `RamRa`'s lanes makes the
-Hamming-weight leg `Σ_k ra(k,·) = H` a *real* tie of `H` to stage-0 committed
-data (all lanes present, nothing reconstructed). `H` is then a fixed stage-0
-polynomial, so `RamHammingBooleanity`'s `H² = H` at the stage-1 point is sound
-(data fixed before the reference randomness), giving `H ∈ {0,1}`, hence
-`Σ_k ra(k,j) ∈ {0,1}` — genuine one-hotness, cryptographic and trust-free,
-exactly base Jolt's guarantee. The virtualized path broke this by omitting the
-digit-zero lane, which made the Hamming leg vacuous (`Σ_k L = M_RAM` by
-construction) and severed `H` from committed data. Not virtualizing RAM
-restores the tie.
+For now `RamRa` commits every lane and follows the existing base protocol:
+`RamHammingBooleanity`, the Hamming-weight leg, Booleanity, and RAM
+virtualization. This is a scope boundary, not a conclusion about whether a
+later implementation of the note's RAM construction is possible.
 
 ## 6. The balanced-increment columns (extension beyond the note)
 
@@ -169,13 +142,13 @@ per-digit values only to `[−K/2, K/2)`; `specs/lattice-claims.md`, relation 3)
 ## 7. Delta versus base mode / prior drafts
 
 - Instruction/bytecode/increment: digit-zero-virtualized (omit the digit-zero
-  lane, 2-leg recentered stage-7 reduction, no Hamming leg). Sound by Theorem 1.
+  lane, two reconstructed stage-7 legs, no Hamming leg).
 - RAM: unchanged from base (all lanes committed, `RamHammingBooleanity` + base
-  Hamming leg, 3-leg stage-7 reduction). No `RamActivationBooleanity`, no
-  `Load+Store` activation — both removed as unsound.
+  Hamming leg, three-leg stage-7 reduction). The `Load+Store` construction is
+  deferred.
 - Notation renamed to digit-zero throughout the lattice path
   (`…AtDigitZero` publics, `LatticeDigitZeroClaimReduction`, digest
-  `…/digit-zero-balanced-inc/…`).
+  `…/digit-zero-mu-one-full-ram/…`).
 - Shared `JoltRelationId::HammingWeightClaimReduction` / `SumcheckId` names
   kept (base mode still performs a genuine Hamming-weight reduction under them,
   and now so does RAM on the packed path).
@@ -185,6 +158,6 @@ per-digit values only to `[−K/2, K/2)`; `specs/lattice-claims.md`, relation 3)
 - `muldiv` both modes (base bit-identical); the four akita e2e tests;
   `jolt-claims` lattice-semantics + claim-graph; `jolt-verifier` tamper suites
   and fingerprint-keyed fixtures; both clippy modes; `cargo fmt`.
-- Soundness-specific: a negative/tamper test that a weight-≥2 RAM tensor (or a
-  forged `RamHammingWeight`) is rejected — the regression guarding this
-  decision.
+- Policy-specific: physical packing tests must show that digit zero is omitted
+  for a virtualized column and retained for a RAM-style committed column; the
+  stage-7 algebra test must show the mixed two-leg/three-leg gamma layout.

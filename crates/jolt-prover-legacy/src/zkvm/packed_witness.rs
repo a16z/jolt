@@ -17,23 +17,30 @@ use crate::zkvm::instruction::{
 use crate::zkvm::lookup_table::LookupTables;
 use common::constants::XLEN;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DigitZeroRow {
+    Committed,
+    Virtualized,
+}
+
 /// Packs equal-length semantic columns into prefix slots and pads unused
-/// slots with zero rows. The logical digit-zero row is virtual and therefore omitted
-/// from the physical one-hot polynomial.
+/// slots with zero rows. A virtualized digit-zero row is omitted from the
+/// physical polynomial; a committed row retains lane zero.
 pub fn pack_one_hot_columns(
     k: usize,
     slot_capacity: usize,
-    columns: Vec<Vec<Option<u8>>>,
+    columns: Vec<(Vec<Option<u8>>, DigitZeroRow)>,
 ) -> OneHotPolynomial {
     assert!(slot_capacity.is_power_of_two());
     assert!(!columns.is_empty() && columns.len() <= slot_capacity);
-    let rows = columns[0].len();
-    assert!(columns.iter().all(|column| column.len() == rows));
+    let rows = columns[0].0.len();
+    assert!(columns.iter().all(|(column, _)| column.len() == rows));
 
     let mut indices = Vec::with_capacity(slot_capacity * rows);
-    for column in columns {
+    for (column, digit_zero_row) in columns {
         indices.extend(column.into_iter().map(|lane| match lane {
-            Some(0) | None => None,
+            Some(0) if digit_zero_row == DigitZeroRow::Virtualized => None,
+            None => None,
             Some(lane) => {
                 assert!((lane as usize) < k);
                 Some(lane)
@@ -384,17 +391,20 @@ mod tests {
         use jolt_field::{Fr, FromPrimitiveInt};
         use jolt_poly::{eq_index_msb, MultilinearPoly};
 
-        let columns = vec![vec![Some(0), Some(2)], vec![Some(3), None]];
+        let columns = vec![
+            (vec![Some(0), Some(2)], DigitZeroRow::Virtualized),
+            (vec![Some(0), None], DigitZeroRow::Committed),
+        ];
         let packed = pack_one_hot_columns(4, 4, columns);
         assert_eq!(
             packed.indices(),
-            [None, Some(2), Some(3), None, None, None, None, None]
+            [None, Some(2), Some(0), None, None, None, None, None]
         );
 
         let selector = [Fr::from_u64(3), Fr::from_u64(5)];
         let logical = [Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
         let first = OneHotPolynomial::new(4, vec![None, Some(2)]).evaluate(&logical);
-        let second = OneHotPolynomial::new(4, vec![Some(3), None]).evaluate(&logical);
+        let second = OneHotPolynomial::new(4, vec![Some(0), None]).evaluate(&logical);
         let expected = eq_index_msb(&selector, 0) * first + eq_index_msb(&selector, 1) * second;
         let point = [selector.as_slice(), logical.as_slice()].concat();
         assert_eq!(packed.evaluate(&point), expected);
@@ -442,6 +452,18 @@ mod tests {
                     + (carry << FUSED_INC_BITS);
                 assert_eq!(reconstructed, delta, "width={width}, delta={delta}");
             }
+        }
+    }
+
+    #[test]
+    fn zero_fused_increment_uses_digit_zero_for_every_column() {
+        let inc = FusedIncValue { delta: 0 };
+        for width in [4, 8, 16, 32] {
+            let chunking = BalancedIncChunking::new(width).unwrap();
+            for index in 0..chunking.chunk_count() {
+                assert_eq!(inc.balanced_chunk_hot_lane_bits(width, index), 0);
+            }
+            assert_eq!(inc.balanced_carry_hot_lane_bits(width), 0);
         }
     }
 

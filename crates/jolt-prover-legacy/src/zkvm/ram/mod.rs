@@ -71,7 +71,6 @@ use rayon::prelude::*;
 use tracer::emulator::memory::Memory;
 use tracer::JoltDevice;
 
-pub mod activation_booleanity;
 pub mod hamming_booleanity;
 pub mod output_check;
 pub mod ra_virtual;

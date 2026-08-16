@@ -64,7 +64,7 @@ use jolt_verifier::stages::{
     },
     stage6b::outputs::{
         BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
-        ProgramImageReductionCyclePhaseOutputClaims, RamActivationBooleanityOutputClaims,
+        ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
         RamRaVirtualizationOutputClaims, Stage6bOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
         UntrustedAdviceCyclePhaseOutputClaims,
     },
@@ -404,7 +404,7 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
     let Stage6bOutputClaims {
         bytecode_read_raf,
         booleanity,
-        ram_activation_booleanity,
+        ram_hamming_booleanity,
         ram_ra_virtualization,
         instruction_ra_virtualization,
         trusted_advice,
@@ -440,9 +440,8 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
         f(scalar);
     }
     f(balanced_inc_carry);
-    let RamActivationBooleanityOutputClaims { load, store } = ram_activation_booleanity;
-    f(load);
-    f(store);
+    let RamHammingBooleanityOutputClaims { ram_hamming_weight } = ram_hamming_booleanity;
+    f(ram_hamming_weight);
     let RamRaVirtualizationOutputClaims {
         ram_ra: virt_ram_ra,
     } = ram_ra_virtualization;
