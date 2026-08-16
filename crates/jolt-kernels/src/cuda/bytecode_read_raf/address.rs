@@ -1,24 +1,225 @@
+use jolt_claims::protocols::jolt::geometry::bytecode::{
+    read_raf_stage_values, BytecodeReadRafStageValueInputs,
+};
+use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
-use jolt_witness::JoltWitnessPlane;
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::stage6a::bytecode_read_raf::{
+    BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
+    BytecodeReadRafAddressPhaseOutputClaims,
+};
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use crate::cuda::CudaBackend;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs, STAGES};
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+use crate::cuda::{require_context, CudaBackend};
+use crate::reference::bytecode_read_raf::BytecodeReadRafWitness;
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 
-#[expect(
-    clippy::todo,
-    reason = "phase-1 stub: the legacy-oracle gate is written against this signature before the \
-              device kernels exist"
-)]
+pub struct BytecodeReadRafAddressKernel<F: Field> {
+    context: &'static CudaKernelContext,
+    relation: BytecodeReadRafAddressPhase<F>,
+    state: DeviceBytecodePushforward,
+    last_round_poly: Option<UnivariatePoly<F>>,
+    intermediate: Option<F>,
+    val_stages: Vec<F>,
+    rounds_bound: usize,
+}
+
+impl<F: Field> BytecodeReadRafAddressKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let failed = || SumcheckError::MissingEvaluationSource {
+            kind: "cuda bytecode read-RAF address-phase bind",
+        };
+        self.state
+            .bind(self.context, challenge)
+            .map_err(|_| failed())?;
+        self.rounds_bound += 1;
+        let final_round = self.rounds_bound == self.relation.symbolic().rounds();
+        if let Some(poly) = self.last_round_poly.take() {
+            if final_round {
+                self.intermediate = Some(poly.evaluate(challenge));
+            }
+        }
+        if final_round && self.relation.committed_program() {
+            self.val_stages = self.state.val_claims().map_err(|_| failed())?;
+        }
+        Ok(())
+    }
+}
+
+impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.relation.symbolic().rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        let (at_zero, at_two) = self.state.round_lanes(self.context).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
+                kind: "cuda bytecode read-RAF address-phase round",
+            }
+        })?;
+        let poly = UnivariatePoly::from_evals_and_hint(previous_claim, &[at_zero, at_two]);
+        self.last_round_poly = Some(poly.clone());
+        Ok(poly)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
+    type Relation = BytecodeReadRafAddressPhase<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &BytecodeReadRafAddressPhaseInputClaims<F>,
+    ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
+        let remaining = self.relation.symbolic().rounds() - self.rounds_bound;
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        if self.state.len() != 1 {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA bytecode read-RAF address phase counted every round but its tables \
+                         are not fully bound",
+            });
+        }
+        let intermediate = self
+            .intermediate
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA bytecode read-RAF address phase never staged its intermediate claim",
+            })?;
+        Ok(BytecodeReadRafAddressPhaseOutputClaims {
+            intermediate,
+            val_stages: self.val_stages.clone(),
+        })
+    }
+}
+
 impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
-        todo!("the CUDA bytecode read-RAF address phase is not implemented yet")
+        let context = require_context()?;
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let addresses = 1usize << dimensions.log_k();
+        let cycles = 1usize << dimensions.log_t();
+        if relation.register_read_write_point().len() < REGISTER_ADDRESS_BITS
+            || relation.register_val_evaluation_point().len() < REGISTER_ADDRESS_BITS
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "a bytecode read-RAF register point is shorter than its address prefix",
+            });
+        }
+        if relation
+            .stage_cycle_points()
+            .iter()
+            .any(|point| point.len() != dimensions.log_t())
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "a bytecode read-RAF stage cycle point has the wrong variable count",
+            });
+        }
+
+        let program = witness.program_preprocessing();
+        let stage_gammas = inputs.challenges.stage_gamma_powers();
+        let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
+            bytecode: &program.bytecode.bytecode,
+            register_read_write_point: &relation.register_read_write_point()
+                [..REGISTER_ADDRESS_BITS],
+            register_val_evaluation_point: &relation.register_val_evaluation_point()
+                [..REGISTER_ADDRESS_BITS],
+            stage1_gammas: &stage_gammas[0],
+            stage2_gammas: &stage_gammas[1],
+            stage3_gammas: &stage_gammas[2],
+            stage4_gammas: &stage_gammas[3],
+            stage5_gammas: &stage_gammas[4],
+        });
+        if stage_values.len() != addresses {
+            return Err(KernelError::TableSizeMismatch {
+                table: "bytecode stage values".to_owned(),
+                expected: addresses,
+                got: stage_values.len(),
+            });
+        }
+
+        let rows = collect_bundles::<BytecodeReadRafWitness>(witness, cycles)?;
+        let mut pcs = Vec::with_capacity(cycles);
+        for row in &rows {
+            let pc = u32::try_from(row.bytecode_pc.0).map_err(|_| KernelError::Unsupported {
+                reason: "the CUDA bytecode read-RAF address phase packs each PC into one 32-bit \
+                         word",
+            })?;
+            if row.bytecode_pc.0 >= addresses {
+                return Err(KernelError::InvariantViolation {
+                    reason: "a bytecode PC escapes the padded bytecode domain",
+                });
+            }
+            pcs.push(pc);
+        }
+        let entry_trace_index = rows
+            .first()
+            .ok_or(KernelError::InvariantViolation {
+                reason: "the bytecode read-RAF address phase needs at least one cycle",
+            })?
+            .bytecode_pc
+            .0;
+        drop(rows);
+
+        let columns = DeviceOneHotColumns::new(
+            context,
+            &[],
+            &[],
+            &pcs,
+            [0, 0, 1],
+            dimensions.log_k(),
+            cycles,
+        )?;
+        drop(pcs);
+
+        let state = DeviceBytecodePushforward::new(
+            context,
+            &columns,
+            PushforwardInputs {
+                stage_cycle_points: relation.stage_cycle_points(),
+                stage_values: &stage_values,
+                entry_trace_index,
+                entry_expected_index: relation.entry_bytecode_index(),
+                gamma: inputs.challenges.gamma,
+            },
+        )?;
+        drop(columns);
+
+        Ok(Box::new(BytecodeReadRafAddressKernel {
+            context,
+            relation: relation.clone(),
+            state,
+            last_round_poly: None,
+            intermediate: None,
+            val_stages: Vec::with_capacity(STAGES),
+            rounds_bound: 0,
+        }))
     }
 }
 

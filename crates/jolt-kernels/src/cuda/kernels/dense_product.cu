@@ -144,6 +144,83 @@ extern "C" __global__ void weighted_combine_kernel(const u64 *__restrict__ weigh
     store4(accumulator + i * LIMBS, sum);
 }
 
+extern "C" __global__ void sopg_round_kernel(
+    const u64 *const *__restrict__ tables, const unsigned int *__restrict__ term_offsets,
+    const unsigned int *__restrict__ term_factors, const u64 *__restrict__ coefficients,
+    unsigned int terms, unsigned int half, const u64 *__restrict__ e_in,
+    const u64 *__restrict__ e_out, unsigned int e_in_len, unsigned int in_bits,
+    u64 *__restrict__ partials) {
+    extern __shared__ u64 scratch[];
+    unsigned int tid = threadIdx.x;
+    unsigned int y = blockIdx.x * blockDim.x + tid;
+
+    u64 acc[2][LIMBS];
+    for (int lane = 0; lane < 2; lane++)
+        for (int l = 0; l < LIMBS; l++) acc[lane][l] = 0;
+
+    if (y < half) {
+        u64 sum_constant[LIMBS] = {0, 0, 0, 0};
+        u64 sum_leading[LIMBS] = {0, 0, 0, 0};
+
+        for (unsigned int t = 0; t < terms; t++) {
+            u64 constant[LIMBS], leading[LIMBS];
+            load4(FR_ONE, constant);
+            load4(FR_ONE, leading);
+            for (unsigned int f = term_offsets[t]; f < term_offsets[t + 1]; f++) {
+                const u64 *table = tables[term_factors[f]];
+                u64 lo[LIMBS], hi[LIMBS], diff[LIMBS], next[LIMBS];
+                load4(table + (2 * y) * LIMBS, lo);
+                load4(table + (2 * y + 1) * LIMBS, hi);
+                fr_sub(hi, lo, diff);
+                fr_mul(constant, lo, next);
+                for (int l = 0; l < LIMBS; l++) constant[l] = next[l];
+                fr_mul(leading, diff, next);
+                for (int l = 0; l < LIMBS; l++) leading[l] = next[l];
+            }
+            u64 weighted[LIMBS], sum[LIMBS];
+            fr_mul(constant, coefficients + t * LIMBS, weighted);
+            fr_add(sum_constant, weighted, sum);
+            for (int l = 0; l < LIMBS; l++) sum_constant[l] = sum[l];
+            fr_mul(leading, coefficients + t * LIMBS, weighted);
+            fr_add(sum_leading, weighted, sum);
+            for (int l = 0; l < LIMBS; l++) sum_leading[l] = sum[l];
+        }
+
+        u64 weight[LIMBS];
+        if (e_in_len <= 1) {
+            load4(e_out + (unsigned long long)y * LIMBS, weight);
+        } else {
+            u64 inner[LIMBS], outer[LIMBS];
+            load4(e_in + (unsigned long long)(y & ((1u << in_bits) - 1u)) * LIMBS, inner);
+            load4(e_out + (unsigned long long)(y >> in_bits) * LIMBS, outer);
+            fr_mul(inner, outer, weight);
+        }
+        fr_mul(sum_constant, weight, acc[0]);
+        fr_mul(sum_leading, weight, acc[1]);
+    }
+
+    for (unsigned int lane = 0; lane < 2; lane++) {
+        store4(scratch + tid * LIMBS, acc[lane]);
+        __syncthreads();
+        for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                u64 a[LIMBS], b[LIMBS], sum[LIMBS];
+                load4(scratch + tid * LIMBS, a);
+                load4(scratch + (tid + stride) * LIMBS, b);
+                fr_add(a, b, sum);
+                store4(scratch + tid * LIMBS, sum);
+            }
+            __syncthreads();
+        }
+        if (tid == 0) {
+            u64 total[LIMBS];
+            load4(scratch, total);
+            store4(partials + ((unsigned long long)lane * gridDim.x + blockIdx.x) * LIMBS, total);
+        }
+        __syncthreads();
+    }
+}
+
 extern "C" __global__ void sop_round_kernel(
     const u64 *const *__restrict__ tables, const unsigned int *__restrict__ term_offsets,
     const unsigned int *__restrict__ term_factors, const u64 *__restrict__ coefficients,

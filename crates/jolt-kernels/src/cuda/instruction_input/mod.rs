@@ -1,23 +1,173 @@
+use jolt_claims::protocols::jolt::relations::instruction::{
+    InstructionInputInputClaims, InstructionInputOutputClaims,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use super::CudaBackend;
+use super::{require_context, CudaBackend};
+use crate::cuda::common::context::CudaKernelContext;
+use crate::SumcheckKernelError;
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence test must fail here until the kernels land, and \
-              the expectation becomes an error the moment they do"
-)]
+pub(crate) mod columns;
+pub(crate) mod rounds;
+pub(crate) mod witness;
+
+use columns::DeviceInstructionColumns;
+use rounds::{Basis, RoundBasis};
+use witness::InstructionInputWitness;
+
+pub struct InstructionInputKernel<F: Field> {
+    context: &'static CudaKernelContext,
+    relation: InstructionInput<F>,
+    columns: DeviceInstructionColumns,
+    basis: Basis<F>,
+    rounds_bound: usize,
+    finals: Option<Vec<F>>,
+}
+
+impl<F: Field> InstructionInputKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        let failed = || SumcheckError::MissingEvaluationSource {
+            kind: "cuda instruction input-virtualization bind",
+        };
+        self.columns
+            .bind(self.context, challenge)
+            .map_err(|_| failed())?;
+        self.basis
+            .bind(self.context, challenge)
+            .map_err(|_| failed())?;
+        self.rounds_bound += 1;
+        if self.rounds_bound == self.relation.symbolic().rounds() {
+            self.finals = Some(self.columns.finals().map_err(|_| failed())?);
+        }
+        Ok(())
+    }
+}
+
+impl<F: Field> ProveRounds<F> for InstructionInputKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.relation.symbolic().rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        self.basis
+            .round_poly(
+                self.context,
+                &self.columns,
+                previous_claim,
+                self.relation.symbolic().degree(),
+            )
+            .map_err(|_| SumcheckError::MissingEvaluationSource {
+                kind: "cuda instruction input-virtualization round",
+            })
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for InstructionInputKernel<F> {
+    type Relation = InstructionInput<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &InstructionInputInputClaims<F>,
+    ) -> Result<InstructionInputOutputClaims<F>, SumcheckKernelError<F>> {
+        let rounds = self.relation.symbolic().rounds();
+        if self.rounds_bound != rounds {
+            return Err(SumcheckKernelError::NotFullyBound {
+                remaining: rounds.saturating_sub(self.rounds_bound),
+            });
+        }
+        let finals = self
+            .finals
+            .as_ref()
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA instruction input-virtualization never read back its bound columns",
+            })?;
+        let &[left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm] =
+            finals.as_slice()
+        else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA instruction input-virtualization bound the wrong column count",
+            });
+        };
+        Ok(InstructionInputOutputClaims {
+            left_operand_is_rs1,
+            rs1_value,
+            left_operand_is_pc,
+            unexpanded_pc,
+            right_operand_is_rs2,
+            rs2_value,
+            right_operand_is_imm,
+            imm,
+        })
+    }
+}
+
+pub(crate) fn prepare_with_basis<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: &ProverInputs<'_, F, InstructionInput<F>>,
+    basis: RoundBasis,
+) -> Result<InstructionInputKernel<F>, KernelError<F>> {
+    let context = require_context()?;
+    let relation = inputs.relation;
+    let log_t = relation.symbolic().rounds();
+    if log_t == 0 || relation.product_remainder_opening_point().len() != log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "the instruction-input product-remainder point spans the cycle variables",
+        });
+    }
+
+    let rows = collect_bundles::<InstructionInputWitness>(witness, 1usize << log_t)?;
+    let packed = witness::pack(&rows);
+    drop(rows);
+    let columns = DeviceInstructionColumns::new(context, &packed)?;
+    drop(packed);
+    let basis = Basis::new(
+        context,
+        basis,
+        relation.product_remainder_opening_point(),
+        inputs.challenges.gamma,
+    )?;
+
+    Ok(InstructionInputKernel {
+        context,
+        relation: relation.clone(),
+        columns,
+        basis,
+        rounds_bound: 0,
+        finals: None,
+    })
+}
+
 impl<F: Field> PrepareKernel<F, InstructionInput<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, InstructionInput<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
-        todo!("CUDA instruction input-virtualization kernel")
+        Ok(Box::new(prepare_with_basis(
+            witness,
+            &inputs,
+            RoundBasis::Gruen,
+        )?))
     }
 }
 
@@ -41,6 +191,7 @@ mod tests {
     use jolt_witness::JoltWitnessPlane;
     use proptest::prelude::*;
 
+    use super::rounds::RoundBasis;
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{
@@ -148,6 +299,45 @@ mod tests {
                     expected_claims.opening_values(),
                     "output claims diverged"
                 );
+                Ok(())
+            })?;
+        }
+
+        #[test]
+        fn gruen_basis_matches_eval_point_basis_round_for_round(
+            seed in any::<u64>(),
+            product_remainder_point in arb_point(LOG_T),
+            gamma in any::<u64>().prop_map(fr),
+            challenges in arb_point(LOG_T),
+        ) {
+            let Some(_) = shared_context() else { return Ok(()); };
+
+            with_r1cs_witness(LOG_T, RAM_K, one_hot(), seed, |witness| {
+                let relation = InstructionInput::<Fr>::new(
+                    TraceDimensions::new(LOG_T),
+                    product_remainder_point.clone(),
+                );
+                let claims = InstructionInputInputClaims::default();
+                let points = InstructionInputInputClaims::default();
+                let challenge_set = InstructionInputChallenges { gamma };
+                let make_inputs = || ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenge_set,
+                };
+
+                let input_claim = reference_input_claim(witness, make_inputs);
+                let mut expected_kernel = super::prepare_with_basis(
+                    witness, &make_inputs(), RoundBasis::EvalPoints,
+                ).expect("eval-point prepare");
+                let mut got_kernel = super::prepare_with_basis(
+                    witness, &make_inputs(), RoundBasis::Gruen,
+                ).expect("gruen prepare");
+
+                let expected = drive(&mut expected_kernel, input_claim, &challenges);
+                let got = drive(&mut got_kernel, input_claim, &challenges);
+                prop_assert_eq!(got, expected, "the two round bases diverged");
                 Ok(())
             })?;
         }

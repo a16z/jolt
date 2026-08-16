@@ -1,12 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "implementation target: the four witness-linear G1 relations wire this up in \
-                  step 3, and the expectation becomes an error the moment the first one does"
-    )
-)]
-
 use jolt_field::Field;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -28,6 +19,20 @@ pub struct PrefixSuffixGroup<F: Field> {
     pub pairs: Vec<PrefixSuffixPair<F>>,
     pub columns: Vec<(usize, F)>,
     pub constant: F,
+}
+
+pub const fn prefix_rounds_ceil(log_t: usize) -> Option<usize> {
+    if log_t < 2 {
+        return None;
+    }
+    Some(log_t - log_t / 2)
+}
+
+pub const fn prefix_rounds_floor(log_t: usize) -> Option<usize> {
+    if log_t < 2 {
+        return None;
+    }
+    Some(log_t / 2)
 }
 
 pub fn eq_pair<F: Field>(

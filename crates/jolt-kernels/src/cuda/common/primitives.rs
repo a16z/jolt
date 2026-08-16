@@ -333,6 +333,35 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    pub fn u128_to_montgomery(&self, values: &[u128]) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(values.len())?;
+        if values.is_empty() {
+            return Ok(output);
+        }
+        let mut magnitude = Vec::with_capacity(values.len() * 2);
+        for &value in values {
+            magnitude.push(value as u64);
+            magnitude.push((value >> 64) as u64);
+        }
+        let magnitude = self.upload_u64_slice(&magnitude)?;
+        let negative = self.upload_u8_slice(&vec![0u8; values.len()])?;
+        let count = Self::count_of(values.len())?;
+        let mut builder = self.stream().launch_builder(&self.i128_to_mont);
+        let _ = builder.arg(&magnitude);
+        let _ = builder.arg(&negative);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: identical launch to `i128_to_montgomery`, differing only in
+        // that every `negative` byte is zero: thread `i < count` reads
+        // `magnitude[2i]`, `magnitude[2i+1]` (a `2 * count`-element buffer) and
+        // `negative[i]` (a `count`-element buffer), and writes only
+        // `out[i*4..i*4+4]` of `count * LIMBS`. All three are distinct
+        // allocations. Threads with `i >= count` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
     pub(crate) fn exclusive_scan_with_total_u32(
         &self,
         input: &CudaSlice<u32>,
@@ -674,6 +703,18 @@ mod tests {
             let got = context
                 .i128_to_montgomery(&values)
                 .expect("device i128_to_montgomery")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn u128_to_montgomery_matches_cpu(values in vec(any::<u128>(), 1..300)) {
+            let Some(context) = device() else { return Ok(()); };
+            let expected: Vec<Fr> = values.iter().copied().map(Fr::from_u128).collect();
+            let got = context
+                .u128_to_montgomery(&values)
+                .expect("device u128_to_montgomery")
                 .to_host()
                 .expect("download");
             prop_assert_eq!(got, expected);

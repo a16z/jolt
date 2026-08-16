@@ -21,6 +21,7 @@ use one_hot::DeviceBytecodeRa;
 pub(crate) mod address;
 pub(crate) mod coefficient;
 pub(crate) mod one_hot;
+pub(crate) mod pushforward;
 pub(crate) mod witness;
 
 pub struct BytecodeReadRafCycleKernel<F: Field> {

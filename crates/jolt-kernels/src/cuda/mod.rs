@@ -61,12 +61,18 @@ where
         if !device_available() {
             return backend;
         }
+        backend.booleanity_address = Box::new(CudaBackend);
         backend.booleanity_cycle = Box::new(CudaBackend);
+        backend.bytecode_read_raf_address = Box::new(CudaBackend);
         backend.bytecode_read_raf_cycle = Box::new(CudaBackend);
         backend.instruction_ra_virtualization = Box::new(CudaBackend);
         backend.instruction_read_raf = Box::new(CudaBackend);
         backend.registers_val_evaluation = Box::new(CudaBackend);
         backend.hamming_weight_claim_reduction = Box::new(CudaBackend);
+        backend.inc_claim_reduction = Box::new(CudaBackend);
+        backend.instruction_claim_reduction = Box::new(CudaBackend);
+        backend.instruction_input = Box::new(CudaBackend);
+        backend.registers_claim_reduction = Box::new(CudaBackend);
         backend.ram_hamming_booleanity = Box::new(CudaBackend);
         backend.ram_output_check = Box::new(CudaBackend);
         backend.ram_raf_evaluation = Box::new(CudaBackend);
@@ -77,6 +83,7 @@ where
         backend.ram_read_write = Box::new(CudaBackend);
         backend.spartan_outer_uniskip = Box::new(CudaBackend);
         backend.spartan_outer_remainder = Box::new(CudaBackend);
+        backend.spartan_shift = Box::new(CudaBackend);
         backend.spartan_product_uniskip = Box::new(CudaBackend);
         backend.spartan_product_remainder = Box::new(CudaBackend);
         backend

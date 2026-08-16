@@ -80,6 +80,14 @@ const KERNEL_SRC: &str = concat!(
     include_str!("../kernels/ram_output_check.cu"),
     "\n",
     include_str!("../kernels/spartan_product.cu"),
+    "\n",
+    include_str!("../kernels/spartan_shift.cu"),
+    "\n",
+    include_str!("../kernels/booleanity_address.cu"),
+    "\n",
+    include_str!("../kernels/bytecode_read_raf_address.cu"),
+    "\n",
+    include_str!("../kernels/instruction_input.cu"),
 );
 
 pub struct CudaKernelContext {
@@ -183,6 +191,14 @@ pub struct CudaKernelContext {
     so_claims: CudaFunction,
     sop_round: CudaFunction,
     hf_half_fold: CudaFunction,
+    sopg_round: CudaFunction,
+    ii_columns: CudaFunction,
+    ss_columns: CudaFunction,
+    bap_bind_squared: CudaFunction,
+    bap_message: CudaFunction,
+    brap_one_hot: CudaFunction,
+    brap_term: CudaFunction,
+    brap_message: CudaFunction,
     sp_matrix: CudaFunction,
     sp_factors: CudaFunction,
     sp_claims: CudaFunction,
@@ -305,6 +321,14 @@ impl CudaKernelContext {
             so_claims: module.load_function("so_claims_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
+            sopg_round: module.load_function("sopg_round_kernel")?,
+            ii_columns: module.load_function("ii_columns_kernel")?,
+            ss_columns: module.load_function("ss_columns_kernel")?,
+            bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
+            bap_message: module.load_function("bap_message_kernel")?,
+            brap_one_hot: module.load_function("brap_one_hot_kernel")?,
+            brap_term: module.load_function("brap_term_kernel")?,
+            brap_message: module.load_function("brap_message_kernel")?,
             sp_matrix: module.load_function("sp_matrix_kernel")?,
             sp_factors: module.load_function("sp_factors_kernel")?,
             sp_claims: module.load_function("sp_claims_kernel")?,
@@ -539,6 +563,38 @@ impl CudaKernelContext {
 
     pub(crate) const fn roc_message(&self) -> &CudaFunction {
         &self.roc_message
+    }
+
+    pub(crate) const fn sopg_round(&self) -> &CudaFunction {
+        &self.sopg_round
+    }
+
+    pub(crate) const fn ii_columns(&self) -> &CudaFunction {
+        &self.ii_columns
+    }
+
+    pub(crate) const fn ss_columns(&self) -> &CudaFunction {
+        &self.ss_columns
+    }
+
+    pub(crate) const fn bap_bind_squared(&self) -> &CudaFunction {
+        &self.bap_bind_squared
+    }
+
+    pub(crate) const fn bap_message(&self) -> &CudaFunction {
+        &self.bap_message
+    }
+
+    pub(crate) const fn brap_one_hot(&self) -> &CudaFunction {
+        &self.brap_one_hot
+    }
+
+    pub(crate) const fn brap_term(&self) -> &CudaFunction {
+        &self.brap_term
+    }
+
+    pub(crate) const fn brap_message(&self) -> &CudaFunction {
+        &self.brap_message
     }
 
     pub(crate) const fn sop_round(&self) -> &CudaFunction {

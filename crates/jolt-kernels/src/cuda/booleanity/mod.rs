@@ -18,6 +18,7 @@ use crate::{
 use one_hot::DeviceBooleanityRa;
 
 pub(crate) mod address;
+pub(crate) mod masses;
 pub(crate) mod one_hot;
 pub(crate) mod witness;
 

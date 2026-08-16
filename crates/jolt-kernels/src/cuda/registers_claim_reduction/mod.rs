@@ -1,24 +1,130 @@
+use jolt_claims::protocols::jolt::relations::claim_reductions::registers::{
+    RegistersClaimReductionInputClaims, RegistersClaimReductionOutputClaims,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use super::CudaBackend;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use super::common::prefix_suffix::{
+    eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
+};
+use super::{require_context, CudaBackend};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence test must fail here until the kernels land, and \
-              the expectation becomes an error the moment they do"
-)]
+pub(crate) mod witness;
+
+const COLUMNS: usize = 3;
+
+pub struct RegistersClaimReductionKernel<F: Field> {
+    rounds: PrefixSuffixRounds<F>,
+    total: usize,
+    bound: usize,
+}
+
+impl<F: Field> ProveRounds<F> for RegistersClaimReductionKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.total
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if bind.is_some() {
+            self.bound += 1;
+        }
+        self.rounds.prove_round(bind, round, previous_claim)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bound += 1;
+        self.rounds.finish_rounds(bind)
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for RegistersClaimReductionKernel<F> {
+    type Relation = RegistersClaimReduction<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &RegistersClaimReductionInputClaims<F>,
+    ) -> Result<RegistersClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
+        let remaining = self.total - self.bound;
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        let claims =
+            self.rounds
+                .column_claims()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA registers claim reduction failed to read back its column claims",
+                })?;
+        let [rd_write_value, rs1_value, rs2_value] = claims.as_slice() else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA registers claim reduction produces one claim per reduced column",
+            });
+        };
+        Ok(RegistersClaimReductionOutputClaims {
+            rd_write_value: *rd_write_value,
+            rs1_value: *rs1_value,
+            rs2_value: *rs2_value,
+        })
+    }
+}
+
 impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, RegistersClaimReduction<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, RegistersClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersClaimReduction<F>>>, KernelError<F>>
     {
-        todo!("CUDA registers claim-reduction kernel")
+        let context = require_context()?;
+        let relation = inputs.relation;
+        let log_t = relation.symbolic().rounds();
+        let tau_low = relation.product_uniskip_tau_low();
+        if tau_low.len() != log_t {
+            return Err(KernelError::InvariantViolation {
+                reason: "the registers reduction Spartan point has the wrong variable count",
+            });
+        }
+        let prefix_rounds = prefix_rounds_ceil(log_t).ok_or(KernelError::Unsupported {
+            reason: "the CUDA registers claim reduction needs at least two cycle variables to \
+                     split the prefix-suffix sumcheck",
+        })?;
+
+        let cycles = 1usize << log_t;
+        let rows = collect_bundles::<witness::RegistersClaimReductionWitness>(witness, cycles)?;
+        let columns = witness::device_columns(context, &rows)?;
+        drop(rows);
+
+        let gamma = inputs.challenges.gamma;
+        let mut powers = Vec::with_capacity(COLUMNS);
+        let mut power = F::one();
+        for _ in 0..COLUMNS {
+            powers.push(power);
+            power *= gamma;
+        }
+        let group = PrefixSuffixGroup {
+            pairs: vec![eq_pair(tau_low, prefix_rounds)?],
+            columns: powers.into_iter().enumerate().collect(),
+            constant: F::zero(),
+        };
+
+        Ok(Box::new(RegistersClaimReductionKernel {
+            rounds: PrefixSuffixRounds::new(context, columns, vec![group], prefix_rounds)?,
+            total: log_t,
+            bound: 0,
+        }))
     }
 }
 

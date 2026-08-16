@@ -1,22 +1,131 @@
+use jolt_claims::protocols::jolt::relations::claim_reductions::increments::{
+    IncClaimReductionInputClaims, IncClaimReductionOutputClaims,
+};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
+use jolt_poly::UnivariatePoly;
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use super::CudaBackend;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use super::common::prefix_suffix::{
+    eq_pair, prefix_rounds_floor, PrefixSuffixGroup, PrefixSuffixRounds,
+};
+use super::{require_context, CudaBackend};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 
-#[expect(
-    clippy::todo,
-    reason = "phase 1 stub: the equivalence test drives this until the kernels land"
-)]
+pub(crate) mod witness;
+
+const RAM_COLUMN: usize = 0;
+
+const RD_COLUMN: usize = 1;
+
+const GROUP_COLUMNS: [usize; 4] = [RAM_COLUMN, RAM_COLUMN, RD_COLUMN, RD_COLUMN];
+
+pub struct IncClaimReductionKernel<F: Field> {
+    rounds: PrefixSuffixRounds<F>,
+    total: usize,
+    bound: usize,
+}
+
+impl<F: Field> ProveRounds<F> for IncClaimReductionKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.total
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if bind.is_some() {
+            self.bound += 1;
+        }
+        self.rounds.prove_round(bind, round, previous_claim)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bound += 1;
+        self.rounds.finish_rounds(bind)
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for IncClaimReductionKernel<F> {
+    type Relation = IncClaimReduction<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &IncClaimReductionInputClaims<F>,
+    ) -> Result<IncClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
+        let remaining = self.total - self.bound;
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        let claims =
+            self.rounds
+                .column_claims()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "CUDA increment claim reduction failed to read back its column claims",
+                })?;
+        let [ram_inc, rd_inc] = claims.as_slice() else {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA increment claim reduction produces one claim per increment column",
+            });
+        };
+        Ok(IncClaimReductionOutputClaims {
+            ram_inc: *ram_inc,
+            rd_inc: *rd_inc,
+        })
+    }
+}
+
 impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, IncClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = IncClaimReduction<F>>>, KernelError<F>> {
-        todo!("CUDA increment claim-reduction kernel")
+        let context = require_context()?;
+        let relation = inputs.relation;
+        let log_t = relation.symbolic().rounds();
+        let cycle_points = relation.cycle_points();
+        if cycle_points.iter().any(|point| point.len() != log_t) {
+            return Err(KernelError::InvariantViolation {
+                reason: "an increment reduction cycle point has the wrong variable count",
+            });
+        }
+        let prefix_rounds = prefix_rounds_floor(log_t).ok_or(KernelError::Unsupported {
+            reason: "the CUDA increment claim reduction needs at least two cycle variables to \
+                     split the prefix-suffix sumcheck",
+        })?;
+
+        let cycles = 1usize << log_t;
+        let rows = collect_bundles::<witness::IncClaimReductionWitness>(witness, cycles)?;
+        let columns = witness::device_columns(context, &rows)?;
+        drop(rows);
+
+        let gamma = inputs.challenges.gamma;
+        let mut power = F::one();
+        let mut groups = Vec::with_capacity(GROUP_COLUMNS.len());
+        for (point, column) in cycle_points.into_iter().zip(GROUP_COLUMNS) {
+            groups.push(PrefixSuffixGroup {
+                pairs: vec![eq_pair(point, prefix_rounds)?],
+                columns: vec![(column, power)],
+                constant: F::zero(),
+            });
+            power *= gamma;
+        }
+
+        Ok(Box::new(IncClaimReductionKernel {
+            rounds: PrefixSuffixRounds::new(context, columns, groups, prefix_rounds)?,
+            total: log_t,
+            bound: 0,
+        }))
     }
 }
 

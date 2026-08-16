@@ -1,24 +1,176 @@
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
-use jolt_witness::JoltWitnessPlane;
+use jolt_poly::{BindingOrder, UnivariatePoly};
+use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::stage6a::booleanity::{
+    BooleanityAddressPhase, BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims,
+};
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use crate::cuda::CudaBackend;
-use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+use super::masses::DeviceBooleanityMasses;
+use super::witness::{packed_columns, BooleanityCycleWitness};
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+use crate::cuda::common::split_eq::DeviceSplitEq;
+use crate::cuda::{require_context, CudaBackend};
+use crate::{
+    KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
+};
 
-#[expect(
-    clippy::todo,
-    reason = "phase-1 stub: the legacy-oracle gate is written against this signature before the \
-              device kernels exist"
-)]
+pub struct BooleanityAddressKernel<F: Field> {
+    context: &'static CudaKernelContext,
+    relation: BooleanityAddressPhase<F>,
+    masses: DeviceBooleanityMasses,
+    eq: DeviceSplitEq<F>,
+    last_round_poly: Option<UnivariatePoly<F>>,
+    intermediate: Option<F>,
+    rounds_bound: usize,
+}
+
+impl<F: Field> BooleanityAddressKernel<F> {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        self.masses.bind(self.context, challenge).map_err(|_| {
+            SumcheckError::MissingEvaluationSource {
+                kind: "cuda booleanity address-phase bind",
+            }
+        })?;
+        self.eq.bind(challenge);
+        self.rounds_bound += 1;
+        if let Some(poly) = self.last_round_poly.take() {
+            if self.rounds_bound == self.relation.symbolic().rounds() {
+                self.intermediate = Some(poly.evaluate(challenge));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<F: Field> ProveRounds<F> for BooleanityAddressKernel<F> {
+    fn num_rounds(&self) -> usize {
+        self.relation.symbolic().rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        _round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        if let Some(challenge) = bind {
+            self.bind(challenge)?;
+        }
+        let (at_zero, leading) = self
+            .masses
+            .round_lanes(self.context, &self.eq)
+            .map_err(|_| SumcheckError::MissingEvaluationSource {
+                kind: "cuda booleanity address-phase round",
+            })?;
+        let mut coefficients = self
+            .eq
+            .gruen_poly_deg_3(at_zero, leading, previous_claim)
+            .into_coefficients();
+        coefficients.resize(self.relation.degree() + 1, F::from_u64(0));
+        let poly = UnivariatePoly::new(coefficients);
+        self.last_round_poly = Some(poly.clone());
+        Ok(poly)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.bind(bind)
+    }
+}
+
+impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
+    type Relation = BooleanityAddressPhase<F>;
+
+    fn output_claims(
+        &mut self,
+        _inputs: &BooleanityAddressPhaseInputClaims<F>,
+    ) -> Result<BooleanityAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
+        let remaining = self.relation.symbolic().rounds() - self.rounds_bound;
+        if remaining != 0 {
+            return Err(SumcheckKernelError::NotFullyBound { remaining });
+        }
+        if self.masses.len() != 1 {
+            return Err(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA booleanity address phase counted every round but its mass \
+                         tables are not fully bound",
+            });
+        }
+        let intermediate = self
+            .intermediate
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "CUDA booleanity address phase never staged its intermediate claim",
+            })?;
+        Ok(BooleanityAddressPhaseOutputClaims { intermediate })
+    }
+}
+
 impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
-        _witness: &dyn JoltWitnessPlane<F>,
-        _inputs: ProverInputs<'_, F, BooleanityAddressPhase<F>>,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, BooleanityAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
     {
-        todo!("the CUDA booleanity address phase is not implemented yet")
+        let context = require_context()?;
+        let relation = inputs.relation;
+        let dimensions = relation.dimensions();
+        let reference_cycle = relation.reference_cycle();
+        if inputs.challenges.reference_address.len() != dimensions.log_k_chunk
+            || reference_cycle.len() != dimensions.log_t
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "a booleanity address-phase reference point has the wrong variable count",
+            });
+        }
+
+        let layout = dimensions.layout;
+        let cycles = 1usize << dimensions.log_t;
+        let rows = collect_bundles::<BooleanityCycleWitness>(witness, cycles)?;
+        let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
+            reason: "the CUDA booleanity address phase packs the bytecode PC and the remapped RAM \
+                     word address into one 32-bit word each, reserving the all-ones word for a \
+                     cold cycle",
+        })?;
+        drop(rows);
+
+        let device_columns = DeviceOneHotColumns::new(
+            context,
+            &columns.lookup,
+            &columns.pc,
+            &columns.ram,
+            [layout.instruction(), layout.bytecode(), layout.ram()],
+            dimensions.log_k_chunk,
+            cycles,
+        )?;
+        drop(columns);
+
+        let masses = DeviceBooleanityMasses::new(
+            context,
+            &device_columns,
+            &reference_cycle,
+            inputs.challenges.gamma,
+        )?;
+        drop(device_columns);
+
+        let eq = DeviceSplitEq::new(
+            context,
+            &inputs.challenges.reference_address,
+            BindingOrder::LowToHigh,
+        )?;
+
+        Ok(Box::new(BooleanityAddressKernel {
+            context,
+            relation: relation.clone(),
+            masses,
+            eq,
+            last_round_poly: None,
+            intermediate: None,
+            rounds_bound: 0,
+        }))
     }
 }
 

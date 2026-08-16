@@ -11,6 +11,7 @@ use super::context::{CudaKernelContext, BLOCK};
 use super::dense_product::DeviceDenseProduct;
 use super::device::{require_fr, DeviceFrVec, LIMBS};
 use super::error::CudaError;
+use super::split_eq::DeviceSplitEq;
 
 pub struct SumOfProducts<F: Field> {
     offsets: Vec<u32>,
@@ -178,6 +179,92 @@ impl DeviceSumOfProducts {
             })
             .collect()
     }
+
+    pub fn round_gruen_endpoints<F: Field>(
+        &self,
+        context: &CudaKernelContext,
+        tables: &[&DeviceFrVec],
+        half: usize,
+        eq: &DeviceSplitEq<F>,
+    ) -> Result<(F, F), CudaError> {
+        if self.uniform_arity.is_none() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a Gruen leading-coefficient lane mixes leading coefficients of different \
+                         degrees unless every term has the same arity",
+            });
+        }
+        if half == 0 {
+            return Err(CudaError::LengthMismatch {
+                expected: 2,
+                got: 0,
+            });
+        }
+        for table in tables {
+            if table.len() != 2 * half {
+                return Err(CudaError::LengthMismatch {
+                    expected: 2 * half,
+                    got: table.len(),
+                });
+            }
+        }
+        let e_in_len = eq.e_in_len();
+        if eq.e_out_current().len() * e_in_len != half {
+            return Err(CudaError::LengthMismatch {
+                expected: half,
+                got: eq.e_out_current().len() * e_in_len,
+            });
+        }
+
+        let half_count = CudaKernelContext::count_of(half)?;
+        let terms = CudaKernelContext::count_of(self.terms)?;
+        let inner_len = CudaKernelContext::count_of(e_in_len)?;
+        let in_bits = CudaKernelContext::count_of(e_in_len.max(1).ilog2() as usize)?;
+        let pointers = context.device_pointers(tables)?;
+        let blocks = half_count.div_ceil(BLOCK).max(1);
+        let mut partials = context.alloc(2 * blocks as usize)?;
+
+        let mut builder = context.stream().launch_builder(context.sopg_round());
+        let _ = builder.arg(&pointers);
+        let _ = builder.arg(&self.offsets);
+        let _ = builder.arg(&self.factors);
+        let _ = builder.arg(self.coefficients.limbs());
+        let _ = builder.arg(&terms);
+        let _ = builder.arg(&half_count);
+        let _ = builder.arg(eq.e_in_current().limbs());
+        let _ = builder.arg(eq.e_out_current().limbs());
+        let _ = builder.arg(&inner_len);
+        let _ = builder.arg(&in_bits);
+        let _ = builder.arg(partials.limbs_mut());
+        // SAFETY: thread `y < half` reads `table[2y]` and `table[2y+1]` of every
+        // table named by `factors`, each checked above to hold `2 * half`
+        // elements, and every `factors` entry indexes `tables` because `push`
+        // recorded it against that same slice. `offsets` holds `terms + 1`
+        // entries so `offsets[t + 1]` is in bounds, and `coefficients` holds
+        // `terms`. The eq lookup reads `e_out[y]` when `e_in_len <= 1` and
+        // otherwise `e_in[y & mask]` / `e_out[y >> in_bits]`, bounded because
+        // `in_bits` is `e_in`'s log length and
+        // `e_out.len() * e_in_len == half` is checked above. Writes touch only
+        // `partials[lane * gridDim.x + blockIdx.x]` for `lane < 2`, of
+        // `2 * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
+        // `shared_mem_bytes`, and the two block reductions sit outside the
+        // `y < half` guard so every thread reaches each `__syncthreads()`.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+
+        let totals = DeviceDenseProduct::reduce_lanes(context, partials, 2, blocks)?;
+        let host = totals.to_host()?;
+        let unsupported = || CudaError::NotImplemented {
+            kernel: "CUDA kernels support only the BN254 scalar field",
+        };
+        let constant = super::device::fr_into(host[0]).ok_or_else(unsupported)?;
+        let leading = super::device::fr_into(host[1]).ok_or_else(unsupported)?;
+        Ok((constant, leading))
+    }
 }
 
 #[cfg(test)]
@@ -274,6 +361,129 @@ mod tests {
                 .collect();
             prop_assert_eq!(got, expected, "sum-of-products lanes diverged");
         }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(6))]
+        #[test]
+        fn gruen_sum_of_products_endpoints_match_cpu(
+            log_t in 2usize..9,
+            seed in any::<u64>(),
+            arity in 1usize..4,
+            term_count in 1usize..4,
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            let cycles = 1usize << log_t;
+            let table_count = arity + 1;
+            let tables: Vec<Vec<Fr>> = (0..table_count)
+                .map(|t| {
+                    (0..cycles)
+                        .map(|i| fr(seed ^ ((t as u64) << 40) ^ (i as u64 * 17 + 5)))
+                        .collect()
+                })
+                .collect();
+            let terms: Vec<(Fr, Vec<usize>)> = (0..term_count)
+                .map(|t| {
+                    let coefficient = fr(seed ^ (t as u64 * 2003 + 11));
+                    let factors = (0..arity).map(|f| (t + f) % table_count).collect();
+                    (coefficient, factors)
+                })
+                .collect();
+            let point: Vec<Fr> = (0..log_t).map(|i| fr(seed ^ (i as u64 * 97 + 41))).collect();
+
+            let mut form = SumOfProducts::<Fr>::new();
+            for (coefficient, factors) in &terms {
+                form.push(*coefficient, factors).expect("push term");
+            }
+            let device_form = form.upload(context).expect("upload form");
+            let uploaded: Vec<_> = tables
+                .iter()
+                .map(|table| context.upload(table).expect("upload table"))
+                .collect();
+            let handles: Vec<_> = uploaded.iter().collect();
+            let eq = super::super::split_eq::DeviceSplitEq::<Fr>::new(
+                context,
+                &point,
+                jolt_poly::BindingOrder::LowToHigh,
+            )
+            .expect("device split-eq");
+            let host_eq = jolt_poly::GruenSplitEqPolynomial::<Fr>::new(
+                &point,
+                jolt_poly::BindingOrder::LowToHigh,
+            );
+
+            let got: (Fr, Fr) = device_form
+                .round_gruen_endpoints(context, &handles, cycles / 2, &eq)
+                .expect("device gruen endpoints");
+            let expected = cpu_gruen_endpoints(&tables, &terms, cycles / 2, &host_eq);
+            prop_assert_eq!(got, expected, "gruen endpoints diverged");
+        }
+    }
+
+    fn cpu_gruen_endpoints(
+        tables: &[Vec<Fr>],
+        terms: &[(Fr, Vec<usize>)],
+        half: usize,
+        eq: &jolt_poly::GruenSplitEqPolynomial<Fr>,
+    ) -> (Fr, Fr) {
+        let e_in = eq.e_in_current();
+        let e_out = eq.e_out_current();
+        let bits = e_in.len().max(1).ilog2();
+        let mut constant = Fr::from_u64(0);
+        let mut leading = Fr::from_u64(0);
+        for y in 0..half {
+            let weight = e_out[y >> bits]
+                * if e_in.len() <= 1 {
+                    Fr::from_u64(1)
+                } else {
+                    e_in[y & ((1usize << bits) - 1)]
+                };
+            let mut sum_constant = Fr::from_u64(0);
+            let mut sum_leading = Fr::from_u64(0);
+            for (coefficient, factors) in terms {
+                let mut at_zero = Fr::from_u64(1);
+                let mut delta = Fr::from_u64(1);
+                for &factor in factors {
+                    let lo = tables[factor][2 * y];
+                    let hi = tables[factor][2 * y + 1];
+                    at_zero *= lo;
+                    delta *= hi - lo;
+                }
+                sum_constant += *coefficient * at_zero;
+                sum_leading += *coefficient * delta;
+            }
+            constant += weight * sum_constant;
+            leading += weight * sum_leading;
+        }
+        (constant, leading)
+    }
+
+    #[test]
+    fn mixed_arity_endpoints_are_refused() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let point = [fr(3), fr(9)];
+        let eq = super::super::split_eq::DeviceSplitEq::<Fr>::new(
+            context,
+            &point,
+            jolt_poly::BindingOrder::LowToHigh,
+        )
+        .expect("device split-eq");
+        let mut form = SumOfProducts::<Fr>::new();
+        form.push(Fr::from_u64(1), &[0]).expect("arity one");
+        form.push(Fr::from_u64(1), &[0, 1]).expect("arity two");
+        let device_form = form.upload(context).expect("upload form");
+        let table = context
+            .upload(&[fr(1), fr(2), fr(3), fr(4)])
+            .expect("upload table");
+        let handles = [&table, &table];
+        assert!(
+            device_form
+                .round_gruen_endpoints::<Fr>(context, &handles, 2, &eq)
+                .is_err(),
+            "a leading-coefficient lane over mixed arities must be refused, not silently wrong",
+        );
     }
 
     #[test]
