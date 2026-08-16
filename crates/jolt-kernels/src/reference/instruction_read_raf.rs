@@ -360,18 +360,34 @@ impl<F: Field> InstructionReadRafKernel<F> {
         self.dimensions.instruction_address_bits()
     }
 
+    #[cfg_attr(
+        not(all(test, feature = "cuda")),
+        expect(dead_code, reason = "the CUDA equivalence tests are the only consumer")
+    )]
     pub(crate) fn rows(&self) -> &[InstructionReadRafWitness] {
         &self.rows
     }
 
+    #[cfg_attr(
+        not(all(test, feature = "cuda")),
+        expect(dead_code, reason = "the CUDA equivalence tests are the only consumer")
+    )]
     pub(crate) fn u_evals(&self) -> &[F] {
         &self.u_evals
     }
 
+    #[cfg_attr(
+        not(all(test, feature = "cuda")),
+        expect(dead_code, reason = "the CUDA equivalence tests are the only consumer")
+    )]
     pub(crate) fn v_table(&self, phase: usize) -> &[F] {
         &self.v_tables[phase]
     }
 
+    #[cfg_attr(
+        not(all(test, feature = "cuda")),
+        expect(dead_code, reason = "the CUDA equivalence tests are the only consumer")
+    )]
     pub(crate) fn prefix_checkpoints(&self) -> &[PrefixEval<F>] {
         &self.prefix_checkpoints
     }

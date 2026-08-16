@@ -1,8 +1,8 @@
-use cudarc::driver::PushKernelArg;
+use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_field::Field;
 
-use super::context::CudaKernelContext;
-use super::device::{fr_limbs, require_fr, DeviceFrVec};
+use super::context::{CudaKernelContext, BLOCK};
+use super::device::{fr_limbs, require_fr, DeviceFrVec, LIMBS};
 use super::error::CudaError;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -75,9 +75,12 @@ pub fn half_fold_into<F: Field>(
             got: column.len(),
         });
     }
-    let (out_stride, sum_stride) = summed.strides(out_len, sum_len);
     let scale = fr_limbs(require_fr(scale)?);
     let bias = fr_limbs(require_fr(bias)?);
+    if summed == SummedHalf::Low {
+        return row_fold_into(context, column, weights, out, &scale, &bias, accumulate);
+    }
+    let (out_stride, sum_stride) = summed.strides(out_len, sum_len);
     let out_count = CudaKernelContext::count_of(out_len)?;
     let sum_count = CudaKernelContext::count_of(sum_len)?;
     let out_stride = CudaKernelContext::count_of(out_stride)?;
@@ -111,6 +114,56 @@ pub fn half_fold_into<F: Field>(
     // so no device buffer backs them, and threads with `a >= out_len` return
     // before any access.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(out_count)) }?;
+    Ok(())
+}
+
+fn row_fold_into(
+    context: &CudaKernelContext,
+    column: &DeviceFrVec,
+    weights: &DeviceFrVec,
+    out: &mut DeviceFrVec,
+    scale: &[u64; LIMBS],
+    bias: &[u64; LIMBS],
+    accumulate: bool,
+) -> Result<(), CudaError> {
+    let out_len = out.len();
+    let sum_len = weights.len();
+    let sum_count = CudaKernelContext::count_of(sum_len)?;
+    let blocks = u32::try_from(out_len).map_err(|_| CudaError::LengthMismatch {
+        expected: u32::MAX as usize,
+        got: out_len,
+    })?;
+    let accumulate = u32::from(accumulate);
+
+    let mut builder = context.stream().launch_builder(context.hf_row_fold());
+    let _ = builder.arg(column.limbs());
+    let _ = builder.arg(weights.limbs());
+    let _ = builder.arg(out.limbs_mut());
+    for limb in scale {
+        let _ = builder.arg(limb);
+    }
+    for limb in bias {
+        let _ = builder.arg(limb);
+    }
+    let _ = builder.arg(&sum_count);
+    let _ = builder.arg(&accumulate);
+    // SAFETY: block `a = blockIdx.x < out_len` reads `weights[b]` and
+    // `column[a * sum_len + b]` for `b` striding from `threadIdx.x` by
+    // `blockDim.x` while `b < sum_len`, so every column index is below
+    // `out_len * sum_len` — `column`'s checked length — and every weight index
+    // below `sum_len`. Shared memory is `BLOCK * LIMBS` u64s, matching
+    // `shared_mem_bytes`; every thread reaches each `__syncthreads()` because the
+    // strided loop and the tree sit outside any early return, and `BLOCK` is a
+    // power of two so the tree covers the block. Only thread 0 touches `out[a]`,
+    // one slot per block, so the accumulate path's read-modify-write is
+    // uncontended. `scale` and `bias` arrive as by-value limbs.
+    let _ = unsafe {
+        builder.launch(LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+        })
+    }?;
     Ok(())
 }
 

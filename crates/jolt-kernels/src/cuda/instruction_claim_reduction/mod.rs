@@ -13,6 +13,7 @@ use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
 };
 use super::{require_context, CudaBackend};
+use crate::reference::ReferenceBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -88,7 +89,7 @@ impl<F: Field> SumcheckKernel<F> for InstructionClaimReductionKernel<F> {
 impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
@@ -102,10 +103,9 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBackend {
                 reason: "the instruction reduction Spartan point has the wrong variable count",
             });
         }
-        let prefix_rounds = prefix_rounds_ceil(log_t).ok_or(KernelError::Unsupported {
-            reason: "the CUDA instruction claim reduction needs at least two cycle variables to \
-                     split the prefix-suffix sumcheck",
-        })?;
+        let Some(prefix_rounds) = prefix_rounds_ceil(log_t) else {
+            return ReferenceBackend.prepare(session, witness, inputs);
+        };
 
         let cycles = 1usize << log_t;
         let rows = collect_bundles::<witness::InstructionClaimReductionWitness>(witness, cycles)?;
@@ -199,6 +199,52 @@ mod tests {
                     "{id:?} is constant across the fixture, so a mis-indexed read would pass",
                 );
             }
+        });
+    }
+
+    #[test]
+    fn a_one_round_trace_is_served_below_the_prefix_suffix_minimum() {
+        let Some(_) = shared_context() else {
+            return;
+        };
+        const TINY: usize = 1;
+        let point = vec![fr(7)];
+        let challenges = vec![fr(11)];
+        with_r1cs_witness(TINY, RAM_K, one_hot(), 3, |witness| {
+            let relation =
+                InstructionClaimReduction::<Fr>::new(TraceDimensions::new(TINY), point.clone());
+            let claims = InstructionClaimReductionInputClaims::default();
+            let points = InstructionClaimReductionInputClaims::default();
+            let challenge_set = InstructionClaimReductionChallenges { gamma: fr(5) };
+            let make_inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenge_set,
+            };
+
+            let input_claim = reference_input_claim(witness, make_inputs);
+            let mut expected_kernel = ReferenceBackend
+                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                .expect("reference prepare");
+            let mut got_kernel = CudaBackend
+                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                .expect("cuda prepare below the prefix-suffix minimum");
+
+            let expected = drive(&mut *expected_kernel, input_claim, &challenges);
+            let got = drive(&mut *got_kernel, input_claim, &challenges);
+            assert_eq!(got, expected, "round polynomials diverged at log_T = 1");
+            assert_eq!(
+                got_kernel
+                    .output_claims(&claims)
+                    .expect("cuda claims")
+                    .opening_values(),
+                expected_kernel
+                    .output_claims(&claims)
+                    .expect("reference claims")
+                    .opening_values(),
+                "output claims diverged at log_T = 1",
+            );
         });
     }
 

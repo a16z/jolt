@@ -44,14 +44,14 @@ extern "C" __global__ void i128_to_mont_kernel(const u64 *__restrict__ magnitude
 }
 
 extern "C" __global__ void eq_double_kernel(const u64 *__restrict__ in,
-                                            const u64 *__restrict__ r_i,
+                                            u64 r0, u64 r1, u64 r2, u64 r3,
                                             u64 *__restrict__ out,
                                             unsigned int prev_len) {
     unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j >= prev_len) return;
-    u64 base[LIMBS], r[LIMBS], one[LIMBS], one_minus_r[LIMBS], lo[LIMBS], hi[LIMBS];
+    u64 base[LIMBS], one[LIMBS], one_minus_r[LIMBS], lo[LIMBS], hi[LIMBS];
+    u64 r[LIMBS] = {r0, r1, r2, r3};
     load4(in + j * LIMBS, base);
-    load4(r_i, r);
     load4(FR_ONE, one);
     fr_sub(one, r, one_minus_r);
     fr_mul(base, one_minus_r, lo);
@@ -61,13 +61,13 @@ extern "C" __global__ void eq_double_kernel(const u64 *__restrict__ in,
 }
 
 extern "C" __global__ void lt_double_kernel(u64 *__restrict__ evals,
-                                            const u64 *__restrict__ r_i,
+                                            u64 r0, u64 r1, u64 r2, u64 r3,
                                             unsigned int half) {
     unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j >= half) return;
-    u64 x[LIMBS], r[LIMBS], y[LIMBS], diff[LIMBS], nx[LIMBS];
+    u64 x[LIMBS], y[LIMBS], diff[LIMBS], nx[LIMBS];
+    u64 r[LIMBS] = {r0, r1, r2, r3};
     load4(evals + j * LIMBS, x);
-    load4(r_i, r);
     fr_mul(x, r, y);
     fr_sub(r, y, diff);
     fr_add(x, diff, nx);

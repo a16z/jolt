@@ -1,4 +1,3 @@
-use jolt_claims::protocols::jolt::geometry::ram::{ram_inc_val_check, ram_ra_val_check};
 use jolt_claims::protocols::jolt::relations::ram::{
     RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
 };
@@ -8,16 +7,18 @@ use jolt_field::Field;
 use jolt_poly::BindingOrder;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
+use crate::cuda::common::device::require_fr_slice;
 use crate::cuda::common::lt_poly::DeviceLtPolynomial;
 use crate::cuda::common::ra_poly::DeviceRaPolynomial;
-use crate::reference::views::{dense_view, eq_table};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+pub(crate) mod witness;
 
 impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
     fn prepare(
@@ -38,13 +39,17 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
         }
         let (r_address, r_cycle) = point.split_at(ram_log_k);
 
-        let weights: [(F, Vec<F>); 0] = [];
-        let factors = [dense_view(witness, ram_inc_val_check())?];
-        let ra_id = ram_ra_val_check().polynomial_id();
-        let ra = DeviceRaPolynomial::new(
+        let cycles = 1usize << log_t;
+        let addresses = 1usize << ram_log_k;
+        let rows = collect_bundles::<witness::RamValCheckWitness>(witness, cycles)?;
+        let (inc, hot) = witness::device_columns(context, &rows, addresses)?;
+        drop(rows);
+
+        let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
+        let ra = DeviceRaPolynomial::from_device_tables(
             context,
-            &witness.hot_indices(ra_id)?,
-            &eq_table(r_address),
+            &hot,
+            eq_address,
             BindingOrder::LowToHigh,
         )?;
         let lt = DeviceLtPolynomial::shifted(
@@ -53,10 +58,9 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
             BindingOrder::LowToHigh,
             Some(inputs.challenges.gamma),
         )?;
-        let state = DeviceDenseProduct::new(
-            context,
-            &weights,
-            &factors,
+        let state = DeviceDenseProduct::from_device_factors(
+            None,
+            vec![inc],
             Some(ra),
             Some(lt),
             log_t,
@@ -132,7 +136,7 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamValCheck<F>> {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_claims::protocols::jolt::geometry::ram::RamValCheckInit;
+    use jolt_claims::protocols::jolt::geometry::ram::{ram_ra_val_check, RamValCheckInit};
     use jolt_claims::protocols::jolt::relations::ram::{
         RamValCheckChallenges, RamValCheckInputClaims,
     };
@@ -142,27 +146,27 @@ mod tests {
     use jolt_claims::{OutputClaims, SumcheckChallenges};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
-    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
+    use jolt_witness::{
+        collect_bundles, FixedBackend, JoltWitnessOracle, JoltWitnessPlane, OneHotSource,
+        PolynomialEncoding, Shape,
+    };
     use proptest::prelude::*;
 
-    use super::CudaBackend;
+    use super::{witness::RamValCheckWitness, CudaBackend};
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::testing::{arb_point, drive, fr, reference_input_claim, FixedPlane};
+    use crate::cuda::common::testing::{
+        arb_point, drive, fr, ram_row_is_cold, ram_rows_with_grid, reference_input_claim,
+        RamRowFixture, RowPlane, RAM_ROW_PATTERN,
+    };
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 
     const LOG_T: usize = 6;
-    const RAM_LOG_K: usize = 3;
+    const RAM_LOG_K: usize = 4;
 
-    fn witness(seed: u64) -> FixedPlane {
-        let cycles = 1usize << LOG_T;
-        let addresses = 1usize << RAM_LOG_K;
+    fn witness(seed: u64) -> RowPlane {
+        let RamRowFixture { rows, ra, inc } = ram_rows_with_grid(LOG_T, RAM_LOG_K, seed);
         let mut backend = FixedBackend::new();
-        let mut ra = vec![Fr::from_u64(0); addresses * cycles];
-        for cycle in 0..cycles {
-            let address = ((cycle as u64 * 5 + seed) % addresses as u64) as usize;
-            ra[address * cycles + cycle] = Fr::from_u64(1);
-        }
         backend
             .insert(
                 JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa),
@@ -170,7 +174,6 @@ mod tests {
                 ra,
             )
             .expect("insert ram_ra");
-        let inc: Vec<Fr> = (0..cycles as u64).map(|c| fr(c + seed)).collect();
         backend
             .insert(
                 JoltPolynomialId::Committed(JoltCommittedPolynomial::RamInc),
@@ -178,7 +181,69 @@ mod tests {
                 inc,
             )
             .expect("insert ram_inc");
-        FixedPlane::with_log_t(backend, "cuda ram_val_check fixture", Some(LOG_T))
+        RowPlane::new(backend, "cuda ram_val_check fixture", LOG_T, rows)
+    }
+
+    #[test]
+    fn fixture_bundles_match_the_one_hot_oracle_and_carry_cold_cycles() {
+        let cycles = 1usize << LOG_T;
+        for seed in 0..RAM_ROW_PATTERN as u64 {
+            let plane = witness(seed);
+            let rows =
+                collect_bundles::<RamValCheckWitness>(&plane as &dyn JoltWitnessPlane<Fr>, cycles)
+                    .expect("bundle walk");
+            let expected = plane
+                .hot_indices(ram_ra_val_check().polynomial_id())
+                .expect("oracle hot indices");
+            let inc = JoltWitnessOracle::<Fr>::oracle_table(
+                &plane,
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::RamInc),
+            )
+            .expect("oracle increment column");
+            assert_eq!(rows.len(), cycles, "bundle row count");
+            for (cycle, row) in rows.iter().enumerate() {
+                assert_eq!(
+                    row.address.0.map(|address| address as usize),
+                    expected[cycle],
+                    "seed {seed} cycle {cycle}: bundle address disagrees with hot_indices",
+                );
+                assert_eq!(
+                    row.address.0.is_none(),
+                    ram_row_is_cold(cycle),
+                    "seed {seed} cycle {cycle}: the fixture disagrees with itself on coldness",
+                );
+                assert_eq!(
+                    Fr::from_i128(row.inc.0),
+                    inc[cycle],
+                    "seed {seed} cycle {cycle}: bundle increment disagrees with the oracle column",
+                );
+            }
+            let cold = rows.iter().filter(|row| row.address.0.is_none()).count();
+            assert!(
+                cold > 0 && cold < cycles,
+                "seed {seed}: {cold} of {cycles} cycles are cold, so one of the two paths is \
+                 unexercised",
+            );
+            assert!(
+                rows.iter().any(|row| row.inc.0 < 0),
+                "seed {seed}: no cycle carries a negative increment",
+            );
+            assert!(
+                rows.iter().any(|row| row.inc.0 > 0),
+                "seed {seed}: no cycle carries a positive increment",
+            );
+            assert!(
+                rows.iter().any(|row| row.inc.0 == 0),
+                "seed {seed}: no cycle carries an idle increment",
+            );
+            let distinct: std::collections::BTreeSet<u64> =
+                rows.iter().filter_map(|row| row.address.0).collect();
+            assert!(
+                distinct.len() > 1,
+                "seed {seed}: every hot cycle targets the same address, so the address column \
+                 cannot detect a wrong index",
+            );
+        }
     }
 
     proptest! {

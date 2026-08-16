@@ -1,16 +1,16 @@
 #define RA_COLD 0xFFFFFFFFu
 
 extern "C" __global__ void ra_split_tables_kernel(const u64 *__restrict__ in,
-                                                  const u64 *__restrict__ eq_zero,
-                                                  const u64 *__restrict__ eq_one,
+                                                  u64 zero0, u64 zero1, u64 zero2, u64 zero3,
+                                                  u64 one0, u64 one1, u64 one2, u64 one3,
                                                   u64 *__restrict__ out,
                                                   unsigned int n) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    u64 value[LIMBS], z[LIMBS], o[LIMBS], lo[LIMBS], hi[LIMBS];
+    u64 value[LIMBS], lo[LIMBS], hi[LIMBS];
+    u64 z[LIMBS] = {zero0, zero1, zero2, zero3};
+    u64 o[LIMBS] = {one0, one1, one2, one3};
     load4(in + (unsigned long long)i * LIMBS, value);
-    load4(eq_zero, z);
-    load4(eq_one, o);
     fr_mul(value, z, lo);
     fr_mul(value, o, hi);
     store4(out + (unsigned long long)i * LIMBS, lo);

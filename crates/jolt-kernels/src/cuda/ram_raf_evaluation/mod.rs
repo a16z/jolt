@@ -1,4 +1,3 @@
-use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
 };
@@ -7,11 +6,12 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
 use crate::cuda::common::one_hot_fold::{affine_table, DeviceOneHotColumns, FoldTuning};
+use crate::cuda::common::ram_address_witness::{packed_ram_words, RamAddressWitness};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -40,14 +40,17 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
             });
         }
 
-        let hot = witness.hot_indices(ram_ra_raf_evaluation().polynomial_id())?;
-        if hot.len() != 1usize << relation.tau_low().len() {
-            return Err(KernelError::InvariantViolation {
-                reason: "the RAM one-hot column length disagrees with the RAF cycle point",
-            });
-        }
-        let columns = DeviceOneHotColumns::from_hot_indices(context, &hot, ram_log_k)?;
-        drop(hot);
+        let cycles = 1usize << relation.tau_low().len();
+        let rows = collect_bundles::<RamAddressWitness>(witness, cycles)?;
+        let words =
+            packed_ram_words(&rows, 1usize << ram_log_k).map_err(|_| KernelError::Unsupported {
+                reason: "the CUDA RAM RAF evaluation packs each remapped RAM word address into \
+                         one 32-bit word below the RAM address space, reserving the all-ones \
+                         word for a cold cycle",
+            })?;
+        drop(rows);
+        let columns = DeviceOneHotColumns::from_words(context, &words, ram_log_k)?;
+        drop(words);
 
         let folded = columns.fold_cycles(context, relation.tau_low(), FoldTuning::default())?;
         drop(columns);

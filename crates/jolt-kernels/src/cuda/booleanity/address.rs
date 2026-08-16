@@ -9,9 +9,9 @@ use jolt_verifier::stages::stage6a::booleanity::{
 use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::masses::DeviceBooleanityMasses;
-use super::witness::{packed_columns, BooleanityCycleWitness};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::cuda::{require_context, CudaBackend};
 use crate::{
@@ -129,7 +129,7 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
 
         let layout = dimensions.layout;
         let cycles = 1usize << dimensions.log_t;
-        let rows = collect_bundles::<BooleanityCycleWitness>(witness, cycles)?;
+        let rows = collect_bundles::<OneHotCycleWitness>(witness, cycles)?;
         let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA booleanity address phase packs the bytecode PC and the remapped RAM \
                      word address into one 32-bit word each, reserving the all-ones word for a \
@@ -383,8 +383,9 @@ mod tests {
         row_ram_address, slot_for_cycle, with_legacy_witness, LegacyFixture, SLOTS,
     };
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::testing::hot_addresses;
+    use crate::cuda::common::testing::{fr, hot_addresses};
     use crate::cuda::CudaBackend;
+    use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 
     const LOG_T: usize = 8;
@@ -700,6 +701,90 @@ mod tests {
                 "round 0 must NOT vanish at X = 2: the squared leg's extension is quadratic \
                  while the linear leg's is linear, so a zero here means the masses are zero and \
                  the fixture is blind",
+            );
+        });
+    }
+
+    #[test]
+    fn booleanity_address_matches_reference_round_for_round() {
+        let Some(_) = shared_context() else {
+            return;
+        };
+        with_legacy_witness(LOG_T, RAM_K, one_hot(), SEED, |witness, fixture| {
+            let layout = formula_dimensions_from_parts(
+                one_hot(),
+                LOG_T,
+                fixture.bytecode.code_size,
+                fixture.ram_k,
+                JoltRelationId::Booleanity,
+            )
+            .expect("formula dimensions")
+            .ra_layout;
+            let chunk_bits = usize::from(one_hot().log_k_chunk);
+            let dimensions = BooleanityDimensions::new(layout, LOG_T, chunk_bits);
+            let cycle_point: Vec<Fr> = (0..LOG_T).map(|i| fr(3 * i as u64 + 1)).collect();
+            let address_point: Vec<Fr> = (0..chunk_bits).map(|i| fr(7 * i as u64 + 5)).collect();
+            let relation =
+                BooleanityAddressPhase::<Fr>::new(dimensions, address_point.clone(), cycle_point);
+
+            let claims = BooleanityAddressPhaseInputClaims::default();
+            let points = BooleanityAddressPhaseInputClaims::default();
+            let challenge_set = BooleanityAddressPhaseChallenges {
+                reference_address: address_point,
+                gamma: fr(11),
+            };
+            let make_inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenge_set,
+            };
+
+            let mut expected_kernel = ReferenceBackend
+                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                .expect("reference prepare");
+            let mut got_kernel = CudaBackend
+                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                .expect("cuda prepare");
+
+            let challenges: Vec<Fr> = (0..chunk_bits).map(|i| fr(13 * i as u64 + 2)).collect();
+            let mut expected_claim = Fr::from_u64(0);
+            let mut got_claim = Fr::from_u64(0);
+            let mut bind = None;
+            for (round, &challenge) in challenges.iter().enumerate() {
+                let expected = expected_kernel
+                    .prove_round(bind, round, expected_claim)
+                    .expect("reference prove_round");
+                let got = got_kernel
+                    .prove_round(bind, round, got_claim)
+                    .expect("cuda prove_round");
+                for point in 0..=DEGREE {
+                    let at = Fr::from_u64(point as u64);
+                    assert_eq!(
+                        got.evaluate(at),
+                        expected.evaluate(at),
+                        "round {round} message diverged at X = {point}",
+                    );
+                }
+                expected_claim = expected.evaluate(challenge);
+                got_claim = got.evaluate(challenge);
+                bind = Some(challenge);
+            }
+            let last = challenges[challenges.len() - 1];
+            expected_kernel
+                .finish_rounds(last)
+                .expect("reference finish_rounds");
+            got_kernel.finish_rounds(last).expect("cuda finish_rounds");
+            assert_eq!(
+                got_kernel
+                    .output_claims(&claims)
+                    .expect("cuda output claims")
+                    .intermediate,
+                expected_kernel
+                    .output_claims(&claims)
+                    .expect("reference output claims")
+                    .intermediate,
+                "the staged address-phase claim diverged",
             );
         });
     }

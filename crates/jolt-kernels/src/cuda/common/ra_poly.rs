@@ -8,12 +8,12 @@ use jolt_field::{Field, Fr};
 use jolt_poly::BindingOrder;
 
 use super::context::CudaKernelContext;
-use super::device::{require_fr, require_fr_slice, DeviceFrVec};
+use super::device::{fr_limbs, require_fr, require_fr_slice, DeviceFrVec};
 use super::error::CudaError;
 
 pub const COLLAPSE_AFTER_ROUNDS: usize = 3;
 
-pub const COLD: u32 = u32::MAX;
+pub use crate::cuda::common::pack::COLD;
 
 pub struct DeviceRaPolynomial {
     indices: CudaSlice<u32>,
@@ -64,9 +64,35 @@ impl DeviceRaPolynomial {
             };
             raw.push(encoded);
         }
+        Self::from_words(context, &raw, eq_address, order)
+    }
+
+    pub fn from_words<F: Field>(
+        context: &CudaKernelContext,
+        words: &[u32],
+        eq_address: &[F],
+        order: BindingOrder,
+    ) -> Result<Self, CudaError> {
+        let tables = context.upload(require_fr_slice(eq_address)?)?;
+        Self::from_device_tables(context, words, tables, order)
+    }
+
+    pub fn from_device_tables(
+        context: &CudaKernelContext,
+        words: &[u32],
+        tables: DeviceFrVec,
+        order: BindingOrder,
+    ) -> Result<Self, CudaError> {
+        let cycles = words.len();
+        let addresses = tables.len();
+        if !cycles.is_power_of_two() || !addresses.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a one-hot polynomial needs power-of-two cycle and address counts",
+            });
+        }
         Ok(Self {
-            indices: context.upload_u32_slice(&raw)?,
-            tables: context.upload(require_fr_slice(eq_address)?)?,
+            indices: context.upload_u32_slice(words)?,
+            tables,
             addresses,
             cycles,
             order,
@@ -147,8 +173,10 @@ impl DeviceRaPolynomial {
         // `indices[j * stride + bases[slot]]` for `slots` slots — every offset is
         // below `cycles` (`stride * len == cycles` for LowToHigh; for HighToLow
         // `reverse_bits(slot) * len + j < cycles`), and a non-`COLD` entry is
-        // `< addresses` by the check in `new`, so the table read is inside
-        // `tables`'s `slots * addresses`. `out` is a distinct allocation.
+        // `< addresses` — checked by `new` per index, and by `from_words`'s
+        // callers, which encode through `common::pack::encode_address` with the
+        // same `addresses` bound — so the table read is inside `tables`'s
+        // `slots * addresses`. `out` is a distinct allocation.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
         context.stream().synchronize()?;
         Ok(output)
@@ -160,23 +188,27 @@ impl DeviceRaPolynomial {
         challenge: F,
     ) -> Result<(), CudaError> {
         let challenge = require_fr(challenge)?;
-        let eq_zero = context.upload(&[Fr::from(1u64) - challenge])?;
-        let eq_one = context.upload(&[challenge])?;
+        let eq_zero = fr_limbs(Fr::from(1u64) - challenge);
+        let eq_one = fr_limbs(challenge);
         let len = self.tables.len();
         let mut doubled = context.alloc(len * 2)?;
         let count = CudaKernelContext::count_of(len)?;
         let mut builder = context.stream().launch_builder(context.ra_split_tables());
         let _ = builder.arg(self.tables.limbs());
-        let _ = builder.arg(eq_zero.limbs());
-        let _ = builder.arg(eq_one.limbs());
+        for limb in &eq_zero {
+            let _ = builder.arg(limb);
+        }
+        for limb in &eq_one {
+            let _ = builder.arg(limb);
+        }
         let _ = builder.arg(doubled.limbs_mut());
         let _ = builder.arg(&count);
-        // SAFETY: thread `i < len` reads `in[i]` plus the two single-element
-        // challenges and writes exactly `out[i]` and `out[len + i]` — disjoint
-        // across threads. `in` holds `len`, `out` holds `2 * len`, and `out` is a
-        // distinct allocation, so no thread reads another's write.
+        // SAFETY: thread `i < len` reads `in[i]` and writes exactly `out[i]` and
+        // `out[len + i]` — disjoint across threads. The two eq weights arrive as
+        // by-value limbs, so no device buffer backs them. `in` holds `len`, `out`
+        // holds `2 * len`, and `out` is a distinct allocation, so no thread reads
+        // another's write.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-        context.stream().synchronize()?;
         self.tables = doubled;
         Ok(())
     }

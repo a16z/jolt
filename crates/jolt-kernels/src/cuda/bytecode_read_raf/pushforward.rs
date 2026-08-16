@@ -146,7 +146,6 @@ impl DeviceBytecodePushforward {
         // fresh allocation, and reads nothing but the two by-value scalars and the
         // `FR_ONE` constant. Threads with `i >= count` return before any access.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-        context.stream().synchronize()?;
         Ok(table)
     }
 
@@ -182,7 +181,6 @@ impl DeviceBytecodePushforward {
         // `TERMS`. Index sets are disjoint across threads and `out` is distinct from
         // both inputs.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-        context.stream().synchronize()?;
         Ok(())
     }
 
@@ -224,7 +222,6 @@ impl DeviceBytecodePushforward {
                 shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
             })
         }?;
-        context.stream().synchronize()?;
 
         let totals = DeviceDenseProduct::reduce_lanes(
             context,
@@ -256,7 +253,6 @@ impl DeviceBytecodePushforward {
         self.left = context.bind_rows(&self.left, self.len, challenge)?;
         self.right = context.bind_rows(&self.right, self.len, challenge)?;
         self.int = context.bind_rows(&self.int, self.len, challenge)?;
-        context.stream().synchronize()?;
         self.len /= 2;
         Ok(())
     }

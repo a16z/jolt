@@ -98,7 +98,7 @@ extern "C" __global__ void brr_message_sparse_kernel(
         brr_accumulate(lanes, prod, acc);
     }
 
-    rrv_block_reduce(scratch, lanes, acc, partials);
+    lane_block_reduce(scratch, lanes, acc, partials);
 }
 
 extern "C" __global__ void brr_message_dense_kernel(
@@ -133,5 +133,5 @@ extern "C" __global__ void brr_message_dense_kernel(
         brr_accumulate(lanes, prod, acc);
     }
 
-    rrv_block_reduce(scratch, lanes, acc, partials);
+    lane_block_reduce(scratch, lanes, acc, partials);
 }

@@ -1,8 +1,3 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: the device address phase wires this once its kernels land"
-)]
-
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, MulPow2};
 use jolt_lookup_tables::tables::LookupTableKind;

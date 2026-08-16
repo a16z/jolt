@@ -385,8 +385,8 @@ mod tests {
 
     use super::{DevicePackedRamRa, COLLAPSE_AFTER_ROUNDS};
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::pack::COLD;
     use crate::cuda::common::testing::{arb_point, fr};
-    use crate::cuda::ram_ra_virtualization::witness::COLD;
 
     fn packed_address(seed: u64, cycle: usize, span: u32, cold_every: usize) -> u32 {
         if cycle.is_multiple_of(cold_every) {

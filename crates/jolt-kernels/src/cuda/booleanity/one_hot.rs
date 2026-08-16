@@ -1,10 +1,10 @@
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 
-use super::witness::PackedColumns;
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::one_hot_witness::PackedColumns;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
 pub const COLLAPSE_AFTER_ROUNDS: usize = 5;
@@ -436,8 +436,9 @@ mod tests {
     use proptest::prelude::*;
 
     use super::{DeviceBooleanityRa, COLLAPSE_AFTER_ROUNDS};
-    use crate::cuda::booleanity::witness::{PackedColumns, COLD};
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::one_hot_witness::PackedColumns;
+    use crate::cuda::common::pack::COLD;
     use crate::cuda::common::testing::{arb_point, fr};
 
     fn mix(seed: u64, cycle: usize, salt: u64) -> u64 {

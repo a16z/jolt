@@ -33,10 +33,10 @@ extern "C" __global__ void roc_message_kernel(const u64 *__restrict__ tables, un
         fr_sub(v1, v0, value_delta);
         fr_mul(mask_delta, value_delta, quadratic);
 
-        ohf_weight(e_in, e_in_len, e_out, num_x_in_bits, g, weight);
+        eq_split_weight(e_in, e_in_len, e_out, num_x_in_bits, g, weight);
         fr_mul(constant, weight, acc[0]);
         fr_mul(quadratic, weight, acc[1]);
     }
 
-    ohf_block_reduce(scratch, 2, acc, partials);
+    lane_block_reduce(scratch, 2, acc, partials);
 }

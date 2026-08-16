@@ -279,15 +279,15 @@ mod tests {
     };
     use jolt_claims::OutputClaims;
     use jolt_field::{Fr, FromPrimitiveInt};
-    use jolt_program::execution::{RegisterRead, RegisterState, RegisterWrite};
     use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
     use jolt_witness::__private::TraceRow;
-    use jolt_witness::witnesses::{Extract, RdInc, ToField, WitnessEnv};
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
 
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::testing::{arb_point, drive, fr, reference_input_claim, RowPlane};
+    use crate::cuda::common::testing::{
+        arb_point, drive, fr, reference_input_claim, register_rows, RowPlane, REGISTER_ACTIVITY,
+    };
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
     use proptest::prelude::*;
@@ -295,88 +295,13 @@ mod tests {
     const LOG_T: usize = 6;
     const LOG_K: usize = 7;
 
-    type Activity = (Option<u8>, Option<u8>, Option<u8>);
-
-    const ACTIVITY: [Activity; 12] = [
-        (None, None, None),
-        (Some(3), None, None),
-        (None, Some(5), None),
-        (None, None, Some(7)),
-        (Some(9), Some(9), None),
-        (Some(11), None, Some(11)),
-        (None, Some(13), Some(13)),
-        (Some(2), Some(4), Some(6)),
-        (Some(6), Some(6), Some(6)),
-        (Some(1), Some(2), Some(1)),
-        (Some(1), Some(2), Some(2)),
-        (Some(120), Some(121), Some(122)),
-    ];
-
     fn rows(seed: u64) -> (Vec<TraceRow>, Vec<Vec<Fr>>, Vec<Fr>) {
-        let cycles = 1usize << LOG_T;
-        let registers = 1usize << LOG_K;
-        let mut state = vec![0u64; registers];
-        let mut rows = Vec::with_capacity(cycles);
-        let mut val = vec![Fr::from_u64(0); registers * cycles];
-        let mut rs1_ra = vec![Fr::from_u64(0); registers * cycles];
-        let mut rs2_ra = vec![Fr::from_u64(0); registers * cycles];
-        let mut rd_wa = vec![Fr::from_u64(0); registers * cycles];
-
-        for cycle in 0..cycles {
-            for (register, value) in state.iter().copied().enumerate() {
-                val[register * cycles + cycle] = Fr::from_u64(value);
-            }
-
-            let (rs1, rs2, rd) = ACTIVITY[(cycle + seed as usize) % ACTIVITY.len()];
-            let mut registers_state = RegisterState::default();
-            if let Some(register) = rs1 {
-                registers_state.rs1 = Some(RegisterRead {
-                    register,
-                    value: state[register as usize],
-                });
-                rs1_ra[register as usize * cycles + cycle] = Fr::from_u64(1);
-            }
-            if let Some(register) = rs2 {
-                registers_state.rs2 = Some(RegisterRead {
-                    register,
-                    value: state[register as usize],
-                });
-                rs2_ra[register as usize * cycles + cycle] = Fr::from_u64(1);
-            }
-            if let Some(register) = rd {
-                let pre_value = state[register as usize];
-                let post_value = pre_value
-                    .wrapping_add(seed.wrapping_mul(cycle as u64 + 1))
-                    .wrapping_add(u64::from(register));
-                registers_state.rd = Some(RegisterWrite {
-                    register,
-                    pre_value,
-                    post_value,
-                });
-                rd_wa[register as usize * cycles + cycle] = Fr::from_u64(1);
-                state[register as usize] = post_value;
-            }
-            rows.push(TraceRow {
-                registers: registers_state,
-                ..TraceRow::default()
-            });
-        }
-
-        let preprocessing = RowPlane::new(FixedBackend::new(), "inc probe", LOG_T, Vec::new());
-        let env = WitnessEnv::new(jolt_witness::ProgramSource::program_preprocessing(
-            &preprocessing,
-        ));
-        let inc: Vec<Fr> = rows
-            .iter()
-            .enumerate()
-            .map(|(index, row)| {
-                RdInc::extract(row, rows.get(index + 1), &env)
-                    .expect("rd increment")
-                    .to_field()
-            })
-            .collect();
-
-        (rows, vec![val, rs1_ra, rs2_ra, rd_wa], inc)
+        let fixture = register_rows(LOG_T, LOG_K, seed);
+        (
+            fixture.rows,
+            vec![fixture.val, fixture.rs1_ra, fixture.rs2_ra, fixture.rd_wa],
+            fixture.inc,
+        )
     }
 
     fn witness(seed: u64) -> RowPlane {
@@ -410,7 +335,7 @@ mod tests {
     #[test]
     fn fixture_grids_agree_with_trace_rows() {
         let cycles = 1usize << LOG_T;
-        for seed in 0..ACTIVITY.len() as u64 {
+        for seed in 0..REGISTER_ACTIVITY.len() as u64 {
             let (rows, grids, inc) = rows(seed);
             let [val, rs1_ra, rs2_ra, rd_wa] = [&grids[0], &grids[1], &grids[2], &grids[3]];
             let mut reads = 0usize;

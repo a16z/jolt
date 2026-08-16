@@ -129,21 +129,6 @@ extern "C" __global__ void lane_sum_total_kernel(const u64 *__restrict__ in,
     }
 }
 
-extern "C" __global__ void weighted_combine_kernel(const u64 *__restrict__ weights,
-                                                  const u64 *__restrict__ coefficient,
-                                                  u64 *__restrict__ accumulator,
-                                                  unsigned int n) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    u64 w[LIMBS], c[LIMBS], scaled[LIMBS], acc[LIMBS], sum[LIMBS];
-    load4(weights + i * LIMBS, w);
-    load4(coefficient, c);
-    fr_mul(w, c, scaled);
-    load4(accumulator + i * LIMBS, acc);
-    fr_add(acc, scaled, sum);
-    store4(accumulator + i * LIMBS, sum);
-}
-
 extern "C" __global__ void sopg_round_kernel(
     const u64 *const *__restrict__ tables, const unsigned int *__restrict__ term_offsets,
     const unsigned int *__restrict__ term_factors, const u64 *__restrict__ coefficients,

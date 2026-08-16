@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::{
 };
 
 use super::context::{CudaKernelContext, BLOCK};
-use super::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use super::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
 use super::error::CudaError;
 use super::lt_poly::DeviceLtPolynomial;
 use super::ra_poly::DeviceRaPolynomial;
@@ -25,76 +25,6 @@ pub struct DeviceDenseProduct {
 }
 
 impl DeviceDenseProduct {
-    pub fn new<F: Field>(
-        context: &CudaKernelContext,
-        weights: &[(F, Vec<F>)],
-        factors: &[Vec<F>],
-        one_hot: Option<DeviceRaPolynomial>,
-        lt: Option<DeviceLtPolynomial>,
-        rounds: usize,
-        degree: usize,
-    ) -> Result<Self, CudaError> {
-        let expected = 1usize << rounds;
-        for table in weights.iter().map(|(_, table)| table).chain(factors.iter()) {
-            if table.len() != expected {
-                return Err(CudaError::LengthMismatch {
-                    expected,
-                    got: table.len(),
-                });
-            }
-        }
-        if weights.is_empty() && lt.is_none() && one_hot.is_none() && factors.is_empty() {
-            return Err(CudaError::InvariantViolation {
-                reason: "a dense product needs at least one factor",
-            });
-        }
-        if let Some(one_hot) = &one_hot {
-            if one_hot.len() != expected {
-                return Err(CudaError::LengthMismatch {
-                    expected,
-                    got: one_hot.len(),
-                });
-            }
-            if one_hot.order() != BindingOrder::LowToHigh {
-                return Err(CudaError::InvariantViolation {
-                    reason: "a dense product binds LowToHigh, so its one-hot factor must too",
-                });
-            }
-        }
-        if let Some(lt) = &lt {
-            if lt.len() != expected {
-                return Err(CudaError::LengthMismatch {
-                    expected,
-                    got: lt.len(),
-                });
-            }
-            if lt.order() != BindingOrder::LowToHigh {
-                return Err(CudaError::InvariantViolation {
-                    reason: "a dense product binds LowToHigh, so its LT factor must too",
-                });
-            }
-        }
-
-        let weight = if weights.is_empty() {
-            None
-        } else {
-            Some(Self::combine_weights(context, weights, expected)?)
-        };
-        let mut uploaded = Vec::with_capacity(factors.len());
-        for table in factors {
-            uploaded.push(context.upload(require_fr_slice(table)?)?);
-        }
-        Ok(Self {
-            weight,
-            factors: uploaded,
-            one_hot,
-            lt,
-            degree,
-            rounds,
-            rounds_bound: 0,
-        })
-    }
-
     pub fn from_device_factors(
         weight: Option<DeviceFrVec>,
         factors: Vec<DeviceFrVec>,
@@ -153,32 +83,6 @@ impl DeviceDenseProduct {
             rounds,
             rounds_bound: 0,
         })
-    }
-
-    fn combine_weights<F: Field>(
-        context: &CudaKernelContext,
-        weights: &[(F, Vec<F>)],
-        len: usize,
-    ) -> Result<DeviceFrVec, CudaError> {
-        let mut accumulator = context.alloc(len)?;
-        let count = CudaKernelContext::count_of(len)?;
-        for (coefficient, table) in weights {
-            let table = context.upload(require_fr_slice(table)?)?;
-            let coefficient = context.upload(&[require_fr(*coefficient)?])?;
-            let mut builder = context.stream().launch_builder(context.weighted_combine());
-            let _ = builder.arg(table.limbs());
-            let _ = builder.arg(coefficient.limbs());
-            let _ = builder.arg(accumulator.limbs_mut());
-            let _ = builder.arg(&count);
-            // SAFETY: thread `i < count` reads `weights[i]` plus the
-            // single-element `coefficient`, and read-modify-writes only
-            // `accumulator[i]` — one thread per element, so uncontended. Both
-            // tables hold `count` elements (checked against `len` in `new`) and
-            // are distinct allocations.
-            let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-            context.stream().synchronize()?;
-        }
-        Ok(accumulator)
     }
 
     fn round_tables(
@@ -277,7 +181,6 @@ impl DeviceDenseProduct {
                 shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
             })
         }?;
-        context.stream().synchronize()?;
         drop(materialized);
 
         let totals = Self::reduce_lanes(context, partials, lanes, blocks)?;
@@ -320,7 +223,6 @@ impl DeviceDenseProduct {
                 shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
             })
         }?;
-        context.stream().synchronize()?;
         Ok(totals)
     }
 
@@ -331,10 +233,10 @@ impl DeviceDenseProduct {
     ) -> Result<(), CudaError> {
         let challenge = require_fr(challenge)?;
         if let Some(weight) = &self.weight {
-            self.weight = Some(context.bind(weight, challenge, BindingOrder::LowToHigh)?);
+            self.weight = Some(context.bind_rows(weight, weight.len(), challenge)?);
         }
         for table in &mut self.factors {
-            *table = context.bind(table, challenge, BindingOrder::LowToHigh)?;
+            *table = context.bind_rows(table, table.len(), challenge)?;
         }
         if let Some(one_hot) = &mut self.one_hot {
             one_hot.bind(context, challenge)?;

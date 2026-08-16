@@ -1,6 +1,9 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: step 2c (the device address phase) is the consumer; only the tests exercise this module so far"
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "implementation target: step 2c (the device address phase) is the consumer; only the tests exercise this module so far"
+    )
 )]
 
 use cudarc::driver::PushKernelArg;
@@ -54,6 +57,10 @@ pub fn update_checkpoints(
     Ok(out)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one launch per prefix takes the whole round state"
+)]
 pub fn prefix_mle_batch<F: Field>(
     context: &CudaKernelContext,
     prefix: u32,

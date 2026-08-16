@@ -5,8 +5,6 @@ use super::context::{CudaKernelContext, BLOCK};
 use super::device::{require_fr_slice, DeviceFrVec};
 use super::error::CudaError;
 
-pub const COLD: u32 = u32::MAX;
-
 pub const LANES: usize = 8;
 
 pub const PACKED_BITS: usize = 32;
@@ -114,27 +112,12 @@ impl DeviceOneHotColumns {
         })
     }
 
-    pub fn from_hot_indices(
+    pub fn from_words(
         context: &CudaKernelContext,
-        hot: &[Option<usize>],
+        words: &[u32],
         chunk_bits: usize,
     ) -> Result<Self, CudaError> {
-        let mut packed = Vec::with_capacity(hot.len());
-        for address in hot {
-            match address {
-                None => packed.push(COLD),
-                Some(address) => match u32::try_from(*address) {
-                    Ok(word) if word != COLD && (*address >> chunk_bits) == 0 => packed.push(word),
-                    _ => {
-                        return Err(CudaError::NotImplemented {
-                            kernel: "the CUDA one-hot cycle fold packs each hot address into one \
-                                     32-bit word, reserving the all-ones word for a cold cycle",
-                        })
-                    }
-                },
-            }
-        }
-        Self::new(context, &[], &[], &packed, [0, 0, 1], chunk_bits, hot.len())
+        Self::new(context, &[], &[], words, [0, 0, 1], chunk_bits, words.len())
     }
 
     pub const fn polys(&self) -> usize {
@@ -290,9 +273,8 @@ mod tests {
 
     use super::super::context::shared_context;
     use super::super::testing::fr;
-    use super::{
-        affine_table, DeviceOneHotColumns, FoldTuning, COLD, POLYS_PER_BLOCK, SHARED_BUDGET,
-    };
+    use super::{affine_table, DeviceOneHotColumns, FoldTuning, POLYS_PER_BLOCK, SHARED_BUDGET};
+    use crate::cuda::common::pack::COLD;
 
     fn mix(seed: u64, cycle: usize, salt: u64) -> u64 {
         let value = seed
@@ -447,8 +429,12 @@ mod tests {
                 }
             }
 
-            let got = DeviceOneHotColumns::from_hot_indices(context, &hot, chunk_bits)
-                .expect("upload hot indices")
+            let words: Vec<u32> = hot
+                .iter()
+                .map(|address| address.map_or(COLD, |address| address as u32))
+                .collect();
+            let got = DeviceOneHotColumns::from_words(context, &words, chunk_bits)
+                .expect("upload packed addresses")
                 .fold_cycles(context, &cycle_point, FoldTuning::default())
                 .expect("device one-hot cycle fold")
                 .to_host()

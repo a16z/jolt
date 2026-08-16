@@ -74,32 +74,6 @@ __device__ __forceinline__ void rrv_fold_pair(const u64 *p0, const u64 *p1, unsi
     }
 }
 
-__device__ __forceinline__ void rrv_block_reduce(u64 *scratch, unsigned int lanes,
-                                                 u64 acc[RRV_MAX_LANES][LIMBS],
-                                                 u64 *__restrict__ partials) {
-    unsigned int tid = threadIdx.x;
-    for (unsigned int lane = 0; lane < lanes; lane++) {
-        store4(scratch + tid * LIMBS, acc[lane]);
-        __syncthreads();
-        for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-            if (tid < stride) {
-                u64 a[LIMBS], b[LIMBS], s[LIMBS];
-                load4(scratch + tid * LIMBS, a);
-                load4(scratch + (tid + stride) * LIMBS, b);
-                fr_add(a, b, s);
-                store4(scratch + tid * LIMBS, s);
-            }
-            __syncthreads();
-        }
-        if (tid == 0) {
-            u64 total[LIMBS];
-            load4(scratch, total);
-            store4(partials + ((unsigned long long)lane * gridDim.x + blockIdx.x) * LIMBS, total);
-        }
-        __syncthreads();
-    }
-}
-
 __device__ __forceinline__ void rrv_pad_degree(unsigned int polys, unsigned int lanes,
                                                u64 prod[RRV_MAX_LANES][LIMBS]) {
     if (polys < lanes) {
@@ -139,14 +113,14 @@ extern "C" __global__ void rrv_message_sparse_kernel(
             rrv_pad_degree(polys, lanes, prod);
 
             u64 combined[LIMBS];
-            irv_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
+            eq_split_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
             for (unsigned int lane = 0; lane < lanes; lane++) {
                 fr_mul(prod[lane], combined, acc[lane]);
             }
         }
     }
 
-    rrv_block_reduce(scratch, lanes, acc, partials);
+    lane_block_reduce(scratch, lanes, acc, partials);
 }
 
 extern "C" __global__ void rrv_message_dense_kernel(
@@ -172,11 +146,11 @@ extern "C" __global__ void rrv_message_dense_kernel(
         rrv_pad_degree(polys, lanes, prod);
 
         u64 combined[LIMBS];
-        irv_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
+        eq_split_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
         for (unsigned int lane = 0; lane < lanes; lane++) {
             fr_mul(prod[lane], combined, acc[lane]);
         }
     }
 
-    rrv_block_reduce(scratch, lanes, acc, partials);
+    lane_block_reduce(scratch, lanes, acc, partials);
 }

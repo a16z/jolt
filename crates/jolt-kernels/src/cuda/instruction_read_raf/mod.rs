@@ -398,7 +398,6 @@ impl<F: Field> SumcheckKernel<F> for DeviceInstructionReadRaf<F> {
 #[expect(
     clippy::expect_used,
     clippy::panic,
-    clippy::unwrap_used,
     reason = "test module: device and fixture errors fail loudly"
 )]
 mod legacy_oracle {

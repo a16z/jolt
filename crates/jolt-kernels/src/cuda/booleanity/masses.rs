@@ -3,7 +3,9 @@ use jolt_field::{Field, Fr};
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::dense_product::DeviceDenseProduct;
-use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::device::{
+    fr_into, fr_limbs, require_fr, require_fr_slice, DeviceFrVec, LIMBS,
+};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::one_hot_fold::{DeviceOneHotColumns, FoldTuning};
 use crate::cuda::common::split_eq::DeviceSplitEq;
@@ -122,7 +124,6 @@ impl DeviceBooleanityMasses {
                 shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
             })
         }?;
-        context.stream().synchronize()?;
 
         let totals = DeviceDenseProduct::reduce_lanes(
             context,
@@ -152,27 +153,30 @@ impl DeviceBooleanityMasses {
         }
         let challenge = require_fr(challenge)?;
         let complement = Fr::from(1u64) - challenge;
-        let low = context.upload(&[complement * complement])?;
-        let high = context.upload(&[challenge * challenge])?;
+        let low = fr_limbs(complement * complement);
+        let high = fr_limbs(challenge * challenge);
 
         let half = self.polys * self.len / 2;
         let mut bound = context.alloc(half)?;
         let count = CudaKernelContext::count_of(half)?;
         let mut builder = context.stream().launch_builder(context.bap_bind_squared());
         let _ = builder.arg(self.squared.limbs());
-        let _ = builder.arg(low.limbs());
-        let _ = builder.arg(high.limbs());
+        for limb in &low {
+            let _ = builder.arg(limb);
+        }
+        for limb in &high {
+            let _ = builder.arg(limb);
+        }
         let _ = builder.arg(bound.limbs_mut());
         let _ = builder.arg(&count);
         // SAFETY: thread `i < half` reads `in[2i]` and `in[2i + 1]`, both inside
-        // `in`'s `2 * half` elements, plus the two single-element weights, and writes
-        // only `out[i]` of `half`. `len` is even, so no pair straddles a row boundary
-        // and this is a per-row squared-weight bind whose result is contiguous with
-        // stride `len / 2`. `out` is a fresh allocation distinct from `in`, so no
-        // thread reads a partially written slot; threads with `i >= half` return
-        // first.
+        // `in`'s `2 * half` elements, and writes only `out[i]` of `half`. The two
+        // squared weights arrive as by-value limbs, so no device buffer backs them.
+        // `len` is even, so no pair straddles a row boundary and this is a per-row
+        // squared-weight bind whose result is contiguous with stride `len / 2`.
+        // `out` is a fresh allocation distinct from `in`, so no thread reads a
+        // partially written slot; threads with `i >= half` return first.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-        context.stream().synchronize()?;
 
         self.squared = bound;
         self.linear = context.bind_rows(&self.linear, self.len, challenge)?;
@@ -192,9 +196,10 @@ mod tests {
     use proptest::prelude::*;
 
     use super::DeviceBooleanityMasses;
-    use crate::cuda::booleanity::witness::{packed_columns, BooleanityCycleWitness, COLD};
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+    use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
+    use crate::cuda::common::pack::COLD;
     use crate::cuda::common::split_eq::DeviceSplitEq;
     use crate::cuda::common::testing::fr;
 
@@ -404,7 +409,7 @@ mod tests {
         };
         let log_t = 5;
         let cycles = 1usize << log_t;
-        let rows = vec![BooleanityCycleWitness::default(); cycles];
+        let rows = vec![OneHotCycleWitness::default(); cycles];
         let packed = packed_columns(&rows).expect("pack the columns");
         let uploaded = DeviceOneHotColumns::new(
             context,

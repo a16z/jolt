@@ -12,9 +12,9 @@ use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeight
 use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::{require_context, CudaBackend};
-use crate::cuda::booleanity::witness::{packed_columns, BooleanityCycleWitness};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
+use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -172,7 +172,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend 
         }
 
         let cycles = 1usize << relation.r_cycle().len();
-        let rows = collect_bundles::<BooleanityCycleWitness>(witness, cycles)?;
+        let rows = collect_bundles::<OneHotCycleWitness>(witness, cycles)?;
         let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA hamming reduction packs the bytecode PC and the remapped RAM word \
                      address into one 32-bit word each, reserving the all-ones word for a cold \

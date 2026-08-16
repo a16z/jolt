@@ -263,8 +263,10 @@ mod tests {
         slot_for_cycle, with_legacy_witness, LegacyFixture, SLOTS,
     };
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::testing::{fr, probe_input_claim};
     use crate::cuda::CudaBackend;
     use crate::reference::bytecode_read_raf::BytecodeReadRafWitness;
+    use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 
     const LOG_T: usize = 8;
@@ -709,6 +711,128 @@ mod tests {
                 "every mapped bytecode row decodes identically, so the per-stage Val tables are \
                  constant and cannot detect a wrong Val bind",
             );
+        });
+    }
+
+    #[test]
+    fn bytecode_read_raf_address_matches_reference_round_for_round() {
+        let Some(_) = shared_context() else {
+            return;
+        };
+        with_legacy_witness(LOG_T, RAM_K, one_hot(), SEED, |witness, fixture| {
+            let dimensions = formula_dimensions_from_parts(
+                one_hot(),
+                LOG_T,
+                fixture.bytecode.code_size,
+                fixture.ram_k,
+                JoltRelationId::BytecodeReadRaf,
+            )
+            .expect("formula dimensions")
+            .bytecode_read_raf;
+            let rounds = dimensions.log_k();
+            let cycles = 1usize << LOG_T;
+            let rows = collect_bundles::<BytecodeReadRafWitness>(
+                witness as &dyn JoltWitnessPlane<Fr>,
+                cycles,
+            )
+            .expect("bundle walk");
+            let entry_bytecode_index = rows[0].bytecode_pc.0;
+
+            let point = |offset: u64, len: usize| -> Vec<Fr> {
+                (0..len)
+                    .map(|index| fr(offset * 31 + 7 * index as u64 + 3))
+                    .collect()
+            };
+            let stage_cycle_points: [Vec<Fr>; STAGE_COUNT] =
+                core::array::from_fn(|stage| point(stage as u64 + 1, LOG_T));
+            let register_point = point(11, REGISTER_ADDRESS_BITS + LOG_T);
+
+            for committed_program in [false, true] {
+                let relation = BytecodeReadRafAddressPhase::<Fr>::new(
+                    dimensions,
+                    committed_program,
+                    BytecodeStagePoints {
+                        stage_cycle_points: stage_cycle_points.clone(),
+                        register_read_write_point: register_point.clone(),
+                        register_val_evaluation_point: register_point.clone(),
+                    },
+                    entry_bytecode_index,
+                );
+                let claims = BytecodeReadRafAddressPhaseInputClaims::default();
+                let points = BytecodeReadRafAddressPhaseInputClaims::default();
+                let challenge_set = jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges {
+                    gamma: fr(101),
+                    stage1_gamma: fr(103),
+                    stage2_gamma: fr(107),
+                    stage3_gamma: fr(109),
+                    stage4_gamma: fr(113),
+                    stage5_gamma: fr(127),
+                };
+                let make_inputs = || ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenge_set,
+                };
+
+                let mut expected_kernel = ReferenceBackend
+                    .prepare(&mut ProofSession::default(), witness, make_inputs())
+                    .expect("reference prepare");
+                let mut got_kernel = CudaBackend
+                    .prepare(&mut ProofSession::default(), witness, make_inputs())
+                    .expect("cuda prepare");
+
+                let challenges: Vec<Fr> =
+                    (0..rounds).map(|index| fr(17 * index as u64 + 5)).collect();
+                let mut expected_claim = probe_input_claim(&mut *expected_kernel);
+                let mut got_claim = expected_claim;
+                let mut bind = None;
+                for (round, &challenge) in challenges.iter().enumerate() {
+                    let expected = expected_kernel
+                        .prove_round(bind, round, expected_claim)
+                        .expect("reference prove_round");
+                    let got = got_kernel
+                        .prove_round(bind, round, got_claim)
+                        .expect("cuda prove_round");
+                    for at in 0..SAMPLE_POINTS {
+                        let x = Fr::from_u64(at as u64);
+                        assert_eq!(
+                            got.evaluate(x),
+                            expected.evaluate(x),
+                            "committed_program {committed_program} round {round} message diverged \
+                             at X = {at}",
+                        );
+                    }
+                    expected_claim = expected.evaluate(challenge);
+                    got_claim = got.evaluate(challenge);
+                    bind = Some(challenge);
+                }
+                let last = challenges[challenges.len() - 1];
+                expected_kernel
+                    .finish_rounds(last)
+                    .expect("reference finish_rounds");
+                got_kernel.finish_rounds(last).expect("cuda finish_rounds");
+
+                let expected_claims = expected_kernel
+                    .output_claims(&claims)
+                    .expect("reference output claims");
+                let got_claims = got_kernel
+                    .output_claims(&claims)
+                    .expect("cuda output claims");
+                assert_eq!(
+                    got_claims.intermediate, expected_claims.intermediate,
+                    "committed_program {committed_program}: staged claim diverged",
+                );
+                assert_eq!(
+                    got_claims.val_stages, expected_claims.val_stages,
+                    "committed_program {committed_program}: per-stage Val claims diverged",
+                );
+                assert_eq!(
+                    got_claims.val_stages.is_empty(),
+                    !committed_program,
+                    "committed_program {committed_program}: the Val-claim branch did not run",
+                );
+            }
         });
     }
 

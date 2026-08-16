@@ -93,10 +93,18 @@ impl DevicePackedRa {
         self.cycles >> self.rounds_bound
     }
 
+    #[expect(
+        dead_code,
+        reason = "shape accessor kept alongside the sibling one-hot types"
+    )]
     pub const fn polys(&self) -> usize {
         self.polys
     }
 
+    #[expect(
+        dead_code,
+        reason = "shape accessor kept alongside the sibling one-hot types"
+    )]
     pub const fn rounds_bound(&self) -> usize {
         self.rounds_bound
     }
@@ -109,6 +117,10 @@ impl DevicePackedRa {
         1usize << self.rounds_bound
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the equivalence tests are the only consumer")
+    )]
     pub fn coefficients(&self, context: &CudaKernelContext) -> Result<Vec<DeviceFrVec>, CudaError> {
         if self.is_collapsed() {
             return self.dense.iter().map(DeviceFrVec::try_clone).collect();
@@ -360,7 +372,7 @@ impl DevicePackedRa {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::Fr;
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 
@@ -426,7 +438,7 @@ mod tests {
             let mut got = DevicePackedRa::new(context, packed, cycles, chunk_bits, &point, &seeds)
                 .expect("device packed one-hot family");
 
-            for round in 0..log_t {
+            for (round, &challenge) in challenges.iter().enumerate().take(log_t) {
                 let coefficients = got.coefficients(context).expect("gather coefficients");
                 for (p, table) in coefficients.iter().enumerate() {
                     prop_assert_eq!(
@@ -435,7 +447,6 @@ mod tests {
                         "poly {} diverged at round {}", p, round
                     );
                 }
-                let challenge = challenges[round];
                 for poly in &mut expected {
                     poly.bind_with_order(challenge, BindingOrder::LowToHigh);
                 }

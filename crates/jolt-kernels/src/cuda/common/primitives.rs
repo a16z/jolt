@@ -237,22 +237,23 @@ impl CudaKernelContext {
         for &coordinate in point {
             let prev_len = table.len();
             let mut doubled = self.alloc(prev_len * 2)?;
-            let coordinate = self.upload(&[coordinate])?;
+            let coordinate = crate::cuda::common::device::fr_limbs(coordinate);
             let count = Self::count_of(prev_len)?;
             let mut builder = self.stream().launch_builder(&self.eq_double);
             let _ = builder.arg(table.limbs());
-            let _ = builder.arg(coordinate.limbs());
+            for limb in &coordinate {
+                let _ = builder.arg(limb);
+            }
             let _ = builder.arg(doubled.limbs_mut());
             let _ = builder.arg(&count);
-            // SAFETY: thread `j < prev_len` reads only `table[j]` and the
-            // single-element coordinate buffer, and writes exactly
+            // SAFETY: thread `j < prev_len` reads only `table[j]`, the
+            // coordinate arriving as four by-value limbs, and writes exactly
             // `doubled[2j]` and `doubled[2j+1]` — disjoint across threads.
             // `table` holds `prev_len * LIMBS` u64s and `doubled` holds
             // `2 * prev_len * LIMBS`, a fresh allocation distinct from `table`
             // (the ping-pong is what makes this race-free, unlike the in-place
             // CPU form). Threads with `j >= prev_len` return first.
             let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
-            self.stream().synchronize()?;
             table = doubled;
         }
         Ok(table)
@@ -262,11 +263,13 @@ impl CudaKernelContext {
         let mut table = self.alloc(1usize << point.len())?;
         for (level, &coordinate) in point.iter().rev().enumerate() {
             let half = 1usize << level;
-            let coordinate = self.upload(&[coordinate])?;
+            let coordinate = crate::cuda::common::device::fr_limbs(coordinate);
             let count = Self::count_of(half)?;
             let mut builder = self.stream().launch_builder(&self.lt_double);
             let _ = builder.arg(table.limbs_mut());
-            let _ = builder.arg(coordinate.limbs());
+            for limb in &coordinate {
+                let _ = builder.arg(limb);
+            }
             let _ = builder.arg(&count);
             // SAFETY: this kernel is deliberately in-place, mirroring the CPU
             // `lt_evals`. Thread `j < half` reads `table[j]` once and then writes
@@ -275,10 +278,9 @@ impl CudaKernelContext {
             // `j + half` over `[half, 2*half)`), so no thread reads a location
             // another writes. `table` holds `2^point.len() * LIMBS` u64s and
             // `2 * half` never exceeds that. Threads with `j >= half` return
-            // first. The launches are sequential (one per level, each followed by
-            // a synchronize), which is what orders the levels.
+            // first. The launches are sequential on one stream (one per level),
+            // which is what orders the levels.
             let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
-            self.stream().synchronize()?;
         }
         Ok(table)
     }

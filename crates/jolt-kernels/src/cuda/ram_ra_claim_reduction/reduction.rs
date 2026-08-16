@@ -1,11 +1,9 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
-use jolt_poly::BindingOrder;
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::ra_poly::COLD;
 
 pub const TERMS: usize = 3;
 
@@ -49,17 +47,17 @@ pub struct DeviceRamRaReduction {
 impl DeviceRamRaReduction {
     pub fn new<F: Field>(
         context: &CudaKernelContext,
-        hot_indices: &[Option<usize>],
-        eq_address: &[F],
+        words: &[u32],
+        eq_address: &DeviceFrVec,
         cycle_points: &CyclePoints<'_, F>,
         gamma: F,
         log_t: usize,
     ) -> Result<Self, CudaError> {
         let cycles = 1usize << log_t;
-        if hot_indices.len() != cycles {
+        if words.len() != cycles {
             return Err(CudaError::LengthMismatch {
                 expected: cycles,
-                got: hot_indices.len(),
+                got: words.len(),
             });
         }
         let prefix_vars = log_t / 2;
@@ -73,7 +71,7 @@ impl DeviceRamRaReduction {
             }
         }
 
-        let h = Self::gather_h(context, hot_indices, eq_address, cycles)?;
+        let h = Self::gather_h(context, words, eq_address, cycles)?;
 
         let mut suffix_points = Vec::with_capacity(TERMS);
         let mut prefix_points = Vec::with_capacity(TERMS);
@@ -107,34 +105,13 @@ impl DeviceRamRaReduction {
         })
     }
 
-    fn gather_h<F: Field>(
+    fn gather_h(
         context: &CudaKernelContext,
-        hot_indices: &[Option<usize>],
-        eq_address: &[F],
+        words: &[u32],
+        eq_address: &DeviceFrVec,
         cycles: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let addresses = eq_address.len();
-        let mut raw = Vec::with_capacity(cycles);
-        for hot in hot_indices {
-            let encoded = match *hot {
-                None => COLD,
-                Some(address) if address < addresses => {
-                    u32::try_from(address).map_err(|_| CudaError::LengthMismatch {
-                        expected: addresses,
-                        got: address,
-                    })?
-                }
-                Some(address) => {
-                    return Err(CudaError::LengthMismatch {
-                        expected: addresses,
-                        got: address,
-                    })
-                }
-            };
-            raw.push(encoded);
-        }
-        let indices = context.upload_u32_slice(&raw)?;
-        let eq_address = context.upload(require_fr_slice(eq_address)?)?;
+        let indices = context.upload_u32_slice(words)?;
         let mut h = context.alloc(cycles)?;
         let count = CudaKernelContext::count_of(cycles)?;
         let mut builder = context.stream().launch_builder(context.ram_ra_gather_h());
@@ -143,11 +120,11 @@ impl DeviceRamRaReduction {
         let _ = builder.arg(h.limbs_mut());
         let _ = builder.arg(&count);
         // SAFETY: thread `c < cycles` reads `indices[c]` and, unless the entry is
-        // `COLD`, `eq_address[indices[c]]` — bounded by `addresses` by the check
-        // above — and writes only `h[c]` of `cycles` elements. `h` is a distinct
-        // allocation.
+        // `COLD`, `eq_address[indices[c]]` — below `eq_address`'s length because
+        // every caller encodes through `common::pack::encode_address` with that
+        // length as its bound — and writes only `h[c]` of `cycles` elements. `h` is
+        // a distinct allocation.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-        context.stream().synchronize()?;
         Ok(h)
     }
 
@@ -425,13 +402,13 @@ impl DeviceRamRaReduction {
         match &mut self.phase {
             Phase::Prefix { p, q } => {
                 for table in p.iter_mut().chain(q.iter_mut()) {
-                    *table = context.bind(table, challenge, BindingOrder::LowToHigh)?;
+                    *table = context.bind_rows(table, table.len(), challenge)?;
                 }
             }
             Phase::Suffix { h_prime, eq_hi } => {
-                *h_prime = context.bind(h_prime, challenge, BindingOrder::LowToHigh)?;
+                *h_prime = context.bind_rows(h_prime, h_prime.len(), challenge)?;
                 for table in eq_hi.iter_mut() {
-                    *table = context.bind(table, challenge, BindingOrder::LowToHigh)?;
+                    *table = context.bind_rows(table, table.len(), challenge)?;
                 }
             }
         }
@@ -479,6 +456,7 @@ mod tests {
 
     use super::{CyclePoints, DeviceRamRaReduction};
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::pack::COLD;
     use crate::cuda::common::testing::arb_point;
 
     const LOG_T: usize = 6;
@@ -494,6 +472,13 @@ mod tests {
                     Some(((c as u64 * 5 + seed) as usize) % addresses)
                 }
             })
+            .collect()
+    }
+
+    fn packed(indices: &[Option<usize>]) -> Vec<u32> {
+        indices
+            .iter()
+            .map(|hot| hot.map_or(COLD, |address| address as u32))
             .collect()
     }
 
@@ -544,14 +529,16 @@ mod tests {
         ) {
             let Some(context) = shared_context() else { return Ok(()); };
             let indices = hot_indices(seed);
+            let words = packed(&indices);
             let eq_address = eq_table(&address);
+            let device_eq = context.upload(&eq_address).expect("upload eq address");
             let points = CyclePoints {
                 raf: &raf,
                 read_write: &read_write,
                 val_check: &val_check,
             };
             let state = DeviceRamRaReduction::new(
-                context, &indices, &eq_address, &points, gamma[0], LOG_T,
+                context, &words, &device_eq, &points, gamma[0], LOG_T,
             ).expect("device ram ra reduction");
 
             let prefix_vars = LOG_T / 2;
@@ -586,14 +573,16 @@ mod tests {
         ) {
             let Some(context) = shared_context() else { return Ok(()); };
             let indices = hot_indices(seed);
+            let words = packed(&indices);
             let eq_address = eq_table(&address);
+            let device_eq = context.upload(&eq_address).expect("upload eq address");
             let points = CyclePoints {
                 raf: &raf,
                 read_write: &read_write,
                 val_check: &val_check,
             };
             let mut state = DeviceRamRaReduction::new(
-                context, &indices, &eq_address, &points, gamma[0], LOG_T,
+                context, &words, &device_eq, &points, gamma[0], LOG_T,
             ).expect("device ram ra reduction");
 
             for &challenge in &challenges {

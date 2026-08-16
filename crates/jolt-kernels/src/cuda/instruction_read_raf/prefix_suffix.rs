@@ -1,6 +1,9 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: step 2 (the instruction read+RAF address phase) is the consumer; only the tests exercise this module so far"
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "implementation target: step 2 (the instruction read+RAF address phase) is the consumer; only the tests exercise this module so far"
+    )
 )]
 
 use cudarc::driver::{LaunchConfig, PushKernelArg};

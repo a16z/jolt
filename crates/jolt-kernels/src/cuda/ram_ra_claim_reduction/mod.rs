@@ -1,4 +1,3 @@
-use jolt_claims::protocols::jolt::geometry::ram::ram_ra_claim_reduction;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamRaClaimReductionInputClaims, RamRaClaimReductionOutputClaims,
 };
@@ -8,13 +7,13 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use self::reduction::{CyclePoints, DeviceRamRaReduction};
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device::fr_into;
-use crate::reference::views::eq_table;
+use crate::cuda::common::device::{fr_into, require_fr_slice};
+use crate::cuda::common::ram_address_witness::{packed_ram_words, RamAddressWitness};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -53,11 +52,20 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
             read_write: &points.read_write()[ram_log_k..],
             val_check: &points.val_check()[ram_log_k..],
         };
-        let ra_id = ram_ra_claim_reduction().polynomial_id();
+        let addresses = 1usize << ram_log_k;
+        let cycles = 1usize << log_t;
+        let rows = collect_bundles::<RamAddressWitness>(witness, cycles)?;
+        let words = packed_ram_words(&rows, addresses).map_err(|_| KernelError::Unsupported {
+            reason: "the CUDA RAM RA claim reduction packs each remapped RAM word address into \
+                     one 32-bit word below the RAM address space, reserving the all-ones word \
+                     for a cold cycle",
+        })?;
+        drop(rows);
+        let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
         let state = DeviceRamRaReduction::new(
             context,
-            &witness.hot_indices(ra_id)?,
-            &eq_table(r_address),
+            &words,
+            &eq_address,
             &cycle_points,
             inputs.challenges.gamma,
             log_t,
@@ -145,27 +153,24 @@ mod tests {
     use jolt_claims::{OutputClaims, SumcheckChallenges};
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
-    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
+    use jolt_witness::{FixedBackend, OneHotSource, PolynomialEncoding, Shape};
     use proptest::prelude::*;
 
     use super::CudaBackend;
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::testing::{arb_point, drive, fr, reference_input_claim, FixedPlane};
+    use crate::cuda::common::testing::{
+        arb_point, drive, fr, ram_row_is_cold, ram_rows_with_grid, reference_input_claim,
+        RamRowFixture, RowPlane, RAM_ROW_PATTERN,
+    };
     use crate::reference::ReferenceBackend;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
 
     const LOG_T: usize = 6;
     const RAM_LOG_K: usize = 3;
 
-    fn witness(seed: u64) -> FixedPlane {
-        let cycles = 1usize << LOG_T;
-        let addresses = 1usize << RAM_LOG_K;
+    fn witness(seed: u64) -> RowPlane {
+        let RamRowFixture { rows, ra, .. } = ram_rows_with_grid(LOG_T, RAM_LOG_K, seed);
         let mut backend = FixedBackend::new();
-        let mut ra = vec![Fr::from_u64(0); addresses * cycles];
-        for cycle in 0..cycles {
-            let address = ((cycle as u64 * 5 + seed) % addresses as u64) as usize;
-            ra[address * cycles + cycle] = Fr::from_u64(1);
-        }
         backend
             .insert(
                 JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa),
@@ -173,7 +178,45 @@ mod tests {
                 ra,
             )
             .expect("insert ram_ra");
-        FixedPlane::with_log_t(backend, "cuda ram_ra_claim_reduction fixture", Some(LOG_T))
+        RowPlane::new(backend, "cuda ram_ra_claim_reduction fixture", LOG_T, rows)
+    }
+
+    #[test]
+    fn fixture_ram_ra_is_one_hot_with_cold_cycles() {
+        let cycles = 1usize << LOG_T;
+        let addresses = 1usize << RAM_LOG_K;
+        for seed in 0..RAM_ROW_PATTERN as u64 {
+            let plane = witness(seed);
+            let hot = plane
+                .hot_indices(JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa))
+                .expect("fixture hot indices");
+            assert_eq!(hot.len(), cycles, "seed {seed}: cycle count");
+            for (cycle, address) in hot.iter().enumerate() {
+                assert_eq!(
+                    address.is_none(),
+                    ram_row_is_cold(cycle),
+                    "seed {seed} cycle {cycle}: the fixture disagrees with itself on coldness",
+                );
+                if let Some(address) = address {
+                    assert!(
+                        *address < addresses,
+                        "seed {seed} cycle {cycle}: address escapes"
+                    );
+                }
+            }
+            let cold = hot.iter().filter(|address| address.is_none()).count();
+            assert!(
+                cold > 0 && cold < cycles,
+                "seed {seed}: {cold} of {cycles} cycles are cold, so one of the two paths is \
+                 unexercised",
+            );
+            let distinct: std::collections::BTreeSet<usize> =
+                hot.iter().filter_map(|address| *address).collect();
+            assert!(
+                distinct.len() > 1,
+                "seed {seed}: every hot cycle targets the same address",
+            );
+        }
     }
 
     proptest! {

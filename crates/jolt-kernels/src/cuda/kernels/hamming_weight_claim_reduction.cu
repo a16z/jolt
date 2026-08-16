@@ -59,5 +59,5 @@ extern "C" __global__ void hwr_message_kernel(const u64 *__restrict__ folded,
         pa_finalize(fold_infinity, acc[1]);
     }
 
-    ohf_block_reduce(scratch, 2, acc, partials);
+    lane_block_reduce(scratch, 2, acc, partials);
 }

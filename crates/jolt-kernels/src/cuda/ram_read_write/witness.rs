@@ -39,10 +39,6 @@ pub fn matrix_entries(rows: &[RamReadWriteWitness]) -> Vec<MatrixEntry> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test module: fixture errors fail loudly"
-)]
 mod tests {
     use ark_bn254::Fr as LegacyFr;
     use common::jolt_device::MemoryLayout;

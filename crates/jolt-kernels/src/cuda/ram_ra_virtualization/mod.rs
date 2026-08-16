@@ -12,6 +12,7 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::ram_address_witness::{packed_ram_words, RamAddressWitness};
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -19,7 +20,6 @@ use crate::{
 use one_hot::DevicePackedRamRa;
 
 pub(crate) mod one_hot;
-pub(crate) mod witness;
 
 pub struct RamRaVirtualizationKernel<F: Field> {
     context: &'static CudaKernelContext,
@@ -136,8 +136,14 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
         let address_point: Vec<F> = chunks.concat();
 
         let cycles = 1usize << dimensions.log_t();
-        let rows = collect_bundles::<witness::RamRaVirtualizationWitness>(witness, cycles)?;
-        let words = witness::packed_words(&rows).map_err(|_| KernelError::Unsupported {
+        let address_bits = chunk_bits * chunks.len();
+        let addresses = if address_bits >= 32 {
+            1usize << 32
+        } else {
+            1usize << address_bits
+        };
+        let rows = collect_bundles::<RamAddressWitness>(witness, cycles)?;
+        let words = packed_ram_words(&rows, addresses).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA RAM RA virtualization kernel packs each remapped RAM word address \
                      into one 32-bit word, reserving the all-ones word for a cold cycle",
         })?;

@@ -12,9 +12,12 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::SpartanShift;
 use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
-use super::common::prefix_suffix::{eq_plus_one_pairs, PrefixSuffixGroup, PrefixSuffixRounds};
+use super::common::prefix_suffix::{
+    eq_plus_one_pairs, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
+};
 use super::CudaBackend;
 use crate::cuda::require_context;
+use crate::reference::ReferenceBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -25,10 +28,6 @@ pub(crate) mod witness;
 use witness::SpartanShiftWitness;
 
 const GAMMA_POWERS: usize = 5;
-
-const fn prefix_rounds(log_t: usize) -> usize {
-    log_t - log_t / 2
-}
 
 pub struct SpartanShiftKernel<F: Field> {
     rounds: PrefixSuffixRounds<F>,
@@ -102,7 +101,7 @@ impl<F: Field> SumcheckKernel<F> for SpartanShiftKernel<F> {
 impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, SpartanShift<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = SpartanShift<F>>>, KernelError<F>> {
@@ -111,17 +110,14 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
         let log_t = relation.symbolic().rounds();
         let tau_low = relation.product_uniskip_tau_low();
         let product_point = relation.product_remainder_opening_point();
-        if log_t < 2 {
-            return Err(KernelError::InvariantViolation {
-                reason: "the CUDA Spartan shift needs one round in each prefix-suffix phase",
-            });
-        }
         if tau_low.len() != log_t || product_point.len() != log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "the Spartan shift eq+1 points span the cycle variables",
             });
         }
-        let prefix_rounds = prefix_rounds(log_t);
+        let Some(prefix_rounds) = prefix_rounds_ceil(log_t) else {
+            return ReferenceBackend.prepare(session, witness, inputs);
+        };
 
         let rows = collect_bundles::<SpartanShiftWitness>(witness, 1usize << log_t)?;
         let packed = witness::pack(&rows);
@@ -176,7 +172,7 @@ mod tests {
     use jolt_verifier::stages::stage3::outputs::SpartanShift;
     use proptest::prelude::*;
 
-    use super::{eq_plus_one_pairs, CudaBackend};
+    use super::{eq_plus_one_pairs, prefix_rounds_ceil, CudaBackend};
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{
         arb_point, drive, fr, reference_input_claim, with_r1cs_witness,
@@ -194,7 +190,8 @@ mod tests {
         for log_t in 2usize..12 {
             let point: Vec<Fr> = (0..log_t).map(|index| fr(index as u64 * 13 + 5)).collect();
             let expected = EqPlusOnePrefixSuffix::<Fr>::new(&point);
-            let got = eq_plus_one_pairs(&point, super::prefix_rounds(log_t)).expect("eq+1 pairs");
+            let got = eq_plus_one_pairs(&point, prefix_rounds_ceil(log_t).expect("prefix rounds"))
+                .expect("eq+1 pairs");
             assert_eq!(got[0].prefix, expected.prefix_0, "log_t {log_t}");
             assert_eq!(got[0].suffix, expected.suffix_0, "log_t {log_t}");
             assert_eq!(got[1].prefix, expected.prefix_1, "log_t {log_t}");
@@ -228,6 +225,52 @@ mod tests {
                      on it would not change any round polynomial",
                 );
             }
+        });
+    }
+
+    #[test]
+    fn a_one_round_trace_is_served_below_the_prefix_suffix_minimum() {
+        let Some(_) = shared_context() else {
+            return;
+        };
+        const TINY: usize = 1;
+        let point = vec![fr(7)];
+        let challenges = vec![fr(11)];
+        with_r1cs_witness(TINY, RAM_K, one_hot(), 3, |witness| {
+            let relation =
+                SpartanShift::<Fr>::new(TraceDimensions::new(TINY), point.clone(), point.clone());
+            let claims = SpartanShiftInputClaims::default();
+            let points = SpartanShiftInputClaims::default();
+            let challenge_set = SpartanShiftChallenges { gamma: fr(5) };
+            let make_inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenge_set,
+            };
+
+            let input_claim = reference_input_claim(witness, make_inputs);
+            let mut expected_kernel = ReferenceBackend
+                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                .expect("reference prepare");
+            let mut got_kernel = CudaBackend
+                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                .expect("cuda prepare below the prefix-suffix minimum");
+
+            let expected = drive(&mut *expected_kernel, input_claim, &challenges);
+            let got = drive(&mut *got_kernel, input_claim, &challenges);
+            assert_eq!(got, expected, "round polynomials diverged at log_T = 1");
+            assert_eq!(
+                got_kernel
+                    .output_claims(&claims)
+                    .expect("cuda claims")
+                    .opening_values(),
+                expected_kernel
+                    .output_claims(&claims)
+                    .expect("reference claims")
+                    .opening_values(),
+                "output claims diverged at log_T = 1",
+            );
         });
     }
 

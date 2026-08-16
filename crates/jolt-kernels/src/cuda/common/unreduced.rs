@@ -1,6 +1,9 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: the address-phase bucket scans wire this once its kernels land"
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "implementation target: the address-phase bucket scans wire this once its kernels land"
+    )
 )]
 
 use cudarc::driver::PushKernelArg;
@@ -126,7 +129,6 @@ fn scatter(
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
-    clippy::unwrap_used,
     reason = "test module: device operations fail loudly"
 )]
 mod tests {

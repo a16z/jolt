@@ -1,13 +1,13 @@
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RemappedRamAddress};
 use jolt_witness::WitnessBundle;
 
+use crate::cuda::common::pack::{COLD, PACK_CHUNK};
+
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub const COLD: u32 = u32::MAX;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
-pub struct BooleanityCycleWitness {
+pub struct OneHotCycleWitness {
     pub lookup: LookupIndex,
     pub pc: MappedPc,
     pub ram: RemappedRamAddress,
@@ -19,9 +19,7 @@ pub struct PackedColumns {
     pub ram: Vec<u32>,
 }
 
-const PACK_CHUNK: usize = 1 << 14;
-
-pub fn packed_columns(rows: &[BooleanityCycleWitness]) -> Result<PackedColumns, u128> {
+pub fn packed_columns(rows: &[OneHotCycleWitness]) -> Result<PackedColumns, u128> {
     let mut lookup = vec![0u64; 2 * rows.len()];
     let mut pc = vec![COLD; rows.len()];
     let mut ram = vec![COLD; rows.len()];
@@ -53,7 +51,7 @@ fn fill(
     lookup: &mut [u64],
     pc: &mut [u32],
     ram: &mut [u32],
-    rows: &[BooleanityCycleWitness],
+    rows: &[OneHotCycleWitness],
 ) -> Option<u128> {
     let mut rejected: Option<u128> = None;
     let mut reject = |value: u128| {

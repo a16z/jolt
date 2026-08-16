@@ -1,8 +1,3 @@
-#![expect(
-    dead_code,
-    reason = "implementation target: the instruction read-RAF kernel wires this once it lands"
-)]
-
 use cudarc::driver::PushKernelArg;
 use jolt_field::Fr;
 
@@ -137,7 +132,6 @@ fn build_ra(
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
-    clippy::unwrap_used,
     reason = "test module: device operations fail loudly"
 )]
 mod tests {

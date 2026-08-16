@@ -4,14 +4,13 @@ use jolt_witness::WitnessBundle;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub const COLD: u32 = u32::MAX;
+pub use crate::cuda::common::pack::COLD;
+use crate::cuda::common::pack::PACK_CHUNK;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
 pub struct BytecodeReadRafCycleWitness {
     pub pc: MappedPc,
 }
-
-const PACK_CHUNK: usize = 1 << 14;
 
 pub fn packed_column(rows: &[BytecodeReadRafCycleWitness]) -> Result<Vec<u32>, usize> {
     let mut pc = vec![COLD; rows.len()];

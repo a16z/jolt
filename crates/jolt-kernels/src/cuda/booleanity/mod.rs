@@ -11,6 +11,7 @@ use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -20,7 +21,6 @@ use one_hot::DeviceBooleanityRa;
 pub(crate) mod address;
 pub(crate) mod masses;
 pub(crate) mod one_hot;
-pub(crate) mod witness;
 
 pub struct BooleanityCycleKernel<F: Field> {
     context: &'static CudaKernelContext,
@@ -166,8 +166,8 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
         let layout = dimensions.layout;
         let families = [layout.instruction(), layout.bytecode(), layout.ram()];
         let cycles = 1usize << dimensions.log_t;
-        let rows = collect_bundles::<witness::BooleanityCycleWitness>(witness, cycles)?;
-        let columns = witness::packed_columns(&rows).map_err(|_| KernelError::Unsupported {
+        let rows = collect_bundles::<OneHotCycleWitness>(witness, cycles)?;
+        let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA booleanity kernel packs the bytecode PC and the remapped RAM word \
                      address into one 32-bit word each, reserving the all-ones word for a cold \
                      cycle",
@@ -214,16 +214,13 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
 )]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-    use jolt_claims::protocols::jolt::{
-        JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId, JoltRelationId,
-    };
+    use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltRelationId};
     use jolt_claims::OutputClaims;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_verifier::stages::formula_dimensions_from_parts;
     use jolt_verifier::stages::stage6b::booleanity::{
         Booleanity, BooleanityCyclePhaseChallenges, BooleanityInputClaims,
     };
-    use jolt_witness::JoltWitnessOracle;
     use proptest::prelude::*;
 
     use super::CudaBackend;

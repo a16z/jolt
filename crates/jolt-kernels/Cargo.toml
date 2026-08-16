@@ -72,3 +72,7 @@ required-features = ["cuda"]
 [[example]]
 name = "cuda_address_split_bench"
 required-features = ["cuda"]
+
+[[example]]
+name = "cuda_round_trip_bench"
+required-features = ["cuda"]

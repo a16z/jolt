@@ -23,6 +23,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/tables.cu"),
     "\n",
+    include_str!("../kernels/sumcheck_common.cu"),
+    "\n",
     include_str!("../kernels/scan.cu"),
     "\n",
     include_str!("../kernels/lt_poly.cu"),
@@ -112,7 +114,6 @@ pub struct CudaKernelContext {
     dense_product_round: CudaFunction,
     lane_sum_reduce: CudaFunction,
     lane_sum_total: CudaFunction,
-    weighted_combine: CudaFunction,
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
     lt_reconstruct: CudaFunction,
@@ -191,6 +192,7 @@ pub struct CudaKernelContext {
     so_claims: CudaFunction,
     sop_round: CudaFunction,
     hf_half_fold: CudaFunction,
+    hf_row_fold: CudaFunction,
     sopg_round: CudaFunction,
     ii_columns: CudaFunction,
     ss_columns: CudaFunction,
@@ -242,7 +244,6 @@ impl CudaKernelContext {
             dense_product_round: module.load_function("dense_product_round_kernel")?,
             lane_sum_reduce: module.load_function("lane_sum_reduce_kernel")?,
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
-            weighted_combine: module.load_function("weighted_combine_kernel")?,
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
             lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
@@ -321,6 +322,7 @@ impl CudaKernelContext {
             so_claims: module.load_function("so_claims_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
+            hf_row_fold: module.load_function("hf_row_fold_kernel")?,
             sopg_round: module.load_function("sopg_round_kernel")?,
             ii_columns: module.load_function("ii_columns_kernel")?,
             ss_columns: module.load_function("ss_columns_kernel")?,
@@ -455,10 +457,6 @@ impl CudaKernelContext {
 
     pub(crate) const fn lane_sum_total(&self) -> &CudaFunction {
         &self.lane_sum_total
-    }
-
-    pub(crate) const fn weighted_combine(&self) -> &CudaFunction {
-        &self.weighted_combine
     }
 
     pub(crate) const fn irv_eq_double(&self) -> &CudaFunction {
@@ -603,6 +601,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn hf_half_fold(&self) -> &CudaFunction {
         &self.hf_half_fold
+    }
+
+    pub(crate) const fn hf_row_fold(&self) -> &CudaFunction {
+        &self.hf_row_fold
     }
 
     pub(crate) const fn sp_matrix(&self) -> &CudaFunction {

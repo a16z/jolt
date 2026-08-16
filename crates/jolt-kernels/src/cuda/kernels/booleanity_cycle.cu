@@ -84,7 +84,7 @@ __device__ __forceinline__ void brc_finish(const u64 *fold_c, const u64 *fold_e,
                                            unsigned int num_x_in_bits, unsigned long long g,
                                            u64 acc[2][LIMBS]) {
     u64 combined[LIMBS], constant[LIMBS], quadratic[LIMBS];
-    irv_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
+    eq_split_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
     pa_finalize(fold_c, constant);
     pa_finalize(fold_e, quadratic);
     fr_mul(constant, combined, acc[0]);
@@ -168,7 +168,7 @@ extern "C" __global__ void brc_message_sparse_kernel(
         brc_finish(fold_c, fold_e, e_in, e_in_len, e_out, num_x_in_bits, g, acc);
     }
 
-    rrv_block_reduce(scratch, 2, acc, partials);
+    lane_block_reduce(scratch, 2, acc, partials);
 }
 
 extern "C" __global__ void brc_message_dense_kernel(
@@ -198,5 +198,5 @@ extern "C" __global__ void brc_message_dense_kernel(
         brc_finish(fold_c, fold_e, e_in, e_in_len, e_out, num_x_in_bits, g, acc);
     }
 
-    rrv_block_reduce(scratch, 2, acc, partials);
+    lane_block_reduce(scratch, 2, acc, partials);
 }

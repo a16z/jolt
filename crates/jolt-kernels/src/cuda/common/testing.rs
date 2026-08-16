@@ -24,7 +24,7 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_witness::__private::TraceRow;
-use jolt_witness::witnesses::WitnessEnv;
+use jolt_witness::witnesses::{Extract, ToField, WitnessEnv};
 use jolt_witness::{
     ChunkVisitor, FixedBackend, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
     JoltWitnessPlane, OneHotSource, ProgramSource, RowSource, Shape, TraceBackend, WitnessError,
@@ -664,7 +664,11 @@ fn r1cs_bytecode() -> Vec<JoltInstructionRow> {
 
 fn r1cs_fixture_operands(kind: JoltInstructionKind, slot: usize) -> NormalizedOperands {
     let magnitude = 13 + 5 * slot as i128;
-    let imm = if slot % 2 == 0 { -magnitude } else { magnitude };
+    let imm = if slot.is_multiple_of(2) {
+        -magnitude
+    } else {
+        magnitude
+    };
     let (rd, rs1, rs2) = match kind {
         JoltInstructionKind::SD => (None, Some(2), Some(3)),
         JoltInstructionKind::BEQ => (None, Some(2), Some(3)),
@@ -792,6 +796,176 @@ pub fn with_r1cs_witness<R>(
         JoltVmWitnessInputs::new(&program, &preprocessing, trace),
     );
     body(&backend)
+}
+
+pub const RAM_ROW_PATTERN: usize = 5;
+
+pub const fn ram_row_is_cold(cycle: usize) -> bool {
+    matches!(cycle % RAM_ROW_PATTERN, 0 | 3)
+}
+
+pub struct RamRowFixture {
+    pub rows: Vec<TraceRow>,
+    pub ra: Vec<Fr>,
+    pub inc: Vec<Fr>,
+}
+
+pub fn ram_rows_with_grid(log_t: usize, ram_log_k: usize, seed: u64) -> RamRowFixture {
+    let cycles = 1usize << log_t;
+    let addresses = 1usize << ram_log_k;
+    let lowest = MemoryLayout::default().get_lowest_address();
+    let mut ra = vec![Fr::from_u64(0); addresses * cycles];
+    let mut rows = Vec::with_capacity(cycles);
+
+    for cycle in 0..cycles {
+        let mix = seed
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(cycle as u64 + 1);
+        let word =
+            1 + (mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29)) % (addresses as u64 - 1);
+        let address = lowest + 8 * word;
+        let value = 900 + cycle as u64;
+
+        let access = if ram_row_is_cold(cycle) {
+            if cycle % RAM_ROW_PATTERN == 3 {
+                RamAccess::Read(RamRead { address: 0, value })
+            } else {
+                RamAccess::NoOp
+            }
+        } else {
+            ra[word as usize * cycles + cycle] = Fr::from_u64(1);
+            match cycle % RAM_ROW_PATTERN {
+                1 => RamAccess::Read(RamRead { address, value }),
+                2 => RamAccess::Write(RamWrite {
+                    address,
+                    pre_value: value,
+                    post_value: value + 1 + word,
+                }),
+                _ => RamAccess::Write(RamWrite {
+                    address,
+                    pre_value: value + 1 + word,
+                    post_value: value,
+                }),
+            }
+        };
+
+        rows.push(TraceRow {
+            ram_access: access,
+            ..TraceRow::default()
+        });
+    }
+
+    let probe = RowPlane::new(FixedBackend::new(), "inc probe", log_t, Vec::new());
+    let env = WitnessEnv::new(ProgramSource::program_preprocessing(&probe));
+    let inc: Vec<Fr> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            jolt_witness::witnesses::RamInc::extract(row, rows.get(index + 1), &env)
+                .expect("ram increment")
+                .to_field()
+        })
+        .collect();
+
+    RamRowFixture { rows, ra, inc }
+}
+
+pub type RegisterActivity = (Option<u8>, Option<u8>, Option<u8>);
+
+pub const REGISTER_ACTIVITY: [RegisterActivity; 12] = [
+    (None, None, None),
+    (Some(3), None, None),
+    (None, Some(5), None),
+    (None, None, Some(7)),
+    (Some(9), Some(9), None),
+    (Some(11), None, Some(11)),
+    (None, Some(13), Some(13)),
+    (Some(2), Some(4), Some(6)),
+    (Some(6), Some(6), Some(6)),
+    (Some(1), Some(2), Some(1)),
+    (Some(1), Some(2), Some(2)),
+    (Some(120), Some(121), Some(122)),
+];
+
+pub struct RegisterFixture {
+    pub rows: Vec<TraceRow>,
+    pub val: Vec<Fr>,
+    pub rs1_ra: Vec<Fr>,
+    pub rs2_ra: Vec<Fr>,
+    pub rd_wa: Vec<Fr>,
+    pub inc: Vec<Fr>,
+}
+
+pub fn register_rows(log_t: usize, log_k: usize, seed: u64) -> RegisterFixture {
+    let cycles = 1usize << log_t;
+    let registers = 1usize << log_k;
+    let mut state = vec![0u64; registers];
+    let mut rows = Vec::with_capacity(cycles);
+    let mut val = vec![Fr::from_u64(0); registers * cycles];
+    let mut rs1_ra = vec![Fr::from_u64(0); registers * cycles];
+    let mut rs2_ra = vec![Fr::from_u64(0); registers * cycles];
+    let mut rd_wa = vec![Fr::from_u64(0); registers * cycles];
+
+    for cycle in 0..cycles {
+        for (register, value) in state.iter().copied().enumerate() {
+            val[register * cycles + cycle] = Fr::from_u64(value);
+        }
+
+        let (rs1, rs2, rd) = REGISTER_ACTIVITY[(cycle + seed as usize) % REGISTER_ACTIVITY.len()];
+        let mut registers_state = RegisterState::default();
+        if let Some(register) = rs1 {
+            registers_state.rs1 = Some(RegisterRead {
+                register,
+                value: state[register as usize],
+            });
+            rs1_ra[register as usize * cycles + cycle] = Fr::from_u64(1);
+        }
+        if let Some(register) = rs2 {
+            registers_state.rs2 = Some(RegisterRead {
+                register,
+                value: state[register as usize],
+            });
+            rs2_ra[register as usize * cycles + cycle] = Fr::from_u64(1);
+        }
+        if let Some(register) = rd {
+            let pre_value = state[register as usize];
+            let post_value = pre_value
+                .wrapping_add(seed.wrapping_mul(cycle as u64 + 1))
+                .wrapping_add(u64::from(register));
+            registers_state.rd = Some(RegisterWrite {
+                register,
+                pre_value,
+                post_value,
+            });
+            rd_wa[register as usize * cycles + cycle] = Fr::from_u64(1);
+            state[register as usize] = post_value;
+        }
+        rows.push(TraceRow {
+            registers: registers_state,
+            ..TraceRow::default()
+        });
+    }
+
+    let probe = FixedPlane::with_log_t(FixedBackend::new(), "inc probe", Some(log_t));
+    let env = WitnessEnv::new(ProgramSource::program_preprocessing(&probe));
+    let inc: Vec<Fr> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            jolt_witness::witnesses::RdInc::extract(row, rows.get(index + 1), &env)
+                .expect("rd increment")
+                .to_field()
+        })
+        .collect();
+
+    RegisterFixture {
+        rows,
+        val,
+        rs1_ra,
+        rs2_ra,
+        rd_wa,
+        inc,
+    }
 }
 
 pub fn hot_addresses(

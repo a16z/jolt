@@ -128,22 +128,6 @@ __device__ __forceinline__ void irv_block_reduce(u64 *scratch, u64 acc[IRV_LANES
     }
 }
 
-__device__ __forceinline__ void irv_weight(const u64 *__restrict__ e_in, unsigned int e_in_len,
-                                           const u64 *__restrict__ e_out,
-                                           unsigned int num_x_in_bits, unsigned long long g,
-                                           u64 *combined) {
-    u64 weight[LIMBS];
-    if (e_in_len <= 1) {
-        load4(FR_ONE, weight);
-    } else {
-        unsigned long long x_in = g & ((1ull << num_x_in_bits) - 1ull);
-        load4(e_in + x_in * LIMBS, weight);
-    }
-    u64 e_out_eval[LIMBS];
-    load4(e_out + (g >> num_x_in_bits) * LIMBS, e_out_eval);
-    fr_mul(weight, e_out_eval, combined);
-}
-
 extern "C" __global__ void irv_message_sparse_kernel(
     const u64 *__restrict__ packed, const u64 *__restrict__ tables, unsigned int virtual_polys,
     unsigned int addresses, unsigned int slots, unsigned int chunk_bits, unsigned int committed,
@@ -198,7 +182,7 @@ extern "C" __global__ void irv_message_sparse_kernel(
         }
 
         u64 combined[LIMBS];
-        irv_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
+        eq_split_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
         for (int lane = 0; lane < IRV_LANES; lane++) {
             u64 reduced[LIMBS];
             pa_finalize(inner[lane], reduced);
@@ -253,7 +237,7 @@ extern "C" __global__ void irv_message_dense_kernel(
         }
 
         u64 combined[LIMBS];
-        irv_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
+        eq_split_weight(e_in, e_in_len, e_out, num_x_in_bits, g, combined);
         for (int lane = 0; lane < IRV_LANES; lane++) {
             u64 reduced[LIMBS];
             pa_finalize(inner[lane], reduced);

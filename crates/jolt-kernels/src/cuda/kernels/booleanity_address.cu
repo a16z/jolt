@@ -1,15 +1,15 @@
 extern "C" __global__ void bap_bind_squared_kernel(const u64 *__restrict__ in,
-                                                   const u64 *__restrict__ low,
-                                                   const u64 *__restrict__ high,
+                                                   u64 low0, u64 low1, u64 low2, u64 low3,
+                                                   u64 high0, u64 high1, u64 high2, u64 high3,
                                                    u64 *__restrict__ out, unsigned int n) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
 
-    u64 a[LIMBS], b[LIMBS], w0[LIMBS], w1[LIMBS], pa[LIMBS], pb[LIMBS], s[LIMBS];
+    u64 a[LIMBS], b[LIMBS], pa[LIMBS], pb[LIMBS], s[LIMBS];
+    u64 w0[LIMBS] = {low0, low1, low2, low3};
+    u64 w1[LIMBS] = {high0, high1, high2, high3};
     load4(in + (2ull * (unsigned long long)i) * LIMBS, a);
     load4(in + (2ull * (unsigned long long)i + 1ull) * LIMBS, b);
-    load4(low, w0);
-    load4(high, w1);
     fr_mul(a, w0, pa);
     fr_mul(b, w1, pb);
     fr_add(pa, pb, s);
@@ -54,10 +54,10 @@ extern "C" __global__ void bap_message_kernel(const u64 *__restrict__ linear,
         u64 q0[LIMBS], q2[LIMBS], weight[LIMBS];
         pa_finalize(fold_zero, q0);
         pa_finalize(fold_lead, q2);
-        ohf_weight(e_in, e_in_len, e_out, num_x_in_bits, y, weight);
+        eq_split_weight(e_in, e_in_len, e_out, num_x_in_bits, y, weight);
         fr_mul(q0, weight, acc[0]);
         fr_mul(q2, weight, acc[1]);
     }
 
-    ohf_block_reduce(scratch, 2, acc, partials);
+    lane_block_reduce(scratch, 2, acc, partials);
 }

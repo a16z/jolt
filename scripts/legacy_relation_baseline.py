@@ -95,6 +95,23 @@ BUCKETED = {
         ),
         ("claims", ["ProductVirtualEval::compute_claimed_factors"]),
     ],
+    # bytecode-read-raf-address: legacy leaves all four of its methods
+    # uninstrumented (read_raf_checking.rs:170/399/494/534 — the sibling Cycle
+    # prover IS instrumented at :605), so this spec only works on a trace taken
+    # with the four temporary `#[tracing::instrument]` attributes described in
+    # the BACKLOG PASS section of CLAUDE-NOTES.md. On any other trace it reports
+    # "no spans found", which is the honest failure.
+    "bytecode-read-raf-address": [
+        ("prepare", ["BytecodeReadRafAddressSumcheckProver::initialize"]),
+        (
+            "address",
+            [
+                "BytecodeReadRafAddressSumcheckProver::compute_message",
+                "BytecodeReadRafAddressSumcheckProver::ingest_challenge",
+            ],
+        ),
+        ("claims", ["BytecodeReadRafAddressSumcheckProver::cache_openings"]),
+    ],
     # booleanity-address cannot use the round-split model: its `initialize` carries no
     # `#[tracing::instrument]`, so the stack walk skips it and the O(T) G-fold it calls
     # appears as a direct child of `prove_stage6a`. Reading `prepare` as 0.0 understated

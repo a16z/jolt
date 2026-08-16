@@ -117,7 +117,8 @@ mod tests {
         rs1_value, rs2_value, unexpanded_pc,
     };
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltOpeningId};
-    use jolt_field::Fr;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, UnexpandedPc};
     use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
     use super::super::witness::{self, InstructionInputWitness, COLUMNS};
@@ -148,6 +149,69 @@ mod tests {
             right_operand_is_imm(),
             imm(),
         ]
+    }
+
+    fn wide_imm_rows() -> Vec<InstructionInputWitness> {
+        let immediates: [i128; 8] = [
+            0,
+            1,
+            -1,
+            i128::from(u64::MAX),
+            -i128::from(u64::MAX),
+            (1i128 << 96) + 12_345,
+            -((1i128 << 96) + 12_345),
+            (1i128 << 64) - 1,
+        ];
+        immediates
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| InstructionInputWitness {
+                imm: Imm(value),
+                rs1_value: Rs1Value(index as u64),
+                rs2_value: Rs2Value(7 * index as u64),
+                unexpanded_pc: UnexpandedPc(index as u64),
+                right_operand_is_imm: InstructionFlag(true),
+                ..InstructionInputWitness::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn synthetic_rows_exercise_the_high_immediate_word() {
+        let rows = wide_imm_rows();
+        let packed = witness::pack(&rows);
+        assert!(
+            packed
+                .wide
+                .chunks_exact(witness::WIDE * 2)
+                .any(|limbs| limbs[2 * witness::IMM_SLOT + 1] != 0),
+            "no synthetic row populates the immediate's high word, so the wide read's high limb \
+             stays untested",
+        );
+        assert!(
+            rows.iter().any(|row| row.imm.0 < 0),
+            "no synthetic row carries a negative immediate",
+        );
+        assert!(
+            rows.iter().any(|row| row.imm.0 > 0),
+            "no synthetic row carries a positive immediate",
+        );
+    }
+
+    #[test]
+    fn promoted_immediates_match_the_host_conversion_beyond_64_bits() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let rows = wide_imm_rows();
+        let packed = witness::pack(&rows);
+        let columns = DeviceInstructionColumns::new(context, &packed).expect("device columns");
+        let handles = columns.handles();
+        let got = handles[witness::IMM_COLUMN]
+            .to_host()
+            .expect("download the immediate column");
+        let expected: Vec<Fr> = rows.iter().map(|row| Fr::from_i128(row.imm.0)).collect();
+        assert_eq!(got, expected, "the promoted immediate column diverged");
     }
 
     #[test]
