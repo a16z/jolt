@@ -18,6 +18,7 @@ use crate::{
 use coefficient::DeviceCoefficient;
 use one_hot::DeviceBytecodeRa;
 
+pub(crate) mod address;
 pub(crate) mod coefficient;
 pub(crate) mod one_hot;
 pub(crate) mod witness;
