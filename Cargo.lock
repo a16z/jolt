@@ -3763,6 +3763,7 @@ dependencies = [
  "jolt-profiling",
  "jolt-program",
  "jolt-prover-legacy",
+ "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
