@@ -1,6 +1,8 @@
 use std::ops::Deref;
 
-use jolt_riscv::{NormalizedOperands, SourceInstructionKind as Kind, SourceInstructionRow};
+use jolt_riscv::{
+    JoltInstructionKind as Kind, NormalizedOperands, SourceInstructionKind, SourceInstructionRow,
+};
 
 use crate::expand::{
     allocator::{FIRST_INLINE_REGISTER, NUM_INLINE_REGISTERS},
@@ -186,14 +188,9 @@ impl InlineExpansionBuilder {
         }
     }
 
-    /// Emit an R-format row or recursively expand a source-only R-format helper.
-    ///
-    /// Target-legal kinds (`jolt_kind()` is `Some`) appear exactly as written in
-    /// finalized bytecode; source-only helpers are recursively expanded through
-    /// the central `jolt-program` pipeline. The same routing applies to every
-    /// `emit_*` method below.
+    /// Emit a target-legal R-format row.
     pub fn emit_r(&mut self, instruction_kind: Kind, rd: u8, rs1: u8, rs2: u8) {
-        self.emit(SourceInstructionRowTemplate::r(
+        self.inner.emit(RowTemplate::r(
             instruction_kind,
             Self::register_operand(rd),
             Self::register_operand(rs1),
@@ -203,7 +200,7 @@ impl InlineExpansionBuilder {
 
     /// Emit an I-format row with an unsigned immediate.
     pub fn emit_i(&mut self, instruction_kind: Kind, rd: u8, rs1: u8, imm: u64) {
-        self.emit(SourceInstructionRowTemplate::i(
+        self.inner.emit(RowTemplate::i(
             instruction_kind,
             Self::register_operand(rd),
             Self::register_operand(rs1),
@@ -213,7 +210,7 @@ impl InlineExpansionBuilder {
 
     /// Emit a load-shaped I-format row with a signed byte offset.
     pub fn emit_ld(&mut self, instruction_kind: Kind, rd: u8, rs1: u8, imm: i64) {
-        self.emit(SourceInstructionRowTemplate::i(
+        self.inner.emit(RowTemplate::i(
             instruction_kind,
             Self::register_operand(rd),
             Self::register_operand(rs1),
@@ -221,18 +218,44 @@ impl InlineExpansionBuilder {
         ));
     }
 
-    /// Emit a J-format virtual row or recursively expand a source-only helper.
+    /// Recursively expand a source-only I-format helper.
+    pub fn expand_i(&mut self, instruction_kind: SourceInstructionKind, rd: u8, rs1: u8, imm: u64) {
+        self.inner.expand(SourceInstructionRowTemplate::i(
+            instruction_kind,
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            imm as i128,
+        ));
+    }
+
+    /// Recursively expand a source-only load with a signed byte offset.
+    pub fn expand_ld(
+        &mut self,
+        instruction_kind: SourceInstructionKind,
+        rd: u8,
+        rs1: u8,
+        imm: i64,
+    ) {
+        self.inner.expand(SourceInstructionRowTemplate::i(
+            instruction_kind,
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            imm as i128,
+        ));
+    }
+
+    /// Emit a J-format virtual row.
     pub fn emit_j(&mut self, instruction_kind: Kind, rd: u8, imm: u64) {
-        self.emit(SourceInstructionRowTemplate::j(
+        self.inner.emit(RowTemplate::j(
             instruction_kind,
             Self::register_operand(rd),
             imm as i128,
         ));
     }
 
-    /// Emit a U-format row or recursively expand a source-only helper.
+    /// Emit a U-format row.
     pub fn emit_u(&mut self, instruction_kind: Kind, rd: u8, imm: u64) {
-        self.emit(SourceInstructionRowTemplate::u(
+        self.inner.emit(RowTemplate::u(
             instruction_kind,
             Self::register_operand(rd),
             imm as i128,
@@ -241,7 +264,7 @@ impl InlineExpansionBuilder {
 
     /// Emit an S-format row with a signed byte offset.
     pub fn emit_s(&mut self, instruction_kind: Kind, rs1: u8, rs2: u8, imm: i64) {
-        self.emit(SourceInstructionRowTemplate::s(
+        self.inner.emit(RowTemplate::s(
             instruction_kind,
             Self::register_operand(rs1),
             Self::register_operand(rs2),
@@ -251,7 +274,7 @@ impl InlineExpansionBuilder {
 
     /// Emit a B-format row with a signed branch offset.
     pub fn emit_b(&mut self, instruction_kind: Kind, rs1: u8, rs2: u8, imm: i64) {
-        self.emit(SourceInstructionRowTemplate::b(
+        self.inner.emit(RowTemplate::b(
             instruction_kind,
             Self::register_operand(rs1),
             Self::register_operand(rs2),
@@ -264,7 +287,7 @@ impl InlineExpansionBuilder {
     /// These helpers are source-only pseudo-I rows: they read `rs1` and an
     /// immediate offset but do not write `rd`, so they must always be routed
     /// through recursive source expansion.
-    pub fn emit_align(&mut self, instruction_kind: Kind, rs1: u8, imm: i64) {
+    pub fn expand_align(&mut self, instruction_kind: SourceInstructionKind, rs1: u8, imm: i64) {
         self.inner
             .expand_address(instruction_kind, Self::register_operand(rs1), imm as i128);
     }
@@ -313,7 +336,7 @@ impl InlineExpansionBuilder {
         }
         match rs1 {
             Value::Reg(rs1) => {
-                self.emit_i(Kind::SRLIW, rd, rs1, (shamt & 0x1f) as u64);
+                self.expand_i(SourceInstructionKind::SRLIW, rd, rs1, (shamt & 0x1f) as u64);
                 Value::Reg(rd)
             }
             Value::Imm(val) => Value::Imm(((val as u32) >> shamt) as u64),
@@ -405,16 +428,6 @@ impl InlineExpansionBuilder {
     /// are validated in one central place.
     pub fn finalize(self) -> Result<ExpandedInstructionSequence, ExpansionError> {
         self.inner.finalize()
-    }
-
-    fn emit(&mut self, row: SourceInstructionRowTemplate) {
-        match row.instruction_kind.jolt_kind() {
-            Some(instruction_kind) => self.inner.emit(RowTemplate {
-                instruction_kind,
-                operands: row.operands,
-            }),
-            None => self.inner.expand(row),
-        }
     }
 
     fn register_operand(register: u8) -> RegisterOperand {

@@ -384,7 +384,7 @@ impl RISCVTrace for INLINE {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_riscv::SourceInstructionKind as Kind;
+    use jolt_riscv::JoltInstructionKind as Kind;
 
     const TEST_INLINE_WORD: u32 = 0xfc00_602b;
     fn test_sequence(

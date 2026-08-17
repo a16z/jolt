@@ -8,8 +8,8 @@ use super::*;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{
-    JoltInstruction, JoltInstructionProfile, SourceExtension, SourceInlineKey,
-    SourceInstructionKind as Kind, SourceInstructionRow, RV64IMAC_JOLT,
+    JoltInstruction, JoltInstructionKind as Kind, JoltInstructionProfile, SourceExtension,
+    SourceInlineKey, SourceInstructionRow, RV64IMAC_JOLT,
 };
 #[cfg(feature = "serialization")]
 use serde::Deserialize;

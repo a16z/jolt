@@ -1727,6 +1727,15 @@ impl SourceInstructionKind {
         SourceInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
 }
 
+impl JoltInstructionKind {
+    /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ADVICE: Self = JoltInstruction::VirtualAdvice(VirtualAdvice(()));
+
+    /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
+        JoltInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+}
+
 #[cfg(feature = "serialization")]
 impl Serialize for SourceInstructionKind {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

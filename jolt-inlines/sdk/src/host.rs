@@ -15,7 +15,7 @@ pub use jolt_program::expand::{
     InlineRegister, Value,
 };
 
-pub use jolt_riscv::SourceInstructionKind as Kind;
+pub use jolt_riscv::{JoltInstructionKind as Kind, SourceInstructionKind as SourceKind};
 pub use tracer::instruction::format::format_inline::FormatInline;
 pub use tracer::instruction::inline::{InlineAdviceContext, InlineAdviceError, InlineRegistration};
 pub use tracer::utils::inline_sequence_writer::AppendMode;
@@ -437,16 +437,16 @@ macro_rules! __jolt_asm_stmt {
         $asm.emit_i(Kind::XORI, $rd, $rs1, $imm)
     }};
     ($asm:expr, slli $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_i(Kind::SLLI, $rd, $rs1, $imm)
+        use $crate::host::SourceKind;
+        $asm.expand_i(SourceKind::SLLI, $rd, $rs1, $imm)
     }};
     ($asm:expr, srli $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_i(Kind::SRLI, $rd, $rs1, $imm)
+        use $crate::host::SourceKind;
+        $asm.expand_i(SourceKind::SRLI, $rd, $rs1, $imm)
     }};
     ($asm:expr, srliw $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_i(Kind::SRLIW, $rd, $rs1, $imm)
+        use $crate::host::SourceKind;
+        $asm.expand_i(SourceKind::SRLIW, $rd, $rs1, $imm)
     }};
     ($asm:expr, zextw $rd:expr, $rs1:expr) => {{
         use $crate::host::Kind;
@@ -458,8 +458,8 @@ macro_rules! __jolt_asm_stmt {
         $asm.emit_ld(Kind::LD, $rd, $rs1, $imm)
     }};
     ($asm:expr, lw $rd:expr, $rs1:expr, $imm:expr) => {{
-        use $crate::host::Kind;
-        $asm.emit_ld(Kind::LW, $rd, $rs1, $imm)
+        use $crate::host::SourceKind;
+        $asm.expand_ld(SourceKind::LW, $rd, $rs1, $imm)
     }};
     // Store: sd base, src, offset
     ($asm:expr, sd $base:expr, $src:expr, $imm:expr) => {{
@@ -530,7 +530,12 @@ impl InlineBuilderExt for InlineExpansionBuilder {
 
     fn load_u32_range(&mut self, base: u8, offset_start: i64, registers: &[InlineRegister]) {
         for (i, register) in registers.iter().enumerate() {
-            self.emit_ld(Kind::LW, **register, base, offset_start + i as i64 * 4);
+            self.expand_ld(
+                SourceKind::LW,
+                **register,
+                base,
+                offset_start + i as i64 * 4,
+            );
         }
     }
 
@@ -802,12 +807,12 @@ macro_rules! __submit_inline_op {
             $crate::host::InlineRegistration {
                 opcode: <$op as $crate::host::InlineOp>::OPCODE,
                 funct3: <$op as $crate::host::InlineOp>::FUNCT3,
-            funct7: <$op as $crate::host::InlineOp>::FUNCT7,
-            extension: $extension,
-            name: <$op as $crate::host::InlineOp>::NAME,
-            build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
-            build_advice: <$op as $crate::host::InlineOp>::build_runtime_advice,
-        }
+                funct7: <$op as $crate::host::InlineOp>::FUNCT7,
+                extension: $extension,
+                name: <$op as $crate::host::InlineOp>::NAME,
+                build_sequence: <$op as $crate::host::InlineOp>::build_sequence,
+                build_advice: <$op as $crate::host::InlineOp>::build_runtime_advice,
+            }
         }
     };
 }
