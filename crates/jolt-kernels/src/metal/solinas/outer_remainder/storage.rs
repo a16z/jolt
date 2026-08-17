@@ -425,22 +425,11 @@ pub(super) fn write_fields(
     capacity: usize,
     values: &[AkitaField],
 ) -> Result<(), MetalError> {
-    if values.len() > capacity {
-        return Err(MetalError::OuterRemainderStorageLength {
-            name: "field input",
-            capacity,
-            got: values.len(),
-        });
-    }
-    // SAFETY: no command is active while the host overwrites this prefix and
-    // the shared allocation has `capacity` fields.
-    let destination =
-        unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), capacity) };
-    for (destination, value) in destination.iter_mut().zip(values) {
-        *destination = Fp128::from_jolt_field(value);
-    }
-    context.validate_inputs("outer host input", &destination[..values.len()])?;
-    Ok(())
+    super::super::write_fields(buffer, capacity, values, "outer remainder", "field input")?;
+    // SAFETY: the shared write above initialized the first `values.len()`
+    // fields and no command is active.
+    let written = unsafe { slice::from_raw_parts(buffer.contents().cast::<Fp128>(), values.len()) };
+    context.validate_inputs("outer host input", written)
 }
 
 fn new_field_buffer(context: &SolinasMetal, elements: usize) -> Result<Buffer, MetalError> {

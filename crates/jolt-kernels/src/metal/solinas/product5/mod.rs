@@ -120,7 +120,9 @@ impl SolinasMetal {
             .checked_mul(elements_per_table)
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
         if tables.len() != table_elements {
-            return Err(MetalError::Product5StorageLength {
+            return Err(MetalError::StorageLength {
+                family: "five-factor",
+                name: "table storage",
                 expected: table_elements,
                 got: tables.len(),
             });
@@ -301,7 +303,9 @@ impl Product5Sequence {
     pub fn reset(&mut self, tables: &[AkitaField]) -> Result<(), MetalError> {
         let expected = PRODUCT5_FACTORS * self.initial_elements;
         if tables.len() != expected {
-            return Err(MetalError::Product5StorageLength {
+            return Err(MetalError::StorageLength {
+                family: "five-factor",
+                name: "table storage",
                 expected,
                 got: tables.len(),
             });
@@ -335,7 +339,9 @@ impl Product5Sequence {
     pub fn read_current_tables(&self, output: &mut [AkitaField]) -> Result<(), MetalError> {
         let elements = PRODUCT5_FACTORS * self.current_elements;
         if output.len() != elements {
-            return Err(MetalError::Product5StorageLength {
+            return Err(MetalError::StorageLength {
+                family: "five-factor",
+                name: "table storage",
                 expected: elements,
                 got: output.len(),
             });
@@ -360,7 +366,9 @@ impl Product5Sequence {
             .iter()
             .any(|table| table.len() < self.current_elements)
         {
-            return Err(MetalError::Product5StorageLength {
+            return Err(MetalError::StorageLength {
+                family: "five-factor",
+                name: "table storage",
                 expected: self.current_elements,
                 got: output.iter().map(Vec::len).min().unwrap_or(0),
             });
@@ -541,7 +549,9 @@ fn write_akita_fields(
     values: &[AkitaField],
 ) -> Result<(), MetalError> {
     if values.len() > capacity {
-        return Err(MetalError::Product5StorageLength {
+        return Err(MetalError::StorageLength {
+            family: "five-factor",
+            name: "table storage",
             expected: capacity,
             got: values.len(),
         });

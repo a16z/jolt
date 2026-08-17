@@ -69,8 +69,8 @@ mod spartan_outer_uniskip;
 pub mod spartan_shift;
 
 use runtime::{
-    buffer_from_slice, completed_command_gpu_time, encode_column_reductions,
-    validate_completed_command, ReductionBuffer,
+    buffer_from_slice, completed_command_gpu_time, encode_column_reductions, read_message_fields,
+    validate_completed_command, write_fields, ReductionBuffer,
 };
 pub(crate) use runtime::{set_inline_bytes, validate_working_set};
 pub use runtime::{PipelineLimits, SolinasMetal};
@@ -316,8 +316,6 @@ pub enum MetalError {
     },
     #[error("Instruction RA needs a power-of-two row count of at least two, got {0}")]
     InvalidInstructionRaRows(usize),
-    #[error("Instruction RA factor-table storage has length {got}, expected {expected}")]
-    InstructionRaStorageLength { expected: usize, got: usize },
     #[error("Instruction RA split weights cover {covered} pairs, expected {expected}")]
     InstructionRaWeightShape { expected: usize, covered: usize },
     #[error("Instruction RA resident {name} buffer has {got} bytes, expected {expected}")]
@@ -388,8 +386,6 @@ pub enum MetalError {
     },
     #[error("InstructionInput needs a power-of-two row count of at least four, got {0}")]
     InvalidInstructionInputRows(usize),
-    #[error("InstructionInput table storage has length {got}, expected {expected}")]
-    InstructionInputStorageLength { expected: usize, got: usize },
     #[error("InstructionInput split weights cover {covered} pairs, expected {expected}")]
     InstructionInputWeightShape { expected: usize, covered: usize },
     #[error(
@@ -426,8 +422,6 @@ pub enum MetalError {
         "five-factor kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
     InvalidProduct5TableLength { minimum: usize, got: usize },
-    #[error("five-factor table storage has length {got}, expected {expected}")]
-    Product5StorageLength { expected: usize, got: usize },
     #[error(
         "split equality tables cover {covered} pairs, but the five-factor kernel needs {expected}"
     )]
@@ -442,12 +436,6 @@ pub enum MetalError {
     InvalidBooleanityMaterializeWidth(usize),
     #[error("booleanity selector is outside its packed source")]
     InvalidBooleanitySelector,
-    #[error("booleanity {name} storage has length {got}, expected {expected}")]
-    BooleanityStorageLength {
-        name: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error("booleanity split weights cover {covered} pairs, expected {expected}")]
     BooleanityWeightShape { expected: usize, covered: usize },
     #[error("Booleanity address selector tiles must contain 1..=6 selectors, got {0}")]
@@ -475,12 +463,6 @@ pub enum MetalError {
         expected: usize,
         e_in: usize,
         e_out: usize,
-    },
-    #[error("outer remainder {name} storage has capacity {capacity}, got {got} values")]
-    OuterRemainderStorageLength {
-        name: &'static str,
-        capacity: usize,
-        got: usize,
     },
     #[error("outer remainder CPU tail needs {expected} Az/Bz values, got az={az}, bz={bz}")]
     OuterRemainderTailLength {
@@ -534,6 +516,13 @@ pub enum MetalError {
     InvalidState {
         family: &'static str,
         message: &'static str,
+    },
+    #[error("{family} {name} has length {got}, expected {expected}")]
+    StorageLength {
+        family: &'static str,
+        name: &'static str,
+        expected: usize,
+        got: usize,
     },
 }
 

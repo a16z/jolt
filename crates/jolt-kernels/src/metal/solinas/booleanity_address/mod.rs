@@ -7,7 +7,8 @@ use metal::{
     MTLResourceOptions, MTLSize,
 };
 
-use super::booleanity::{balanced_bias, selector_abi, write_fields};
+use super::booleanity::{balanced_bias, selector_abi};
+use super::write_fields;
 use super::{
     completed_command_gpu_time, set_inline_bytes, BooleanityRows, BooleanitySelector, Fp128,
     MetalError, PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
@@ -316,8 +317,20 @@ impl SolinasMetal {
         let e_out_buffer = self
             .device
             .new_buffer(e_out_bytes, MTLResourceOptions::StorageModeShared);
-        write_fields(&e_in_buffer, e_in.len(), e_in)?;
-        write_fields(&e_out_buffer, e_out.len(), e_out)?;
+        write_fields(
+            &e_in_buffer,
+            e_in.len(),
+            e_in,
+            "booleanity address",
+            "field buffer",
+        )?;
+        write_fields(
+            &e_out_buffer,
+            e_out.len(),
+            e_out,
+            "booleanity address",
+            "field buffer",
+        )?;
 
         Ok(BooleanityAddressPushforward {
             context: self.clone(),

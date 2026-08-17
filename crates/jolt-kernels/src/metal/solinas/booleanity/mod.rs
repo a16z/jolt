@@ -1,8 +1,8 @@
 use std::{mem::size_of, slice, sync::Arc};
 
 use super::{
-    buffer_from_slice, encode_column_reductions, set_inline_bytes, validate_completed_command,
-    Fp128, MetalError, PipelineLimits, SolinasMetal,
+    buffer_from_slice, encode_column_reductions, read_message_fields, set_inline_bytes,
+    write_fields, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
 use jolt_field::AkitaField;
 use metal::{
@@ -62,7 +62,8 @@ impl BooleanityRows {
         }
         let expected_bytes = instruction_source_byte_length(len)?;
         if buffer.length() != expected_bytes {
-            return Err(MetalError::BooleanityStorageLength {
+            return Err(MetalError::StorageLength {
+                family: "booleanity",
                 name: "resident rows",
                 expected: expected_bytes as usize,
                 got: buffer.length() as usize,
@@ -462,7 +463,8 @@ impl SolinasMetal {
             return Err(MetalError::InvalidBooleanityRows(rows_len));
         }
         if selectors.is_empty() || selectors.len() != rho.len() {
-            return Err(MetalError::BooleanityStorageLength {
+            return Err(MetalError::StorageLength {
+                family: "booleanity",
                 name: "rho",
                 expected: selectors.len(),
                 got: rho.len(),
@@ -485,7 +487,8 @@ impl SolinasMetal {
             .checked_mul(k)
             .ok_or(MetalError::InputTooLong(selectors.len()))?;
         if base_tables.len() != expected_tables {
-            return Err(MetalError::BooleanityStorageLength {
+            return Err(MetalError::StorageLength {
+                family: "booleanity",
                 name: "base tables",
                 expected: expected_tables,
                 got: base_tables.len(),
@@ -587,12 +590,18 @@ impl SolinasMetal {
             MTLResourceOptions::StorageModeShared,
         );
         let rho_buffer = self.new_booleanity_buffer(rho.len())?;
-        write_fields(&rho_buffer, rho.len(), rho)?;
+        write_fields(&rho_buffer, rho.len(), rho, "booleanity", "field buffer")?;
         let initial_constant = self.new_booleanity_buffer(initial_constant_elements)?;
         let initial_leading = self.new_booleanity_buffer(initial_leading_elements)?;
         write_initial_pair_tables(&initial_constant, &initial_leading, base_tables, rho, k)?;
         let branches_a = self.new_booleanity_buffer(branch_capacity)?;
-        write_fields(&branches_a, branch_capacity, base_tables)?;
+        write_fields(
+            &branches_a,
+            branch_capacity,
+            base_tables,
+            "booleanity",
+            "field buffer",
+        )?;
 
         Ok(BooleanitySequence {
             context: self.clone(),
@@ -676,14 +685,21 @@ impl BooleanitySequence {
     pub fn reset(&mut self, base_tables: &[AkitaField]) -> Result<(), MetalError> {
         let expected = self.polys * self.k;
         if base_tables.len() != expected {
-            return Err(MetalError::BooleanityStorageLength {
+            return Err(MetalError::StorageLength {
+                family: "booleanity",
                 name: "base tables",
                 expected,
                 got: base_tables.len(),
             });
         }
         let branch_capacity = self.polys * self.materialize_width * self.k;
-        write_fields(&self.buffers.branches_a, branch_capacity, base_tables)?;
+        write_fields(
+            &self.buffers.branches_a,
+            branch_capacity,
+            base_tables,
+            "booleanity",
+            "field buffer",
+        )?;
         write_initial_pair_tables(
             &self.buffers.initial_constant,
             &self.buffers.initial_leading,
@@ -708,7 +724,8 @@ impl BooleanitySequence {
         }
         let elements = self.polys * self.dense_elements;
         if output.len() != elements {
-            return Err(MetalError::BooleanityStorageLength {
+            return Err(MetalError::StorageLength {
+                family: "booleanity",
                 name: "dense output",
                 expected: elements,
                 got: output.len(),
@@ -928,8 +945,20 @@ impl BooleanitySequence {
     }
 
     fn write_weights(&self, e_in: &[AkitaField], e_out: &[AkitaField]) -> Result<(), MetalError> {
-        write_fields(&self.buffers.e_in, self.e_in_capacity, e_in)?;
-        write_fields(&self.buffers.e_out, self.e_out_capacity, e_out)
+        write_fields(
+            &self.buffers.e_in,
+            self.e_in_capacity,
+            e_in,
+            "booleanity",
+            "field buffer",
+        )?;
+        write_fields(
+            &self.buffers.e_out,
+            self.e_out_capacity,
+            e_out,
+            "booleanity",
+            "field buffer",
+        )
     }
 
     fn params(
@@ -987,18 +1016,17 @@ impl BooleanitySequence {
         command_buffer: &metal::CommandBufferRef,
         final_in_a: bool,
     ) -> Result<[AkitaField; MESSAGE_LANES], MetalError> {
-        validate_completed_command(command_buffer)?;
         let buffer = if final_in_a {
             &self.buffers.partial_a
         } else {
             &self.buffers.partial_b
         };
-        // SAFETY: the completed reduction leaves exactly two message fields at
-        // the front of the selected shared buffer.
-        let values =
-            unsafe { slice::from_raw_parts(buffer.contents().cast::<Fp128>(), MESSAGE_LANES) };
-        self.context.validate_inputs("booleanity message", values)?;
-        Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
+        read_message_fields::<MESSAGE_LANES>(
+            &self.context,
+            command_buffer,
+            buffer,
+            "booleanity message",
+        )
     }
 
     fn branch_source_buffer(&self) -> &Buffer {
@@ -1059,27 +1087,6 @@ pub(super) fn balanced_bias(chunk_bits: usize) -> u64 {
     bias as u64
 }
 
-pub(super) fn write_fields(
-    buffer: &Buffer,
-    capacity: usize,
-    values: &[AkitaField],
-) -> Result<(), MetalError> {
-    if values.len() > capacity {
-        return Err(MetalError::BooleanityStorageLength {
-            name: "field buffer",
-            expected: capacity,
-            got: values.len(),
-        });
-    }
-    // SAFETY: callers allocate the shared Metal buffer for `capacity` fields
-    // and no GPU command uses it while host values are copied in.
-    let output = unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), capacity) };
-    for (output, value) in output.iter_mut().zip(values) {
-        *output = Fp128::from_jolt_field(value);
-    }
-    Ok(())
-}
-
 fn write_initial_pair_tables(
     constant_buffer: &Buffer,
     leading_buffer: &Buffer,
@@ -1092,7 +1099,8 @@ fn write_initial_pair_tables(
         .checked_mul(k)
         .ok_or(MetalError::InputTooLong(rho.len()))?;
     if base_tables.len() != expected {
-        return Err(MetalError::BooleanityStorageLength {
+        return Err(MetalError::StorageLength {
+            family: "booleanity",
             name: "initial pair tables",
             expected,
             got: base_tables.len(),

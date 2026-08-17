@@ -12,7 +12,8 @@ use metal::{
 
 use super::super::{
     buffer_from_slice, completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
-    Fp128, MetalError, ProductRemainderRows, ProductRemainderSourceKind, SolinasMetal,
+    write_fields, Fp128, MetalError, ProductRemainderRows, ProductRemainderSourceKind,
+    SolinasMetal,
 };
 use super::{
     finalize_openings, finish_bind, nontrivial_gamma_powers, InstructionClaimGeometry,
@@ -1145,11 +1146,18 @@ impl InstructionClaimSequence {
     }
 
     fn write_weights(&self, e_in: &[AkitaField], e_out: &[AkitaField]) -> Result<(), MetalError> {
-        write_fields(&self.buffers.e_in, self.layout.e_in_fields(), e_in, "e_in")?;
+        write_fields(
+            &self.buffers.e_in,
+            self.layout.e_in_fields(),
+            e_in,
+            "instruction claim-reduction",
+            "e_in",
+        )?;
         write_fields(
             &self.buffers.e_out,
             self.layout.e_out_fields(),
             e_out,
+            "instruction claim-reduction",
             "e_out",
         )
     }
@@ -1245,29 +1253,4 @@ fn finish_command_vec(
         values.iter().copied().map(Fp128::into_jolt_field).collect(),
         gpu_active,
     ))
-}
-
-fn write_fields(
-    buffer: &Buffer,
-    capacity: usize,
-    values: &[AkitaField],
-    name: &'static str,
-) -> Result<(), MetalError> {
-    if values.len() > capacity {
-        return Err(super::InstructionClaimShapeError::StorageLength {
-            name,
-            expected: capacity,
-            got: values.len(),
-        }
-        .into());
-    }
-    let output = unsafe {
-        // SAFETY: the shared buffer holds `capacity` fields and no device
-        // command remains active when the next equality prefix is written.
-        slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), capacity)
-    };
-    for (output, value) in output.iter_mut().zip(values) {
-        *output = Fp128::from_jolt_field(value);
-    }
-    Ok(())
 }

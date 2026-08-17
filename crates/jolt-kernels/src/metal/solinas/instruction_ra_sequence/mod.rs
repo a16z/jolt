@@ -13,8 +13,8 @@ use metal::{
 };
 
 use super::{
-    encode_column_reductions, set_inline_bytes, validate_completed_command, Fp128, MetalError,
-    PipelineLimits, ResidentLookupIndexPlane, SolinasMetal,
+    encode_column_reductions, read_message_fields, set_inline_bytes, write_fields, Fp128,
+    MetalError, PipelineLimits, ResidentLookupIndexPlane, SolinasMetal,
 };
 
 const FACTORS: usize = 16;
@@ -483,13 +483,21 @@ impl InstructionRaSequenceStorage {
             });
         }
         if chunk_tables.len() != FACTORS * BINS {
-            return Err(MetalError::InstructionRaStorageLength {
+            return Err(MetalError::StorageLength {
+                family: "Instruction RA",
+                name: "factor-table storage",
                 expected: FACTORS * BINS,
                 got: chunk_tables.len(),
             });
         }
         validate_plane(&self.context, &plane)?;
-        write_fields(&self.buffers.branches_a, FACTORS * BINS, chunk_tables)?;
+        write_fields(
+            &self.buffers.branches_a,
+            FACTORS * BINS,
+            chunk_tables,
+            "Instruction RA",
+            "factor-table storage",
+        )?;
         if self.buffers.dense_b.is_none() {
             let required = byte_length::<Fp128>(
                 FACTORS * (self.rows / self.config.materialize_width.elements()) / 2,
@@ -578,7 +586,9 @@ impl InstructionRaSequence {
         }
         let elements = FACTORS * self.dense_elements;
         if output.len() != elements {
-            return Err(MetalError::InstructionRaStorageLength {
+            return Err(MetalError::StorageLength {
+                family: "Instruction RA",
+                name: "factor-table storage",
                 expected: elements,
                 got: output.len(),
             });
@@ -856,8 +866,20 @@ impl InstructionRaSequence {
     }
 
     fn write_weights(&self, e_in: &[AkitaField], e_out: &[AkitaField]) -> Result<(), MetalError> {
-        write_fields(&self.buffers.e_in, self.e_in_capacity, e_in)?;
-        write_fields(&self.buffers.e_out, self.e_out_capacity, e_out)
+        write_fields(
+            &self.buffers.e_in,
+            self.e_in_capacity,
+            e_in,
+            "Instruction RA",
+            "factor-table storage",
+        )?;
+        write_fields(
+            &self.buffers.e_out,
+            self.e_out_capacity,
+            e_out,
+            "Instruction RA",
+            "factor-table storage",
+        )
     }
 
     fn message_pipeline(&self, width: usize) -> Result<&ComputePipelineState, MetalError> {
@@ -907,18 +929,17 @@ impl InstructionRaSequence {
         command_buffer: &metal::CommandBufferRef,
         final_in_a: bool,
     ) -> Result<[AkitaField; SAMPLES], MetalError> {
-        validate_completed_command(command_buffer)?;
         let buffer = if final_in_a {
             &self.buffers.partial_a
         } else {
             &self.buffers.partial_b
         };
-        // SAFETY: the completed reduction leaves four fields at the front of
-        // the selected shared buffer.
-        let values = unsafe { slice::from_raw_parts(buffer.contents().cast::<Fp128>(), SAMPLES) };
-        self.context
-            .validate_inputs("instruction RA lazy message", values)?;
-        Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
+        read_message_fields::<SAMPLES>(
+            &self.context,
+            command_buffer,
+            buffer,
+            "instruction RA lazy message",
+        )
     }
 
     fn branch_source_buffer(&self) -> &Buffer {
@@ -1015,22 +1036,6 @@ fn new_buffer(context: &SolinasMetal, elements: usize) -> Result<Buffer, MetalEr
     Ok(context
         .device
         .new_buffer(bytes, MTLResourceOptions::StorageModeShared))
-}
-
-fn write_fields(buffer: &Buffer, capacity: usize, values: &[AkitaField]) -> Result<(), MetalError> {
-    if values.len() > capacity {
-        return Err(MetalError::InstructionRaStorageLength {
-            expected: capacity,
-            got: values.len(),
-        });
-    }
-    // SAFETY: the shared buffer has `capacity` fields and no command is using
-    // it while the host writes the active prefix.
-    let output = unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), capacity) };
-    for (output, value) in output.iter_mut().zip(values) {
-        *output = Fp128::from_jolt_field(value);
-    }
-    Ok(())
 }
 
 fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {

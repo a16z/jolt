@@ -1,4 +1,6 @@
-use std::{ffi::c_void, mem::size_of, time::Duration};
+use std::{ffi::c_void, mem::size_of, slice, time::Duration};
+
+use jolt_field::AkitaField;
 
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
 use metal::{
@@ -326,4 +328,42 @@ pub(super) fn validate_completed_command(
         return Err(MetalError::CommandFailed(status));
     }
     Ok(())
+}
+
+pub(crate) fn write_fields(
+    buffer: &Buffer,
+    capacity: usize,
+    values: &[AkitaField],
+    family: &'static str,
+    name: &'static str,
+) -> Result<(), MetalError> {
+    if values.len() > capacity {
+        return Err(MetalError::StorageLength {
+            family,
+            name,
+            expected: capacity,
+            got: values.len(),
+        });
+    }
+    // SAFETY: callers allocate the shared Metal buffer for `capacity` fields
+    // and no GPU command uses it while host values are copied in.
+    let output = unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), capacity) };
+    for (output, value) in output.iter_mut().zip(values) {
+        *output = Fp128::from_jolt_field(value);
+    }
+    Ok(())
+}
+
+pub(crate) fn read_message_fields<const N: usize>(
+    context: &SolinasMetal,
+    command_buffer: &metal::CommandBufferRef,
+    buffer: &Buffer,
+    label: &'static str,
+) -> Result<[AkitaField; N], MetalError> {
+    validate_completed_command(command_buffer)?;
+    // SAFETY: the completed reduction leaves at least `N` message fields at
+    // the front of the shared buffer.
+    let values = unsafe { slice::from_raw_parts(buffer.contents().cast::<Fp128>(), N) };
+    context.validate_inputs(label, values)?;
+    Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
 }

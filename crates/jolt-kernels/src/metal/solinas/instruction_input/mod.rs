@@ -1085,7 +1085,9 @@ impl InstructionInputSequence {
             .checked_mul(self.dense_elements)
             .ok_or(MetalError::InputTooLong(self.dense_elements))?;
         if output.len() != expected {
-            return Err(MetalError::InstructionInputStorageLength {
+            return Err(MetalError::StorageLength {
+                family: "InstructionInput",
+                name: "table storage",
                 expected,
                 got: output.len(),
             });
@@ -1383,7 +1385,9 @@ fn write_fields(
     values: &[AkitaField],
 ) -> Result<(), MetalError> {
     if values.len() > capacity {
-        return Err(MetalError::InstructionInputStorageLength {
+        return Err(MetalError::StorageLength {
+            family: "InstructionInput",
+            name: "table storage",
             expected: capacity,
             got: values.len(),
         });
