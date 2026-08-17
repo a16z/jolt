@@ -55,12 +55,14 @@ For advanced use cases, you can invoke inlines directly through inline assembly.
 - **funct7**: Identifies the type of operation (e.g., `0x00` for SHA2)
 - **funct3**: Identifies sub-instructions within that operation (e.g., `0x0` for SHA256, `0x1` for SHA256INIT)
 
+Both SHA-256 entries read a raw 64-byte block in SHA-256's big-endian byte order. A native-endian `[u32; 16]` has the wrong layout on little-endian guests.
+
 #### Jolt Core Inlines Reference
 
 | Inline        | Opcode | funct7 | funct3 | Description                                |
 | ------------- | ------ | ------ | ------ | ------------------------------------------ |
-| SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state    |
-| SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants |
+| SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state and big-endian input block    |
+| SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants and big-endian input block |
 | KECCAK256     | 0x0B   | 0x01   | 0x00   | Keccak-256 permutation                     |
 | BLAKE2B       | 0x0B   | 0x02   | 0x00   | BLAKE2b compression                        |
 | BLAKE3        | 0x0B   | 0x03   | 0x00   | BLAKE3 compression                         |
@@ -76,7 +78,7 @@ unsafe {
     // opcode=0x0B (core inline), funct3=0x0 (SHA256), funct7=0x00 (SHA2 family)
     core::arch::asm!(
         ".insn r 0x0B, 0x0, 0x00, x0, {}, {}",
-        in(reg) input_ptr,  // Pointer to 16 u32 words
+        in(reg) input_ptr,  // Pointer to a big-endian 64-byte block
         in(reg) state_ptr,  // Pointer to 8 u32 words
         options(nostack)
     );
@@ -127,16 +129,16 @@ If verification fails, the proof becomes unsatisfiable. This is appropriate when
 
 ## Benchmarks
 
-The table below compares the performance of reference and inline implementations for each hash function, using identical 32KB inputs and the same API across both reference and inline implementations.
+The table below compares the performance of reference and inline implementations for each hash function, using identical 32 KiB inputs and the same API across both reference and inline implementations.
 
 | Hash Function | Implementation | Cycles | Cycles Per Byte (CPB) | Speedup |
 |--------------|----------------|----------------|----------------------|---------|
-| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 10,414,653     | 317.94               | -       |
-| SHA-256      | **Jolt Inline**     | **1,765,207**  | **53.89**            | **5.9×** |
-| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 2,556,519      | 78.04                | -       |
+| SHA-256      | [sha2 crate](https://crates.io/crates/sha2)      | 10,414,653     | 317.83               | -       |
+| SHA-256      | **Jolt Inline**     | **1,545,643**  | **47.17**            | **6.74×** |
+| Keccak-256   | [sha3 crate](https://crates.io/crates/sha3)      | 2,556,519      | 78.02                | -       |
 | Keccak-256   | **Jolt Inline**     | **848,224**    | **25.89**            | **3.01×** |
-| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 968,562        | 29.57                | -       |
-| Blake2B      | **Jolt Inline**     | **340,787**    | **10.40**            | **2.85×** |
+| Blake2B      | [blake2 crate](https://crates.io/crates/blake2)      | 968,562        | 29.56                | -       |
+| Blake2B      | **Jolt Inline**     | **340,787**    | **10.40**            | **2.84×** |
 
 *Note: Blake3 currently supports inputs up to 64 bytes. Full implementation for larger inputs is in development.*
 
@@ -152,9 +154,9 @@ The following table shows the data that can be proved by each of the Jolt inline
 
 | Hash Function | MacBook M4 Max (500 kHz) | Threadripper Pro 7975WX (1.5 MHz) |
 |--------------|---------------------|----------------------|
-| SHA-256 Inline | 9.1 KB/s | 27.1 KB/s |
-| Keccak-256 Inline | 18.8 KB/s | 56.1 KB/s |
-| Blake2B Inline | 47.1 KB/s | 139.1 KB/s |
+| SHA-256 Inline | 10.4 KiB/s | 31.1 KiB/s |
+| Keccak-256 Inline | 18.9 KiB/s | 56.6 KiB/s |
+| Blake2B Inline | 47.0 KiB/s | 140.9 KiB/s |
 
 
 ## Jolt CPU Advantages
