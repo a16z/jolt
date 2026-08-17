@@ -241,89 +241,9 @@ mod muldiv {
 
         #[cfg(all(feature = "metal", target_os = "macos"))]
         let (backend, metal) = {
-            let instruction_input_cutoff_elements =
-                2usize << (config.trace_length.ilog2() as usize / 2);
-            assert!(instruction_input_cutoff_elements < config.trace_length);
-            let metal = jolt_kernels::metal::MetalBackend::new(jolt_kernels::metal::MetalConfig {
-                spartan_outer_uniskip: jolt_kernels::metal::SpartanOuterUniskipMetalConfig {
-                    trace_cutoff_elements: 2,
-                    ..Default::default()
-                },
-                spartan_outer_remainder: jolt_kernels::metal::SpartanOuterRemainderMetalConfig {
-                    trace_cutoff_elements: 4,
-                    dispatch: jolt_kernels::metal::solinas::OuterRemainderSequenceConfig {
-                        cpu_tail_elements: 2,
-                        product_uniskip_carrier: true,
-                        ..Default::default()
-                    },
-                },
-                spartan_product_remainder:
-                    jolt_kernels::metal::SpartanProductRemainderMetalConfig {
-                        trace_cutoff_elements: 2,
-                        ..Default::default()
-                    },
-                instruction_claim_reduction:
-                    jolt_kernels::metal::InstructionClaimReductionMetalConfig {
-                        trace_cutoff_elements: 2,
-                        ..Default::default()
-                    },
-                instruction_input: jolt_kernels::metal::InstructionInputMetalConfig {
-                    trace_cutoff_elements: 4,
-                    cutoff_elements: instruction_input_cutoff_elements,
-                    dense_storage_mode:
-                        jolt_kernels::metal::InstructionInputDenseStorageMode::OuterResidual,
-                    ..Default::default()
-                },
-                registers_claim_reduction:
-                    jolt_kernels::metal::RegistersClaimReductionMetalConfig {
-                        implementation:
-                            jolt_kernels::metal::RegistersClaimReductionImplementation::OuterCarrierAliasHybrid,
-                        trace_cutoff_elements: 4,
-                        ..Default::default()
-                    },
-                instruction_read_raf: jolt_kernels::metal::InstructionReadRafMetalConfig {
-                    address_cutoff_elements: 8,
-                    cutoff_elements: 8,
-                    ..Default::default()
-                },
-                booleanity_address: jolt_kernels::metal::BooleanityAddressMetalConfig {
-                    trace_cutoff_elements: 2,
-                    dispatch: jolt_kernels::metal::solinas::BooleanityAddressPushforwardConfig {
-                        inner_log2: 2,
-                        selectors_per_tile: 6,
-                        tile_threads_per_threadgroup: Some(256),
-                        finalize_threads_per_threadgroup: Some(256),
-                    },
-                    ..Default::default()
-                },
-                booleanity_cycle: jolt_kernels::metal::BooleanityMetalConfig {
-                    trace_cutoff_elements: 2,
-                    cutoff_elements: 2,
-                    ..Default::default()
-                },
-                bytecode_read_raf_cycle: jolt_kernels::metal::BytecodeReadRafMetalConfig {
-                    trace_cutoff_elements: 2,
-                    cutoff_elements: 2,
-                    ..Default::default()
-                },
-                instruction_ra_virtualization:
-                    jolt_kernels::metal::InstructionRaVirtualizationMetalConfig {
-                        trace_cutoff_elements: 8,
-                        cutoff_elements: 2,
-                        ..Default::default()
-                    },
-                hamming_weight_claim_reduction: jolt_kernels::metal::HammingWeightMetalConfig {
-                    trace_cutoff_elements: 2,
-                    dispatch: jolt_kernels::metal::solinas::BooleanityAddressPushforwardConfig {
-                        inner_log2: 2,
-                        selectors_per_tile: 6,
-                        tile_threads_per_threadgroup: Some(256),
-                        finalize_threads_per_threadgroup: Some(256),
-                    },
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
+            let metal = jolt_kernels::metal::MetalBackend::new(
+                jolt_kernels::metal::MetalConfig::small_trace_acceptance(config.trace_length),
+            )
             .expect("Metal backend should initialize");
             let mut backend = akita::JoltAkitaBackend::optimized();
             backend.base = backend.base.with_metal_compute(&metal);
@@ -483,7 +403,6 @@ mod muldiv {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
-                    ..Default::default()
                 },
                 ..Default::default()
             })

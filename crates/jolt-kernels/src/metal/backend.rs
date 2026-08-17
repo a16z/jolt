@@ -27,8 +27,8 @@ use super::registers_val_evaluation::{
     RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
 };
 use super::solinas::{
-    InstructionInputStorageInitialization, MetalError, OuterRemainderStorageInitialization,
-    SolinasMetal,
+    BooleanityAddressPushforwardConfig, InstructionInputStorageInitialization, MetalError,
+    OuterRemainderStorageInitialization, SolinasMetal,
 };
 use super::spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
 use super::spartan_product::SpartanProductRemainderMetalConfig;
@@ -108,6 +108,49 @@ impl MetalConfig {
         config.registers_val_evaluation.trace_cutoff_elements = 1 << 26;
         config
     }
+
+    /// Small-trace acceptance profile: every retained route's cutoff is tiny
+    /// so short fixture traces still exercise the Metal dispatch paths.
+    pub fn small_trace_acceptance(trace_length: usize) -> Self {
+        let instruction_input_cutoff_elements = 2usize << (trace_length.ilog2() as usize / 2);
+        assert!(instruction_input_cutoff_elements < trace_length);
+        let small_pushforward = BooleanityAddressPushforwardConfig {
+            inner_log2: 2,
+            selectors_per_tile: 6,
+            tile_threads_per_threadgroup: Some(256),
+            finalize_threads_per_threadgroup: Some(256),
+        };
+        let mut config = Self::default();
+        config.spartan_outer_uniskip.trace_cutoff_elements = 2;
+        config.spartan_outer_remainder.trace_cutoff_elements = 4;
+        config.spartan_outer_remainder.dispatch.cpu_tail_elements = 2;
+        config
+            .spartan_outer_remainder
+            .dispatch
+            .product_uniskip_carrier = true;
+        config.spartan_product_remainder.trace_cutoff_elements = 2;
+        config.instruction_claim_reduction.trace_cutoff_elements = 2;
+        config.instruction_input.trace_cutoff_elements = 4;
+        config.instruction_input.cutoff_elements = instruction_input_cutoff_elements;
+        config.instruction_input.dense_storage_mode =
+            InstructionInputDenseStorageMode::OuterResidual;
+        config.registers_claim_reduction.implementation =
+            RegistersClaimReductionImplementation::OuterCarrierAliasHybrid;
+        config.registers_claim_reduction.trace_cutoff_elements = 4;
+        config.instruction_read_raf.address_cutoff_elements = 8;
+        config.instruction_read_raf.cutoff_elements = 8;
+        config.booleanity_address.trace_cutoff_elements = 2;
+        config.booleanity_address.dispatch = small_pushforward;
+        config.booleanity_cycle.trace_cutoff_elements = 2;
+        config.booleanity_cycle.cutoff_elements = 2;
+        config.bytecode_read_raf_cycle.trace_cutoff_elements = 2;
+        config.bytecode_read_raf_cycle.cutoff_elements = 2;
+        config.instruction_ra_virtualization.trace_cutoff_elements = 8;
+        config.instruction_ra_virtualization.cutoff_elements = 2;
+        config.hamming_weight_claim_reduction.trace_cutoff_elements = 2;
+        config.hamming_weight_claim_reduction.dispatch = small_pushforward;
+        config
+    }
 }
 
 /// Shared Metal device state used by the installed sumcheck slots.
@@ -139,6 +182,7 @@ macro_rules! test_counter_getters {
             }
         )*
     };
+
 }
 
 #[derive(Clone)]
