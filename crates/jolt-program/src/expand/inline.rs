@@ -4,7 +4,10 @@ use jolt_riscv::{NormalizedOperands, SourceInstructionKind, SourceInstructionRow
 
 use crate::expand::{
     allocator::{FIRST_INLINE_REGISTER, NUM_INLINE_REGISTERS},
-    grammar::{ExpandedInstructionSequence, ExpansionBuilder, InlineTempId, RegisterOperand},
+    grammar::{
+        ExpandedInstructionSequence, ExpansionBuilder, InlineTempId, RegisterOperand, RowTemplate,
+        SourceInstructionRowTemplate,
+    },
     ExpansionError,
 };
 
@@ -190,112 +193,70 @@ impl InlineExpansionBuilder {
     /// the central `jolt-program` pipeline. The same routing applies to every
     /// `emit_*` method below.
     pub fn emit_r(&mut self, instruction_kind: SourceInstructionKind, rd: u8, rs1: u8, rs2: u8) {
-        match instruction_kind.jolt_kind() {
-            Some(kind) => self.inner.emit_r(
-                kind,
-                Self::register_operand(rd),
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-            ),
-            None => self.inner.expand_r(
-                instruction_kind,
-                Self::register_operand(rd),
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-            ),
-        }
+        self.emit(SourceInstructionRowTemplate::r(
+            instruction_kind,
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            Self::register_operand(rs2),
+        ));
     }
 
     /// Emit an I-format row with an unsigned immediate.
     pub fn emit_i(&mut self, instruction_kind: SourceInstructionKind, rd: u8, rs1: u8, imm: u64) {
-        self.emit_i_signed(instruction_kind, rd, rs1, imm as i128);
+        self.emit(SourceInstructionRowTemplate::i(
+            instruction_kind,
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            imm as i128,
+        ));
     }
 
     /// Emit a load-shaped I-format row with a signed byte offset.
     pub fn emit_ld(&mut self, instruction_kind: SourceInstructionKind, rd: u8, rs1: u8, imm: i64) {
-        self.emit_i_signed(instruction_kind, rd, rs1, imm as i128);
+        self.emit(SourceInstructionRowTemplate::i(
+            instruction_kind,
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            imm as i128,
+        ));
     }
 
     /// Emit a J-format virtual row or recursively expand a source-only helper.
     pub fn emit_j(&mut self, instruction_kind: SourceInstructionKind, rd: u8, imm: u64) {
-        match instruction_kind.jolt_kind() {
-            Some(kind) => self
-                .inner
-                .emit_j(kind, Self::register_operand(rd), imm as i128),
-            None => self
-                .inner
-                .expand_j(instruction_kind, Self::register_operand(rd), imm as i128),
-        }
+        self.emit(SourceInstructionRowTemplate::j(
+            instruction_kind,
+            Self::register_operand(rd),
+            imm as i128,
+        ));
     }
 
     /// Emit a U-format row or recursively expand a source-only helper.
     pub fn emit_u(&mut self, instruction_kind: SourceInstructionKind, rd: u8, imm: u64) {
-        match instruction_kind.jolt_kind() {
-            Some(kind) => self
-                .inner
-                .emit_u(kind, Self::register_operand(rd), imm as i128),
-            None => self
-                .inner
-                .expand_u(instruction_kind, Self::register_operand(rd), imm as i128),
-        }
+        self.emit(SourceInstructionRowTemplate::u(
+            instruction_kind,
+            Self::register_operand(rd),
+            imm as i128,
+        ));
     }
 
     /// Emit an S-format row with a signed byte offset.
     pub fn emit_s(&mut self, instruction_kind: SourceInstructionKind, rs1: u8, rs2: u8, imm: i64) {
-        match instruction_kind.jolt_kind() {
-            Some(kind) => self.inner.emit_s(
-                kind,
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-                imm as i128,
-            ),
-            None => self.inner.expand_s(
-                instruction_kind,
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-                imm as i128,
-            ),
-        }
+        self.emit(SourceInstructionRowTemplate::s(
+            instruction_kind,
+            Self::register_operand(rs1),
+            Self::register_operand(rs2),
+            imm as i128,
+        ));
     }
 
     /// Emit a B-format row with a signed branch offset.
     pub fn emit_b(&mut self, instruction_kind: SourceInstructionKind, rs1: u8, rs2: u8, imm: i64) {
-        match instruction_kind.jolt_kind() {
-            Some(kind) => self.inner.emit_b(
-                kind,
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-                imm as i128,
-            ),
-            None => self.inner.expand_b(
-                instruction_kind,
-                Self::register_operand(rs1),
-                Self::register_operand(rs2),
-                imm as i128,
-            ),
-        }
-    }
-
-    /// Emit a virtual shift row whose immediate encodes the shift mask.
-    pub fn emit_vshift_i(
-        &mut self,
-        instruction_kind: SourceInstructionKind,
-        rd: u8,
-        rs1: u8,
-        imm: u64,
-    ) {
-        self.emit_i(instruction_kind, rd, rs1, imm);
-    }
-
-    /// Emit a virtual shift row whose shift amount comes from `rs2`.
-    pub fn emit_vshift_r(
-        &mut self,
-        instruction_kind: SourceInstructionKind,
-        rd: u8,
-        rs1: u8,
-        rs2: u8,
-    ) {
-        self.emit_r(instruction_kind, rd, rs1, rs2);
+        self.emit(SourceInstructionRowTemplate::b(
+            instruction_kind,
+            Self::register_operand(rs1),
+            Self::register_operand(rs2),
+            imm as i128,
+        ));
     }
 
     /// Emit an address/alignment assertion helper.
@@ -374,7 +335,7 @@ impl InlineExpansionBuilder {
         let mask = ones << shamt;
         match rs1 {
             Value::Reg(rs1_reg) => {
-                self.emit_vshift_i(SourceInstructionKind::VirtualROTRIW, rd, rs1_reg, mask);
+                self.emit_i(SourceInstructionKind::VirtualROTRIW, rd, rs1_reg, mask);
                 Value::Reg(rd)
             }
             Value::Imm(val) => Value::Imm(((val as u32).rotate_right(shamt)) as u64),
@@ -423,7 +384,7 @@ impl InlineExpansionBuilder {
     pub fn rotri(&mut self, rs1: Value, imm: u64, rd: u8) -> Value {
         match rs1 {
             Value::Reg(rs1) => {
-                self.emit_vshift_i(SourceInstructionKind::VirtualROTRI, rd, rs1, imm);
+                self.emit_i(SourceInstructionKind::VirtualROTRI, rd, rs1, imm);
                 Value::Reg(rd)
             }
             Value::Imm(val) => {
@@ -465,26 +426,13 @@ impl InlineExpansionBuilder {
         self.inner.finalize()
     }
 
-    fn emit_i_signed(
-        &mut self,
-        instruction_kind: SourceInstructionKind,
-        rd: u8,
-        rs1: u8,
-        imm: i128,
-    ) {
-        match instruction_kind.jolt_kind() {
-            Some(kind) => self.inner.emit_i(
-                kind,
-                Self::register_operand(rd),
-                Self::register_operand(rs1),
-                imm,
-            ),
-            None => self.inner.expand_i(
+    fn emit(&mut self, row: SourceInstructionRowTemplate) {
+        match row.instruction_kind.jolt_kind() {
+            Some(instruction_kind) => self.inner.emit(RowTemplate {
                 instruction_kind,
-                Self::register_operand(rd),
-                Self::register_operand(rs1),
-                imm,
-            ),
+                operands: row.operands,
+            }),
+            None => self.inner.expand(row),
         }
     }
 
