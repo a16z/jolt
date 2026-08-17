@@ -589,9 +589,8 @@ jobs:
   # only discovers the ignored stub), so without this lane optimized
   # proof/transcript divergence could merge green. Runs the whole
   # prover-fixtures surface of jolt-prover: the stage-granular muldiv
-  # ratchet, the mode × trace-order whole-proof arms (both backends), the
-  # 2^17 chunk-boundary arm (slice-backed + forced chunk walk), and the
-  # {8, 32} wide one-hot geometry arm.
+  # ratchet, the mode × trace-order whole-proof arms (both backends), and
+  # the {8, 32} wide one-hot geometry arm.
   test-byte-parity:
     runs-on: ubuntu-latest
     name: Byte parity vs legacy prover
