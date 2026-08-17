@@ -2,7 +2,7 @@
 
 Scope 2026-08-16: digit-zero virtualization applies to the instruction,
 bytecode, and balanced-increment families only. RAM stays on the base treatment
-(all lanes committed, `RamHammingBooleanity`, and the Hamming-weight leg) so it
+(all rows committed, `RamHammingBooleanity`, and the Hamming-weight leg) so it
 can be reviewed in a separate change. This document makes no claim about the
 note's nonconstant-activation RAM construction. Source: "Digit-Zero
 Virtualization for Twist and Shout" (`~/akita-paper/ra-virtualization-note.tex`).
@@ -34,8 +34,8 @@ requires the note's separate nonconstant activation treatment, while
 by the bytecode read-RAF.
 
 Notation to code: digit position `i` is a chunk index; digit value `k_i` is a
-lane; `ra_i(0,·)` is the digit-zero row; and the nonzero-digit rows are the
-committed lanes. Code comments use the paper's reconstruction term
+row index; `ra_i(0,·)` is the digit-zero row; and the nonzero-digit rows are
+committed. Code comments use the paper's reconstruction term
 `ẽq(r_address,0)·M̃_µ(r_cycle)` rather than the earlier `w(0)·A` shorthand.
 
 ## 2. Memory activation (Definition 1) — constant 1 for every virtualized family
@@ -91,13 +91,13 @@ check.
 
 ## 4. RAM: the base treatment, unchanged
 
-`RamRa` is committed with **all** lanes (digit-zero row included), exactly as
+`RamRa` is committed with **all** rows (digit-zero row included), exactly as
 base mode does, and keeps:
 
 - `RamHammingBooleanity` (stage 6b): proves the RAM access indicator
   `H = RamHammingWeight` is Boolean (`H² = H`) at the stage-1 cycle point;
 - the stage-7 Hamming-weight leg (`γ^{3i}`): ties `Σ_k ra(k,·) = H` against the
-  committed rows — a genuine tie because all lanes are committed;
+  committed rows — a genuine tie because all rows are committed;
 - the standard Booleanity and RA-virtualization legs.
 
 So RAM's stage-7 legs are the base 3-leg form (Hamming, Booleanity,
@@ -123,7 +123,7 @@ implemented here. Integrating that construction requires a separate mapping
 of the activation claims, their evaluation points, and their binding to the
 existing RAM relations. This patch deliberately does not settle those details.
 
-For now `RamRa` commits every lane and follows the existing base protocol:
+For now `RamRa` commits every row and follows the existing base protocol:
 `RamHammingBooleanity`, the Hamming-weight leg, Booleanity, and RAM
 virtualization. This is a scope boundary, not a conclusion about whether a
 later implementation of the note's RAM construction is possible.
@@ -142,8 +142,8 @@ per-digit values only to `[−K/2, K/2)`; `specs/lattice-claims.md`, relation 3)
 ## 7. Delta versus base mode / prior drafts
 
 - Instruction/bytecode/increment: digit-zero-virtualized (omit the digit-zero
-  lane, two reconstructed stage-7 legs, no Hamming leg).
-- RAM: unchanged from base (all lanes committed, `RamHammingBooleanity` + base
+  row, two reconstructed stage-7 legs, no Hamming leg).
+- RAM: unchanged from base (all rows committed, `RamHammingBooleanity` + base
   Hamming leg, three-leg stage-7 reduction). The `Load+Store` construction is
   deferred.
 - Notation renamed to digit-zero throughout the lattice path

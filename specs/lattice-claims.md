@@ -170,7 +170,7 @@ BytecodeCircuitFlag { chunk, flag },        // plain 0/1 columns
 BytecodeInstructionFlag { chunk, flag },
 BytecodeLookupSelector { chunk },           // one-hot table selector
 BytecodeRafFlag { chunk },
-BytecodeUnexpandedPcBytes { chunk },        // byte one-hot lanes
+BytecodeUnexpandedPcBytes { chunk },        // byte one-hot columns
 BytecodeImmBytes { chunk },
 ProgramImageBytes,
 
@@ -369,9 +369,9 @@ relation ids across variant sumcheck structs. The base
 `relations/booleanity/*` files stay untouched; the lattice variant reuses the
 base geometry helpers. Every increment column, including the carry, is a full
 `K x T` one-hot column and produces an opening at the common
-`(r_address, r_cycle)` point. The honest encoder puts each cycle's carry row on
-lane 0, 1, or K-1 — the three lanes a carry in `{0, +1, -1}` occupies — but the
-relations enforce only one-hotness over all K lanes, so the carry is pinned to
+`(r_address, r_cycle)` point. The honest encoder selects carry row 0, 1, or
+K-1, corresponding to `{0, +1, -1}`, but the relations enforce only
+one-hotness over all K rows, so the carry is pinned to
 the same `[-K/2, K/2)` alphabet as the digits. See "Increment range" below for
 why that slack is safe.
 
@@ -421,7 +421,7 @@ Three facts make the slack safe, none of them currently tested:
    all, so this decomposition's window is strictly *stronger* than the
    non-akita baseline rather than weaker.
 
-If a real bound on `Inc` is ever wanted, the cheap shape is a public lane-mask
+If a real bound on `Inc` is ever wanted, the cheap shape is a public row-mask
 leg in this reduction with no matching input term (the `upper_half_all_ones`
 pattern), costing one γ power — not a narrower carry column, which would break
 the shared-final-point invariant.
@@ -532,14 +532,14 @@ cells that puts in the commitment differs by object:
   therefore physically empty. The balanced encoding sends a zero fused
   increment to digit zero in every digit and carry column, making padding rows
   free.
-- **RAM columns** retain digit zero. Active cycles commit the selected lane,
-  including lane zero, while inactive cycles remain empty. RAM keeps
+- **RAM columns** retain digit zero. Active cycles commit the selected row,
+  including row zero, while inactive cycles remain empty. RAM keeps
   `RamHammingBooleanity` and the base Hamming-weight leg; the note's separate
   `M_RAM = Load + Store` optimization is not part of this change.
 
 - **Auxiliary prefix-packed objects** (advice bytes, precommitted bytecode
-  lanes) still commit lane zero, so their padding rows must be hot-lane-zero
-  hot and never all-zero — including advice byte positions beyond the actual
+  columns) still commit row zero, so their padding rows must select row zero
+  and never be all-zero — including advice byte positions beyond the actual
   advice size and, by the offline checks, padded bytecode/program-image rows.
   All-zero padding there would falsify the claimed input sums (`γ` for the
   advice column).

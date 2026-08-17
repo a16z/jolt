@@ -616,7 +616,7 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
 
 /// Extends the base Booleanity parameters with the increment digits and
 /// the carry. Every added member is a full `(address ‖ cycle)` one-hot
-/// polynomial over the same `K` lanes; the carry decodes to a signed value,
+/// polynomial over the same `K` rows; the carry decodes to a signed value,
 /// which the honest encoder keeps in `{0, +1, -1}` though only the full
 /// alphabet is enforced. The batching weights therefore grow
 /// by `chunk_count + 1`, and every added member participates in both phases.
@@ -655,11 +655,11 @@ pub fn lattice_booleanity_params<F: JoltField>(
 /// Stage 7 hamming-weight reduction.
 #[cfg(all(feature = "prover", feature = "akita"))]
 pub struct FusedIncColumns {
-    /// One-hot hot-address lanes: the increment digit columns in index
-    /// order, then the carry column last (which this encoder keeps on lane
+    /// Selected one-hot rows: the increment digit columns in index
+    /// order, then the carry column last (which this encoder keeps on row
     /// `0`, `1`, or `K - 1`, though the protocol enforces only one-hotness
     /// over all `K`) — the batching order of
-    /// [`lattice_booleanity_params`]. Lanes are never
+    /// [`lattice_booleanity_params`]. Entries are never
     /// `None`: Booleanity must see the digit-zero-*inclusive* columns, unlike
     /// the commitment, which omits the digit-zero row and lets Stage 7
     /// reconstruct it (`specs/digit-zero-virtualization.md`).
@@ -669,8 +669,8 @@ pub struct FusedIncColumns {
     pub fused: Vec<i128>,
 }
 
-/// Pushforward of one-hot lane columns through a split eq table:
-/// `out[c][k] = Σ_{j : lanes[c][j] = k} e_hi[j >> lo_bits] · e_lo[j & mask]`.
+/// Pushforward of one-hot columns through a split eq table:
+/// `out[c][k] = Σ_{j : rows[c][j] = k} e_hi[j >> lo_bits] · e_lo[j & mask]`.
 ///
 /// The per-cycle eq product is computed once and scattered into every
 /// column's `k_chunk`-sized (cache-resident) accumulator, so additional
@@ -695,8 +695,8 @@ pub fn one_hot_pushforwards<F: JoltField>(
             for j in start..end {
                 let eq_eval = e_hi[j >> lo_bits] * e_lo[j & mask];
                 for (column, g) in columns.iter().zip(acc.iter_mut()) {
-                    if let Some(lane) = column[j] {
-                        g[lane as usize] += eq_eval;
+                    if let Some(row) = column[j] {
+                        g[row as usize] += eq_eval;
                     }
                 }
             }
@@ -746,7 +746,7 @@ impl<F: JoltField> LatticeBooleanityAddressSumcheckProver<F> {
         let mut inner =
             BooleanityAddressSumcheckProver::initialize(params, trace, bytecode, memory_layout);
 
-        // Chunk pushforwards `G_i(k) = Σ_{j: hot_lane_i(j) = k} eq(r_cycle, j)`,
+        // Chunk pushforwards `G_i(k) = Σ_{j: row_i(j) = k} eq(r_cycle, j)`,
         // with the same two-table split-eq as `compute_all_G`.
         let r_cycle = &inner.params.common.r_cycle;
         let lo_bits = r_cycle.len() / 2;
@@ -1179,17 +1179,17 @@ mod tests {
         // negatives, and extremes.
         let fused: Vec<i128> = vec![5, -7, 0, (1 << 63) - 1, -(1 << 63), 123, -456, 0];
         let inc = |delta: i128| crate::zkvm::packed_witness::FusedIncValue { delta };
-        let hot_lanes: Vec<Vec<u8>> = (0..chunk_count)
+        let digit_rows: Vec<Vec<u8>> = (0..chunk_count)
             .map(|index| {
                 fused
                     .iter()
-                    .map(|delta| inc(*delta).balanced_chunk_hot_lane_bits(width, index) as u8)
+                    .map(|delta| inc(*delta).balanced_digit_row(width, index) as u8)
                     .collect()
             })
             .collect();
         let carry: Vec<u8> = fused
             .iter()
-            .map(|delta| inc(*delta).balanced_carry_hot_lane_bits(width) as u8)
+            .map(|delta| inc(*delta).balanced_carry_row(width) as u8)
             .collect();
 
         let ra_indices: Vec<RaIndices> = (0..T)
@@ -1274,7 +1274,7 @@ mod tests {
                     .unwrap_or(Fr::zero());
                 inner += leg(gamma_powers[i], f);
             }
-            for (index, column) in hot_lanes.iter().enumerate() {
+            for (index, column) in digit_rows.iter().enumerate() {
                 inner += leg(gamma_powers[num_base + index], f_table[column[j] as usize]);
             }
             inner += leg(
@@ -1295,10 +1295,10 @@ mod tests {
             input_claim,
         );
 
-        let one_hot_columns: Vec<Arc<Vec<Option<u8>>>> = hot_lanes
+        let one_hot_columns: Vec<Arc<Vec<Option<u8>>>> = digit_rows
             .iter()
             .chain(core::iter::once(&carry))
-            .map(|column| Arc::new(column.iter().map(|lane| Some(*lane)).collect()))
+            .map(|column| Arc::new(column.iter().map(|row| Some(*row)).collect()))
             .collect();
         let input = LatticeBooleanityCycleInput {
             base: BooleanityCycleInput {

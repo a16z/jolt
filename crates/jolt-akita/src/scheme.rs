@@ -1164,7 +1164,7 @@ mod flavor_bench {
         let union_vars = cell_vars + slots.next_power_of_two().ilog2() as usize;
         let mut state = 0x1234_5678;
 
-        // Per-slot hot lanes; the last slot mimics a two-lane column.
+        // Selected rows for each slot; the last slot uses only two rows.
         let slot_indices: Vec<Vec<Option<u8>>> = (0..slots)
             .map(|slot| {
                 (0..t)
@@ -1250,9 +1250,9 @@ mod flavor_bench {
         eprintln!("union setup ({union_vars} vars): {:.2?}", start.elapsed());
         let mut ones = Vec::with_capacity(slots * t);
         for (slot, indices) in slot_indices.iter().enumerate() {
-            for (cycle, &lane) in indices.iter().enumerate() {
-                let lane = lane.unwrap() as usize;
-                ones.push((slot << cell_vars) | (lane << log_t) | cycle);
+            for (cycle, &row) in indices.iter().enumerate() {
+                let row = row.unwrap() as usize;
+                ones.push((slot << cell_vars) | (row << log_t) | cycle);
             }
         }
         ones.sort_unstable();

@@ -25,7 +25,7 @@ pub enum DigitZeroRow {
 
 /// Packs equal-length semantic columns into prefix slots and pads unused
 /// slots with zero rows. A virtualized digit-zero row is omitted from the
-/// physical polynomial; a committed row retains lane zero.
+/// physical polynomial; a committed column retains row zero.
 pub fn pack_one_hot_columns(
     k: usize,
     slot_capacity: usize,
@@ -38,12 +38,12 @@ pub fn pack_one_hot_columns(
 
     let mut indices = Vec::with_capacity(slot_capacity * rows);
     for (column, digit_zero_row) in columns {
-        indices.extend(column.into_iter().map(|lane| match lane {
+        indices.extend(column.into_iter().map(|row| match row {
             Some(0) if digit_zero_row == DigitZeroRow::Virtualized => None,
             None => None,
-            Some(lane) => {
-                assert!((lane as usize) < k);
-                Some(lane)
+            Some(row) => {
+                assert!((row as usize) < k);
+                Some(row)
             }
         }));
     }
@@ -205,7 +205,7 @@ impl FusedIncValue {
     }
 
     /// The centered radix-`2^width` digit encoded modulo the radix.
-    pub fn balanced_chunk_hot_lane_bits(self, width: usize, index: usize) -> usize {
+    pub fn balanced_digit_row(self, width: usize, index: usize) -> usize {
         let radix = 1i128 << width;
         let mask = radix - 1;
         let standard_digit = (self.biased_for_balanced_digits(width) >> (width * index)) & mask;
@@ -213,7 +213,7 @@ impl FusedIncValue {
     }
 
     /// The signed carry above bit 63, encoded modulo the chunk radix.
-    pub fn balanced_carry_hot_lane_bits(self, width: usize) -> usize {
+    pub fn balanced_carry_row(self, width: usize) -> usize {
         let radix = 1i128 << width;
         let carry = self.biased_for_balanced_digits(width) >> FUSED_INC_BITS;
         debug_assert!((-1..=1).contains(&carry));
@@ -225,7 +225,7 @@ impl FusedIncValue {
 /// and the program image) into one-positions of the packed precommitted
 /// witness, per the canonical `precommitted_packing_plan` slots. Row domain per
 /// chunk is `2^log_bytecode_rows` (bytecode rows, zero-padded); byte
-/// one-hot columns encode padding as hot_lane-0 hot (never all-zero), the
+/// one-hot columns encode padding with row zero selected (never all-zero), the
 /// selector/flag columns leave padding rows empty.
 ///
 /// The imm lane decomposes `F::from_i128(imm)`'s canonical little-endian
@@ -433,18 +433,18 @@ mod tests {
             for delta in values {
                 let inc = FusedIncValue { delta };
                 let digits = (0..chunking.chunk_count()).map(|index| {
-                    let lane = inc.balanced_chunk_hot_lane_bits(width, index) as i128;
-                    if lane < radix / 2 {
-                        lane
+                    let row = inc.balanced_digit_row(width, index) as i128;
+                    if row < radix / 2 {
+                        row
                     } else {
-                        lane - radix
+                        row - radix
                     }
                 });
-                let carry_lane = inc.balanced_carry_hot_lane_bits(width) as i128;
-                let carry = if carry_lane < radix / 2 {
-                    carry_lane
+                let carry_row = inc.balanced_carry_row(width) as i128;
+                let carry = if carry_row < radix / 2 {
+                    carry_row
                 } else {
-                    carry_lane - radix
+                    carry_row - radix
                 };
                 let reconstructed = digits
                     .enumerate()
@@ -461,9 +461,9 @@ mod tests {
         for width in [4, 8, 16, 32] {
             let chunking = BalancedIncChunking::new(width).unwrap();
             for index in 0..chunking.chunk_count() {
-                assert_eq!(inc.balanced_chunk_hot_lane_bits(width, index), 0);
+                assert_eq!(inc.balanced_digit_row(width, index), 0);
             }
-            assert_eq!(inc.balanced_carry_hot_lane_bits(width), 0);
+            assert_eq!(inc.balanced_carry_row(width), 0);
         }
     }
 

@@ -717,7 +717,7 @@ impl AkitaPackedProver<'_> {
 
     /// Builds the physical prefix-packed `OneHotTrace` polynomial.
     /// Instruction, bytecode, and increment columns omit digit zero; RAM
-    /// commits every lane (`specs/digit-zero-virtualization.md`).
+    /// commits every row (`specs/digit-zero-virtualization.md`).
     #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
     fn assemble_one_hot_trace(
         &self,
@@ -761,7 +761,7 @@ impl AkitaPackedProver<'_> {
                     .iter()
                     .zip(fused_inc)
                     .map(|((lookup_index, pc, ram_address), inc)| {
-                        let hot = match polynomial {
+                        let selected_row = match polynomial {
                             JoltCommittedPolynomial::InstructionRa(index) => {
                                 Some(params.lookup_index_chunk(*lookup_index, *index) as usize)
                             }
@@ -771,15 +771,15 @@ impl AkitaPackedProver<'_> {
                             JoltCommittedPolynomial::RamRa(index) => (*ram_address)
                                 .map(|address| params.ram_address_chunk(address, *index) as usize),
                             JoltCommittedPolynomial::BalancedIncDigit(index) => {
-                                Some(inc.balanced_chunk_hot_lane_bits(params.log_k_chunk, *index))
+                                Some(inc.balanced_digit_row(params.log_k_chunk, *index))
                             }
                             JoltCommittedPolynomial::BalancedIncCarry => {
-                                Some(inc.balanced_carry_hot_lane_bits(params.log_k_chunk))
+                                Some(inc.balanced_carry_row(params.log_k_chunk))
                             }
                             _ => unreachable!("OneHotTrace plan contains only canonical columns"),
                         };
-                        hot.map(|hot| {
-                            u8::try_from(hot).expect("OneHotTrace K is at most the u8 lane domain")
+                        selected_row.map(|row| {
+                            u8::try_from(row).expect("OneHotTrace K is at most the u8 row domain")
                         })
                     })
                     .collect::<Vec<_>>();
@@ -811,14 +811,14 @@ impl AkitaPackedProver<'_> {
                 Arc::new(
                     fused_cycles
                         .par_iter()
-                        .map(|cycle| Some(cycle.balanced_chunk_hot_lane_bits(width, index) as u8))
+                        .map(|cycle| Some(cycle.balanced_digit_row(width, index) as u8))
                         .collect(),
                 )
             })
             .chain(core::iter::once(Arc::new(
                 fused_cycles
                     .par_iter()
-                    .map(|cycle| Some(cycle.balanced_carry_hot_lane_bits(width) as u8))
+                    .map(|cycle| Some(cycle.balanced_carry_row(width) as u8))
                     .collect(),
             )))
             .collect();
