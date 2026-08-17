@@ -134,18 +134,6 @@ impl SpartanShiftGeometry {
         })
     }
 
-    pub const fn target() -> Self {
-        Self {
-            rows: 1 << 26,
-            log_t: 26,
-            prefix_vars: 13,
-            suffix_vars: 13,
-            prefix_elements: 1 << 13,
-            suffix_elements: 1 << 13,
-            flag_words: 1 << 21,
-        }
-    }
-
     copy_field_getters! { pub, {
         rows: usize,
         log_t: usize,
@@ -200,7 +188,6 @@ pub struct SpartanShiftPlan {
     pub config: SpartanShiftKernelConfig,
     pub params: SpartanShiftParams,
     pub storage: SpartanShiftStorage,
-    pub cost: SpartanShiftCost,
 }
 
 impl SpartanShiftPlan {
@@ -212,13 +199,11 @@ impl SpartanShiftPlan {
         let config = config.validate()?;
         let params = geometry.params(config)?;
         let storage = storage(geometry, config)?;
-        let cost = cost(geometry, config)?;
         Ok(Self {
             geometry,
             config,
             params,
             storage,
-            cost,
         })
     }
 
@@ -245,27 +230,6 @@ pub struct SpartanShiftStorage {
     pub dense_output_bytes: usize,
     pub total_resident_bytes: usize,
     pub maximum_buffer_bytes: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SpartanShiftCost {
-    pub high_tiles: usize,
-    pub halo_rows: usize,
-    pub halo_flag_words: usize,
-    pub build_row_evaluations: usize,
-    pub mixed_full_products: usize,
-    pub mixed_half_products: usize,
-    pub fold_half_products: usize,
-    pub prefix_host_products: usize,
-    pub suffix_host_products: usize,
-    pub build_unique_bytes: usize,
-    pub build_halo_value_bytes: usize,
-    pub build_halo_flag_bytes: usize,
-    pub build_coalesced_bytes_with_halo: usize,
-    pub fold_unique_bytes: usize,
-    pub readback_bytes: usize,
-    pub command_buffers: usize,
-    pub dispatches: usize,
 }
 
 fn storage(
@@ -329,117 +293,6 @@ fn storage(
         dense_output_bytes,
         total_resident_bytes,
         maximum_buffer_bytes,
-    })
-}
-
-fn coalesced_halo_flag_words(
-    geometry: SpartanShiftGeometry,
-    config: SpartanShiftKernelConfig,
-) -> Result<usize, SpartanShiftPlanError> {
-    let high_tiles = geometry.suffix_elements / config.high_tile_elements;
-    let mut words = 0usize;
-    for tile in 1..high_tiles {
-        let high = checked_product("halo high coordinate", tile, config.high_tile_elements)?;
-        let first_row = checked_product("halo first row", high, geometry.prefix_elements)?;
-        let last_row = first_row
-            .checked_add(geometry.prefix_elements - 1)
-            .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-        let first_word = first_row / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
-        let last_word = last_row / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
-        words = words
-            .checked_add(last_word - first_word + 1)
-            .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-    }
-    Ok(words)
-}
-
-fn cost(
-    geometry: SpartanShiftGeometry,
-    config: SpartanShiftKernelConfig,
-) -> Result<SpartanShiftCost, SpartanShiftPlanError> {
-    let high_tiles = geometry.suffix_elements / config.high_tile_elements;
-    let internal_halos = high_tiles - 1;
-    let halo_rows = checked_product("build halo rows", geometry.prefix_elements, internal_halos)?;
-    let halo_flag_words = coalesced_halo_flag_words(geometry, config)?;
-    let build_row_evaluations = geometry
-        .rows
-        .checked_add(halo_rows)
-        .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-    let successor_rows = geometry.rows - geometry.prefix_elements;
-    let mixed_full_products = geometry
-        .rows
-        .checked_add(successor_rows)
-        .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-    let mixed_half_products = build_row_evaluations;
-    let fold_half_products = checked_product("fold half products", 2, geometry.rows)?;
-    let prefix_host_products = geometry
-        .prefix_elements
-        .checked_mul(16)
-        .and_then(|products| products.checked_sub(24))
-        .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-    let suffix_host_products = geometry
-        .suffix_elements
-        .checked_mul(19)
-        .and_then(|products| products.checked_sub(19))
-        .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-
-    let storage = storage(geometry, config)?;
-    let partial_read_write = checked_product("partial read/write", storage.partial_bytes, 2)?;
-    let build_unique_bytes = checked_sum(
-        "build unique traffic",
-        &[
-            storage.native_value_bytes,
-            storage.native_flag_bytes,
-            storage.high_weight_bytes,
-            partial_read_write,
-            storage.q_bytes,
-        ],
-    )?;
-    let build_halo_value_bytes = checked_bytes("halo value traffic", halo_rows, 16)?;
-    let build_halo_flag_bytes = checked_bytes(
-        "halo flag traffic",
-        halo_flag_words,
-        size_of::<SpartanShiftFlagWord>(),
-    )?;
-    let build_coalesced_bytes_with_halo = checked_sum(
-        "build coalesced traffic",
-        &[
-            build_unique_bytes,
-            build_halo_value_bytes,
-            build_halo_flag_bytes,
-        ],
-    )?;
-    let fold_unique_bytes = checked_sum(
-        "fold unique traffic",
-        &[
-            storage.native_value_bytes,
-            storage.native_flag_bytes,
-            storage.low_weight_bytes,
-            storage.dense_output_bytes,
-        ],
-    )?;
-    let readback_bytes = storage
-        .q_bytes
-        .checked_add(storage.dense_output_bytes)
-        .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-    Ok(SpartanShiftCost {
-        high_tiles,
-        halo_rows,
-        halo_flag_words,
-        build_row_evaluations,
-        mixed_full_products,
-        mixed_half_products,
-        fold_half_products,
-        prefix_host_products,
-        suffix_host_products,
-        build_unique_bytes,
-        build_halo_value_bytes,
-        build_halo_flag_bytes,
-        build_coalesced_bytes_with_halo,
-        fold_unique_bytes,
-        readback_bytes,
-        command_buffers: 2,
-        dispatches: 3,
     })
 }
 
@@ -527,36 +380,6 @@ impl ResidentSpartanShiftMetadata {
             return Err(SpartanShiftPlanError::UncertifiedCurrentFlags);
         }
         Ok(self)
-    }
-}
-
-/// Exact output and work counts for the disjoint 32-row producer partition.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SpartanShiftProducerPlan {
-    pub row_extractions: usize,
-    pub flag_chunks: usize,
-    pub value_bytes_written: usize,
-    pub flag_bytes_written: usize,
-    pub total_bytes_written: usize,
-}
-
-impl SpartanShiftProducerPlan {
-    pub fn new(geometry: SpartanShiftGeometry) -> Result<Self, SpartanShiftPlanError> {
-        let value_bytes_written = checked_bytes("producer PC bytes", 2 * geometry.rows, 8)?;
-        let flag_bytes_written = checked_bytes(
-            "producer flag bytes",
-            geometry.flag_words,
-            size_of::<SpartanShiftFlagWord>(),
-        )?;
-        Ok(Self {
-            row_extractions: geometry.rows,
-            flag_chunks: geometry.flag_words,
-            value_bytes_written,
-            flag_bytes_written,
-            total_bytes_written: value_bytes_written
-                .checked_add(flag_bytes_written)
-                .ok_or(SpartanShiftPlanError::SizeOverflow)?,
-        })
     }
 }
 
@@ -1306,27 +1129,6 @@ mod tests {
             device_registry_id: 19,
             exact_current_flags: true,
         }
-    }
-
-    #[test]
-    fn target_plan_prices_packed_halos() {
-        let geometry = SpartanShiftGeometry::target();
-        let config = SpartanShiftKernelConfig::default();
-        let plan = SpartanShiftPlan::new(geometry.rows, config).unwrap();
-
-        assert_eq!(plan.cost.halo_rows, 516_096);
-        assert_eq!(plan.cost.halo_flag_words, 16_128);
-        assert_eq!(plan.cost.build_halo_value_bytes, 8_257_536);
-        assert_eq!(plan.cost.build_halo_flag_bytes, 193_536);
-        assert_eq!(plan.cost.build_unique_bytes, 1_166_802_944);
-        assert_eq!(plan.cost.build_coalesced_bytes_with_halo, 1_175_254_016);
-
-        let producer = SpartanShiftProducerPlan::new(geometry).unwrap();
-        assert_eq!(producer.row_extractions, 67_108_864);
-        assert_eq!(producer.flag_chunks, 2_097_152);
-        assert_eq!(producer.value_bytes_written, 1_073_741_824);
-        assert_eq!(producer.flag_bytes_written, 25_165_824);
-        assert_eq!(producer.total_bytes_written, 1_098_907_648);
     }
 
     #[test]

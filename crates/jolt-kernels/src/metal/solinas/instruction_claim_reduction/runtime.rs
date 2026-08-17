@@ -98,7 +98,6 @@ impl PendingInstructionClaimInitialMessage {
 enum InstructionClaimPhase {
     Raw,
     Materialized,
-    CpuTail,
     Finished,
 }
 
@@ -202,16 +201,6 @@ impl allocative::Allocative for InstructionClaimSequence {
         }
         visitor.exit();
     }
-}
-
-pub struct InstructionClaimCpuTail {
-    geometry: InstructionClaimGeometry,
-    state: Vec<AkitaField>,
-    scratch: Vec<AkitaField>,
-    next_round: usize,
-    sequence_identity: usize,
-    generation: u64,
-    wall: Duration,
 }
 
 impl SolinasMetal {
@@ -863,75 +852,6 @@ impl InstructionClaimSequence {
         Ok(combined)
     }
 
-    pub fn handoff_to_cpu(&mut self) -> Result<InstructionClaimCpuTail, MetalError> {
-        let started = Instant::now();
-        if self.phase != InstructionClaimPhase::Materialized {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "a CPU handoff requires a materialized device state",
-            ));
-        }
-        let values = unsafe {
-            // SAFETY: the active shared buffer contains `current_elements`
-            // initialized fields and the previous command completed.
-            slice::from_raw_parts(
-                self.source_buffer().contents().cast::<Fp128>(),
-                self.current_elements,
-            )
-        };
-        self.context
-            .validate_inputs("instruction claim CPU handoff", values)?;
-        let state = values
-            .iter()
-            .copied()
-            .map(Fp128::into_jolt_field)
-            .collect::<Vec<_>>();
-        let scratch = Vec::with_capacity(state.len() / 2);
-        self.phase = InstructionClaimPhase::CpuTail;
-        self.timing.wall += started.elapsed();
-        Ok(InstructionClaimCpuTail {
-            geometry: self.geometry,
-            state,
-            scratch,
-            next_round: self.rounds_bound + 1,
-            sequence_identity: self.buffers.gamma_powers.as_ptr() as usize,
-            generation: self.generation,
-            wall: Duration::ZERO,
-        })
-    }
-
-    pub fn finish_cpu_tail(
-        &mut self,
-        tail: InstructionClaimCpuTail,
-        challenge: AkitaField,
-    ) -> Result<AkitaField, MetalError> {
-        let started = Instant::now();
-        if self.phase != InstructionClaimPhase::CpuTail {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "the sequence has no active CPU tail",
-            ));
-        }
-        if tail.sequence_identity != self.buffers.gamma_powers.as_ptr() as usize
-            || tail.geometry != self.geometry
-            || tail.generation != self.generation
-        {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "the CPU tail belongs to a different resident sequence or generation",
-            ));
-        }
-        if tail.state.len() != 2 || tail.next_round != self.geometry.log_t() {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "the CPU tail has not emitted every remaining round message",
-            ));
-        }
-        let combined = finish_bind([tail.state[0], tail.state[1]], challenge);
-        self.current_elements = 2;
-        self.rounds_bound = self.geometry.log_t() - 1;
-        self.combined_claim = Some(combined);
-        self.phase = InstructionClaimPhase::Finished;
-        self.timing.wall += tail.wall + started.elapsed();
-        Ok(combined)
-    }
-
     pub fn openings(
         &mut self,
         e_in: &[AkitaField],
@@ -1238,61 +1158,6 @@ impl InstructionClaimSequence {
         } else {
             &self.buffers.state_a
         }
-    }
-}
-
-impl InstructionClaimCpuTail {
-    pub const fn current_elements(&self) -> usize {
-        self.state.len()
-    }
-
-    pub const fn round_device_buffer_allocations(&self) -> usize {
-        0
-    }
-
-    pub fn bind_and_message(
-        &mut self,
-        challenge: AkitaField,
-        e_in: &[AkitaField],
-        e_out: &[AkitaField],
-    ) -> Result<[AkitaField; INSTRUCTION_CLAIM_MESSAGE_COLUMNS], MetalError> {
-        let started = Instant::now();
-        let params = InstructionClaimPhaseParams::transition(
-            self.geometry,
-            self.next_round,
-            e_in.len(),
-            e_out.len(),
-        )?;
-        let source_elements = params.source_elements as usize;
-        if self.state.len() != source_elements {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "the CPU tail source length differs from its round geometry",
-            ));
-        }
-        self.scratch.clear();
-        self.scratch.resize(source_elements / 2, AkitaField::zero());
-        let mut endpoints = [AkitaField::zero(); INSTRUCTION_CLAIM_MESSAGE_COLUMNS];
-        for (x_out, &outer_weight) in e_out.iter().enumerate() {
-            let mut inner = [AkitaField::zero(); INSTRUCTION_CLAIM_MESSAGE_COLUMNS];
-            for (x_in, &inner_weight) in e_in.iter().enumerate() {
-                let pair = x_out * e_in.len() + x_in;
-                let source = 4 * pair;
-                let destination = 2 * pair;
-                let low = finish_bind([self.state[source], self.state[source + 1]], challenge);
-                let high = finish_bind([self.state[source + 2], self.state[source + 3]], challenge);
-                self.scratch[destination] = low;
-                self.scratch[destination + 1] = high;
-                inner[0] += inner_weight * low;
-                inner[1] += inner_weight * (high + high - low);
-            }
-            for (endpoint, inner) in endpoints.iter_mut().zip(inner) {
-                *endpoint += outer_weight * inner;
-            }
-        }
-        std::mem::swap(&mut self.state, &mut self.scratch);
-        self.next_round += 1;
-        self.wall += started.elapsed();
-        Ok(endpoints)
     }
 }
 

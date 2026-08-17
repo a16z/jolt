@@ -820,60 +820,6 @@ fn stage1_sequence_matches_standalone_sequence() {
     assert_eq!(direct_openings, standalone_openings);
 }
 
-#[test]
-fn stale_cpu_tail_is_rejected_after_reset() {
-    let Ok(context) = super::super::SolinasMetal::for_akita() else {
-        return;
-    };
-    let rows = 1 << 4;
-    let core = (0..rows)
-        .map(|index| InstructionClaimCoreRow::new(index as u64, 2, 3, 4))
-        .collect::<Vec<_>>();
-    let right = (0..rows)
-        .map(|index| InstructionClaimRightInput::new(index as i128 - 8))
-        .collect::<Vec<_>>();
-    let planes = operand_planes(&core, &right);
-    let point = (0..4)
-        .map(|index| AkitaField::from_u64(101 + 2 * index))
-        .collect::<Vec<_>>();
-    let challenges = (0..4)
-        .map(|index| AkitaField::from_u64(401 + 4 * index))
-        .collect::<Vec<_>>();
-    let mut sequence = context
-        .prepare_instruction_claim_sequence(
-            &planes,
-            AkitaField::from_u64(17),
-            InstructionClaimKernelConfig::default(),
-        )
-        .expect("the resident sequence should prepare");
-
-    let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
-    let _ = sequence
-        .message(gruen.e_in_current(), gruen.e_out_current())
-        .unwrap();
-    let mut stale = sequence.handoff_to_cpu().unwrap();
-    for round in 1..4 {
-        gruen.bind(challenges[round - 1]);
-        let _ = stale
-            .bind_and_message(
-                challenges[round - 1],
-                gruen.e_in_current(),
-                gruen.e_out_current(),
-            )
-            .unwrap();
-    }
-    assert_eq!(stale.current_elements(), 2);
-
-    sequence.reset();
-    let gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
-    let _ = sequence
-        .message(gruen.e_in_current(), gruen.e_out_current())
-        .unwrap();
-    let _current = sequence.handoff_to_cpu().unwrap();
-    let error = sequence.finish_cpu_tail(stale, challenges[3]).unwrap_err();
-    assert!(error.to_string().contains("generation"));
-}
-
 fn assert_resident_sequence(gamma: AkitaField, rows: usize) {
     let Ok(context) = super::super::SolinasMetal::for_akita() else {
         return;
@@ -980,7 +926,7 @@ fn assert_resident_sequence(gamma: AkitaField, rows: usize) {
     assert_eq!(sequence.current_elements(), rows);
     assert_eq!(sequence.allocation_identities(), allocations);
 
-    let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+    let gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
     let expected =
         oracle::materialize_message(&planes, gamma, gruen.e_in_current(), gruen.e_out_current())
             .unwrap();
@@ -989,64 +935,6 @@ fn assert_resident_sequence(gamma: AkitaField, rows: usize) {
             .message(gruen.e_in_current(), gruen.e_out_current())
             .unwrap(),
         expected.q_endpoints
-    );
-    let mut state = expected.state;
-    let gpu_rounds = 3.min(log_t);
-    for round in 1..gpu_rounds {
-        gruen.bind(challenges[round - 1]);
-        let expected = oracle::bind_and_message(
-            &state,
-            InstructionClaimGeometry::new(rows).unwrap(),
-            round,
-            challenges[round - 1],
-            gruen.e_in_current(),
-            gruen.e_out_current(),
-        )
-        .unwrap();
-        assert_eq!(
-            sequence
-                .bind_and_message(
-                    challenges[round - 1],
-                    gruen.e_in_current(),
-                    gruen.e_out_current(),
-                )
-                .unwrap(),
-            expected.q_endpoints
-        );
-        state = expected.state;
-    }
-    let mut tail = sequence.handoff_to_cpu().unwrap();
-    assert_eq!(tail.current_elements(), state.len());
-    for round in gpu_rounds..log_t {
-        gruen.bind(challenges[round - 1]);
-        let expected = oracle::bind_and_message(
-            &state,
-            InstructionClaimGeometry::new(rows).unwrap(),
-            round,
-            challenges[round - 1],
-            gruen.e_in_current(),
-            gruen.e_out_current(),
-        )
-        .unwrap();
-        assert_eq!(
-            tail.bind_and_message(
-                challenges[round - 1],
-                gruen.e_in_current(),
-                gruen.e_out_current(),
-            )
-            .unwrap(),
-            expected.q_endpoints,
-            "CPU tail round {round}"
-        );
-        state = expected.state;
-    }
-    assert_eq!(tail.current_elements(), 2);
-    assert_eq!(tail.round_device_buffer_allocations(), 0);
-    assert_eq!(
-        sequence
-            .finish_cpu_tail(tail, challenges[log_t - 1])
-            .unwrap(),
-        finish_bind([state[0], state[1]], challenges[log_t - 1])
     );
     assert_eq!(sequence.allocation_identities(), allocations);
 }
