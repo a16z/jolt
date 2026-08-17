@@ -24,6 +24,10 @@ parallel = [
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
+# Field-inline (FR) protocol composition: the stage-2 FR claim-reduction
+# kernel slot. The reference slot fails closed until the FR witness wiring
+# lands (milestone 11). Selected by jolt-prover's `field-inline` feature.
+field-inline = ["jolt-claims/field-inline", "jolt-verifier/field-inline"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }

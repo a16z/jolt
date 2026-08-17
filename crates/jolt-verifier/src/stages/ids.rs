@@ -48,6 +48,33 @@ impl From<FieldInlineOpeningId> for VerifierOpeningId {
     }
 }
 
+/// Downcast from the composite [`VerifierOpeningId`] to one protocol family's
+/// opening id: `None` when the composite carries the other family. The inverse
+/// of the `From` embeddings above, letting family-typed resolvers (each batch
+/// member's claim struct speaks its own id family) participate in one
+/// composite-keyed lookup — see `relations::resolve_member_opening`.
+pub trait FromVerifierOpeningId: Sized {
+    fn from_verifier(id: VerifierOpeningId) -> Option<Self>;
+}
+
+impl FromVerifierOpeningId for JoltOpeningId {
+    fn from_verifier(id: VerifierOpeningId) -> Option<Self> {
+        match id {
+            VerifierOpeningId::Jolt(id) => Some(id),
+            VerifierOpeningId::FieldInline(_) => None,
+        }
+    }
+}
+
+impl FromVerifierOpeningId for FieldInlineOpeningId {
+    fn from_verifier(id: VerifierOpeningId) -> Option<Self> {
+        match id {
+            VerifierOpeningId::FieldInline(id) => Some(id),
+            VerifierOpeningId::Jolt(_) => None,
+        }
+    }
+}
+
 /// A derived-value id from either protocol family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VerifierDerivedId {

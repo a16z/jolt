@@ -15,6 +15,22 @@ workspace = true
 default = ["parallel"]
 parallel = ["jolt-kernels/parallel"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+# Field-inline (FR) protocol composition: compiles the prover against the
+# FR-extended verifier stage shapes. NO FR proving yet — the reference
+# backend's FR kernel slot and the stage-2 input wiring fail closed until the
+# FR witness wiring lands (milestone 11).
+field-inline = [
+  "jolt-claims/field-inline",
+  "jolt-kernels/field-inline",
+  "jolt-verifier/field-inline",
+  "jolt-witness/field-inline",
+  # Weak forwards: jolt-witness/field-inline turns on jolt-riscv's FR
+  # instruction variants, so any build that also compiles the tracer or the
+  # legacy prover (the profiling harness and fixtures, and this crate's test
+  # targets via the dev-dependencies) must compile them with their FR arms.
+  "tracer?/field-inline",
+  "jolt-prover-legacy?/field-inline",
+]
 # Compile-time ZK mode: committed sumcheck recorders, hiding witness
 # commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.

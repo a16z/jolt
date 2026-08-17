@@ -10,15 +10,13 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use jolt_claims::protocols::jolt::JoltChallengeId;
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::Field;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
-};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
@@ -95,13 +93,13 @@ pub trait BuildRoundScheduler<F: Field> {
 /// field yields no impl). That match is single-bound: a `Box<dyn
 /// PrepareKernel<F, R> + Send>` (any extra bound) is silently skipped and
 /// surfaces the same distant way.
+// No claim-trait where-clauses: `R: ConcreteSumcheck<F>` already implies them
+// (the ConcreteSumcheck where-clauses are elaborated at every use site), and
+// the relation-family-generic spellings would restate them for nothing.
 pub trait PrepareKernel<F, R>
 where
     F: Field,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     fn prepare(
         &self,
@@ -136,6 +134,10 @@ where
     pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
+    /// Fails closed in the reference tier: field-inline proving is pending
+    /// witness wiring (milestone 11).
+    #[cfg(feature = "field-inline")]
+    pub field_registers_claim_reduction: Box<dyn PrepareKernel<F, FieldRegistersClaimReduction<F>>>,
     pub ram_raf_evaluation: Box<dyn PrepareKernel<F, RamRafEvaluation<F>>>,
     pub ram_output_check: Box<dyn PrepareKernel<F, RamOutputCheck<F>>>,
     pub spartan_shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,

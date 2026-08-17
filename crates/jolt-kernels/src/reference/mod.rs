@@ -30,6 +30,8 @@ pub mod booleanity;
 pub mod bytecode_claim_reduction;
 pub mod bytecode_read_raf;
 pub mod commitment;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_claim_reduction;
 pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
@@ -88,6 +90,8 @@ where
             spartan_product_remainder: Box::new(ReferenceProductRemainder),
             ram_read_write: Box::new(ReferenceBackend),
             instruction_claim_reduction: Box::new(ReferenceBackend),
+            #[cfg(feature = "field-inline")]
+            field_registers_claim_reduction: Box::new(ReferenceBackend),
             ram_raf_evaluation: Box::new(ReferenceBackend),
             ram_output_check: Box::new(ReferenceBackend),
             spartan_shift: Box::new(ReferenceBackend),

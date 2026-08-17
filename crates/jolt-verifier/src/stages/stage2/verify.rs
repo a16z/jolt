@@ -58,20 +58,27 @@ enum ProductUniskipVerified<F: Field, C> {
 /// outputs into the generated `Stage2BatchInputClaims` aggregate. Each per-relation
 /// `*_from_upstream` helper wires which upstream opening feeds which downstream
 /// input. The product-remainder input is the product uni-skip's output claim (a
-/// separate stage-2 sub-sumcheck), not an upstream stage's opening.
+/// separate stage-2 sub-sumcheck), not an upstream stage's opening. Errors only
+/// under `field-inline`, where the FR claim-reduction inputs are required
+/// fail-closed from the stage-1 FR carrier.
 pub fn stage2_batch_input_values_from_upstream<F: Field>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
-) -> Stage2BatchInputClaims<F> {
-    Stage2BatchInputClaims {
+) -> Result<Stage2BatchInputClaims<F>, VerifierError> {
+    Ok(Stage2BatchInputClaims {
         ram_read_write: ram_read_write_input_values_from_upstream(stage1),
         product_remainder: product_remainder_input_values_from_uniskip_output(
             product_uniskip_output_claim,
         ),
         instruction_claim_reduction: instruction_claim_reduction_input_values_from_upstream(stage1),
+        #[cfg(feature = "field-inline")]
+        field_registers_claim_reduction:
+            super::field_registers_claim_reduction::field_registers_claim_reduction_input_values_from_upstream(
+                stage1,
+            )?,
         ram_raf_evaluation: ram_raf_evaluation_input_values_from_upstream(stage1),
         ram_output_check: RamOutputCheckInputClaims::default(),
-    }
+    })
 }
 
 #[jolt_verifier_derive::fs_scope(Stage2)]
@@ -112,7 +119,7 @@ where
     let uniskip =
         verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
 
-    // Build the five batch relations once, pre-branch; each owns its input/output
+    // Build the batch relations once, pre-branch; each owns its input/output
     // claim algebra (single-sourced with its jolt-claims formula and the BlindFold
     // constraint). The product uni-skip stays hand-coded above.
     let lowest_address = checked.public_io.memory_layout.get_lowest_address();
@@ -138,6 +145,12 @@ where
             trace_dimensions,
             uniskip.tau_low.clone(),
         ),
+        #[cfg(feature = "field-inline")]
+        field_registers_claim_reduction:
+            super::field_registers_claim_reduction::FieldRegistersClaimReduction::new(
+                jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
+                uniskip.tau_low.clone(),
+            ),
         ram_raf_evaluation: RamRafEvaluation::new(
             read_write_dimensions,
             raf_dimensions,
@@ -149,12 +162,12 @@ where
     };
 
     // Draw each relation's challenges in declaration order: the RAM read-write
-    // gamma, then the instruction claim-reduction gamma (each a single
-    // `challenge_scalar`), then the RAM output-check address reference point
-    // (the last member's `draw_challenges` override — one raw `challenge()` per
-    // RAM address variable, landing after both gammas as the inline draw did).
-    // The drawn challenges feed the input/output claims and populate the stage
-    // aggregate carried downstream.
+    // gamma, the instruction claim-reduction gamma, under `field-inline` the FR
+    // claim-reduction gamma (each a single `challenge_scalar`), then the RAM
+    // output-check address reference point (the last member's `draw_challenges`
+    // override — one raw `challenge()` per RAM address variable, landing after
+    // the gammas as the inline draw did). The drawn challenges feed the
+    // input/output claims and populate the stage aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     // Every member's input points are empty (each derives its output points from its
@@ -200,8 +213,37 @@ where
     let claims = &proof.clear_claims()?.stage2;
     sumchecks.validate_output_claims(&claims.batch_outputs)?;
 
+    // The three FR product-row openings ride the proof beside the batch
+    // outputs; the composed remainder's FR lanes factor over them. Required
+    // fail-closed on FR-on builds.
+    #[cfg(feature = "field-inline")]
+    let field_inline_product = {
+        let field_inline_product =
+            claims
+                .field_inline_product
+                .clone()
+                .ok_or(VerifierError::MissingProofPayload {
+                    field: "claims.stage2.field_inline_product",
+                })?;
+        sumchecks
+            .product_remainder
+            .set_field_inline_outputs(field_inline_product.clone())?;
+        // WHY: the spec's alias table (field-inline-protocol.md, "Stage 2
+        // Composition") aliases the FR claim-reduction outputs into the FR
+        // product-remainder rows. The generated alias machinery resolves
+        // canonical sources across batch members' typed claims only, and the FR
+        // product openings ride the proof as an appendage — so the alias is
+        // enforced as this explicit equality instead. It is a
+        // same-polynomial-at-the-same-point statement for the same structural
+        // reason as the jolt aliases: both relations bind the same batch-point
+        // suffix and derive the same reversed opening point (pinned by
+        // `field_registers_claim_reduction_shares_the_product_remainder_point`).
+        validate_field_inline_product_aliases(&claims.batch_outputs, &field_inline_product)?;
+        field_inline_product
+    };
+
     let input_values =
-        stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim);
+        stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim)?;
 
     let output_points = sumchecks.verify_clear(
         &input_values,
@@ -213,13 +255,68 @@ where
         2,
     )?;
 
+    #[cfg(not(feature = "field-inline"))]
     sumchecks.append_output_claims(transcript, &claims.batch_outputs);
+    // The curated FR-on absorb: the FR product appendage splices in after the
+    // product-remainder outputs, per the spec's committed output row order.
+    #[cfg(feature = "field-inline")]
+    sumchecks.append_output_claims(transcript, &claims.batch_outputs, &field_inline_product);
 
     Ok(Stage2Output::Clear(Stage2ClearOutput {
         output_values: claims.batch_outputs.clone(),
         output_points,
         product_tau_low: uniskip.tau_low,
     }))
+}
+
+/// Enforce the spec's stage-2 alias table: each FR claim-reduction output
+/// equals the FR product-remainder opening of the same polynomial (see the WHY
+/// at the call site). Value-only, like the generated `validate_aliases`.
+#[cfg(feature = "field-inline")]
+fn validate_field_inline_product_aliases<F: Field>(
+    batch_outputs: &super::outputs::Stage2BatchOutputClaims<F>,
+    field_inline_product: &super::outputs::FieldRegistersProductOutputClaims<F>,
+) -> Result<(), VerifierError> {
+    use jolt_claims::protocols::field_inline::{
+        FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
+    };
+
+    let reduction = &batch_outputs.field_registers_claim_reduction;
+    let pairs = [
+        (
+            FieldInlineVirtualPolynomial::FieldRs1Value,
+            reduction.rs1_value,
+            field_inline_product.rs1_value,
+        ),
+        (
+            FieldInlineVirtualPolynomial::FieldRs2Value,
+            reduction.rs2_value,
+            field_inline_product.rs2_value,
+        ),
+        (
+            FieldInlineVirtualPolynomial::FieldRdValue,
+            reduction.rd_value,
+            field_inline_product.rd_value,
+        ),
+    ];
+    for (polynomial, aliased, source) in pairs {
+        if aliased != source {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: format!("{:?}", FieldInlineRelationId::FieldRegistersClaimReduction),
+                left: FieldInlineOpeningId::virtual_polynomial(
+                    polynomial,
+                    FieldInlineRelationId::FieldRegistersClaimReduction,
+                )
+                .into(),
+                right: FieldInlineOpeningId::virtual_polynomial(
+                    polynomial,
+                    FieldInlineRelationId::FieldRegistersProduct,
+                )
+                .into(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The product uni-skip's low binding tau_low: the tail (`[1..]`) of stage
@@ -270,6 +367,20 @@ where
         Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
             let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
+            // The FR lanes' input claims (FieldProduct/FieldInvProduct at the
+            // FR Spartan-outer segment) enter the composed uni-skip input
+            // exactly as the ordinary lanes do — Lagrange-weighted at the lane
+            // indices following them. Required fail-closed on FR-on builds.
+            #[cfg(feature = "field-inline")]
+            {
+                let field_inline = stage1.field_inline_output_values.as_ref().ok_or(
+                    VerifierError::MissingProofPayload {
+                        field: "stage1.field_inline_output_values",
+                    },
+                )?;
+                uniskip_relation
+                    .set_field_inline_inputs(field_inline.product, field_inline.inv_product)?;
+            }
             let uniskip_input_values = product_uniskip_input_values_from_stage1(stage1);
             let uniskip_input_claim =
                 uniskip_relation.input_claim(&uniskip_input_values, &NoChallenges::default())?;
@@ -302,5 +413,87 @@ where
                 verified: ProductUniskipVerified::Zk(verified),
             })
         }
+    }
+}
+
+#[cfg(all(test, feature = "field-inline"))]
+mod field_inline_tests {
+    use super::super::outputs::{
+        FieldRegistersClaimReductionOutputClaims, FieldRegistersProductOutputClaims,
+        InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
+        RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
+        Stage2BatchOutputClaims,
+    };
+    use super::validate_field_inline_product_aliases;
+    use jolt_field::{Fr, FromPrimitiveInt};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    fn batch_outputs_with_reduction(rd: u64, rs1: u64, rs2: u64) -> Stage2BatchOutputClaims<Fr> {
+        Stage2BatchOutputClaims {
+            ram_read_write: RamReadWriteOutputClaims {
+                val: fr(1),
+                ra: fr(2),
+                inc: fr(3),
+            },
+            product_remainder: ProductRemainderOutputClaims {
+                left_instruction_input: fr(4),
+                right_instruction_input: fr(5),
+                jump_flag: fr(6),
+                write_lookup_output_to_rd: fr(7),
+                lookup_output: fr(8),
+                branch_flag: fr(9),
+                next_is_noop: fr(10),
+                virtual_instruction: fr(11),
+            },
+            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
+                lookup_output: fr(8),
+                left_lookup_operand: fr(12),
+                right_lookup_operand: fr(13),
+                left_instruction_input: fr(4),
+                right_instruction_input: fr(5),
+            },
+            field_registers_claim_reduction: FieldRegistersClaimReductionOutputClaims {
+                rd_value: fr(rd),
+                rs1_value: fr(rs1),
+                rs2_value: fr(rs2),
+            },
+            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
+            ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
+        }
+    }
+
+    fn appendage() -> FieldRegistersProductOutputClaims<Fr> {
+        FieldRegistersProductOutputClaims {
+            rs1_value: fr(21),
+            rs2_value: fr(22),
+            rd_value: fr(23),
+        }
+    }
+
+    #[test]
+    fn field_inline_product_aliases_accept_matching_values() {
+        let batch = batch_outputs_with_reduction(23, 21, 22);
+        assert!(validate_field_inline_product_aliases(&batch, &appendage()).is_ok());
+    }
+
+    #[test]
+    fn field_inline_product_aliases_reject_rs1_mismatch() {
+        let batch = batch_outputs_with_reduction(23, 99, 22);
+        assert!(validate_field_inline_product_aliases(&batch, &appendage()).is_err());
+    }
+
+    #[test]
+    fn field_inline_product_aliases_reject_rs2_mismatch() {
+        let batch = batch_outputs_with_reduction(23, 21, 99);
+        assert!(validate_field_inline_product_aliases(&batch, &appendage()).is_err());
+    }
+
+    #[test]
+    fn field_inline_product_aliases_reject_rd_mismatch() {
+        let batch = batch_outputs_with_reduction(99, 21, 22);
+        assert!(validate_field_inline_product_aliases(&batch, &appendage()).is_err());
     }
 }

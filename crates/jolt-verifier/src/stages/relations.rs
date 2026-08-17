@@ -27,8 +27,13 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_transcript::Transcript;
 
-use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId, VerifierOpeningId};
+use crate::stages::ids::{FromVerifierOpeningId, VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
+
+/// Re-exported for the `#[derive(SumcheckBatch)]`-generated batch-wide alias
+/// resolver, whose closure is typed at the composite id so members from any
+/// protocol family can chain into it.
+pub use crate::stages::ids::VerifierOpeningId;
 
 /// Transcript-side companion to [`OutputClaims`]: append a relation's produced
 /// openings to the Fiat-Shamir transcript in canonical order.
@@ -398,6 +403,25 @@ where
     }
 }
 
+/// Resolve one batch member's produced opening by composite id: downcast the
+/// composite to the member's own opening-id family, then resolve within the
+/// member's claims. A foreign-family or unknown id is a miss (`None`), so the
+/// generated batch-wide alias resolver can chain members across protocol
+/// families. Called by the generated `validate_aliases` per member.
+pub fn resolve_member_opening<F, I>(
+    claims: &SumcheckOutputClaims<F, I>,
+    id: &VerifierOpeningId,
+) -> Option<F>
+where
+    F: Field,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: FromVerifierOpeningId,
+{
+    let native = OpeningIdOf::<F, I>::from_verifier(*id)?;
+    claims.resolve_output(&native)
+}
+
 /// Enforce one member's declared cross-relation opening aliases: each aliased
 /// wire cell (resolved from the DECLARING member's claims) must equal its
 /// canonical source opening, resolved across the batch by `resolve_source`
@@ -408,9 +432,12 @@ where
 pub fn validate_member_aliases<F, I>(
     member: &I,
     claims: &SumcheckOutputClaims<F, I>,
-    // Cross-family aliasing is intentionally unsupported: the resolver speaks
-    // the declaring member's own opening-id family, so aliases stay within it.
-    resolve_source: impl Fn(&OpeningIdOf<F, I>) -> Option<F>,
+    // The resolver is keyed by the composite id so a mixed-family batch can
+    // serve every member through one closure; alias PAIRS stay within the
+    // declaring member's own family (`aliased_output_openings` returns its
+    // family's ids on both sides), so cross-family aliasing remains
+    // unrepresentable at the declaration level.
+    resolve_source: impl Fn(&VerifierOpeningId) -> Option<F>,
 ) -> Result<(), VerifierError>
 where
     F: Field,
@@ -423,7 +450,7 @@ where
         let target = claims
             .resolve_output(&aliased)
             .ok_or(VerifierError::MissingOpeningClaim { id: aliased.into() })?;
-        let source_value = resolve_source(&source)
+        let source_value = resolve_source(&source.into())
             .ok_or(VerifierError::MissingOpeningClaim { id: source.into() })?;
         if target != source_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
@@ -441,7 +468,9 @@ where
 /// (absorbed via their canonical source; their value equality is enforced
 /// separately by `validate_aliases`), must equal the member's
 /// [`wire_output_openings`](ConcreteSumcheck::wire_output_openings). Called by
-/// the generated `validate_output_claims` per member.
+/// the generated `validate_output_claims` per member. Family-agnostic (the
+/// mismatch is attributed by the member's Debug-formatted relation id), so
+/// mixed-family batches validate every member through it.
 pub fn validate_member_output_shape<F, I>(
     member: &I,
     claims: &SumcheckOutputClaims<F, I>,
@@ -451,10 +480,6 @@ where
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
     OpeningIdOf<F, I>: Ord,
-    // `StageClaimPublicInputFailed` attributes to a typed `JoltRelationId`, so
-    // this helper is pinned to jolt-family relation ids until that diagnostic
-    // grows a composite stage id.
-    SymbolicOf<F, I>: SymbolicSumcheck<RelationId = JoltRelationId>,
 {
     let expected = member.wire_output_openings();
     let aliased: BTreeSet<_> = I::aliased_output_openings()
@@ -467,8 +492,8 @@ where
         .filter(|id| !aliased.contains(id))
         .collect();
     if provided != expected {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: member.id(),
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{:?}", member.id()),
             reason: format!(
                 "output claim shape mismatch: expected {} openings, got {}",
                 expected.len(),

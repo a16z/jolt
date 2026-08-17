@@ -19,6 +19,8 @@ mod stage1 {
 }
 
 mod stage2 {
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
     use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
     use jolt_verifier::stages::stage2::outputs::{
         Stage2BatchChallenges, Stage2BatchInputClaims, Stage2BatchInputPoints,
@@ -31,7 +33,26 @@ mod stage2 {
 
     use crate::driver::impl_stage_prover;
 
+    #[cfg(not(feature = "field-inline"))]
     jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover);
+
+    // The field-inline batch suppresses the generated absorb (the verifier's
+    // committed row order splices the FR product appendage mid-batch), so the
+    // driver needs a curation override — which no backend can honestly
+    // satisfy until the FR witness wiring lands (milestone 11). Fail closed
+    // here; the stage-2 recipe's input assembly already rejects earlier.
+    #[cfg(feature = "field-inline")]
+    jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover
+        curate = |_batch, _claims, _points| {
+            Err(jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                stage: "Stage2Batch".to_string(),
+                reason: "field-inline proving pending witness wiring (milestone 11): the \
+                         curated stage-2 absorb needs the FR product appendage"
+                    .to_string(),
+            }
+            .into())
+        },
+    );
 }
 
 mod stage3 {

@@ -530,6 +530,26 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets each instruction claim-reduction output (aliased cells are rejected by the generated validate_aliases)",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage2.claims.batch_outputs.field_registers_claim_reduction",
+        "claims.stage2.batch_outputs.field_registers_claim_reduction.*",
+        VerifierPhase::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "the FR claim-reduction outputs feed the stage-2 fold and the explicit FR product-row \
+         alias equality; mutation runs once modular field-inline fixtures exist",
+    ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage2.claims.field_inline_product",
+        "claims.stage2.field_inline_product",
+        VerifierPhase::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "the FR product-row openings feed the composed remainder's FR lanes and the explicit \
+         alias equality; mutation runs once modular field-inline fixtures exist",
+    ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
         "claims.stage2.batch_outputs.ram_raf_evaluation.ram_ra",
@@ -1305,6 +1325,12 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.instruction_claim_reduction.left_instruction_input",
             "claims.stage2.batch_outputs.instruction_claim_reduction.right_instruction_input",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage2.batch_outputs.field_registers_claim_reduction.*" => vec![
+            "claims.stage2.batch_outputs.field_registers_claim_reduction.rd_value",
+            "claims.stage2.batch_outputs.field_registers_claim_reduction.rs1_value",
+            "claims.stage2.batch_outputs.field_registers_claim_reduction.rs2_value",
+        ],
         "claims.stage3.shift.*" => vec![
             "claims.stage3.shift.unexpanded_pc",
             "claims.stage3.shift.pc",
@@ -1413,9 +1439,9 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                 },
             },
         ),
-        stage2: stage2::outputs::Stage2OutputClaims {
-            product_uniskip_output_claim: zero,
-            batch_outputs: stage2::outputs::Stage2BatchOutputClaims {
+        stage2: stage2::outputs::Stage2OutputClaims::new(
+            zero,
+            stage2::outputs::Stage2BatchOutputClaims {
                 ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
                     val: zero,
                     ra: zero,
@@ -1439,10 +1465,17 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                         left_instruction_input: zero,
                         right_instruction_input: zero,
                     },
+                #[cfg(feature = "field-inline")]
+                field_registers_claim_reduction:
+                    stage2::outputs::FieldRegistersClaimReductionOutputClaims {
+                        rd_value: zero,
+                        rs1_value: zero,
+                        rs2_value: zero,
+                    },
                 ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims { ram_ra: zero },
                 ram_output_check: stage2::outputs::RamOutputCheckOutputClaims { val_final: zero },
             },
-        },
+        ),
         stage3: stage3::outputs::Stage3OutputClaims {
             shift: stage3::outputs::SpartanShiftOutputClaims {
                 unexpanded_pc: zero,

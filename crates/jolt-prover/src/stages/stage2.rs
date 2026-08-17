@@ -142,6 +142,12 @@ where
             trace_dimensions,
             tau_low.clone(),
         ),
+        #[cfg(feature = "field-inline")]
+        field_registers_claim_reduction:
+            jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction::new(
+                jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
+                tau_low.clone(),
+            ),
         ram_raf_evaluation: RamRafEvaluation::new(
             read_write_dimensions,
             raf_dimensions,
@@ -156,7 +162,9 @@ where
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let input_points = sumchecks.empty_input_points();
-    let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim);
+    // Under `field-inline` this fails closed: the prover's stage-1 carrier has
+    // no FR payload until the FR witness wiring lands (milestone 11).
+    let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim)?;
 
     let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
@@ -178,10 +186,7 @@ where
     Ok(Stage2ProverOutput {
         uniskip_proof: proved_uniskip.proof,
         sumcheck_proof,
-        claims: Stage2OutputClaims {
-            product_uniskip_output_claim: proved_uniskip.output_claim,
-            batch_outputs: proved.output_claims.clone(),
-        },
+        claims: Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone()),
         clear_output: Stage2ClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,

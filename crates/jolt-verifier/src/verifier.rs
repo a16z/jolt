@@ -1514,9 +1514,9 @@ mod tests {
                 bytecode: None,
                 program_image: None,
             },
-            stage2: stage2::outputs::Stage2OutputClaims {
-                product_uniskip_output_claim: zero,
-                batch_outputs: stage2::outputs::Stage2BatchOutputClaims {
+            stage2: stage2::outputs::Stage2OutputClaims::new(
+                zero,
+                stage2::outputs::Stage2BatchOutputClaims {
                     ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
                         val: zero,
                         ra: zero,
@@ -1540,6 +1540,13 @@ mod tests {
                             left_instruction_input: zero,
                             right_instruction_input: zero,
                         },
+                    #[cfg(feature = "field-inline")]
+                    field_registers_claim_reduction:
+                        stage2::outputs::FieldRegistersClaimReductionOutputClaims {
+                            rd_value: zero,
+                            rs1_value: zero,
+                            rs2_value: zero,
+                        },
                     ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims {
                         ram_ra: zero,
                     },
@@ -1547,7 +1554,7 @@ mod tests {
                         val_final: zero,
                     },
                 },
-            },
+            ),
             stage3: stage3::outputs::Stage3OutputClaims {
                 shift: stage3::outputs::SpartanShiftOutputClaims {
                     unexpanded_pc: zero,

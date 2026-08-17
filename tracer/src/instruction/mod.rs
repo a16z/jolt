@@ -2101,7 +2101,10 @@ mod tests {
         for _ in 0..6 {
             trace_one(&mut cpu, field_inline_word(FieldInlineOp::Mul, 1, 1, 1));
         }
-        trace_one(&mut cpu, field_inline_word(FieldInlineOp::StoreToX, 10, 1, 0));
+        trace_one(
+            &mut cpu,
+            field_inline_word(FieldInlineOp::StoreToX, 10, 1, 0),
+        );
     }
 
     #[cfg(feature = "field-inline")]

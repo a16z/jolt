@@ -308,16 +308,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         .iter()
         .map(plan_field)
         .collect::<syn::Result<Vec<_>>>()?;
-    let Some(first_plan) = plans.first() else {
+    if plans.is_empty() {
         return Err(syn::Error::new(
             name.span(),
             "SumcheckBatch requires at least one instance field",
         ));
-    };
-    // The batch-wide alias resolver speaks one opening-id family; project it
-    // through the first member (the `.or_else` chain unifies every member's
-    // family with it, so a mixed-family batch fails to compile there).
-    let first_instance = first_plan.instance.clone();
+    }
 
     let relations = quote!(#krate::stages::relations);
 
@@ -817,20 +813,30 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // Always generated and run by `expected_final_claim` (the fold is where the
     // aliased values get consumed), so declaring a pair on a relation enforces it
     // everywhere: the check cannot be skipped by a stage.
+    //
+    // The resolver closure is keyed by the composite `VerifierOpeningId` and each
+    // member's arm downcasts to its own family (`relations::resolve_member_opening`),
+    // so a batch may mix protocol families; alias pairs themselves stay
+    // family-local (see `relations::validate_member_aliases`).
     let validate_aliases_method = {
         let resolve_arms = plans.iter().map(|plan| {
             let id = &plan.ident;
+            let instance = &plan.instance;
             if plan.is_option {
                 quote! {
                     .or_else(|| {
-                        output_values
-                            .#id
-                            .as_ref()
-                            .and_then(|__claims| __claims.resolve_output(__id))
+                        output_values.#id.as_ref().and_then(|__claims| {
+                            #relations::resolve_member_opening::<#f, #instance>(__claims, __id)
+                        })
                     })
                 }
             } else {
-                quote!(.or_else(|| output_values.#id.resolve_output(__id)))
+                quote! {
+                    .or_else(|| #relations::resolve_member_opening::<#f, #instance>(
+                        &output_values.#id,
+                        __id,
+                    ))
+                }
             }
         });
         let claims_cell_ident = format_ident!("__claims_cell");
@@ -862,8 +868,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 &self,
                 output_values: &#output_claims_name<#f>,
             ) -> ::core::result::Result<(), #krate::VerifierError> {
-                use ::jolt_claims::OutputClaims as _;
-                let __resolve = |__id: &#relations::OpeningIdOf<#f, #first_instance>| {
+                let __resolve = |__id: &#relations::VerifierOpeningId| {
                     ::core::option::Option::<#f>::None
                         #(#resolve_arms)*
                 };
