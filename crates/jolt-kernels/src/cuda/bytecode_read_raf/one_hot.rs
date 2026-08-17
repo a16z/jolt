@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 
@@ -14,7 +16,7 @@ pub const PACKED_BITS: usize = 32;
 pub const MESSAGE_STRIP: usize = 1;
 
 pub struct DeviceBytecodeRa {
-    pc: CudaSlice<u32>,
+    pc: Arc<CudaSlice<u32>>,
     tables: DeviceFrVec,
     dense: Option<DeviceFrVec>,
     polys: usize,
@@ -27,7 +29,7 @@ pub struct DeviceBytecodeRa {
 impl DeviceBytecodeRa {
     pub fn new<F: Field>(
         context: &CudaKernelContext,
-        pc: CudaSlice<u32>,
+        pc: Arc<CudaSlice<u32>>,
         cycles: usize,
         chunk_bits: usize,
         chunk_points: &[Vec<F>],
@@ -149,7 +151,7 @@ impl DeviceBytecodeRa {
         let polys = CudaKernelContext::count_of(self.polys)?;
         let count = CudaKernelContext::count_of(len)?;
         let mut builder = context.stream().launch_builder(context.brr_gather());
-        let _ = builder.arg(&self.pc);
+        let _ = builder.arg(self.pc.as_ref());
         let _ = builder.arg(self.tables.limbs());
         let _ = builder.arg(&addresses);
         let _ = builder.arg(&slots);
@@ -227,7 +229,7 @@ impl DeviceBytecodeRa {
         if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS && self.len() > 1 {
             self.dense = Some(self.gather(context)?);
             self.tables = context.alloc(0)?;
-            self.pc = context.alloc_u32(0)?;
+            self.pc = Arc::new(context.alloc_u32(0)?);
         }
         Ok(())
     }
@@ -314,7 +316,7 @@ impl DeviceBytecodeRa {
             let mut builder = context
                 .stream()
                 .launch_builder(context.brr_message_sparse());
-            let _ = builder.arg(&self.pc);
+            let _ = builder.arg(self.pc.as_ref());
             let _ = builder.arg(self.tables.limbs());
             let _ = builder.arg(coefficient.limbs());
             let _ = builder.arg(&addresses);
@@ -361,6 +363,8 @@ impl DeviceBytecodeRa {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use std::sync::Arc;
+
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
@@ -446,7 +450,7 @@ mod tests {
             let mut expected = expected_tables(&pc, chunk_bits, &chunk_points);
             let mut got = DeviceBytecodeRa::new(
                 context,
-                context.upload_u32_slice(&pc).expect("upload the pc column"),
+                Arc::new(context.upload_u32_slice(&pc).expect("upload the pc column")),
                 cycles,
                 chunk_bits,
                 &chunk_points,

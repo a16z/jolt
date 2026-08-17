@@ -10,11 +10,9 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
-
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::ram_address_witness::{packed_ram_words, RamAddressWitness};
+use crate::cuda::common::device_columns::device_ram_words;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -132,9 +130,6 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
             });
         }
 
-        let unsupported = || KernelError::Unsupported {
-            reason: "the CUDA RAM RA virtualization kernel supports only the BN254 scalar field",
-        };
         let address_point: Vec<F> = chunks.concat();
 
         let cycles = 1usize << dimensions.log_t();
@@ -144,16 +139,7 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
         } else {
             1usize << address_bits
         };
-        let rows = cached_bundles::<RamAddressWitness, _>(session, witness, cycles)?;
-        let words = packed_ram_words(&rows, addresses).map_err(|_| KernelError::Unsupported {
-            reason: "the CUDA RAM RA virtualization kernel packs each remapped RAM word address \
-                     into one 32-bit word, reserving the all-ones word for a cold cycle",
-        })?;
-        drop(rows);
-        let packed = context
-            .upload_u32_slice(&words)
-            .map_err(|_| unsupported())?;
-        drop(words);
+        let packed = device_ram_words::<F, _>(context, session, witness, cycles, addresses)?;
 
         let one_hot = DevicePackedRamRa::new(context, packed, cycles, chunk_bits, &address_point)
             .map_err(|_| KernelError::Unsupported {

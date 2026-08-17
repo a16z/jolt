@@ -33,6 +33,7 @@ use self::cycle_rounds::DeviceCycleRounds;
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice};
+use crate::cuda::common::device_columns::device_lookup_limbs;
 use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -175,15 +176,13 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
                          2·XLEN interleaved-operand address width in 8-variable phases",
             });
         }
-        let rows: Vec<InstructionReadRafWitness> =
-            cached_bundles(session, witness, 1 << dimensions.log_t())?;
+        let cycles = 1usize << dimensions.log_t();
+        let bits = device_lookup_limbs::<F, _>(context, session, witness, cycles)?;
+        let rows: Vec<InstructionReadRafWitness> = cached_bundles(session, witness, cycles)?;
 
-        let mut bits = Vec::with_capacity(rows.len() * 2);
         let mut table_index = Vec::with_capacity(rows.len());
         let mut raf_flag = Vec::with_capacity(rows.len());
         for row in &rows {
-            bits.push(row.lookup_index.0 as u64);
-            bits.push((row.lookup_index.0 >> 64) as u64);
             table_index.push(row.table_index.0.map_or(NO_TABLE, |index| index as u32));
             raf_flag.push(u8::from(row.raf_flag.0));
         }
@@ -193,10 +192,9 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             reason: "the CUDA instruction read-RAF kernel supports only the BN254 scalar field",
         };
         let device_rows = Arc::new(
-            DeviceRows::from_encoded(context, &bits, &table_index, &raf_flag)
+            DeviceRows::from_device(context, bits, &table_index, &raf_flag)
                 .map_err(|_| unsupported())?,
         );
-        drop(bits);
 
         let device = DeviceAddressPhase::with_rows(
             context,

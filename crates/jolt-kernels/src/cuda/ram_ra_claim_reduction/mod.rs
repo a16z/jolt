@@ -9,13 +9,11 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
-
 use self::reduction::{CyclePoints, DeviceRamRaReduction};
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr_slice};
-use crate::cuda::common::ram_address_witness::{packed_ram_words, RamAddressWitness};
+use crate::cuda::common::device_columns::device_ram_words;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -56,13 +54,7 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
         };
         let addresses = 1usize << ram_log_k;
         let cycles = 1usize << log_t;
-        let rows = cached_bundles::<RamAddressWitness, _>(session, witness, cycles)?;
-        let words = packed_ram_words(&rows, addresses).map_err(|_| KernelError::Unsupported {
-            reason: "the CUDA RAM RA claim reduction packs each remapped RAM word address into \
-                     one 32-bit word below the RAM address space, reserving the all-ones word \
-                     for a cold cycle",
-        })?;
-        drop(rows);
+        let words = device_ram_words::<F, _>(context, session, witness, cycles, addresses)?;
         let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
         let state = DeviceRamRaReduction::new(
             context,

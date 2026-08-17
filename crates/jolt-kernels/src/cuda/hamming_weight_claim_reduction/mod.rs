@@ -11,12 +11,10 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
-
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device_columns::{device_trace_columns, ANY_SPAN};
 use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
-use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -174,24 +172,11 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend 
         }
 
         let cycles = 1usize << relation.r_cycle().len();
-        let rows = cached_bundles::<OneHotCycleWitness, _>(session, witness, cycles)?;
-        let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
-            reason: "the CUDA hamming reduction packs the bytecode PC and the remapped RAM word \
-                     address into one 32-bit word each, reserving the all-ones word for a cold \
-                     cycle",
-        })?;
-        drop(rows);
-
-        let device_columns = DeviceOneHotColumns::new(
-            context,
-            &columns.lookup,
-            &columns.pc,
-            &columns.ram,
-            [layout.instruction(), layout.bytecode(), layout.ram()],
-            dimensions.log_k_chunk,
-            cycles,
-        )?;
-        drop(columns);
+        let families = [layout.instruction(), layout.bytecode(), layout.ram()];
+        let columns =
+            device_trace_columns::<F, _>(context, session, witness, cycles, families, ANY_SPAN)?;
+        let device_columns =
+            DeviceOneHotColumns::from_device(columns, families, dimensions.log_k_chunk, cycles)?;
 
         let state = DeviceHammingWeightReduction::new(
             context,

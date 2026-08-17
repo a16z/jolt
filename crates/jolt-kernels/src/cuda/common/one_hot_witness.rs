@@ -1,9 +1,10 @@
 use jolt_witness::witnesses::{LookupIndex, MappedPc, RemappedRamAddress};
 use jolt_witness::WitnessBundle;
 
+#[cfg(test)]
 use crate::cuda::common::pack::{COLD, PACK_CHUNK};
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
@@ -13,12 +14,14 @@ pub struct OneHotCycleWitness {
     pub ram: RemappedRamAddress,
 }
 
+#[cfg(test)]
 pub struct PackedColumns {
     pub lookup: Vec<u64>,
     pub pc: Vec<u32>,
     pub ram: Vec<u32>,
 }
 
+#[cfg(test)]
 pub fn packed_columns(rows: &[OneHotCycleWitness]) -> Result<PackedColumns, u128> {
     let mut lookup = vec![0u64; 2 * rows.len()];
     let mut pc = vec![COLD; rows.len()];
@@ -47,6 +50,7 @@ pub fn packed_columns(rows: &[OneHotCycleWitness]) -> Result<PackedColumns, u128
     }
 }
 
+#[cfg(test)]
 fn fill(
     lookup: &mut [u64],
     pc: &mut [u32],

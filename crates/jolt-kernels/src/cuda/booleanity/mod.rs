@@ -9,11 +9,9 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
-
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
+use crate::cuda::common::device_columns::{device_trace_columns, ANY_SPAN};
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -168,15 +166,10 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
         let layout = dimensions.layout;
         let families = [layout.instruction(), layout.bytecode(), layout.ram()];
         let cycles = 1usize << dimensions.log_t;
-        let rows = cached_bundles::<OneHotCycleWitness, _>(session, witness, cycles)?;
-        let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
-            reason: "the CUDA booleanity kernel packs the bytecode PC and the remapped RAM word \
-                     address into one 32-bit word each, reserving the all-ones word for a cold \
-                     cycle",
-        })?;
-        drop(rows);
+        let columns =
+            device_trace_columns::<F, _>(context, session, witness, cycles, families, ANY_SPAN)?;
 
-        let one_hot = DeviceBooleanityRa::new(
+        let one_hot = DeviceBooleanityRa::from_device(
             context,
             columns,
             cycles,

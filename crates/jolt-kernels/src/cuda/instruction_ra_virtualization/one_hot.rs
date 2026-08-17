@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 use jolt_poly::BindingOrder;
@@ -9,7 +11,7 @@ use crate::cuda::common::error::CudaError;
 pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
 
 pub struct DevicePackedRa {
-    packed: CudaSlice<u64>,
+    packed: Arc<CudaSlice<u64>>,
     tables: DeviceFrVec,
     dense: Vec<DeviceFrVec>,
     polys: usize,
@@ -22,7 +24,7 @@ pub struct DevicePackedRa {
 impl DevicePackedRa {
     pub fn new<F: Field>(
         context: &CudaKernelContext,
-        packed: CudaSlice<u64>,
+        packed: Arc<CudaSlice<u64>>,
         cycles: usize,
         chunk_bits: usize,
         address_point: &[F],
@@ -148,7 +150,7 @@ impl DevicePackedRa {
         let committed = CudaKernelContext::count_of(self.polys)?;
         let count = CudaKernelContext::count_of(len)?;
         let mut builder = context.stream().launch_builder(context.irv_gather());
-        let _ = builder.arg(&self.packed);
+        let _ = builder.arg(self.packed.as_ref());
         let _ = builder.arg(self.tables.limbs());
         let _ = builder.arg(&pointers);
         let _ = builder.arg(&addresses);
@@ -229,7 +231,7 @@ impl DevicePackedRa {
         if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS && self.len() > 1 {
             self.dense = self.gather(context)?;
             self.tables = context.alloc(0)?;
-            self.packed = context.alloc_u64(0)?;
+            self.packed = Arc::new(context.alloc_u64(0)?);
         }
         Ok(())
     }
@@ -324,7 +326,7 @@ impl DevicePackedRa {
             let mut builder = context
                 .stream()
                 .launch_builder(context.irv_message_sparse());
-            let _ = builder.arg(&self.packed);
+            let _ = builder.arg(self.packed.as_ref());
             let _ = builder.arg(self.tables.limbs());
             let _ = builder.arg(&groups);
             let _ = builder.arg(&addresses);
@@ -372,6 +374,8 @@ impl DevicePackedRa {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use std::sync::Arc;
+
     use jolt_field::Fr;
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
@@ -434,7 +438,8 @@ mod tests {
                 })
                 .collect();
 
-            let packed = context.upload_u64_slice(&words).expect("upload packed index");
+            let packed =
+                Arc::new(context.upload_u64_slice(&words).expect("upload packed index"));
             let mut got = DevicePackedRa::new(context, packed, cycles, chunk_bits, &point, &seeds)
                 .expect("device packed one-hot family");
 

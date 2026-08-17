@@ -2524,6 +2524,17 @@ fn measure_joint_opening(workload: Workload, scale: u32, backend: BackendKind) -
         let tables = std::collections::BTreeMap::new();
         let selected = selected_backend(backend);
         let mut session = ProofSession::default();
+        let setup = DoryScheme::setup_prover(grid.total_vars);
+        let _ = selected
+            .commit
+            .commit_witness(
+                &mut session,
+                witness as &dyn jolt_witness::RowSource,
+                &order,
+                grid,
+                &setup,
+            )
+            .expect("warm the session the way stage 0 does before stage 8 runs");
 
         let start = Instant::now();
         let polynomials = selected

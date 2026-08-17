@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use ark_bn254::{Fq, G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::BigInt;
+use cudarc::driver::CudaSlice;
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltPolynomialId, TracePolynomialOrder,
 };
@@ -12,8 +15,10 @@ use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsume
 
 use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
+use super::common::device_columns::{park_device_column, DeviceColumn};
 use super::common::error::CudaError;
 use super::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs, FQ_LIMBS};
+use super::common::pack::COLD;
 use super::common::trace_columns::store_columns;
 use super::{require_context, CudaBackend};
 use crate::commitment::{
@@ -88,7 +93,8 @@ impl DeviceTier1Commitment for DoryScheme {
 struct CollectedColumns {
     kinds: Vec<ColumnKind>,
     increments: Vec<Vec<i128>>,
-    hot: Vec<Vec<Option<usize>>>,
+    hot: Vec<Vec<u32>>,
+    spans: Vec<usize>,
     rows: Vec<CommittedColumnsWitness>,
 }
 
@@ -118,8 +124,23 @@ impl CollectedColumns {
             kinds: kinds.to_vec(),
             increments,
             hot,
+            spans: vec![0; kinds.len()],
             rows: Vec::with_capacity(cycles),
         }
+    }
+
+    fn span<F: Field>(&self, index: usize, one_hot_k: usize) -> Result<usize, KernelError<F>> {
+        let span = self.spans[index];
+        if span > one_hot_k || span > COLD as usize {
+            return Err(KernelError::InvalidGeometry {
+                reason: format!(
+                    "a committed one-hot column reaches address {} of a {one_hot_k}-address chunk \
+                     encoded in 32 bits reserving {COLD} for a cold cycle",
+                    span - 1
+                ),
+            });
+        }
+        Ok(span)
     }
 }
 
@@ -129,13 +150,58 @@ impl StreamConsumer for CollectedColumns {
     fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
         self.rows.extend_from_slice(chunk);
         for (index, kind) in self.kinds.iter().copied().enumerate() {
-            if kind.is_one_hot() {
-                self.hot[index].extend(chunk.iter().map(|row| kind.hot_address(row)));
-            } else {
+            if !kind.is_one_hot() {
                 self.increments[index].extend(chunk.iter().map(|row| kind.increment(row)));
+                continue;
             }
+            let column = &mut self.hot[index];
+            let mut span = self.spans[index];
+            for row in chunk {
+                match kind.hot_address(row) {
+                    None => column.push(COLD),
+                    Some(address) => {
+                        span = span.max(address + 1);
+                        column.push(address as u32);
+                    }
+                }
+            }
+            self.spans[index] = span;
         }
     }
+}
+
+type RetainedHotColumns = Vec<Option<Arc<CudaSlice<u32>>>>;
+
+fn retain_hot_columns<F: Field>(
+    context: &'static CudaKernelContext,
+    session: &mut ProofSession,
+    source: &dyn RowSource,
+    collected: &mut CollectedColumns,
+    ids: &[JoltCommittedPolynomial],
+    cycles: usize,
+    one_hot_k: usize,
+) -> Result<RetainedHotColumns, KernelError<F>> {
+    let mut retained = Vec::with_capacity(ids.len());
+    for (index, &id) in ids.iter().enumerate() {
+        if !collected.kinds[index].is_one_hot() {
+            retained.push(None);
+            continue;
+        }
+        let span = collected.span::<F>(index, one_hot_k)?;
+        let host = std::mem::take(&mut collected.hot[index]);
+        let column = Arc::new(context.upload_u32_slice(&host)?);
+        drop(host);
+        park_device_column(
+            session,
+            source,
+            DeviceColumn::CommittedHot(id),
+            cycles,
+            span,
+            Arc::clone(&column),
+        );
+        retained.push(Some(column));
+    }
+    Ok(retained)
 }
 
 struct ResidentBases {
@@ -214,21 +280,37 @@ where
             tracing::info_span!("cuda_commit_store_columns", cycles)
                 .in_scope(|| store_columns(session, source, cycles, &rows));
             drop(rows);
+            let hot = tracing::info_span!("cuda_commit_park_hot", columns = kinds.len()).in_scope(
+                || {
+                    retain_hot_columns::<F>(
+                        context,
+                        session,
+                        source,
+                        &mut collected,
+                        ids,
+                        cycles,
+                        one_hot_k,
+                    )
+                },
+            )?;
             let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
                 .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
-            return kinds
+            return hot
                 .iter()
                 .zip(ids)
                 .enumerate()
-                .map(|(index, (kind, &id))| {
-                    let rows = if kind.is_one_hot() {
-                        tracing::info_span!("cuda_commit_tier1_one_hot").in_scope(|| {
-                            context.one_hot_rows(bases, &collected.hot[index], one_hot_k, row_width)
-                        })?
-                    } else {
-                        tracing::info_span!("cuda_commit_tier1_dense").in_scope(|| {
+                .map(|(index, (column, &id))| {
+                    let rows = match column {
+                        Some(column) => {
+                            tracing::info_span!("cuda_commit_tier1_one_hot").in_scope(|| {
+                                context.one_hot_rows_device(
+                                    bases, column, cycles, one_hot_k, row_width,
+                                )
+                            })?
+                        }
+                        None => tracing::info_span!("cuda_commit_tier1_dense").in_scope(|| {
                             context.msm_rows_i128(bases, &collected.increments[index], row_width)
-                        })?
+                        })?,
                     };
                     tracing::info_span!("cuda_commit_tier2")
                         .in_scope(|| finish::<F, PCS>(setup, &rows, id))

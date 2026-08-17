@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, MulPow2};
 use jolt_lookup_tables::tables::LookupTableKind;
@@ -17,7 +19,7 @@ const RAF_LANES: usize = 6;
 const MAX_SUFFIXES: usize = 4;
 
 pub struct DeviceRows {
-    lookup_index: CudaSlice<u64>,
+    lookup_index: Arc<CudaSlice<u64>>,
     table_index: CudaSlice<u32>,
     raf_flag: CudaSlice<u8>,
     cycles: usize,
@@ -63,8 +65,29 @@ impl DeviceRows {
                 got: (bits.len() / 2).min(flags.len()),
             });
         }
+        Self::from_device(
+            context,
+            Arc::new(context.upload_u64_slice(bits)?),
+            tables,
+            flags,
+        )
+    }
+
+    pub fn from_device(
+        context: &CudaKernelContext,
+        lookup_index: Arc<CudaSlice<u64>>,
+        tables: &[u32],
+        flags: &[u8],
+    ) -> Result<Self, CudaError> {
+        let cycles = tables.len();
+        if lookup_index.len() != cycles * 2 || flags.len() != cycles {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: (lookup_index.len() / 2).min(flags.len()),
+            });
+        }
         Ok(Self {
-            lookup_index: context.upload_u64_slice(bits)?,
+            lookup_index,
             table_index: context.upload_u32_slice(tables)?,
             raf_flag: context.upload_u8_slice(flags)?,
             cycles,
@@ -75,7 +98,7 @@ impl DeviceRows {
         self.cycles
     }
 
-    pub(super) const fn lookup_index(&self) -> &CudaSlice<u64> {
+    pub(super) fn lookup_index(&self) -> &CudaSlice<u64> {
         &self.lookup_index
     }
 
@@ -168,7 +191,7 @@ pub fn init_raf_buckets(
 
     let mut keys = context.alloc_u32(rows.cycles)?;
     let mut builder = context.stream().launch_builder(context.ap_raf_keys());
-    let _ = builder.arg(&rows.lookup_index);
+    let _ = builder.arg(rows.lookup_index());
     let _ = builder.arg(&suffix_len_arg);
     let _ = builder.arg(&mut keys);
     let _ = builder.arg(&count);
@@ -191,7 +214,7 @@ pub fn init_raf_buckets(
     let _ = builder.arg(&segments.order);
     let _ = builder.arg(&segments.offsets);
     let _ = builder.arg(&segments.counts);
-    let _ = builder.arg(&rows.lookup_index);
+    let _ = builder.arg(rows.lookup_index());
     let _ = builder.arg(&rows.raf_flag);
     let _ = builder.arg(u_evals.limbs());
     let _ = builder.arg(&suffix_len_arg);
@@ -293,7 +316,7 @@ pub fn init_suffix_buckets(
 
     let mut keys = context.alloc_u32(rows.cycles)?;
     let mut builder = context.stream().launch_builder(context.ap_table_keys());
-    let _ = builder.arg(&rows.lookup_index);
+    let _ = builder.arg(rows.lookup_index());
     let _ = builder.arg(&rows.table_index);
     let _ = builder.arg(&device_slots);
     let _ = builder.arg(&table_count_arg);
@@ -320,7 +343,7 @@ pub fn init_suffix_buckets(
     let _ = builder.arg(&segments.order);
     let _ = builder.arg(&segments.offsets);
     let _ = builder.arg(&segments.counts);
-    let _ = builder.arg(&rows.lookup_index);
+    let _ = builder.arg(rows.lookup_index());
     let _ = builder.arg(u_evals.limbs());
     let _ = builder.arg(&device_suffix_ids);
     let _ = builder.arg(&device_suffix_offsets);
@@ -393,7 +416,7 @@ pub fn condense_u_evals(
     let suffix_len_arg = CudaKernelContext::count_of(suffix_len)?;
 
     let mut builder = context.stream().launch_builder(context.ap_condense());
-    let _ = builder.arg(&rows.lookup_index);
+    let _ = builder.arg(rows.lookup_index());
     let _ = builder.arg(u_evals.limbs_mut());
     let _ = builder.arg(v_prev.limbs());
     let _ = builder.arg(&suffix_len_arg);

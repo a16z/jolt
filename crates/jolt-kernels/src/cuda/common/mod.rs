@@ -2,6 +2,7 @@ pub(crate) mod address_major_matrix;
 pub(crate) mod context;
 pub(crate) mod dense_product;
 pub(crate) mod device;
+pub(crate) mod device_columns;
 pub(crate) mod error;
 pub(crate) mod half_fold;
 pub(crate) mod lt_poly;

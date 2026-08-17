@@ -10,10 +10,9 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
-
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device_columns::device_pc_words;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -208,22 +207,14 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
 
         let log_t = dimensions.log_t();
         let cycles = 1usize << log_t;
-        let rows =
-            cached_bundles::<witness::BytecodeReadRafCycleWitness, _>(session, witness, cycles)?;
-        let column = witness::packed_column(&rows).map_err(|_| KernelError::Unsupported {
-            reason: "the CUDA bytecode read-RAF kernel packs the bytecode PC into one 32-bit \
-                     word, reserving the all-ones word for a cold cycle",
-        })?;
-        drop(rows);
+        let column = device_pc_words::<F, _>(context, session, witness, cycles)?;
 
         let unsupported = || KernelError::Unsupported {
             reason: "the CUDA bytecode read-RAF kernel supports only the BN254 scalar field",
         };
         let one_hot = DeviceBytecodeRa::new(
             context,
-            context
-                .upload_u32_slice(&column)
-                .map_err(|_| unsupported())?,
+            column,
             cycles,
             relation.committed_chunk_bits(),
             &chunks,

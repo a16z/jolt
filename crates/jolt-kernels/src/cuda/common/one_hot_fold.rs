@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::Field;
 
 use super::context::{CudaKernelContext, BLOCK};
 use super::device::{require_fr_slice, DeviceFrVec};
+use super::device_columns::DeviceTraceColumns;
 use super::error::CudaError;
 
 pub const LANES: usize = 8;
@@ -33,9 +36,9 @@ impl Default for FoldTuning {
 }
 
 pub struct DeviceOneHotColumns {
-    lookup: CudaSlice<u64>,
-    pc: CudaSlice<u32>,
-    ram: CudaSlice<u32>,
+    lookup: Arc<CudaSlice<u64>>,
+    pc: Arc<CudaSlice<u32>>,
+    ram: Arc<CudaSlice<u32>>,
     families: [usize; 3],
     chunk_bits: usize,
     cycles: usize,
@@ -51,6 +54,40 @@ impl DeviceOneHotColumns {
         chunk_bits: usize,
         cycles: usize,
     ) -> Result<Self, CudaError> {
+        let lookup = if lookup.is_empty() {
+            context.alloc_u64(0)?
+        } else {
+            context.upload_u64_slice(lookup)?
+        };
+        let pc = if pc.is_empty() {
+            context.alloc_u32(0)?
+        } else {
+            context.upload_u32_slice(pc)?
+        };
+        let ram = if ram.is_empty() {
+            context.alloc_u32(0)?
+        } else {
+            context.upload_u32_slice(ram)?
+        };
+        Self::from_device(
+            DeviceTraceColumns {
+                lookup: Arc::new(lookup),
+                pc: Arc::new(pc),
+                ram: Arc::new(ram),
+            },
+            families,
+            chunk_bits,
+            cycles,
+        )
+    }
+
+    pub fn from_device(
+        columns: DeviceTraceColumns,
+        families: [usize; 3],
+        chunk_bits: usize,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
+        let DeviceTraceColumns { lookup, pc, ram } = columns;
         let polys = families.iter().sum::<usize>();
         if polys == 0 || chunk_bits == 0 {
             return Err(CudaError::InvariantViolation {
@@ -86,22 +123,6 @@ impl DeviceOneHotColumns {
                 got: ram.len(),
             });
         }
-
-        let lookup = if lookup.is_empty() {
-            context.alloc_u64(0)?
-        } else {
-            context.upload_u64_slice(lookup)?
-        };
-        let pc = if pc.is_empty() {
-            context.alloc_u32(0)?
-        } else {
-            context.upload_u32_slice(pc)?
-        };
-        let ram = if ram.is_empty() {
-            context.alloc_u32(0)?
-        } else {
-            context.upload_u32_slice(ram)?
-        };
         Ok(Self {
             lookup,
             pc,
@@ -110,14 +131,6 @@ impl DeviceOneHotColumns {
             chunk_bits,
             cycles,
         })
-    }
-
-    pub fn from_words(
-        context: &CudaKernelContext,
-        words: &[u32],
-        chunk_bits: usize,
-    ) -> Result<Self, CudaError> {
-        Self::new(context, &[], &[], words, [0, 0, 1], chunk_bits, words.len())
     }
 
     pub const fn polys(&self) -> usize {
@@ -188,9 +201,9 @@ impl DeviceOneHotColumns {
         let use_shared = u32::from(shared_bytes > 0);
 
         let mut builder = context.stream().launch_builder(context.ohf_fold());
-        let _ = builder.arg(&self.lookup);
-        let _ = builder.arg(&self.pc);
-        let _ = builder.arg(&self.ram);
+        let _ = builder.arg(self.lookup.as_ref());
+        let _ = builder.arg(self.pc.as_ref());
+        let _ = builder.arg(self.ram.as_ref());
         let _ = builder.arg(&instruction);
         let _ = builder.arg(&bytecode);
         let _ = builder.arg(&ram);
@@ -433,12 +446,20 @@ mod tests {
                 .iter()
                 .map(|address| address.map_or(COLD, |address| address as u32))
                 .collect();
-            let got = DeviceOneHotColumns::from_words(context, &words, chunk_bits)
-                .expect("upload packed addresses")
-                .fold_cycles(context, &cycle_point, FoldTuning::default())
-                .expect("device one-hot cycle fold")
-                .to_host()
-                .expect("download the folded table");
+            let got = DeviceOneHotColumns::new(
+                context,
+                &[],
+                &[],
+                &words,
+                [0, 0, 1],
+                chunk_bits,
+                words.len(),
+            )
+            .expect("upload packed addresses")
+            .fold_cycles(context, &cycle_point, FoldTuning::default())
+            .expect("device one-hot cycle fold")
+            .to_host()
+            .expect("download the folded table");
             assert_eq!(
                 got, expected,
                 "the fold diverged at chunk_bits {chunk_bits}"

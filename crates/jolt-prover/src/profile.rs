@@ -573,6 +573,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     // materialization, commitment, all sumcheck stages, joint opening). The
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
+    #[cfg(feature = "cuda")]
+    jolt_kernels::cuda::xfer_stats::reset();
     let now = Instant::now();
     let proof = crate::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
         &backend,
@@ -584,6 +586,8 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     )
     .expect("modular prove");
     let duration = now.elapsed();
+    #[cfg(feature = "cuda")]
+    let transfers = jolt_kernels::cuda::xfer_stats::snapshot();
 
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
         .expect("serialize proof")
@@ -615,6 +619,10 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             scale,
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
+    }
+    #[cfg(feature = "cuda")]
+    if transfers != jolt_kernels::cuda::xfer_stats::Snapshot::default() {
+        println!("{}", transfers.report());
     }
 
     // The same 7-field CSV line the legacy harness writes, in the run

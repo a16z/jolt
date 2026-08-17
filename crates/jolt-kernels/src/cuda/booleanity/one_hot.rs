@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::device_columns::DeviceTraceColumns;
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::one_hot_witness::PackedColumns;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
 pub const COLLAPSE_AFTER_ROUNDS: usize = 5;
@@ -14,9 +16,9 @@ pub const PACKED_BITS: usize = 32;
 const LANES: usize = 2;
 
 pub struct DeviceBooleanityRa {
-    lookup: CudaSlice<u64>,
-    pc: CudaSlice<u32>,
-    ram: CudaSlice<u32>,
+    lookup: Arc<CudaSlice<u64>>,
+    pc: Arc<CudaSlice<u32>>,
+    ram: Arc<CudaSlice<u32>>,
     tables: DeviceFrVec,
     rho: DeviceFrVec,
     dense: Option<DeviceFrVec>,
@@ -28,9 +30,9 @@ pub struct DeviceBooleanityRa {
 }
 
 impl DeviceBooleanityRa {
-    pub fn new<F: Field>(
+    pub fn from_device<F: Field>(
         context: &CudaKernelContext,
-        columns: PackedColumns,
+        columns: DeviceTraceColumns,
         cycles: usize,
         chunk_bits: usize,
         families: [usize; 3],
@@ -97,9 +99,9 @@ impl DeviceBooleanityRa {
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
 
         Ok(Self {
-            lookup: context.upload_u64_slice(&columns.lookup)?,
-            pc: context.upload_u32_slice(&columns.pc)?,
-            ram: context.upload_u32_slice(&columns.ram)?,
+            lookup: columns.lookup,
+            pc: columns.pc,
+            ram: columns.ram,
             tables,
             rho,
             dense: None,
@@ -198,9 +200,9 @@ impl DeviceBooleanityRa {
         let bits = CudaKernelContext::count_of(self.chunk_bits)?;
         let count = CudaKernelContext::count_of(len)?;
         let mut builder = context.stream().launch_builder(context.brc_gather());
-        let _ = builder.arg(&self.lookup);
-        let _ = builder.arg(&self.pc);
-        let _ = builder.arg(&self.ram);
+        let _ = builder.arg(self.lookup.as_ref());
+        let _ = builder.arg(self.pc.as_ref());
+        let _ = builder.arg(self.ram.as_ref());
         let _ = builder.arg(self.tables.limbs());
         let _ = builder.arg(&instruction);
         let _ = builder.arg(&bytecode);
@@ -285,9 +287,9 @@ impl DeviceBooleanityRa {
         if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS && self.len() > 1 {
             self.dense = Some(self.gather(context)?);
             self.tables = context.alloc(0)?;
-            self.lookup = context.alloc_u64(0)?;
-            self.pc = context.alloc_u32(0)?;
-            self.ram = context.alloc_u32(0)?;
+            self.lookup = Arc::new(context.alloc_u64(0)?);
+            self.pc = Arc::new(context.alloc_u32(0)?);
+            self.ram = Arc::new(context.alloc_u32(0)?);
         }
         Ok(())
     }
@@ -378,9 +380,9 @@ impl DeviceBooleanityRa {
             let mut builder = context
                 .stream()
                 .launch_builder(context.brc_message_sparse());
-            let _ = builder.arg(&self.lookup);
-            let _ = builder.arg(&self.pc);
-            let _ = builder.arg(&self.ram);
+            let _ = builder.arg(self.lookup.as_ref());
+            let _ = builder.arg(self.pc.as_ref());
+            let _ = builder.arg(self.ram.as_ref());
             let _ = builder.arg(self.tables.limbs());
             let _ = builder.arg(self.rho.limbs());
             let _ = builder.arg(&instruction);
@@ -435,8 +437,11 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 
+    use std::sync::Arc;
+
     use super::{DeviceBooleanityRa, COLLAPSE_AFTER_ROUNDS};
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::device_columns::DeviceTraceColumns;
     use crate::cuda::common::one_hot_witness::PackedColumns;
     use crate::cuda::common::pack::COLD;
     use crate::cuda::common::testing::{arb_point, fr};
@@ -542,8 +547,15 @@ mod tests {
 
             let mut expected =
                 expected_tables(&packed, cycles, chunk_bits, families, &point, gamma);
-            let mut got = DeviceBooleanityRa::new(
-                context, packed, cycles, chunk_bits, families, &point, gamma,
+            let uploaded = DeviceTraceColumns {
+                lookup: Arc::new(
+                    context.upload_u64_slice(&packed.lookup).expect("upload lookup"),
+                ),
+                pc: Arc::new(context.upload_u32_slice(&packed.pc).expect("upload pc")),
+                ram: Arc::new(context.upload_u32_slice(&packed.ram).expect("upload ram")),
+            };
+            let mut got = DeviceBooleanityRa::from_device(
+                context, uploaded, cycles, chunk_bits, families, &point, gamma,
             )
             .expect("device booleanity one-hot family");
 

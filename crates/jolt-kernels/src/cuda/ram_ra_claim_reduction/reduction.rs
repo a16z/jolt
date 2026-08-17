@@ -1,4 +1,4 @@
-use cudarc::driver::{LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
@@ -47,7 +47,7 @@ pub struct DeviceRamRaReduction {
 impl DeviceRamRaReduction {
     pub fn new<F: Field>(
         context: &CudaKernelContext,
-        words: &[u32],
+        words: &CudaSlice<u32>,
         eq_address: &DeviceFrVec,
         cycle_points: &CyclePoints<'_, F>,
         gamma: F,
@@ -107,15 +107,15 @@ impl DeviceRamRaReduction {
 
     fn gather_h(
         context: &CudaKernelContext,
-        words: &[u32],
+        words: &CudaSlice<u32>,
         eq_address: &DeviceFrVec,
         cycles: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let indices = context.upload_u32_slice(words)?;
+        let indices = words;
         let mut h = context.alloc(cycles)?;
         let count = CudaKernelContext::count_of(cycles)?;
         let mut builder = context.stream().launch_builder(context.ram_ra_gather_h());
-        let _ = builder.arg(&indices);
+        let _ = builder.arg(indices);
         let _ = builder.arg(eq_address.limbs());
         let _ = builder.arg(h.limbs_mut());
         let _ = builder.arg(&count);
@@ -530,6 +530,9 @@ mod tests {
             let Some(context) = shared_context() else { return Ok(()); };
             let indices = hot_indices(seed);
             let words = packed(&indices);
+            let device_words = context
+                .upload_u32_slice(&words)
+                .expect("upload the packed ram words");
             let eq_address = eq_table(&address);
             let device_eq = context.upload(&eq_address).expect("upload eq address");
             let points = CyclePoints {
@@ -538,7 +541,7 @@ mod tests {
                 val_check: &val_check,
             };
             let state = DeviceRamRaReduction::new(
-                context, &words, &device_eq, &points, gamma[0], LOG_T,
+                context, &device_words, &device_eq, &points, gamma[0], LOG_T,
             ).expect("device ram ra reduction");
 
             let prefix_vars = LOG_T / 2;
@@ -574,6 +577,9 @@ mod tests {
             let Some(context) = shared_context() else { return Ok(()); };
             let indices = hot_indices(seed);
             let words = packed(&indices);
+            let device_words = context
+                .upload_u32_slice(&words)
+                .expect("upload the packed ram words");
             let eq_address = eq_table(&address);
             let device_eq = context.upload(&eq_address).expect("upload eq address");
             let points = CyclePoints {
@@ -582,7 +588,7 @@ mod tests {
                 val_check: &val_check,
             };
             let mut state = DeviceRamRaReduction::new(
-                context, &words, &device_eq, &points, gamma[0], LOG_T,
+                context, &device_words, &device_eq, &points, gamma[0], LOG_T,
             ).expect("device ram ra reduction");
 
             for &challenge in &challenges {

@@ -9,10 +9,9 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
-
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device_columns::device_lookup_limbs;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -179,15 +178,7 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for CudaBackend 
         }
 
         let cycles = 1usize << dimensions.log_t();
-        let rows = cached_bundles::<witness::InstructionRaVirtualizationWitness, _>(
-            session, witness, cycles,
-        )?;
-        let words = witness::packed_words(&rows);
-        drop(rows);
-        let packed = context
-            .upload_u64_slice(&words)
-            .map_err(|_| unsupported())?;
-        drop(words);
+        let packed = device_lookup_limbs::<F, _>(context, session, witness, cycles)?;
 
         let one_hot = DevicePackedRa::new(
             context,

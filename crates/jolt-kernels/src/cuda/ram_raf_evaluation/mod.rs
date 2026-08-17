@@ -8,12 +8,12 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
-
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
 use crate::cuda::common::one_hot_fold::{affine_table, DeviceOneHotColumns, FoldTuning};
-use crate::cuda::common::ram_address_witness::{packed_ram_words, RamAddressWitness};
+use std::sync::Arc;
+
+use crate::cuda::common::device_columns::{device_ram_words, DeviceTraceColumns};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -43,16 +43,18 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
         }
 
         let cycles = 1usize << relation.tau_low().len();
-        let rows = cached_bundles::<RamAddressWitness, _>(session, witness, cycles)?;
         let words =
-            packed_ram_words(&rows, 1usize << ram_log_k).map_err(|_| KernelError::Unsupported {
-                reason: "the CUDA RAM RAF evaluation packs each remapped RAM word address into \
-                         one 32-bit word below the RAM address space, reserving the all-ones \
-                         word for a cold cycle",
-            })?;
-        drop(rows);
-        let columns = DeviceOneHotColumns::from_words(context, &words, ram_log_k)?;
-        drop(words);
+            device_ram_words::<F, _>(context, session, witness, cycles, 1usize << ram_log_k)?;
+        let columns = DeviceOneHotColumns::from_device(
+            DeviceTraceColumns {
+                lookup: Arc::new(context.alloc_u64(0)?),
+                pc: Arc::new(context.alloc_u32(0)?),
+                ram: words,
+            },
+            [0, 0, 1],
+            ram_log_k,
+            cycles,
+        )?;
 
         let folded = columns.fold_cycles(context, relation.tau_low(), FoldTuning::default())?;
         drop(columns);

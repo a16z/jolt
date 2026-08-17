@@ -1,4 +1,5 @@
 #define POINT_BLOCK 128
+#define MSM_COLD 0xFFFFFFFFu
 
 __device__ __constant__ u64 FQ_MODULUS[4] = {
     0x3c208c16d87cfd47ULL, 0x97816a916871ca8dULL,
@@ -477,6 +478,37 @@ extern "C" __global__ void msm_bucket_scatter_kernel(const unsigned int *__restr
     unsigned int column = i % row_len;
     unsigned int position = atomicAdd(&cursor[row * buckets + digit], 1u);
     indices[position] = column | ((unsigned int)signs[i] << 31);
+}
+
+extern "C" __global__ void msm_one_hot_count_kernel(const unsigned int *__restrict__ hot,
+                                                   unsigned int cycles, unsigned int chunk_len,
+                                                   unsigned int chunk_count,
+                                                   unsigned int one_hot_k,
+                                                   unsigned int *__restrict__ counts) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= cycles) return;
+    unsigned int address = hot[i];
+    if (address == MSM_COLD) return;
+    if (address >= one_hot_k) {
+        atomicAdd(&counts[one_hot_k * chunk_count], 1u);
+        return;
+    }
+    atomicAdd(&counts[address * chunk_count + i / chunk_len], 1u);
+}
+
+extern "C" __global__ void msm_one_hot_scatter_kernel(const unsigned int *__restrict__ hot,
+                                                     unsigned int cycles, unsigned int chunk_len,
+                                                     unsigned int chunk_count,
+                                                     unsigned int one_hot_k,
+                                                     unsigned int *__restrict__ cursor,
+                                                     unsigned int *__restrict__ indices) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= cycles) return;
+    unsigned int address = hot[i];
+    if (address == MSM_COLD || address >= one_hot_k) return;
+    unsigned int segment = address * chunk_count + i / chunk_len;
+    unsigned int position = atomicAdd(&cursor[segment], 1u);
+    indices[position] = i % chunk_len;
 }
 
 extern "C" __global__ void msm_segment_sum_kernel(const u64 *__restrict__ bases,

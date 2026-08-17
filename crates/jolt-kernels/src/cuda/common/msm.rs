@@ -7,6 +7,8 @@ use jolt_field::Fr;
 
 use super::device::DeviceFrVec;
 use super::error::CudaError;
+#[cfg(test)]
+use super::pack::COLD;
 use super::xfer_stats::{self, Phase};
 
 pub const FQ_LIMBS: usize = 4;
@@ -467,6 +469,7 @@ impl CudaKernelContext {
         self.pippenger(bases, &device, &signs, rows.len(), row_len, 64)
     }
 
+    #[cfg(test)]
     pub fn one_hot_chunk_sums(
         &self,
         bases: &DeviceG1Bases,
@@ -515,10 +518,11 @@ impl CudaKernelContext {
         self.segment_sums(bases, &indices, &offsets, &counts, one_hot_k)
     }
 
+    #[cfg(test)]
     pub fn one_hot_rows(
         &self,
         bases: &DeviceG1Bases,
-        hot: &[Option<usize>],
+        hot: &[u32],
         one_hot_k: usize,
         chunk_len: usize,
     ) -> Result<Vec<JacobianLimbs>, CudaError> {
@@ -536,31 +540,161 @@ impl CudaKernelContext {
         }
         let chunk_count = hot.len() / chunk_len;
         let segments = one_hot_k * chunk_count;
-        let mut counts = vec![0u32; segments];
-        for (column, row) in hot.iter().enumerate() {
-            let Some(row) = *row else { continue };
-            if row >= one_hot_k {
-                return Err(CudaError::InvariantViolation {
-                    reason: "a one-hot address lies outside the declared address count",
-                });
-            }
-            counts[row * chunk_count + column / chunk_len] += 1;
+        let (indices, offsets, counts) =
+            tracing::info_span!("cuda_commit_one_hot_csr", segments, cycles = hot.len()).in_scope(
+                || {
+                    let mut counts = vec![0u32; segments];
+                    for (column, &row) in hot.iter().enumerate() {
+                        if row == COLD {
+                            continue;
+                        }
+                        let row = row as usize;
+                        if row >= one_hot_k {
+                            return Err(CudaError::InvariantViolation {
+                                reason: "a one-hot address lies outside the declared address count",
+                            });
+                        }
+                        counts[row * chunk_count + column / chunk_len] += 1;
+                    }
+                    let mut offsets = Vec::with_capacity(segments);
+                    let mut running = 0u32;
+                    for &count in &counts {
+                        offsets.push(running);
+                        running += count;
+                    }
+                    let mut cursor = offsets.clone();
+                    let mut indices = vec![0u32; running as usize];
+                    for (column, &row) in hot.iter().enumerate() {
+                        if row == COLD {
+                            continue;
+                        }
+                        let segment = row as usize * chunk_count + column / chunk_len;
+                        indices[cursor[segment] as usize] = (column % chunk_len) as u32;
+                        cursor[segment] += 1;
+                    }
+                    Ok((indices, offsets, counts))
+                },
+            )?;
+        tracing::info_span!("cuda_commit_one_hot_segments", segments)
+            .in_scope(|| self.segment_sums(bases, &indices, &offsets, &counts, segments))
+    }
+
+    pub fn one_hot_rows_device(
+        &self,
+        bases: &DeviceG1Bases,
+        hot: &CudaSlice<u32>,
+        cycles: usize,
+        one_hot_k: usize,
+        chunk_len: usize,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        if one_hot_k == 0 || chunk_len == 0 || !cycles.is_multiple_of(chunk_len) {
+            return Err(CudaError::LengthMismatch {
+                expected: chunk_len,
+                got: cycles,
+            });
         }
-        let mut offsets = Vec::with_capacity(segments);
-        let mut running = 0u32;
-        for &count in &counts {
-            offsets.push(running);
-            running += count;
+        if bases.count() < chunk_len {
+            return Err(CudaError::LengthMismatch {
+                expected: chunk_len,
+                got: bases.count(),
+            });
         }
-        let mut cursor = offsets.clone();
-        let mut indices = vec![0u32; running as usize];
-        for (column, row) in hot.iter().enumerate() {
-            let Some(row) = *row else { continue };
-            let segment = row * chunk_count + column / chunk_len;
-            indices[cursor[segment] as usize] = (column % chunk_len) as u32;
-            cursor[segment] += 1;
+        if hot.len() < cycles {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: hot.len(),
+            });
         }
-        self.segment_sums(bases, &indices, &offsets, &counts, segments)
+        let chunk_count = cycles / chunk_len;
+        let segments = one_hot_k * chunk_count;
+        let cycle_count = Self::count_of(cycles)?;
+        let chunk_len_arg = Self::count_of(chunk_len)?;
+        let chunk_count_arg = Self::count_of(chunk_count)?;
+        let one_hot_k_arg = Self::count_of(one_hot_k)?;
+
+        let mut counts = self.alloc_u32(segments + 1)?;
+        let mut builder = self.stream().launch_builder(self.msm_one_hot_count());
+        let _ = builder.arg(hot);
+        let _ = builder.arg(&cycle_count);
+        let _ = builder.arg(&chunk_len_arg);
+        let _ = builder.arg(&chunk_count_arg);
+        let _ = builder.arg(&one_hot_k_arg);
+        let _ = builder.arg(&mut counts);
+        // SAFETY: thread `i < cycles` reads only `hot[i]`, of a buffer whose
+        // length is checked against `cycles` above. A live address below
+        // `one_hot_k` atomically increments
+        // `counts[address * chunk_count + i / chunk_len]`, which is `< segments`
+        // because `i / chunk_len < chunk_count`; an out-of-range address
+        // increments the one extra trailing slot instead, and a cold cycle
+        // increments nothing. `counts` holds `segments + 1` u32s zeroed by
+        // `alloc_u32`, so every increment is in bounds and concurrent hits on
+        // one counter are atomic.
+        let _ = unsafe { builder.launch(Self::launch_config(cycle_count)) }?;
+        self.stream().synchronize()?;
+
+        let (offsets, total, widest) = tracing::info_span!("cuda_commit_one_hot_scan", segments)
+            .in_scope(|| {
+                let histogram = self.download_u32(&counts)?;
+                if histogram[segments] != 0 {
+                    return Err(CudaError::InvariantViolation {
+                        reason: "a one-hot address lies outside the declared address count",
+                    });
+                }
+                let mut offsets = Vec::with_capacity(segments);
+                let mut running = 0u32;
+                let mut widest = 0u32;
+                for &count in &histogram[..segments] {
+                    offsets.push(running);
+                    widest = widest.max(count);
+                    running = running
+                        .checked_add(count)
+                        .ok_or(CudaError::InvariantViolation {
+                            reason: "a one-hot segment plan holds more than u32::MAX entries",
+                        })?;
+                }
+                Ok((
+                    self.upload_u32_slice(&offsets)?,
+                    running as usize,
+                    widest as usize,
+                ))
+            })?;
+
+        let mut cursor = self.clone_u32(&offsets)?;
+        let mut indices = self.alloc_u32(total.max(1))?;
+        let mut builder = self.stream().launch_builder(self.msm_one_hot_scatter());
+        let _ = builder.arg(hot);
+        let _ = builder.arg(&cycle_count);
+        let _ = builder.arg(&chunk_len_arg);
+        let _ = builder.arg(&chunk_count_arg);
+        let _ = builder.arg(&one_hot_k_arg);
+        let _ = builder.arg(&mut cursor);
+        let _ = builder.arg(&mut indices);
+        // SAFETY: thread `i < cycles` reads `hot[i]` and, for a live in-range
+        // address, atomically bumps `cursor[segment]` for the same `segment
+        // < segments` the count kernel used, inside the `segments`-element copy
+        // of the scan offsets. Because the cursor starts at the exclusive scan
+        // of the very histogram those threads produced, the slots handed out are
+        // exactly the `total` positions of `indices`, one per thread, so the
+        // writes are disjoint and in bounds. Cold and out-of-range cycles were
+        // excluded from the histogram and return without writing.
+        let _ = unsafe { builder.launch(Self::launch_config(cycle_count)) }?;
+        self.stream().synchronize()?;
+
+        let mut output = self.alloc_u64(segments * 3 * FQ_LIMBS)?;
+        tracing::info_span!("cuda_commit_one_hot_segments", segments).in_scope(|| {
+            self.launch_segment_sums(
+                bases,
+                SegmentPlan {
+                    indices: &indices,
+                    offsets: &offsets,
+                    counts: &counts,
+                    segments,
+                    widest,
+                },
+                &mut output,
+            )
+        })?;
+        Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
     fn canonical_scalars(&self, values: &DeviceFrVec) -> Result<CudaSlice<u64>, CudaError> {
@@ -582,6 +716,7 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    #[cfg(test)]
     fn segment_sums(
         &self,
         bases: &DeviceG1Bases,
@@ -998,27 +1133,33 @@ impl CudaKernelContext {
         output.to_host()
     }
 
-    pub(crate) fn one_hot_embed(
+    pub(crate) fn one_hot_embed_device(
         &self,
-        hot: &[u32],
+        device_hot: &CudaSlice<u32>,
+        cycles: usize,
         domain: usize,
     ) -> Result<DeviceFrVec, CudaError> {
         let mut output = self.alloc(domain)?;
-        if hot.is_empty() {
+        if cycles == 0 {
             return Ok(output);
         }
-        let device_hot = self.upload_u32_slice(hot)?;
-        let cycles = u64::try_from(hot.len()).map_err(|_| CudaError::LengthMismatch {
+        if device_hot.len() < cycles {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: device_hot.len(),
+            });
+        }
+        let count = Self::count_of(cycles)?;
+        let cycles = u64::try_from(cycles).map_err(|_| CudaError::LengthMismatch {
             expected: u32::MAX as usize,
-            got: hot.len(),
+            got: count as usize,
         })?;
         let domain_arg = u64::try_from(domain).map_err(|_| CudaError::LengthMismatch {
             expected: u32::MAX as usize,
             got: domain,
         })?;
-        let count = Self::count_of(hot.len())?;
         let mut builder = self.stream().launch_builder(self.opening_one_hot_embed());
-        let _ = builder.arg(&device_hot);
+        let _ = builder.arg(device_hot);
         let _ = builder.arg(&cycles);
         let _ = builder.arg(&domain_arg);
         let _ = builder.arg(output.limbs_mut());
@@ -1032,28 +1173,28 @@ impl CudaKernelContext {
         Ok(output)
     }
 
-    pub(crate) fn one_hot_fold(
+    pub(crate) fn one_hot_fold_device(
         &self,
-        hot: &[u32],
+        device_hot: &CudaSlice<u32>,
+        cycles: usize,
         left: &[Fr],
         sigma: usize,
     ) -> Result<Vec<Fr>, CudaError> {
         let columns = 1usize << sigma;
         let mut output = self.alloc(columns)?;
-        if hot.is_empty() {
+        if cycles == 0 {
             return output.to_host();
         }
-        if columns > hot.len() {
+        if columns > cycles || device_hot.len() < cycles {
             return Err(CudaError::LengthMismatch {
                 expected: columns,
-                got: hot.len(),
+                got: cycles.min(device_hot.len()),
             });
         }
         let device_left = self.upload(left)?;
-        let device_hot = self.upload_u32_slice(hot)?;
-        let cycles = u64::try_from(hot.len()).map_err(|_| CudaError::LengthMismatch {
+        let cycles = u64::try_from(cycles).map_err(|_| CudaError::LengthMismatch {
             expected: u32::MAX as usize,
-            got: hot.len(),
+            got: cycles,
         })?;
         let columns_u64 = u64::try_from(columns).map_err(|_| CudaError::LengthMismatch {
             expected: u32::MAX as usize,
@@ -1069,7 +1210,7 @@ impl CudaKernelContext {
         })?;
         let columns_arg = Self::count_of(columns)?;
         let mut builder = self.stream().launch_builder(self.opening_one_hot_fold());
-        let _ = builder.arg(&device_hot);
+        let _ = builder.arg(device_hot);
         let _ = builder.arg(device_left.limbs());
         let _ = builder.arg(&cycles);
         let _ = builder.arg(&columns_u64);
@@ -1211,6 +1352,84 @@ mod tests {
 
     fn msm_bases() -> Vec<G1Affine> {
         (0..MSM_ROW_LEN).map(|i| affine(i as u64 + 3)).collect()
+    }
+
+    const CSR_GEOMETRIES: [(usize, usize, usize); 4] =
+        [(16, 4, 5), (64, 16, 4), (4096, 2048, 8), (256, 256, 3)];
+
+    fn csr_hot(cycles: usize, one_hot_k: usize, seed: u64) -> Vec<u32> {
+        (0..cycles)
+            .map(|cycle| {
+                let mixed = (cycle as u64)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .wrapping_add(seed);
+                if mixed.is_multiple_of(5) {
+                    super::COLD
+                } else {
+                    1 + (mixed >> 17) as u32 % (one_hot_k as u32 - 1)
+                }
+            })
+            .collect()
+    }
+
+    fn csr_segment_counts(hot: &[u32], one_hot_k: usize, chunk_len: usize) -> Vec<usize> {
+        let chunk_count = hot.len() / chunk_len;
+        let mut counts = vec![0usize; one_hot_k * chunk_count];
+        for (column, &address) in hot.iter().enumerate() {
+            if address != super::COLD {
+                counts[address as usize * chunk_count + column / chunk_len] += 1;
+            }
+        }
+        counts
+    }
+
+    #[test]
+    fn fixture_csr_geometries_cover_both_segment_kernels() {
+        let mut narrow = 0usize;
+        let mut wide = 0usize;
+        let mut empty_segments = 0usize;
+        let mut multi_chunk = 0usize;
+        for (index, &(cycles, chunk_len, one_hot_k)) in CSR_GEOMETRIES.iter().enumerate() {
+            assert!(
+                cycles.is_multiple_of(chunk_len) && one_hot_k > 1,
+                "geometry {index}: the cycle count must tile into whole chunks over at least \
+                 two addresses",
+            );
+            let hot = csr_hot(cycles, one_hot_k, 31 + index as u64);
+            assert!(
+                hot.contains(&super::COLD),
+                "geometry {index}: no cold cycle, so a scatter that ignored the sentinel would \
+                 pass",
+            );
+            let counts = csr_segment_counts(&hot, one_hot_k, chunk_len);
+            let widest = counts.iter().copied().max().unwrap_or(0);
+            if widest <= super::SMALL_SEGMENT_LIMIT {
+                narrow += 1;
+            } else {
+                wide += 1;
+            }
+            if counts.contains(&0) {
+                empty_segments += 1;
+            }
+            if cycles / chunk_len > 1 {
+                multi_chunk += 1;
+            }
+        }
+        assert!(
+            narrow > 0 && wide > 0,
+            "the geometries reach only one of the two segment-sum kernels ({narrow} narrow, \
+             {wide} wide), so the widest-segment decision the device plan has to make is \
+             untested",
+        );
+        assert!(
+            empty_segments > 0,
+            "no geometry leaves a segment empty, so an offsets/counts pair that mishandled a \
+             zero-length window would pass",
+        );
+        assert!(
+            multi_chunk > 0,
+            "every geometry is a single chunk, so a key that dropped the chunk term would pass",
+        );
     }
 
     fn one_hot_chunk() -> Vec<Option<usize>> {
@@ -1629,15 +1848,96 @@ mod tests {
                     })
                     .collect()
             };
+            let words: Vec<u32> = hot
+                .iter()
+                .map(|row| row.map_or(super::COLD, |address| address as u32))
+                .collect();
             let got = projectives(
                 &context
-                    .one_hot_rows(&device_bases, &hot, ONE_HOT_K, chunk_len)
+                    .one_hot_rows(&device_bases, &words, ONE_HOT_K, chunk_len)
                     .expect("device one_hot_rows"),
             );
             prop_assert_eq!(
                 got,
                 expected,
                 "the batched row form must equal the per-chunk form transposed"
+            );
+        }
+
+        #[test]
+        fn one_hot_rows_device_matches_the_host_csr(seed in any::<u64>()) {
+            let Some(context) = device() else { return Ok(()); };
+            for (index, &(cycles, chunk_len, one_hot_k)) in CSR_GEOMETRIES.iter().enumerate() {
+                let hot = csr_hot(cycles, one_hot_k, seed ^ index as u64);
+                let bases: Vec<G1Affine> = (0..chunk_len)
+                    .map(|column| affine(column as u64 + 1))
+                    .collect();
+                let device_bases = context
+                    .upload_g1_bases(&bases.iter().copied().map(affine_limbs).collect::<Vec<_>>())
+                    .expect("upload bases");
+                let device_hot = context
+                    .upload_u32_slice(&hot)
+                    .expect("upload the hot column");
+
+                let expected = projectives(
+                    &context
+                        .one_hot_rows(&device_bases, &hot, one_hot_k, chunk_len)
+                        .expect("host one_hot_rows"),
+                );
+                let got = projectives(
+                    &context
+                        .one_hot_rows_device(
+                            &device_bases,
+                            &device_hot,
+                            cycles,
+                            one_hot_k,
+                            chunk_len,
+                        )
+                        .expect("device one_hot_rows"),
+                );
+                prop_assert_eq!(
+                    got,
+                    expected,
+                    "geometry {} (cycles {}, chunk_len {}, one_hot_k {}): the device segment \
+                     plan diverged from the host one",
+                    index,
+                    cycles,
+                    chunk_len,
+                    one_hot_k
+                );
+            }
+        }
+
+        #[test]
+        fn one_hot_rows_device_rejects_an_address_past_the_chunk(
+            cycle in prop::sample::select(vec![0usize, 7, 63]),
+        ) {
+            let Some(context) = device() else { return Ok(()); };
+            let (cycles, chunk_len, one_hot_k) = (64usize, 16usize, 4usize);
+            let mut hot = csr_hot(cycles, one_hot_k, 5);
+            hot[cycle] = one_hot_k as u32;
+            let bases: Vec<G1Affine> = (0..chunk_len)
+                .map(|column| affine(column as u64 + 1))
+                .collect();
+            let device_bases = context
+                .upload_g1_bases(&bases.iter().copied().map(affine_limbs).collect::<Vec<_>>())
+                .expect("upload bases");
+            let device_hot = context
+                .upload_u32_slice(&hot)
+                .expect("upload the hot column");
+            prop_assert!(
+                context
+                    .one_hot_rows(&device_bases, &hot, one_hot_k, chunk_len)
+                    .is_err(),
+                "the host CSR build accepted an address past the chunk, so it cannot say what \
+                 the device one should do"
+            );
+            prop_assert!(
+                context
+                    .one_hot_rows_device(&device_bases, &device_hot, cycles, one_hot_k, chunk_len)
+                    .is_err(),
+                "the device CSR build accepted an address past the chunk: the scatter drops such \
+                 a cycle, so the commitment would silently omit it"
             );
         }
 

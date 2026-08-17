@@ -210,6 +210,8 @@ pub struct CudaKernelContext {
     msm_digits: CudaFunction,
     msm_bucket_count: CudaFunction,
     msm_bucket_scatter: CudaFunction,
+    msm_one_hot_count: CudaFunction,
+    msm_one_hot_scatter: CudaFunction,
     msm_segment_sum: CudaFunction,
     msm_segment_sum_small: CudaFunction,
     msm_bucket_reduce_parallel: CudaFunction,
@@ -369,6 +371,8 @@ impl CudaKernelContext {
             msm_digits: module.load_function("msm_digits_kernel")?,
             msm_bucket_count: module.load_function("msm_bucket_count_kernel")?,
             msm_bucket_scatter: module.load_function("msm_bucket_scatter_kernel")?,
+            msm_one_hot_count: module.load_function("msm_one_hot_count_kernel")?,
+            msm_one_hot_scatter: module.load_function("msm_one_hot_scatter_kernel")?,
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
             msm_bucket_reduce_parallel: module
@@ -714,6 +718,14 @@ impl CudaKernelContext {
 
     pub(crate) const fn msm_bucket_scatter(&self) -> &CudaFunction {
         &self.msm_bucket_scatter
+    }
+
+    pub(crate) const fn msm_one_hot_count(&self) -> &CudaFunction {
+        &self.msm_one_hot_count
+    }
+
+    pub(crate) const fn msm_one_hot_scatter(&self) -> &CudaFunction {
+        &self.msm_one_hot_scatter
     }
 
     pub(crate) const fn msm_segment_sum(&self) -> &CudaFunction {

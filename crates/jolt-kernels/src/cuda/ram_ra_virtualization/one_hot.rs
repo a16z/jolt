@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Field, Fr};
 use jolt_poly::BindingOrder;
@@ -14,7 +16,7 @@ pub const MAX_LANES: usize = 8;
 pub const PACKED_BITS: usize = 32;
 
 pub struct DevicePackedRamRa {
-    packed: CudaSlice<u32>,
+    packed: Arc<CudaSlice<u32>>,
     tables: DeviceFrVec,
     dense: Vec<DeviceFrVec>,
     polys: usize,
@@ -27,7 +29,7 @@ pub struct DevicePackedRamRa {
 impl DevicePackedRamRa {
     pub fn new<F: Field>(
         context: &CudaKernelContext,
-        packed: CudaSlice<u32>,
+        packed: Arc<CudaSlice<u32>>,
         cycles: usize,
         chunk_bits: usize,
         address_point: &[F],
@@ -152,7 +154,7 @@ impl DevicePackedRamRa {
         let committed = CudaKernelContext::count_of(self.polys)?;
         let count = CudaKernelContext::count_of(len)?;
         let mut builder = context.stream().launch_builder(context.rrv_gather());
-        let _ = builder.arg(&self.packed);
+        let _ = builder.arg(self.packed.as_ref());
         let _ = builder.arg(self.tables.limbs());
         let _ = builder.arg(&pointers);
         let _ = builder.arg(&addresses);
@@ -234,7 +236,7 @@ impl DevicePackedRamRa {
         if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS && self.len() > 1 {
             self.dense = self.gather(context)?;
             self.tables = context.alloc(0)?;
-            self.packed = context.alloc_u32(0)?;
+            self.packed = Arc::new(context.alloc_u32(0)?);
         }
         Ok(())
     }
@@ -330,7 +332,7 @@ impl DevicePackedRamRa {
             let mut builder = context
                 .stream()
                 .launch_builder(context.rrv_message_sparse());
-            let _ = builder.arg(&self.packed);
+            let _ = builder.arg(self.packed.as_ref());
             let _ = builder.arg(self.tables.limbs());
             let _ = builder.arg(&addresses);
             let _ = builder.arg(&slots);
@@ -379,6 +381,8 @@ impl DevicePackedRamRa {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
+    use std::sync::Arc;
+
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
@@ -444,7 +448,8 @@ mod tests {
                 })
                 .collect();
 
-            let packed = context.upload_u32_slice(&words).expect("upload packed address");
+            let packed =
+                Arc::new(context.upload_u32_slice(&words).expect("upload packed address"));
             let mut got = DevicePackedRamRa::new(context, packed, cycles, chunk_bits, &point)
                 .expect("device packed RAM one-hot family");
 
