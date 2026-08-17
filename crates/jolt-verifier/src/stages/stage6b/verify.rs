@@ -1,7 +1,8 @@
 use crate::stages::relations::OutputAppend;
 use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
-    BytecodeClaimReductionLayout, JoltRelationId, PrecommittedReductionLayout,
+    BytecodeClaimReductionLayout, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+    PrecommittedReductionLayout,
 };
 use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
@@ -227,6 +228,11 @@ where
             reason: "Stage 6 booleanity produced no opening point".to_string(),
         })?
         .to_vec();
+    validate_bytecode_ra_aliases(
+        claims,
+        &cycle_points.bytecode_read_raf.bytecode_ra,
+        &booleanity_opening_point,
+    )?;
     append_opening_claims(
         transcript,
         claims,
@@ -510,6 +516,37 @@ pub fn stage6b_opening_values<F: Field>(
         values.extend(reduction.opening_values());
     }
     values
+}
+
+fn validate_bytecode_ra_aliases<F: Field>(
+    claims: &Stage6bOutputClaims<F>,
+    bytecode_read_raf_points: &[Vec<F>],
+    booleanity_point: &[F],
+) -> Result<(), VerifierError> {
+    for (index, booleanity_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
+        if !bytecode_read_raf_points
+            .get(index)
+            .is_some_and(|point| point.as_slice() == booleanity_point)
+        {
+            continue;
+        }
+
+        let polynomial = JoltCommittedPolynomial::BytecodeRa(index);
+        let source_id = JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf);
+        let source_claim = claims
+            .bytecode_read_raf
+            .bytecode_ra
+            .get(index)
+            .ok_or(VerifierError::MissingOpeningClaim { id: source_id })?;
+        if booleanity_claim != source_claim {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: format!("{:?}", JoltRelationId::Booleanity),
+                left: JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity),
+                right: source_id,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn append_opening_claims<F, T>(
@@ -843,5 +880,53 @@ mod tests {
         }
 
         assert_eq!(got.chunks, want.chunks);
+    }
+
+    #[test]
+    fn bytecode_runtime_alias_requires_equal_claims() {
+        let (mut claims, _) = sample_claims();
+        let alias_point = vec![fr(41), fr(42)];
+        let other_point = vec![fr(43), fr(44)];
+        let bytecode_points = vec![alias_point.clone(), other_point];
+        let source_claim = claims
+            .bytecode_read_raf
+            .bytecode_ra
+            .first()
+            .copied()
+            .expect("sample has a bytecode read-RAF claim");
+        *claims
+            .booleanity
+            .bytecode_ra
+            .first_mut()
+            .expect("sample has a bytecode booleanity claim") = fr(1) - source_claim;
+
+        let error = validate_bytecode_ra_aliases(&claims, &bytecode_points, &alias_point)
+            .expect_err("mismatched evaluations at an aliased point must be rejected");
+        let polynomial = JoltCommittedPolynomial::BytecodeRa(0);
+        assert!(matches!(
+            error,
+            VerifierError::StageClaimOpeningMismatch { stage, left, right }
+                if stage == "Booleanity"
+                    && left
+                        == JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity)
+                    && right
+                        == JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf)
+        ));
+
+        *claims
+            .booleanity
+            .bytecode_ra
+            .first_mut()
+            .expect("sample has a bytecode booleanity claim") = source_claim;
+        validate_bytecode_ra_aliases(&claims, &bytecode_points, &alias_point)
+            .expect("equal evaluations at an aliased point must validate");
+
+        *claims
+            .booleanity
+            .bytecode_ra
+            .first_mut()
+            .expect("sample has a bytecode booleanity claim") = fr(99);
+        validate_bytecode_ra_aliases(&claims, &bytecode_points, &[fr(45), fr(46)])
+            .expect("different evaluations at different points are not aliases");
     }
 }
