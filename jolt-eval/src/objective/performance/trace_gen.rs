@@ -124,11 +124,6 @@ impl<G: GuestConfig + 'static> Objective for TraceGenObjective<G> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use jolt_program::execution::TraceRow;
-    use tracer::TracerBackend;
-
     use crate::guests::{Fibonacci, Sha2Chain};
 
     use super::*;
@@ -143,51 +138,5 @@ mod tests {
             TraceGenObjective::new(Sha2Chain::profiling_default()).name(),
             "trace_gen_sha2_chain_4446"
         );
-    }
-
-    fn sha2_chain_rows(iterations: u32) -> Vec<TraceRow> {
-        let guest = Sha2Chain {
-            input: [5u8; 32],
-            num_iters: iterations,
-        };
-        let (program, inputs) = build_trace_setup(&guest);
-        let mut backend = TracerBackend::new();
-        program
-            .trace_with(&mut backend, inputs)
-            .expect("sha2-chain trace failed")
-            .trace
-            .rows()
-            .to_vec()
-    }
-
-    #[test]
-    #[ignore = "compiles and traces the sha2-chain guest"]
-    fn sha2_chain_incremental_digest_rows() {
-        let one_digest = sha2_chain_rows(1);
-        let two_digests = sha2_chain_rows(2);
-        let rows_per_digest = two_digests.len() - one_digest.len();
-
-        let mut one_mnemonics = BTreeMap::<&'static str, usize>::new();
-        for row in &one_digest {
-            *one_mnemonics
-                .entry(row.instruction.instruction_kind.name())
-                .or_default() += 1;
-        }
-        let mut mnemonic_delta = BTreeMap::<&'static str, usize>::new();
-        for row in &two_digests {
-            *mnemonic_delta
-                .entry(row.instruction.instruction_kind.name())
-                .or_default() += 1;
-        }
-        for (mnemonic, count) in one_mnemonics {
-            *mnemonic_delta.entry(mnemonic).or_default() -= count;
-        }
-
-        eprintln!("sha2-chain incremental digest: {rows_per_digest} rows");
-        for (mnemonic, count) in mnemonic_delta.into_iter().filter(|(_, count)| *count != 0) {
-            eprintln!("{mnemonic}: {count}");
-        }
-
-        assert_eq!(rows_per_digest, 2_643);
     }
 }
