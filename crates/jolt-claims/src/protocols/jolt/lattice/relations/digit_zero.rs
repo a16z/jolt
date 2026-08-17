@@ -123,8 +123,16 @@ pub struct LatticeDigitZeroClaimReductionOutputClaims<C> {
     pub balanced_inc_carry: C,
 }
 
-/// The lattice instantiation of the stage-7 reduction slot. It keeps the base
-/// `HammingWeightClaimReduction` relation id because RAM still uses that leg.
+/// The lattice instantiation of the stage-7 reduction slot, selected by the verifier's
+/// `akita` feature (`jolt-verifier/src/stages/stage7/hamming_weight_claim_reduction.rs`,
+/// the `mode` module — the single place base and lattice are swapped).
+///
+/// [`Self::id`] deliberately returns the base `JoltRelationId::HammingWeightClaimReduction`:
+/// the relation id is protocol data (opening ids, transcript labels, tamper-manifest
+/// paths), RAM still carries a genuine Hamming-weight leg here, and base mode must keep
+/// producing bit-identical proofs. So the *slot* is named for the base algebra while this
+/// type is named for the lattice one — the verifier aliases between the two names once,
+/// at the `mode` seam, and nowhere else.
 #[derive(Clone)]
 pub struct LatticeDigitZeroClaimReduction {
     shape: LatticeDigitZeroClaimReductionDimensions,

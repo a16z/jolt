@@ -4,40 +4,92 @@
 //! (instruction, bytecode, RAM) into the one-hot `Ra` opening claims that anchor the
 //! stage 8 final batched opening. Owns the shared opening-point derivation and the
 //! `EqBooleanity` / `EqVirtualization` public-value computation.
+//!
+//! # One slot, two relations
+//!
+//! `JoltRelationId::HammingWeightClaimReduction` names a protocol slot, not an algebra.
+//! The opening ids, transcript labels, and wire field name are identical in both modes;
+//! which symbolic relation fills the slot is chosen by the `akita` feature:
+//!
+//! - base — `claim_reductions::hamming_weight::ClaimReduction`: three gamma legs per RA
+//!   polynomial (hamming weight, booleanity, virtualization).
+//! - akita — `lattice::relations::digit_zero::LatticeDigitZeroClaimReduction`: two
+//!   digit-zero-recentered legs for instruction and bytecode, the base three for RAM,
+//!   plus one leg per balanced-increment column and the fused-increment decode leg. See
+//!   `specs/digit-zero-virtualization.md`.
+//!
+//! The private `mode` module below is the only place that choice is made. Everything
+//! else — here and in the rest of stage 7 — spells the slot's
+//! `HammingWeightClaimReduction*` names and reaches the live relation through the
+//! aliases re-exported from it, so no consumer needs a `cfg` of its own.
 
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::relations::digit_zero as lattice_digit_zero;
-#[cfg(not(feature = "akita"))]
-use jolt_claims::protocols::jolt::relations;
-#[cfg(feature = "akita")]
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
-#[cfg(not(feature = "akita"))]
-pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::{
-    HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
-    HammingWeightClaimReductionOutputClaims,
-};
-#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{
-    HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
-};
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::{
-    HammingWeightClaimReductionPublic, JoltDerivedId, JoltRelationId,
+    geometry::ra::JoltRaPolynomialLayout, HammingWeightClaimReductionPublic, JoltDerivedId,
+    JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_poly::try_eq_mle;
-#[cfg(feature = "akita")]
-pub use lattice_digit_zero::{
-    LatticeDigitZeroClaimReductionInputClaims as HammingWeightClaimReductionInputClaims,
-    LatticeDigitZeroClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
-};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::outputs::{Stage6bOutputClaims, Stage6bOutputPoints};
 use crate::VerifierError;
+
+/// Base mode: the slot is a genuine Hamming-weight reduction over fully committed
+/// one-hot columns.
+#[cfg(not(feature = "akita"))]
+mod mode {
+    pub use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions as Dimensions;
+    pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::{
+        ClaimReduction as Symbolic, HammingWeightClaimReductionInputClaims as InputClaims,
+        HammingWeightClaimReductionOutputClaims as OutputClaims,
+    };
+}
+
+/// Akita mode: the slot is the digit-zero reduction, which also carries the
+/// balanced-increment booleanity legs and the fused-increment decode leg.
+#[cfg(feature = "akita")]
+mod mode {
+    pub use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
+        LatticeDigitZeroClaimReduction as Symbolic,
+        LatticeDigitZeroClaimReductionDimensions as Dimensions,
+        LatticeDigitZeroClaimReductionInputClaims as InputClaims,
+        LatticeDigitZeroClaimReductionOutputClaims as OutputClaims,
+    };
+}
+
+/// The active relation's shape. Public because the kernel seam reads it off the
+/// relation (`Self::dimensions`).
+pub use mode::Dimensions as HammingWeightClaimReductionDimensions;
+/// The claims the active relation consumes.
+pub use mode::InputClaims as HammingWeightClaimReductionInputClaims;
+/// The claims the active relation produces.
+pub use mode::OutputClaims as HammingWeightClaimReductionOutputClaims;
+
+type HammingWeightClaimReductionSymbolic = mode::Symbolic;
+
+/// Builds the active relation's shape. Base dimensions are infallible; akita
+/// additionally derives the balanced-increment chunking from `log_k_chunk`, which
+/// rejects widths that do not divide the fused increment.
+pub fn hamming_weight_claim_reduction_dimensions(
+    layout: JoltRaPolynomialLayout,
+    log_k_chunk: usize,
+) -> Result<HammingWeightClaimReductionDimensions, VerifierError> {
+    #[cfg(not(feature = "akita"))]
+    {
+        Ok(HammingWeightClaimReductionDimensions::new(
+            layout,
+            log_k_chunk,
+        ))
+    }
+    #[cfg(feature = "akita")]
+    {
+        HammingWeightClaimReductionDimensions::new(layout, log_k_chunk).map_err(public_input_failed)
+    }
+}
 
 /// The hamming reduction's consumed opening *values*, wired from the stage-6b
 /// cycle-phase output claims. The relation reads only their values (its produced
@@ -70,7 +122,7 @@ pub fn hamming_weight_input_values_from_upstream<F: Field>(
 /// RAM) order: the leading `log_k_chunk` coordinates of each stage-6b RA
 /// virtualization opening point.
 pub fn stage7_hamming_virtualization_address_points<F: Field>(
-    dimensions: HammingDimensions,
+    dimensions: HammingWeightClaimReductionDimensions,
     stage6_points: &Stage6bOutputPoints<F>,
 ) -> Result<Vec<Vec<F>>, VerifierError> {
     let instruction_ra_points = stage6_points
@@ -107,8 +159,8 @@ pub fn stage7_hamming_virtualization_address_points<F: Field>(
 
 #[derive(Clone)]
 pub struct HammingWeightClaimReduction<F: Field> {
-    symbolic: HammingSymbolic,
-    dimensions: HammingDimensions,
+    symbolic: HammingWeightClaimReductionSymbolic,
+    dimensions: HammingWeightClaimReductionDimensions,
     /// The shared cycle suffix appended to every produced opening point (the
     /// stage-6 booleanity cycle point).
     r_cycle: Vec<F>,
@@ -121,13 +173,13 @@ pub struct HammingWeightClaimReduction<F: Field> {
 
 impl<F: Field> HammingWeightClaimReduction<F> {
     pub fn new(
-        dimensions: HammingDimensions,
+        dimensions: HammingWeightClaimReductionDimensions,
         r_cycle: Vec<F>,
         r_address: Vec<F>,
         virtualization_points: Vec<Vec<F>>,
     ) -> Self {
         Self {
-            symbolic: HammingSymbolic::new(dimensions),
+            symbolic: HammingWeightClaimReductionSymbolic::new(dimensions),
             dimensions,
             r_cycle,
             r_address,
@@ -163,7 +215,7 @@ impl<F: Field> HammingWeightClaimReduction<F> {
             })
     }
 
-    pub fn dimensions(&self) -> HammingDimensions {
+    pub fn dimensions(&self) -> HammingWeightClaimReductionDimensions {
         self.dimensions
     }
 
@@ -197,7 +249,7 @@ fn eq_at_digit_zero<F: Field>(point: &[F]) -> F {
 }
 
 impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
-    type Symbolic = HammingSymbolic;
+    type Symbolic = HammingWeightClaimReductionSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -313,17 +365,3 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         }
     }
 }
-
-/// The relation's shape under the active PCS: the base claim-reduction
-/// dimensions, or (akita) the lattice variant. Public because the kernel seam
-/// reads it off the relation (`Self::dimensions`).
-#[cfg(not(feature = "akita"))]
-pub type HammingDimensions =
-    jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
-#[cfg(feature = "akita")]
-pub type HammingDimensions = lattice_digit_zero::LatticeDigitZeroClaimReductionDimensions;
-
-#[cfg(not(feature = "akita"))]
-type HammingSymbolic = relations::claim_reductions::hamming_weight::ClaimReduction;
-#[cfg(feature = "akita")]
-type HammingSymbolic = lattice_digit_zero::LatticeDigitZeroClaimReduction;

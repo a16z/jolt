@@ -3,7 +3,7 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::{
             advice,
             bytecode::{self as bytecode_reduction},
-            hamming_weight, program_image,
+            program_image,
         },
         dimensions::JoltFormulaDimensions,
     },
@@ -23,8 +23,9 @@ use super::committed_reduction_address_phase::{
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseInputClaims,
 };
 use super::hamming_weight_claim_reduction::{
-    hamming_weight_input_values_from_upstream, stage7_hamming_virtualization_address_points,
-    HammingDimensions, HammingWeightClaimReduction,
+    hamming_weight_claim_reduction_dimensions, hamming_weight_input_values_from_upstream,
+    stage7_hamming_virtualization_address_points, HammingWeightClaimReduction,
+    HammingWeightClaimReductionDimensions,
 };
 use super::outputs::{
     Stage7ClearOutput, Stage7InputClaims, Stage7Output, Stage7Sumchecks, Stage7ZkOutput,
@@ -58,22 +59,10 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let base_hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
+    let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
         proof.one_hot_config.committed_chunk_bits(),
-    );
-    #[cfg(not(feature = "akita"))]
-    let hamming_dimensions = base_hamming_dimensions;
-    #[cfg(feature = "akita")]
-    let hamming_dimensions =
-        jolt_claims::protocols::jolt::lattice::relations::digit_zero::LatticeDigitZeroClaimReductionDimensions::new(
-            base_hamming_dimensions.layout,
-            base_hamming_dimensions.log_k_chunk,
-        )
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: error.to_string(),
-        })?;
+    )?;
 
     // The clear-only reference geometry each address phase's expected-output term
     // reads (advice / program-image RAM address points, bytecode cycle-phase
@@ -168,7 +157,7 @@ where
 /// precommitted layout is committed and its dimensions carry active address rounds
 /// — the presence flag the input / challenge aggregates track in lockstep.
 pub fn build_stage7_sumchecks<F: Field>(
-    hamming_dimensions: HammingDimensions,
+    hamming_dimensions: HammingWeightClaimReductionDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
     clear: Option<(&Stage4ClearOutput<F>, &Stage6bClearOutput<F>)>,
