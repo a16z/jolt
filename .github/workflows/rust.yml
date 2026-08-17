@@ -139,7 +139,8 @@ jobs:
           cargo nextest run -p jolt-kernels --features metal,test-utils --cargo-quiet
           -E 'test(metal::backend::tests::production_profile_selects_only_retained_routes)
           | test(metal::solinas::source::tests::production_manifest_matches_source_assembly)
-          | test(metal::solinas::source::tests::production_source_excludes_diagnostic_and_rejected_kernels)
+          | test(metal::solinas::source::tests::source_excludes_rejected_kernels)
+          | test(metal::solinas::source::tests::source_assembly_puts_the_outer_fragment_last)
           | test(/metal::solinas::bytecode_read_raf_address::stage1_topology::tests/)
           | test(/metal::solinas::ram_cycle_family::tests/)'
 
