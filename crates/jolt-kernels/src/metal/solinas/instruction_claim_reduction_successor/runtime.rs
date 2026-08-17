@@ -94,24 +94,18 @@ impl Drop for PendingProductInstructionInitialMessage {
 
 impl PendingProductInstructionInitialMessage {
     pub(crate) fn join(mut self) -> Result<ProductInstructionInitialResult, MetalError> {
-        let mut product = self
-            .product
-            .take()
-            .ok_or(MetalError::InvalidProductRemainderState(
-                "joint first message lost its product sequence",
-            ))?;
-        let mut instruction =
-            self.instruction
-                .take()
-                .ok_or(MetalError::InvalidInstructionClaimState(
-                    "joint first message lost its instruction sequence",
-                ))?;
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidProductRemainderState(
-                "joint first message lost its command buffer",
-            ))?;
+        let mut product = self.product.take().ok_or(MetalError::InvalidState {
+            family: "resident product remainder state",
+            message: "joint first message lost its product sequence",
+        })?;
+        let mut instruction = self.instruction.take().ok_or(MetalError::InvalidState {
+            family: "resident instruction claim-reduction state",
+            message: "joint first message lost its instruction sequence",
+        })?;
+        let command = self.command.take().ok_or(MetalError::InvalidState {
+            family: "resident product remainder state",
+            message: "joint first message lost its command buffer",
+        })?;
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
         let product_values = unsafe {
@@ -155,9 +149,11 @@ impl ProductInstructionRoundService {
             || product.current_elements() != instruction.current_elements()
             || product.storage_layout().rows().ilog2() as usize != tau_low.len()
         {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint round service received mismatched resident sequences or equality point",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message:
+                    "joint round service received mismatched resident sequences or equality point",
+            });
         }
         Ok(Self {
             context: product.context().clone(),
@@ -211,9 +207,10 @@ impl ProductInstructionRoundService {
         if self.cached_instruction.is_some()
             || self.product.current_elements() != self.instruction.current_elements()
         {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint round service was advanced before instruction consumed its message",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "joint round service was advanced before instruction consumed its message",
+            });
         }
         self.instruction_weights.bind(challenge);
         let instruction_e_in = self.instruction_weights.e_in_current().to_vec();
@@ -299,9 +296,7 @@ impl ProductInstructionRoundService {
                 || cached.e_in != e_in
                 || cached.e_out != e_out
             {
-                return Err(MetalError::InvalidInstructionClaimState(
-                    "cached joint instruction message has the wrong round, bind, or equality tables",
-                ));
+                return Err(MetalError::InvalidState { family: "resident instruction claim-reduction state", message: "cached joint instruction message has the wrong round, bind, or equality tables" });
             }
             return Ok((
                 cached.message,
@@ -329,9 +324,10 @@ impl ProductInstructionRoundService {
         challenge: AkitaField,
     ) -> Result<AkitaField, MetalError> {
         if self.cached_instruction.is_some() {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "instruction finish observed an unconsumed joint message",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "instruction finish observed an unconsumed joint message",
+            });
         }
         self.instruction.finish(challenge)
     }
@@ -378,16 +374,18 @@ impl SolinasMetal {
             || product.joint_stage1_allocation_identities()
                 != instruction.joint_stage1_allocation_identities()
         {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint materialization source shape, device, or allocation differs",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "joint materialization source shape, device, or allocation differs",
+            });
         }
         let product_threads = product.joint_materialize_threads_per_threadgroup();
         let instruction_threads = instruction.joint_materialize_threads_per_threadgroup();
         if product_threads != instruction_threads {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint materialization threadgroup widths differ",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "joint materialization threadgroup widths differ",
+            });
         }
         let pipeline = self.compile_named_pipeline(PIPELINE)?;
         let limits = Self::limits(&pipeline);
@@ -401,9 +399,10 @@ impl SolinasMetal {
             .and_then(|dynamic| dynamic.checked_add(limits.static_threadgroup_memory_length))
             .ok_or(MetalError::InputTooLong(threadgroup_bytes))?;
         if total_threadgroup_bytes > self.device.max_threadgroup_memory_length() {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint materialization exceeds threadgroup memory",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "joint materialization exceeds threadgroup memory",
+            });
         }
 
         let submitted_at = Instant::now();
@@ -465,9 +464,10 @@ fn validate_matching_params(
         || product.e_in_length != instruction.e_in_length
         || product.e_out_length != instruction.e_out_length
     {
-        return Err(MetalError::InvalidInstructionClaimState(
-            "joint materialization equality geometry differs",
-        ));
+        return Err(MetalError::InvalidState {
+            family: "resident instruction claim-reduction state",
+            message: "joint materialization equality geometry differs",
+        });
     }
     Ok(())
 }

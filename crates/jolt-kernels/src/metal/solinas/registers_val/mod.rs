@@ -187,18 +187,14 @@ impl PendingRegistersValFirstMessage {
     pub(crate) fn join(
         mut self,
     ) -> Result<(RegistersValFirstMessageInvocation, Duration), MetalError> {
-        let invocation = self
-            .invocation
-            .take()
-            .ok_or(MetalError::InvalidRegistersValState(
-                "submitted first message lost its invocation",
-            ))?;
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidRegistersValState(
-                "submitted first message lost its command",
-            ))?;
+        let invocation = self.invocation.take().ok_or(MetalError::InvalidState {
+            family: "registers value-evaluation state",
+            message: "submitted first message lost its invocation",
+        })?;
+        let command = self.command.take().ok_or(MetalError::InvalidState {
+            family: "registers value-evaluation state",
+            message: "submitted first message lost its command",
+        })?;
         let gpu_active = invocation.complete_first_message(command)?;
         Ok((invocation, gpu_active))
     }
@@ -369,9 +365,10 @@ impl SolinasMetal {
                         != receipt.instruction_rows_storage_id()
                     || source.row_buffer().length() != receipt.instruction_rows_bytes()
                 {
-                    return Err(MetalError::InvalidRegistersValState(
-                        "instruction-row source does not match its sealed receipt",
-                    ));
+                    return Err(MetalError::InvalidState {
+                        family: "registers value-evaluation state",
+                        message: "instruction-row source does not match its sealed receipt",
+                    });
                 }
             }
         }

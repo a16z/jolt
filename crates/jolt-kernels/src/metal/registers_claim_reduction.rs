@@ -147,9 +147,10 @@ impl MetalRegistersClaimPendingStage1Carry {
             || submission.source_compact_storage_id != source.compact_storage_id
             || submission.source_residual_storage_id != source.residual_storage_id
         {
-            return Err(super::solinas::MetalError::InvalidOuterRemainderConfig(
-                "pending registers-claim carrier provenance is inconsistent",
-            ));
+            return Err(super::solinas::MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message: "pending registers-claim carrier provenance is inconsistent",
+            });
         }
         Ok(Self {
             pending,

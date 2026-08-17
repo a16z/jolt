@@ -178,9 +178,10 @@ impl MetalBackend {
             return Err(MetalError::InvalidHybridCutoff(remainder_trace_cutoff));
         }
         if config.spartan_outer_remainder.dispatch.max_threadgroups == 0 {
-            return Err(MetalError::InvalidOuterRemainderConfig(
-                "max_threadgroups must be nonzero",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message: "max_threadgroups must be nonzero",
+            });
         }
         if config.registers_claim_reduction.implementation
             == RegistersClaimReductionImplementation::OuterCarrierAliasHybrid
@@ -189,9 +190,11 @@ impl MetalBackend {
                 || config.instruction_input.trace_cutoff_elements
                     > config.registers_claim_reduction.trace_cutoff_elements)
         {
-            return Err(MetalError::InvalidOuterRemainderConfig(
-                "registers-claim carrier producers must activate no later than their consumer",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message:
+                    "registers-claim carrier producers must activate no later than their consumer",
+            });
         }
         if config.bytecode_read_raf_address.implementation
             == BytecodeReadRafAddressImplementation::AddressMajor
@@ -199,9 +202,11 @@ impl MetalBackend {
                 > config.bytecode_read_raf_address.trace_cutoff_elements
                 || config.bytecode_read_raf_address.trace_cutoff_elements < 1 << 15)
         {
-            return Err(MetalError::InvalidBytecodeReadRafAddressConfig(
-                "address-major requires the Stage-1 grouped owner at every admitted trace size",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "bytecode read-RAF address configuration",
+                message:
+                    "address-major requires the Stage-1 grouped owner at every admitted trace size",
+            });
         }
         if config.registers_val_evaluation.source == RegistersValEvaluationSource::Stage1Resident
             && (config.instruction_read_raf.address_cutoff_elements
@@ -211,18 +216,14 @@ impl MetalBackend {
                 || config.registers_val_evaluation.cutoff_elements
                     >= config.registers_val_evaluation.trace_cutoff_elements)
         {
-            return Err(MetalError::InvalidRegistersValState(
-                "Stage-1 resident RegistersVal requires the grouped owner at logs 26 through 28 and a smaller tail cutoff",
-            ));
+            return Err(MetalError::InvalidState { family: "registers value-evaluation state", message: "Stage-1 resident RegistersVal requires the grouped owner at logs 26 through 28 and a smaller tail cutoff" });
         }
         if config.instruction_input.dense_storage_mode
             == InstructionInputDenseStorageMode::OuterResidual
             && config.spartan_outer_remainder.trace_cutoff_elements
                 > config.instruction_input.trace_cutoff_elements
         {
-            return Err(MetalError::InvalidInstructionInputState(
-                "Outer-residual InstructionInput storage requires an active OuterRemainder producer",
-            ));
+            return Err(MetalError::InvalidState { family: "resident InstructionInput state", message: "Outer-residual InstructionInput storage requires an active OuterRemainder producer" });
         }
         let cutoff = config.instruction_read_raf.cutoff_elements;
         if cutoff < 2 || !cutoff.is_power_of_two() {
@@ -391,7 +392,10 @@ mod tests {
         config.instruction_read_raf.address_cutoff_elements = 1 << 27;
         assert!(matches!(
             MetalBackend::validate_config(&config),
-            Err(MetalError::InvalidRegistersValState(_))
+            Err(MetalError::InvalidState {
+                family: "registers value-evaluation state",
+                ..
+            })
         ));
     }
 
@@ -404,7 +408,10 @@ mod tests {
 
         assert!(matches!(
             MetalBackend::validate_config(&config),
-            Err(MetalError::InvalidInstructionInputState(_))
+            Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                ..
+            })
         ));
     }
 }

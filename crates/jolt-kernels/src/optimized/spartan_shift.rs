@@ -164,9 +164,10 @@ pub(crate) fn prepare_metal_spartan_shift_witness_rows(
             return Err(MetalError::SpartanShiftRowExtraction { row, message });
         }
         if cursor != cycles {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "witness projection did not fill the cycle domain",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Spartan shift state",
+                message: "witness projection did not fill the cycle domain",
+            });
         }
         Ok(())
     })

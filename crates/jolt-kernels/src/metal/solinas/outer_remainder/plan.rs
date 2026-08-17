@@ -68,15 +68,17 @@ pub(super) fn validate_opening_threadgroup_memory(
     let dynamic = opening_threadgroup_memory_lengths(threads, product_uniskip_carrier)?
         .into_iter()
         .try_fold(0u64, |total, bytes| total.checked_add(bytes))
-        .ok_or(MetalError::InvalidOuterRemainderConfig(
-            "opening threadgroup byte count overflowed",
-        ))?;
+        .ok_or(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "opening threadgroup byte count overflowed",
+        })?;
     let requested = limits
         .static_threadgroup_memory_length
         .checked_add(dynamic)
-        .ok_or(MetalError::InvalidOuterRemainderConfig(
-            "opening threadgroup byte count overflowed",
-        ))?;
+        .ok_or(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "opening threadgroup byte count overflowed",
+        })?;
     let maximum = context.device.max_threadgroup_memory_length();
     if requested > maximum {
         return Err(MetalError::ThreadgroupMemory {
@@ -96,9 +98,10 @@ pub(super) fn opening_threadgroup_memory_lengths(
     let row_words = layout
         .tile_rows
         .checked_mul(layout.row_stride_words)
-        .ok_or(MetalError::InvalidOuterRemainderConfig(
-            "opening threadgroup byte count overflowed",
-        ))?;
+        .ok_or(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "opening threadgroup byte count overflowed",
+        })?;
     let row_bytes = row_words.checked_mul(size_of::<u64>());
     let weight_bytes = layout.tile_rows.checked_mul(size_of::<Fp128>());
     let outputs = opening_output_count(product_uniskip_carrier);
@@ -112,9 +115,10 @@ pub(super) fn opening_threadgroup_memory_lengths(
     let [Some(row_bytes), Some(weight_bytes), Some(shard_bytes)] =
         [row_bytes, weight_bytes, shard_bytes]
     else {
-        return Err(MetalError::InvalidOuterRemainderConfig(
-            "opening threadgroup byte count overflowed",
-        ));
+        return Err(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "opening threadgroup byte count overflowed",
+        });
     };
     Ok([row_bytes as u64, weight_bytes as u64, shard_bytes as u64])
 }
@@ -135,14 +139,16 @@ pub(super) fn storage_geometry(
         return Err(MetalError::InvalidOuterRemainderRows(cycles));
     }
     if config.max_threadgroups == 0 {
-        return Err(MetalError::InvalidOuterRemainderConfig(
-            "max_threadgroups must be nonzero",
-        ));
+        return Err(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "max_threadgroups must be nonzero",
+        });
     }
     if config.cpu_tail_elements < 2 || !config.cpu_tail_elements.is_power_of_two() {
-        return Err(MetalError::InvalidOuterRemainderConfig(
-            "cpu_tail_elements must be a power of two of at least two",
-        ));
+        return Err(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "cpu_tail_elements must be a power of two of at least two",
+        });
     }
     let current_elements = cycles
         .checked_mul(2)

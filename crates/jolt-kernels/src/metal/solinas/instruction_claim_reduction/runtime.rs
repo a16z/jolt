@@ -77,18 +77,14 @@ impl PendingInstructionClaimInitialMessage {
         ),
         MetalError,
     > {
-        let mut sequence = self
-            .sequence
-            .take()
-            .ok_or(MetalError::InvalidInstructionClaimState(
-                "the pending first message lost its resident sequence",
-            ))?;
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidInstructionClaimState(
-                "the pending first message lost its command buffer",
-            ))?;
+        let mut sequence = self.sequence.take().ok_or(MetalError::InvalidState {
+            family: "resident instruction claim-reduction state",
+            message: "the pending first message lost its resident sequence",
+        })?;
+        let command = self.command.take().ok_or(MetalError::InvalidState {
+            family: "resident instruction claim-reduction state",
+            message: "the pending first message lost its command buffer",
+        })?;
         let (message, timing) = sequence.complete_initial_message(command)?;
         Ok((sequence, message, timing))
     }
@@ -235,9 +231,10 @@ impl SolinasMetal {
         if product.device_registry_id() != self.device_registry_id()
             || product.source_kind() != ProductRemainderSourceKind::SpartanStage1
         {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "resident instruction Stage-1 rows have the wrong source or Metal device",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "resident instruction Stage-1 rows have the wrong source or Metal device",
+            });
         }
         let len = product.len();
         self.prepare_instruction_claim_sequence_from_rows(
@@ -333,9 +330,10 @@ impl SolinasMetal {
         ] {
             let resolved = Self::resolve_threadgroup_width(Some(requested), limits)?;
             if resolved != requested {
-                return Err(MetalError::InvalidInstructionClaimState(
-                    "resolved threadgroup width differs from the checked configuration",
-                ));
+                return Err(MetalError::InvalidState {
+                    family: "resident instruction claim-reduction state",
+                    message: "resolved threadgroup width differs from the checked configuration",
+                });
             }
             let total = u64::try_from(dynamic)
                 .ok()
@@ -352,9 +350,10 @@ impl SolinasMetal {
         let reduction_threads =
             Self::resolve_threadgroup_width(Some(INSTRUCTION_CLAIM_SIMD_WIDTH), reduction_limits)?;
         if reduction_threads != INSTRUCTION_CLAIM_SIMD_WIDTH {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "the recursive reduction must use one SIMD group",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "the recursive reduction must use one SIMD group",
+            });
         }
 
         let gamma_powers = nontrivial_gamma_powers(gamma)
@@ -418,14 +417,16 @@ impl InstructionClaimSequence {
         e_out_length: usize,
     ) -> Result<InstructionClaimPhaseParams, MetalError> {
         if self.phase != InstructionClaimPhase::Raw {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint materialization requires a raw instruction sequence",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "joint materialization requires a raw instruction sequence",
+            });
         }
         if !matches!(&self.buffers.rows, InstructionClaimRows::Stage1(_)) {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint materialization requires resident Stage-1 rows",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "joint materialization requires resident Stage-1 rows",
+            });
         }
         let params =
             InstructionClaimPhaseParams::materialize(self.geometry, e_in_length, e_out_length)?;
@@ -461,9 +462,10 @@ impl InstructionClaimSequence {
         gpu_active: Duration,
     ) -> Result<(), MetalError> {
         if self.phase != InstructionClaimPhase::Raw {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint instruction state was materialized more than once",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "joint instruction state was materialized more than once",
+            });
         }
         self.phase = InstructionClaimPhase::Materialized;
         self.timing.wall += wall;
@@ -479,9 +481,10 @@ impl InstructionClaimSequence {
         e_out: &[AkitaField],
     ) -> Result<Buffer, MetalError> {
         if self.phase != InstructionClaimPhase::Materialized || self.current_elements < 4 {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "a joint transition needs a materialized instruction state",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "a joint transition needs a materialized instruction state",
+            });
         }
         let round = self.rounds_bound + 1;
         let params =
@@ -526,9 +529,10 @@ impl InstructionClaimSequence {
         gpu_active: Duration,
     ) -> Result<(), MetalError> {
         if self.phase != InstructionClaimPhase::Materialized || self.current_elements < 4 {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint instruction transition completed in the wrong phase",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "joint instruction transition completed in the wrong phase",
+            });
         }
         self.current_elements /= 2;
         self.rounds_bound += 1;
@@ -606,9 +610,10 @@ impl InstructionClaimSequence {
         e_out: &[AkitaField],
     ) -> Result<InstructionClaimInitialMessageCommand, MetalError> {
         if self.phase != InstructionClaimPhase::Raw {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "the materialization message was already emitted",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "the materialization message was already emitted",
+            });
         }
         let submitted_at = Instant::now();
         let params =
@@ -639,11 +644,11 @@ impl InstructionClaimSequence {
                     set_inline_bytes(encoder, 10, &params);
                 }
                 InstructionClaimRows::Stage1(product) => {
-                    let (compact, residual) = product.stage1_buffers().ok_or(
-                        MetalError::InvalidInstructionClaimState(
-                            "resident instruction rows lost their Stage-1 allocations",
-                        ),
-                    )?;
+                    let (compact, residual) =
+                        product.stage1_buffers().ok_or(MetalError::InvalidState {
+                            family: "resident instruction claim-reduction state",
+                            message: "resident instruction rows lost their Stage-1 allocations",
+                        })?;
                     encoder.set_buffer(0, Some(compact), 0);
                     encoder.set_buffer(1, Some(residual), 0);
                     encoder.set_buffer(2, Some(&self.buffers.gamma_powers), 0);
@@ -702,9 +707,10 @@ impl InstructionClaimSequence {
             || command.sequence_identity != self.buffers.gamma_powers.as_ptr() as usize
             || command.generation != self.generation
         {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "the pending first message belongs to a different sequence generation",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "the pending first message belongs to a different sequence generation",
+            });
         }
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
@@ -724,10 +730,9 @@ impl InstructionClaimSequence {
             .map(Fp128::into_jolt_field)
             .collect::<Vec<_>>()
             .try_into()
-            .map_err(|_| {
-                MetalError::InvalidInstructionClaimState(
-                    "the first-message output column count changed",
-                )
+            .map_err(|_| MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "the first-message output column count changed",
             })?;
         let timing = InstructionClaimTiming {
             wall: command.submitted_at.elapsed(),
@@ -762,9 +767,10 @@ impl InstructionClaimSequence {
         MetalError,
     > {
         if self.phase != InstructionClaimPhase::Materialized || self.current_elements < 4 {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "a transition needs a materialized state of at least four elements",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "a transition needs a materialized state of at least four elements",
+            });
         }
         let started = Instant::now();
         let round = self.rounds_bound + 1;
@@ -832,9 +838,10 @@ impl InstructionClaimSequence {
             || self.current_elements != 2
             || self.rounds_bound + 1 != self.geometry.log_t()
         {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "finish requires every round message and the last challenge",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "finish requires every round message and the last challenge",
+            });
         }
         let values = unsafe {
             // SAFETY: the active shared buffer contains the two final values,
@@ -867,11 +874,10 @@ impl InstructionClaimSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<(InstructionClaimOpenings<AkitaField>, InstructionClaimTiming), MetalError> {
-        let combined_claim =
-            self.combined_claim
-                .ok_or(MetalError::InvalidInstructionClaimState(
-                    "openings require the final combined claim",
-                ))?;
+        let combined_claim = self.combined_claim.ok_or(MetalError::InvalidState {
+            family: "resident instruction claim-reduction state",
+            message: "openings require the final combined claim",
+        })?;
         let started = Instant::now();
         let columns = self.opening_mode.columns();
         let params = InstructionClaimOpeningParams::new(
@@ -922,9 +928,10 @@ impl InstructionClaimSequence {
         MetalError,
     > {
         if self.phase != InstructionClaimPhase::Finished {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "aliased openings require the final combined claim",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "aliased openings require the final combined claim",
+            });
         }
         let started = Instant::now();
         let params =
@@ -948,11 +955,11 @@ impl InstructionClaimSequence {
                     set_inline_bytes(encoder, 5, &params);
                 }
                 InstructionClaimRows::Stage1(product) => {
-                    let (compact, residual) = product.stage1_buffers().ok_or(
-                        MetalError::InvalidInstructionClaimState(
-                            "resident instruction openings lost their Stage-1 allocations",
-                        ),
-                    )?;
+                    let (compact, residual) =
+                        product.stage1_buffers().ok_or(MetalError::InvalidState {
+                            family: "resident instruction claim-reduction state",
+                            message: "resident instruction openings lost their Stage-1 allocations",
+                        })?;
                     encoder.set_buffer(0, Some(compact), 0);
                     encoder.set_buffer(1, Some(residual), 0);
                     encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
@@ -1018,9 +1025,10 @@ impl InstructionClaimSequence {
                 right_instruction_input,
             } = &self.buffers.rows
             else {
-                return Err(MetalError::InvalidInstructionClaimState(
-                    "resident product rows support the alias opening path only",
-                ));
+                return Err(MetalError::InvalidState {
+                    family: "resident instruction claim-reduction state",
+                    message: "resident product rows support the alias opening path only",
+                });
             };
             match self.opening_mode {
                 InstructionClaimOpeningMode::CoreAndRecover => {
@@ -1118,9 +1126,10 @@ impl InstructionClaimSequence {
     #[cfg(feature = "test-utils")]
     pub fn read_current_state(&self) -> Result<Vec<AkitaField>, MetalError> {
         if self.phase == InstructionClaimPhase::Raw {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "the combined state is not materialized",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident instruction claim-reduction state",
+                message: "the combined state is not materialized",
+            });
         }
         let values = unsafe {
             // SAFETY: the active shared buffer contains `current_elements`
@@ -1208,9 +1217,11 @@ fn finish_command<const COLUMNS: usize>(
     label: &'static str,
 ) -> Result<([AkitaField; COLUMNS], Duration), MetalError> {
     let (values, duration) = finish_command_vec(context, command_buffer, output, COLUMNS, label)?;
-    let values: [AkitaField; COLUMNS] = values.try_into().map_err(|_| {
-        MetalError::InvalidInstructionClaimState("the reduced output column count changed")
-    })?;
+    let values: [AkitaField; COLUMNS] =
+        values.try_into().map_err(|_| MetalError::InvalidState {
+            family: "resident instruction claim-reduction state",
+            message: "the reduced output column count changed",
+        })?;
     Ok((values, duration))
 }
 

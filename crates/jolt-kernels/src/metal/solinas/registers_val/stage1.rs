@@ -166,7 +166,10 @@ fn validate_instruction_source_lease(
 }
 
 fn invalid(reason: &'static str) -> MetalError {
-    MetalError::InvalidRegistersValState(reason)
+    MetalError::InvalidState {
+        family: "registers value-evaluation state",
+        message: reason,
+    }
 }
 
 #[cfg(feature = "allocative")]

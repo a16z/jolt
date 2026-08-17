@@ -325,10 +325,9 @@ impl MetalInstructionClaimState {
             Self::Standalone(sequence) => sequence.finish(challenge),
             Self::Joint(service) => service
                 .lock()
-                .map_err(|_| {
-                    MetalError::InvalidInstructionClaimState(
-                        "joint Product/Instruction service lock is poisoned",
-                    )
+                .map_err(|_| MetalError::InvalidState {
+                    family: "resident instruction claim-reduction state",
+                    message: "joint Product/Instruction service lock is poisoned",
                 })?
                 .finish_instruction(challenge),
         }
@@ -349,10 +348,9 @@ impl MetalInstructionClaimState {
             Self::Standalone(sequence) => sequence.aliased_openings_timed(e_in, e_out),
             Self::Joint(service) => service
                 .lock()
-                .map_err(|_| {
-                    MetalError::InvalidInstructionClaimState(
-                        "joint Product/Instruction service lock is poisoned",
-                    )
+                .map_err(|_| MetalError::InvalidState {
+                    family: "resident instruction claim-reduction state",
+                    message: "joint Product/Instruction service lock is poisoned",
                 })?
                 .instruction_aliased_openings(e_in, e_out),
         }

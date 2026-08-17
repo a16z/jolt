@@ -237,18 +237,14 @@ impl PendingInstructionInputPrimer {
     }
 
     pub(crate) fn join(mut self) -> Result<InstructionInputSequence, MetalError> {
-        let sequence = self
-            .sequence
-            .take()
-            .ok_or(MetalError::InvalidInstructionInputState(
-                "native pipeline primer lost its sequence",
-            ))?;
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidInstructionInputState(
-                "native pipeline primer lost its command",
-            ))?;
+        let sequence = self.sequence.take().ok_or(MetalError::InvalidState {
+            family: "resident InstructionInput state",
+            message: "native pipeline primer lost its sequence",
+        })?;
+        let command = self.command.take().ok_or(MetalError::InvalidState {
+            family: "resident InstructionInput state",
+            message: "native pipeline primer lost its command",
+        })?;
         sequence
             .storage
             .complete_native_pipeline_primer(&sequence.resident_rows, command)?;
@@ -319,13 +315,17 @@ impl BufferRegion {
     }
 
     fn range(buffer: &Buffer, offset_bytes: u64, length_bytes: u64) -> Result<Self, MetalError> {
-        let end = offset_bytes.checked_add(length_bytes).ok_or(
-            MetalError::InvalidInstructionInputState("dense buffer range overflowed"),
-        )?;
+        let end = offset_bytes
+            .checked_add(length_bytes)
+            .ok_or(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "dense buffer range overflowed",
+            })?;
         if !offset_bytes.is_multiple_of(size_of::<Fp128>() as u64) || end > buffer.length() {
-            return Err(MetalError::InvalidInstructionInputState(
-                "dense buffer range is misaligned or out of bounds",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "dense buffer range is misaligned or out of bounds",
+            });
         }
         let _ = usize::try_from(offset_bytes).map_err(|_| MetalError::InputTooLong(usize::MAX))?;
         Ok(Self {
@@ -494,9 +494,10 @@ pub(crate) fn instruction_input_sequence_auxiliary_storage_bytes(
         .owned_bytes
         .checked_sub(layout.buffer_bytes[0])
         .and_then(|bytes| bytes.checked_sub(layout.buffer_bytes[1]))
-        .ok_or(MetalError::InvalidInstructionInputState(
-            "InstructionInput auxiliary byte count underflowed",
-        ))
+        .ok_or(MetalError::InvalidState {
+            family: "resident InstructionInput state",
+            message: "InstructionInput auxiliary byte count underflowed",
+        })
 }
 
 pub(crate) struct InstructionInputSequenceStorage {
@@ -697,13 +698,17 @@ impl SolinasMetal {
         )?;
         let borrowed_dense_bytes = layout.buffer_bytes[0]
             .checked_add(layout.buffer_bytes[1])
-            .ok_or(MetalError::InvalidInstructionInputState(
-                "dense buffer byte count overflowed",
-            ))?;
+            .ok_or(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "dense buffer byte count overflowed",
+            })?;
         let borrowed = outer_rows.is_some();
         let owned_bytes = if borrowed {
             layout.owned_bytes.checked_sub(borrowed_dense_bytes).ok_or(
-                MetalError::InvalidInstructionInputState("owned buffer byte count underflowed"),
+                MetalError::InvalidState {
+                    family: "resident InstructionInput state",
+                    message: "owned buffer byte count underflowed",
+                },
             )?
         } else {
             layout.owned_bytes
@@ -728,9 +733,10 @@ impl SolinasMetal {
 
         let (dense_a, dense_b, dense_arena) = if let Some(outer_rows) = outer_rows {
             if config.storage_initialization == InstructionInputStorageInitialization::Full {
-                return Err(MetalError::InvalidInstructionInputState(
-                    "borrowed dense storage does not support full initialization",
-                ));
+                return Err(MetalError::InvalidState {
+                    family: "resident InstructionInput state",
+                    message: "borrowed dense storage does not support full initialization",
+                });
             }
             let expected = outer_rows.residual_arena_key();
             let expected_parent_bytes = spartan_outer_uniskip_residual_row_bytes(rows)?;
@@ -739,9 +745,10 @@ impl SolinasMetal {
                 || expected.storage_bytes != expected_parent_bytes
                 || borrowed_dense_bytes > expected.storage_bytes
             {
-                return Err(MetalError::InvalidInstructionInputState(
-                    "Outer residual arena has the wrong shape or device",
-                ));
+                return Err(MetalError::InvalidState {
+                    family: "resident InstructionInput state",
+                    message: "Outer residual arena has the wrong shape or device",
+                });
             }
             (
                 BufferRegion::range(outer_rows.residual_buffer(), 0, layout.buffer_bytes[0])?,
@@ -773,9 +780,10 @@ impl SolinasMetal {
         };
         let actual_buffer_bytes = buffers.all().map(|buffer| buffer.length());
         if actual_buffer_bytes != layout.buffer_bytes {
-            return Err(MetalError::InvalidInstructionInputState(
-                "allocated storage lengths disagree with the plan",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "allocated storage lengths disagree with the plan",
+            });
         }
         initialize_storage(self, &buffers, config.storage_initialization, !borrowed)?;
 
@@ -829,14 +837,16 @@ impl InstructionInputSequenceStorage {
         resident_rows: &InstructionInputRows,
     ) -> Result<(), MetalError> {
         let DenseArenaState::OuterResidual { expected, released } = &mut self.dense_arena else {
-            return Err(MetalError::InvalidInstructionInputState(
-                "owned dense storage received an Outer release receipt",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "owned dense storage received an Outer release receipt",
+            });
         };
         if *released {
-            return Err(MetalError::InvalidInstructionInputState(
-                "Outer residual arena was released more than once",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "Outer residual arena was released more than once",
+            });
         }
         if receipt.key != *expected
             || resident_rows.len() != expected.rows
@@ -845,9 +855,10 @@ impl InstructionInputSequenceStorage {
             || self.buffers.dense_a.allocation_identity() != expected.storage_id
             || self.buffers.dense_b.allocation_identity() != expected.storage_id
         {
-            return Err(MetalError::InvalidInstructionInputState(
-                "Outer residual release receipt changed before InstructionInput",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "Outer residual release receipt changed before InstructionInput",
+            });
         }
         *released = true;
         Ok(())
@@ -940,9 +951,10 @@ impl InstructionInputSequenceStorage {
         if resident_rows.allocation_identity() != primer.resident_row_identity
             || self.buffers.identities() != primer.storage_buffer_identities
         {
-            return Err(MetalError::InvalidInstructionInputState(
-                "native pipeline primer resources changed before completion",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "native pipeline primer resources changed before completion",
+            });
         }
         primer.command_buffer.wait_until_completed();
         let _ = completed_command_gpu_time(&primer.command_buffer)?;
@@ -960,9 +972,10 @@ impl InstructionInputSequenceStorage {
             .iter()
             .any(|value| value.into_jolt_field::<AkitaField>() != AkitaField::zero())
         {
-            return Err(MetalError::InvalidInstructionInputState(
-                "instruction input pipeline primer produced a nonzero message",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "instruction input pipeline primer produced a nonzero message",
+            });
         }
         Ok(())
     }
@@ -972,9 +985,10 @@ impl InstructionInputSequenceStorage {
         resident_rows: InstructionInputRows,
     ) -> Result<InstructionInputSequence, MetalError> {
         if self.requires_outer_residual_release() {
-            return Err(MetalError::InvalidInstructionInputState(
-                "Outer residual arena was attached before release",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "Outer residual arena was attached before release",
+            });
         }
         if resident_rows.len() != self.rows {
             return Err(MetalError::InvalidInstructionInputRows(resident_rows.len()));
@@ -1011,9 +1025,10 @@ impl InstructionInputSequence {
         self,
     ) -> Result<PendingInstructionInputPrimer, MetalError> {
         if self.phase != SequencePhase::BeforeMessage {
-            return Err(MetalError::InvalidInstructionInputState(
-                "native pipeline primer requires the initial sequence state",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "native pipeline primer requires the initial sequence state",
+            });
         }
         let command = self
             .storage
@@ -1031,9 +1046,10 @@ impl InstructionInputSequence {
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; INSTRUCTION_INPUT_COEFFICIENTS], MetalError> {
         if self.phase != SequencePhase::BeforeMessage {
-            return Err(MetalError::InvalidInstructionInputState(
-                "native message may execute only once",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "native message may execute only once",
+            });
         }
         self.execute(DispatchKind::NativeMessage, None, gamma, e_in, e_out)
     }
@@ -1047,9 +1063,10 @@ impl InstructionInputSequence {
     ) -> Result<[AkitaField; INSTRUCTION_INPUT_COEFFICIENTS], MetalError> {
         let kind = match self.phase {
             SequencePhase::BeforeMessage => {
-                return Err(MetalError::InvalidInstructionInputState(
-                    "the native message must precede the first bind",
-                ));
+                return Err(MetalError::InvalidState {
+                    family: "resident InstructionInput state",
+                    message: "the native message must precede the first bind",
+                });
             }
             SequencePhase::Native => DispatchKind::NativeTransition,
             SequencePhase::Dense => DispatchKind::DenseTransition,
@@ -1059,9 +1076,10 @@ impl InstructionInputSequence {
 
     pub fn read_current_tables(&self, output: &mut [AkitaField]) -> Result<(), MetalError> {
         if self.phase != SequencePhase::Dense {
-            return Err(MetalError::InvalidInstructionInputState(
-                "native rows cannot be read as dense tables",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "native rows cannot be read as dense tables",
+            });
         }
         let expected = INSTRUCTION_INPUT_TABLES
             .checked_mul(self.dense_elements)
@@ -1196,11 +1214,10 @@ impl InstructionInputSequence {
                     set_inline_bytes(
                         encoder,
                         5,
-                        challenge
-                            .as_ref()
-                            .ok_or(MetalError::InvalidInstructionInputState(
-                                "native transition is missing its challenge",
-                            ))?,
+                        challenge.as_ref().ok_or(MetalError::InvalidState {
+                            family: "resident InstructionInput state",
+                            message: "native transition is missing its challenge",
+                        })?,
                     );
                     set_inline_bytes(encoder, 6, &gamma);
                     set_inline_bytes(encoder, 7, &params);
@@ -1214,11 +1231,10 @@ impl InstructionInputSequence {
                     set_inline_bytes(
                         encoder,
                         5,
-                        challenge
-                            .as_ref()
-                            .ok_or(MetalError::InvalidInstructionInputState(
-                                "dense transition is missing its challenge",
-                            ))?,
+                        challenge.as_ref().ok_or(MetalError::InvalidState {
+                            family: "resident InstructionInput state",
+                            message: "dense transition is missing its challenge",
+                        })?,
                     );
                     set_inline_bytes(encoder, 6, &gamma);
                     set_inline_bytes(encoder, 7, &params);
@@ -1325,11 +1341,10 @@ fn initialize_storage(
         }
     });
     let bytes = fill_lengths.iter().try_fold(0u64, |total, length| {
-        total
-            .checked_add(*length)
-            .ok_or(MetalError::InvalidInstructionInputState(
-                "storage initialization byte count overflowed",
-            ))
+        total.checked_add(*length).ok_or(MetalError::InvalidState {
+            family: "resident InstructionInput state",
+            message: "storage initialization byte count overflowed",
+        })
     })?;
     let device_buffers = fill_lengths.iter().filter(|length| **length != 0).count();
     let span = tracing::info_span!(
@@ -1905,7 +1920,10 @@ mod tests {
         assert_eq!(actual, expected);
         assert!(matches!(
             sequence.submit_native_pipeline_primer(),
-            Err(MetalError::InvalidInstructionInputState(_))
+            Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                ..
+            })
         ));
     }
 

@@ -267,9 +267,10 @@ impl SolinasMetal {
             },
         };
         if threads.opening < 128 {
-            return Err(MetalError::InvalidOuterRemainderConfig(
-                "opening threadgroup needs at least 128 threads",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message: "opening threadgroup needs at least 128 threads",
+            });
         }
         validate_opening_threadgroup_memory(
             self,
@@ -386,9 +387,10 @@ fn initialize_storage(
             buffers.iter().try_fold(0u64, |total, buffer| {
                 total
                     .checked_add(buffer.length())
-                    .ok_or(MetalError::InvalidOuterRemainderConfig(
-                        "storage initialization byte count overflowed",
-                    ))
+                    .ok_or(MetalError::InvalidState {
+                        family: "outer remainder configuration",
+                        message: "storage initialization byte count overflowed",
+                    })
             })?
         }
     };

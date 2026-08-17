@@ -295,8 +295,6 @@ pub enum MetalError {
     InvalidInstructionReadRafGrouped(String),
     #[error("invalid co-produced RAM access collection: {0}")]
     InvalidRamAccessCollection(String),
-    #[error("invalid bytecode read-RAF address configuration: {0}")]
-    InvalidBytecodeReadRafAddressConfig(&'static str),
     #[error("address cycle phase tables contain {got} fields, expected {expected}")]
     AddressCyclePhaseTableShape { expected: usize, got: usize },
     #[error("address cycle has {got} table values, expected {expected}")]
@@ -350,8 +348,6 @@ pub enum MetalError {
         "registers value evaluation cannot continue split-LT binding from length {0}; hand off to the dense tail"
     )]
     RegistersValSplitLtExhausted(usize),
-    #[error("invalid registers value-evaluation state: {0}")]
-    InvalidRegistersValState(&'static str),
     #[error("registers value evaluation index {0} is outside the 128-register domain")]
     InvalidRegistersValIndex(u8),
     #[error(transparent)]
@@ -367,16 +363,12 @@ pub enum MetalError {
     SpartanShiftPlan(#[from] spartan_shift::SpartanShiftPlanError),
     #[error(transparent)]
     SpartanShiftOracle(#[from] spartan_shift::SpartanShiftOracleError),
-    #[error("invalid resident Spartan shift state: {0}")]
-    InvalidSpartanShiftState(&'static str),
     #[error("Spartan shift row {row} could not be extracted: {message}")]
     SpartanShiftRowExtraction { row: usize, message: String },
     #[error(transparent)]
     InstructionClaimShape(#[from] instruction_claim_reduction::InstructionClaimShapeError),
     #[error(transparent)]
     InstructionClaimOpening(#[from] instruction_claim_reduction::InstructionClaimOpeningError),
-    #[error("invalid resident instruction claim-reduction state: {0}")]
-    InvalidInstructionClaimState(&'static str),
     #[error(
         "instruction claim-reduction {phase} needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
     )]
@@ -394,18 +386,12 @@ pub enum MetalError {
         invalid_rows: u32,
         unsupported_dispatches: u32,
     },
-    #[error("invalid resident product remainder state: {0}")]
-    InvalidProductRemainderState(&'static str),
-    #[error("invalid resident Instruction RA state: {0}")]
-    InvalidInstructionRaState(&'static str),
     #[error("InstructionInput needs a power-of-two row count of at least four, got {0}")]
     InvalidInstructionInputRows(usize),
     #[error("InstructionInput table storage has length {got}, expected {expected}")]
     InstructionInputStorageLength { expected: usize, got: usize },
     #[error("InstructionInput split weights cover {covered} pairs, expected {expected}")]
     InstructionInputWeightShape { expected: usize, covered: usize },
-    #[error("invalid resident InstructionInput state: {0}")]
-    InvalidInstructionInputState(&'static str),
     #[error(
         "bytecode cycle kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
@@ -418,8 +404,6 @@ pub enum MetalError {
     },
     #[error("bytecode cycle maximum threadgroup count must be nonzero, got {0}")]
     InvalidBytecodeCycleThreadgroups(usize),
-    #[error("invalid resident bytecode cycle state: {0}")]
-    InvalidBytecodeCycleState(&'static str),
     #[error(
         "row-derived bytecode cycle needs {expected} stages, got {points} points and {weights} weights"
     )]
@@ -478,8 +462,6 @@ pub enum MetalError {
         "outer remainder explicit prefix has {explicit} rows, exceeding logical length {logical}"
     )]
     OuterRemainderExplicitRows { explicit: usize, logical: usize },
-    #[error("invalid outer remainder configuration: {0}")]
-    InvalidOuterRemainderConfig(&'static str),
     #[error("invalid outer remainder state: expected {expected}, got {got}")]
     InvalidOuterRemainderState {
         expected: &'static str,
@@ -506,8 +488,6 @@ pub enum MetalError {
         az: usize,
         bz: usize,
     },
-    #[error("invalid booleanity sequence state: {0}")]
-    InvalidBooleanityState(&'static str),
     #[error(
         "threadgroup width {requested} must be a multiple of {execution_width} and at most {maximum}"
     )]
@@ -549,6 +529,11 @@ pub enum MetalError {
         name: &'static str,
         expected: u64,
         got: u64,
+    },
+    #[error("invalid {family}: {message}")]
+    InvalidState {
+        family: &'static str,
+        message: &'static str,
     },
 }
 

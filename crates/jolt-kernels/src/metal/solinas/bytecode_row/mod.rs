@@ -257,9 +257,10 @@ impl SolinasMetal {
 impl BytecodeCycleRowSequence {
     pub(crate) fn message(&mut self) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
         if self.phase != RowPhase::BeforeMessage {
-            return Err(MetalError::InvalidBytecodeCycleState(
-                "row-derived message may run exactly once before the first bind",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident bytecode cycle state",
+                message: "row-derived message may run exactly once before the first bind",
+            });
         }
         let message = self.execute_row_round(None)?;
         self.phase = RowPhase::BeforeFirstBind;
@@ -271,9 +272,10 @@ impl BytecodeCycleRowSequence {
         challenge: AkitaField,
     ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
         match self.phase {
-            RowPhase::BeforeMessage => Err(MetalError::InvalidBytecodeCycleState(
-                "row-derived first bind requires the initial message",
-            )),
+            RowPhase::BeforeMessage => Err(MetalError::InvalidState {
+                family: "resident bytecode cycle state",
+                message: "row-derived first bind requires the initial message",
+            }),
             RowPhase::BeforeFirstBind => {
                 let message = self.execute_row_round(Some(challenge))?;
                 self.phase = RowPhase::Dense;
@@ -289,9 +291,10 @@ impl BytecodeCycleRowSequence {
         output: BytecodeCycleTablesMut<'_>,
     ) -> Result<(), MetalError> {
         if self.phase != RowPhase::Dense {
-            return Err(MetalError::InvalidBytecodeCycleState(
-                "row-derived factors are not dense before the first bind",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident bytecode cycle state",
+                message: "row-derived factors are not dense before the first bind",
+            });
         }
         self.dense.read_current_tables(output)
     }
@@ -322,12 +325,10 @@ impl BytecodeCycleRowSequence {
         &mut self,
         challenge: Option<AkitaField>,
     ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
-        let row_buffers =
-            self.row_buffers
-                .as_ref()
-                .ok_or(MetalError::InvalidBytecodeCycleState(
-                    "row-derived buffers were released",
-                ))?;
+        let row_buffers = self.row_buffers.as_ref().ok_or(MetalError::InvalidState {
+            family: "resident bytecode cycle state",
+            message: "row-derived buffers were released",
+        })?;
         let command_buffer = self.context.queue.new_command_buffer();
         let final_in_a = autoreleasepool(|| {
             if let Some(challenge) = challenge {

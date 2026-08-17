@@ -372,9 +372,10 @@ impl ProductRemainderRows {
             || residual.length() != residual_bytes
             || compact.as_ptr() == residual.as_ptr()
         {
-            return Err(MetalError::InvalidProductRemainderState(
-                "the Spartan Stage-1 product source has invalid provenance or shape",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "the Spartan Stage-1 product source has invalid provenance or shape",
+            });
         }
         Ok(Self {
             source: ProductRemainderSource::SpartanStage1 {
@@ -729,23 +730,20 @@ impl PendingProductRemainderInitialMessage {
         ),
         MetalError,
     > {
-        let mut sequence = self
-            .sequence
-            .take()
-            .ok_or(MetalError::InvalidProductRemainderState(
-                "the pending first message lost its resident sequence",
-            ))?;
+        let mut sequence = self.sequence.take().ok_or(MetalError::InvalidState {
+            family: "resident product remainder state",
+            message: "the pending first message lost its resident sequence",
+        })?;
         if !sequence.is_ready() {
-            return Err(MetalError::InvalidProductRemainderState(
-                "the pending first message lost its ready sequence state",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "the pending first message lost its ready sequence state",
+            });
         }
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidProductRemainderState(
-                "the pending first message lost its command buffer",
-            ))?;
+        let command = self.command.take().ok_or(MetalError::InvalidState {
+            family: "resident product remainder state",
+            message: "the pending first message lost its command buffer",
+        })?;
         let (message, gpu_active) = sequence.complete_initial_message(command)?;
         Ok((sequence, message, gpu_active))
     }
@@ -849,9 +847,10 @@ impl SolinasMetal {
             let expected = u64::try_from(state_a_bytes)
                 .map_err(|_| MetalError::InputTooLong(state_a_bytes))?;
             if state_a.length() != expected {
-                return Err(MetalError::InvalidProductRemainderState(
-                    "borrowed product state A has the wrong length",
-                ));
+                return Err(MetalError::InvalidState {
+                    family: "resident product remainder state",
+                    message: "borrowed product state A has the wrong length",
+                });
             }
         }
         let workspace_bytes = layout
@@ -940,9 +939,10 @@ impl SolinasMetal {
         };
         let state_b = self.new_product_remainder_buffer(layout.state_b_fields())?;
         if state_a.as_ptr() == state_b.as_ptr() {
-            return Err(MetalError::InvalidProductRemainderState(
-                "product state buffers alias",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "product state buffers alias",
+            });
         }
 
         Ok(ProductRemainderSequence {
@@ -994,16 +994,18 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<ProductRemainderPhaseParams, MetalError> {
         if self.phase != ProductRemainderPhase::Ready {
-            return Err(MetalError::InvalidProductRemainderState(
-                "joint materialization requires a ready product sequence",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "joint materialization requires a ready product sequence",
+            });
         }
         let params =
             ProductRemainderPhaseParams::materialize(self.layout.rows(), e_in.len(), e_out.len())?;
         let Some((compact, residual)) = self.buffers.rows.stage1_buffers() else {
-            return Err(MetalError::InvalidProductRemainderState(
-                "joint materialization requires resident Stage-1 rows",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "joint materialization requires resident Stage-1 rows",
+            });
         };
         self.write_weights(e_in, e_out)?;
         encoder.set_buffer(0, Some(compact), 0);
@@ -1040,9 +1042,10 @@ impl ProductRemainderSequence {
         &mut self,
     ) -> Result<(), MetalError> {
         if self.phase != ProductRemainderPhase::Ready {
-            return Err(MetalError::InvalidProductRemainderState(
-                "joint product state was materialized more than once",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "joint product state was materialized more than once",
+            });
         }
         self.current_elements = self.layout.rows();
         self.source_in_a = true;
@@ -1058,9 +1061,10 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<Buffer, MetalError> {
         if self.phase != ProductRemainderPhase::Materialized || self.current_elements < 4 {
-            return Err(MetalError::InvalidProductRemainderState(
-                "a joint transition needs a materialized product state",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "a joint transition needs a materialized product state",
+            });
         }
         let params = ProductRemainderPhaseParams::transition(
             self.current_elements,
@@ -1110,9 +1114,10 @@ impl ProductRemainderSequence {
         &mut self,
     ) -> Result<(), MetalError> {
         if self.phase != ProductRemainderPhase::Materialized || self.current_elements < 4 {
-            return Err(MetalError::InvalidProductRemainderState(
-                "joint product transition completed in the wrong phase",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "joint product transition completed in the wrong phase",
+            });
         }
         self.current_elements /= 2;
         self.source_in_a = !self.source_in_a;
@@ -1138,16 +1143,18 @@ impl ProductRemainderSequence {
 
     pub(crate) fn prime_workspace(&self) -> Result<(), MetalError> {
         if !self.is_ready() {
-            return Err(MetalError::InvalidProductRemainderState(
-                "workspace priming requires a ready sequence",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "workspace priming requires a ready sequence",
+            });
         }
         let state_a_identity = self.buffers.state_a.as_ptr() as usize;
         let state_b_identity = self.buffers.state_b.as_ptr() as usize;
         if state_a_identity == state_b_identity {
-            return Err(MetalError::InvalidProductRemainderState(
-                "workspace state buffers alias",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "workspace state buffers alias",
+            });
         }
         let buffers = if self.state_a_borrowed {
             [&self.buffers.state_b, &self.buffers.state_b][..1].to_vec()
@@ -1185,9 +1192,10 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<(ProductUniskipExtendedNodes<AkitaField>, Duration), MetalError> {
         if !self.is_ready() {
-            return Err(MetalError::InvalidProductRemainderState(
-                "product uni-skip requires a ready resident sequence",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "product uni-skip requires a ready resident sequence",
+            });
         }
         let params = ProductUniskipBlockParams::new(self.layout.rows(), e_in.len(), e_out.len())?;
         self.write_weights(e_in, e_out)?;
@@ -1203,11 +1211,14 @@ impl ProductRemainderSequence {
                 encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
                 set_inline_bytes(encoder, 5, &params);
             } else {
-                let rows = self.buffers.rows.packed_buffer().ok_or(
-                    MetalError::InvalidProductRemainderState(
-                        "packed product uni-skip lost its row buffer",
-                    ),
-                )?;
+                let rows = self
+                    .buffers
+                    .rows
+                    .packed_buffer()
+                    .ok_or(MetalError::InvalidState {
+                        family: "resident product remainder state",
+                        message: "packed product uni-skip lost its row buffer",
+                    })?;
                 encoder.set_buffer(0, Some(rows), 0);
                 encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
                 encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
@@ -1269,9 +1280,10 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
         if self.phase != ProductRemainderPhase::Ready {
-            return Err(MetalError::InvalidProductRemainderState(
-                "the materialization message was already emitted",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "the materialization message was already emitted",
+            });
         }
         let (message, active_time) = self.execute_materialize_message(e_in, e_out)?;
         self.phase = ProductRemainderPhase::Materialized;
@@ -1295,9 +1307,10 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<PendingProductRemainderInitialMessage, MetalError> {
         if !self.is_ready() {
-            return Err(MetalError::InvalidProductRemainderState(
-                "product-remainder prefetch requires a ready sequence",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "product-remainder prefetch requires a ready sequence",
+            });
         }
         let command = self.submit_materialize_message_command(e_in, e_out)?;
         Ok(PendingProductRemainderInitialMessage {
@@ -1311,9 +1324,10 @@ impl ProductRemainderSequence {
         command: ProductRemainderInitialMessageCommand,
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
         if command.sequence_identity != self.buffers.state_a.as_ptr() as usize {
-            return Err(MetalError::InvalidProductRemainderState(
-                "the pending first message belongs to a different product sequence",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "the pending first message belongs to a different product sequence",
+            });
         }
         command.command_buffer.wait_until_completed();
         let gpu_active = completed_command_gpu_time(&command.command_buffer)?;
@@ -1380,11 +1394,14 @@ impl ProductRemainderSequence {
                 encoder.set_buffer(6, Some(&self.buffers.partial_a), 0);
                 set_inline_bytes(encoder, 7, &params);
             } else {
-                let rows = self.buffers.rows.packed_buffer().ok_or(
-                    MetalError::InvalidProductRemainderState(
-                        "packed product materialization lost its row buffer",
-                    ),
-                )?;
+                let rows = self
+                    .buffers
+                    .rows
+                    .packed_buffer()
+                    .ok_or(MetalError::InvalidState {
+                        family: "resident product remainder state",
+                        message: "packed product materialization lost its row buffer",
+                    })?;
                 encoder.set_buffer(0, Some(rows), 0);
                 encoder.set_buffer(1, Some(&self.buffers.lagrange), 0);
                 encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
@@ -1458,9 +1475,10 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_MESSAGE_COLUMNS], Duration), MetalError> {
         if self.phase != ProductRemainderPhase::Materialized {
-            return Err(MetalError::InvalidProductRemainderState(
-                "the first message must be emitted before a transition",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "the first message must be emitted before a transition",
+            });
         }
         let params = ProductRemainderPhaseParams::transition(
             self.current_elements,
@@ -1533,9 +1551,10 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_OPENINGS], Duration), MetalError> {
         if self.phase != ProductRemainderPhase::Materialized || self.current_elements != 2 {
-            return Err(MetalError::InvalidProductRemainderState(
-                "openings require every message round to be completed",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "openings require every message round to be completed",
+            });
         }
         let (openings, active_time) = self.execute_openings(e_in, e_out)?;
         Ok((openings, active_time))
@@ -1547,9 +1566,10 @@ impl ProductRemainderSequence {
         e_out: &[AkitaField],
     ) -> Result<([AkitaField; PRODUCT_REMAINDER_OPENINGS], Duration), MetalError> {
         if self.phase != ProductRemainderPhase::Materialized || self.current_elements <= 2 {
-            return Err(MetalError::InvalidProductRemainderState(
-                "CPU-tail openings require an unfinished resident sequence",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "CPU-tail openings require an unfinished resident sequence",
+            });
         }
         let (openings, active_time) = self.execute_openings(e_in, e_out)?;
         Ok((openings, active_time))
@@ -1575,11 +1595,14 @@ impl ProductRemainderSequence {
                 encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
                 set_inline_bytes(encoder, 5, &params);
             } else {
-                let rows = self.buffers.rows.packed_buffer().ok_or(
-                    MetalError::InvalidProductRemainderState(
-                        "packed product openings lost its row buffer",
-                    ),
-                )?;
+                let rows = self
+                    .buffers
+                    .rows
+                    .packed_buffer()
+                    .ok_or(MetalError::InvalidState {
+                        family: "resident product remainder state",
+                        message: "packed product openings lost its row buffer",
+                    })?;
                 encoder.set_buffer(0, Some(rows), 0);
                 encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
                 encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
@@ -1650,9 +1673,10 @@ impl ProductRemainderSequence {
     #[doc(hidden)]
     pub fn read_current_state(&self) -> Result<(Vec<AkitaField>, Vec<AkitaField>), MetalError> {
         if self.phase != ProductRemainderPhase::Materialized {
-            return Err(MetalError::InvalidProductRemainderState(
-                "the product state is not materialized",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident product remainder state",
+                message: "the product state is not materialized",
+            });
         }
         let state = self.source_buffer();
         let values = unsafe {

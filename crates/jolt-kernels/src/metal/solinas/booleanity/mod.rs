@@ -652,9 +652,10 @@ impl BooleanitySequence {
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; MESSAGE_LANES], MetalError> {
         if self.dense {
-            return Err(MetalError::InvalidBooleanityState(
-                "a dense sequence has no unbound message entry",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "booleanity sequence state",
+                message: "a dense sequence has no unbound message entry",
+            });
         }
         self.execute_lazy(None, e_in, e_out)
     }
@@ -700,9 +701,10 @@ impl BooleanitySequence {
 
     pub fn read_current_tables(&self, output: &mut [AkitaField]) -> Result<(), MetalError> {
         if !self.dense {
-            return Err(MetalError::InvalidBooleanityState(
-                "lazy tables cannot be read as dense tables",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "booleanity sequence state",
+                message: "lazy tables cannot be read as dense tables",
+            });
         }
         let elements = self.polys * self.dense_elements;
         if output.len() != elements {
@@ -757,9 +759,10 @@ impl BooleanitySequence {
             self.branch_width
         };
         if next_width > self.materialize_width {
-            return Err(MetalError::InvalidBooleanityState(
-                "lazy branch width exceeds the materialization point",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "booleanity sequence state",
+                message: "lazy branch width exceeds the materialization point",
+            });
         }
         let source_elements = self.rows / next_width;
         self.validate_weights(source_elements / 2, e_in, e_out)?;
@@ -853,9 +856,10 @@ impl BooleanitySequence {
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; MESSAGE_LANES], MetalError> {
         if self.dense_elements < 4 {
-            return Err(MetalError::InvalidBooleanityState(
-                "dense transition needs at least four elements",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "booleanity sequence state",
+                message: "dense transition needs at least four elements",
+            });
         }
         self.validate_weights(self.dense_elements / 4, e_in, e_out)?;
         self.write_weights(e_in, e_out)?;

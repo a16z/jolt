@@ -465,16 +465,15 @@ impl PendingSpartanStage1SourcePrimer {
         if source_identities != self.source_identities
             || self.checksums.length() != byte_length::<u32>(SOURCE_PRIMER_THREADS)?
         {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer resources changed before completion",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Spartan shift state",
+                message: "Stage1 source primer resources changed before completion",
+            });
         }
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer command was already joined",
-            ))?;
+        let command = self.command.take().ok_or(MetalError::InvalidState {
+            family: "resident Spartan shift state",
+            message: "Stage1 source primer command was already joined",
+        })?;
         command.wait_until_completed();
         let _gpu_active = completed_command_gpu_time(&command)?;
         Ok(())
@@ -511,9 +510,10 @@ impl SolinasMetal {
             || outer.device_registry_id() != self.device_registry_id()
             || shift.device_registry_id() != self.device_registry_id()
         {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer received mismatched resident rows",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Spartan shift state",
+                message: "Stage1 source primer received mismatched resident rows",
+            });
         }
 
         let [shift_unexpanded_pc, shift_pc, shift_flags] = shift.source_buffers();
@@ -529,9 +529,10 @@ impl SolinasMetal {
             .iter()
             .any(|buffer| buffer.device().registry_id() != expected_device)
         {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer received a foreign buffer",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Spartan shift state",
+                message: "Stage1 source primer received a foreign buffer",
+            });
         }
         let source_identities = std::array::from_fn(|index| sources[index].as_ptr() as usize);
         let word_counts =
@@ -549,9 +550,10 @@ impl SolinasMetal {
         if limits.thread_execution_width != SIMD_WIDTH
             || limits.max_total_threads_per_threadgroup < SOURCE_PRIMER_THREADS_PER_THREADGROUP
         {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer pipeline has unsupported limits",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Spartan shift state",
+                message: "Stage1 source primer pipeline has unsupported limits",
+            });
         }
         let checksum_bytes = byte_length::<u32>(SOURCE_PRIMER_THREADS)?;
         self.validate_additional_working_set(checksum_bytes)?;
@@ -675,10 +677,9 @@ impl SolinasMetal {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
-            .map_err(|_| {
-                MetalError::InvalidInstructionInputState(
-                    "Outer residual generation counter exhausted",
-                )
+            .map_err(|_| MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "Outer residual generation counter exhausted",
             })?;
         Ok(SpartanOuterUniskipRows {
             instruction_input_rows: InstructionInputRows::from_buffer(
@@ -719,9 +720,10 @@ impl SolinasMetal {
                 outer_rows = Some(prepared);
                 Ok(())
             })?;
-        let outer_rows = outer_rows.ok_or(MetalError::InvalidSpartanShiftState(
-            "combined outer/shift fill did not produce outer rows",
-        ))?;
+        let outer_rows = outer_rows.ok_or(MetalError::InvalidState {
+            family: "resident Spartan shift state",
+            message: "combined outer/shift fill did not produce outer rows",
+        })?;
         Ok((outer_rows, shift_rows))
     }
 

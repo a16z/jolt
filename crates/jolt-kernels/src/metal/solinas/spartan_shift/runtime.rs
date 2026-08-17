@@ -72,9 +72,10 @@ impl SpartanShiftResidentRows {
                 metadata.flags.allocation_identity,
             ]
         {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "resident allocation identity changed",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Spartan shift state",
+                message: "resident allocation identity changed",
+            });
         }
         Ok(())
     }
@@ -162,18 +163,14 @@ impl PendingSpartanShiftPrefix {
     pub fn join(
         mut self,
     ) -> Result<(SpartanShiftPrefixInvocation, SpartanShiftPrefixObservation), MetalError> {
-        let invocation = self
-            .invocation
-            .take()
-            .ok_or(MetalError::InvalidSpartanShiftState(
-                "submitted prefix lost its invocation",
-            ))?;
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidSpartanShiftState(
-                "submitted prefix lost its command",
-            ))?;
+        let invocation = self.invocation.take().ok_or(MetalError::InvalidState {
+            family: "resident Spartan shift state",
+            message: "submitted prefix lost its invocation",
+        })?;
+        let command = self.command.take().ok_or(MetalError::InvalidState {
+            family: "resident Spartan shift state",
+            message: "submitted prefix lost its command",
+        })?;
         let observation = invocation.complete(command)?;
         Ok((invocation, observation))
     }
@@ -183,18 +180,14 @@ impl PendingSpartanShiftFold {
     pub fn join(
         mut self,
     ) -> Result<(SpartanShiftFoldInvocation, SpartanShiftFoldObservation), MetalError> {
-        let invocation = self
-            .invocation
-            .take()
-            .ok_or(MetalError::InvalidSpartanShiftState(
-                "submitted fold lost its invocation",
-            ))?;
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidSpartanShiftState(
-                "submitted fold lost its command",
-            ))?;
+        let invocation = self.invocation.take().ok_or(MetalError::InvalidState {
+            family: "resident Spartan shift state",
+            message: "submitted fold lost its invocation",
+        })?;
+        let command = self.command.take().ok_or(MetalError::InvalidState {
+            family: "resident Spartan shift state",
+            message: "submitted fold lost its command",
+        })?;
         let observation = invocation.complete(command)?;
         Ok((invocation, observation))
     }
@@ -420,9 +413,10 @@ impl SolinasMetal {
             build_limits,
         )?;
         if build_threads != plan.config.build_threads_per_threadgroup {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "resolved build width differs from checked plan",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Spartan shift state",
+                message: "resolved build width differs from checked plan",
+            });
         }
         let reduce_threads = Self::resolve_threadgroup_width(None, reduce_limits)?;
 
@@ -480,9 +474,10 @@ impl SolinasMetal {
             limits,
         )?;
         if threads != plan.config.fold_threads_per_threadgroup {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "resolved fold width differs from checked plan",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Spartan shift state",
+                message: "resolved fold width differs from checked plan",
+            });
         }
         let dynamic_threadgroup_bytes = plan.config.fold_threadgroup_bytes()?;
         let total_threadgroup_bytes = u64::try_from(dynamic_threadgroup_bytes)
@@ -757,7 +752,10 @@ fn validate_command_resources(
     if rows.allocation_identities() != command.source_allocation_identities
         || output.as_ptr() as usize != command.output_allocation_identity
     {
-        return Err(MetalError::InvalidSpartanShiftState(error));
+        return Err(MetalError::InvalidState {
+            family: "resident Spartan shift state",
+            message: error,
+        });
     }
     Ok(())
 }

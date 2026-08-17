@@ -135,9 +135,10 @@ impl OuterRegistersClaimCarrier {
             || receipt.rd_bytes != rd_write_value.length()
             || receipt.device_registry_id != rd_write_value.device().registry_id()
         {
-            return Err(MetalError::InvalidOuterRemainderConfig(
-                "registers-claim carrier receipt is inconsistent",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message: "registers-claim carrier receipt is inconsistent",
+            });
         }
         let lengths = [
             components.rd_write_value.len(),
@@ -148,9 +149,10 @@ impl OuterRegistersClaimCarrier {
             .into_iter()
             .any(|length| length != receipt.prefix_elements)
         {
-            return Err(MetalError::InvalidOuterRemainderConfig(
-                "registers-claim carrier component length is inconsistent",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message: "registers-claim carrier component length is inconsistent",
+            });
         }
         Ok(Self {
             receipt,
@@ -175,10 +177,9 @@ pub(super) fn next_completion_serial() -> Result<u64, MetalError> {
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
-        .map_err(|_| {
-            MetalError::InvalidOuterRemainderConfig(
-                "registers-claim carrier completion counter exhausted",
-            )
+        .map_err(|_| MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "registers-claim carrier completion counter exhausted",
         })
 }
 

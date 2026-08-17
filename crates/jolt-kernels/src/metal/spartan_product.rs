@@ -1136,10 +1136,9 @@ impl MetalProductRemainderState {
             Self::Standalone(sequence) => sequence.openings_timed(e_in, e_out),
             Self::Joint(service) => service
                 .lock()
-                .map_err(|_| {
-                    MetalError::InvalidProductRemainderState(
-                        "joint Product/Instruction service lock is poisoned",
-                    )
+                .map_err(|_| MetalError::InvalidState {
+                    family: "resident product remainder state",
+                    message: "joint Product/Instruction service lock is poisoned",
                 })?
                 .product_openings(after_cpu_tail, e_in, e_out),
         }

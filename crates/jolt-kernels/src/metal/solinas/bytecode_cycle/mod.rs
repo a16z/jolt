@@ -304,9 +304,10 @@ impl BytecodeCycleSequence {
     /// Restores the initial source after exactly one transition without copying it.
     pub fn rewind_initial_state(&mut self) -> Result<(), MetalError> {
         if self.source_in_a || self.current_elements != self.initial_elements / 2 {
-            return Err(MetalError::InvalidBytecodeCycleState(
-                "rewind requires exactly one transition from the initial state",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident bytecode cycle state",
+                message: "rewind requires exactly one transition from the initial state",
+            });
         }
         self.current_elements = self.initial_elements;
         self.source_in_a = true;

@@ -116,9 +116,10 @@ impl InstructionRaSequenceConfig {
             return Err(MetalError::InvalidInstructionRaRows(rows));
         }
         if self.reuse_inverse_for_dense && materialize_width == 16 {
-            return Err(MetalError::InvalidInstructionRaState(
-                "the resident inverse buffer is too small for width-16 dense ping-pong",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                message: "the resident inverse buffer is too small for width-16 dense ping-pong",
+            });
         }
         let (branch_a_width, branch_b_width) = branch_capacity_widths(materialize_width);
         let branch_a_values = FACTORS
@@ -320,9 +321,10 @@ impl SolinasMetal {
             return Err(MetalError::InvalidInstructionRaRows(rows));
         }
         if config.reuse_inverse_for_dense && materialize_width == 16 {
-            return Err(MetalError::InvalidInstructionRaState(
-                "the resident inverse buffer is too small for width-16 dense ping-pong",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                message: "the resident inverse buffer is too small for width-16 dense ping-pong",
+            });
         }
         let covered = e_in_capacity
             .checked_mul(e_out_capacity)
@@ -475,9 +477,10 @@ impl InstructionRaSequenceStorage {
         chunk_tables: &[AkitaField],
     ) -> Result<InstructionRaSequence, MetalError> {
         if plane.len() != self.rows {
-            return Err(MetalError::InvalidInstructionRaState(
-                "resident lookup plane does not match the preallocated sequence",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                message: "resident lookup plane does not match the preallocated sequence",
+            });
         }
         if chunk_tables.len() != FACTORS * BINS {
             return Err(MetalError::InstructionRaStorageLength {
@@ -568,9 +571,10 @@ impl InstructionRaSequence {
 
     pub fn read_current_tables(&self, output: &mut [AkitaField]) -> Result<(), MetalError> {
         if !self.dense {
-            return Err(MetalError::InvalidInstructionRaState(
-                "lazy tables cannot be read as dense tables",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                message: "lazy tables cannot be read as dense tables",
+            });
         }
         let elements = FACTORS * self.dense_elements;
         if output.len() != elements {
@@ -615,9 +619,10 @@ impl InstructionRaSequence {
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; SAMPLES], MetalError> {
         if self.dense {
-            return Err(MetalError::InvalidInstructionRaState(
-                "the lazy prefix has already materialized",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                message: "the lazy prefix has already materialized",
+            });
         }
         let next_width = if challenge.is_some() {
             self.branch_width * 2
@@ -625,9 +630,10 @@ impl InstructionRaSequence {
             self.branch_width
         };
         if next_width > self.materialize_width {
-            return Err(MetalError::InvalidInstructionRaState(
-                "branch width exceeds the materialization point",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                message: "branch width exceeds the materialization point",
+            });
         }
         let source_elements = self.rows / next_width;
         self.validate_weights(source_elements / 2, e_in, e_out)?;
@@ -652,12 +658,10 @@ impl InstructionRaSequence {
         } else {
             Some(self.message_pipeline(next_width)?.clone())
         };
-        let plane = self
-            .lookup_plane
-            .as_ref()
-            .ok_or(MetalError::InvalidInstructionRaState(
-                "the resident lookup plane is missing",
-            ))?;
+        let plane = self.lookup_plane.as_ref().ok_or(MetalError::InvalidState {
+            family: "resident Instruction RA state",
+            message: "the resident lookup plane is missing",
+        })?;
 
         let queue = self.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
@@ -707,7 +711,10 @@ impl InstructionRaSequence {
                 );
             } else {
                 encoder.set_compute_pipeline_state(message_pipeline.as_ref().ok_or(
-                    MetalError::InvalidInstructionRaState("the lazy message pipeline is missing"),
+                    MetalError::InvalidState {
+                        family: "resident Instruction RA state",
+                        message: "the lazy message pipeline is missing",
+                    },
                 )?);
                 encoder.set_buffer(0, Some(plane.lookups()), 0);
                 encoder.set_buffer(1, Some(plane.cycle_to_table_major()), 0);
@@ -747,9 +754,10 @@ impl InstructionRaSequence {
                 let inverse = self
                     .lookup_plane
                     .as_ref()
-                    .ok_or(MetalError::InvalidInstructionRaState(
-                        "the resident inverse buffer is missing at materialization",
-                    ))?
+                    .ok_or(MetalError::InvalidState {
+                        family: "resident Instruction RA state",
+                        message: "the resident inverse buffer is missing at materialization",
+                    })?
                     .cycle_to_table_major()
                     .clone();
                 self.buffers.dense_b = Some(inverse);
@@ -771,9 +779,10 @@ impl InstructionRaSequence {
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; SAMPLES], MetalError> {
         if !self.dense || self.dense_elements < 4 {
-            return Err(MetalError::InvalidInstructionRaState(
-                "dense transition needs at least four elements per factor",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                message: "dense transition needs at least four elements per factor",
+            });
         }
         self.validate_weights(self.dense_elements / 4, e_in, e_out)?;
         self.write_weights(e_in, e_out)?;
@@ -864,9 +873,10 @@ impl InstructionRaSequence {
                 .find_map(|(pipeline_width, pipeline)| {
                     (*pipeline_width == width).then_some(pipeline)
                 })
-                .ok_or(MetalError::InvalidInstructionRaState(
-                    "no lazy message pipeline for this branch width",
-                )),
+                .ok_or(MetalError::InvalidState {
+                    family: "resident Instruction RA state",
+                    message: "no lazy message pipeline for this branch width",
+                }),
         }
     }
 
@@ -947,9 +957,10 @@ impl InstructionRaSequence {
         self.buffers
             .dense_b
             .as_ref()
-            .ok_or(MetalError::InvalidInstructionRaState(
-                "the dense destination buffer is missing",
-            ))
+            .ok_or(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                message: "the dense destination buffer is missing",
+            })
     }
 }
 
@@ -1106,7 +1117,10 @@ mod tests {
         };
         assert!(matches!(
             config.scratch_layout(1 << 26),
-            Err(MetalError::InvalidInstructionRaState(_))
+            Err(MetalError::InvalidState {
+                family: "resident Instruction RA state",
+                ..
+            })
         ));
     }
 

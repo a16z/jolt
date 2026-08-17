@@ -126,9 +126,10 @@ fn resident_row_working_set(
     };
     let instruction_input_bytes = if instruction_input && borrow_outer_residual {
         if !stage1 {
-            return Err(MetalError::InvalidInstructionInputState(
-                "Outer residual borrowing requires resident Stage-1 rows",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "resident InstructionInput state",
+                message: "Outer residual borrowing requires resident Stage-1 rows",
+            });
         }
         instruction_input_sequence_auxiliary_storage_bytes(cycles)?
     } else if instruction_input {
@@ -1868,9 +1869,10 @@ mod tests {
             Some("gpu_timestamp_lookup")
         );
         assert_eq!(
-            outer_remainder_storage_fallback_reason(&MetalError::InvalidOuterRemainderConfig(
-                "invalid test configuration",
-            )),
+            outer_remainder_storage_fallback_reason(&MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message: "invalid test configuration"
+            }),
             None
         );
     }
@@ -2096,9 +2098,10 @@ mod tests {
         config.spartan_outer_remainder.dispatch.max_threadgroups = 0;
         assert!(matches!(
             MetalBackend::new(config),
-            Err(MetalError::InvalidOuterRemainderConfig(
-                "max_threadgroups must be nonzero"
-            ))
+            Err(MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message: "max_threadgroups must be nonzero"
+            })
         ));
     }
 }

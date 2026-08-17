@@ -277,12 +277,10 @@ impl Drop for PendingOuterRegistersClaimCarrier {
 
 impl PendingOuterRegistersClaimCarrier {
     pub(crate) fn submission(&self) -> Result<OuterRegistersClaimCarrierSubmission, MetalError> {
-        let buffers = self
-            .buffers
-            .as_ref()
-            .ok_or(MetalError::InvalidOuterRemainderConfig(
-                "pending registers-claim carrier lost its buffers",
-            ))?;
+        let buffers = self.buffers.as_ref().ok_or(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "pending registers-claim carrier lost its buffers",
+        })?;
         Ok(OuterRegistersClaimCarrierSubmission {
             rows: self.source.rows,
             explicit_rows: self.explicit_rows,
@@ -303,19 +301,15 @@ impl PendingOuterRegistersClaimCarrier {
     }
 
     pub(crate) fn join(mut self) -> Result<OuterRegistersClaimCarrier, MetalError> {
-        let command_buffer =
-            self.command_buffer
-                .take()
-                .ok_or(MetalError::InvalidOuterRemainderConfig(
-                    "pending registers-claim carrier lost its command buffer",
-                ))?;
+        let command_buffer = self.command_buffer.take().ok_or(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "pending registers-claim carrier lost its command buffer",
+        })?;
         command_buffer.wait_until_completed();
-        let buffers = self
-            .buffers
-            .take()
-            .ok_or(MetalError::InvalidOuterRemainderConfig(
-                "pending registers-claim carrier lost its buffers",
-            ))?;
+        let buffers = self.buffers.take().ok_or(MetalError::InvalidState {
+            family: "outer remainder configuration",
+            message: "pending registers-claim carrier lost its buffers",
+        })?;
         let device_registry_id = self.context.device_registry_id();
         if self.source.device_registry_id != device_registry_id
             || self.source_instruction_input.as_ptr() as usize != self.source.compact_storage_id
@@ -332,9 +326,10 @@ impl PendingOuterRegistersClaimCarrier {
             .into_iter()
             .any(|buffer| buffer.device().registry_id() != device_registry_id)
         {
-            return Err(MetalError::InvalidOuterRemainderConfig(
-                "pending registers-claim carrier changed source provenance",
-            ));
+            return Err(MetalError::InvalidState {
+                family: "outer remainder configuration",
+                message: "pending registers-claim carrier changed source provenance",
+            });
         }
         // SAFETY: the completed reduction initializes every component field
         // before the CPU-visible read.
@@ -719,9 +714,10 @@ impl OuterRemainderSequence {
         let padding_weight = canonical_padding_weight(explicit_rows, e_in, e_out);
         if explicit_rows == 0 {
             if self.config.registers_claim_carrier {
-                return Err(MetalError::InvalidOuterRemainderConfig(
-                    "registers-claim carrier requires at least one explicit row",
-                ));
+                return Err(MetalError::InvalidState {
+                    family: "outer remainder configuration",
+                    message: "registers-claim carrier requires at least one explicit row",
+                });
             }
             self.product_uniskip_endpoints = self
                 .config
