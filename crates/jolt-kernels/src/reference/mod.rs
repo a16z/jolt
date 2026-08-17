@@ -32,6 +32,10 @@ pub mod bytecode_read_raf;
 pub mod commitment;
 #[cfg(feature = "field-inline")]
 pub mod field_registers_claim_reduction;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_read_write_checking;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_val_evaluation;
 pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
@@ -98,11 +102,15 @@ where
             instruction_input: Box::new(ReferenceBackend),
             registers_claim_reduction: Box::new(ReferenceBackend),
             registers_read_write: Box::new(ReferenceBackend),
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write: Box::new(ReferenceBackend),
             ram_val_check: Box::new(ReferenceBackend),
             advice_opening: Box::new(ReferenceBackend),
             instruction_read_raf: Box::new(ReferenceBackend),
             ram_ra_claim_reduction: Box::new(ReferenceBackend),
             registers_val_evaluation: Box::new(ReferenceBackend),
+            #[cfg(feature = "field-inline")]
+            field_registers_val_evaluation: Box::new(ReferenceBackend),
             bytecode_read_raf_address: Box::new(ReferenceBackend),
             booleanity_address: Box::new(ReferenceBackend),
             bytecode_read_raf_cycle: Box::new(ReferenceBackend),

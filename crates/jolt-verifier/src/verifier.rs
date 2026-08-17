@@ -1587,6 +1587,14 @@ mod tests {
                     rd_wa: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_registers_read_write: stage4::FieldRegistersReadWriteOutputClaims {
+                    registers_val: zero,
+                    rs1_ra: zero,
+                    rs2_ra: zero,
+                    rd_wa: zero,
+                    rd_inc: zero,
+                },
                 ram_val_check: stage4::RamValCheckOutputClaims {
                     untrusted_advice: None,
                     trusted_advice: None,
@@ -1603,6 +1611,11 @@ mod tests {
                 },
                 ram_ra_claim_reduction: stage5::RamRaClaimReductionOutputClaims { ram_ra: zero },
                 registers_val_evaluation: stage5::RegistersValEvaluationOutputClaims {
+                    rd_inc: zero,
+                    rd_wa: zero,
+                },
+                #[cfg(feature = "field-inline")]
+                field_registers_val_evaluation: stage5::FieldRegistersValEvaluationOutputClaims {
                     rd_inc: zero,
                     rd_wa: zero,
                 },

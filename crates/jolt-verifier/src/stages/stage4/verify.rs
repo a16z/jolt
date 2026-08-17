@@ -42,9 +42,11 @@ use crate::{
 /// Assemble the stage-4 consumed opening *values* from the upstream outputs into
 /// the generated `Stage4InputClaims` aggregate. This is the single place the
 /// stage's Outputs→Inputs dataflow is expressed: the register read-write inputs
-/// come from stage 3's registers claim-reduction, and the RAM value-check inputs
-/// come from stage 2's RAM `val`/`val_final` plus the reconstructed `Val_init`
-/// decomposition (advice / program-image contributions).
+/// come from stage 3's registers claim-reduction, the FR read-write inputs
+/// (under `field-inline`) from stage 2's FR claim-reduction, and the RAM
+/// value-check inputs come from stage 2's RAM `val`/`val_final` plus the
+/// reconstructed `Val_init` decomposition (advice / program-image
+/// contributions).
 pub fn stage4_input_values_from_upstream<F: Field>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage3: &Stage3OutputClaims<F>,
@@ -52,6 +54,11 @@ pub fn stage4_input_values_from_upstream<F: Field>(
 ) -> Stage4InputClaims<F> {
     Stage4InputClaims {
         registers_read_write: registers_read_write_input_values_from_upstream(stage3),
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write:
+            super::field_registers_read_write_checking::field_registers_read_write_input_values_from_upstream(
+                stage2,
+            ),
         ram_val_check: ram_val_check_input_values_from_upstream(stage2, ram_val_check_init),
     }
 }
@@ -67,6 +74,11 @@ pub fn stage4_input_points_from_upstream<F: Field>(
 ) -> Stage4InputPoints<F> {
     Stage4InputPoints {
         registers_read_write: registers_read_write_input_points_from_upstream(stage3),
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write:
+            super::field_registers_read_write_checking::field_registers_read_write_input_points_from_upstream(
+                stage2,
+            ),
         ram_val_check: ram_val_check_input_points_from_upstream(stage2, structure),
     }
 }
@@ -139,13 +151,24 @@ where
 
     let sumchecks = Stage4Sumchecks {
         registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
+        // FR dimensions are pinned by the compile-time protocol config
+        // (phase1 = log_t, phase2 = log_k), not the proof's rw_config, so no
+        // eager phase-split validation is needed.
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write:
+            super::field_registers_read_write_checking::FieldRegistersReadWriteChecking::new(
+                crate::config::JOLT_VERIFIER_CONFIG
+                    .field_inline
+                    .read_write_dimensions(log_t),
+            ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
 
-    // Draw the batching gammas in declaration order: the registers gamma (a single
-    // `challenge_scalar`), then the RAM value-check gamma behind its
-    // `b"ram_val_check_gamma"` domain separator (the relation's `draw_challenges`
-    // override replays the separator at its exact transcript position).
+    // Draw the batching gammas in declaration order: the registers gamma, under
+    // `field-inline` the FR read-write gamma (each a single `challenge_scalar`),
+    // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
+    // separator (the relation's `draw_challenges` override replays the separator
+    // at its exact transcript position).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

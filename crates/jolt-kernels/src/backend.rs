@@ -25,8 +25,12 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking
 use jolt_verifier::stages::stage3::outputs::{
     InstructionInput, RegistersClaimReduction, SpartanShift,
 };
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
@@ -144,11 +148,19 @@ where
     pub instruction_input: Box<dyn PrepareKernel<F, InstructionInput<F>>>,
     pub registers_claim_reduction: Box<dyn PrepareKernel<F, RegistersClaimReduction<F>>>,
     pub registers_read_write: Box<dyn PrepareKernel<F, RegistersReadWriteChecking<F>>>,
+    /// Fails closed in the reference tier: field-inline proving is pending
+    /// witness wiring (milestone 11).
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write: Box<dyn PrepareKernel<F, FieldRegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
     pub advice_opening: Box<dyn AdviceOpeningEvaluation<F>>,
     pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
+    /// Fails closed in the reference tier: field-inline proving is pending
+    /// witness wiring (milestone 11).
+    #[cfg(feature = "field-inline")]
+    pub field_registers_val_evaluation: Box<dyn PrepareKernel<F, FieldRegistersValEvaluation<F>>>,
     pub bytecode_read_raf_address: Box<dyn PrepareKernel<F, BytecodeReadRafAddressPhase<F>>>,
     pub booleanity_address: Box<dyn PrepareKernel<F, BooleanityAddressPhase<F>>>,
     pub bytecode_read_raf_cycle: Box<dyn PrepareKernel<F, BytecodeReadRafCycle<F>>>,

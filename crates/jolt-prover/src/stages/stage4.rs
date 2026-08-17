@@ -169,11 +169,18 @@ where
 
     let sumchecks = Stage4Sumchecks {
         registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write:
+            jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking::new(
+                jolt_verifier::JOLT_VERIFIER_CONFIG
+                    .field_inline
+                    .read_write_dimensions(log_t),
+            ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
-    // Draws the registers gamma, then the RAM value-check gamma behind its
-    // `b"ram_val_check_gamma"` domain separator (replayed by the relation's
-    // `draw_challenges` override).
+    // Draws the registers gamma, under `field-inline` the FR read-write gamma,
+    // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
+    // separator (replayed by the relation's `draw_challenges` override).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage4_input_values_from_upstream(

@@ -69,6 +69,7 @@ pub struct FieldRegistersReadWriteChallenges<F> {
 /// The native field-register read/write checking sumcheck: relates the read-value
 /// claims (`FieldRdValue`, `FieldRs1Value`, `FieldRs2Value`) folded by `gamma` to
 /// the register `val`/`ra`/`inc` openings weighted by the `EqCycle` public.
+#[derive(Clone)]
 pub struct ReadWriteChecking {
     shape: FieldRegistersReadWriteDimensions,
 }
@@ -153,6 +154,7 @@ pub struct FieldRegistersValEvaluationInputClaims<C> {
 
 /// The native field-register val-evaluation sumcheck: relates the register `val`
 /// opening to `rd_inc * rd_wa` weighted by the `LtCycle` public.
+#[derive(Clone)]
 pub struct ValEvaluation {
     shape: FieldRegistersTraceDimensions,
 }

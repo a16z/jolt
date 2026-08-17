@@ -81,9 +81,17 @@ where
         instruction_read_raf: InstructionReadRaf::new(formula_dimensions.instruction_read_raf),
         ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, log_k),
         registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
+        #[cfg(feature = "field-inline")]
+        field_registers_val_evaluation:
+            jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation::new(
+                jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(
+                    trace_dimensions.log_t(),
+                ),
+            ),
     };
     // Draws the instruction gamma, then the RAM gamma (registers draws
-    // nothing) — the generated declaration-order draw.
+    // nothing, and so does the `field-inline` FR value-evaluation member) —
+    // the generated declaration-order draw.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);

@@ -684,6 +684,17 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         TamperCoverage::IgnoredUntilFixture,
         "committed fixture test offsets the staged program-image init contribution",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage4.claims.field_registers_read_write",
+        "claims.stage4.field_registers_read_write.*",
+        VerifierPhase::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "the FR read-write outputs feed the stage-4 fold (EqCycle-weighted Twist formula) and \
+         the stage-5 FR val-evaluation input; mutation runs once modular field-inline fixtures \
+         exist",
+    ),
 ];
 
 pub const STAGE5_TARGETS: &[TamperTarget] = &[
@@ -750,6 +761,17 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "prover-fixture test offsets each register value-evaluation output claim",
+    ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage5.claims.field_registers_val_evaluation",
+        "claims.stage5.field_registers_val_evaluation.*",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "the FR val-evaluation outputs feed the stage-5 fold (LtCycle-weighted write \
+         activation) and the stage-6 FieldRdInc reduction; mutation runs once modular \
+         field-inline fixtures exist",
     ),
 ];
 
@@ -1360,6 +1382,14 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage4.registers_read_write.rd_wa",
             "claims.stage4.registers_read_write.rd_inc",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage4.field_registers_read_write.*" => vec![
+            "claims.stage4.field_registers_read_write.registers_val",
+            "claims.stage4.field_registers_read_write.rs1_ra",
+            "claims.stage4.field_registers_read_write.rs2_ra",
+            "claims.stage4.field_registers_read_write.rd_wa",
+            "claims.stage4.field_registers_read_write.rd_inc",
+        ],
         "claims.stage4.ram_val_check.*" => vec![
             "claims.stage4.ram_val_check.ram_ra",
             "claims.stage4.ram_val_check.ram_inc",
@@ -1367,6 +1397,11 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
         "claims.stage5.registers_val_evaluation.*" => vec![
             "claims.stage5.registers_val_evaluation.rd_inc",
             "claims.stage5.registers_val_evaluation.rd_wa",
+        ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage5.field_registers_val_evaluation.*" => vec![
+            "claims.stage5.field_registers_val_evaluation.rd_inc",
+            "claims.stage5.field_registers_val_evaluation.rd_wa",
         ],
         path => vec![path],
     }
@@ -1508,6 +1543,14 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rd_wa: zero,
                 rd_inc: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write: stage4::FieldRegistersReadWriteOutputClaims {
+                registers_val: zero,
+                rs1_ra: zero,
+                rs2_ra: zero,
+                rd_wa: zero,
+                rd_inc: zero,
+            },
             ram_val_check: stage4::RamValCheckOutputClaims {
                 untrusted_advice: optional,
                 trusted_advice: optional,
@@ -1524,6 +1567,11 @@ pub fn clear_claims<F: Field>(fill_optionals: bool) -> ClearProofClaims<F> {
             },
             ram_ra_claim_reduction: stage5::RamRaClaimReductionOutputClaims { ram_ra: zero },
             registers_val_evaluation: stage5::RegistersValEvaluationOutputClaims {
+                rd_inc: zero,
+                rd_wa: zero,
+            },
+            #[cfg(feature = "field-inline")]
+            field_registers_val_evaluation: stage5::FieldRegistersValEvaluationOutputClaims {
                 rd_inc: zero,
                 rd_wa: zero,
             },

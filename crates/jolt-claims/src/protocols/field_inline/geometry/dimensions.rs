@@ -15,6 +15,22 @@ impl FieldRegistersTraceDimensions {
     pub const fn log_t(self) -> usize {
         self.log_t
     }
+
+    /// The reversed cycle opening point of a trace-domain FR sumcheck, mirroring
+    /// `protocols::jolt`'s `TraceDimensions::cycle_opening_point`.
+    pub fn cycle_opening_point<F: Field>(
+        self,
+        challenges: &[F],
+    ) -> Result<Vec<F>, JoltFormulaPointError> {
+        if challenges.len() != self.log_t {
+            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+                expected: self.log_t,
+                got: challenges.len(),
+            });
+        }
+
+        Ok(challenges.iter().rev().copied().collect())
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
