@@ -6,7 +6,9 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
@@ -21,7 +23,7 @@ const RAM_WORD_BYTES: u64 = 8;
 impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRafEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRafEvaluation<F>>>, KernelError<F>> {
@@ -41,7 +43,7 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
         }
 
         let cycles = 1usize << relation.tau_low().len();
-        let rows = collect_bundles::<RamAddressWitness>(witness, cycles)?;
+        let rows = cached_bundles::<RamAddressWitness, _>(session, witness, cycles)?;
         let words =
             packed_ram_words(&rows, 1usize << ram_log_k).map_err(|_| KernelError::Unsupported {
                 reason: "the CUDA RAM RAF evaluation packs each remapped RAM word address into \

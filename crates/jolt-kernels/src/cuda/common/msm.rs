@@ -997,6 +997,94 @@ impl CudaKernelContext {
         self.stream().synchronize()?;
         output.to_host()
     }
+
+    pub(crate) fn one_hot_embed(
+        &self,
+        hot: &[u32],
+        domain: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(domain)?;
+        if hot.is_empty() {
+            return Ok(output);
+        }
+        let device_hot = self.upload_u32_slice(hot)?;
+        let cycles = u64::try_from(hot.len()).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: hot.len(),
+        })?;
+        let domain_arg = u64::try_from(domain).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: domain,
+        })?;
+        let count = Self::count_of(hot.len())?;
+        let mut builder = self.stream().launch_builder(self.opening_one_hot_embed());
+        let _ = builder.arg(&device_hot);
+        let _ = builder.arg(&cycles);
+        let _ = builder.arg(&domain_arg);
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: thread `t < cycles` reads only `hot[t]`, and writes at most one
+        // element `out[address * cycles + t]` after checking that index against
+        // `domain` — the length of the fresh zeroed allocation `out`. Each `t`
+        // yields a distinct index, so no two threads write the same element, and
+        // `out` aliases neither `hot` nor any input.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub(crate) fn one_hot_fold(
+        &self,
+        hot: &[u32],
+        left: &[Fr],
+        sigma: usize,
+    ) -> Result<Vec<Fr>, CudaError> {
+        let columns = 1usize << sigma;
+        let mut output = self.alloc(columns)?;
+        if hot.is_empty() {
+            return output.to_host();
+        }
+        if columns > hot.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: columns,
+                got: hot.len(),
+            });
+        }
+        let device_left = self.upload(left)?;
+        let device_hot = self.upload_u32_slice(hot)?;
+        let cycles = u64::try_from(hot.len()).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: hot.len(),
+        })?;
+        let columns_u64 = u64::try_from(columns).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: columns,
+        })?;
+        let rows = u64::try_from(left.len()).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: left.len(),
+        })?;
+        let sigma_arg = u32::try_from(sigma).map_err(|_| CudaError::LengthMismatch {
+            expected: u32::MAX as usize,
+            got: sigma,
+        })?;
+        let columns_arg = Self::count_of(columns)?;
+        let mut builder = self.stream().launch_builder(self.opening_one_hot_fold());
+        let _ = builder.arg(&device_hot);
+        let _ = builder.arg(device_left.limbs());
+        let _ = builder.arg(&cycles);
+        let _ = builder.arg(&columns_u64);
+        let _ = builder.arg(&sigma_arg);
+        let _ = builder.arg(&rows);
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: thread `c < columns` reads `hot[t]` for `t = c, c+columns, …`
+        // strictly below `cycles`, and `left[row]` only after bounds-checking
+        // `row < rows` against `left`'s own length. It writes only `out[c]` of a
+        // `columns`-element fresh allocation distinct from both inputs. Threads
+        // with `c >= columns` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(columns_arg)) }?;
+        self.stream().synchronize()?;
+        output.to_host()
+    }
 }
 
 #[cfg(test)]

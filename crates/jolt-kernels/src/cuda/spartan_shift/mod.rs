@@ -10,7 +10,9 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::SpartanShift;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::common::prefix_suffix::{
     eq_plus_one_pairs, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -119,7 +121,7 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
             return ReferenceBackend.prepare(session, witness, inputs);
         };
 
-        let rows = collect_bundles::<SpartanShiftWitness>(witness, 1usize << log_t)?;
+        let rows = cached_bundles::<SpartanShiftWitness, _>(session, witness, 1usize << log_t)?;
         let packed = witness::pack(&rows);
         let device_columns = columns::upload(context, &packed)?;
 

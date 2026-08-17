@@ -8,7 +8,9 @@ use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
@@ -110,7 +112,7 @@ impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
 impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
@@ -142,7 +144,7 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
         } else {
             1usize << address_bits
         };
-        let rows = collect_bundles::<RamAddressWitness>(witness, cycles)?;
+        let rows = cached_bundles::<RamAddressWitness, _>(session, witness, cycles)?;
         let words = packed_ram_words(&rows, addresses).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA RAM RA virtualization kernel packs each remapped RAM word address \
                      into one 32-bit word, reserving the all-ones word for a cold cycle",

@@ -6,7 +6,9 @@ use jolt_r1cs::constraint::ConstraintMatrices;
 use jolt_r1cs::constraints::jolt::spartan_outer_constraints;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::{require_context, CudaBackend};
@@ -48,7 +50,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
             });
         }
 
-        let rows = collect_bundles::<SpartanOuterWitness>(witness, 1usize << log_t)?;
+        let rows = cached_bundles::<SpartanOuterWitness, _>(session, witness, 1usize << log_t)?;
         let packed = witness::pack(&rows);
         let inputs = DeviceR1csInputs::new(context, &packed)?;
         let matrices = spartan_outer_constraints::<F>();

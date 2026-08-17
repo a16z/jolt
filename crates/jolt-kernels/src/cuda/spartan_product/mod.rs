@@ -3,7 +3,9 @@ use jolt_field::Field;
 use jolt_poly::UnivariatePoly;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::{require_context, CudaBackend};
@@ -44,7 +46,7 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
             });
         }
 
-        let rows = collect_bundles::<SpartanProductWitness>(witness, 1usize << log_t)?;
+        let rows = cached_bundles::<SpartanProductWitness, _>(session, witness, 1usize << log_t)?;
         let packed = witness::pack(&rows);
         let columns = DeviceProductColumns::new(context, &packed)?;
         let matrix = uniskip::product_matrix(context, &columns, tau_low)?;

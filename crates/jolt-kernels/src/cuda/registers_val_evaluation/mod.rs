@@ -6,7 +6,9 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
@@ -24,7 +26,7 @@ pub(crate) mod witness;
 impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersValEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
@@ -42,7 +44,8 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let registers = 1usize << REGISTER_ADDRESS_BITS;
-        let rows = collect_bundles::<witness::RegistersValEvaluationWitness>(witness, cycles)?;
+        let rows =
+            cached_bundles::<witness::RegistersValEvaluationWitness, _>(session, witness, cycles)?;
         let (inc, hot) = witness::device_columns(context, &rows, registers)?;
         drop(rows);
 

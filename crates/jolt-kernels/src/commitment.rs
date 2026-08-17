@@ -22,7 +22,7 @@ use crate::{KernelError, ProofSession};
 /// consumer's bundle. The runtime-arity chunk selection (which `InstructionRa`
 /// chunk of the lookup index, etc.) lives in the consumer, which owns the
 /// proof config; the bundle carries only the trace-derived values.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct CommittedColumnsWitness {
     pub rd_inc: RdInc,
     pub ram_inc: RamInc,

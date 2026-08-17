@@ -7,7 +7,9 @@ use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
@@ -117,7 +119,7 @@ impl<F: Field> SumcheckKernel<F> for InstructionRaVirtualizationKernel<F> {
 impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
@@ -177,7 +179,9 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for CudaBackend 
         }
 
         let cycles = 1usize << dimensions.log_t();
-        let rows = collect_bundles::<witness::InstructionRaVirtualizationWitness>(witness, cycles)?;
+        let rows = cached_bundles::<witness::InstructionRaVirtualizationWitness, _>(
+            session, witness, cycles,
+        )?;
         let words = witness::packed_words(&rows);
         drop(rows);
         let packed = context

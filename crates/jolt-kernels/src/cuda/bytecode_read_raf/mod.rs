@@ -8,7 +8,9 @@ use jolt_poly::{try_eq_mle, IdentityPolynomial, MultilinearEvaluation, Univariat
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
@@ -135,7 +137,7 @@ fn eq_at_index<F: Field>(point: &[F], index: usize) -> Result<F, KernelError<F>>
 impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
@@ -206,7 +208,8 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
 
         let log_t = dimensions.log_t();
         let cycles = 1usize << log_t;
-        let rows = collect_bundles::<witness::BytecodeReadRafCycleWitness>(witness, cycles)?;
+        let rows =
+            cached_bundles::<witness::BytecodeReadRafCycleWitness, _>(session, witness, cycles)?;
         let column = witness::packed_column(&rows).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA bytecode read-RAF kernel packs the bytecode PC into one 32-bit \
                      word, reserving the all-ones word for a cold cycle",

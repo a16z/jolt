@@ -8,7 +8,9 @@ use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
@@ -165,7 +167,7 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
 impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>
@@ -191,7 +193,8 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
         let gamma = require_fr(inputs.challenges.gamma).map_err(|_| KernelError::Unsupported {
             reason: "CUDA kernels support only the BN254 scalar field",
         })?;
-        let rows = collect_bundles::<witness::RamReadWriteWitness>(witness, 1usize << log_t)?;
+        let rows =
+            cached_bundles::<witness::RamReadWriteWitness, _>(session, witness, 1usize << log_t)?;
         let rows = device_rows::DeviceRamRows::upload(context, &rows)?;
         let cycle = rows.matrix(context, gamma)?;
         let inc = rows.inc(context)?;

@@ -10,11 +10,15 @@ use jolt_witness::JoltWitnessOracle;
 use super::common::context::CudaKernelContext;
 use super::common::device::{fr_into, fr_vec_into, require_fr_slice, DeviceFrVec};
 use super::common::error::CudaError;
+use super::common::trace_columns::{cached_columns, witness_identity, CachedBundle};
 use super::{require_context, CudaBackend};
-use crate::commitment::CommitmentGrid;
+use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
+use crate::reference::commitment::column_kinds;
 use crate::reference::views::dense_view;
 use crate::{KernelError, ProofSession};
+
+pub(crate) const NO_HOT: u32 = u32::MAX;
 
 enum EmbedPlan {
     ZeroExtend,
@@ -23,10 +27,14 @@ enum EmbedPlan {
     AddressMajorOneHot { cycles: usize },
 }
 
+enum JointSource<F> {
+    Dense { table: Vec<F>, plan: EmbedPlan },
+    SparseOneHot { hot: Vec<u32> },
+}
+
 struct JointPolynomial<F> {
     context: &'static CudaKernelContext,
-    source: Vec<F>,
-    plan: EmbedPlan,
+    source: JointSource<F>,
     grid: CommitmentGrid,
 }
 
@@ -35,8 +43,12 @@ impl<F: Field> JointPolynomial<F> {
         let _span =
             tracing::info_span!("cuda_opening_embed", vars = self.grid.total_vars).entered();
         let domain = 1usize << self.grid.total_vars;
-        let source = self.context.upload(require_fr_slice(&self.source)?)?;
-        match self.plan {
+        let (table, plan) = match &self.source {
+            JointSource::SparseOneHot { hot } => return self.context.one_hot_embed(hot, domain),
+            JointSource::Dense { table, plan } => (table, plan),
+        };
+        let source = self.context.upload(require_fr_slice(table)?)?;
+        match *plan {
             EmbedPlan::ZeroExtend if source.len() == domain => Ok(source),
             EmbedPlan::ZeroExtend => self.context.zero_extend(&source, domain),
             EmbedPlan::Block { block_vars } => {
@@ -68,6 +80,19 @@ impl<F: Field> JointPolynomial<F> {
     }
 
     fn fold_rows_device(&self, left: &[F], sigma: usize) -> Result<Vec<F>, CudaError> {
+        if let JointSource::SparseOneHot { hot } = &self.source {
+            if sigma <= self.grid.log_t {
+                let folded =
+                    tracing::info_span!("cuda_opening_sparse_fold", sigma, cycles = hot.len())
+                        .in_scope(|| {
+                            self.context
+                                .one_hot_fold(hot, require_fr_slice(left)?, sigma)
+                        })?;
+                return fr_vec_into(folded).ok_or(CudaError::NotImplemented {
+                    kernel: "CUDA kernels support only the BN254 scalar field",
+                });
+            }
+        }
         let embedded = self.embed()?;
         let folded = tracing::info_span!("cuda_opening_fold", sigma).in_scope(|| {
             self.context
@@ -171,28 +196,99 @@ fn embed_plan<F: Field>(
     }
 }
 
+fn is_trace_one_hot(polynomial: JoltCommittedPolynomial) -> bool {
+    matches!(
+        polynomial,
+        JoltCommittedPolynomial::InstructionRa(_)
+            | JoltCommittedPolynomial::BytecodeRa(_)
+            | JoltCommittedPolynomial::RamRa(_)
+    )
+}
+
+fn is_trace_derived(polynomial: JoltCommittedPolynomial) -> bool {
+    is_trace_one_hot(polynomial)
+        || matches!(
+            polynomial,
+            JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc
+        )
+}
+
+pub(crate) fn sparse_hot_columns<F: Field>(
+    session: &ProofSession,
+    identity: usize,
+    polynomials: &[JoltCommittedPolynomial],
+    grid: CommitmentGrid,
+) -> Result<BTreeMap<JoltCommittedPolynomial, Vec<u32>>, KernelError<F>> {
+    let cycles = 1usize << grid.log_t;
+    if grid.order != TracePolynomialOrder::CycleMajor {
+        return Ok(BTreeMap::new());
+    }
+    let one_hot_k = 1usize << grid.log_k_chunk;
+    if one_hot_k
+        .checked_mul(cycles)
+        .is_none_or(|span| span > 1usize << grid.total_vars)
+        || one_hot_k > NO_HOT as usize
+    {
+        return Ok(BTreeMap::new());
+    }
+    let Some(columns) = cached_columns(session, identity, cycles) else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(rows) = CommittedColumnsWitness::restore(columns, cycles) else {
+        return Ok(BTreeMap::new());
+    };
+    let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
+        .iter()
+        .copied()
+        .filter(|&id| is_trace_derived(id))
+        .collect();
+    let kinds = column_kinds::<F>(&trace_ids, grid)?;
+    let mut sparse = BTreeMap::new();
+    for (&id, &kind) in trace_ids.iter().zip(&kinds) {
+        if !kind.is_one_hot() {
+            continue;
+        }
+        let mut hot = Vec::with_capacity(cycles);
+        for row in &rows {
+            hot.push(
+                kind.hot_address(row)
+                    .map_or(NO_HOT, |address| address as u32),
+            );
+        }
+        let _ = sparse.insert(id, hot);
+    }
+    Ok(sparse)
+}
+
 impl<F: Field> JointOpeningPolynomials<F> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessOracle<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
         let context = require_context::<F>()?;
+        let identity = witness_identity(witness);
+        let mut sparse = tracing::info_span!("cuda_opening_sparse_plan")
+            .in_scope(|| sparse_hot_columns::<F>(session, identity, polynomials, grid))?;
         polynomials
             .iter()
             .map(|&polynomial| {
-                let source = match precommitted_tables.get(&polynomial) {
-                    Some(table) => table.clone(),
-                    None => dense_view(witness, final_opening_id(polynomial))?,
+                let source = if let Some(hot) = sparse.remove(&polynomial) {
+                    JointSource::SparseOneHot { hot }
+                } else {
+                    let table = match precommitted_tables.get(&polynomial) {
+                        Some(table) => table.clone(),
+                        None => dense_view(witness, final_opening_id(polynomial))?,
+                    };
+                    let plan = embed_plan(polynomial, &table, grid)?;
+                    JointSource::Dense { table, plan }
                 };
-                let plan = embed_plan(polynomial, &source, grid)?;
                 Ok(Box::new(JointPolynomial {
                     context,
                     source,
-                    plan,
                     grid,
                 }) as Box<dyn MultilinearPoly<F>>)
             })
@@ -240,13 +336,15 @@ mod tests {
     };
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::MultilinearPoly;
-    use jolt_witness::JoltWitnessOracle;
+    use jolt_program::execution::OwnedTrace;
+    use jolt_witness::{JoltWitnessOracle, TraceBackend};
     use proptest::prelude::*;
 
-    use super::CudaBackend;
-    use crate::commitment::CommitmentGrid;
+    use super::{CudaBackend, NO_HOT};
+    use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{advice_plane, fr, with_r1cs_witness};
+    use crate::cuda::common::trace_columns::cached_bundles;
     use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
     use crate::reference::ReferenceBackend;
     use crate::ProofSession;
@@ -323,19 +421,14 @@ mod tests {
 
     fn polynomial_facts(
         backend: &dyn JointOpeningPolynomials<Fr>,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessOracle<Fr>,
         tables: &BTreeMap<JoltCommittedPolynomial, Vec<Fr>>,
         probe: &OpeningProbe,
     ) -> Vec<PolynomialFacts> {
         let order_ids = batch_order(witness, tables);
         let polynomials = backend
-            .prepare(
-                &mut ProofSession::default(),
-                witness,
-                &order_ids,
-                tables,
-                probe.grid,
-            )
+            .prepare(session, witness, &order_ids, tables, probe.grid)
             .expect("joint opening polynomials");
         polynomials
             .iter()
@@ -348,6 +441,222 @@ mod tests {
                 evaluation: polynomial.evaluate(&probe.point),
             })
             .collect()
+    }
+
+    fn warm_session(witness: &TraceBackend<'_, OwnedTrace>, log_t: usize) -> ProofSession {
+        let mut session = ProofSession::default();
+        let _ =
+            cached_bundles::<CommittedColumnsWitness, _>(&mut session, witness, 1usize << log_t)
+                .expect("the fixture serves the committed columns bundle");
+        session
+    }
+
+    fn one_hot_ids(
+        witness: &dyn JoltWitnessOracle<Fr>,
+        tables: &BTreeMap<JoltCommittedPolynomial, Vec<Fr>>,
+    ) -> Vec<JoltCommittedPolynomial> {
+        batch_order(witness, tables)
+            .into_iter()
+            .filter(|&id| super::is_trace_one_hot(id))
+            .collect()
+    }
+
+    const FOLD_GEOMETRIES: [(usize, usize, usize); 4] =
+        [(8, 16, 8), (10, 18, 8), (12, 18, 6), (6, 16, 4)];
+
+    fn synthetic_hot(cycles: usize, one_hot_k: usize, seed: u64) -> Vec<u32> {
+        (0..cycles)
+            .map(|cycle| {
+                let mixed = (cycle as u64)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .wrapping_add(seed);
+                if mixed.is_multiple_of(7) {
+                    NO_HOT
+                } else {
+                    (mixed >> 13) as usize as u32 % one_hot_k as u32
+                }
+            })
+            .collect()
+    }
+
+    fn dense_one_hot_grid(hot: &[u32], cycles: usize, domain: usize) -> Vec<Fr> {
+        let mut table = vec![Fr::from_u64(0); domain];
+        for (cycle, &address) in hot.iter().enumerate() {
+            if address != NO_HOT {
+                table[address as usize * cycles + cycle] = Fr::from_u64(1);
+            }
+        }
+        table
+    }
+
+    #[test]
+    fn one_hot_fold_matches_the_dense_fold() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for (index, &(log_t, total_vars, log_k_chunk)) in FOLD_GEOMETRIES.iter().enumerate() {
+            let cycles = 1usize << log_t;
+            let one_hot_k = 1usize << log_k_chunk;
+            let domain = 1usize << total_vars;
+            assert!(
+                one_hot_k * cycles <= domain,
+                "geometry {index}: the one-hot span exceeds the grid",
+            );
+            let sigma = total_vars.div_ceil(2);
+            let rows = domain >> sigma;
+            let hot = synthetic_hot(cycles, one_hot_k, 17 + index as u64);
+            assert!(
+                hot.contains(&NO_HOT) && hot.iter().any(|&address| address != NO_HOT),
+                "geometry {index}: the synthetic column is all hot or all cold",
+            );
+            let left: Vec<Fr> = (0..rows)
+                .map(|row| fr((index as u64 + 1) * 1_000 + row as u64 + 3))
+                .collect();
+
+            let table = dense_one_hot_grid(&hot, cycles, domain);
+            let device_table = context.upload(&table).expect("upload dense grid");
+            let expected = context
+                .fold_rows(&device_table, &left, sigma)
+                .expect("dense fold");
+            if sigma > log_t {
+                assert!(
+                    context.one_hot_fold(&hot, &left, sigma).is_err(),
+                    "geometry {index} (sigma {sigma} > log_T {log_t}): the sparse fold accepted a \
+                     geometry whose column index depends on the address, where its \
+                     thread-per-column scheme does not hold",
+                );
+            } else {
+                let got = context
+                    .one_hot_fold(&hot, &left, sigma)
+                    .expect("sparse fold");
+                assert_eq!(
+                    got, expected,
+                    "geometry {index} (log_T {log_t}, total_vars {total_vars}, log_k \
+                     {log_k_chunk}, sigma {sigma}): the sparse fold diverged from the dense fold",
+                );
+            }
+
+            let embedded = context
+                .one_hot_embed(&hot, domain)
+                .expect("sparse embed")
+                .to_host()
+                .expect("download embedded grid");
+            assert_eq!(
+                embedded, table,
+                "geometry {index}: the sparse embed diverged from the dense grid",
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_fold_geometries_cover_the_production_regime() {
+        let strict = FOLD_GEOMETRIES
+            .iter()
+            .filter(|&&(log_t, total_vars, _)| total_vars.div_ceil(2) < log_t)
+            .count();
+        assert!(
+            strict >= 2,
+            "fewer than two geometries have sigma < log_T, so the multi-iteration fold loop that \
+             production runs (sigma 13, log_T 22) is barely covered",
+        );
+        assert!(
+            FOLD_GEOMETRIES
+                .iter()
+                .any(|&(log_t, total_vars, _)| total_vars.div_ceil(2) == log_t),
+            "no geometry has sigma == log_T, the single-iteration boundary case",
+        );
+        assert!(
+            FOLD_GEOMETRIES
+                .iter()
+                .any(|&(log_t, total_vars, _)| total_vars.div_ceil(2) > log_t),
+            "no geometry has sigma > log_T, where the fold must fall back to the dense path",
+        );
+    }
+
+    #[test]
+    fn fixture_cycle_major_one_hot_takes_the_sparse_plan() {
+        for &(order, log_t) in &CONFIGS {
+            let grid = grid_at(order, log_t);
+            let tables = precommitted_tables(3);
+            with_r1cs_witness(log_t, RAM_K, one_hot(), 3, |witness| {
+                let order_ids = batch_order(witness, &tables);
+                let expected_one_hot = one_hot_ids(witness, &tables);
+                assert!(
+                    !expected_one_hot.is_empty(),
+                    "{order:?} log_T {log_t}: the fixture commits no one-hot polynomial, so the \
+                     sparse plan is untestable",
+                );
+
+                let cold = ProofSession::default();
+                let identity = super::witness_identity(witness as &dyn JoltWitnessOracle<Fr>);
+                let sparse_cold =
+                    super::sparse_hot_columns::<Fr>(&cold, identity, &order_ids, grid)
+                        .expect("cold sparse plan");
+                assert!(
+                    sparse_cold.is_empty(),
+                    "{order:?} log_T {log_t}: a cold session produced a sparse plan, so the plan \
+                     does not depend on residency at all",
+                );
+
+                let warm = warm_session(witness, log_t);
+                let sparse_warm =
+                    super::sparse_hot_columns::<Fr>(&warm, identity, &order_ids, grid)
+                        .expect("warm sparse plan");
+                if order == TracePolynomialOrder::CycleMajor {
+                    let mut covered = sparse_warm.keys().copied().collect::<Vec<_>>();
+                    let mut wanted = expected_one_hot.clone();
+                    covered.sort_unstable();
+                    wanted.sort_unstable();
+                    assert_eq!(
+                        covered, wanted,
+                        "{order:?} log_T {log_t}: the sparse plan does not cover exactly the \
+                         one-hot polynomials",
+                    );
+                    for (id, hot) in &sparse_warm {
+                        assert_eq!(
+                            hot.len(),
+                            1usize << log_t,
+                            "{id:?}: the hot column is not one entry per cycle",
+                        );
+                        assert!(
+                            hot.iter().any(|&address| address != NO_HOT),
+                            "{id:?}: every cycle is cold, so a fold that ignored the column \
+                             would pass",
+                        );
+                        assert!(
+                            hot.iter().any(|&address| address != hot[0]),
+                            "{id:?}: every cycle shares one address, so a fold that used a \
+                             constant address would pass",
+                        );
+                    }
+                    assert!(
+                        sparse_warm.values().any(|hot| hot.contains(&NO_HOT)),
+                        "no one-hot column has a cold cycle, so the fold's cold-cycle handling \
+                         is untested by this fixture",
+                    );
+                } else {
+                    assert!(
+                        sparse_warm.is_empty(),
+                        "{order:?} log_T {log_t}: address-major took the sparse plan, whose \
+                         index arithmetic only holds for cycle-major grids",
+                    );
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn warm_session_identity_matches_across_the_witness_traits() {
+        let log_t = 8;
+        with_r1cs_witness(log_t, RAM_K, one_hot(), 5, |witness| {
+            let as_oracle = super::witness_identity(witness as &dyn JoltWitnessOracle<Fr>);
+            let as_source = super::witness_identity(witness);
+            assert_eq!(
+                as_oracle, as_source,
+                "the oracle and concrete views of one witness have different identities, so \
+                 stage 8 could never read what commit stored",
+            );
+        });
     }
 
     fn advice_opening(
@@ -447,14 +756,21 @@ mod tests {
                 .map(|&(order, log_t)| {
                     let probe = probe(order, log_t, seed);
                     with_r1cs_witness(log_t, RAM_K, one_hot(), seed, |witness| {
-                        polynomial_facts(&ReferenceBackend, witness, &tables, &probe)
+                        polynomial_facts(
+                            &ReferenceBackend,
+                            &mut ProofSession::default(),
+                            witness,
+                            &tables,
+                            &probe,
+                        )
                     })
                 })
                 .collect();
             for (&(order, log_t), expected) in CONFIGS.iter().zip(&expected) {
                 let probe = probe(order, log_t, seed);
                 let got = with_r1cs_witness(log_t, RAM_K, one_hot(), seed, |witness| {
-                    polynomial_facts(&CudaBackend, witness, &tables, &probe)
+                    let mut session = warm_session(witness, log_t);
+                    polynomial_facts(&CudaBackend, &mut session, witness, &tables, &probe)
                 });
                 prop_assert_eq!(
                     got.len(),

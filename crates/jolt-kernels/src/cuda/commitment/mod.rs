@@ -14,6 +14,7 @@ use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
 use super::common::error::CudaError;
 use super::common::msm::{AffineLimbs, DeviceG1Bases, JacobianLimbs, FQ_LIMBS};
+use super::common::trace_columns::store_columns;
 use super::{require_context, CudaBackend};
 use crate::commitment::{
     finish_streamed, CommitWitness, CommitmentGrid, CommittedColumnsWitness,
@@ -88,6 +89,7 @@ struct CollectedColumns {
     kinds: Vec<ColumnKind>,
     increments: Vec<Vec<i128>>,
     hot: Vec<Vec<Option<usize>>>,
+    rows: Vec<CommittedColumnsWitness>,
 }
 
 impl CollectedColumns {
@@ -116,6 +118,7 @@ impl CollectedColumns {
             kinds: kinds.to_vec(),
             increments,
             hot,
+            rows: Vec::with_capacity(cycles),
         }
     }
 }
@@ -124,6 +127,7 @@ impl StreamConsumer for CollectedColumns {
     type Witness = CommittedColumnsWitness;
 
     fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {
+        self.rows.extend_from_slice(chunk);
         for (index, kind) in self.kinds.iter().copied().enumerate() {
             if kind.is_one_hot() {
                 self.hot[index].extend(chunk.iter().map(|row| kind.hot_address(row)));
@@ -200,14 +204,18 @@ where
         let kinds = column_kinds::<F>(ids, grid)?;
         let cycles = 1usize << grid.log_t;
         let row_width = grid.num_columns();
-        let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
-            .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
 
         if grid.order == TracePolynomialOrder::CycleMajor && row_width <= cycles {
             let one_hot_k = 1usize << grid.log_k_chunk;
             let mut consumers = (CollectedColumns::begin(&kinds, cycles),);
             stream_witnesses(source, 0..cycles, row_width, &mut consumers)?;
-            let collected = consumers.0;
+            let mut collected = consumers.0;
+            let rows = std::mem::take(&mut collected.rows);
+            tracing::info_span!("cuda_commit_store_columns", cycles)
+                .in_scope(|| store_columns(session, source, cycles, &rows));
+            drop(rows);
+            let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
+                .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
             return kinds
                 .iter()
                 .zip(ids)
@@ -228,6 +236,8 @@ where
                 .collect();
         }
 
+        let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
+            .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
         kinds
             .iter()
             .zip(ids)

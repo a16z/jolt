@@ -6,7 +6,9 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6a::booleanity::{
     BooleanityAddressPhase, BooleanityAddressPhaseInputClaims, BooleanityAddressPhaseOutputClaims,
 };
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::masses::DeviceBooleanityMasses;
 use crate::cuda::common::context::CudaKernelContext;
@@ -110,7 +112,7 @@ impl<F: Field> SumcheckKernel<F> for BooleanityAddressKernel<F> {
 impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BooleanityAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BooleanityAddressPhase<F>>>, KernelError<F>>
@@ -129,7 +131,7 @@ impl<F: Field> PrepareKernel<F, BooleanityAddressPhase<F>> for CudaBackend {
 
         let layout = dimensions.layout;
         let cycles = 1usize << dimensions.log_t;
-        let rows = collect_bundles::<OneHotCycleWitness>(witness, cycles)?;
+        let rows = cached_bundles::<OneHotCycleWitness, _>(session, witness, cycles)?;
         let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA booleanity address phase packs the bytecode PC and the remapped RAM \
                      word address into one 32-bit word each, reserving the all-ones word for a \

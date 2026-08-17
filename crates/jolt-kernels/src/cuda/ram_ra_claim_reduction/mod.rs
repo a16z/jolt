@@ -7,7 +7,9 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use self::reduction::{CyclePoints, DeviceRamRaReduction};
 use super::{require_context, CudaBackend};
@@ -29,7 +31,7 @@ pub struct RamRaReductionKernel<F: Field> {
 impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRaClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaClaimReduction<F>>>, KernelError<F>> {
@@ -54,7 +56,7 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
         };
         let addresses = 1usize << ram_log_k;
         let cycles = 1usize << log_t;
-        let rows = collect_bundles::<RamAddressWitness>(witness, cycles)?;
+        let rows = cached_bundles::<RamAddressWitness, _>(session, witness, cycles)?;
         let words = packed_ram_words(&rows, addresses).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA RAM RA claim reduction packs each remapped RAM word address into \
                      one 32-bit word below the RAM address space, reserving the all-ones word \

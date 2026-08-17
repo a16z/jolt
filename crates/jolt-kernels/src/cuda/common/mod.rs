@@ -21,5 +21,6 @@ pub(crate) mod staging;
 pub(crate) mod sum_of_products;
 #[cfg(test)]
 pub(crate) mod testing;
+pub(crate) mod trace_columns;
 pub(crate) mod unreduced;
 pub mod xfer_stats;

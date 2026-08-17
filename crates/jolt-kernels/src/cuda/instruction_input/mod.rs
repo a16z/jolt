@@ -7,7 +7,9 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
@@ -121,6 +123,7 @@ impl<F: Field> SumcheckKernel<F> for InstructionInputKernel<F> {
 }
 
 pub(crate) fn prepare_with_basis<F: Field>(
+    session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     inputs: &ProverInputs<'_, F, InstructionInput<F>>,
     basis: RoundBasis,
@@ -134,7 +137,7 @@ pub(crate) fn prepare_with_basis<F: Field>(
         });
     }
 
-    let rows = collect_bundles::<InstructionInputWitness>(witness, 1usize << log_t)?;
+    let rows = cached_bundles::<InstructionInputWitness, _>(session, witness, 1usize << log_t)?;
     let packed = witness::pack(&rows);
     drop(rows);
     let columns = DeviceInstructionColumns::new(context, &packed)?;
@@ -159,11 +162,12 @@ pub(crate) fn prepare_with_basis<F: Field>(
 impl<F: Field> PrepareKernel<F, InstructionInput<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         Ok(Box::new(prepare_with_basis(
+            session,
             witness,
             &inputs,
             RoundBasis::Gruen,
@@ -328,11 +332,12 @@ mod tests {
                 };
 
                 let input_claim = reference_input_claim(witness, make_inputs);
+                let mut session = ProofSession::default();
                 let mut expected_kernel = super::prepare_with_basis(
-                    witness, &make_inputs(), RoundBasis::EvalPoints,
+                    &mut session, witness, &make_inputs(), RoundBasis::EvalPoints,
                 ).expect("eval-point prepare");
                 let mut got_kernel = super::prepare_with_basis(
-                    witness, &make_inputs(), RoundBasis::Gruen,
+                    &mut session, witness, &make_inputs(), RoundBasis::Gruen,
                 ).expect("gruen prepare");
 
                 let expected = drive(&mut expected_kernel, input_claim, &challenges);

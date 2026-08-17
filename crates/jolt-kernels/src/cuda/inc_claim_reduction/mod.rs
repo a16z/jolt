@@ -7,7 +7,9 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_floor, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -105,7 +107,8 @@ impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let rows = collect_bundles::<witness::IncClaimReductionWitness>(witness, cycles)?;
+        let rows =
+            cached_bundles::<witness::IncClaimReductionWitness, _>(session, witness, cycles)?;
         let columns = witness::device_columns(context, &rows)?;
         drop(rows);
 

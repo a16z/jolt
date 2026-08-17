@@ -11,7 +11,9 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
     BytecodeReadRafAddressPhaseOutputClaims,
 };
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs, STAGES};
 use crate::cuda::common::context::CudaKernelContext;
@@ -115,7 +117,7 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
 impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
@@ -164,7 +166,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend 
             });
         }
 
-        let rows = collect_bundles::<BytecodeReadRafWitness>(witness, cycles)?;
+        let rows = cached_bundles::<BytecodeReadRafWitness, _>(session, witness, cycles)?;
         let mut pcs = Vec::with_capacity(cycles);
         for row in &rows {
             let pc = u32::try_from(row.bytecode_pc.0).map_err(|_| KernelError::Unsupported {

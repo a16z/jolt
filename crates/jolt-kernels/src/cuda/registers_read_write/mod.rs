@@ -7,7 +7,9 @@ use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
@@ -206,7 +208,7 @@ impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
 impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
@@ -231,7 +233,11 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
         }
 
         let gamma = inputs.challenges.gamma;
-        let rows = collect_bundles::<witness::RegistersReadWriteWitness>(witness, 1usize << log_t)?;
+        let rows = cached_bundles::<witness::RegistersReadWriteWitness, _>(
+            session,
+            witness,
+            1usize << log_t,
+        )?;
         let rows = device_rows::DeviceRegisterRows::upload(context, &rows)?;
         let cycle = rows.matrix(
             context,

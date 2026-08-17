@@ -22,7 +22,9 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use self::address_driver::DeviceAddressPhase;
 use self::address_phase::{flag_claims, DeviceRows, NO_TABLE};
@@ -159,7 +161,7 @@ impl<F: Field> DeviceInstructionReadRaf<F> {
 impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
@@ -174,7 +176,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             });
         }
         let rows: Vec<InstructionReadRafWitness> =
-            collect_bundles(witness, 1 << dimensions.log_t())?;
+            cached_bundles(session, witness, 1 << dimensions.log_t())?;
 
         let mut bits = Vec::with_capacity(rows.len() * 2);
         let mut table_index = Vec::with_capacity(rows.len());

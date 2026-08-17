@@ -9,7 +9,9 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::{collect_bundles, JoltWitnessPlane};
+use jolt_witness::JoltWitnessPlane;
+
+use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
@@ -154,7 +156,7 @@ impl<F: Field> SumcheckKernel<F> for HammingWeightClaimReductionKernel<F> {
 impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, HammingWeightClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
@@ -172,7 +174,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend 
         }
 
         let cycles = 1usize << relation.r_cycle().len();
-        let rows = collect_bundles::<OneHotCycleWitness>(witness, cycles)?;
+        let rows = cached_bundles::<OneHotCycleWitness, _>(session, witness, cycles)?;
         let columns = packed_columns(&rows).map_err(|_| KernelError::Unsupported {
             reason: "the CUDA hamming reduction packs the bytecode PC and the remapped RAM word \
                      address into one 32-bit word each, reserving the all-ones word for a cold \

@@ -29,6 +29,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/msm.cu"),
     "\n",
+    include_str!("../kernels/opening.cu"),
+    "\n",
     include_str!("../kernels/scan.cu"),
     "\n",
     include_str!("../kernels/lt_poly.cu"),
@@ -216,6 +218,8 @@ pub struct CudaKernelContext {
     msm_scatter_strided: CudaFunction,
     msm_scatter_one_hot: CudaFunction,
     msm_fold_rows: CudaFunction,
+    opening_one_hot_embed: CudaFunction,
+    opening_one_hot_fold: CudaFunction,
     pcr_round: CudaFunction,
     pcr_scatter: CudaFunction,
     pcr_value_fold: CudaFunction,
@@ -374,6 +378,8 @@ impl CudaKernelContext {
             msm_scatter_strided: module.load_function("msm_scatter_strided_kernel")?,
             msm_scatter_one_hot: module.load_function("msm_scatter_one_hot_kernel")?,
             msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
+            opening_one_hot_embed: module.load_function("opening_one_hot_embed_kernel")?,
+            opening_one_hot_fold: module.load_function("opening_one_hot_fold_kernel")?,
             pcr_round: module.load_function("pcr_round_kernel")?,
             pcr_scatter: module.load_function("pcr_scatter_kernel")?,
             pcr_value_fold: module.load_function("pcr_value_fold_kernel")?,
@@ -740,6 +746,14 @@ impl CudaKernelContext {
 
     pub(crate) const fn msm_fold_rows(&self) -> &CudaFunction {
         &self.msm_fold_rows
+    }
+
+    pub(crate) const fn opening_one_hot_embed(&self) -> &CudaFunction {
+        &self.opening_one_hot_embed
+    }
+
+    pub(crate) const fn opening_one_hot_fold(&self) -> &CudaFunction {
+        &self.opening_one_hot_fold
     }
 
     pub(crate) const fn pcr_round(&self) -> &CudaFunction {
