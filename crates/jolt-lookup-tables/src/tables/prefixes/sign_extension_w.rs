@@ -5,6 +5,18 @@ use crate::XLEN;
 
 use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
+/// Prefix-owned portion of the SRAW sign-fill term.
+///
+/// Let `w = XLEN / 2`, `a = x_{w-1}`, and let `y` be the bitmask
+/// `2^w - 2^s`. The complete sign-fill contribution is
+///
+/// `a * ((2^XLEN - 2^w) + sum_{i=1}^{w-1} 2^i * (1 - y_{w-1-i}))`.
+///
+/// The first term fills the upper word; the sum fills the `s` vacated bits in
+/// the shifted word. This checkpoint starts at zero, adds the upper-word term
+/// when `a` enters the prefix, then adds each mask-dependent term as its `y`
+/// bit enters the prefix. `SignExtensionWSuffix` owns the terms that
+/// still depend on suffix bits.
 pub enum SignExtensionWPrefix {}
 
 impl<F: Field> SparseDensePrefix<F> for SignExtensionWPrefix {

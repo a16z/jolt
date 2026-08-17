@@ -152,7 +152,9 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    /// SRAW sign-fill terms whose variables remain in the suffix.
     SignExtensionW,
+    /// The suffix-owned product `x_{XLEN/2-1} * y_0` used by SRLW.
     X31Y0,
 }
 

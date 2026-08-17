@@ -13,10 +13,6 @@ workspace = true
 
 [features]
 prover-abi-tests = []
-# Exposes per-table in-domain random lookup index generation to downstream
-# test fixtures (tables with constrained operand domains override the
-# uniform default).
-test-utils = ["dep:rand"]
 field-inline = [
   "jolt-prover-legacy/field-inline",
   "jolt-riscv/field-inline",
@@ -26,7 +22,6 @@ field-inline = [
 [dependencies]
 jolt-field = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
-rand = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
 

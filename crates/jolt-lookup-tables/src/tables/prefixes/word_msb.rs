@@ -5,6 +5,13 @@ use crate::XLEN;
 
 use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
+/// Prefix checkpoint for the low word's most-significant bit.
+///
+/// Let `w = XLEN / 2`. At a Boolean point this checkpoint is `x_{w-1}`
+/// (`x_31` for RV64). It remains the multiplicative identity while that bit
+/// belongs to the suffix. Once a phase binds the bit, the checkpoint carries
+/// its value so `VirtualSRAWTable::combine` can multiply it by the remaining
+/// suffix-owned sign-fill terms.
 pub enum WordMsbPrefix {}
 
 impl<F: Field> SparseDensePrefix<F> for WordMsbPrefix {

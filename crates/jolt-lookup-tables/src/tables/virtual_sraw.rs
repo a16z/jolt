@@ -87,9 +87,9 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRAWTable<XLE
             + prefixes[Prefixes::SignExtensionW] * one
     }
 
-    #[cfg(any(test, feature = "test-utils"))]
-    fn random_lookup_index(&self, rng: &mut rand::rngs::StdRng) -> u128 {
-        crate::tables::index_gen::gen_bitmask_w_lookup_index::<XLEN>(rng)
+    #[cfg(test)]
+    fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
+        crate::tables::test_utils::gen_bitmask_w_lookup_index::<XLEN>(rng)
     }
 }
 

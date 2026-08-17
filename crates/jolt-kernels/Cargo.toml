@@ -48,9 +48,7 @@ tracing.workspace = true
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true
-jolt-lookup-tables = { workspace = true, features = ["test-utils"] }
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
-rand = { workspace = true }
 rand_chacha.workspace = true
 rand_core.workspace = true

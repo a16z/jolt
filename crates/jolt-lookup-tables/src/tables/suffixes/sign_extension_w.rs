@@ -2,6 +2,18 @@ use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
 use crate::XLEN;
 
+/// Suffix-owned portion of the SRAW sign-fill term.
+///
+/// Let `w = XLEN / 2`, `a = x_{w-1}`, and let `y` be the bitmask
+/// `2^w - 2^s`. Before any relevant bit leaves the suffix, this evaluates
+///
+/// `a * ((2^XLEN - 2^w) + sum_{i=1}^{w-1} 2^i * (1 - y_{w-1-i}))`.
+///
+/// If `a` is still present, this suffix applies it directly. After `a` moves
+/// into the prefix, the suffix returns the remaining mask-dependent fill and
+/// `VirtualSRAWTable::combine` multiplies it by `WordMsbPrefix`. Terms whose
+/// `y` bits have also moved into the prefix are carried by
+/// `SignExtensionWPrefix`.
 pub enum SignExtensionWSuffix {}
 
 impl SparseDenseSuffix for SignExtensionWSuffix {

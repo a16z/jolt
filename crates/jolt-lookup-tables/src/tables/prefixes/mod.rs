@@ -158,8 +158,11 @@ pub enum Prefixes {
     XorRotW8,
     XorRotW12,
     XorRotW16,
+    /// The low word's most-significant source bit, `x_{XLEN/2-1}`.
     WordMsb,
+    /// SRAW sign-fill terms whose variables have entered the prefix.
     SignExtensionW,
+    /// The prefix-owned portion of SRLW's `x_{XLEN/2-1} * y_0` predicate.
     SrlwSext,
 }
 

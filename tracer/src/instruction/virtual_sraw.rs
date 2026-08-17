@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
-    format::format_virtual_right_shift_w_r::FormatVirtualRightShiftWR, RISCVInstruction, RISCVTrace,
+    format::format_virtual_right_shift_r::FormatVirtualRightShiftR, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
     name = VirtualSRAW,
     mask = 0,
     match = 0,
-    format = FormatVirtualRightShiftWR,
+    format = FormatVirtualRightShiftR<32>,
     ram = ()
 );
 

@@ -5,6 +5,14 @@ use crate::XLEN;
 
 use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
+/// Prefix-owned portion of SRLW's sign-extension predicate `x_{w-1} * y_0`.
+///
+/// Here `w = XLEN / 2` and `y = 2^w - 2^s`, so `y_0` is one exactly when
+/// `s = 0`. A logical word shift can therefore leave result bit `w - 1` set
+/// only when `x_{w-1} * y_0 = 1`. The checkpoint is zero until `x_{w-1}`
+/// enters the prefix, carries `x_{w-1}` while `y_0` remains in the suffix, and
+/// folds in `y_0` during the final phase. `X31Y0Suffix` supplies the
+/// same product while both bits belong to the suffix.
 pub enum SrlwSextPrefix {}
 
 impl<F: Field> SparseDensePrefix<F> for SrlwSextPrefix {
