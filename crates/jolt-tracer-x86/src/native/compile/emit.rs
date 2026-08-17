@@ -694,6 +694,13 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; mov rax, -1 ; shl rax, cl);
                 e.store_rd(RAX, row.operands.rd);
             }
+            K::VirtualShiftRightBitmaskW(_) => {
+                // rd = (1 << 32) - (1 << (x[rs1] & 31)) — bits [31:shift] set.
+                // 32-bit shl masks cl mod 32 and zero-extends into rax.
+                e.load_reg(RCX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; mov eax, -1 ; shl eax, cl);
+                e.store_rd(RAX, row.operands.rd);
+            }
             K::VirtualSignExtendWord(_) => {
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; movsxd rax, eax);
@@ -724,6 +731,34 @@ impl DynasmEmitter {
                 e.load_reg(RCX, row.operands.rs2);
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr rax, cl);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualSrlw(_) => {
+                // rd = sext32((x[rs1] as u32) >> tz(x[rs2])); the W bitmask
+                // producer guarantees tz(x[rs2]) ≤ 31, within shr's cl mod 32.
+                e.load_reg(RCX, row.operands.rs2);
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr eax, cl ; movsxd rax, eax);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualSraw(_) => {
+                // rd = (x[rs1] as i32 >> tz(x[rs2])) as i64.
+                e.load_reg(RCX, row.operands.rs2);
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; sar eax, cl ; movsxd rax, eax);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualSrliw(_) => {
+                // Static: shift = imm.trailing_zeros() (imm is a word bitmask).
+                let shift = ((row.operands.imm as u64).trailing_zeros() % 32) as i8;
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; shr eax, shift ; movsxd rax, eax);
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::VirtualSraiw(_) => {
+                let shift = ((row.operands.imm as u64).trailing_zeros() % 32) as i8;
+                e.load_reg(RAX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; sar eax, shift ; movsxd rax, eax);
                 e.store_rd(RAX, row.operands.rd);
             }
 
