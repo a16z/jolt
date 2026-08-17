@@ -165,12 +165,12 @@ fn digit_zero_reconstruction_matches_semantic_one_hot_at_random_points() {
         let mut semantic = vec![fr(0); 1 << (value_bits + log_t)];
         let mut sparse = semantic.clone();
         let mut activation = vec![fr(0); rows];
-        for (cycle, lane) in hot.iter().copied().enumerate() {
-            if let Some(lane) = lane {
-                semantic[(lane << log_t) | cycle] = fr(1);
+        for (cycle, row) in hot.iter().copied().enumerate() {
+            if let Some(row) = row {
+                semantic[(row << log_t) | cycle] = fr(1);
                 activation[cycle] = fr(1);
-                if lane != 0 {
-                    sparse[(lane << log_t) | cycle] = fr(1);
+                if row != 0 {
+                    sparse[(row << log_t) | cycle] = fr(1);
                 }
             }
         }
@@ -178,19 +178,19 @@ fn digit_zero_reconstruction_matches_semantic_one_hot_at_random_points() {
         let full_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
         let semantic_eval = eval_mle(&semantic, &full_point);
         let activation_eval = eval_mle(&activation, &r_cycle);
-        let sparse_by_lane = (0..1 << value_bits)
-            .map(|lane| {
+        let sparse_by_row = (0..1 << value_bits)
+            .map(|row| {
                 (0..rows)
-                    .map(|cycle| eq_cycle[cycle] * sparse[(lane << log_t) | cycle])
+                    .map(|cycle| eq_cycle[cycle] * sparse[(row << log_t) | cycle])
                     .sum::<Fr>()
             })
             .collect::<Vec<_>>();
         let recentered = eq_zero * activation_eval
-            + sparse_by_lane
+            + sparse_by_row
                 .iter()
                 .enumerate()
-                .map(|(lane, value)| {
-                    *value * (eq_index_msb::<Fr>(&r_address, lane as u128) - eq_zero)
+                .map(|(row, value)| {
+                    *value * (eq_index_msb::<Fr>(&r_address, row as u128) - eq_zero)
                 })
                 .sum::<Fr>();
         assert_eq!(recentered, semantic_eval);

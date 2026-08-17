@@ -181,7 +181,7 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
             match polynomial {
                 // RAM: base three legs, no reconstruction. The committed column
-                // includes the digit-zero lane.
+                // includes the digit-zero row.
                 JoltRaPolynomial::Ram(_) => {
                     input = input
                         + gamma.clone().pow(power) * opening(ram_hamming_weight())

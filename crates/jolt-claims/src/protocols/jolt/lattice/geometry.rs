@@ -68,7 +68,7 @@ pub enum LatticeGeometryError {
 /// `Σ_j 2^(chunk_width·j)·digit_j + 2^FUSED_INC_BITS·carry` is the signed
 /// increment itself — no unsigned shift. See [`balanced_inc_value`] for the
 /// value map, which sends digit zero to zero and therefore lets a
-/// zero increment sit entirely on the lane the commitment omits.
+/// zero increment sit entirely on the row the commitment omits.
 ///
 /// The chunk width is fixed to the shared one-hot chunk size (`log_k_chunk`)
 /// so the digit polynomials sit in the `Ra` families' variable-count class
@@ -183,7 +183,7 @@ pub fn selector_block_weight<F: Field>(
         .sum()
 }
 
-/// MLE of the centered lane value used by balanced increment digits.
+/// MLE of the centered row value used by balanced increment digits.
 pub fn balanced_inc_value<F: Field>(address_point: &[F]) -> F {
     let unsigned = IdentityPolynomial::new(address_point.len()).evaluate(address_point);
     let msb = address_point.first().copied().unwrap_or_else(F::zero);
@@ -227,17 +227,17 @@ mod tests {
     }
 
     #[test]
-    fn balanced_inc_value_matches_centered_boolean_lanes() {
+    fn balanced_inc_value_matches_centered_boolean_rows() {
         for width in [4, 8] {
             let radix = 1usize << width;
-            for lane in 0..radix {
-                let expected = if lane < radix / 2 {
-                    lane as i128
+            for row in 0..radix {
+                let expected = if row < radix / 2 {
+                    row as i128
                 } else {
-                    lane as i128 - radix as i128
+                    row as i128 - radix as i128
                 };
                 assert_eq!(
-                    balanced_inc_value(&boolean_point_msb::<Fr>(width, lane)),
+                    balanced_inc_value(&boolean_point_msb::<Fr>(width, row)),
                     Fr::from_i128(expected)
                 );
             }

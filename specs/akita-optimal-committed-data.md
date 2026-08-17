@@ -280,9 +280,9 @@ remain akita-side fallback tracks.
 
 The measurements above describe the earlier grouped-member design. The current
 protocol supersedes it: `OneHotTrace` is one fixed-capacity prefix-packed
-physical polynomial in `(slot || cycle || address)` order. Logical address lane
+physical polynomial in `(slot || cycle || address)` order. Logical address row
 zero is public and omitted from the witness; Stage 7 recenters each semantic
-claim around that lane. Stage 8 samples the slot selector only after binding
+claim around that row. Stage 8 samples the slot selector only after binding
 the common point and all semantic evaluations, then opens the one physical
 polynomial directly.
 

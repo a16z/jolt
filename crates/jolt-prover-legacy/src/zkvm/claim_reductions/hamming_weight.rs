@@ -670,11 +670,11 @@ impl<F: JoltField> HammingWeightClaimReductionProver<F> {
         let k_chunk = 1usize << params.log_k_chunk;
         let half = k_chunk / 2;
         let inc_value: Vec<F> = (0..k_chunk)
-            .map(|lane| {
-                if lane < half {
-                    F::from_i128(lane as i128)
+            .map(|row| {
+                if row < half {
+                    F::from_i128(row as i128)
                 } else {
-                    F::from_i128(lane as i128 - k_chunk as i128)
+                    F::from_i128(row as i128 - k_chunk as i128)
                 }
             })
             .collect();
