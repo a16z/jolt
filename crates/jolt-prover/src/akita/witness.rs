@@ -571,7 +571,7 @@ const _: () = {
 /// lanes and the program image) into one-positions of the packed precommitted
 /// witness, per the canonical `precommitted_packing` slots. Row domain per
 /// chunk is `2^log_bytecode_rows` (bytecode rows, zero-padded); byte one-hot
-/// columns encode padding as hot-lane-0 hot (never all-zero), the
+/// columns encode padding by selecting row zero (never all-zero), the
 /// selector/flag columns leave padding rows empty.
 pub fn assemble_precommitted_witness<F: Field>(
     plan: &PrefixPackedObjectPlan,

@@ -42,7 +42,7 @@ pub trait PostCommitmentCleanup: CommitmentScheme {
     ) -> Result<(), OpeningsError>;
 }
 
-/// Prover seam for committing the packed trace directly from row-major hot lanes.
+/// Prover seam for committing the packed trace directly from selected one-hot rows.
 pub trait TraceOneHotCommitment: CommitmentScheme {
     fn commit_trace_one_hot(
         setup: &Self::ProverSetup,
