@@ -1,12 +1,9 @@
-use std::mem::size_of;
-
 use jolt_field::AkitaField;
-use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
-use super::booleanity::booleanity_address_can_fallback;
+use super::booleanity::run_booleanity_address_pushforward;
 use super::solinas::{
     BooleanityAddressPushforwardConfig, BooleanityRows, BOOLEANITY_SOURCE_ROW_BYTES,
 };
@@ -95,96 +92,26 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
         };
         let resident_row_identity = resident_rows.allocation_identity();
         let resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES;
-        let e_in_elements = 1usize << config.dispatch.inner_log2;
-        let e_out_elements = trace_elements / e_in_elements;
-        let selector_bytes = selectors.len() * size_of::<[u32; 2]>();
-        let e_in_bytes = e_in_elements * size_of::<AkitaField>();
-        let e_out_bytes = e_out_elements * size_of::<AkitaField>();
-        let partial_bytes =
-            e_out_elements * config.dispatch.selectors_per_tile * 256 * size_of::<AkitaField>();
-        let output_bytes = selectors.len() * 256 * size_of::<AkitaField>();
-        let planned_device_bytes =
-            selector_bytes + e_in_bytes + e_out_bytes + partial_bytes + output_bytes;
-        let device = self.context.device_info();
-        let requested_tile_threads = config.dispatch.tile_threads_per_threadgroup.unwrap_or(0);
-        let requested_finalize_threads = config
-            .dispatch
-            .finalize_threads_per_threadgroup
-            .unwrap_or(0);
-
         let prepare_guard =
             tracing::info_span!("MetalHammingWeightClaimReduction::prepare").entered();
-        let sequence_span = tracing::info_span!(
-            "MetalHammingWeightClaimReduction::sequence_prepare",
-            resident_rows_storage_id = resident_row_identity,
-            resident_rows = trace_elements,
-            resident_row_bytes,
-            row_upload_bytes = 0u64,
-            polys = selectors.len(),
-            k = 256usize,
-            e_in_elements,
-            e_out_elements,
-            requested_inner_log2 = config.dispatch.inner_log2,
-            effective_inner_log2 = config.dispatch.inner_log2,
-            requested_selectors_per_tile = config.dispatch.selectors_per_tile,
-            effective_selectors_per_tile = tracing::field::Empty,
-            requested_tile_threads,
-            effective_tile_threads = tracing::field::Empty,
-            requested_finalize_threads,
-            effective_finalize_threads = tracing::field::Empty,
-            selector_tiles = tracing::field::Empty,
-            production_specialized = tracing::field::Empty,
-        );
-        let sequence_guard = sequence_span.enter();
-        let allocation_span = tracing::info_span!(
-            "MetalHammingWeightClaimReduction::allocation_plan",
-            device_buffers = 5u64,
-            planned_device_bytes,
-            current_device_bytes = device.current_allocated_size,
-            recommended_device_bytes = device.recommended_max_working_set_size,
-        );
-        let allocation_guard = allocation_span.enter();
-        let invocation = match self.context.prepare_booleanity_address_pushforward(
+        let masses = match run_booleanity_address_pushforward(
+            self,
             resident_rows,
             &selectors,
             plan.reference_cycle(),
             config.dispatch,
+            "hamming_weight",
         ) {
-            Ok(invocation) => invocation,
-            Err(error) if booleanity_address_can_fallback(&error) => {
-                tracing::warn!(
-                    error = %error,
-                    "Hamming-weight Metal preparation unavailable; using the optimized CPU kernel"
-                );
-                drop(allocation_guard);
-                drop(sequence_guard);
+            Ok(Some(masses)) => masses,
+            Ok(None) => {
                 drop(prepare_guard);
                 return cpu(session);
             }
             Err(error) => {
                 let _ = session.take::<BooleanityRows>();
-                return Err(metal_error(error.to_string()).into());
+                return Err(error.into());
             }
         };
-        drop(allocation_guard);
-        let _ = sequence_span.record(
-            "effective_selectors_per_tile",
-            invocation.selectors_per_tile(),
-        );
-        let _ = sequence_span.record(
-            "effective_tile_threads",
-            invocation.tile_threads_per_threadgroup(),
-        );
-        let _ = sequence_span.record(
-            "effective_finalize_threads",
-            invocation.finalize_threads_per_threadgroup(),
-        );
-        let _ = sequence_span.record("selector_tiles", invocation.selector_tiles());
-        let _ = sequence_span.record(
-            "production_specialized",
-            invocation.uses_production_specialization(),
-        );
-        drop(sequence_guard);
 
         let consumed_rows =
             session
@@ -203,7 +130,7 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
                 reason: "Hamming-weight Metal preparation left a resident row owner",
             });
         }
-        let lifecycle_guard = tracing::info_span!(
+        let _lifecycle_guard = tracing::info_span!(
             "MetalBooleanityRows::stage7_hamming_use",
             resident_rows_storage_id = resident_row_identity,
             resident_rows = consumed_rows.len(),
@@ -215,37 +142,6 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
             terminal_carry_removed,
         )
         .entered();
-
-        let dispatch_span = tracing::info_span!(
-            "MetalHammingWeightClaimReduction::dispatch",
-            command_buffers = 1u64,
-            tile_dispatches = invocation.selector_tiles(),
-            finalize_dispatches = invocation.selector_tiles(),
-            command_completed = tracing::field::Empty,
-            gpu_active_ns = tracing::field::Empty,
-            resident_rows_storage_id = resident_row_identity,
-        );
-        let dispatch_guard = dispatch_span.enter();
-        let gpu_active = invocation
-            .execute_timed()
-            .map_err(|error| metal_error(error.to_string()))?;
-        let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
-        let _ = dispatch_span.record("command_completed", true);
-        let _ = dispatch_span.record("gpu_active_ns", gpu_active_ns);
-        drop(dispatch_guard);
-
-        let readback_span = tracing::info_span!(
-            "MetalHammingWeightClaimReduction::readback",
-            elements = invocation.output_elements(),
-            bytes = invocation.output_elements() * size_of::<AkitaField>(),
-            readbacks = 1u64,
-        );
-        let readback_guard = readback_span.enter();
-        let masses = invocation
-            .read_masses()
-            .map_err(|error| metal_error(error.to_string()))?;
-        drop(readback_guard);
-        drop(lifecycle_guard);
         drop(consumed_rows);
         let kernel = plan.finish_flat(masses)?;
         #[cfg(any(test, feature = "test-utils"))]
@@ -254,13 +150,6 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
             .hamming_dispatches
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(kernel)
-    }
-}
-
-fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: message.into(),
     }
 }
 

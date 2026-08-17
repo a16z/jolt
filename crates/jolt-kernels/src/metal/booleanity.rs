@@ -11,7 +11,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
 use super::solinas::{
-    BooleanityAddressPushforwardConfig, BooleanityRows, BooleanitySequence,
+    BooleanityAddressPushforwardConfig, BooleanityRows, BooleanitySelector, BooleanitySequence,
     BooleanitySequenceConfig, MetalError, BOOLEANITY_SOURCE_ROW_BYTES,
 };
 use crate::optimized::booleanity::{
@@ -103,58 +103,62 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
         };
         let _span = tracing::info_span!("MetalBooleanityAddressPhase::prepare").entered();
         let plan = BooleanityAddressMetalPlan::new(witness, inputs.relation, inputs.challenges)?;
-        prepare_accepted_booleanity_address(self, session, resident_rows, plan, config, cpu)
+        let masses = match run_booleanity_address_pushforward(
+            self,
+            resident_rows,
+            plan.selectors(),
+            plan.reference_cycle(),
+            config.dispatch,
+            "booleanity_address",
+        )? {
+            Some(masses) => masses,
+            None => return cpu(session),
+        };
+        plan.finish(masses)
     }
 }
 
-fn prepare_accepted_booleanity_address(
+/// Shared pushforward dispatch for the two consumers of resident booleanity
+/// rows. Returns `Ok(None)` when preparation hit a capacity limit the caller
+/// should resolve by falling back to its CPU kernel.
+pub(super) fn run_booleanity_address_pushforward(
     backend: &MetalBackend,
-    session: &mut ProofSession,
     resident_rows: BooleanityRows,
-    plan: BooleanityAddressMetalPlan,
-    config: BooleanityAddressMetalConfig,
-    cpu: impl FnOnce(
-        &mut ProofSession,
-    ) -> Result<
-        Box<dyn SumcheckKernel<AkitaField, Relation = BooleanityAddressPhase<AkitaField>>>,
-        KernelError<AkitaField>,
-    >,
-) -> Result<
-    Box<dyn SumcheckKernel<AkitaField, Relation = BooleanityAddressPhase<AkitaField>>>,
-    KernelError<AkitaField>,
-> {
+    selectors: &[BooleanitySelector],
+    reference_cycle: &[AkitaField],
+    dispatch: BooleanityAddressPushforwardConfig,
+    consumer: &'static str,
+) -> Result<Option<Vec<AkitaField>>, SumcheckError<AkitaField>> {
     let resident_row_identity = resident_rows.allocation_identity();
     let trace_elements = resident_rows.len();
     let resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES;
-    let e_in_elements = 1usize << config.dispatch.inner_log2;
+    let e_in_elements = 1usize << dispatch.inner_log2;
     let e_out_elements = trace_elements / e_in_elements;
-    let selector_bytes = plan.selectors().len() * size_of::<[u32; 2]>();
+    let selector_bytes = selectors.len() * size_of::<[u32; 2]>();
     let e_in_bytes = e_in_elements * size_of::<AkitaField>();
     let e_out_bytes = e_out_elements * size_of::<AkitaField>();
     let partial_bytes =
-        e_out_elements * config.dispatch.selectors_per_tile * 256 * size_of::<AkitaField>();
-    let output_bytes = plan.selectors().len() * 256 * size_of::<AkitaField>();
+        e_out_elements * dispatch.selectors_per_tile * 256 * size_of::<AkitaField>();
+    let output_bytes = selectors.len() * 256 * size_of::<AkitaField>();
     let planned_device_bytes =
         selector_bytes + e_in_bytes + e_out_bytes + partial_bytes + output_bytes;
     let device = backend.context.device_info();
-    let requested_tile_threads = config.dispatch.tile_threads_per_threadgroup.unwrap_or(0);
-    let requested_finalize_threads = config
-        .dispatch
-        .finalize_threads_per_threadgroup
-        .unwrap_or(0);
+    let requested_tile_threads = dispatch.tile_threads_per_threadgroup.unwrap_or(0);
+    let requested_finalize_threads = dispatch.finalize_threads_per_threadgroup.unwrap_or(0);
     let sequence_span = tracing::info_span!(
-        "MetalBooleanityAddressPhase::sequence_prepare",
+        "MetalBooleanityPushforward::sequence_prepare",
+        consumer,
         resident_rows_storage_id = resident_row_identity,
         resident_rows = trace_elements,
         resident_row_bytes,
         row_upload_bytes = 0u64,
-        polys = plan.selectors().len(),
+        polys = selectors.len(),
         k = 256usize,
         e_in_elements,
         e_out_elements,
-        requested_inner_log2 = config.dispatch.inner_log2,
-        effective_inner_log2 = config.dispatch.inner_log2,
-        requested_selectors_per_tile = config.dispatch.selectors_per_tile,
+        requested_inner_log2 = dispatch.inner_log2,
+        effective_inner_log2 = dispatch.inner_log2,
+        requested_selectors_per_tile = dispatch.selectors_per_tile,
         effective_selectors_per_tile = tracing::field::Empty,
         requested_tile_threads,
         effective_tile_threads = tracing::field::Empty,
@@ -165,7 +169,8 @@ fn prepare_accepted_booleanity_address(
     );
     let sequence_guard = sequence_span.enter();
     let allocation_span = tracing::info_span!(
-        "MetalBooleanityAddressPhase::allocation_plan",
+        "MetalBooleanityPushforward::allocation_plan",
+        consumer,
         device_buffers = 5u64,
         planned_device_bytes,
         current_device_bytes = device.current_allocated_size,
@@ -174,16 +179,20 @@ fn prepare_accepted_booleanity_address(
     let allocation_guard = allocation_span.enter();
     let invocation = match backend.context.prepare_booleanity_address_pushforward(
         resident_rows,
-        plan.selectors(),
-        plan.reference_cycle(),
-        config.dispatch,
+        selectors,
+        reference_cycle,
+        dispatch,
     ) {
         Ok(invocation) => invocation,
         Err(error) if booleanity_address_can_fallback(&error) => {
-            tracing::warn!(error = %error, "Booleanity address Metal preparation fell back to CPU");
-            return cpu(session);
+            tracing::warn!(
+                error = %error,
+                consumer,
+                "booleanity pushforward Metal preparation fell back to CPU"
+            );
+            return Ok(None);
         }
-        Err(error) => return Err(metal_error(error.to_string()).into()),
+        Err(error) => return Err(metal_error(error.to_string())),
     };
     drop(allocation_guard);
     let _ = sequence_span.record(
@@ -206,7 +215,8 @@ fn prepare_accepted_booleanity_address(
     drop(sequence_guard);
 
     let dispatch_span = tracing::info_span!(
-        "MetalBooleanityAddressPhase::dispatch",
+        "MetalBooleanityPushforward::dispatch",
+        consumer,
         command_buffers = 1u64,
         tile_dispatches = invocation.selector_tiles(),
         finalize_dispatches = invocation.selector_tiles(),
@@ -224,7 +234,8 @@ fn prepare_accepted_booleanity_address(
     drop(dispatch_guard);
 
     let readback_span = tracing::info_span!(
-        "MetalBooleanityAddressPhase::readback",
+        "MetalBooleanityPushforward::readback",
+        consumer,
         elements = invocation.output_elements(),
         bytes = invocation.output_elements() * size_of::<AkitaField>(),
         readbacks = 1u64,
@@ -234,7 +245,7 @@ fn prepare_accepted_booleanity_address(
         .read_masses()
         .map_err(|error| metal_error(error.to_string()))?;
     drop(readback_guard);
-    plan.finish(masses)
+    Ok(Some(masses))
 }
 
 impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
