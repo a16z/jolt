@@ -22,6 +22,8 @@ pub use outputs::Stage8ClearOutput;
 pub use outputs::{Stage8Output, Stage8ZkOutput};
 #[cfg(not(feature = "akita"))]
 pub use precommitted::precommitted_final_openings;
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+pub use verify::splice_field_inline_final_opening;
 pub use verify::verify;
 #[cfg(not(feature = "akita"))]
 pub use verify::{batch_entries, Stage8BatchEntry};

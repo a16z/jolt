@@ -189,9 +189,27 @@ where
         builder = builder.public(id, value);
     }
 
+    // The stage-8 plan carries composite ids; the BlindFold final-opening
+    // equation is jolt-typed, so downcast fail-closed (a field-inline id here
+    // means an FR-on ZK proof, whose BlindFold lowering has not landed).
+    let final_opening_ids = input
+        .stage8
+        .opening_ids
+        .iter()
+        .map(|id| match id {
+            crate::stages::ids::VerifierOpeningId::Jolt(id) => Ok(*id),
+            crate::stages::ids::VerifierOpeningId::FieldInline(id) => {
+                Err(VerifierError::BlindFoldConstructionFailed {
+                    reason: format!(
+                        "field-inline final opening {id:?} has no BlindFold lowering yet"
+                    ),
+                })
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let protocol = builder
         .final_opening(
-            input.stage8.opening_ids.clone(),
+            final_opening_ids,
             input.stage8.constraint_coefficients.clone(),
             input.stage8.hiding_evaluation_commitment,
         )

@@ -145,6 +145,25 @@ where
         &precommitted_finals,
         Some((&stage6b.output_values, &stage7.output_values)),
     )?;
+    // The composed plan splice, exactly as `stage8::verify` performs it: the
+    // reduced `FieldRdInc` joins the batch after `RdInc@IncClaimReduction`.
+    #[cfg(feature = "field-inline")]
+    let entries = {
+        let mut entries = entries;
+        jolt_verifier::stages::stage8::splice_field_inline_final_opening(
+            &mut entries,
+            commitments,
+            &opening_point,
+            stage6b.output_points.field_registers_inc_opening_point(),
+            Some(
+                stage6b
+                    .output_values
+                    .field_registers_inc_claim_reduction
+                    .rd_inc,
+            ),
+        )?;
+        entries
+    };
     let statement: Vec<VerifierOpeningClaim<F, PCS::Output>> = entries
         .iter()
         .map(|entry| {
