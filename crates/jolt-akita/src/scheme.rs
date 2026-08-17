@@ -26,6 +26,12 @@ use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
 
+fn split_commit_output(
+    output: akita_prover::CommitOutput<AkitaField>,
+) -> (AkitaBackendCommitment, AkitaBackendHint) {
+    (output.committed_group, output.hint)
+}
+
 /// Prover-only cleanup after a commitment has produced its opening hint.
 pub trait PostCommitmentCleanup: CommitmentScheme {
     /// Releases backend state that can be reconstructed from the setup or
@@ -188,14 +194,17 @@ impl AkitaScheme {
                 backend_prover_setup,
                 std::slice::from_ref(&source),
                 &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             ),
             AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
                 backend_prover_setup,
                 std::slice::from_ref(&source),
                 &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
             ),
             _ => unreachable!("the one-hot setup geometry was validated during setup"),
         })
+        .map(split_commit_output)
         .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
@@ -248,14 +257,21 @@ impl AkitaScheme {
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         with_backend_pool(|| match setup.one_hot_k() {
-            AKITA_ONE_HOT_K16 => {
-                AkitaOneHotK16BackendScheme::commit(backend_prover_setup, polynomials, &stack)
-            }
-            AKITA_ONE_HOT_K256 => {
-                AkitaOneHotK256BackendScheme::commit(backend_prover_setup, polynomials, &stack)
-            }
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                polynomials,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                polynomials,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
             _ => unreachable!("the one-hot setup geometry was validated during setup"),
         })
+        .map(split_commit_output)
         .map_err(commit_failed)
     }
 
@@ -325,8 +341,14 @@ impl AkitaScheme {
         let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            AkitaBackendScheme::commit(backend_prover_setup, dense.as_slice(), &stack)
+            AkitaBackendScheme::commit(
+                backend_prover_setup,
+                dense.as_slice(),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
         })
+        .map(split_commit_output)
         .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
@@ -494,8 +516,10 @@ impl CommitmentScheme for AkitaScheme {
                     backend_prover_setup,
                     std::slice::from_ref(&sparse),
                     &stack,
+                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
             })
+            .map(split_commit_output)
             .map_err(commit_failed)?;
             return Self::package_commitment(
                 setup.default_layout_digest(),

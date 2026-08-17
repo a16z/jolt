@@ -11,7 +11,7 @@
 //! mismatches *before* any shape-backed allocation happens, so verifier
 //! memory stays proportional to the bytes the prover actually supplied.
 
-use akita_config::{effective_batched_schedule, policy_of, CommitmentConfig};
+use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_pcs::AkitaError;
 use akita_schedules::ResolvedScheduleRow;
 use akita_types::{
@@ -81,8 +81,8 @@ pub(crate) fn deserialize_checked_backend_payload(
         &commitment.serialized_backend_bytes,
         &commitment.backend_coeff_len,
     )?;
-    // The frozen commitment profile comes from the trusted resolved row — the
-    // proof supplies only the payload coefficients, exactly as before.
+    // The commitment profile comes from the trusted resolved row; the proof
+    // supplies only the payload coefficients.
     let backend_commitment =
         AkitaBackendCommitment::new(resolved.profiles().final_group, backend_payload);
 
@@ -110,12 +110,7 @@ where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
     let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout()?);
-    let resolved = akita_schedules::select_generated_schedule_row(
-        &key,
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-        Cfg::schedule_catalog(),
-    )?;
+    let resolved = Cfg::resolve_catalog_row_for_key(&key)?;
     effective_batched_schedule::<Cfg>(resolved, layout, backend_point)
 }
 
@@ -269,10 +264,16 @@ fn validate_level_shape(
     }
     let expected_stage1 = DigitRangePlan::new(1usize << params.log_basis_open)
         .map_err(|err| invalid_batch(format!("Akita schedule error: {err}")))?
-        .stage_shapes(rounds);
-    if shape.stage1_stages != expected_stage1 {
+        .proof_shapes_for_route(rounds, params.inner_commit_matrix.security_route())
+        .map_err(|err| invalid_batch(format!("Akita schedule error: {err}")))?;
+    if shape.stage1_stages != expected_stage1.0 {
         return Err(invalid_batch(
             "Akita level shape stage-1 tree does not match the scheduled stages",
+        ));
+    }
+    if shape.stage1_norm != expected_stage1.1 {
+        return Err(invalid_batch(
+            "Akita level shape stage-1 norm proof does not match the scheduled security route",
         ));
     }
 
@@ -393,15 +394,18 @@ mod tests {
                      output_witness_len: usize,
                      successor: Option<&RecursiveFoldParams>| {
             let rounds = sumcheck_rounds(params.d_a(), output_witness_len);
+            let stage1 = DigitRangePlan::new(1usize << params.log_basis_open)
+                .expect("scheduled range basis")
+                .proof_shapes_for_route(rounds, params.inner_commit_matrix.security_route())
+                .expect("scheduled stage-1 shape");
             LevelProofShape {
                 extension_opening_reduction: None,
                 opening_payload_coeffs: params
                     .opening_payload_geometry()
                     .expect("scheduled opening payload geometry")
                     .transmitted_coefficients(),
-                stage1_stages: DigitRangePlan::new(1usize << params.log_basis_open)
-                    .expect("scheduled range basis")
-                    .stage_shapes(rounds),
+                stage1_stages: stage1.0,
+                stage1_norm: stage1.1,
                 stage2_sumcheck_proof: vec![STAGE2_SUMCHECK_DEGREE; rounds],
                 stage3_sumcheck: None,
                 next_witness_binding: match successor {

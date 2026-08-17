@@ -55,10 +55,10 @@ fn catalog_setup_capacity<Cfg: CommitmentConfig>(
             && entry.root.final_group.layout.num_vars() <= max_num_vars
             && entry.root.final_group.layout.num_polynomials() <= max_num_batched_polys
     }) {
-        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        let row = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             entry.root.final_group.layout,
         ))?;
-        let entry_capacity = setup_matrix_capacity_for_schedule(&schedule)?;
+        let entry_capacity = setup_matrix_capacity_for_schedule(row.schedule())?;
         capacity.num_field_elements = capacity
             .num_field_elements
             .max(entry_capacity.num_field_elements);
@@ -67,10 +67,7 @@ fn catalog_setup_capacity<Cfg: CommitmentConfig>(
 }
 
 /// Delegates a [`CommitmentConfig`] to an upstream preset, overriding its
-/// schedule catalog and catalog-backed setup sizing. `get_params_for_prove`
-/// re-derives the single-group lookup key through the public layout API;
-/// multi-group layouts (never produced by Jolt's shapes) fall back to the base
-/// preset's DP planning.
+/// schedule catalog and catalog-backed setup sizing.
 macro_rules! delegate_preset {
     (
         $(#[$doc:meta])*
@@ -108,10 +105,6 @@ macro_rules! delegate_preset {
 
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 <$base>::sis_modulus_profile()
-            }
-
-            fn ring_subfield_embedding_norm_bound() -> u32 {
-                <$base>::ring_subfield_embedding_norm_bound()
             }
 
             fn setup_matrix_capacity(
@@ -162,36 +155,8 @@ macro_rules! delegate_preset {
                 <$base>::recursive_setup_planning()
             }
 
-            fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+            fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
                 $catalog
-            }
-
-            fn runtime_schedule(
-                key: AkitaScheduleLookupKey,
-            ) -> Result<akita_types::FoldSchedule, AkitaError> {
-                Self::validate_sis_modulus_profile()?;
-                match akita_schedules::resolve_group_batch_schedule(
-                    &key,
-                    &akita_config::policy_of::<Self>(),
-                    Self::ring_challenge_config,
-                    Self::schedule_catalog(),
-                ) {
-                    Err(AkitaError::UnsupportedSchedule(_)) => dp_planned_schedule::<Self>(&key),
-                    result => result,
-                }
-            }
-
-            fn get_params_for_prove(
-                layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::FoldSchedule, akita_pcs::AkitaError> {
-                if layout.num_groups() == 1 {
-                    layout.check()?;
-                    Self::runtime_schedule(AkitaScheduleLookupKey::single(
-                        layout.root_final_group_layout()?,
-                    ))
-                } else {
-                    <$base>::get_params_for_prove(layout)
-                }
             }
         }
     };
@@ -202,10 +167,7 @@ delegate_preset!(
     JoltOneHotK16,
     akita_config::proof_optimized::fp128::OneHot,
     akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
-        akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
-            128,
-            akita_types::sis::FoldWitnessNorms::new(1, 4),
-        ),
+        akita_types::sis::UnitOneHotFoldPolicy::new(128, 1, 16),
     ),
     crate::schedules::jolt_fp128_onehot_k16_table()
 );
@@ -249,7 +211,8 @@ mod tests {
         ));
 
         let layout = akita_types::OpeningClaimsLayout::new(39, 1).unwrap();
-        let schedule = JoltOneHotK256::get_params_for_prove(&layout).unwrap();
+        let row = JoltOneHotK256::resolve_catalog_row_for_opening(&layout).unwrap();
+        let schedule = row.schedule();
         let commitment = &schedule.root.params.final_group.commitment;
         assert!([64, 128, 256].contains(&commitment.inner_commit_matrix.ring_dimension()));
         assert!([64, 128].contains(&commitment.outer_commit_matrix.ring_dimension()));

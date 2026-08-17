@@ -16,19 +16,19 @@
 //! may still fall back to the planner DP. Catalog identity is validated
 //! against the config policy on every lookup.
 
-pub(crate) use akita_planner::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub(crate) use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
     GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
     GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
     GeneratedRootPrecommittedGroup, GeneratedSetupPrefixInput, GeneratedTerminalFold,
-    GeneratedWitnessPartition, PlannerCostModelId, SelectionPolicyId,
+    GeneratedWitnessPartition, PlannerCostModelId, SelectionPolicyId, SelectiveL2ResponseModelId,
 };
 pub(crate) use akita_schedules::RingDimensionScheduleMode;
+pub(crate) use akita_schedules::{GeneratedScheduleCatalogIdentity, GeneratedScheduleTable};
 pub(crate) use akita_types::{
     ChunkedWitnessCfg, CommitmentPayloadMode, CommitmentRingDims, CommittedGroupProfile,
     DecompositionParams, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
+    SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
 };
 
 #[expect(
@@ -54,7 +54,6 @@ mod jolt_fp128_onehot_k256;
 pub fn jolt_fp128_onehot_k16_table() -> Option<GeneratedScheduleTable> {
     Some(GeneratedScheduleTable {
         entries: jolt_fp128_onehot_k16::JOLT_FP128_ONEHOT_K16_SCHEDULES,
-        precommitted_profiles: &[],
         identity: jolt_fp128_onehot_k16::CATALOG_IDENTITY,
     })
 }
@@ -63,7 +62,6 @@ pub fn jolt_fp128_onehot_k16_table() -> Option<GeneratedScheduleTable> {
 pub fn jolt_fp128_onehot_k256_table() -> Option<GeneratedScheduleTable> {
     Some(GeneratedScheduleTable {
         entries: jolt_fp128_onehot_k256::JOLT_FP128_ONEHOT_K256_SCHEDULES,
-        precommitted_profiles: &[],
         identity: jolt_fp128_onehot_k256::CATALOG_IDENTITY,
     })
 }
@@ -72,7 +70,6 @@ pub fn jolt_fp128_onehot_k256_table() -> Option<GeneratedScheduleTable> {
 pub fn jolt_fp128_dense_table() -> Option<GeneratedScheduleTable> {
     Some(GeneratedScheduleTable {
         entries: jolt_fp128_dense::JOLT_FP128_DENSE_SCHEDULES,
-        precommitted_profiles: &[],
         identity: jolt_fp128_dense::CATALOG_IDENTITY,
     })
 }
@@ -164,11 +161,11 @@ pub mod emit {
             policy: policy_of::<Cfg>(),
             keys: keys(num_polys, num_vars),
             group_batch_keys: Vec::new(),
+            preplanned_scalar: Vec::new(),
             output_dir,
             regen: regen::<Cfg>,
             regen_group_batch: regen_group_batch::<Cfg>,
             ring_challenge_config: Cfg::ring_challenge_config,
-            precommitted_profiles: Vec::new(),
             generator_command:
                 "cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/src/schedules",
         }

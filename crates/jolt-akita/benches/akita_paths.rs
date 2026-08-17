@@ -38,12 +38,11 @@ use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, ComputeBackendSetup, CpuBackend};
 use akita_prover::{
     AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, OneHotPoly,
-    PreparedProverGroup, ProverOpeningData, SelectedProverOpeningData,
+    PreparedProverGroup, SelectedProverOpeningData,
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, CommittedGroup, CommittedGroupBatchProfile, OpeningClaims,
-    PolynomialGroupClaims,
+    AkitaCommitmentHint, BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
 };
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
@@ -558,12 +557,14 @@ fn akita_prover_commit_dense(
         setup.dense_prover.expanded.as_ref(),
     )
     .expect("uniform backend stack");
-    BackendScheme::commit(
+    let output = BackendScheme::commit(
         &setup.dense_prover,
         black_box(std::slice::from_ref(poly)),
         &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
-    .expect("Akita backend dense commit should succeed")
+    .expect("Akita backend dense commit should succeed");
+    (output.committed_group, output.hint)
 }
 
 fn akita_prover_commit_one_hot(
@@ -576,12 +577,14 @@ fn akita_prover_commit_one_hot(
         setup.one_hot_prover.expanded.as_ref(),
     )
     .expect("uniform backend stack");
-    OneHotBackendScheme::commit(
+    let output = OneHotBackendScheme::commit(
         &setup.one_hot_prover,
         black_box(std::slice::from_ref(poly)),
         &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
     )
-    .expect("Akita backend one-hot commit should succeed")
+    .expect("Akita backend one-hot commit should succeed");
+    (output.committed_group, output.hint)
 }
 
 fn akita_prover_claims<'a, Cfg, P>(
@@ -592,23 +595,14 @@ fn akita_prover_claims<'a, Cfg, P>(
     hint: BackendHint,
 ) -> SelectedProverOpeningData<'a, AkitaField, PreparedProverGroup<'a, P>, AkitaField>
 where
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
     P: akita_prover::RootPolyMeta<AkitaField>,
 {
     let group = PolynomialGroupClaims::new(point.to_vec(), evaluations, commitment.clone())
         .expect("prover group claims");
     let claims = OpeningClaims::from_groups(vec![group]).expect("prover claims");
-    let profiles = CommittedGroupBatchProfile {
-        final_group: *commitment.profile(),
-        precommitteds: Vec::new(),
-    };
-    let selection = Cfg::select_schedule_for_profiles(&profiles)
-        .expect("prover schedule selection")
-        .selection();
-    (
-        selection,
-        ProverOpeningData::new(claims, vec![hint], vec![polynomials]).expect("prover opening data"),
-    )
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, vec![hint], vec![polynomials])
+        .expect("prover opening data")
 }
 
 fn akita_prover_open_dense(
