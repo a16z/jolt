@@ -281,9 +281,6 @@ mod muldiv {
                         trace_cutoff_elements: 4,
                         ..Default::default()
                     },
-                registers_read_write: jolt_kernels::metal::RegistersReadWriteMetalConfig {
-                    precompute_cutoff_elements: 2,
-                },
                 instruction_read_raf: jolt_kernels::metal::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 8,
                     cutoff_elements: 8,

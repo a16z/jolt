@@ -134,6 +134,7 @@ jobs:
         run: |
           cargo clippy -p jolt-kernels --features metal,test-utils --all-targets
           cargo clippy -p jolt-prover --example modular_benchmark --features prover-fixtures,akita,metal
+          cargo clippy -p jolt-prover --tests --features prover-fixtures,akita,metal
       - name: Run platform-independent Metal contract tests
         run: >
           cargo nextest run -p jolt-kernels --features metal,test-utils --cargo-quiet
