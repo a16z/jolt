@@ -108,6 +108,7 @@ pub use m::RemUW;
 pub use m::RemW;
 pub use virt::MovSign;
 pub use virt::MulI;
+pub use virt::MulIW;
 pub use virt::Pow2;
 pub use virt::Pow2I;
 pub use virt::Pow2IW;
@@ -342,11 +343,15 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     Noop(Noop<T>),
     Add(Add<T>),
     Addi(Addi<T>),
+    AddW(AddW<T>),
+    AddiW(AddiW<T>),
     Sub(Sub<T>),
+    SubW(SubW<T>),
     Lui(Lui<T>),
     Auipc(Auipc<T>),
     Mul(Mul<T>),
     MulHU(MulHU<T>),
+    MulW(MulW<T>),
     And(And<T>),
     AndI(AndI<T>),
     Or(Or<T>),
@@ -381,6 +386,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     Pow2W(Pow2W<T>),
     Pow2IW(Pow2IW<T>),
     MulI(MulI<T>),
+    MulIW(MulIW<T>),
     MovSign(MovSign<T>),
     VirtualRev8W(VirtualRev8W<T>),
     VirtualChangeDivisor(VirtualChangeDivisor<T>),
@@ -549,11 +555,15 @@ macro_rules! impl_jolt_instructions_flags {
 impl_jolt_instructions_flags! {
     Add => ADD,
     Addi => ADDI,
+    AddW => ADDW,
+    AddiW => ADDIW,
     Sub => SUB,
+    SubW => SUBW,
     Lui => LUI,
     Auipc => AUIPC,
     Mul => MUL,
     MulHU => MULHU,
+    MulW => MULW,
     And => AND,
     AndI => ANDI,
     Or => OR,
@@ -588,6 +598,7 @@ impl_jolt_instructions_flags! {
     Pow2W => VirtualPow2W,
     Pow2IW => VirtualPow2IW,
     MulI => VirtualMULI,
+    MulIW => VirtualMULIW,
     MovSign => VirtualMovsign,
     VirtualRev8W => VirtualRev8W,
     VirtualChangeDivisor => VirtualChangeDivisor,
@@ -775,7 +786,6 @@ mod tests {
             Ok(JoltInstruction::Add(..))
         ));
         for kind in [
-            SourceInstructionKind::ADDW,
             SourceInstructionKind::DIV,
             SourceInstructionKind::LW,
             SourceInstructionKind::SW,
@@ -805,6 +815,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside a Result-returning test"
+    )]
     fn terminal_virtual_instruction_marks_last_in_sequence() -> Result<(), JoltInstructionKind> {
         fn flags_for(
             row: JoltInstructionRow,

@@ -43,7 +43,7 @@ TOOLCHAIN_URL="https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/relea
 # ACT4 top-level Makefile prefers mise over raw uv/bundle detection.
 # The installer lands at ~/.local/bin/mise.
 if ! command -v mise >/dev/null 2>&1; then
-    curl -fL https://mise.run | sh
+    curl -fL --retry 5 --retry-all-errors https://mise.run | sh
 fi
 export PATH="$HOME/.local/bin:$PATH"
 mise --version
@@ -58,13 +58,32 @@ mise trust third-party/riscv-arch-test/.mise.toml
 # submodule directory so mise reads .mise.toml there.
 (cd third-party/riscv-arch-test && mise install)
 
+# Pre-install the UDB gem bundle with retries. The udb gem's native
+# extension downloads an artifact over the network at install time
+# (ext/udb_download), and transient registry/CDN failures there are the
+# top cause of arch-tests CI flakes. Warming the bundle here turns the
+# framework's install-on-demand (act's _ensure_udb_installed) into a
+# no-op `bundle check` at generate time.
+GEM_DATA_DIR="third-party/riscv-arch-test/framework/src/act/data"
+for attempt in 1 2 3 4 5; do
+    if (cd "${GEM_DATA_DIR}" && mise exec -- bundle install); then
+        break
+    fi
+    if [ "${attempt}" -eq 5 ]; then
+        echo "bundle install still failing after ${attempt} attempts" >&2
+        exit 1
+    fi
+    echo "bundle install failed (attempt ${attempt}); retrying in $((attempt * 15))s" >&2
+    sleep $((attempt * 15))
+done
+
 mkdir -p /opt/riscv/
 
 # Download and install the xpack riscv-none-elf GCC toolchain. The tarball
 # wraps everything in xpack-riscv-none-elf-gcc-<ver>-<arch>/; --strip-components=1
 # flattens it so bin/riscv-none-elf-gcc lands at /opt/riscv/bin/riscv-none-elf-gcc.
 echo "downloading toolchain from ${TOOLCHAIN_URL}"
-curl -fL "${TOOLCHAIN_URL}" -o /tmp/riscv-toolchain.tar.gz
+curl -fL --retry 5 --retry-all-errors "${TOOLCHAIN_URL}" -o /tmp/riscv-toolchain.tar.gz
 tar -xzf /tmp/riscv-toolchain.tar.gz -C /opt/riscv/ --strip-components=1
 rm -f /tmp/riscv-toolchain.tar.gz
 
@@ -81,7 +100,7 @@ SAIL_ASSET="sail-riscv-$(uname -s)-$(uname -m).tar.gz"
 SAIL_URL="https://github.com/riscv/sail-riscv/releases/download/${SAIL_TAG}/${SAIL_ASSET}"
 
 echo "downloading sail from ${SAIL_URL}"
-curl -fL "${SAIL_URL}" -o /tmp/sail-riscv.tar.gz
+curl -fL --retry 5 --retry-all-errors "${SAIL_URL}" -o /tmp/sail-riscv.tar.gz
 tar -xzf /tmp/sail-riscv.tar.gz -C /opt/riscv/ --strip-components=1
 rm -f /tmp/sail-riscv.tar.gz
 

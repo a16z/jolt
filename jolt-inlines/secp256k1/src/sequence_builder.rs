@@ -1,16 +1,12 @@
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256k1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    instruction::{
-        add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, sltu::SLTU,
-        virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
-        virtual_assert_lte::VirtualAssertLTE,
-    },
     limbs_to_nbiguint, load_field_element_limbs, mulq_division_advice, mulq_quotient_advice,
     ExpandedInstructionSequence, ExpansionError, FormatInline, GlvDecompositionAdvice,
     InlineAdviceContext, InlineAdviceError, InlineBuilderExt, InlineExpansionBuilder, InlineOp,
-    InlineOperands, InlineRegister, ModularDivisionAdvice, MulqType, QuotientAdvice,
+    InlineOperands, InlineRegister, Kind, ModularDivisionAdvice, MulqType, QuotientAdvice,
 };
+use jolt_inlines_sdk::jolt_asm;
 
 /// inline constructor for GLV decomposition in secp256k1 scalar field
 struct GlvrAdvBuilder {
@@ -168,8 +164,9 @@ impl MulqBuilder {
             match self.op_type {
                 MulqType::Mul => {
                     self.asm
-                        .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
-                    self.asm.emit_ld::<LD>(
+                        .emit_ld(Kind::LD, *self.a[i], self.operands.rs1, i as i64 * 8);
+                    self.asm.emit_ld(
+                        Kind::LD,
                         *self.b.as_ref().unwrap()[i],
                         self.operands.rs2,
                         i as i64 * 8,
@@ -177,45 +174,52 @@ impl MulqBuilder {
                 }
                 MulqType::Square => {
                     self.asm
-                        .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
+                        .emit_ld(Kind::LD, *self.a[i], self.operands.rs1, i as i64 * 8);
                 }
                 MulqType::Div => {
-                    self.asm.emit_ld::<LD>(
+                    self.asm.emit_ld(
+                        Kind::LD,
                         *self.b.as_ref().unwrap()[i],
                         self.operands.rs2,
                         i as i64 * 8,
                     );
-                    self.asm.emit_j::<VirtualAdvice>(*self.a[i], 0);
-                    self.asm
-                        .emit_s::<SD>(self.operands.rs3, *self.a[i], i as i64 * 8);
+                    // The advised quotient stays in registers until every check
+                    // has run; see the store loop at the end of this sequence.
+                    self.asm.emit_j(Kind::VIRTUAL_ADVICE, *self.a[i], 0);
                 }
             }
-            self.asm.emit_j::<VirtualAdvice>(*self.w[i], 0);
+            self.asm.emit_j(Kind::VIRTUAL_ADVICE, *self.w[i], 0);
         }
         if self.is_scalar_field {
-            self.asm.emit_u::<LUI>(*self.p, 0x402da1732fc9bebf);
+            self.asm.emit_u(Kind::LUI, *self.p, 0x402da1732fc9bebf);
             self.asm
-                .emit_u::<LUI>(**self.p2.as_ref().unwrap(), 0x4551231950b75fc4);
+                .emit_u(Kind::LUI, **self.p2.as_ref().unwrap(), 0x4551231950b75fc4);
         } else {
-            self.asm.emit_u::<LUI>(*self.p, (1u64 << 32) + 977);
+            self.asm.emit_u(Kind::LUI, *self.p, (1u64 << 32) + 977);
         }
         match self.op_type {
             MulqType::Square => {
-                self.asm.emit_r::<MUL>(*self.r[0], *self.a[0], *self.a[0]);
+                self.asm
+                    .emit_r(Kind::MUL, *self.r[0], *self.a[0], *self.a[0]);
             }
             _ => {
-                self.asm
-                    .emit_r::<MUL>(*self.r[0], *self.a[0], *self.b.as_ref().unwrap()[0]);
+                self.asm.emit_r(
+                    Kind::MUL,
+                    *self.r[0],
+                    *self.a[0],
+                    *self.b.as_ref().unwrap()[0],
+                );
             }
         }
         self.mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p, *self.aux);
         match self.op_type {
             MulqType::Div => {
-                self.asm.emit_ld::<LD>(*self.aux, self.operands.rs1, 0);
-                self.asm.emit_b::<VirtualAssertEQ>(*self.r[0], *self.aux, 0);
+                self.asm.emit_ld(Kind::LD, *self.aux, self.operands.rs1, 0);
+                self.asm
+                    .emit_b(Kind::VirtualAssertEQ, *self.r[0], *self.aux, 0);
             }
             _ => {
-                self.asm.emit_s::<SD>(self.operands.rs3, *self.r[0], 0);
+                self.asm.emit_s(Kind::SD, self.operands.rs3, *self.r[0], 0);
             }
         }
         for k in 1..7 {
@@ -252,9 +256,9 @@ impl MulqBuilder {
                         *self.aux,
                     );
                     first = false;
-                    self.asm.emit_r::<ADD>(rk, rk, *self.w[k - 2]);
-                    self.asm.emit_r::<SLTU>(*self.aux, rk, *self.w[k - 2]);
-                    self.asm.emit_r::<ADD>(rk_next, rk_next, *self.aux);
+                    self.asm.emit_r(Kind::ADD, rk, rk, *self.w[k - 2]);
+                    self.asm.emit_r(Kind::SLTU, *self.aux, rk, *self.w[k - 2]);
+                    self.asm.emit_r(Kind::ADD, rk_next, rk_next, *self.aux);
                 }
             }
             for i in 0..=k {
@@ -345,31 +349,48 @@ impl MulqBuilder {
                 match self.op_type {
                     MulqType::Div => {
                         self.asm
-                            .emit_ld::<LD>(*self.aux, self.operands.rs1, k as i64 * 8);
-                        self.asm.emit_b::<VirtualAssertEQ>(rk, *self.aux, 0);
+                            .emit_ld(Kind::LD, *self.aux, self.operands.rs1, k as i64 * 8);
+                        self.asm.emit_b(Kind::VirtualAssertEQ, rk, *self.aux, 0);
                     }
                     _ => {
-                        self.asm.emit_s::<SD>(self.operands.rs3, rk, k as i64 * 8);
+                        self.asm
+                            .emit_s(Kind::SD, self.operands.rs3, rk, k as i64 * 8);
                     }
                 }
             } else if k >= 4 {
-                self.asm.emit_b::<VirtualAssertEQ>(rk, *self.w[k - 4], 0);
+                self.asm
+                    .emit_b(Kind::VirtualAssertEQ, rk, *self.w[k - 4], 0);
             }
         }
         match self.op_type {
             MulqType::Square => {
-                self.asm.emit_r::<MULHU>(*self.aux, *self.a[3], *self.a[3]);
+                self.asm
+                    .emit_r(Kind::MULHU, *self.aux, *self.a[3], *self.a[3]);
             }
             _ => {
-                self.asm
-                    .emit_r::<MULHU>(*self.aux, *self.a[3], *self.b.as_ref().unwrap()[3]);
+                self.asm.emit_r(
+                    Kind::MULHU,
+                    *self.aux,
+                    *self.a[3],
+                    *self.b.as_ref().unwrap()[3],
+                );
             }
         }
-        self.asm.emit_r::<ADD>(*self.r[1], *self.r[1], *self.aux);
-        self.asm
-            .emit_b::<VirtualAssertEQ>(*self.r[1], *self.w[3], 0);
-        self.asm
-            .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[1], 0);
+        jolt_asm!(self.asm, {
+            add *self.r[1], *self.r[1], *self.aux;
+            assert_eq *self.r[1], *self.w[3];
+            assert_lte *self.aux, *self.r[1];
+        });
+        // WARNING: the division result must be stored only after the checks
+        // above. `rs3` may alias `rs1`, in which case an earlier store would
+        // overwrite the dividend and reduce `cb + wp == 2^256 w + a` to a
+        // tautology, admitting an arbitrary quotient.
+        if let MulqType::Div = self.op_type {
+            for i in 0..4 {
+                self.asm
+                    .emit_s(Kind::SD, self.operands.rs3, *self.a[i], i as i64 * 8);
+            }
+        }
         self.asm.release_many(self.a);
         match self.op_type {
             MulqType::Square => {}
@@ -390,26 +411,34 @@ impl MulqBuilder {
         self.asm.finalize()
     }
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MUL>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(c2, c1, aux);
+        jolt_asm!(self.asm, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+        });
     }
     fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MULHU>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(c2, c1, aux);
+        jolt_asm!(self.asm, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+        });
     }
     fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MUL>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
+        jolt_asm!(self.asm, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
     fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MULHU>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
+        jolt_asm!(self.asm, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
     fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
         if carry_exists {
@@ -426,38 +455,46 @@ impl MulqBuilder {
         }
     }
     fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MUL>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(c2, c1, aux);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
+        jolt_asm!(self.asm, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
     fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8) {
-        self.asm.emit_r::<MULHU>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(c2, c1, aux);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux);
+        jolt_asm!(self.asm, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu c2, c1, aux;
+            add c1, c1, aux;
+            sltu aux, c1, aux;
+            add c2, c2, aux;
+        });
     }
     fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.asm.emit_r::<MUL>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux2);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux2);
+        jolt_asm!(self.asm, {
+            mul aux, a, b;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+        });
     }
     fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8) {
-        self.asm.emit_r::<MULHU>(aux, a, b);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux2);
-        self.asm.emit_r::<ADD>(c1, c1, aux);
-        self.asm.emit_r::<SLTU>(aux2, c1, aux);
-        self.asm.emit_r::<ADD>(c2, c2, aux2);
+        jolt_asm!(self.asm, {
+            mulhu aux, a, b;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+            add c1, c1, aux;
+            sltu aux2, c1, aux;
+            add c2, c2, aux2;
+        });
     }
 }
 

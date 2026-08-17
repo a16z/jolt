@@ -9,7 +9,7 @@ pub(in crate::expand) fn expand_sraiw(
     let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.emit_i(
-        JoltInstructionKind::VirtualSRAIW,
+        Kind::VirtualSRAIW,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         bitmask as i128,

@@ -260,26 +260,6 @@ impl ExpansionBuilder {
         self.emit(RowTemplate::u(instruction_kind, rd, imm));
     }
 
-    pub(super) fn emit_b(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
-        imm: i128,
-    ) {
-        self.emit(RowTemplate::b(instruction_kind, rs1, rs2, imm));
-    }
-
-    pub(super) fn emit_s(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
-        imm: i128,
-    ) {
-        self.emit(RowTemplate::s(instruction_kind, rs1, rs2, imm));
-    }
-
     /// Record a source-only helper row that the provider-free materializer must
     /// expand before appending its finalized rows to this source-row sequence.
     ///
@@ -410,11 +390,11 @@ impl ExpansionBuilder {
         })
     }
 
-    fn emit(&mut self, row: RowTemplate) {
+    pub(super) fn emit(&mut self, row: RowTemplate) {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    fn expand(&mut self, row: SourceInstructionRowTemplate) {
+    pub(super) fn expand(&mut self, row: SourceInstructionRowTemplate) {
         self.ops.push(ExpansionOp::Expand(row));
     }
 }
@@ -426,12 +406,8 @@ pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
     matches!(
         instruction_kind,
         SourceInstructionKind::Inline
-            | SourceInstructionKind::ADDIW
-            | SourceInstructionKind::ADDW
-            | SourceInstructionKind::SUBW
             | SourceInstructionKind::MULH
             | SourceInstructionKind::MULHSU
-            | SourceInstructionKind::MULW
             | SourceInstructionKind::LB
             | SourceInstructionKind::LBU
             | SourceInstructionKind::LH
@@ -482,8 +458,8 @@ pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
             | SourceInstructionKind::MRET
             | SourceInstructionKind::SLL
             | SourceInstructionKind::SLLI
-            | SourceInstructionKind::SLLW
             | SourceInstructionKind::SLLIW
+            | SourceInstructionKind::SLLW
             | SourceInstructionKind::SRL
             | SourceInstructionKind::SRLI
             | SourceInstructionKind::SRA
@@ -497,6 +473,11 @@ pub fn is_source_only(instruction_kind: SourceInstructionKind) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
+
     use jolt_riscv::{NormalizedOperands, SourceInstructionRow};
 
     use super::*;

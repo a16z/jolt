@@ -8,15 +8,13 @@ pub(in crate::expand) fn expand_sraw(
     let v_bitmask = asm.allocate()?;
 
     asm.emit_i(
-        JoltInstructionKind::VirtualShiftRightBitmaskW(
-            jolt_riscv::instructions::VirtualShiftRightBitmaskW(()),
-        ),
+        Kind::VirtualShiftRightBitmaskW(jolt_riscv::instructions::VirtualShiftRightBitmaskW(())),
         v_bitmask.operand(),
         reg(rs2(instruction)?),
         0,
     );
     asm.emit_r(
-        JoltInstructionKind::VirtualSRAW,
+        Kind::VirtualSRAW,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         v_bitmask.operand(),

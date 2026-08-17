@@ -55,6 +55,13 @@ impl<F: Field> CompressedPoly<F> {
     /// `c1 = h - 2*c0 - c2 - c3 - ...`
     #[inline]
     fn recover_linear_term(&self, hint: F) -> F {
+        // Deserialized proofs can carry an empty coefficient vector; fail with
+        // a clear contract violation instead of an index panic. Callers on
+        // untrusted data must reject empty polynomials first (`is_empty`).
+        assert!(
+            !self.coeffs_except_linear_term.is_empty(),
+            "cannot evaluate an empty compressed polynomial"
+        );
         let c0 = self.coeffs_except_linear_term[0];
         let mut linear_term = hint - c0 - c0;
         for &c in &self.coeffs_except_linear_term[1..] {
@@ -67,6 +74,9 @@ impl<F: Field> CompressedPoly<F> {
     ///
     /// Recovers the linear term, then evaluates via ascending-power accumulation
     /// in O(d) multiplications.
+    ///
+    /// # Panics
+    /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
     #[inline]
     pub fn evaluate_with_hint(&self, hint: F, point: F) -> F {
         self.eval_from_hint(&hint, &point)
@@ -74,6 +84,9 @@ impl<F: Field> CompressedPoly<F> {
 
     /// Like [`evaluate_with_hint`](Self::evaluate_with_hint) but takes hint and
     /// point by reference, avoiding a copy at call sites that already hold references.
+    ///
+    /// # Panics
+    /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
     #[inline]
     pub fn eval_from_hint(&self, hint: &F, point: &F) -> F {
         let linear_term = self.recover_linear_term(*hint);
@@ -88,6 +101,9 @@ impl<F: Field> CompressedPoly<F> {
     }
 
     /// Recovers the full polynomial given the hint `h = f(0) + f(1)`.
+    ///
+    /// # Panics
+    /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
     pub fn decompress(&self, hint: F) -> UnivariatePoly<F> {
         let linear_term = self.recover_linear_term(hint);
 
@@ -200,6 +216,20 @@ mod tests {
                 .unwrap()
                 .0;
         assert_eq!(compressed, recovered);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot evaluate an empty compressed polynomial")]
+    fn empty_compressed_poly_evaluation_rejected() {
+        let empty = CompressedPoly::<Fr>::new(vec![]);
+        let _ = empty.evaluate_with_hint(Fr::one(), Fr::one());
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot evaluate an empty compressed polynomial")]
+    fn empty_compressed_poly_decompress_rejected() {
+        let empty = CompressedPoly::<Fr>::new(vec![]);
+        let _ = empty.decompress(Fr::one());
     }
 
     #[test]

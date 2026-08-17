@@ -108,8 +108,8 @@ fn modular_lookup_table_indices_match_prover_abi() {
             prover_index(ProverLookupTables::<XLEN>::LowerHalfWord(Default::default())),
         ),
         (
-            LookupTableKind::<XLEN>::SignExtendHalfWord(Default::default()).index(),
-            prover_index(ProverLookupTables::<XLEN>::SignExtendHalfWord(
+            LookupTableKind::<XLEN>::SignExtendWord(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::SignExtendWord(
                 Default::default(),
             )),
         ),

@@ -15,7 +15,7 @@ use range_check_aligned::RangeCheckAlignedTable;
 use serde::{Deserialize, Serialize};
 use shift_right_bitmask::ShiftRightBitmaskTable;
 use shift_right_bitmask_w::ShiftRightBitmaskWTable;
-use sign_extend_half_word::SignExtendHalfWordTable;
+use sign_extend_word::SignExtendWordTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
 use std::marker::Sync;
@@ -92,7 +92,7 @@ pub mod range_check;
 pub mod range_check_aligned;
 pub mod shift_right_bitmask;
 pub mod shift_right_bitmask_w;
-pub mod sign_extend_half_word;
+pub mod sign_extend_word;
 pub mod signed_greater_than_equal;
 pub mod signed_less_than;
 pub mod sub;
@@ -146,7 +146,7 @@ pub enum LookupTables<const XLEN: usize> {
     HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
     WordAlignment(WordAlignmentTable<XLEN>),
     LowerHalfWord(LowerHalfWordTable<XLEN>),
-    SignExtendHalfWord(SignExtendHalfWordTable<XLEN>),
+    SignExtendWord(SignExtendWordTable<XLEN>),
     Pow2(Pow2Table<XLEN>),
     Pow2W(Pow2WTable<XLEN>),
     ShiftRightBitmask(ShiftRightBitmaskTable<XLEN>),
@@ -201,7 +201,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::HalfwordAlignment(table) => table.materialize(),
             LookupTables::WordAlignment(table) => table.materialize(),
             LookupTables::LowerHalfWord(table) => table.materialize(),
-            LookupTables::SignExtendHalfWord(table) => table.materialize(),
+            LookupTables::SignExtendWord(table) => table.materialize(),
             LookupTables::Pow2(table) => table.materialize(),
             LookupTables::Pow2W(table) => table.materialize(),
             LookupTables::ShiftRightBitmask(table) => table.materialize(),
@@ -249,7 +249,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::HalfwordAlignment(table) => table.materialize_entry(index),
             LookupTables::WordAlignment(table) => table.materialize_entry(index),
             LookupTables::LowerHalfWord(table) => table.materialize_entry(index),
-            LookupTables::SignExtendHalfWord(table) => table.materialize_entry(index),
+            LookupTables::SignExtendWord(table) => table.materialize_entry(index),
             LookupTables::Pow2(table) => table.materialize_entry(index),
             LookupTables::Pow2W(table) => table.materialize_entry(index),
             LookupTables::ShiftRightBitmask(table) => table.materialize_entry(index),
@@ -301,7 +301,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::HalfwordAlignment(table) => table.evaluate_mle(r),
             LookupTables::WordAlignment(table) => table.evaluate_mle(r),
             LookupTables::LowerHalfWord(table) => table.evaluate_mle(r),
-            LookupTables::SignExtendHalfWord(table) => table.evaluate_mle(r),
+            LookupTables::SignExtendWord(table) => table.evaluate_mle(r),
             LookupTables::Pow2(table) => table.evaluate_mle(r),
             LookupTables::Pow2W(table) => table.evaluate_mle(r),
             LookupTables::ShiftRightBitmask(table) => table.evaluate_mle(r),
@@ -349,7 +349,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::HalfwordAlignment(table) => table.suffixes(),
             LookupTables::WordAlignment(table) => table.suffixes(),
             LookupTables::LowerHalfWord(table) => table.suffixes(),
-            LookupTables::SignExtendHalfWord(table) => table.suffixes(),
+            LookupTables::SignExtendWord(table) => table.suffixes(),
             LookupTables::Pow2(table) => table.suffixes(),
             LookupTables::Pow2W(table) => table.suffixes(),
             LookupTables::ShiftRightBitmask(table) => table.suffixes(),
@@ -401,7 +401,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::HalfwordAlignment(table) => table.combine(prefixes, suffixes),
             LookupTables::WordAlignment(table) => table.combine(prefixes, suffixes),
             LookupTables::LowerHalfWord(table) => table.combine(prefixes, suffixes),
-            LookupTables::SignExtendHalfWord(table) => table.combine(prefixes, suffixes),
+            LookupTables::SignExtendWord(table) => table.combine(prefixes, suffixes),
             LookupTables::Pow2(table) => table.combine(prefixes, suffixes),
             LookupTables::Pow2W(table) => table.combine(prefixes, suffixes),
             LookupTables::ShiftRightBitmask(table) => table.combine(prefixes, suffixes),

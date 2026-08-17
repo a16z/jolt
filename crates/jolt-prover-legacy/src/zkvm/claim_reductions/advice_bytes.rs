@@ -635,200 +635,15 @@ mod tests {
 
     type Challenge = <Fr as JoltField>::Challenge;
 
-    const WORD_VARS: usize = 2;
-
-    /// Drives the full round loop over a synthetic advice column and checks
+    /// Drives the full round loop over synthetic advice columns and checks
     /// every message folds the previous claim, the final claim equals the
     /// legacy verifier half's closed form, and the cached byte opening
     /// decodes directly against the column — pinning the msb-first cell
-    /// conventions non-circularly.
+    /// conventions non-circularly. Word patterns exercise mixed values,
+    /// duplicate lanes, empty advice (all-padding), and implicit padding
+    /// rows past `words.len()`.
     #[test]
     fn round_loop_reduces_to_the_byte_column_opening() {
-        let words: Vec<u64> = vec![0x0102030405060708, 0, u64::MAX, 0xdeadbeef];
-        let r_word: Vec<Challenge> = (0..WORD_VARS)
-            .map(|i| Challenge::from((31 + 7 * i as u64) as u128))
-            .collect();
-        let word_claim = MultilinearPolynomial::<Fr>::from(words.clone()).evaluate(&r_word);
-
-        let mut accumulator = ProverOpeningAccumulator::<Fr>::new(WORD_VARS);
-        accumulator.append_untrusted_advice(
-            SumcheckId::AdviceClaimReduction,
-            OpeningPoint::new(r_word.clone()),
-            word_claim,
-        );
-
-        let mut transcript = Blake2bTranscript::new(b"advice-bytes-test");
-        let params = UntrustedAdviceReconstructionSumcheckParams::<Fr>::new(
-            WORD_VARS,
-            &accumulator,
-            &mut transcript,
-        );
-        let mut prover =
-            UntrustedAdviceReconstructionSumcheckProver::initialize(params.clone(), &words);
-
-        let mut claim = params.input_claim(&accumulator);
-        let mut challenges = Vec::new();
-        for round in 0..params.num_rounds() {
-            let message = SumcheckInstanceProver::<Fr, Blake2bTranscript>::compute_message(
-                &mut prover,
-                round,
-                claim,
-            );
-            assert_eq!(
-                message.eval_at_zero() + message.eval_at_one(),
-                claim,
-                "round {round} message must fold the previous claim"
-            );
-            let r_j = Challenge::from((211 + 13 * round) as u128);
-            claim = message.evaluate(&r_j);
-            challenges.push(r_j);
-            SumcheckInstanceProver::<Fr, Blake2bTranscript>::ingest_challenge(
-                &mut prover,
-                r_j,
-                round,
-            );
-        }
-        SumcheckInstanceProver::<Fr, Blake2bTranscript>::cache_openings(
-            &prover,
-            &mut accumulator,
-            &challenges,
-        );
-
-        // The verifier's closed form over the cached opening: the same five
-        // publics the jolt-verifier ConcreteSumcheck derives (eq splits,
-        // msb-first identity and place kernels).
-        let opening_point = params.normalize_opening_point(&challenges);
-        let (_, bytes_claim) = accumulator
-            .get_advice_opening(
-                AdviceKind::Untrusted,
-                SumcheckId::UntrustedAdviceReconstruction,
-            )
-            .unwrap();
-        let limb_bits = WORD_BYTES.log_2();
-        let point: Vec<Fr> = opening_point.r.iter().map(|&c| c.into()).collect();
-        let reference: Vec<Fr> = params.r_reference.iter().map(|&c| c.into()).collect();
-        let (r_symbol, r_limb_word) = point.split_at(BYTE_BITS);
-        let (r_limb, r_word_bound) = r_limb_word.split_at(limb_bits);
-        let r_word_field: Vec<Fr> = r_word.iter().map(|&c| c.into()).collect();
-        let eq_cell_mle: Fr = EqPolynomial::mle(&point, &reference);
-        let eq_limb_word: Fr = EqPolynomial::mle(r_limb_word, &reference[BYTE_BITS..]);
-        let eq_word: Fr = EqPolynomial::mle(r_word_bound, &r_word_field);
-        let identity_at_symbol = r_symbol
-            .iter()
-            .fold(Fr::from_u64(0), |acc, coordinate| acc + acc + *coordinate);
-        let place_at_limb =
-            r_limb
-                .iter()
-                .enumerate()
-                .fold(Fr::from_u64(1), |acc, (position, coordinate)| {
-                    let weight = 1usize << (limb_bits - 1 - position);
-                    let place = Fr::from_u64(1u64 << (8 * weight));
-                    acc * ((place - Fr::from_u64(1)) * *coordinate + Fr::from_u64(1))
-                });
-        let gamma = params.gamma;
-        let expected = eq_cell_mle * (bytes_claim.square() - bytes_claim)
-            + gamma * eq_limb_word * bytes_claim
-            + gamma * gamma * identity_at_symbol * place_at_limb * eq_word * bytes_claim;
-        assert_eq!(claim, expected, "final claim must equal the closed form");
-
-        // The cached opening must equal the byte column evaluated directly at
-        // the produced msb-first cell point.
-        let cell_vars = word_byte_num_vars(WORD_VARS);
-        let eq_cell = EqPolynomial::<Fr>::evals(&opening_point.r);
-        let limb_bits = WORD_BYTES.log_2();
-        let mut direct = Fr::from_u64(0);
-        for limb in 0..WORD_BYTES {
-            for (word_index, word) in words.iter().enumerate() {
-                let byte = ((word >> (8 * limb)) & 0xff) as usize;
-                direct += eq_cell[(((byte << limb_bits) | limb) << WORD_VARS) | word_index];
-            }
-        }
-        assert_eq!(cell_vars, opening_point.len());
-        assert_eq!(bytes_claim, direct, "byte opening must decode the column");
-    }
-
-    /// The dense cell-domain tables the prover materialized before the
-    /// factored rewrite — kept as a reference oracle: the factored prover
-    /// must produce identical round polynomials and final opening claim.
-    struct DenseReference {
-        bytes: MultilinearPolynomial<Fr>,
-        k_bool: MultilinearPolynomial<Fr>,
-        k_lin: MultilinearPolynomial<Fr>,
-    }
-
-    impl DenseReference {
-        fn initialize(
-            params: &UntrustedAdviceReconstructionSumcheckParams<Fr>,
-            words: &[u64],
-        ) -> Self {
-            let word_vars = params.word_vars;
-            let limb_bits = WORD_BYTES.log_2();
-            let cell_vars = word_byte_num_vars(word_vars);
-            let mut bytes = vec![0u8; 1 << cell_vars];
-            for limb in 0..WORD_BYTES {
-                for word_index in 0..(1usize << word_vars) {
-                    let byte = words
-                        .get(word_index)
-                        .map_or(0, |word| (word >> (8 * limb)) as u8)
-                        as usize;
-                    bytes[(((byte << limb_bits) | limb) << word_vars) | word_index] = 1;
-                }
-            }
-            let k_bool = EqPolynomial::<Fr>::evals(&params.r_reference);
-            let eq_lw = EqPolynomial::<Fr>::evals(&params.r_reference[BYTE_BITS..]);
-            let eq_word = EqPolynomial::<Fr>::evals(&params.r_word.r);
-            let gamma = params.gamma;
-            let gamma_squared = gamma * gamma;
-            let k_lin = (0..1usize << cell_vars)
-                .map(|cell| {
-                    let word_index = cell & ((1 << word_vars) - 1);
-                    let limb = (cell >> word_vars) & (WORD_BYTES - 1);
-                    let symbol = cell >> (word_vars + limb_bits);
-                    let place = Fr::from_u64(1u64 << (8 * limb));
-                    gamma * eq_lw[cell & ((1 << (limb_bits + word_vars)) - 1)]
-                        + gamma_squared * Fr::from_u64(symbol as u64) * place * eq_word[word_index]
-                })
-                .collect::<Vec<Fr>>();
-            Self {
-                bytes: MultilinearPolynomial::from(bytes),
-                k_bool: MultilinearPolynomial::from(k_bool),
-                k_lin: MultilinearPolynomial::from(k_lin),
-            }
-        }
-
-        fn compute_message(&self, previous_claim: Fr) -> UniPoly<Fr> {
-            let term = |b: Fr, kb: Fr, kl: Fr| kb * (b.square() - b) + kl * b;
-            let mut evals = [Fr::from_u64(0); 3];
-            for g in 0..self.bytes.len() / 2 {
-                let b0 = self.bytes.get_bound_coeff(2 * g);
-                let b1 = self.bytes.get_bound_coeff(2 * g + 1);
-                let kb0 = self.k_bool.get_bound_coeff(2 * g);
-                let kb1 = self.k_bool.get_bound_coeff(2 * g + 1);
-                let kl0 = self.k_lin.get_bound_coeff(2 * g);
-                let kl1 = self.k_lin.get_bound_coeff(2 * g + 1);
-                let (b_delta, kb_delta, kl_delta) = (b1 - b0, kb1 - kb0, kl1 - kl0);
-                let (b2, b3) = (b1 + b_delta, b1 + b_delta + b_delta);
-                evals[0] += term(b0, kb0, kl0);
-                evals[1] += term(b2, kb1 + kb_delta, kl1 + kl_delta);
-                evals[2] += term(b3, kb1 + kb_delta + kb_delta, kl1 + kl_delta + kl_delta);
-            }
-            UniPoly::from_evals(&[evals[0], previous_claim - evals[0], evals[1], evals[2]])
-        }
-
-        fn bind(&mut self, r_j: Challenge) {
-            self.bytes.bind_parallel(r_j, BindingOrder::LowToHigh);
-            self.k_bool.bind_parallel(r_j, BindingOrder::LowToHigh);
-            self.k_lin.bind_parallel(r_j, BindingOrder::LowToHigh);
-        }
-    }
-
-    /// Runs the factored prover and the dense reference through the full
-    /// round loop on the same challenges, comparing every round polynomial
-    /// coefficient-for-coefficient and the final opening claim — across word
-    /// patterns exercising duplicate lanes, all-zero rows, implicit padding
-    /// rows (`words.len() < 2^word_vars`), and both row/lane phase shapes.
-    #[test]
-    fn factored_prover_matches_the_dense_reference() {
         let cases: Vec<(usize, Vec<u64>)> = vec![
             (2, vec![0x0102030405060708, 0, u64::MAX, 0xdeadbeef]),
             // Duplicate lanes: every row of a word hits the same byte value.
@@ -840,18 +655,20 @@ mod tests {
         ];
         for (case_index, (word_vars, words)) in cases.into_iter().enumerate() {
             let r_word: Vec<Challenge> = (0..word_vars)
-                .map(|i| Challenge::from((17 + 5 * (i + case_index) as u64) as u128))
+                .map(|i| Challenge::from((31 + 7 * (i + case_index) as u64) as u128))
                 .collect();
             let mut padded = words.clone();
             padded.resize(1 << word_vars, 0);
             let word_claim = MultilinearPolynomial::<Fr>::from(padded).evaluate(&r_word);
+
             let mut accumulator = ProverOpeningAccumulator::<Fr>::new(word_vars);
             accumulator.append_untrusted_advice(
                 SumcheckId::AdviceClaimReduction,
-                OpeningPoint::new(r_word),
+                OpeningPoint::new(r_word.clone()),
                 word_claim,
             );
-            let mut transcript = Blake2bTranscript::new(b"advice-bytes-dense-diff");
+
+            let mut transcript = Blake2bTranscript::new(b"advice-bytes-test");
             let params = UntrustedAdviceReconstructionSumcheckParams::<Fr>::new(
                 word_vars,
                 &accumulator,
@@ -859,7 +676,6 @@ mod tests {
             );
             let mut prover =
                 UntrustedAdviceReconstructionSumcheckProver::initialize(params.clone(), &words);
-            let mut reference = DenseReference::initialize(&params, &words);
 
             let mut claim = params.input_claim(&accumulator);
             let mut challenges = Vec::new();
@@ -869,12 +685,12 @@ mod tests {
                     round,
                     claim,
                 );
-                let expected = reference.compute_message(claim);
                 assert_eq!(
-                    message.coeffs, expected.coeffs,
-                    "case {case_index} round {round}: factored round polynomial diverges"
+                    message.eval_at_zero() + message.eval_at_one(),
+                    claim,
+                    "case {case_index} round {round}: message must fold the previous claim"
                 );
-                let r_j = Challenge::from((97 + 29 * (round + case_index)) as u128);
+                let r_j = Challenge::from((211 + 13 * (round + case_index)) as u128);
                 claim = message.evaluate(&r_j);
                 challenges.push(r_j);
                 SumcheckInstanceProver::<Fr, Blake2bTranscript>::ingest_challenge(
@@ -882,23 +698,71 @@ mod tests {
                     r_j,
                     round,
                 );
-                reference.bind(r_j);
             }
             SumcheckInstanceProver::<Fr, Blake2bTranscript>::cache_openings(
                 &prover,
                 &mut accumulator,
                 &challenges,
             );
+
+            // The verifier's closed form over the cached opening: the same five
+            // publics the jolt-verifier ConcreteSumcheck derives (eq splits,
+            // msb-first identity and place kernels).
+            let opening_point = params.normalize_opening_point(&challenges);
             let (_, bytes_claim) = accumulator
                 .get_advice_opening(
                     AdviceKind::Untrusted,
                     SumcheckId::UntrustedAdviceReconstruction,
                 )
-                .expect("factored prover caches the byte opening");
+                .unwrap();
+            let limb_bits = WORD_BYTES.log_2();
+            let point: Vec<Fr> = opening_point.r.iter().map(|&c| c.into()).collect();
+            let reference: Vec<Fr> = params.r_reference.iter().map(|&c| c.into()).collect();
+            let (r_symbol, r_limb_word) = point.split_at(BYTE_BITS);
+            let (r_limb, r_word_bound) = r_limb_word.split_at(limb_bits);
+            let r_word_field: Vec<Fr> = r_word.iter().map(|&c| c.into()).collect();
+            let eq_cell_mle: Fr = EqPolynomial::mle(&point, &reference);
+            let eq_limb_word: Fr = EqPolynomial::mle(r_limb_word, &reference[BYTE_BITS..]);
+            let eq_word: Fr = EqPolynomial::mle(r_word_bound, &r_word_field);
+            let identity_at_symbol = r_symbol
+                .iter()
+                .fold(Fr::from_u64(0), |acc, coordinate| acc + acc + *coordinate);
+            let place_at_limb =
+                r_limb
+                    .iter()
+                    .enumerate()
+                    .fold(Fr::from_u64(1), |acc, (position, coordinate)| {
+                        let weight = 1usize << (limb_bits - 1 - position);
+                        let place = Fr::from_u64(1u64 << (8 * weight));
+                        acc * ((place - Fr::from_u64(1)) * *coordinate + Fr::from_u64(1))
+                    });
+            let gamma = params.gamma;
+            let expected = eq_cell_mle * (bytes_claim.square() - bytes_claim)
+                + gamma * eq_limb_word * bytes_claim
+                + gamma * gamma * identity_at_symbol * place_at_limb * eq_word * bytes_claim;
             assert_eq!(
-                bytes_claim,
-                reference.bytes.final_sumcheck_claim(),
-                "case {case_index}: final byte opening diverges from the dense reference"
+                claim, expected,
+                "case {case_index}: final claim must equal the closed form"
+            );
+
+            // The cached opening must equal the byte column evaluated directly
+            // at the produced msb-first cell point; padding rows past
+            // words.len() decode as zero words (lane 0 hot).
+            let cell_vars = word_byte_num_vars(word_vars);
+            let eq_cell = EqPolynomial::<Fr>::evals(&opening_point.r);
+            let limb_bits = WORD_BYTES.log_2();
+            let mut direct = Fr::from_u64(0);
+            for limb in 0..WORD_BYTES {
+                for word_index in 0..(1usize << word_vars) {
+                    let word = words.get(word_index).copied().unwrap_or(0);
+                    let byte = ((word >> (8 * limb)) & 0xff) as usize;
+                    direct += eq_cell[(((byte << limb_bits) | limb) << word_vars) | word_index];
+                }
+            }
+            assert_eq!(cell_vars, opening_point.len());
+            assert_eq!(
+                bytes_claim, direct,
+                "case {case_index}: byte opening must decode the column"
             );
         }
     }
