@@ -104,14 +104,16 @@ where
         alias_pairs.iter().map(|(aliased, _)| *aliased).collect();
 
     let zero = PCS::Field::zero();
-    let mut output_ids = relations::spartan::SpartanShiftOutputClaims::<PCS::Field> {
-        unexpanded_pc: zero,
-        pc: zero,
-        is_virtual: zero,
-        is_first_in_sequence: zero,
-        is_noop: zero,
-    }
-    .canonical_order();
+    let mut output_ids = composite_ids(
+        relations::spartan::SpartanShiftOutputClaims::<PCS::Field> {
+            unexpanded_pc: zero,
+            pc: zero,
+            is_virtual: zero,
+            is_first_in_sequence: zero,
+            is_noop: zero,
+        }
+        .canonical_order(),
+    );
     output_ids.extend(
         relations::instruction::InstructionInputOutputClaims::<PCS::Field> {
             left_operand_is_rs1: zero,
@@ -125,7 +127,8 @@ where
         }
         .canonical_order()
         .into_iter()
-        .filter(|id| !aliased_targets.contains(id)),
+        .filter(|id| !aliased_targets.contains(id))
+        .map(VerifierOpeningId::from),
     );
     output_ids.extend(
         relations::claim_reductions::registers::RegistersClaimReductionOutputClaims::<PCS::Field> {
@@ -135,12 +138,10 @@ where
         }
         .canonical_order()
         .into_iter()
-        .filter(|id| !aliased_targets.contains(id)),
+        .filter(|id| !aliased_targets.contains(id))
+        .map(VerifierOpeningId::from),
     );
-    let aliases = alias_pairs
-        .into_iter()
-        .map(|(aliased, source)| OpeningAlias::new(aliased, source))
-        .collect::<Vec<_>>();
+    let aliases = composite_aliases(alias_pairs);
     add_batched_stage(
         builder,
         "stage3.batch",
@@ -155,5 +156,6 @@ where
         values,
         output_ids,
         aliases,
+        Vec::new(),
     )
 }

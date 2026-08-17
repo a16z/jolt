@@ -71,6 +71,7 @@ impl<F, O, Com, P, Ch> BlindFoldStage<F, O, Com, P, Ch> {
 pub struct CommittedClaimRows<O, Com> {
     pub opening_ids: Vec<O>,
     pub opening_aliases: Vec<OpeningAlias<O>>,
+    pub opening_equalities: Vec<OpeningEquality<O>>,
     pub row_len: usize,
     pub commitments: CommittedOutputClaims<Com>,
 }
@@ -87,6 +88,24 @@ impl<O> OpeningAlias<O> {
     }
 }
 
+/// An equality constraint between two openings that BOTH have their own
+/// committed rows (unlike [`OpeningAlias`], where the alias id has no row and
+/// resolves to the source's variable). Lowered as an R1CS equality between the
+/// two hidden row values, so a statement can bind duplicate semantic openings
+/// that are separately committed — e.g. a claim-reduction output row and the
+/// appendage row it must equal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpeningEquality<O> {
+    pub left: O,
+    pub right: O,
+}
+
+impl<O> OpeningEquality<O> {
+    pub fn new(left: O, right: O) -> Self {
+        Self { left, right }
+    }
+}
+
 impl<O, Com> CommittedClaimRows<O, Com> {
     pub fn new(
         opening_ids: Vec<O>,
@@ -96,6 +115,7 @@ impl<O, Com> CommittedClaimRows<O, Com> {
         Self {
             opening_ids,
             opening_aliases: Vec::new(),
+            opening_equalities: Vec::new(),
             row_len,
             commitments,
         }
@@ -106,10 +126,19 @@ impl<O, Com> CommittedClaimRows<O, Com> {
         self
     }
 
+    pub fn with_equalities(
+        mut self,
+        equalities: impl IntoIterator<Item = OpeningEquality<O>>,
+    ) -> Self {
+        self.opening_equalities.extend(equalities);
+        self
+    }
+
     pub fn empty() -> Self {
         Self {
             opening_ids: Vec::new(),
             opening_aliases: Vec::new(),
+            opening_equalities: Vec::new(),
             row_len: 0,
             commitments: CommittedOutputClaims {
                 commitments: Vec::new(),

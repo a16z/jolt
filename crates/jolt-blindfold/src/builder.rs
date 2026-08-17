@@ -6,7 +6,7 @@ use jolt_sumcheck::{
 
 use crate::{
     BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows, Error,
-    FinalOpeningBinding, OpeningAlias, VerificationError,
+    FinalOpeningBinding, OpeningAlias, OpeningEquality, VerificationError,
 };
 
 #[derive(Clone, Debug)]
@@ -136,6 +136,19 @@ impl<F, O, Com, P, Ch> BlindFoldStageBuilder<F, O, Com, P, Ch> {
             .take()
             .unwrap_or_else(CommittedClaimRows::empty)
             .with_aliases(aliases);
+        self.output_claim_rows = Some(rows);
+        self
+    }
+
+    pub fn output_claim_equalities(
+        mut self,
+        equalities: impl IntoIterator<Item = OpeningEquality<O>>,
+    ) -> Self {
+        let rows = self
+            .output_claim_rows
+            .take()
+            .unwrap_or_else(CommittedClaimRows::empty)
+            .with_equalities(equalities);
         self.output_claim_rows = Some(rows);
         self
     }

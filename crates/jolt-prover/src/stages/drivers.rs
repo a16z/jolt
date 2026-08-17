@@ -15,7 +15,27 @@ mod stage1 {
 
     use crate::driver::impl_stage_prover;
 
+    #[cfg(not(feature = "field-inline"))]
     jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover);
+
+    // The composed stage-1 committed/absorb order appends the 13 FR-local
+    // Spartan-outer openings after the 35 member openings (the verifier's
+    // composed row order), which the generated member absorb cannot express —
+    // and no backend can supply the FR values until the FR witness wiring
+    // lands (milestone 11). Fail closed here so an FR-on prover cannot emit a
+    // 35-row shell the FR-on verifier would reject at the committed count.
+    #[cfg(feature = "field-inline")]
+    jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover
+        curate = |_batch, _claims, _points| {
+            Err(jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                stage: "Stage1Batch".to_string(),
+                reason: "field-inline proving pending witness wiring (milestone 11): the \
+                         composed stage-1 absorb needs the FR Spartan-outer appendage"
+                    .to_string(),
+            }
+            .into())
+        },
+    );
 }
 
 mod stage2 {

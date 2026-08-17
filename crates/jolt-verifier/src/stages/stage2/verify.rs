@@ -181,11 +181,26 @@ where
             });
         };
         let consistency = sumchecks.verify_zk(&proof.stages.stage2_sumcheck_proof, transcript)?;
+        // The committed shell carries the curated row order: the member
+        // openings plus (under `field-inline`) the three FR product-appendage
+        // rows spliced after the product-remainder outputs — the clear absorb
+        // order exactly.
+        let output_claim_count = sumchecks.output_claim_count();
+        #[cfg(feature = "field-inline")]
+        let output_claim_count = output_claim_count
+            .checked_add(
+                jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings()
+                    .len(),
+            )
+            .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+                stage: format!("{:?}", JoltRelationId::SpartanProductVirtualization),
+                reason: "composed stage-2 output-claim count overflows usize".to_string(),
+            })?;
         let batch_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage2_sumcheck_proof,
             "stage2_sumcheck_proof",
-            sumchecks.output_claim_count(),
+            output_claim_count,
             JoltRelationId::RamReadWriteChecking,
         )?;
         let output_points =
@@ -269,6 +284,22 @@ where
     }))
 }
 
+/// The spec's stage-2 alias table (`field-inline-protocol.md`, "Stage 2
+/// Composition") as its polynomial list: each FR claim-reduction output aliases
+/// the FR product-remainder opening of the same polynomial. Shared by the clear
+/// equality check below and the BlindFold lowering's `OpeningEquality` rows, so
+/// the two enforcement paths cannot drift.
+#[cfg(feature = "field-inline")]
+pub(crate) fn field_inline_product_alias_polynomials(
+) -> [jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial; 3] {
+    use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
+    [
+        FieldInlineVirtualPolynomial::FieldRs1Value,
+        FieldInlineVirtualPolynomial::FieldRs2Value,
+        FieldInlineVirtualPolynomial::FieldRdValue,
+    ]
+}
+
 /// Enforce the spec's stage-2 alias table: each FR claim-reduction output
 /// equals the FR product-remainder opening of the same polynomial (see the WHY
 /// at the call site). Value-only, like the generated `validate_aliases`.
@@ -277,42 +308,35 @@ fn validate_field_inline_product_aliases<F: Field>(
     batch_outputs: &super::outputs::Stage2BatchOutputClaims<F>,
     field_inline_product: &super::outputs::FieldRegistersProductOutputClaims<F>,
 ) -> Result<(), VerifierError> {
-    use jolt_claims::protocols::field_inline::{
-        FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
-    };
+    use jolt_claims::protocols::field_inline::{FieldInlineOpeningId, FieldInlineRelationId};
+    use jolt_claims::OutputClaims as _;
 
     let reduction = &batch_outputs.field_registers_claim_reduction;
-    let pairs = [
-        (
-            FieldInlineVirtualPolynomial::FieldRs1Value,
-            reduction.rs1_value,
-            field_inline_product.rs1_value,
-        ),
-        (
-            FieldInlineVirtualPolynomial::FieldRs2Value,
-            reduction.rs2_value,
-            field_inline_product.rs2_value,
-        ),
-        (
-            FieldInlineVirtualPolynomial::FieldRdValue,
-            reduction.rd_value,
-            field_inline_product.rd_value,
-        ),
-    ];
-    for (polynomial, aliased, source) in pairs {
+    for polynomial in field_inline_product_alias_polynomials() {
+        let aliased_id = FieldInlineOpeningId::virtual_polynomial(
+            polynomial,
+            FieldInlineRelationId::FieldRegistersClaimReduction,
+        );
+        let source_id = FieldInlineOpeningId::virtual_polynomial(
+            polynomial,
+            FieldInlineRelationId::FieldRegistersProduct,
+        );
+        let aliased =
+            reduction
+                .resolve_output(&aliased_id)
+                .ok_or(VerifierError::MissingOpeningClaim {
+                    id: aliased_id.into(),
+                })?;
+        let source = field_inline_product.resolve_output(&source_id).ok_or(
+            VerifierError::MissingOpeningClaim {
+                id: source_id.into(),
+            },
+        )?;
         if aliased != source {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: format!("{:?}", FieldInlineRelationId::FieldRegistersClaimReduction),
-                left: FieldInlineOpeningId::virtual_polynomial(
-                    polynomial,
-                    FieldInlineRelationId::FieldRegistersClaimReduction,
-                )
-                .into(),
-                right: FieldInlineOpeningId::virtual_polynomial(
-                    polynomial,
-                    FieldInlineRelationId::FieldRegistersProduct,
-                )
-                .into(),
+                left: aliased_id.into(),
+                right: source_id.into(),
             });
         }
     }

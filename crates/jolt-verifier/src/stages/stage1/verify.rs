@@ -136,11 +136,25 @@ where
 
         let remainder_consistency =
             sumchecks.verify_zk(&proof.stages.stage1_sumcheck_proof, transcript)?;
+        // The committed shell carries the composed row order: the 35 member
+        // openings, then (under `field-inline`) the 13 FR-local appendage
+        // rows — the same rows the clear path absorbs after the member
+        // openings.
+        let output_claim_count = sumchecks.output_claim_count();
+        #[cfg(feature = "field-inline")]
+        let output_claim_count = output_claim_count
+            .checked_add(
+                jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
+            )
+            .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+                stage: format!("{:?}", JoltRelationId::SpartanOuter),
+                reason: "composed stage-1 output-claim count overflows usize".to_string(),
+            })?;
         let remainder_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage1_sumcheck_proof,
             "stage1_sumcheck_proof",
-            sumchecks.output_claim_count(),
+            output_claim_count,
             JoltRelationId::SpartanOuter,
         )?;
         let output_points =

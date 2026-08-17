@@ -337,12 +337,16 @@ where
 
     fn validate_unique_openings(&self) -> Result<(), Error> {
         let mut openings = Vec::new();
+        // Committed-row ids only (no aliases): opening equalities constrain two
+        // hidden ROW values, so each operand must own a committed row.
+        let mut row_openings = Vec::new();
         for stage in &self.stages {
             for opening_id in &stage.output_claim_rows.opening_ids {
                 if openings.contains(opening_id) {
                     return Err(Error::DuplicateOpeningSource);
                 }
                 openings.push(opening_id.clone());
+                row_openings.push(opening_id.clone());
             }
             for alias in &stage.output_claim_rows.opening_aliases {
                 if openings.contains(&alias.alias) {
@@ -352,6 +356,12 @@ where
                     return Err(Error::MissingOpeningAliasSource);
                 }
                 openings.push(alias.alias.clone());
+            }
+            for equality in &stage.output_claim_rows.opening_equalities {
+                if !row_openings.contains(&equality.left) || !row_openings.contains(&equality.right)
+                {
+                    return Err(Error::MissingOpeningEqualityOperand);
+                }
             }
         }
         Ok(())
