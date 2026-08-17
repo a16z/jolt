@@ -120,6 +120,17 @@ where
         .program
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
+    // The FR bytecode side table, required fail-closed exactly like the
+    // verifier's `Stage6bSumchecks::build` (committed-program preprocessing
+    // cannot supply it, and neither can a full program preprocessed without FR
+    // support).
+    #[cfg(feature = "field-inline")]
+    let field_inline_bytecode =
+        jolt_verifier::stages::field_inline_bytecode::convert_field_inline_bytecode(
+            jolt_verifier::stages::field_inline_bytecode::required_field_inline_bytecode(
+                &preprocessing.verifier.program,
+            )?,
+        )?;
     let sumchecks = Stage6bSumchecks::build_from_parts(Stage6bBuildParts {
         formula_dimensions: &formula_dimensions,
         ram_log_k: log_k,
@@ -127,6 +138,8 @@ where
         precommitted,
         entry_bytecode_index,
         bytecode_table_rows,
+        #[cfg(feature = "field-inline")]
+        field_inline_bytecode,
         carried,
         eta: draws.eta,
         stage1_cycle_binding,

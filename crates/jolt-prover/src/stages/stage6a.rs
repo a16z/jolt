@@ -122,6 +122,16 @@ where
         ),
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
+    // Under `field-inline` this fails closed: the prover's stage-1 carrier has
+    // no FR payload until the FR witness wiring lands (milestone 11).
+    #[cfg(feature = "field-inline")]
+    sumchecks.bytecode_read_raf.set_field_inline_inputs(
+        jolt_verifier::stages::stage6a::bytecode_read_raf::field_inline_bytecode_read_raf_inputs_from_upstream(
+            stage1,
+            &stage4.output_values,
+            &stage5.output_values,
+        )?,
+    )?;
 
     let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(

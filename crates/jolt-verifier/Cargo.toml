@@ -18,7 +18,16 @@ default = ["transcript-blake2b"]
 allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = ["jolt-prover-legacy/host"]
 fs-audit = []
-field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
+field-inline = [
+  "jolt-claims/field-inline",
+  "jolt-lookup-tables/field-inline",
+  "jolt-program/field-inline",
+  "jolt-r1cs/field-inline",
+  "jolt-riscv/field-inline",
+  # Dev-dependency forward: the test targets link jolt-prover-legacy (and its
+  # tracer), which must see the same FR-extended jolt-riscv enums.
+  "jolt-prover-legacy/field-inline",
+]
 zk = ["jolt-prover-legacy/zk"]
 # The packed (lattice/Akita) commitment mode: one packed one-hot witness per
 # commitment object, co-batched reduction opening. Mutually exclusive with

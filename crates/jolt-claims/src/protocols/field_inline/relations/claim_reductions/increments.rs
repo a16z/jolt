@@ -55,6 +55,7 @@ pub struct FieldRegistersIncClaimReductionChallenges<F> {
 /// Reduces the two `FieldRdInc` openings (read/write and val-evaluation) to a
 /// single reduced `FieldRdInc` opening, folding by the drawn challenge and
 /// weighting by the `EqReadWrite`/`EqValEvaluation` publics.
+#[derive(Clone)]
 pub struct ClaimReduction {
     shape: FieldRegistersTraceDimensions,
 }

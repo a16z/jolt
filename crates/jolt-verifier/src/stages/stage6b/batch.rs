@@ -36,6 +36,10 @@ use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhaseChallenges, ProgramImageReductionCyclePhase,
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
+#[cfg(feature = "field-inline")]
+use super::field_registers_inc_claim_reduction::{
+    FieldRegistersIncClaimReduction, FieldRegistersIncClaimReductionChallenges,
+};
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionChallenges};
 use super::instruction_ra_virtualization::{
@@ -75,6 +79,10 @@ pub struct Stage6bBuildParts<'a, F: Field> {
     /// The full bytecode rows backing the full-program table fold
     /// (`None` in ZK and committed-program modes).
     pub bytecode_table_rows: Option<&'a [JoltInstructionRow]>,
+    /// The converted field-inline bytecode side table (required: the FR-on
+    /// verifier rejects preprocessing without it before assembling parts).
+    #[cfg(feature = "field-inline")]
+    pub field_inline_bytecode: crate::stages::field_inline_bytecode::FieldInlineBytecodeTable,
     pub carried: &'a Stage6aCarriedChallenges<F>,
     pub eta: Option<F>,
     pub stage1_cycle_binding: Vec<F>,
@@ -98,6 +106,11 @@ pub struct Stage6bDraws<F> {
     /// Base only: the packed batch has no inc claim-reduction member.
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
+    /// The FR increment-reduction gamma (the spec's `eta`), member-drawn in
+    /// declaration order: after the ordinary inc gamma, before the optional
+    /// committed-bytecode eta.
+    #[cfg(feature = "field-inline")]
+    pub field_registers_inc_gamma: F,
     /// The bytecode claim-reduction eta, drawn exactly when the bytecode
     /// layout is committed.
     pub eta: Option<F>,
@@ -114,6 +127,8 @@ impl<F: Field> Stage6bDraws<F> {
             instruction_ra_gamma: transcript.challenge_scalar(),
             #[cfg(not(feature = "akita"))]
             inc_gamma: transcript.challenge_scalar(),
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_gamma: transcript.challenge_scalar(),
             eta: committed_bytecode.then(|| transcript.challenge_scalar()),
         }
     }
@@ -190,6 +205,18 @@ impl<F: Field> Stage6bSumchecks<F> {
                 )
             };
 
+        // The field-inline bytecode side table is a hard preprocessing
+        // requirement of stage 6 (spec: "Stage 6 rejects a field-inline proof
+        // if the table is missing"); committed-program preprocessing carries
+        // no full bytecode, so FR-on rejects it here too.
+        #[cfg(feature = "field-inline")]
+        let field_inline_bytecode =
+            crate::stages::field_inline_bytecode::convert_field_inline_bytecode(
+                crate::stages::field_inline_bytecode::required_field_inline_bytecode(
+                    &preprocessing.program,
+                )?,
+            )?;
+
         Self::build_from_parts(Stage6bBuildParts {
             formula_dimensions,
             ram_log_k: crate::num::ilog2(checked.ram_K),
@@ -197,6 +224,8 @@ impl<F: Field> Stage6bSumchecks<F> {
             precommitted: &checked.precommitted,
             entry_bytecode_index,
             bytecode_table_rows,
+            #[cfg(feature = "field-inline")]
+            field_inline_bytecode,
             carried: stage6a.challenges(),
             eta,
             stage1_cycle_binding,
@@ -223,6 +252,8 @@ impl<F: Field> Stage6bSumchecks<F> {
             precommitted,
             entry_bytecode_index,
             bytecode_table_rows,
+            #[cfg(feature = "field-inline")]
+            field_inline_bytecode,
             carried,
             eta,
             stage1_cycle_binding,
@@ -243,6 +274,20 @@ impl<F: Field> Stage6bSumchecks<F> {
         let bytecode_reduction_layout = precommitted.bytecode.as_ref();
         let program_image_reduction_layout = precommitted.program_image.as_ref();
         let committed_program = bytecode_reduction_layout.is_some();
+
+        // The FR extension anchors the field access selectors through the
+        // public/preprocessed side table, which committed-program mode cannot
+        // supply; reject before any member construction (the verifier's own
+        // `build` already rejected at the metadata requirement).
+        #[cfg(feature = "field-inline")]
+        if committed_program {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "field-inline verification requires the full-program bytecode side \
+                         table; committed-program mode is unsupported"
+                    .to_string(),
+            });
+        }
 
         let booleanity_dimensions =
             BooleanityDimensions::new(formula_dimensions.ra_layout, log_t, committed_chunk_bits);
@@ -306,6 +351,44 @@ impl<F: Field> Stage6bSumchecks<F> {
         )?;
         let registers_read_write_cycle = stage_points.register_read_write_cycle().to_vec();
         let registers_val_evaluation_cycle = stage_points.register_val_evaluation_cycle().to_vec();
+        // The FR opening sub-points: the stage-4/5 FR opening points split
+        // past the FR address prefix. The cycle legs feed both the bytecode
+        // FR public fold and the FR increment reduction's Eq publics.
+        #[cfg(feature = "field-inline")]
+        let (field_inline_fold, field_read_write_cycle, field_val_evaluation_cycle) = {
+            use crate::stages::field_inline_bytecode::{
+                field_inline_checked_split, field_inline_stage_gamma_powers,
+                FieldInlineBytecodeFold,
+            };
+            use jolt_claims::protocols::field_inline::{
+                FieldInlineRelationId, FIELD_REGISTERS_LOG_K,
+            };
+
+            let (read_write_address, read_write_cycle) = field_inline_checked_split(
+                "Stage 6 stage4 field-register read-write opening",
+                stage4_points.field_registers_read_write_point(),
+                FIELD_REGISTERS_LOG_K,
+                FieldInlineRelationId::FieldRegistersReadWriteChecking,
+            )?;
+            let (val_evaluation_address, val_evaluation_cycle) = field_inline_checked_split(
+                "Stage 6 stage5 field-register val-evaluation opening",
+                stage5_points.field_registers_val_evaluation_point(),
+                FIELD_REGISTERS_LOG_K,
+                FieldInlineRelationId::FieldRegistersValEvaluation,
+            )?;
+            (
+                FieldInlineBytecodeFold {
+                    table: field_inline_bytecode,
+                    read_write_address: read_write_address.to_vec(),
+                    read_write_cycle: read_write_cycle.to_vec(),
+                    val_evaluation_address: val_evaluation_address.to_vec(),
+                    val_evaluation_cycle: val_evaluation_cycle.to_vec(),
+                    gammas: field_inline_stage_gamma_powers(&carried.bytecode_read_raf),
+                },
+                read_write_cycle.to_vec(),
+                val_evaluation_cycle.to_vec(),
+            )
+        };
         #[cfg(not(feature = "akita"))]
         let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = stage_points.stage_cycle_points;
         // The packed fused-inc consumer points appended to the shared five: the
@@ -383,6 +466,8 @@ impl<F: Field> Stage6bSumchecks<F> {
                 entry_bytecode_index,
                 committed_chunk_bits,
                 table_fold: bytecode_table_fold,
+                #[cfg(feature = "field-inline")]
+                field_inline: field_inline_fold,
             })?
         };
 
@@ -427,6 +512,12 @@ impl<F: Field> Stage6bSumchecks<F> {
             registers_read_write_cycle,
             registers_val_evaluation_cycle,
         );
+        #[cfg(feature = "field-inline")]
+        let field_registers_inc_claim_reduction = FieldRegistersIncClaimReduction::new(
+            jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
+            field_read_write_cycle,
+            field_val_evaluation_cycle,
+        );
 
         let trusted_advice = trusted_advice_layout
             .map(|layout| TrustedAdviceCyclePhase::new(layout, trusted_advice_reference_point));
@@ -447,6 +538,8 @@ impl<F: Field> Stage6bSumchecks<F> {
             instruction_ra_virtualization,
             #[cfg(not(feature = "akita"))]
             inc_claim_reduction,
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction,
             trusted_advice,
             untrusted_advice,
             bytecode_reduction,
@@ -481,6 +574,10 @@ impl<F: Field> Stage6bSumchecks<F> {
             inc_claim_reduction: IncClaimReductionChallenges {
                 gamma: draws.inc_gamma,
             },
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionChallenges {
+                gamma: draws.field_registers_inc_gamma,
+            },
             trusted_advice: self
                 .trusted_advice
                 .as_ref()
@@ -498,6 +595,61 @@ impl<F: Field> Stage6bSumchecks<F> {
                 .program_image_reduction
                 .as_ref()
                 .map(|_| NoChallenges::default()),
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_field::Fr;
+
+    /// Pins the post-6a draw schedule to member declaration order: the
+    /// instruction-RA gamma, (base) the inc gamma, under `field-inline` the FR
+    /// inc gamma (the spec's `eta` draw slot: after the ordinary inc gamma,
+    /// before the optional committed-bytecode eta), then the committed
+    /// bytecode eta exactly when the bytecode layout is committed.
+    #[test]
+    fn stage6b_draws_follow_member_declaration_order() {
+        for committed_bytecode in [false, true] {
+            let mut expected_squeezes = 1usize;
+            #[cfg(not(feature = "akita"))]
+            {
+                expected_squeezes += 1;
+            }
+            #[cfg(feature = "field-inline")]
+            {
+                expected_squeezes += 1;
+            }
+            expected_squeezes += usize::from(committed_bytecode);
+
+            let (inline_events, inline_values) = record(|t| {
+                (0..expected_squeezes)
+                    .map(|_| t.challenge_scalar())
+                    .collect::<Vec<Fr>>()
+            });
+            let (draw_events, draws) = record(|t| Stage6bDraws::<Fr>::draw(t, committed_bytecode));
+
+            assert_eq!(draw_events, inline_events);
+            assert_eq!(
+                draw_events,
+                (1..=expected_squeezes as u64)
+                    .map(DrawEvent::Squeeze)
+                    .collect::<Vec<_>>()
+            );
+            let mut ordered = vec![draws.instruction_ra_gamma];
+            #[cfg(not(feature = "akita"))]
+            ordered.push(draws.inc_gamma);
+            #[cfg(feature = "field-inline")]
+            ordered.push(draws.field_registers_inc_gamma);
+            ordered.extend(draws.eta);
+            assert_eq!(ordered, inline_values);
+            assert_eq!(draws.eta.is_some(), committed_bytecode);
         }
     }
 }

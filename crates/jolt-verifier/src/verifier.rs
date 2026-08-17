@@ -1670,6 +1670,9 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_registers_inc_claim_reduction:
+                    stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims { rd_inc: zero },
                 trusted_advice: None,
                 untrusted_advice: None,
                 bytecode_reduction: None,

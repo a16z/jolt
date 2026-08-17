@@ -61,6 +61,12 @@ impl<F: Field> Stage5OutputPoints<F> {
     pub fn registers_opening_point(&self) -> &[F] {
         self.registers_val_evaluation.rd_inc()
     }
+
+    /// The FR val-evaluation opening point (shared by the FR `rd_inc`/`rd_wa`).
+    #[cfg(feature = "field-inline")]
+    pub fn field_registers_val_evaluation_point(&self) -> &[F] {
+        self.field_registers_val_evaluation.rd_inc()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

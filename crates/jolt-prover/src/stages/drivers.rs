@@ -123,6 +123,8 @@ mod stage6b {
         BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
         UntrustedAdviceCyclePhase,
     };
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
     use jolt_verifier::stages::stage6b::outputs::{

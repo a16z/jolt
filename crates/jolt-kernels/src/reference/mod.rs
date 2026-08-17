@@ -33,6 +33,8 @@ pub mod commitment;
 #[cfg(feature = "field-inline")]
 pub mod field_registers_claim_reduction;
 #[cfg(feature = "field-inline")]
+pub mod field_registers_inc_claim_reduction;
+#[cfg(feature = "field-inline")]
 pub mod field_registers_read_write_checking;
 #[cfg(feature = "field-inline")]
 pub mod field_registers_val_evaluation;
@@ -119,6 +121,8 @@ where
             ram_ra_virtualization: Box::new(ReferenceBackend),
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: Box::new(ReferenceBackend),
             trusted_advice_cycle: Box::new(ReferenceBackend),
             untrusted_advice_cycle: Box::new(ReferenceBackend),
             bytecode_reduction_cycle: Box::new(ReferenceBackend),

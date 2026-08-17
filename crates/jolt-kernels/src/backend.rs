@@ -42,6 +42,8 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
 };
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
@@ -169,6 +171,11 @@ where
     pub ram_ra_virtualization: Box<dyn PrepareKernel<F, RamRaVirtualization<F>>>,
     pub instruction_ra_virtualization: Box<dyn PrepareKernel<F, InstructionRaVirtualization<F>>>,
     pub inc_claim_reduction: Box<dyn PrepareKernel<F, IncClaimReduction<F>>>,
+    /// Fails closed in the reference tier: field-inline proving is pending
+    /// witness wiring (milestone 11).
+    #[cfg(feature = "field-inline")]
+    pub field_registers_inc_claim_reduction:
+        Box<dyn PrepareKernel<F, FieldRegistersIncClaimReduction<F>>>,
     pub trusted_advice_cycle: Box<dyn PrepareKernel<F, TrustedAdviceCyclePhase<F>>>,
     pub untrusted_advice_cycle: Box<dyn PrepareKernel<F, UntrustedAdviceCyclePhase<F>>>,
     pub bytecode_reduction_cycle: Box<dyn PrepareKernel<F, BytecodeReductionCyclePhase<F>>>,
