@@ -10,10 +10,14 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_field::Field;
-use thiserror::Error;
 
+use super::frontier::{
+    build_parent_weights, eq_at_boolean_index, for_each_leaf_access, weight_level_bytes,
+    FrontierDriver, RamCycleError, RamCycleMember,
+};
 use super::owner::RamCycleFamilyOwner;
-use super::topology::{BlockMerge, TopologyError};
+
+const MEMBER: RamCycleMember = RamCycleMember::RaVirtualization;
 
 pub const MAX_RAM_RA_VIRTUALIZATION_FACTORS: usize = u32::BITS as usize;
 pub const MAX_RAM_RA_VIRTUALIZATION_EVALUATIONS: usize = MAX_RAM_RA_VIRTUALIZATION_FACTORS + 2;
@@ -52,20 +56,11 @@ impl<F> RamRaVirtualizationTerminal<F> {
 
 pub struct HostSparseRamRaVirtualization<F> {
     owner: Arc<RamCycleFamilyOwner>,
-    frontier_blocks: Vec<u64>,
-    frontier_values: Vec<Vec<F>>,
-    scratch_blocks: Vec<u64>,
-    scratch_values: Vec<Vec<F>>,
-    cached_parent_blocks: Vec<u64>,
-    cached_lows: Vec<Vec<F>>,
-    cached_slopes: Vec<Vec<F>>,
-    cached_round: Option<usize>,
+    core: FrontierDriver<F>,
     parent_weights: Vec<Vec<F>>,
     cycle_point: Vec<F>,
     eq_scale: F,
     factors: usize,
-    round: usize,
-    rounds: usize,
 }
 
 impl<F: Field> HostSparseRamRaVirtualization<F> {
@@ -74,17 +69,19 @@ impl<F: Field> HostSparseRamRaVirtualization<F> {
         r_address: &[F],
         committed_chunk_bits: usize,
         r_cycle: &[F],
-    ) -> Result<Self, RamRaVirtualizationError> {
+    ) -> Result<Self, RamCycleError> {
         validate_chunk_bits(committed_chunk_bits)?;
         let receipt = owner.receipt();
         if r_address.len() != receipt.log_k() {
-            return Err(RamRaVirtualizationError::AddressPointLength {
+            return Err(RamCycleError::AddressPointLength {
+                member: MEMBER,
                 expected: receipt.log_k(),
                 got: r_address.len(),
             });
         }
         if r_cycle.len() != receipt.log_t() {
-            return Err(RamRaVirtualizationError::CyclePointLength {
+            return Err(RamCycleError::CyclePointLength {
+                member: MEMBER,
                 expected: receipt.log_t(),
                 got: r_cycle.len(),
             });
@@ -93,204 +90,118 @@ impl<F: Field> HostSparseRamRaVirtualization<F> {
         let chunks = committed_address_chunks(r_address, committed_chunk_bits);
         let factors = chunks.len();
         if factors == 0 || factors > MAX_RAM_RA_VIRTUALIZATION_FACTORS {
-            return Err(RamRaVirtualizationError::FactorCount { factors });
+            return Err(RamCycleError::FactorCount {
+                member: MEMBER,
+                factors,
+            });
         }
-        let (frontier_blocks, frontier_values) =
-            seed_frontier(&owner, &chunks, committed_chunk_bits)?;
-        let capacity = frontier_blocks.len();
+        let (blocks, lanes) = seed_frontier(&owner, &chunks, committed_chunk_bits)?;
         let rounds = receipt.log_t();
-        let parent_weights = build_parent_weights(&owner, r_cycle)?;
-        let sequence = Self {
+        let parent_weights = build_parent_weights(
+            MEMBER,
+            owner.block_topology(),
+            F::zero(),
+            F::one(),
+            |&parent, high, round| {
+                let coordinate = r_cycle[rounds - 1 - round];
+                parent
+                    * if high {
+                        coordinate
+                    } else {
+                        F::one() - coordinate
+                    }
+            },
+        )?;
+        let core = FrontierDriver::new(MEMBER, rounds, blocks, lanes);
+        core.validate_frontier(owner.block_topology().census())?;
+        Ok(Self {
             owner,
-            frontier_blocks,
-            frontier_values,
-            scratch_blocks: Vec::with_capacity(capacity),
-            scratch_values: factor_buffers(factors, capacity),
-            cached_parent_blocks: Vec::with_capacity(capacity),
-            cached_lows: factor_buffers(factors, capacity),
-            cached_slopes: factor_buffers(factors, capacity),
-            cached_round: None,
+            core,
             parent_weights,
             cycle_point: r_cycle.to_vec(),
             eq_scale: F::one(),
             factors,
-            round: 0,
-            rounds,
-        };
-        sequence.validate_frontier()?;
-        Ok(sequence)
+        })
     }
 
     pub fn owned_heap_bytes(&self) -> usize {
-        let nested = |values: &[Vec<F>], outer_capacity: usize| {
-            outer_capacity * std::mem::size_of::<Vec<F>>()
-                + values
-                    .iter()
-                    .map(|value| value.capacity() * std::mem::size_of::<F>())
-                    .sum::<usize>()
-        };
-        self.frontier_blocks.capacity() * std::mem::size_of::<u64>()
-            + nested(&self.frontier_values, self.frontier_values.capacity())
-            + self.scratch_blocks.capacity() * std::mem::size_of::<u64>()
-            + nested(&self.scratch_values, self.scratch_values.capacity())
-            + self.cached_parent_blocks.capacity() * std::mem::size_of::<u64>()
-            + nested(&self.cached_lows, self.cached_lows.capacity())
-            + nested(&self.cached_slopes, self.cached_slopes.capacity())
-            + self.parent_weights.capacity() * std::mem::size_of::<Vec<F>>()
-            + self
-                .parent_weights
-                .iter()
-                .map(|level| level.capacity() * std::mem::size_of::<F>())
-                .sum::<usize>()
+        self.core.owned_heap_bytes()
+            + weight_level_bytes(&self.parent_weights)
             + self.cycle_point.capacity() * std::mem::size_of::<F>()
     }
 
-    copy_field_getters! { pub, {
-        num_rounds => rounds: usize,
-        round: usize,
-    }}
+    pub const fn num_rounds(&self) -> usize {
+        self.core.num_rounds()
+    }
 
-    pub fn message(&mut self) -> Result<RamRaVirtualizationMessage<F>, RamRaVirtualizationError> {
-        if self.round >= self.rounds {
-            return Err(RamRaVirtualizationError::AlreadyFullyBound);
-        }
-        self.validate_frontier()?;
-        let merges = self.owner.block_topology().merges_for_round(self.round)?;
-        let weights = self
-            .parent_weights
-            .get(self.round + 1)
-            .ok_or(RamRaVirtualizationError::MissingWeightLevel { round: self.round })?;
-        if weights.len() != merges.len() {
-            return Err(RamRaVirtualizationError::WeightLength {
-                round: self.round,
-                expected: merges.len(),
-                got: weights.len(),
-            });
-        }
+    pub const fn round(&self) -> usize {
+        self.core.round()
+    }
 
-        self.cached_parent_blocks.clear();
-        for values in &mut self.cached_lows {
-            values.clear();
-        }
-        for values in &mut self.cached_slopes {
-            values.clear();
-        }
-
-        let coordinate = self.cycle_point[self.rounds - 1 - self.round];
+    pub fn message(&mut self) -> Result<RamRaVirtualizationMessage<F>, RamCycleError> {
+        self.core.ensure_active()?;
+        let round = self.core.round();
+        let rounds = self.core.num_rounds();
+        let coordinate = self.cycle_point[rounds - 1 - round];
         let eq_at_zero = F::one() - coordinate;
         let eq_step = coordinate + coordinate - F::one();
-        let points = self.factors + 2;
+        let factors = self.factors;
+        let points = factors + 2;
+        let eq_scale = self.eq_scale;
         let mut evaluations = [F::zero(); MAX_RAM_RA_VIRTUALIZATION_EVALUATIONS];
         let mut factor_values = [F::zero(); MAX_RAM_RA_VIRTUALIZATION_FACTORS];
         let mut factor_slopes = [F::zero(); MAX_RAM_RA_VIRTUALIZATION_FACTORS];
 
-        for (merge, &weight) in merges.iter().zip(weights) {
-            let parent_block = merge_parent_block(&self.frontier_blocks, *merge, self.round)?;
-            self.cached_parent_blocks.push(parent_block);
-            for factor in 0..self.factors {
-                let low =
-                    frontier_value(&self.frontier_values[factor], merge.low_state(), self.round)?;
-                let high = frontier_value(
-                    &self.frontier_values[factor],
-                    merge.high_state(),
-                    self.round,
-                )?;
-                let slope = high - low;
-                self.cached_lows[factor].push(low);
-                self.cached_slopes[factor].push(slope);
-                factor_values[factor] = low;
-                factor_slopes[factor] = slope;
-            }
-
-            let weighted_scale = weight * self.eq_scale;
-            let mut eq_value = weighted_scale * eq_at_zero;
-            let eq_delta = weighted_scale * eq_step;
-            for evaluation in &mut evaluations[..points] {
-                let mut product = factor_values[0];
-                for &value in &factor_values[1..self.factors] {
-                    product *= value;
+        self.core.prepare_round(
+            self.owner.block_topology(),
+            &self.parent_weights,
+            |weight, lows, _highs, slopes| {
+                factor_values[..factors].copy_from_slice(&lows[..factors]);
+                factor_slopes[..factors].copy_from_slice(&slopes[..factors]);
+                let weighted_scale = weight * eq_scale;
+                let mut eq_value = weighted_scale * eq_at_zero;
+                let eq_delta = weighted_scale * eq_step;
+                for evaluation in &mut evaluations[..points] {
+                    let mut product = factor_values[0];
+                    for &value in &factor_values[1..factors] {
+                        product *= value;
+                    }
+                    *evaluation += eq_value * product;
+                    for factor in 0..factors {
+                        factor_values[factor] += factor_slopes[factor];
+                    }
+                    eq_value += eq_delta;
                 }
-                *evaluation += eq_value * product;
-                for factor in 0..self.factors {
-                    factor_values[factor] += factor_slopes[factor];
-                }
-                eq_value += eq_delta;
-            }
-        }
-        self.cached_round = Some(self.round);
+            },
+        )?;
         Ok(RamRaVirtualizationMessage {
             evaluations,
             len: points,
         })
     }
 
-    pub fn bind(&mut self, challenge: F) -> Result<(), RamRaVirtualizationError> {
-        if self.round >= self.rounds {
-            return Err(RamRaVirtualizationError::AlreadyFullyBound);
-        }
-        if self.cached_round != Some(self.round) {
-            return Err(RamRaVirtualizationError::MessageNotPrepared { round: self.round });
-        }
-        let expected = self.cached_parent_blocks.len();
-        for factor in 0..self.factors {
-            if self.cached_lows[factor].len() != expected
-                || self.cached_slopes[factor].len() != expected
-            {
-                return Err(RamRaVirtualizationError::CacheLength {
-                    round: self.round,
-                    factor,
-                    expected,
-                    lows: self.cached_lows[factor].len(),
-                    slopes: self.cached_slopes[factor].len(),
-                });
-            }
-        }
-
-        self.scratch_blocks.clear();
-        self.scratch_blocks
-            .extend_from_slice(&self.cached_parent_blocks);
-        for factor in 0..self.factors {
-            self.scratch_values[factor].clear();
-            for (&low, &slope) in self.cached_lows[factor]
-                .iter()
-                .zip(&self.cached_slopes[factor])
-            {
-                self.scratch_values[factor].push(low + challenge * slope);
-            }
-        }
-        let coordinate = self.cycle_point[self.rounds - 1 - self.round];
-        self.eq_scale *= (F::one() - coordinate) + challenge * (coordinate + coordinate - F::one());
-
-        std::mem::swap(&mut self.frontier_blocks, &mut self.scratch_blocks);
-        std::mem::swap(&mut self.frontier_values, &mut self.scratch_values);
-        self.cached_parent_blocks.clear();
-        for values in &mut self.cached_lows {
-            values.clear();
-        }
-        for values in &mut self.cached_slopes {
-            values.clear();
-        }
-        self.cached_round = None;
-        self.round += 1;
-        self.validate_frontier()
+    pub fn bind(&mut self, challenge: F) -> Result<(), RamCycleError> {
+        let round = self.core.round();
+        let rounds = self.core.num_rounds();
+        let cycle_point = &self.cycle_point;
+        let eq_scale = &mut self.eq_scale;
+        self.core
+            .bind_cached(self.owner.block_topology(), challenge, || {
+                let coordinate = cycle_point[rounds - 1 - round];
+                *eq_scale *=
+                    (F::one() - coordinate) + challenge * (coordinate + coordinate - F::one());
+            })
     }
 
-    pub fn terminal(&self) -> Result<RamRaVirtualizationTerminal<F>, RamRaVirtualizationError> {
-        if self.round != self.rounds {
-            return Err(RamRaVirtualizationError::NotFullyBound {
-                remaining: self.rounds - self.round,
-            });
-        }
-        self.validate_frontier()?;
+    pub fn terminal(&self) -> Result<RamRaVirtualizationTerminal<F>, RamCycleError> {
+        let lanes = self
+            .core
+            .terminal_values(self.owner.block_topology().census())?;
         let mut ram_ra = [F::zero(); MAX_RAM_RA_VIRTUALIZATION_FACTORS];
-        match self.frontier_blocks.as_slice() {
-            [] => {}
-            [0] => {
-                for (factor, values) in self.frontier_values.iter().enumerate() {
-                    ram_ra[factor] = values[0];
-                }
+        if let Some(lanes) = lanes {
+            for (factor, values) in lanes.iter().enumerate() {
+                ram_ra[factor] = values[0];
             }
-            _ => return Err(RamRaVirtualizationError::InvalidTerminalFrontier),
         }
         Ok(RamRaVirtualizationTerminal {
             ram_ra,
@@ -298,59 +209,27 @@ impl<F: Field> HostSparseRamRaVirtualization<F> {
             eq_cycle: self.eq_scale,
         })
     }
-
-    fn validate_frontier(&self) -> Result<(), RamRaVirtualizationError> {
-        let expected = usize::try_from(
-            self.owner
-                .block_topology()
-                .census()
-                .get(self.round)
-                .ok_or(RamRaVirtualizationError::MissingTopologyLevel { round: self.round })?
-                .entries(),
-        )
-        .map_err(|_| RamRaVirtualizationError::Overflow)?;
-        if self.frontier_blocks.len() != expected {
-            return Err(RamRaVirtualizationError::FrontierLength {
-                round: self.round,
-                factor: None,
-                expected,
-                got: self.frontier_blocks.len(),
-            });
-        }
-        if self.frontier_values.len() != self.factors {
-            return Err(RamRaVirtualizationError::FactorCount {
-                factors: self.frontier_values.len(),
-            });
-        }
-        for (factor, values) in self.frontier_values.iter().enumerate() {
-            if values.len() != expected {
-                return Err(RamRaVirtualizationError::FrontierLength {
-                    round: self.round,
-                    factor: Some(factor),
-                    expected,
-                    got: values.len(),
-                });
-            }
-        }
-        Ok(())
-    }
 }
 
 pub fn estimated_ram_ra_virtualization_products(
     owner: &RamCycleFamilyOwner,
     committed_chunk_bits: usize,
-) -> Result<u128, RamRaVirtualizationError> {
+) -> Result<u128, RamCycleError> {
+    let overflow = || RamCycleError::Overflow { member: MEMBER };
     validate_chunk_bits(committed_chunk_bits)?;
     let receipt = owner.receipt();
     let factors = receipt.log_k().div_ceil(committed_chunk_bits);
     if factors == 0 || factors > MAX_RAM_RA_VIRTUALIZATION_FACTORS {
-        return Err(RamRaVirtualizationError::FactorCount { factors });
+        return Err(RamCycleError::FactorCount {
+            member: MEMBER,
+            factors,
+        });
     }
     let census = owner.block_topology().census();
     let parent_nodes = census.iter().skip(1).try_fold(0u128, |sum, level| {
         sum.checked_add(u128::from(level.entries()))
     });
-    let parent_nodes = parent_nodes.ok_or(RamRaVirtualizationError::Overflow)?;
+    let parent_nodes = parent_nodes.ok_or_else(overflow)?;
     let middle_nodes = census
         .iter()
         .skip(1)
@@ -358,41 +237,35 @@ pub fn estimated_ram_ra_virtualization_products(
         .try_fold(0u128, |sum, level| {
             sum.checked_add(u128::from(level.entries()))
         })
-        .ok_or(RamRaVirtualizationError::Overflow)?;
-    let factors = u128::try_from(factors).map_err(|_| RamRaVirtualizationError::Overflow)?;
-    let chunk_bits =
-        u128::try_from(committed_chunk_bits).map_err(|_| RamRaVirtualizationError::Overflow)?;
-    let rounds = u128::try_from(receipt.log_t()).map_err(|_| RamRaVirtualizationError::Overflow)?;
+        .ok_or_else(overflow)?;
+    let factors = u128::try_from(factors).map_err(|_| overflow())?;
+    let chunk_bits = u128::try_from(committed_chunk_bits).map_err(|_| overflow())?;
+    let rounds = u128::try_from(receipt.log_t()).map_err(|_| overflow())?;
     let address_products = u128::try_from(receipt.access_count())
-        .map_err(|_| RamRaVirtualizationError::Overflow)?
+        .map_err(|_| overflow())?
         .checked_mul(factors)
         .and_then(|value| value.checked_mul(chunk_bits))
-        .ok_or(RamRaVirtualizationError::Overflow)?;
+        .ok_or_else(overflow)?;
     let message_products_per_parent = factors
-        .checked_mul(
-            factors
-                .checked_add(2)
-                .ok_or(RamRaVirtualizationError::Overflow)?,
-        )
+        .checked_mul(factors.checked_add(2).ok_or_else(overflow)?)
         .and_then(|value| value.checked_add(3))
-        .ok_or(RamRaVirtualizationError::Overflow)?;
+        .ok_or_else(overflow)?;
     let message_products = parent_nodes
         .checked_mul(message_products_per_parent)
-        .ok_or(RamRaVirtualizationError::Overflow)?;
-    let bind_products = parent_nodes
-        .checked_mul(factors)
-        .ok_or(RamRaVirtualizationError::Overflow)?;
+        .ok_or_else(overflow)?;
+    let bind_products = parent_nodes.checked_mul(factors).ok_or_else(overflow)?;
     address_products
         .checked_add(middle_nodes)
         .and_then(|value| value.checked_add(message_products))
         .and_then(|value| value.checked_add(bind_products))
         .and_then(|value| value.checked_add(rounds.checked_mul(2)?))
-        .ok_or(RamRaVirtualizationError::Overflow)
+        .ok_or_else(overflow)
 }
 
-fn validate_chunk_bits(committed_chunk_bits: usize) -> Result<(), RamRaVirtualizationError> {
+fn validate_chunk_bits(committed_chunk_bits: usize) -> Result<(), RamCycleError> {
     if committed_chunk_bits == 0 || committed_chunk_bits > u32::BITS as usize {
-        Err(RamRaVirtualizationError::ChunkBits {
+        Err(RamCycleError::ChunkBits {
+            member: MEMBER,
             got: committed_chunk_bits,
         })
     } else {
@@ -400,51 +273,32 @@ fn validate_chunk_bits(committed_chunk_bits: usize) -> Result<(), RamRaVirtualiz
     }
 }
 
-fn factor_buffers<F>(factors: usize, capacity: usize) -> Vec<Vec<F>> {
-    (0..factors).map(|_| Vec::with_capacity(capacity)).collect()
-}
-
 fn seed_frontier<F: Field>(
     owner: &RamCycleFamilyOwner,
     chunks: &[Vec<F>],
     committed_chunk_bits: usize,
-) -> Result<(Vec<u64>, Vec<Vec<F>>), RamRaVirtualizationError> {
-    let leaves = owner.block_topology().leaf_cycles();
-    let records = owner.access_records();
-    let mut record_index = 0;
-    let mut blocks = Vec::with_capacity(leaves.len());
-    let mut values = factor_buffers(chunks.len(), leaves.len());
-    for &cycle in leaves {
+) -> Result<(Vec<u64>, Vec<Vec<F>>), RamCycleError> {
+    let leaves = owner.block_topology().leaf_cycles().len();
+    let mut blocks = Vec::with_capacity(leaves);
+    let mut lanes = chunks
+        .iter()
+        .map(|_| Vec::with_capacity(leaves))
+        .collect::<Vec<_>>();
+    for_each_leaf_access(MEMBER, owner, |cycle, address| {
         blocks.push(u64::from(cycle));
-        let address = match records.get(record_index) {
-            Some(record) if record.cycle() == cycle => {
-                record_index += 1;
-                Some(record.address())
-            }
-            Some(record) if record.cycle() < cycle => {
-                return Err(RamRaVirtualizationError::AccessOutsideTopology {
-                    cycle: record.cycle(),
-                });
-            }
-            _ => None,
-        };
         for (factor, chunk) in chunks.iter().enumerate() {
             let value = match address {
                 Some(address) => {
                     let index = address_chunk(address, factor, chunks.len(), committed_chunk_bits)?;
-                    eq_at_boolean_index(chunk, u64::from(index))?
+                    eq_at_boolean_index(MEMBER, chunk, u64::from(index))?
                 }
                 None => F::zero(),
             };
-            values[factor].push(value);
+            lanes[factor].push(value);
         }
-    }
-    if let Some(record) = records.get(record_index) {
-        return Err(RamRaVirtualizationError::AccessOutsideTopology {
-            cycle: record.cycle(),
-        });
-    }
-    Ok((blocks, values))
+        Ok(())
+    })?;
+    Ok((blocks, lanes))
 }
 
 fn address_chunk(
@@ -452,15 +306,21 @@ fn address_chunk(
     factor: usize,
     factors: usize,
     committed_chunk_bits: usize,
-) -> Result<u32, RamRaVirtualizationError> {
+) -> Result<u32, RamCycleError> {
     let remaining = factors
         .checked_sub(factor + 1)
-        .ok_or(RamRaVirtualizationError::InvalidFactorIndex { factor })?;
+        .ok_or(RamCycleError::InvalidFactorIndex {
+            member: MEMBER,
+            factor,
+        })?;
     let shift = remaining
         .checked_mul(committed_chunk_bits)
-        .ok_or(RamRaVirtualizationError::Overflow)?;
+        .ok_or(RamCycleError::Overflow { member: MEMBER })?;
     if shift >= u32::BITS as usize {
-        return Err(RamRaVirtualizationError::ChunkShift { shift });
+        return Err(RamCycleError::ChunkShift {
+            member: MEMBER,
+            shift,
+        });
     }
     let mask = if committed_chunk_bits == u32::BITS as usize {
         u32::MAX
@@ -468,209 +328,6 @@ fn address_chunk(
         (1u32 << committed_chunk_bits) - 1
     };
     Ok((address >> shift) & mask)
-}
-
-fn build_parent_weights<F: Field>(
-    owner: &RamCycleFamilyOwner,
-    cycle_point: &[F],
-) -> Result<Vec<Vec<F>>, RamRaVirtualizationError> {
-    let rounds = owner.receipt().log_t();
-    let census = owner.block_topology().census();
-    let mut levels = vec![Vec::new(); rounds + 1];
-    let root_entries = usize::try_from(
-        census
-            .get(rounds)
-            .ok_or(RamRaVirtualizationError::MissingTopologyLevel { round: rounds })?
-            .entries(),
-    )
-    .map_err(|_| RamRaVirtualizationError::Overflow)?;
-    if root_entries > 1 {
-        return Err(RamRaVirtualizationError::InvalidRootCensus { got: root_entries });
-    }
-    if root_entries == 1 {
-        levels[rounds].push(F::one());
-    }
-
-    for round in (1..rounds).rev() {
-        let current_len = usize::try_from(
-            census
-                .get(round)
-                .ok_or(RamRaVirtualizationError::MissingTopologyLevel { round })?
-                .entries(),
-        )
-        .map_err(|_| RamRaVirtualizationError::Overflow)?;
-        let merges = owner.block_topology().merges_for_round(round)?;
-        let parents = levels
-            .get(round + 1)
-            .ok_or(RamRaVirtualizationError::MissingWeightLevel { round })?;
-        if merges.len() != parents.len() {
-            return Err(RamRaVirtualizationError::WeightLength {
-                round,
-                expected: merges.len(),
-                got: parents.len(),
-            });
-        }
-        let mut current = vec![F::zero(); current_len];
-        let mut filled = vec![false; current_len];
-        let coordinate = cycle_point[rounds - 1 - round];
-        for (merge, &parent) in merges.iter().zip(parents) {
-            for (child, high) in [(merge.low_state(), false), (merge.high_state(), true)] {
-                let Some(child) = child else {
-                    continue;
-                };
-                if child >= current.len() || filled[child] {
-                    return Err(RamRaVirtualizationError::InvalidWeightChild { round, child });
-                }
-                current[child] = parent
-                    * if high {
-                        coordinate
-                    } else {
-                        F::one() - coordinate
-                    };
-                filled[child] = true;
-            }
-        }
-        if filled.iter().any(|filled| !filled) {
-            return Err(RamRaVirtualizationError::IncompleteWeightLevel { round });
-        }
-        levels[round] = current;
-    }
-    Ok(levels)
-}
-
-fn eq_at_boolean_index<F: Field>(point: &[F], index: u64) -> Result<F, RamRaVirtualizationError> {
-    if point.len() >= u64::BITS as usize || index >= (1u64 << point.len()) {
-        return Err(RamRaVirtualizationError::BooleanIndex { index });
-    }
-    let mut value = F::one();
-    for (bit, &coordinate) in point.iter().rev().enumerate() {
-        value *= if index & (1u64 << bit) == 0 {
-            F::one() - coordinate
-        } else {
-            coordinate
-        };
-    }
-    Ok(value)
-}
-
-fn frontier_value<F: Field>(
-    values: &[F],
-    index: Option<usize>,
-    round: usize,
-) -> Result<F, RamRaVirtualizationError> {
-    index.map_or(Ok(F::zero()), |index| {
-        values
-            .get(index)
-            .copied()
-            .ok_or(RamRaVirtualizationError::InvalidFrontierIndex { round, index })
-    })
-}
-
-fn merge_parent_block(
-    frontier_blocks: &[u64],
-    merge: BlockMerge,
-    round: usize,
-) -> Result<u64, RamRaVirtualizationError> {
-    let low = merge
-        .low_state()
-        .map(|index| {
-            frontier_blocks
-                .get(index)
-                .copied()
-                .ok_or(RamRaVirtualizationError::InvalidFrontierIndex { round, index })
-        })
-        .transpose()?;
-    let high = merge
-        .high_state()
-        .map(|index| {
-            frontier_blocks
-                .get(index)
-                .copied()
-                .ok_or(RamRaVirtualizationError::InvalidFrontierIndex { round, index })
-        })
-        .transpose()?;
-    match (low, high) {
-        (Some(low), Some(high))
-            if low.is_multiple_of(2) && !high.is_multiple_of(2) && low >> 1 == high >> 1 =>
-        {
-            Ok(low >> 1)
-        }
-        (Some(low), None) if low.is_multiple_of(2) => Ok(low >> 1),
-        (None, Some(high)) if !high.is_multiple_of(2) => Ok(high >> 1),
-        (None, None) => Err(RamRaVirtualizationError::EmptyMerge { round }),
-        _ => Err(RamRaVirtualizationError::InvalidMergeChildren { round }),
-    }
-}
-
-#[derive(Debug, Error, Eq, PartialEq)]
-pub enum RamRaVirtualizationError {
-    #[error(transparent)]
-    Topology(#[from] TopologyError),
-    #[error("RAM RA virtualization address point has length {got}, expected {expected}")]
-    AddressPointLength { expected: usize, got: usize },
-    #[error("RAM RA virtualization cycle point has length {got}, expected {expected}")]
-    CyclePointLength { expected: usize, got: usize },
-    #[error("RAM RA virtualization chunk width {got} is unsupported")]
-    ChunkBits { got: usize },
-    #[error("RAM RA virtualization has unsupported factor count {factors}")]
-    FactorCount { factors: usize },
-    #[error("RAM RA virtualization factor index {factor} is invalid")]
-    InvalidFactorIndex { factor: usize },
-    #[error("RAM RA virtualization chunk shift {shift} is outside a u32 address")]
-    ChunkShift { shift: usize },
-    #[error("RAM RA virtualization topology is missing level {round}")]
-    MissingTopologyLevel { round: usize },
-    #[error("RAM RA virtualization weights are missing level {round}")]
-    MissingWeightLevel { round: usize },
-    #[error("RAM RA virtualization weight level {round} has {got} entries, expected {expected}")]
-    WeightLength {
-        round: usize,
-        expected: usize,
-        got: usize,
-    },
-    #[error(
-        "RAM RA virtualization frontier at round {round}, factor {factor:?}, has {got} entries, expected {expected}"
-    )]
-    FrontierLength {
-        round: usize,
-        factor: Option<usize>,
-        expected: usize,
-        got: usize,
-    },
-    #[error("RAM RA virtualization frontier index {index} is invalid at round {round}")]
-    InvalidFrontierIndex { round: usize, index: usize },
-    #[error("RAM RA virtualization cache for factor {factor} is malformed at round {round}")]
-    CacheLength {
-        round: usize,
-        factor: usize,
-        expected: usize,
-        lows: usize,
-        slopes: usize,
-    },
-    #[error("RAM RA virtualization topology has an invalid root census of {got}")]
-    InvalidRootCensus { got: usize },
-    #[error("RAM RA virtualization weight child {child} is invalid at round {round}")]
-    InvalidWeightChild { round: usize, child: usize },
-    #[error("RAM RA virtualization weight level {round} is incomplete")]
-    IncompleteWeightLevel { round: usize },
-    #[error("RAM RA virtualization access cycle {cycle} is absent from the topology")]
-    AccessOutsideTopology { cycle: u32 },
-    #[error("RAM RA virtualization Boolean index {index} is outside its chunk")]
-    BooleanIndex { index: u64 },
-    #[error("RAM RA virtualization merge has no child at round {round}")]
-    EmptyMerge { round: usize },
-    #[error("RAM RA virtualization merge children disagree at round {round}")]
-    InvalidMergeChildren { round: usize },
-    #[error("RAM RA virtualization message was not prepared at round {round}")]
-    MessageNotPrepared { round: usize },
-    #[error("RAM RA virtualization is already fully bound")]
-    AlreadyFullyBound,
-    #[error("RAM RA virtualization is not fully bound; {remaining} rounds remain")]
-    NotFullyBound { remaining: usize },
-    #[error("RAM RA virtualization terminal frontier is invalid")]
-    InvalidTerminalFrontier,
-    #[error("RAM RA virtualization arithmetic overflowed")]
-    Overflow,
 }
 
 #[cfg(test)]
@@ -741,14 +398,14 @@ mod tests {
                                     committed_chunk_bits,
                                 )
                                 .unwrap();
-                                eq_at_boolean_index(chunk, u64::from(index)).unwrap()
+                                eq_at_boolean_index(MEMBER, chunk, u64::from(index)).unwrap()
                             })
                         })
                         .collect()
                 })
                 .collect();
             let eq_cycle = (0..owner.receipt().cycles())
-                .map(|index| eq_at_boolean_index(r_cycle, index as u64).unwrap())
+                .map(|index| eq_at_boolean_index(MEMBER, r_cycle, index as u64).unwrap())
                 .collect();
             Self { factors, eq_cycle }
         }

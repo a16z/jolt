@@ -1,7 +1,10 @@
 use jolt_field::Field;
 
+use super::frontier::{RamCycleError, RamCycleMember};
 use super::owner::RamCycleFamilyOwner;
-use super::ram_val_check::{RamValError, RamValMessage, RamValTerminalFactors};
+use super::ram_val_check::{RamValMessage, RamValTerminalFactors};
+
+const MEMBER: RamCycleMember = RamCycleMember::ValCheck;
 
 /// Independent dense oracle for the sparse RAM value-check sequence.
 ///
@@ -21,16 +24,18 @@ impl<F: Field> DenseRamValCheckOracle<F> {
         r_address: &[F],
         r_cycle: &[F],
         gamma: F,
-    ) -> Result<Self, RamValError> {
+    ) -> Result<Self, RamCycleError> {
         let receipt = owner.receipt();
         if r_address.len() != receipt.log_k() {
-            return Err(RamValError::AddressPointLength {
+            return Err(RamCycleError::AddressPointLength {
+                member: MEMBER,
                 expected: receipt.log_k(),
                 got: r_address.len(),
             });
         }
         if r_cycle.len() != receipt.log_t() {
-            return Err(RamValError::CyclePointLength {
+            return Err(RamCycleError::CyclePointLength {
+                member: MEMBER,
                 expected: receipt.log_t(),
                 got: r_cycle.len(),
             });
@@ -38,7 +43,8 @@ impl<F: Field> DenseRamValCheckOracle<F> {
 
         let eq_address = dense_eq_evaluations(r_address)?;
         if eq_address.len() != receipt.address_domain() {
-            return Err(RamValError::AddressTableLength {
+            return Err(RamCycleError::AddressTableLength {
+                member: MEMBER,
                 expected: receipt.address_domain(),
                 got: eq_address.len(),
             });
@@ -47,22 +53,28 @@ impl<F: Field> DenseRamValCheckOracle<F> {
         let mut ram_ra = vec![F::zero(); receipt.cycles()];
         for record in owner.access_records() {
             let address_weight = eq_address.get(record.address() as usize).copied().ok_or(
-                RamValError::AccessAddressOutOfRange {
+                RamCycleError::AccessAddressOutOfRange {
+                    member: MEMBER,
                     address: record.address(),
                 },
             )?;
             let cycle = record.cycle() as usize;
             let destination = ram_ra
                 .get_mut(cycle)
-                .ok_or(RamValError::DenseCycleOutOfRange {
+                .ok_or(RamCycleError::DenseCycleOutOfRange {
+                    member: MEMBER,
                     cycle: u64::from(record.cycle()),
                 })?;
             *destination = address_weight;
         }
         for increment in owner.increment_records() {
             let destination = ram_increment
-                .get_mut(usize::try_from(increment.cycle()).map_err(|_| RamValError::Overflow)?)
-                .ok_or(RamValError::DenseCycleOutOfRange {
+                .get_mut(
+                    usize::try_from(increment.cycle())
+                        .map_err(|_| RamCycleError::Overflow { member: MEMBER })?,
+                )
+                .ok_or(RamCycleError::DenseCycleOutOfRange {
+                    member: MEMBER,
                     cycle: increment.cycle(),
                 })?;
             *destination = F::from_i128(increment.increment());
@@ -72,7 +84,8 @@ impl<F: Field> DenseRamValCheckOracle<F> {
             .map(|value| value + gamma)
             .collect::<Vec<_>>();
         if lt_cycle_plus_gamma.len() != receipt.cycles() {
-            return Err(RamValError::DenseTableLength {
+            return Err(RamCycleError::DenseTableLength {
+                member: MEMBER,
                 expected: receipt.cycles(),
                 got: lt_cycle_plus_gamma.len(),
             });
@@ -99,13 +112,13 @@ impl<F: Field> DenseRamValCheckOracle<F> {
         self.ram_increment.len()
     }
 
-    pub fn message(&self) -> Result<RamValMessage<F>, RamValError> {
+    pub fn message(&self) -> Result<RamValMessage<F>, RamCycleError> {
         if self.round >= self.rounds {
-            return Err(RamValError::AlreadyFullyBound);
+            return Err(RamCycleError::AlreadyFullyBound { member: MEMBER });
         }
         self.validate_lengths()?;
         if self.ram_increment.len() < 2 || !self.ram_increment.len().is_multiple_of(2) {
-            return Err(RamValError::InvalidDenseState);
+            return Err(RamCycleError::InvalidDenseState { member: MEMBER });
         }
 
         let mut at_zero = F::zero();
@@ -135,22 +148,26 @@ impl<F: Field> DenseRamValCheckOracle<F> {
         Ok(RamValMessage::new(at_zero, at_two, at_three))
     }
 
-    pub fn bind(&mut self, challenge: F) -> Result<(), RamValError> {
+    pub fn bind(&mut self, challenge: F) -> Result<(), RamCycleError> {
         if self.round >= self.rounds {
-            return Err(RamValError::AlreadyFullyBound);
+            return Err(RamCycleError::AlreadyFullyBound { member: MEMBER });
         }
         self.validate_lengths()?;
         self.ram_increment = bind_dense(&self.ram_increment, challenge)?;
         self.ram_ra = bind_dense(&self.ram_ra, challenge)?;
         self.lt_cycle_plus_gamma = bind_dense(&self.lt_cycle_plus_gamma, challenge)?;
-        self.round = self.round.checked_add(1).ok_or(RamValError::Overflow)?;
+        self.round = self
+            .round
+            .checked_add(1)
+            .ok_or(RamCycleError::Overflow { member: MEMBER })?;
         self.validate_lengths()?;
         Ok(())
     }
 
-    pub fn terminal_factors(&self) -> Result<RamValTerminalFactors<F>, RamValError> {
+    pub fn terminal_factors(&self) -> Result<RamValTerminalFactors<F>, RamCycleError> {
         if self.round != self.rounds {
-            return Err(RamValError::NotFullyBound {
+            return Err(RamCycleError::NotFullyBound {
+                member: MEMBER,
                 remaining: self.rounds - self.round,
             });
         }
@@ -162,17 +179,19 @@ impl<F: Field> DenseRamValCheckOracle<F> {
         ))
     }
 
-    fn validate_lengths(&self) -> Result<(), RamValError> {
+    fn validate_lengths(&self) -> Result<(), RamCycleError> {
         let expected = 1usize
             .checked_shl(
-                u32::try_from(self.rounds - self.round).map_err(|_| RamValError::Overflow)?,
+                u32::try_from(self.rounds - self.round)
+                    .map_err(|_| RamCycleError::Overflow { member: MEMBER })?,
             )
-            .ok_or(RamValError::Overflow)?;
+            .ok_or(RamCycleError::Overflow { member: MEMBER })?;
         if self.ram_increment.len() != expected
             || self.ram_ra.len() != expected
             || self.lt_cycle_plus_gamma.len() != expected
         {
-            return Err(RamValError::DenseTableLength {
+            return Err(RamCycleError::DenseTableLength {
+                member: MEMBER,
                 expected,
                 got: self.ram_increment.len(),
             });
@@ -181,9 +200,9 @@ impl<F: Field> DenseRamValCheckOracle<F> {
     }
 }
 
-fn bind_dense<F: Field>(values: &[F], challenge: F) -> Result<Vec<F>, RamValError> {
+fn bind_dense<F: Field>(values: &[F], challenge: F) -> Result<Vec<F>, RamCycleError> {
     if values.len() < 2 || !values.len().is_multiple_of(2) {
-        return Err(RamValError::InvalidDenseState);
+        return Err(RamCycleError::InvalidDenseState { member: MEMBER });
     }
     let mut output = Vec::with_capacity(values.len() / 2);
     for pair in values.chunks_exact(2) {
@@ -194,24 +213,29 @@ fn bind_dense<F: Field>(values: &[F], challenge: F) -> Result<Vec<F>, RamValErro
     Ok(output)
 }
 
-fn pair_entry<F: Copy>(pair: &[F], index: usize) -> Result<F, RamValError> {
+fn pair_entry<F: Copy>(pair: &[F], index: usize) -> Result<F, RamCycleError> {
     pair.get(index)
         .copied()
-        .ok_or(RamValError::InvalidDenseState)
+        .ok_or(RamCycleError::InvalidDenseState { member: MEMBER })
 }
 
-fn only_value<F: Copy>(values: &[F]) -> Result<F, RamValError> {
+fn only_value<F: Copy>(values: &[F]) -> Result<F, RamCycleError> {
     match values {
         [value] => Ok(*value),
-        _ => Err(RamValError::InvalidDenseState),
+        _ => Err(RamCycleError::InvalidDenseState { member: MEMBER }),
     }
 }
 
-fn dense_eq_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RamValError> {
+fn dense_eq_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RamCycleError> {
     let expected = dense_domain_size(point.len())?;
     let mut table = vec![F::one()];
     for &challenge in point {
-        let mut next = Vec::with_capacity(table.len().checked_mul(2).ok_or(RamValError::Overflow)?);
+        let mut next = Vec::with_capacity(
+            table
+                .len()
+                .checked_mul(2)
+                .ok_or(RamCycleError::Overflow { member: MEMBER })?,
+        );
         for &base in &table {
             next.push(base * (F::one() - challenge));
             next.push(base * challenge);
@@ -219,12 +243,12 @@ fn dense_eq_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RamValError> {
         table = next;
     }
     if table.len() != expected {
-        return Err(RamValError::InvalidEqualityTable);
+        return Err(RamCycleError::InvalidEqualityTable { member: MEMBER });
     }
     Ok(table)
 }
 
-fn dense_lt_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RamValError> {
+fn dense_lt_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RamCycleError> {
     let expected = dense_domain_size(point.len())?;
     let mut output = Vec::with_capacity(expected);
     for index in 0..expected {
@@ -235,10 +259,12 @@ fn dense_lt_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RamValError> {
                 .len()
                 .checked_sub(position)
                 .and_then(|remaining| remaining.checked_sub(1))
-                .ok_or(RamValError::Overflow)?;
+                .ok_or(RamCycleError::Overflow { member: MEMBER })?;
             let bit = index
-                .checked_shr(u32::try_from(shift).map_err(|_| RamValError::Overflow)?)
-                .ok_or(RamValError::Overflow)?
+                .checked_shr(
+                    u32::try_from(shift).map_err(|_| RamCycleError::Overflow { member: MEMBER })?,
+                )
+                .ok_or(RamCycleError::Overflow { member: MEMBER })?
                 & 1;
             let bit_field = F::from_u64(bit as u64);
             less_than += (F::one() - bit_field) * challenge * equal_prefix;
@@ -249,7 +275,9 @@ fn dense_lt_evaluations<F: Field>(point: &[F]) -> Result<Vec<F>, RamValError> {
     Ok(output)
 }
 
-fn dense_domain_size(log_size: usize) -> Result<usize, RamValError> {
-    let shift = u32::try_from(log_size).map_err(|_| RamValError::Overflow)?;
-    1usize.checked_shl(shift).ok_or(RamValError::Overflow)
+fn dense_domain_size(log_size: usize) -> Result<usize, RamCycleError> {
+    let shift = u32::try_from(log_size).map_err(|_| RamCycleError::Overflow { member: MEMBER })?;
+    1usize
+        .checked_shl(shift)
+        .ok_or(RamCycleError::Overflow { member: MEMBER })
 }
