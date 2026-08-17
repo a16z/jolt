@@ -1,10 +1,6 @@
 use jolt_inlines_sdk::host::{
-    instruction::{
-        andn::ANDN, ld::LD, srli::SRLI, virtual_rev8w::VirtualRev8W,
-        virtual_xor_rotw::VirtualXORROTW7,
-    },
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
+    InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice, SourceKind,
     Value::{self, Imm, Reg},
 };
 
@@ -89,11 +85,11 @@ impl Sha256SequenceBuilder {
             let lo = *self.message[i * 2];
             let hi = *self.message[i * 2 + 1];
             self.asm
-                .emit_ld::<LD>(lo, self.operands.rs2, (i as i64) * 8);
+                .emit_ld(Kind::LD, lo, self.operands.rs2, (i as i64) * 8);
             // VirtualRev8W is FormatT (rd, rs1, no rs2): emit an I-shaped row so the
             // bytecode operands (rs2 = None, imm = 0) match the tracer's format.
-            self.asm.emit_i::<VirtualRev8W>(lo, lo, 0);
-            self.asm.emit_i::<SRLI>(hi, lo, 32);
+            self.asm.emit_i(Kind::VIRTUAL_REV8_W, lo, lo, 0);
+            self.asm.expand_i(SourceKind::SRLI, hi, lo, 32);
         }
         // Run 64 rounds
         for _ in 0..64 {
@@ -279,7 +275,7 @@ impl Sha256SequenceBuilder {
         // ANDN computes rs1 & !rs2, so andn(G, E) gives G & !E = !E & G
         match (rs1, rs3) {
             (Reg(r1), Reg(r3)) => {
-                self.asm.emit_r::<ANDN>(rd, r3, r1);
+                self.asm.emit_r(Kind::ANDN, rd, r3, r1);
                 let neg_e_and_g = Reg(rd);
                 self.asm.xor(e_and_f, neg_e_and_g, rd)
             }
@@ -317,7 +313,7 @@ impl Sha256SequenceBuilder {
     /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: u8, rd: u8, ss: u8) {
         self.asm.rotri32(Reg(rs1), 11, ss);
-        self.asm.emit_r::<VirtualXORROTW7>(rd, rs1, ss);
+        self.asm.emit_r(Kind::VirtualXORROTW7, rd, rs1, ss);
         self.word_shr(rs1, 3, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
     }

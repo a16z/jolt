@@ -12,14 +12,10 @@ use crate::{
     MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
 };
 use jolt_inlines_sdk::host::{
-    instruction::{
-        lui::LUI,
-        virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8},
-    },
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
-    Value::Reg,
+    InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice,
 };
+use jolt_inlines_sdk::jolt_asm;
 
 /// Layout: v[0..15] + m[0..15] only (no separate h/counter/flags banks, no temp regs):
 /// inputs load directly into their `v` slots and the chaining value is produced
@@ -109,8 +105,9 @@ impl Blake3SequenceBuilder {
         // Inline virtual registers are cleared by `finalize_inline`, so newly allocated
         // inline registers start at 0 across inline calls.
         self.asm
-            .emit_u::<LUI>(*self.vr[INTERNAL_STATE_VR_START + 14], 64);
-        self.asm.emit_u::<LUI>(
+            .emit_u(Kind::LUI, *self.vr[INTERNAL_STATE_VR_START + 14], 64);
+        self.asm.emit_u(
+            Kind::LUI,
             *self.vr[INTERNAL_STATE_VR_START + 15],
             (FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH) as u64,
         );
@@ -122,7 +119,7 @@ impl Blake3SequenceBuilder {
         // v[8..11] = IV[0..3]
         for (i, val) in IV.iter().enumerate().take(4) {
             self.asm
-                .emit_u::<LUI>(*self.vr[CHAINING_VALUE_LEN + i], *val as u64);
+                .emit_u(Kind::LUI, *self.vr[CHAINING_VALUE_LEN + i], *val as u64);
         }
     }
 
@@ -139,7 +136,9 @@ impl Blake3SequenceBuilder {
         for i in 0..CHAINING_VALUE_LEN {
             let vi = *self.vr[INTERNAL_STATE_VR_START + i];
             let vi8 = *self.vr[INTERNAL_STATE_VR_START + i + CHAINING_VALUE_LEN];
-            self.asm.xor(Reg(vi), Reg(vi8), vi);
+            jolt_asm!(self.asm, {
+                xor vi, vi, vi8;
+            });
         }
 
         // Store state
@@ -182,31 +181,26 @@ impl Blake3SequenceBuilder {
         let mx = *self.vr[MSG_BLOCK_START_VR + x];
         let my = *self.vr[MSG_BLOCK_START_VR + y];
 
-        // v[a] = v[a] + v[b] + m[x]
-        self.asm.add(Reg(va), Reg(vb), va);
-        self.asm.add(Reg(va), Reg(mx), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 16)
-        self.asm.emit_r::<VirtualXORROTW16>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 12)
-        self.asm.emit_r::<VirtualXORROTW12>(vb, vb, vc);
-
-        // v[a] = v[a] + v[b] + m[y]
-        self.asm.add(Reg(va), Reg(vb), va);
-        self.asm.add(Reg(va), Reg(my), va);
-
-        // v[d] = rotr32(v[d] ^ v[a], 8)
-        self.asm.emit_r::<VirtualXORROTW8>(vd, vd, va);
-
-        // v[c] = v[c] + v[d]
-        self.asm.add(Reg(vc), Reg(vd), vc);
-
-        // v[b] = rotr32(v[b] ^ v[c], 7)
-        self.asm.emit_r::<VirtualXORROTW7>(vb, vb, vc);
+        jolt_asm!(self.asm, {
+            // v[a] = v[a] + v[b] + m[x]
+            add va, va, vb;
+            add va, va, mx;
+            // v[d] = rotr32(v[d] ^ v[a], 16)
+            xorrotw16 vd, vd, va;
+            // v[c] = v[c] + v[d]
+            add vc, vc, vd;
+            // v[b] = rotr32(v[b] ^ v[c], 12)
+            xorrotw12 vb, vb, vc;
+            // v[a] = v[a] + v[b] + m[y]
+            add va, va, vb;
+            add va, va, my;
+            // v[d] = rotr32(v[d] ^ v[a], 8)
+            xorrotw8 vd, vd, va;
+            // v[c] = v[c] + v[d]
+            add vc, vc, vd;
+            // v[b] = rotr32(v[b] ^ v[c], 7)
+            xorrotw7 vb, vb, vc;
+        });
     }
 
     fn load_data_range_paired_dirty(
