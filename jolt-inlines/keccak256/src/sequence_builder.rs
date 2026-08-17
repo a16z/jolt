@@ -6,9 +6,8 @@
 
 use crate::{NUM_LANES, RATE_IN_U64};
 use jolt_inlines_sdk::host::{
-    instruction::{andn::ANDN, ld::LD, virtual_xor_rot::VirtualXORROTL1},
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
+    InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice,
     Value::{Imm, Reg},
 };
 
@@ -103,7 +102,8 @@ impl Keccak256SequenceBuilder {
         if self.absorb_block {
             let scratch = *self.scratch;
             for i in 0..RATE_IN_U64 {
-                self.asm.emit_ld::<LD>(
+                self.asm.emit_ld(
+                    Kind::LD,
                     scratch,
                     self.operands.rs2,
                     i as i64 * size_of::<u64>() as i64,
@@ -152,7 +152,7 @@ impl Keccak256SequenceBuilder {
             let d = self.d_lane(x);
             let c_prev = *self.c[(x + 4) % 5];
             let c_next = *self.c[(x + 1) % 5];
-            self.asm.emit_r::<VirtualXORROTL1>(d, c_prev, c_next);
+            self.asm.emit_r(Kind::VirtualXORROTL1, d, c_prev, c_next);
         }
 
         for x in 0..5 {
@@ -191,15 +191,15 @@ impl Keccak256SequenceBuilder {
             let t3 = *self.chi_temp[0];
             let t4 = *self.chi_temp[1];
 
-            self.asm.emit_r::<ANDN>(scratch, b[2], b[1]);
-            self.asm.emit_r::<ANDN>(t3, b[0], b[4]);
-            self.asm.emit_r::<ANDN>(t4, b[1], b[0]);
+            self.asm.emit_r(Kind::ANDN, scratch, b[2], b[1]);
+            self.asm.emit_r(Kind::ANDN, t3, b[0], b[4]);
+            self.asm.emit_r(Kind::ANDN, t4, b[1], b[0]);
             self.asm.xor(Reg(b[0]), Reg(scratch), destination[0]);
 
-            self.asm.emit_r::<ANDN>(scratch, b[3], b[2]);
+            self.asm.emit_r(Kind::ANDN, scratch, b[3], b[2]);
             self.asm.xor(Reg(b[1]), Reg(scratch), destination[1]);
 
-            self.asm.emit_r::<ANDN>(scratch, b[4], b[3]);
+            self.asm.emit_r(Kind::ANDN, scratch, b[4], b[3]);
             self.asm.xor(Reg(b[2]), Reg(scratch), destination[2]);
             self.asm.xor(Reg(b[3]), Reg(t3), destination[3]);
             self.asm.xor(Reg(b[4]), Reg(t4), destination[4]);

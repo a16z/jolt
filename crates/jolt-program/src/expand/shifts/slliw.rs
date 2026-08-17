@@ -8,7 +8,7 @@ pub(in crate::expand) fn expand_slliw(
     let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.emit_i(
-        JoltInstructionKind::VirtualMULIW,
+        Kind::VirtualMULIW,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         1i128 << shift,
