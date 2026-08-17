@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787003295183,
+  "lastUpdate": 1787005286956,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -138730,6 +138730,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861240,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "27ce2d6ee4e8076adc074941f0c8054c71e313b2",
+          "message": "refactor(inlines): remove renamed instruction-alias facade, pass canonical kinds to emit_* (#1778)\n\n* refactor(inlines): remove renamed instruction-alias facade, pass canonical kinds to emit_*\n\nInlineExpansionBuilder::emit_* now take SourceInstructionKind values\ndirectly (deriving JoltInstructionKind via jolt_kind(), same routing as\nbefore) instead of InlineInstruction marker type parameters. The marker\ntrait added no type safety (every instruction implemented it), so the\ngeneric API was migration scaffolding from the recipe migration\n(8775247b6).\n\n- delete alias_instruction! and the legacy-shaped instruction::* tree in\n  jolt-inlines-sdk host\n- delete the InlineInstruction marker trait and its for-each impl macro\n- convert all inline recipe call sites to canonical kind constants;\n  VirtualAdvice/VirtualZeroExtendWord use the enum-constructor spelling\n  because same-named variants shadow the generated kind constants\n- SDK re-exports SourceInstructionKind and jolt_riscv::instructions once\n  so inline crates keep a single sdk dependency\n\nRecipe bytes are unchanged: registered inline expansion golden fixtures\npass, and expansion recipes are cached per inline so the const-to-value\nkind dispatch is off any hot path.\n\n* refactor(inlines): importable kind constants for readable emit call sites\n\nAdd a generated jolt_riscv::kinds module (value-level SourceInstructionKind\nconstants, one per instruction) and import the needed names per inline\ncrate, so emit calls read like the old marker style without the turbofish:\n\n    self.asm.emit_r(MUL, self.t(), self.a(i), self.b(j));\n\nThe module also fixes the variant-shadowing wart: associated constants\nlike SourceInstructionKind::VirtualAdvice are unreachable because the\nsame-named enum variant constructor wins path resolution, and associated\nconstants cannot be imported. Plain module constants have neither problem,\nso the constructor-form spellings at VirtualAdvice/VirtualZeroExtendWord\ncall sites are gone too.\n\nRecipe bytes unchanged: golden fixtures pass.\n\n* feat(inlines): jolt_asm! assembly-style macro for straight-line recipe cores\n\nAdds a macro_rules jolt_asm! to the SDK: statements are\n'mnemonic dst, src..;' in RISC-V operand order, operands are ordinary Rust\nexpressions, and every statement expands to exactly one\nInlineExpansionBuilder call — zero runtime cost and byte-identical recipes\n(golden fixtures gate). ~30 mnemonics covering the R/I/load/store/lui/\nadvice/assert shapes used across the inline crates.\n\nConverted where the code is straight-line and reads as assembly:\n- SDK MulAccExt (all mac/m2ac/adc bodies) and the paired-u32/advice-store\n  helpers\n- blake2 and blake3 G-functions, blake2 working-state init tail,\n  blake3 paired load + len/flags load\n- secp256k1 local mac helpers and the top-limb check block; p256 check\n  block (add + assert_eq + assert_lte)\n\nLeft as plain builder calls on purpose: sha2 (live Value constant-folding\nthat fixed mnemonics cannot express), bigint/keccak reduction loops and\nother per-iteration single emits, where a macro block per statement would\nadd noise instead of removing it.\n\n* refactor(inlines): centralize inline emission routing\n\n* refactor: use Kind aliases for instruction emitters\n\n* refactor(inlines): separate emitted and source instruction kinds",
+          "timestamp": "2026-08-17T17:14:23-04:00",
+          "tree_id": "62ee0bab77336d783cea149e72792cc9729c2c2e",
+          "url": "https://github.com/a16z/jolt/commit/27ce2d6ee4e8076adc074941f0c8054c71e313b2"
+        },
+        "date": 1787005281248,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.8967,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 866904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.2953,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 493004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 501184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.72,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 497240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5816,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 491308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0422,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 492792,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.092,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 195420,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.417,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 865832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5661,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 492692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.462,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 496944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.1363,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 492992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7522,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 495008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.276,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1100540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.2995,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 610768,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 90.3616,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2114700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.391,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 492680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.55,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 499528,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5602,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866128,
             "unit": "KB",
             "extra": ""
           }
