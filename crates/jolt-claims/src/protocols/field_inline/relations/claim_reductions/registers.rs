@@ -64,6 +64,7 @@ pub struct FieldRegistersClaimReductionChallenges<F> {
 /// Batches the native field-register Spartan-outer openings (`FieldRdValue`,
 /// `FieldRs1Value`, `FieldRs2Value`) by `gamma` and reduces them to the
 /// registers-claim-reduction openings weighted by the `EqSpartan` public.
+#[derive(Clone)]
 pub struct ClaimReduction {
     shape: FieldRegistersTraceDimensions,
 }

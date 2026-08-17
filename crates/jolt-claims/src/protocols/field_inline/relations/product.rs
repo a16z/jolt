@@ -14,11 +14,11 @@ use crate::protocols::field_inline::{
 use crate::SymbolicSumcheck;
 use crate::{InputClaims, OutputClaims};
 
-/// Produced field-product openings (the two factor openings at the shared
-/// product-remainder point). The full selected-lane opening set — including the
-/// `FieldInvProduct` lane's `FieldRdValue` factor — lives in
-/// `geometry::product::selected_product_remainder_output_openings()`; the stage-2
-/// composition consumes lanes from there.
+/// Produced field-product openings: the three factor openings the selected FR
+/// lanes reference at the shared product-remainder point (`FieldRdValue` is the
+/// `FieldInvProduct` lane's right factor). Field declaration order is the
+/// canonical Fiat-Shamir order and mirrors
+/// `geometry::product::selected_product_remainder_output_openings()`.
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -32,6 +32,8 @@ pub struct FieldRegistersProductOutputClaims<C> {
     pub rs1_value: C,
     #[opening(FieldRs2Value)]
     pub rs2_value: C,
+    #[opening(FieldRdValue)]
+    pub rd_value: C,
 }
 
 /// Consumed field-product input: the `FieldProduct` lane claim entering the
@@ -100,17 +102,19 @@ mod tests {
 
     #[test]
     fn claim_struct_field_order_matches_geometry_opening_order() {
-        use crate::protocols::field_inline::geometry::product::{
-            field_product_input_openings, field_product_output_openings,
-        };
+        use crate::protocols::field_inline::geometry::product::field_product_input_openings;
 
         let value = Fr::from_u64(1);
 
         let outputs = FieldRegistersProductOutputClaims::<Fr> {
             rs1_value: value,
             rs2_value: value,
+            rd_value: value,
         };
-        assert_eq!(outputs.canonical_order(), field_product_output_openings());
+        assert_eq!(
+            outputs.canonical_order(),
+            selected_product_remainder_output_openings()
+        );
 
         let inputs = FieldRegistersProductInputClaims::<Fr> {
             field_product: value,

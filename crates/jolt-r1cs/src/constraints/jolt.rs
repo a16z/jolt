@@ -637,4 +637,70 @@ mod tests {
 
         assert_eq!(composed.check_witness(&witness), Ok(()));
     }
+
+    /// Pins the `jolt-claims` composed-lane helpers against this crate's
+    /// field-inline product constraint rows — the R1CS source of truth for the
+    /// two FR lanes. Per lane, the helper's left/right factor and input values
+    /// must reproduce the row's `A`/`B`/`C` linear forms on a witness with
+    /// distinct (and deliberately non-satisfying) column values, weighted at
+    /// the composed lane indices following the ordinary lanes.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+    fn composed_lane_helpers_match_field_product_constraint_rows() {
+        use jolt_claims::protocols::field_inline::geometry::product::{
+            composed_remainder_factor_contributions, composed_uniskip_input_contribution,
+            FieldProductLaneFactors, FieldProductLaneInputs,
+        };
+
+        let mut z = vec![Fr::zero(); field_constraints::NUM_VARS_PER_CYCLE];
+        z[field_constraints::V_CONST] = Fr::from_u64(1);
+        z[field_constraints::V_FIELD_RS1_VALUE] = Fr::from_u64(7);
+        z[field_constraints::V_FIELD_RS2_VALUE] = Fr::from_u64(11);
+        z[field_constraints::V_FIELD_RD_VALUE] = Fr::from_u64(13);
+        z[field_constraints::V_FIELD_PRODUCT] = Fr::from_u64(17);
+        z[field_constraints::V_FIELD_INV_PRODUCT] = Fr::from_u64(19);
+        let inputs = FieldProductLaneInputs {
+            product: z[field_constraints::V_FIELD_PRODUCT],
+            inv_product: z[field_constraints::V_FIELD_INV_PRODUCT],
+        };
+        let factors = FieldProductLaneFactors {
+            rs1_value: z[field_constraints::V_FIELD_RS1_VALUE],
+            rs2_value: z[field_constraints::V_FIELD_RS2_VALUE],
+            rd_value: z[field_constraints::V_FIELD_RD_VALUE],
+        };
+
+        let matrices = field_constraints::field_inline_trace_constraints::<Fr>();
+        let eval_row = |row: &crate::SparseRow<Fr>| {
+            row.iter()
+                .map(|&(column, coefficient)| coefficient * z[column])
+                .sum::<Fr>()
+        };
+        let weights = (1..=SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE as u64)
+            .map(Fr::from_u64)
+            .collect::<Vec<_>>();
+        let lane_rows = [
+            field_constraints::ROW_FIELD_PRODUCT,
+            field_constraints::ROW_FIELD_INV_PRODUCT,
+        ];
+        let weighted = |rows_of: &dyn Fn(usize) -> Fr| {
+            lane_rows
+                .iter()
+                .enumerate()
+                .map(|(lane, &row)| weights[SPARTAN_PRODUCT_BASE_LANES + lane] * rows_of(row))
+                .sum::<Fr>()
+        };
+        let expected_left = weighted(&|row| eval_row(&matrices.a[row]));
+        let expected_right = weighted(&|row| eval_row(&matrices.b[row]));
+        let expected_input = weighted(&|row| eval_row(&matrices.c[row]));
+
+        assert_eq!(
+            composed_remainder_factor_contributions(&weights, SPARTAN_PRODUCT_BASE_LANES, &factors),
+            Some((expected_left, expected_right)),
+        );
+        assert_eq!(
+            composed_uniskip_input_contribution(&weights, SPARTAN_PRODUCT_BASE_LANES, &inputs),
+            Some(expected_input),
+        );
+    }
 }
