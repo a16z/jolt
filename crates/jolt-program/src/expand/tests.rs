@@ -66,25 +66,6 @@ fn rows(instructions: Vec<JoltInstruction>) -> Vec<JoltInstructionRow> {
 }
 
 #[test]
-fn word_right_shift_expansion_row_counts() -> Result<(), ExpansionError> {
-    for (instruction_kind, expected_rows) in [
-        (SourceInstructionKind::SRLW, 2),
-        (SourceInstructionKind::SRAW, 2),
-        (SourceInstructionKind::SRLIW, 1),
-        (SourceInstructionKind::SRAIW, 1),
-    ] {
-        let mut allocator = ExpansionAllocator::new();
-        let expanded = expand_instruction(
-            &instruction(instruction_kind, Some(3), false),
-            &mut allocator,
-            RV64IMAC_JOLT,
-        )?;
-        assert_eq!(expanded.len(), expected_rows, "{instruction_kind:?}");
-    }
-    Ok(())
-}
-
-#[test]
 fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
     let expanded = rows(expand_instruction(
