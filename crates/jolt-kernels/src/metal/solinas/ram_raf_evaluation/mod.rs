@@ -8,7 +8,7 @@ use thiserror::Error;
 
 mod runtime;
 
-pub use runtime::{PendingRamRafSequence, RamRafAddressPlane, RamRafObservation, RamRafSequence};
+pub use runtime::{PendingRamRafSequence, RamRafAddressPlane};
 
 pub const SOURCE: &str = include_str!("shader.metal");
 
@@ -22,7 +22,6 @@ pub const RAM_RAF_SIMD_WIDTH: usize = 32;
 pub const RAM_RAF_ACCUMULATOR_WORDS: usize = 5;
 pub const RAM_RAF_NO_ACCESS: u32 = u32::MAX;
 pub const RAM_RAF_DEFAULT_TRACE_CUTOFF: usize = 1 << 20;
-pub const RAM_RAF_AKITA_OFFSET: u32 = 0xffff_a7f7;
 
 pub const RAM_RAF_FOLD_PIPELINE: &str = "solinas_ram_raf_fold_tiles";
 pub const RAM_RAF_FINALIZE_PIPELINE: &str = "solinas_ram_raf_finalize";
@@ -42,10 +41,6 @@ impl RamRafAddress {
         } else {
             Err(RamRafError::AddressOutsideDomain { address })
         }
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
     }
 }
 
@@ -263,6 +258,10 @@ impl ValidatedRamRafAddressPlane {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "every field is an explicit byte count"
+)]
 pub struct RamRafStoragePlan {
     pub borrowed_address_bytes: usize,
     pub e_lo_bytes: usize,

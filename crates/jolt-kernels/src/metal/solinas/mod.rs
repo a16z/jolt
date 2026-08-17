@@ -73,7 +73,7 @@ use runtime::{
     validate_completed_command, ReductionBuffer,
 };
 pub(crate) use runtime::{set_inline_bytes, validate_working_set};
-pub use runtime::{DeviceInfo, PipelineLimits, SolinasMetal};
+pub use runtime::{PipelineLimits, SolinasMetal};
 
 pub use address_raf::{AddressRafScanRow, AddressRafSums, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES};
 pub(crate) use address_sequence::ResidentLookupIndexPlane;
@@ -84,10 +84,10 @@ pub use booleanity::{
     BooleanityRow, BooleanitySelector, BooleanitySequence, BooleanitySequenceConfig,
 };
 pub(crate) use booleanity::{BOOLEANITY_SOURCE_ROW_BYTES, BOOLEANITY_SOURCE_WORDS};
-pub use booleanity_address::{BooleanityAddressPushforward, BooleanityAddressPushforwardConfig};
+pub use booleanity_address::BooleanityAddressPushforwardConfig;
 pub use bytecode_cycle::{
-    BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables,
-    BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
+    BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTablesMut,
+    BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
 pub(crate) use instruction_claim_reduction_successor::{
@@ -104,13 +104,10 @@ pub(crate) use instruction_input::{
 pub use instruction_input::{
     InstructionInputRow, InstructionInputRows, InstructionInputSequence,
     InstructionInputSequenceConfig, InstructionInputStorageInitialization,
-    INSTRUCTION_INPUT_COEFFICIENTS, INSTRUCTION_INPUT_TABLES,
+    INSTRUCTION_INPUT_TABLES,
 };
 pub(crate) use instruction_ra_sequence::InstructionRaSequenceStorage;
-pub use instruction_ra_sequence::{
-    InstructionRaMaterializeWidth, InstructionRaSequence, InstructionRaSequenceConfig,
-    InstructionRaSequenceScratchLayout,
-};
+pub use instruction_ra_sequence::{InstructionRaSequence, InstructionRaSequenceConfig};
 #[cfg(test)]
 pub(crate) use instruction_read_raf::validate_bytecode_topology_admission;
 #[doc(hidden)]
@@ -135,34 +132,26 @@ pub(crate) use outer_remainder::{
 };
 pub use outer_remainder::{
     OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
-    OuterRemainderStorageInitialization, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
+    OuterRemainderStorageInitialization,
 };
 pub use product5::{Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS};
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;
 pub(crate) use product_remainder::PendingProductRemainderInitialMessage;
 pub use product_remainder::{
-    ProductRemainderRow, ProductRemainderRowError, ProductRemainderRows, ProductRemainderSequence,
-    ProductRemainderSequenceConfig, ProductRemainderShapeError, ProductRemainderSourceKind,
-    ProductRemainderStorageLayout, PRODUCT_REMAINDER_MESSAGE_COLUMNS, PRODUCT_REMAINDER_OPENINGS,
-    PRODUCT_REMAINDER_SIMD_WIDTH,
+    ProductRemainderRow, ProductRemainderRows, ProductRemainderSequence,
+    ProductRemainderSequenceConfig, ProductRemainderSourceKind, PRODUCT_REMAINDER_MESSAGE_COLUMNS,
 };
 #[cfg(feature = "test-utils")]
 pub use product_uniskip::reference as product_uniskip_reference;
 pub use product_uniskip::{
-    evaluate_product_uniskip_extensions_cpu, ProductUniskipExtendedNodes, ProductUniskipShapeError,
-    PRODUCT_UNISKIP_EXTENDED_NODES, PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS,
-    PRODUCT_UNISKIP_NODE_ORDER, PRODUCT_UNISKIP_SIMD_WIDTH,
+    evaluate_product_uniskip_extensions_cpu, ProductUniskipExtendedNodes,
+    PRODUCT_UNISKIP_EXTENDED_NODES, PRODUCT_UNISKIP_SIMD_WIDTH,
 };
 pub use ram_raf_evaluation::{
     dense_pushforward_oracle, split_equality as ram_raf_split_equality, split_pushforward_oracle,
-    PendingRamRafSequence, RamRafAddress, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
-    RamRafCounters, RamRafDeviceLimits, RamRafError, RamRafFoldParams, RamRafObservation,
-    RamRafQuadraticMessage, RamRafSequence, RamRafShape, RamRafStoragePlan, RamRafTailOutput,
-    ValidatedRamRafAddressPlane, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_AKITA_OFFSET,
-    RAM_RAF_DEFAULT_TRACE_CUTOFF, RAM_RAF_FINALIZE_PIPELINE, RAM_RAF_FOLD_PIPELINE,
-    RAM_RAF_INNER_LENGTH, RAM_RAF_INNER_LOG2, RAM_RAF_NO_ACCESS, RAM_RAF_SIMD_WIDTH,
-    RAM_RAF_THREADS, RAM_RAF_TILE_ADDRESSES, RAM_RAF_TILE_COUNT,
+    PendingRamRafSequence, RamRafAddressPlane, RamRafAffineTail, RamRafConfig, RamRafTailOutput,
+    RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_NO_ACCESS,
 };
 pub(crate) use registers_val::PendingRegistersValFirstMessage;
 pub use registers_val::{
@@ -172,14 +161,13 @@ pub use registers_val::{
 pub(crate) use registers_val::{
     RegistersValInstructionSourceLease, RegistersValInstructionSourceRequest,
 };
-pub use spartan_outer_uniskip::{
-    evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,
-    SpartanOuterUniskipRow, SpartanOuterUniskipRows, SPARTAN_OUTER_EXTENDED_NODES,
-};
 pub(crate) use spartan_outer_uniskip::{
     spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_residual_row_bytes,
     spartan_outer_uniskip_row_bytes, OuterResidualArenaKey, OuterResidualReleaseReceipt,
     PendingSpartanStage1SourcePrimer, SpartanOuterUniskipResidualRow,
+};
+pub use spartan_outer_uniskip::{
+    SpartanOuterUniskipConfig, SpartanOuterUniskipRow, SpartanOuterUniskipRows,
 };
 
 pub const OFFSET_275: u32 = 275;

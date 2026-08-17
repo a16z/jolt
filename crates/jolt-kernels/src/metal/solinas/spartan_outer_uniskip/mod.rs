@@ -6,20 +6,16 @@ use std::{
     time::Duration,
 };
 
-use jolt_field::signed::{S192, S256, S64};
-use jolt_field::{AkitaField, SignedProductAccumulator as _, WithSignedProductAccumulator};
-use jolt_witness::witnesses::SpartanOuterRow;
-use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLResourceOptions, MTLSize,
-};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
 use super::spartan_shift::{SpartanShiftFlagWord, SpartanShiftGeometry, SpartanShiftResidentRows};
 use super::{
     buffer_from_slice, completed_command_gpu_time, Fp128, InstructionInputRow,
     InstructionInputRows, MetalError, SolinasMetal,
+};
+use jolt_field::AkitaField;
+use jolt_witness::witnesses::SpartanOuterRow;
+use metal::{
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    ComputePipelineState, MTLResourceOptions, MTLSize,
 };
 
 pub const SPARTAN_OUTER_EXTENDED_NODES: usize = 9;
@@ -35,28 +31,6 @@ const SOURCE_PRIMER_THREADGROUPS: usize = 256;
 const SOURCE_PRIMER_THREADS: usize =
     SOURCE_PRIMER_THREADS_PER_THREADGROUP * SOURCE_PRIMER_THREADGROUPS;
 static NEXT_OUTER_RESIDUAL_GENERATION: AtomicU64 = AtomicU64::new(1);
-
-const EXTENSION_COEFFICIENTS: [[i64; 10]; SPARTAN_OUTER_EXTENDED_NODES] = [
-    [
-        2002, -15015, 51480, -105_105, 140_140, -126_126, 76440, -30030, 6930, -715,
-    ],
-    [
-        715, -5148, 17160, -34320, 45045, -40040, 24024, -9360, 2145, -220,
-    ],
-    [
-        220, -1485, 4752, -9240, 11880, -10395, 6160, -2376, 540, -55,
-    ],
-    [55, -330, 990, -1848, 2310, -1980, 1155, -440, 99, -10],
-    [10, -45, 120, -210, 252, -210, 120, -45, 10, -1],
-    [-1, 10, -45, 120, -210, 252, -210, 120, -45, 10],
-    [-10, 99, -440, 1155, -1980, 2310, -1848, 990, -330, 55],
-    [
-        -55, 540, -2376, 6160, -10395, 11880, -9240, 4752, -1485, 220,
-    ],
-    [
-        -220, 2145, -9360, 24024, -40040, 45045, -34320, 17160, -5148, 715,
-    ],
-];
 
 const FLAG_LOAD: u32 = 0;
 const FLAG_STORE: u32 = 1;
@@ -427,191 +401,6 @@ impl SpartanOuterUniskipRow {
             flag(FLAG_IS_LAST),
         ]
     }
-}
-
-struct CpuRowGroups {
-    a_first: [i64; 10],
-    a_second: [i64; 9],
-    b_first: [S192; 10],
-    b_second: [S192; 9],
-}
-
-fn cpu_row_groups(row: SpartanOuterUniskipRow) -> CpuRowGroups {
-    let words = row.words;
-    let flags = words[19];
-    let flag = |bit: u32| ((flags >> bit) & 1) as i64;
-    let load = flag(FLAG_LOAD);
-    let store = flag(FLAG_STORE);
-    let add = flag(FLAG_ADD);
-    let sub = flag(FLAG_SUB);
-    let mul = flag(FLAG_MUL);
-    let jump = flag(FLAG_JUMP);
-    let should_branch = flag(FLAG_SHOULD_BRANCH);
-    let slot1 = words[10];
-    let slot2 = words[11];
-    let slot3 = words[12];
-    let ram_address = if load != 0 {
-        slot1
-    } else if store != 0 {
-        slot3
-    } else {
-        0
-    };
-    let rs2 = if load != 0 { 0 } else { slot1 };
-    let rd_write = if store != 0 { 0 } else { slot3 };
-    let ram_read = if load != 0 {
-        slot3
-    } else if store != 0 {
-        slot2
-    } else {
-        0
-    };
-    let ram_write = if load != 0 {
-        slot3
-    } else if store != 0 {
-        slot1
-    } else {
-        0
-    };
-    let a_first = [
-        1 - load - store,
-        load,
-        load,
-        store,
-        add + sub + mul,
-        1 - add - sub - mul,
-        flag(FLAG_ASSERT),
-        flag(FLAG_SHOULD_JUMP),
-        flag(FLAG_VIRTUAL) - flag(FLAG_IS_LAST),
-        flag(FLAG_NEXT_VIRTUAL) - flag(FLAG_NEXT_FIRST),
-    ];
-    let a_second = [
-        load + store,
-        add,
-        sub,
-        mul,
-        1 - add - sub - mul - flag(FLAG_ADVICE),
-        flag(FLAG_WRITE_LOOKUP),
-        jump,
-        should_branch,
-        1 - should_branch - jump,
-    ];
-    let signed = |low: u64, high: u64, positive: bool| S192::new([low, high, 0], positive);
-    let diff = |left: u64, right: u64| S192::from_i128(i128::from(left) - i128::from(right));
-    let right_lookup = signed(words[14], words[15], true);
-    let right_input = signed(words[1], words[2], flag(FLAG_RIGHT_INPUT_POSITIVE) != 0);
-    let product = signed(words[3], words[4], flag(FLAG_PRODUCT_POSITIVE) != 0);
-    let imm = signed(words[7], words[8], flag(FLAG_IMM_POSITIVE) != 0);
-    let b_first = [
-        S192::from_u64(ram_address),
-        diff(ram_read, ram_write),
-        diff(ram_read, rd_write),
-        diff(rs2, ram_write),
-        S192::from_u64(words[13]),
-        diff(words[13], words[0]),
-        S192::from_i128(i128::from(words[18]) - 1),
-        diff(words[16], words[18]),
-        S192::from_i128(i128::from(words[17]) - i128::from(words[5]) - 1),
-        S192::from_i64(1 - flag(FLAG_DO_NOT_UPDATE)),
-    ];
-    let two_pow_64 = S192::new([0, 1, 0], true);
-    let b_second = [
-        S192::from_i128(i128::from(ram_address) - i128::from(words[9])) - imm,
-        right_lookup - S192::from_u64(words[0]) - right_input,
-        right_lookup - S192::from_u64(words[0]) + right_input - two_pow_64,
-        right_lookup - product,
-        right_lookup - right_input,
-        diff(rd_write, words[18]),
-        S192::from_i128(
-            i128::from(rd_write) - i128::from(words[6]) - 4 + 2 * i128::from(flag(FLAG_COMPRESSED)),
-        ),
-        S192::from_i128(i128::from(words[16]) - i128::from(words[6])) - imm,
-        S192::from_i128(
-            i128::from(words[16]) - i128::from(words[6]) - 4
-                + 4 * i128::from(flag(FLAG_DO_NOT_UPDATE))
-                + 2 * i128::from(flag(FLAG_COMPRESSED)),
-        ),
-    ];
-    CpuRowGroups {
-        a_first,
-        a_second,
-        b_first,
-        b_second,
-    }
-}
-
-fn cpu_extended_products(values: &CpuRowGroups) -> [(S256, S256); SPARTAN_OUTER_EXTENDED_NODES] {
-    let mut products = [(S256::zero(), S256::zero()); SPARTAN_OUTER_EXTENDED_NODES];
-    for (node, coefficients) in EXTENSION_COEFFICIENTS.iter().enumerate() {
-        let mut az_first = 0i64;
-        let mut az_second = 0i64;
-        let mut bz_first = S192::zero();
-        let mut bz_second = S192::zero();
-        for (index, &coefficient) in coefficients.iter().enumerate() {
-            az_first += coefficient * values.a_first[index];
-            S64::from_i64(coefficient).fmadd_trunc::<3, 3>(&values.b_first[index], &mut bz_first);
-            if index < 9 {
-                az_second += coefficient * values.a_second[index];
-                S64::from_i64(coefficient)
-                    .fmadd_trunc::<3, 3>(&values.b_second[index], &mut bz_second);
-            }
-        }
-        products[node] = (
-            S64::from_i64(az_first).mul_trunc::<3, 4>(&bz_first),
-            S64::from_i64(az_second).mul_trunc::<3, 4>(&bz_second),
-        );
-    }
-    products
-}
-
-pub fn evaluate_spartan_outer_uniskip_cpu(
-    rows: &[SpartanOuterUniskipRow],
-    e_in: &[AkitaField],
-    e_out: &[AkitaField],
-) -> Result<[AkitaField; SPARTAN_OUTER_EXTENDED_NODES], MetalError> {
-    let pairs_per_block = e_in.len() / 2;
-    if e_in.is_empty()
-        || !e_in.len().is_multiple_of(2)
-        || e_out.is_empty()
-        || pairs_per_block.checked_mul(e_out.len()) != Some(rows.len())
-    {
-        return Err(MetalError::SpartanOuterUniskipShape {
-            rows: rows.len(),
-            e_in: e_in.len(),
-            e_out: e_out.len(),
-        });
-    }
-    let block = |block: usize| {
-        let mut accumulators: [
-            <AkitaField as WithSignedProductAccumulator>::SignedProductAccumulator;
-            SPARTAN_OUTER_EXTENDED_NODES
-        ] = Default::default();
-        for pair in 0..pairs_per_block {
-            let values = cpu_row_groups(rows[block * pairs_per_block + pair]);
-            let products = cpu_extended_products(&values);
-            for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
-                accumulator.fmadd_s256(e_in[2 * pair], first);
-                accumulator.fmadd_s256(e_in[2 * pair + 1], second);
-            }
-        }
-        std::array::from_fn(|node| e_out[block] * accumulators[node].reduce())
-    };
-    let merge = |mut left: [AkitaField; SPARTAN_OUTER_EXTENDED_NODES], right| {
-        for (left, right) in left.iter_mut().zip(right) {
-            *left += right;
-        }
-        left
-    };
-    #[cfg(feature = "parallel")]
-    let output = (0..e_out.len())
-        .into_par_iter()
-        .map(block)
-        .reduce(|| [AkitaField::zero(); SPARTAN_OUTER_EXTENDED_NODES], merge);
-    #[cfg(not(feature = "parallel"))]
-    let output = (0..e_out.len())
-        .map(block)
-        .fold([AkitaField::zero(); SPARTAN_OUTER_EXTENDED_NODES], merge);
-    Ok(output)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1257,13 +1046,224 @@ const _: () = assert!(size_of::<Params>() == 16);
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use jolt_field::signed::{S192, S256, S64};
     use jolt_field::FromPrimitiveInt;
+    use jolt_field::{SignedProductAccumulator as _, WithSignedProductAccumulator};
     use jolt_poly::EqPolynomial;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::OpFlag;
     use jolt_witness::BundleSource;
+    #[cfg(feature = "parallel")]
+    use rayon::prelude::*;
 
     use super::*;
+
+    const EXTENSION_COEFFICIENTS: [[i64; 10]; SPARTAN_OUTER_EXTENDED_NODES] = [
+        [
+            2002, -15015, 51480, -105_105, 140_140, -126_126, 76440, -30030, 6930, -715,
+        ],
+        [
+            715, -5148, 17160, -34320, 45045, -40040, 24024, -9360, 2145, -220,
+        ],
+        [
+            220, -1485, 4752, -9240, 11880, -10395, 6160, -2376, 540, -55,
+        ],
+        [55, -330, 990, -1848, 2310, -1980, 1155, -440, 99, -10],
+        [10, -45, 120, -210, 252, -210, 120, -45, 10, -1],
+        [-1, 10, -45, 120, -210, 252, -210, 120, -45, 10],
+        [-10, 99, -440, 1155, -1980, 2310, -1848, 990, -330, 55],
+        [
+            -55, 540, -2376, 6160, -10395, 11880, -9240, 4752, -1485, 220,
+        ],
+        [
+            -220, 2145, -9360, 24024, -40040, 45045, -34320, 17160, -5148, 715,
+        ],
+    ];
+    struct CpuRowGroups {
+        a_first: [i64; 10],
+        a_second: [i64; 9],
+        b_first: [S192; 10],
+        b_second: [S192; 9],
+    }
+    fn cpu_row_groups(row: SpartanOuterUniskipRow) -> CpuRowGroups {
+        let words = row.words;
+        let flags = words[19];
+        let flag = |bit: u32| ((flags >> bit) & 1) as i64;
+        let load = flag(FLAG_LOAD);
+        let store = flag(FLAG_STORE);
+        let add = flag(FLAG_ADD);
+        let sub = flag(FLAG_SUB);
+        let mul = flag(FLAG_MUL);
+        let jump = flag(FLAG_JUMP);
+        let should_branch = flag(FLAG_SHOULD_BRANCH);
+        let slot1 = words[10];
+        let slot2 = words[11];
+        let slot3 = words[12];
+        let ram_address = if load != 0 {
+            slot1
+        } else if store != 0 {
+            slot3
+        } else {
+            0
+        };
+        let rs2 = if load != 0 { 0 } else { slot1 };
+        let rd_write = if store != 0 { 0 } else { slot3 };
+        let ram_read = if load != 0 {
+            slot3
+        } else if store != 0 {
+            slot2
+        } else {
+            0
+        };
+        let ram_write = if load != 0 {
+            slot3
+        } else if store != 0 {
+            slot1
+        } else {
+            0
+        };
+        let a_first = [
+            1 - load - store,
+            load,
+            load,
+            store,
+            add + sub + mul,
+            1 - add - sub - mul,
+            flag(FLAG_ASSERT),
+            flag(FLAG_SHOULD_JUMP),
+            flag(FLAG_VIRTUAL) - flag(FLAG_IS_LAST),
+            flag(FLAG_NEXT_VIRTUAL) - flag(FLAG_NEXT_FIRST),
+        ];
+        let a_second = [
+            load + store,
+            add,
+            sub,
+            mul,
+            1 - add - sub - mul - flag(FLAG_ADVICE),
+            flag(FLAG_WRITE_LOOKUP),
+            jump,
+            should_branch,
+            1 - should_branch - jump,
+        ];
+        let signed = |low: u64, high: u64, positive: bool| S192::new([low, high, 0], positive);
+        let diff = |left: u64, right: u64| S192::from_i128(i128::from(left) - i128::from(right));
+        let right_lookup = signed(words[14], words[15], true);
+        let right_input = signed(words[1], words[2], flag(FLAG_RIGHT_INPUT_POSITIVE) != 0);
+        let product = signed(words[3], words[4], flag(FLAG_PRODUCT_POSITIVE) != 0);
+        let imm = signed(words[7], words[8], flag(FLAG_IMM_POSITIVE) != 0);
+        let b_first = [
+            S192::from_u64(ram_address),
+            diff(ram_read, ram_write),
+            diff(ram_read, rd_write),
+            diff(rs2, ram_write),
+            S192::from_u64(words[13]),
+            diff(words[13], words[0]),
+            S192::from_i128(i128::from(words[18]) - 1),
+            diff(words[16], words[18]),
+            S192::from_i128(i128::from(words[17]) - i128::from(words[5]) - 1),
+            S192::from_i64(1 - flag(FLAG_DO_NOT_UPDATE)),
+        ];
+        let two_pow_64 = S192::new([0, 1, 0], true);
+        let b_second = [
+            S192::from_i128(i128::from(ram_address) - i128::from(words[9])) - imm,
+            right_lookup - S192::from_u64(words[0]) - right_input,
+            right_lookup - S192::from_u64(words[0]) + right_input - two_pow_64,
+            right_lookup - product,
+            right_lookup - right_input,
+            diff(rd_write, words[18]),
+            S192::from_i128(
+                i128::from(rd_write) - i128::from(words[6]) - 4
+                    + 2 * i128::from(flag(FLAG_COMPRESSED)),
+            ),
+            S192::from_i128(i128::from(words[16]) - i128::from(words[6])) - imm,
+            S192::from_i128(
+                i128::from(words[16]) - i128::from(words[6]) - 4
+                    + 4 * i128::from(flag(FLAG_DO_NOT_UPDATE))
+                    + 2 * i128::from(flag(FLAG_COMPRESSED)),
+            ),
+        ];
+        CpuRowGroups {
+            a_first,
+            a_second,
+            b_first,
+            b_second,
+        }
+    }
+    fn cpu_extended_products(
+        values: &CpuRowGroups,
+    ) -> [(S256, S256); SPARTAN_OUTER_EXTENDED_NODES] {
+        let mut products = [(S256::zero(), S256::zero()); SPARTAN_OUTER_EXTENDED_NODES];
+        for (node, coefficients) in EXTENSION_COEFFICIENTS.iter().enumerate() {
+            let mut az_first = 0i64;
+            let mut az_second = 0i64;
+            let mut bz_first = S192::zero();
+            let mut bz_second = S192::zero();
+            for (index, &coefficient) in coefficients.iter().enumerate() {
+                az_first += coefficient * values.a_first[index];
+                S64::from_i64(coefficient)
+                    .fmadd_trunc::<3, 3>(&values.b_first[index], &mut bz_first);
+                if index < 9 {
+                    az_second += coefficient * values.a_second[index];
+                    S64::from_i64(coefficient)
+                        .fmadd_trunc::<3, 3>(&values.b_second[index], &mut bz_second);
+                }
+            }
+            products[node] = (
+                S64::from_i64(az_first).mul_trunc::<3, 4>(&bz_first),
+                S64::from_i64(az_second).mul_trunc::<3, 4>(&bz_second),
+            );
+        }
+        products
+    }
+    fn evaluate_spartan_outer_uniskip_cpu(
+        rows: &[SpartanOuterUniskipRow],
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> Result<[AkitaField; SPARTAN_OUTER_EXTENDED_NODES], MetalError> {
+        let pairs_per_block = e_in.len() / 2;
+        if e_in.is_empty()
+            || !e_in.len().is_multiple_of(2)
+            || e_out.is_empty()
+            || pairs_per_block.checked_mul(e_out.len()) != Some(rows.len())
+        {
+            return Err(MetalError::SpartanOuterUniskipShape {
+                rows: rows.len(),
+                e_in: e_in.len(),
+                e_out: e_out.len(),
+            });
+        }
+        let block = |block: usize| {
+            let mut accumulators: [
+                <AkitaField as WithSignedProductAccumulator>::SignedProductAccumulator;
+                SPARTAN_OUTER_EXTENDED_NODES
+            ] = Default::default();
+            for pair in 0..pairs_per_block {
+                let values = cpu_row_groups(rows[block * pairs_per_block + pair]);
+                let products = cpu_extended_products(&values);
+                for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
+                    accumulator.fmadd_s256(e_in[2 * pair], first);
+                    accumulator.fmadd_s256(e_in[2 * pair + 1], second);
+                }
+            }
+            std::array::from_fn(|node| e_out[block] * accumulators[node].reduce())
+        };
+        let merge = |mut left: [AkitaField; SPARTAN_OUTER_EXTENDED_NODES], right| {
+            for (left, right) in left.iter_mut().zip(right) {
+                *left += right;
+            }
+            left
+        };
+        #[cfg(feature = "parallel")]
+        let output = (0..e_out.len())
+            .into_par_iter()
+            .map(block)
+            .reduce(|| [AkitaField::zero(); SPARTAN_OUTER_EXTENDED_NODES], merge);
+        #[cfg(not(feature = "parallel"))]
+        let output = (0..e_out.len())
+            .map(block)
+            .fold([AkitaField::zero(); SPARTAN_OUTER_EXTENDED_NODES], merge);
+        Ok(output)
+    }
     use crate::metal::solinas::{
         OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
     };

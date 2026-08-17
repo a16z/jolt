@@ -318,6 +318,10 @@ impl RamRafSequence {
         self.addresses.storage_id()
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "uniform per-round allocation probe across sequence types"
+    )]
     pub const fn round_device_buffer_allocations(&self) -> usize {
         0
     }

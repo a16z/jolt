@@ -83,6 +83,10 @@ fn instruction_ra_weight_capacities(rows: usize) -> Result<(usize, usize), Metal
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "every field is an explicit byte count"
+)]
 pub struct InstructionRaSequenceScratchLayout {
     pub branch_a_bytes: u64,
     pub branch_b_bytes: u64,

@@ -14,7 +14,6 @@ pub(super) const SOURCE: &str = include_str!("shader.metal");
 
 pub const PRODUCT_UNISKIP_EXTENDED_NODES: usize = 2;
 pub const PRODUCT_UNISKIP_SIMD_WIDTH: usize = 32;
-pub const PRODUCT_UNISKIP_NODE_ORDER: [i64; PRODUCT_UNISKIP_EXTENDED_NODES] = [-2, 2];
 pub const PRODUCT_UNISKIP_EXTENSION_COEFFICIENTS: [[i64; 3]; 2] = [[3, -3, 1], [1, -3, 3]];
 
 pub(crate) const BLOCKS_PIPELINE: &str = "solinas_product_uniskip_extended_blocks2";

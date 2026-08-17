@@ -11,7 +11,6 @@ mod tests;
 
 pub use api::{
     OuterRemainderPhase, OuterRemainderSequenceConfig, OuterRemainderStorageInitialization,
-    OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
 pub(crate) use plan::{
     outer_remainder_sequence_max_buffer_bytes_with_config,
