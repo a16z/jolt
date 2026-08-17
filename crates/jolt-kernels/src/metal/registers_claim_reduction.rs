@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::backend::MetalBackend;
+use super::errors::{metal_error, metal_prepare_error};
 use super::solinas::registers_claim_reduction::{
     RegistersClaimAliasSnapshot, RegistersClaimDenseOutputs, RegistersClaimGeometry,
     RegistersClaimKernelConfig, RegistersClaimPartialQHandoff, RegistersClaimResidentRdPlane,
@@ -352,16 +353,17 @@ impl RegistersClaimAliasPublisher {
         rs1_value: Vec<AkitaField>,
         rs2_value: Vec<AkitaField>,
     ) -> Result<(), SumcheckError<AkitaField>> {
-        let geometry = RegistersClaimGeometry::new(self.0.rows).map_err(metal_round_error)?;
+        let geometry = RegistersClaimGeometry::new(self.0.rows).map_err(metal_error)?;
         let snapshot =
             RegistersClaimAliasSnapshot::new(geometry, prefix_challenges, rs1_value, rs2_value)
-                .map_err(metal_round_error)?;
-        let mut state =
-            self.0.state.lock().map_err(|_| {
-                round_state_error("registers claim alias bridge mutex was poisoned")
-            })?;
+                .map_err(metal_error)?;
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .map_err(|_| metal_error("registers claim alias bridge mutex was poisoned"))?;
         if !matches!(*state, RegistersClaimAliasState::Empty) {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "registers claim aliases were published more than once",
             ));
         }
@@ -381,24 +383,25 @@ impl RegistersClaimAliasReceiver {
             || self.0.rows != expected_rows
             || self.0.source_compact_storage_id != expected_source_compact_storage_id
         {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "registers claim alias bridge provenance is inconsistent",
             ));
         }
-        let mut state =
-            self.0.state.lock().map_err(|_| {
-                round_state_error("registers claim alias bridge mutex was poisoned")
-            })?;
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .map_err(|_| metal_error("registers claim alias bridge mutex was poisoned"))?;
         let RegistersClaimAliasState::Published(snapshot) =
             mem::replace(&mut *state, RegistersClaimAliasState::Consumed)
         else {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "registers claim aliases were unavailable at the midpoint",
             ));
         };
         snapshot
             .validate_identity(expected_prefix_challenges)
-            .map_err(metal_round_error)?;
+            .map_err(metal_error)?;
         Ok(snapshot)
     }
 }
@@ -679,7 +682,7 @@ impl MetalRegistersClaimReductionKernel {
                 }
                 Ok(())
             }
-            RegistersClaimPhase::Poisoned => Err(round_state_error(
+            RegistersClaimPhase::Poisoned => Err(metal_error(
                 "registers claim-reduction bind found poisoned state",
             )),
         }
@@ -687,19 +690,20 @@ impl MetalRegistersClaimReductionKernel {
 
     fn transition_to_dense(&mut self) -> Result<(), SumcheckError<AkitaField>> {
         if self.bound_challenges.len() != self.geometry.prefix_vars() {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "registers claim-reduction midpoint has the wrong bind count",
             ));
         }
         let phase = mem::replace(&mut self.phase, RegistersClaimPhase::Poisoned);
         if !matches!(phase, RegistersClaimPhase::Prefix { .. }) {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "registers claim-reduction midpoint requires prefix tables",
             ));
         }
-        let source = self.midpoint_source.take().ok_or_else(|| {
-            round_state_error("registers claim-reduction lost its midpoint source")
-        })?;
+        let source = self
+            .midpoint_source
+            .take()
+            .ok_or_else(|| metal_error("registers claim-reduction lost its midpoint source"))?;
         let outputs = match source {
             RegistersClaimMidpointSource::OuterCarrier {
                 rd,
@@ -721,8 +725,8 @@ impl MetalRegistersClaimReductionKernel {
                 let invocation = self
                     .context
                     .prepare_registers_claim_alias_fold(&rd, &self.bound_challenges, self.config)
-                    .map_err(metal_round_error)?;
-                let observation = invocation.execute_timed().map_err(metal_round_error)?;
+                    .map_err(metal_error)?;
+                let observation = invocation.execute_timed().map_err(metal_error)?;
                 let _ = phase.record("gpu_active_ns", duration_nanos(observation.gpu_active));
                 #[cfg(any(test, feature = "test-utils"))]
                 let _ = self
@@ -792,12 +796,12 @@ impl ProveRounds<AkitaField> for MetalRegistersClaimReductionKernel {
         previous_claim: AkitaField,
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
         if self.finished || round != self.next_round || round >= self.geometry.log_t() {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "registers claim-reduction round calls are out of order",
             ));
         }
         if bind.is_some() != (round != 0) {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "registers claim-reduction round has the wrong bind argument",
             ));
         }
@@ -822,7 +826,7 @@ impl ProveRounds<AkitaField> for MetalRegistersClaimReductionKernel {
                 self.gamma_sq,
             )?,
             RegistersClaimPhase::Poisoned => {
-                return Err(round_state_error(
+                return Err(metal_error(
                     "registers claim-reduction round found poisoned state",
                 ));
             }
@@ -835,7 +839,7 @@ impl ProveRounds<AkitaField> for MetalRegistersClaimReductionKernel {
 
     fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
         if self.finished || self.next_round != self.geometry.log_t() {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "registers claim-reduction cannot finish before every round",
             ));
         }
@@ -887,7 +891,7 @@ fn bind_table(
     challenge: AkitaField,
 ) -> Result<(), SumcheckError<AkitaField>> {
     if table.len() < 2 || !table.len().is_power_of_two() {
-        return Err(round_state_error(
+        return Err(metal_error(
             "registers claim-reduction table has invalid bind geometry",
         ));
     }
@@ -905,7 +909,7 @@ fn product_endpoints(
     right: &[AkitaField],
 ) -> Result<[AkitaField; 2], SumcheckError<AkitaField>> {
     if left.len() != right.len() || left.len() < 2 || !left.len().is_power_of_two() {
-        return Err(round_state_error(
+        return Err(metal_error(
             "registers claim-reduction prefix tables disagree",
         ));
     }
@@ -938,7 +942,7 @@ fn dense_endpoints(
         || eq.len() < 2
         || !eq.len().is_power_of_two()
     {
-        return Err(round_state_error(
+        return Err(metal_error(
             "registers claim-reduction dense tables disagree",
         ));
     }
@@ -958,28 +962,6 @@ fn dense_endpoints(
         );
     }
     Ok(accumulators.map(<AkitaField as WithAccumulator>::Accumulator::reduce))
-}
-
-fn metal_prepare_error(error: impl ToString) -> KernelError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-    .into()
-}
-
-fn metal_round_error(error: impl ToString) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-}
-
-fn round_state_error(reason: &'static str) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: reason.to_owned(),
-    }
 }
 
 fn duration_nanos(duration: std::time::Duration) -> u64 {

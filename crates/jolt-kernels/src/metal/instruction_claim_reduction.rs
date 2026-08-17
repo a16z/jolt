@@ -13,6 +13,7 @@ use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaim
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::errors::{metal_error, metal_output_error, metal_prepare_error};
 use super::solinas::instruction_claim_reduction::{
     finalize_aliased_openings, round_polynomial_from_q_endpoints, InstructionClaimAliasedOpenings,
     InstructionClaimKernelConfig, InstructionClaimSequence, PendingInstructionClaimInitialMessage,
@@ -196,28 +197,6 @@ fn instruction_prepare_fallback_reason(error: &MetalError) -> Option<&'static st
     }
 }
 
-fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-    .into()
-}
-
-fn metal_round_error(error: MetalError) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-}
-
-fn metal_output_error(message: impl ToString) -> SumcheckKernelError<AkitaField> {
-    SumcheckKernelError::ComputeBackend {
-        backend: "metal",
-        message: message.to_string(),
-    }
-}
-
 fn duration_nanos(duration: std::time::Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
@@ -299,7 +278,7 @@ impl MetalInstructionClaimState {
             Self::Standalone(sequence) => {
                 let (message, timing) = sequence
                     .bind_and_message_timed(challenge, e_in, e_out)
-                    .map_err(metal_round_error)?;
+                    .map_err(metal_error)?;
                 Ok((
                     message,
                     ProductInstructionRoundStats {
@@ -316,7 +295,7 @@ impl MetalInstructionClaimState {
                     message: "joint Product/Instruction service lock is poisoned".to_string(),
                 })?
                 .instruction_bind_and_message(round, challenge, e_in, e_out)
-                .map_err(metal_round_error),
+                .map_err(metal_error),
         }
     }
 
@@ -458,7 +437,7 @@ impl ProveRounds<AkitaField> for MetalInstructionClaimKernel {
                             backend: "metal",
                             message: "instruction claim first message is missing".to_string(),
                         })?;
-                let (sequence, message, _stats) = pending.join().map_err(metal_round_error)?;
+                let (sequence, message, _stats) = pending.join().map_err(metal_error)?;
                 self.state = Some(MetalInstructionClaimState::Standalone(Box::new(sequence)));
                 message
             }
@@ -481,7 +460,7 @@ impl ProveRounds<AkitaField> for MetalInstructionClaimKernel {
                 backend: "metal",
                 message: "instruction claim resident sequence is missing".to_string(),
             })?;
-        self.combined_claim = Some(state.finish(bind).map_err(metal_round_error)?);
+        self.combined_claim = Some(state.finish(bind).map_err(metal_error)?);
         Ok(())
     }
 }

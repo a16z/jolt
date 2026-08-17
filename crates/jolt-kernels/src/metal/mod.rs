@@ -5,6 +5,7 @@
 mod backend;
 mod booleanity;
 mod bytecode_read_raf;
+mod errors;
 mod hamming_weight_claim_reduction;
 mod instruction_claim_reduction;
 mod instruction_input;

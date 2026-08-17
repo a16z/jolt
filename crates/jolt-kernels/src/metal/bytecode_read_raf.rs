@@ -12,6 +12,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::backend::MetalBackend;
+use super::errors::metal_error;
 use super::solinas::bytecode_read_raf_address::{
     carrier::{ADDRESS_LOG2, INNER_LOG2},
     worklist::BYTECODE_ADDRESS_PUSHFORWARD_STAGES,
@@ -528,13 +529,6 @@ impl SumcheckKernel<AkitaField> for MetalBytecodeReadRafKernel {
     ) -> Result<SumcheckOutputClaims<AkitaField, Self::Relation>, SumcheckKernelError<AkitaField>>
     {
         self.cpu.output_claims(inputs)
-    }
-}
-
-fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: message.into(),
     }
 }
 

@@ -10,6 +10,7 @@ use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::errors::{metal_error, metal_prepare_error};
 use super::registers_claim_reduction::{
     registers_claim_alias_pair, RegistersClaimAliasPublisher, RegistersClaimReductionImplementation,
 };
@@ -751,17 +752,6 @@ impl SumcheckKernel<AkitaField> for MetalInstructionInputKernel {
     ) -> Result<(), SumcheckKernelError<AkitaField>> {
         self.cpu
             .validate_derived_tables(relation, input_points, output_points, challenges)
-    }
-}
-
-fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
-    metal_error(error.to_string()).into()
-}
-
-fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: message.into(),
     }
 }
 

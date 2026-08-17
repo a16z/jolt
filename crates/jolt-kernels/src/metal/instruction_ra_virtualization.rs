@@ -8,6 +8,7 @@ use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRa
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::errors::metal_error;
 use super::solinas::{
     InstructionRaSequence, InstructionRaSequenceConfig, InstructionRaSequenceStorage,
     ResidentLookupIndexPlane,
@@ -287,12 +288,5 @@ impl SumcheckKernel<AkitaField> for MetalInstructionRaVirtualizationKernel {
     ) -> Result<(), SumcheckKernelError<AkitaField>> {
         self.cpu
             .validate_derived_tables(relation, input_points, output_points, challenges)
-    }
-}
-
-fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: message.into(),
     }
 }

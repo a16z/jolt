@@ -12,6 +12,7 @@ use jolt_verifier::stages::stage3::spartan_shift::{SpartanShift, SpartanShiftOut
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::errors::{metal_error, metal_output_error, metal_prepare_error};
 use super::solinas::spartan_shift::{
     bind_dense_state, bind_prefix_tables, build_dense_state, dense_round, final_outputs,
     prefix_round, PendingSpartanShiftFold, PendingSpartanShiftPrefix, SpartanShiftDenseState,
@@ -254,7 +255,7 @@ impl MetalSpartanShiftKernel {
                     gpu_active_ns = tracing::field::Empty,
                 );
                 let _entered = span.enter();
-                let (_invocation, observation) = pending.join().map_err(metal_round_error)?;
+                let (_invocation, observation) = pending.join().map_err(metal_error)?;
                 let _ = span.record("gpu_active_ns", duration_nanos(observation.gpu_active));
                 self.phase = MetalSpartanShiftPhase::Prefix(SpartanShiftPrefixTables {
                     p,
@@ -266,7 +267,7 @@ impl MetalSpartanShiftKernel {
                 self.phase = MetalSpartanShiftPhase::Prefix(tables);
                 Ok(())
             }
-            _ => Err(round_state_error(
+            _ => Err(metal_error(
                 "Spartan shift prefix was requested after its phase ended",
             )),
         }
@@ -275,18 +276,18 @@ impl MetalSpartanShiftKernel {
     fn transition_to_fold(&mut self) -> Result<(), SumcheckError<AkitaField>> {
         let phase = mem::replace(&mut self.phase, MetalSpartanShiftPhase::Poisoned);
         if !matches!(phase, MetalSpartanShiftPhase::Prefix(_)) {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "Spartan shift midpoint transition requires prefix tables",
             ));
         }
         let rows = self.rows.as_ref().ok_or_else(|| {
-            round_state_error("Spartan shift resident rows disappeared before the midpoint fold")
+            metal_error("Spartan shift resident rows disappeared before the midpoint fold")
         })?;
         let invocation = self
             .context
             .prepare_spartan_shift_fold(rows, &self.bound_challenges, self.config)
-            .map_err(metal_round_error)?;
-        let pending = invocation.submit().map_err(metal_round_error)?;
+            .map_err(metal_error)?;
+        let pending = invocation.submit().map_err(metal_error)?;
         self.rows = None;
         self.phase = MetalSpartanShiftPhase::FoldPending(pending);
         Ok(())
@@ -301,7 +302,7 @@ impl MetalSpartanShiftKernel {
                     gpu_active_ns = tracing::field::Empty,
                 );
                 let _entered = span.enter();
-                let (_invocation, observation) = pending.join().map_err(metal_round_error)?;
+                let (_invocation, observation) = pending.join().map_err(metal_error)?;
                 let _ = span.record("gpu_active_ns", duration_nanos(observation.gpu_active));
                 let state = build_dense_state(
                     self.geometry,
@@ -310,7 +311,7 @@ impl MetalSpartanShiftKernel {
                     &self.r_product,
                     &self.bound_challenges,
                 )
-                .map_err(metal_round_error)?;
+                .map_err(metal_error)?;
                 self.source_retained = false;
                 self.phase = MetalSpartanShiftPhase::Dense(state);
                 Ok(())
@@ -319,7 +320,7 @@ impl MetalSpartanShiftKernel {
                 self.phase = MetalSpartanShiftPhase::Dense(state);
                 Ok(())
             }
-            _ => Err(round_state_error(
+            _ => Err(metal_error(
                 "Spartan shift dense phase was requested before the midpoint fold",
             )),
         }
@@ -335,21 +336,19 @@ impl MetalSpartanShiftKernel {
             BindAction::Prefix => {
                 self.ensure_prefix_ready()?;
                 let MetalSpartanShiftPhase::Prefix(tables) = &mut self.phase else {
-                    return Err(round_state_error(
+                    return Err(metal_error(
                         "Spartan shift prefix bind has no prefix tables",
                     ));
                 };
-                bind_prefix_tables(tables, challenge).map_err(metal_round_error)
+                bind_prefix_tables(tables, challenge).map_err(metal_error)
             }
             BindAction::Transition => self.transition_to_fold(),
             BindAction::Dense => {
                 self.ensure_dense_ready()?;
                 let MetalSpartanShiftPhase::Dense(state) = &mut self.phase else {
-                    return Err(round_state_error(
-                        "Spartan shift dense bind has no dense tables",
-                    ));
+                    return Err(metal_error("Spartan shift dense bind has no dense tables"));
                 };
-                bind_dense_state(state, challenge).map_err(metal_round_error)
+                bind_dense_state(state, challenge).map_err(metal_error)
             }
         }
     }
@@ -360,11 +359,11 @@ impl MetalSpartanShiftKernel {
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
         self.ensure_prefix_ready()?;
         let MetalSpartanShiftPhase::Prefix(tables) = &self.phase else {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "Spartan shift prefix round has no prefix tables",
             ));
         };
-        prefix_round(previous_claim, tables).map_err(metal_round_error)
+        prefix_round(previous_claim, tables).map_err(metal_error)
     }
 
     fn prove_dense(
@@ -373,11 +372,9 @@ impl MetalSpartanShiftKernel {
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
         self.ensure_dense_ready()?;
         let MetalSpartanShiftPhase::Dense(state) = &self.phase else {
-            return Err(round_state_error(
-                "Spartan shift dense round has no dense tables",
-            ));
+            return Err(metal_error("Spartan shift dense round has no dense tables"));
         };
-        dense_round(previous_claim, state, self.gamma).map_err(metal_round_error)
+        dense_round(previous_claim, state, self.gamma).map_err(metal_error)
     }
 
     fn dense_state(
@@ -411,7 +408,7 @@ impl ProveRounds<AkitaField> for MetalSpartanShiftKernel {
         let step = self
             .cursor
             .start_round(round, bind.is_some())
-            .map_err(round_state_error)?;
+            .map_err(metal_error)?;
         if let Some(challenge) = bind {
             self.bound_challenges.push(challenge);
             self.apply_bind(step.bind, challenge)?;
@@ -423,14 +420,14 @@ impl ProveRounds<AkitaField> for MetalSpartanShiftKernel {
     }
 
     fn finish_rounds(&mut self, bind: AkitaField) -> Result<(), SumcheckError<AkitaField>> {
-        let action = self.cursor.finish().map_err(round_state_error)?;
+        let action = self.cursor.finish().map_err(metal_error)?;
         self.bound_challenges.push(bind);
         self.apply_bind(action, bind)?;
         if action == BindAction::Transition {
             self.ensure_dense_ready()?;
         }
         if self.bound_challenges.len() != self.cursor.rounds() {
-            return Err(round_state_error(
+            return Err(metal_error(
                 "Spartan shift bound challenge count differs from its round count",
             ));
         }
@@ -565,35 +562,6 @@ impl RoundCursor {
         } else {
             Ok(BindAction::Dense)
         }
-    }
-}
-
-fn metal_prepare_error(error: impl ToString) -> KernelError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-    .into()
-}
-
-fn metal_round_error(error: impl ToString) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-}
-
-fn metal_output_error(error: impl ToString) -> SumcheckKernelError<AkitaField> {
-    SumcheckKernelError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-}
-
-fn round_state_error(reason: &'static str) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: reason.to_owned(),
     }
 }
 

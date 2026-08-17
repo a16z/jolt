@@ -9,6 +9,7 @@ use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::{JoltWitnessPlane, PolynomialEncoding};
 
 use super::backend::MetalBackend;
+use super::errors::{metal_error, metal_prepare_error};
 use super::solinas::bytecode_read_raf_address::{
     BytecodeAddressFusedScatterRequest, BytecodeAddressSparseStage1Carrier,
     BytecodeAddressStage1TopologyOwner,
@@ -586,7 +587,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                         "Booleanity resident rows were not admitted"
                     );
                 }
-                Err(error) => return Err(backend_error(error.to_string()).into()),
+                Err(error) => return Err(metal_error(error.to_string()).into()),
             }
         }
         Ok(Box::new(MetalInstructionReadRafKernel::new(
@@ -669,7 +670,7 @@ impl MetalInstructionReadRafKernel {
                                         *planes,
                                         config.address_dispatch,
                                     )
-                                    .map_err(|error| backend_error(error.to_string()))?,
+                                    .map_err(|error| metal_error(error.to_string()))?,
                             ),
                             None,
                         )
@@ -685,7 +686,7 @@ impl MetalInstructionReadRafKernel {
                 let (suffix_len, previous) = kernel.cpu.metal_address_phase_request()?;
                 let sums = if let Some(initial_sums) = initial_sums {
                     if suffix_len != INITIAL_ADDRESS_SUFFIX_BITS || previous.is_some() {
-                        return Err(backend_error(
+                        return Err(metal_error(
                             "prefetched Instruction Read-RAF address phase has stale geometry",
                         ));
                     }
@@ -693,7 +694,7 @@ impl MetalInstructionReadRafKernel {
                 } else {
                     sequence
                         .phase(suffix_len, previous.as_ref())
-                        .map_err(|error| backend_error(error.to_string()))?
+                        .map_err(|error| metal_error(error.to_string()))?
                 };
                 kernel.cpu.metal_install_address_phase(sums)?;
                 kernel.metal_address_phases = 1;
@@ -716,7 +717,7 @@ impl MetalInstructionReadRafKernel {
                     tracing::info_span!("MetalInstructionReadRaf::initial_address_phase").entered();
                 sequence
                     .phase(suffix_len, previous.as_ref())
-                    .map_err(|error| backend_error(error.to_string()))?
+                    .map_err(|error| metal_error(error.to_string()))?
             };
             kernel.cpu.metal_install_address_phase(sums)?;
             kernel.metal_address_phases = 1;
@@ -740,10 +741,10 @@ impl MetalInstructionReadRafKernel {
         let sequence = self
             .address_sequence
             .as_mut()
-            .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
+            .ok_or_else(|| metal_error("resident address sequence disappeared"))?;
         let sums = sequence
             .phase(suffix_len, previous.as_ref())
-            .map_err(|error| backend_error(error.to_string()))?;
+            .map_err(|error| metal_error(error.to_string()))?;
         self.cpu.metal_install_address_phase(sums)?;
         self.metal_address_phases += 1;
         Ok(())
@@ -754,14 +755,14 @@ impl MetalInstructionReadRafKernel {
         let sequence = self
             .sequence
             .take()
-            .ok_or_else(|| backend_error("device sequence is absent during readback"))?;
+            .ok_or_else(|| metal_error("device sequence is absent during readback"))?;
         let mut tables = self
             .host_tail
             .take()
-            .ok_or_else(|| backend_error("CPU tail buffers were already consumed"))?;
+            .ok_or_else(|| metal_error("CPU tail buffers were already consumed"))?;
         sequence
             .read_current_factor_tables(&mut tables)
-            .map_err(|error| backend_error(error.to_string()))?;
+            .map_err(|error| metal_error(error.to_string()))?;
         self.cpu.metal_restore_dense(tables)
     }
 }
@@ -802,7 +803,7 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
                 let address_sequence = self
                     .address_sequence
                     .take()
-                    .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
+                    .ok_or_else(|| metal_error("resident address sequence disappeared"))?;
                 let (sequence, q_evals) = self.cpu.metal_offload_resident_bind(
                     challenge,
                     *address_sequence,
@@ -817,7 +818,7 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
                 tracing::info_span!("MetalInstructionReadRaf::resident_first_message").entered();
             let (cpu, address_sequence) = (&self.cpu, self.address_sequence.as_mut());
             let address_sequence = address_sequence
-                .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
+                .ok_or_else(|| metal_error("resident address sequence disappeared"))?;
             let poly = cpu.metal_resident_cycle_message(address_sequence, previous_claim)?;
             self.metal_rounds += 1;
             return Ok(poly);
@@ -835,16 +836,16 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
         if self.sequence.is_some() {
             let _span = tracing::info_span!("MetalInstructionReadRaf::resident_round").entered();
             let challenge = bind.ok_or_else(|| {
-                backend_error("device-resident cycle round did not receive its prior challenge")
+                metal_error("device-resident cycle round did not receive its prior challenge")
             })?;
             self.cpu.metal_bind_offloaded(challenge)?;
             let (cpu, sequence) = (&self.cpu, self.sequence.as_mut());
             let sequence = sequence
-                .ok_or_else(|| backend_error("device sequence disappeared before dispatch"))?;
+                .ok_or_else(|| metal_error("device sequence disappeared before dispatch"))?;
             let (e_in, e_out) = cpu.metal_cycle_weights()?;
             let q_evals = sequence
                 .bind_and_message(challenge, e_in, e_out)
-                .map_err(|error| backend_error(error.to_string()))?;
+                .map_err(|error| metal_error(error.to_string()))?;
             self.metal_rounds += 1;
             return cpu.metal_cycle_message(&q_evals, previous_claim);
         }
@@ -863,7 +864,7 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
                 let (e_in, e_out) = self.cpu.metal_cycle_weights()?;
                 let q_evals = sequence
                     .message(e_in, e_out)
-                    .map_err(|error| backend_error(error.to_string()))?;
+                    .map_err(|error| metal_error(error.to_string()))?;
                 let poly = self.cpu.metal_cycle_message(&q_evals, previous_claim)?;
                 self.metal_rounds += 1;
                 self.sequence = Some(sequence);
@@ -996,17 +997,6 @@ fn validate_fused_bytecode_carrier(
         });
     }
     Ok(())
-}
-
-fn backend_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: message.into(),
-    }
-}
-
-fn metal_prepare_error(error: impl ToString) -> KernelError<AkitaField> {
-    backend_error(error.to_string()).into()
 }
 
 #[cfg(test)]

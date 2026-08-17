@@ -29,6 +29,7 @@ use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::errors::{metal_error, metal_output_error, metal_prepare_error};
 #[cfg(test)]
 use super::solinas::ProductRemainderRow;
 use super::solinas::{
@@ -868,28 +869,6 @@ fn product_prepare_fallback_reason(error: &MetalError) -> Option<&'static str> {
     }
 }
 
-fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-    .into()
-}
-
-fn metal_round_error(error: MetalError) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-}
-
-fn metal_output_error(error: MetalError) -> SumcheckKernelError<AkitaField> {
-    SumcheckKernelError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-}
-
 fn duration_nanos(duration: std::time::Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
@@ -1078,7 +1057,7 @@ impl MetalProductRemainderState {
         &self,
     ) -> Result<(Vec<AkitaField>, Vec<AkitaField>), SumcheckError<AkitaField>> {
         match self {
-            Self::Standalone(sequence) => sequence.read_current_state().map_err(metal_round_error),
+            Self::Standalone(sequence) => sequence.read_current_state().map_err(metal_error),
             Self::Joint(service) => service
                 .lock()
                 .map_err(|_| SumcheckError::ComputeBackend {
@@ -1086,7 +1065,7 @@ impl MetalProductRemainderState {
                     message: "joint Product/Instruction service lock is poisoned".to_string(),
                 })?
                 .read_product_current_state()
-                .map_err(metal_round_error),
+                .map_err(metal_error),
         }
     }
 
@@ -1102,7 +1081,7 @@ impl MetalProductRemainderState {
                 let started = Instant::now();
                 let (message, gpu_active) = sequence
                     .bind_and_message_timed(challenge, e_in, e_out)
-                    .map_err(metal_round_error)?;
+                    .map_err(metal_error)?;
                 Ok((
                     message,
                     ProductInstructionRoundStats {
@@ -1119,7 +1098,7 @@ impl MetalProductRemainderState {
                     message: "joint Product/Instruction service lock is poisoned".to_string(),
                 })?
                 .product_bind_and_message(round, challenge, e_in, e_out)
-                .map_err(metal_round_error),
+                .map_err(metal_error),
         }
     }
 

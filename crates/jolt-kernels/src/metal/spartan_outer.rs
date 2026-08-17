@@ -24,6 +24,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::backend::{MetalBackend, MetalConfig};
+use super::errors::{metal_error, metal_output_error, metal_prepare_error};
 use super::instruction_input::{InstructionInputDenseStorageMode, PreparedInstructionInput};
 use super::registers_claim_reduction::{
     MetalRegistersClaimAsyncStage1Carry, MetalRegistersClaimOuterSource,
@@ -817,28 +818,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
     }
 }
 
-fn metal_prepare_error(error: impl ToString) -> KernelError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-    .into()
-}
-
-fn metal_round_error(error: MetalError) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-}
-
-fn metal_output_error(error: impl ToString) -> SumcheckKernelError<AkitaField> {
-    SumcheckKernelError::ComputeBackend {
-        backend: "metal",
-        message: error.to_string(),
-    }
-}
-
 fn invalid_outer_remainder_state(expected: &'static str, got: &'static str) -> MetalError {
     MetalError::InvalidOuterRemainderState { expected, got }
 }
@@ -1024,7 +1003,7 @@ struct MetalOuterCpuTail {
 impl MetalOuterCpuTail {
     fn new(az: Vec<AkitaField>, bz: Vec<AkitaField>) -> Result<Self, SumcheckError<AkitaField>> {
         if az.len() != bz.len() || az.is_empty() || !az.len().is_power_of_two() {
-            return Err(metal_round_error(invalid_outer_remainder_state(
+            return Err(metal_error(invalid_outer_remainder_state(
                 "equal nonempty power-of-two CPU-tail tables",
                 "inconsistent CPU-tail table lengths",
             )));
@@ -1056,7 +1035,7 @@ impl MetalOuterCpuTail {
             .checked_mul(in_len)
             .and_then(|pairs| pairs.checked_mul(2));
         if expected != Some(az.len()) || bz.len() != az.len() {
-            return Err(metal_round_error(invalid_outer_remainder_state(
+            return Err(metal_error(invalid_outer_remainder_state(
                 "CPU-tail Az/Bz lengths equal 2 * e_in * e_out",
                 "inconsistent CPU-tail weight geometry",
             )));
@@ -1390,7 +1369,7 @@ impl MetalOuterRemainderKernel {
 
     fn restore_cpu_tail(&mut self) -> Result<(), SumcheckError<AkitaField>> {
         let sequence = self.sequence.as_mut().ok_or_else(|| {
-            metal_round_error(invalid_outer_remainder_state(
+            metal_error(invalid_outer_remainder_state(
                 "resident sequence during CPU-tail export",
                 "absent device sequence",
             ))
@@ -1398,10 +1377,10 @@ impl MetalOuterRemainderKernel {
         let current = sequence.current_elements();
         let readback_elements = current
             .checked_mul(2)
-            .ok_or_else(|| metal_round_error(MetalError::InputTooLong(current)))?;
+            .ok_or_else(|| metal_error(MetalError::InputTooLong(current)))?;
         let readback_bytes = readback_elements
             .checked_mul(size_of::<AkitaField>())
-            .ok_or_else(|| metal_round_error(MetalError::InputTooLong(readback_elements)))?;
+            .ok_or_else(|| metal_error(MetalError::InputTooLong(readback_elements)))?;
         let _span = tracing::info_span!(
             "MetalOuterRemainder::readback",
             readbacks = 1u64,
@@ -1410,20 +1389,20 @@ impl MetalOuterRemainderKernel {
         )
         .entered();
         let (mut az, mut bz) = self.host_tail.take().ok_or_else(|| {
-            metal_round_error(invalid_outer_remainder_state(
+            metal_error(invalid_outer_remainder_state(
                 "available CPU-tail buffers",
                 "already-consumed CPU-tail buffers",
             ))
         })?;
         if current > az.len() || current > bz.len() {
-            return Err(metal_round_error(invalid_outer_remainder_state(
+            return Err(metal_error(invalid_outer_remainder_state(
                 "resident table within CPU-tail capacity",
                 "oversized resident table",
             )));
         }
         sequence
             .export_cpu_tail(&mut az[..current], &mut bz[..current])
-            .map_err(metal_round_error)?;
+            .map_err(metal_error)?;
         az.truncate(current);
         bz.truncate(current);
         self.cpu_tail = Some(MetalOuterCpuTail::new(az, bz)?);
@@ -1459,7 +1438,7 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
                 tail.endpoints(e_in, e_out)?
             } else {
                 let sequence = self.sequence.as_mut().ok_or_else(|| {
-                    metal_round_error(invalid_outer_remainder_state(
+                    metal_error(invalid_outer_remainder_state(
                         "resident sequence before a Metal round",
                         "absent device sequence",
                     ))
@@ -1493,7 +1472,7 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
                 } else {
                     sequence.bind_and_message(challenge, e_in, e_out)
                 }
-                .map_err(metal_round_error)?;
+                .map_err(metal_error)?;
                 let gpu_active =
                     record_gpu_phase(&phase, started, gpu_before, sequence.gpu_active_time());
                 if first_bind {
@@ -1505,7 +1484,7 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
             }
         } else {
             self.pending_endpoints.take().ok_or_else(|| {
-                metal_round_error(invalid_outer_remainder_state(
+                metal_error(invalid_outer_remainder_state(
                     "pending first remainder message",
                     "already-consumed first remainder message",
                 ))
@@ -1523,7 +1502,7 @@ impl ProveRounds<AkitaField> for MetalOuterRemainderKernel {
         self.cpu_tail
             .as_mut()
             .ok_or_else(|| {
-                metal_round_error(invalid_outer_remainder_state(
+                metal_error(invalid_outer_remainder_state(
                     "CPU tail before the terminal bind",
                     "absent CPU tail",
                 ))

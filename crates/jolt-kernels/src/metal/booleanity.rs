@@ -10,6 +10,7 @@ use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhas
 use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
+use super::errors::metal_error;
 use super::solinas::{
     BooleanityAddressPushforwardConfig, BooleanityRows, BooleanitySelector, BooleanitySequence,
     BooleanitySequenceConfig, MetalError, BOOLEANITY_SOURCE_ROW_BYTES,
@@ -458,13 +459,6 @@ impl SumcheckKernel<AkitaField> for MetalBooleanityKernel {
     ) -> Result<(), SumcheckKernelError<AkitaField>> {
         self.cpu
             .validate_derived_tables(relation, input_points, output_points, challenges)
-    }
-}
-
-fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: message.into(),
     }
 }
 

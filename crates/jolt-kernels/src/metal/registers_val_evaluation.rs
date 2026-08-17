@@ -13,6 +13,7 @@ use jolt_verifier::stages::stage5::registers_val_evaluation::{
 use jolt_witness::{collect_bundles, JoltWitnessPlane};
 
 use super::backend::MetalBackend;
+use super::errors::{metal_error, metal_prepare_error};
 use super::solinas::{
     MetalError, PendingRegistersValFirstMessage, RegistersValDenseConfig,
     RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
@@ -385,10 +386,10 @@ impl MetalRegistersValEvaluationKernel {
             }
             RegistersValState::Native(invocation) => invocation
                 .read_dense_state_into(rows)
-                .map_err(metal_runtime_error)?,
+                .map_err(metal_error)?,
             RegistersValState::Dense(sequence) => sequence
                 .read_current_dense_state_into(rows)
-                .map_err(metal_runtime_error)?,
+                .map_err(metal_error)?,
             RegistersValState::CpuTail
             | RegistersValState::Finished
             | RegistersValState::Failed => {
@@ -424,12 +425,12 @@ impl MetalRegistersValEvaluationKernel {
                     gpu_active_ns = tracing::field::Empty,
                 );
                 let _entered = span.enter();
-                let (invocation, gpu_active) = pending.join().map_err(metal_runtime_error)?;
+                let (invocation, gpu_active) = pending.join().map_err(metal_error)?;
                 let _ = span.record(
                     "gpu_active_ns",
                     u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX),
                 );
-                let message = invocation.read_message().map_err(metal_runtime_error)?;
+                let message = invocation.read_message().map_err(metal_error)?;
                 self.state = RegistersValState::FirstJoined(invocation);
                 Ok(message)
             }
@@ -450,21 +451,21 @@ impl MetalRegistersValEvaluationKernel {
                     RegistersValState::FirstJoined(invocation) => {
                         let transition = invocation
                             .into_first_transition(bound_lt_lo, self.first_transition)
-                            .map_err(metal_runtime_error)?;
+                            .map_err(metal_error)?;
                         let _span = tracing::info_span!(
                             "MetalRegistersValEvaluation::native_transition",
                             source_elements = transition.source_cycles(),
                         )
                         .entered();
-                        transition.execute(challenge).map_err(metal_runtime_error)?;
-                        let message = transition.read_message().map_err(metal_runtime_error)?;
+                        transition.execute(challenge).map_err(metal_error)?;
+                        let message = transition.read_message().map_err(metal_error)?;
                         self.state = RegistersValState::Native(transition);
                         Ok(message)
                     }
                     RegistersValState::Native(invocation) => {
                         let mut sequence = invocation
                             .into_sequence(self.dense_transition)
-                            .map_err(metal_runtime_error)?;
+                            .map_err(metal_error)?;
                         let source_elements = sequence.current_elements();
                         let _span = tracing::info_span!(
                             "MetalRegistersValEvaluation::dense_transition",
@@ -474,7 +475,7 @@ impl MetalRegistersValEvaluationKernel {
                         .entered();
                         let message = sequence
                             .bind_and_message(challenge, bound_lt_lo)
-                            .map_err(metal_runtime_error)?;
+                            .map_err(metal_error)?;
                         self.state = RegistersValState::Dense(sequence);
                         Ok(message)
                     }
@@ -488,7 +489,7 @@ impl MetalRegistersValEvaluationKernel {
                         .entered();
                         let message = sequence
                             .bind_and_message(challenge, bound_lt_lo)
-                            .map_err(metal_runtime_error)?;
+                            .map_err(metal_error)?;
                         self.state = RegistersValState::Dense(sequence);
                         Ok(message)
                     }
@@ -590,21 +591,6 @@ impl SumcheckKernel<AkitaField> for MetalRegistersValEvaluationKernel {
         }
         self.cpu
             .validate_derived_tables(relation, input_points, output_points, challenges)
-    }
-}
-
-fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
-    metal_runtime_error(error).into()
-}
-
-fn metal_runtime_error(error: MetalError) -> SumcheckError<AkitaField> {
-    metal_error(error.to_string())
-}
-
-fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
-    SumcheckError::ComputeBackend {
-        backend: "metal",
-        message: message.into(),
     }
 }
 
