@@ -277,7 +277,7 @@ fn stage5_claims_from_openings<F: Field>(
     }
     if instruction_ra.is_empty() {
         return Err(VerifierError::MissingOpeningClaim {
-            id: instruction::instruction_ra(0),
+            id: instruction::instruction_ra(0).into(),
         });
     }
     Ok(Stage5OutputClaims {
@@ -333,7 +333,8 @@ fn stage6b_claims_from_openings<F: Field>(
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(0),
                 JoltRelationId::BytecodeReadRaf,
-            ),
+            )
+            .into(),
         });
     }
 
@@ -382,7 +383,8 @@ fn stage6b_claims_from_openings<F: Field>(
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(0),
                 JoltRelationId::Booleanity,
-            ),
+            )
+            .into(),
         });
     }
 
@@ -405,7 +407,7 @@ fn stage6b_claims_from_openings<F: Field>(
     }
     if committed_instruction_ra.is_empty() {
         return Err(VerifierError::MissingOpeningClaim {
-            id: instruction::committed_instruction_ra(0),
+            id: instruction::committed_instruction_ra(0).into(),
         });
     }
 
@@ -558,7 +560,8 @@ fn stage7_claims_from_openings<F: Field>(
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(0),
                 JoltRelationId::HammingWeightClaimReduction,
-            ),
+            )
+            .into(),
         });
     }
 
@@ -619,7 +622,7 @@ impl<F: Field> OpeningClaimMap<F> {
 
     fn require(&self, id: jolt::JoltOpeningId) -> Result<F, VerifierError> {
         self.get(id)
-            .ok_or(VerifierError::MissingOpeningClaim { id })
+            .ok_or(VerifierError::MissingOpeningClaim { id: id.into() })
     }
 
     fn get_or_zero(&self, id: jolt::JoltOpeningId) -> F {
@@ -715,7 +718,8 @@ mod packed {
                 id: JoltOpeningId::committed(
                     JoltCommittedPolynomial::BytecodeRa(0),
                     JoltRelationId::BytecodeReadRaf,
-                ),
+                )
+                .into(),
             });
         }
 
@@ -762,7 +766,7 @@ mod packed {
             indexed_family(claims, instruction::committed_instruction_ra);
         if committed_instruction_ra.is_empty() {
             return Err(VerifierError::MissingOpeningClaim {
-                id: instruction::committed_instruction_ra(0),
+                id: instruction::committed_instruction_ra(0).into(),
             });
         }
 
@@ -821,7 +825,8 @@ mod packed {
                 id: JoltOpeningId::committed(
                     JoltCommittedPolynomial::InstructionRa(0),
                     JoltRelationId::HammingWeightClaimReduction,
-                ),
+                )
+                .into(),
             });
         }
 
@@ -831,7 +836,7 @@ mod packed {
         );
         if chunks.is_empty() {
             return Err(VerifierError::MissingOpeningClaim {
-                id: lattice_digit_zero::reduced_balanced_inc_digit_opening(0),
+                id: lattice_digit_zero::reduced_balanced_inc_digit_opening(0).into(),
             });
         }
 

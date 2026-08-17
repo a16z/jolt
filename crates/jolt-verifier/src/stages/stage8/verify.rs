@@ -312,7 +312,7 @@ where
                 claims
                     .get(index)
                     .copied()
-                    .ok_or(VerifierError::MissingOpeningClaim { id })
+                    .ok_or(VerifierError::MissingOpeningClaim { id: id.into() })
             })
             .transpose()?;
         Ok((commitment, opening_claim))
@@ -325,7 +325,7 @@ where
         polynomial: JoltCommittedPolynomial,
         id: JoltOpeningId,
     ) -> Result<(&'c O, &'c [F], Option<F>), VerifierError> {
-        let opening = opening.ok_or(VerifierError::MissingOpeningClaim { id })?;
+        let opening = opening.ok_or(VerifierError::MissingOpeningClaim { id: id.into() })?;
         let commitment =
             commitment.ok_or(VerifierError::MissingFinalOpeningCommitment { polynomial })?;
         Ok((commitment, opening.point.as_slice(), opening.opening_claim))

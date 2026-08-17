@@ -18,6 +18,7 @@ use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
+pub mod ids;
 pub mod relations;
 pub mod stage1;
 pub mod stage2;

@@ -292,7 +292,7 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         _challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let rho_rev = self.rho_reversed(output_points)?;
         match public_id {
@@ -325,7 +325,7 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 }
                 #[cfg(not(feature = "akita"))]
                 {
-                    Err(VerifierError::MissingStageClaimDerived { id: *id })
+                    Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
                 }
             }
         }

@@ -108,7 +108,7 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         _challenges: &RegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RegistersReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             RegistersReadWritePublic::EqCycle => {

@@ -89,7 +89,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductUniskip<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // The uni-skip first-round Lagrange weights, evaluated at `tau_high`; the
@@ -112,7 +112,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductUniskip<F> {
             // so a misrouted public surfaces.
             SpartanProductVirtualizationPublic::LagrangeWeight(_)
             | SpartanProductVirtualizationPublic::TauKernel => {
-                Err(VerifierError::MissingStageClaimDerived { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }
     }

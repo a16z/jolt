@@ -76,7 +76,7 @@ where
             .challenges
             .bytecode_reduction_eta
             .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
-                id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+                id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta).into(),
             })?;
         values.public(
             VerifierPublicId::Challenge(JoltChallengeId::from(

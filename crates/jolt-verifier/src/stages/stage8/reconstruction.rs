@@ -140,7 +140,7 @@ impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> 
         challenges: &UntrustedAdviceReconstructionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::UntrustedAdviceReconstruction(public) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let r_reference = &challenges.r_reference;
         let opening_point = output_points.bytes();
@@ -216,7 +216,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceReconstructionInstance<F> {
             TrustedAdviceReconstructionPublic::ByteDecode,
         ) = id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         byte_decode_leg(
             output_points.bytes(),
@@ -343,7 +343,7 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeChunkReconstructionInstance<F> {
         _challenges: &BytecodeChunkReconstructionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::BytecodeChunkReconstruction(public) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let vars = self.own_vars();
         // Recover the full bound vector from the widest byte lane's produced
@@ -452,7 +452,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProgramImageReconstructionInstance<F> {
         let JoltDerivedId::ProgramImageReconstruction(ProgramImageReconstructionPublic::ByteDecode) =
             id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         byte_decode_leg(
             output_points.bytes(),

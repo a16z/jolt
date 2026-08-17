@@ -112,7 +112,7 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         _challenges: &InstructionClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // The reduced openings share one opening point; bind it against the low

@@ -311,11 +311,11 @@ impl<F: Field> ConcreteSumcheck<F> for OuterRemainder<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanOuter(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         self.coefficients()?
             .resolve(*public_id)
-            .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
+            .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
 
     /// The composed expected output claim over the full selected opening
@@ -517,8 +517,9 @@ mod tests {
         assert_eq!(relation.variable_count, variable_count);
 
         let rv64_count = SPARTAN_OUTER_R1CS_INPUTS.len();
+        let (rv64_openings, field_inline_openings) = openings.split_at(rv64_count);
         relation
-            .set_field_inline_outputs(openings[rv64_count..].to_vec())
+            .set_field_inline_outputs(field_inline_openings.to_vec())
             .unwrap();
 
         let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
@@ -526,7 +527,7 @@ mod tests {
             .derive_opening_points(&remainder_challenges, &input_points)
             .unwrap();
         let point = vec![Fr::from_u64(7); remainder_len];
-        let output_values = output_values_from(&openings[..rv64_count]);
+        let output_values = output_values_from(rv64_openings);
         let output_points = output_points_at(&point);
         let composed_output = relation
             .expected_output(

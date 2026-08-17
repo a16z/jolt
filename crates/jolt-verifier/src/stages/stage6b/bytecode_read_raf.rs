@@ -232,17 +232,17 @@ fn expected_output_from_publics<F: Field>(
                     return Ok(*value);
                 }
             }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
+            Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
         },
         |id| match id {
             JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
         },
         |id| match id {
             JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                 .value(*public_id)
-                .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
-            _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
+            _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
         },
     )
 }
@@ -370,13 +370,13 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                             return Ok(*value);
                         }
                     }
-                    Err(VerifierError::MissingOpeningClaim { id: *id })
+                    Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
                 },
                 |id| match id {
                     JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
                         Ok(challenges.gamma)
                     }
-                    _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    _ => Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
                 },
                 |id| match id {
                     JoltDerivedId::BytecodeReadRaf(
@@ -384,8 +384,8 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     ) if *stage >= base_stages => fused_stage_value(*stage),
                     JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                         .value(*public_id)
-                        .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
-                    _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                        .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
+                    _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
                 },
             )
         }
@@ -523,21 +523,21 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                             .bytecode_ra
                             .get(index)
                             .copied()
-                            .ok_or(VerifierError::MissingOpeningClaim { id: *id });
+                            .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() });
                     }
                 }
-                Err(VerifierError::MissingOpeningClaim { id: *id })
+                Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
             },
             |id| {
                 challenges
                     .resolve_challenge(id)
-                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
             |id| match id {
                 JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                     .value(*public_id)
-                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
-                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
             },
         )
     }

@@ -454,6 +454,9 @@ mod twin_tests {
         jolt_verifier::stages::relations::SumcheckInputClaims<Fr, R>: jolt_claims::InputClaims<Fr>,
         jolt_verifier::stages::relations::ConcreteSumcheckChallenges<Fr, R>:
             jolt_claims::SumcheckChallenges<Fr, jolt_claims::protocols::jolt::JoltChallengeId>,
+        // `log_residue` records a typed `JoltRelationId`, so the toy kernel is
+        // pinned to jolt-family relations.
+        R::Symbolic: SymbolicSumcheck<RelationId = JoltRelationId>,
     {
         type Relation = R;
 

@@ -930,7 +930,7 @@ where
         .challenges
         .bytecode_reduction_eta
         .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
-            id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+            id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta).into(),
         })?;
     let stage_gamma_powers = input
         .stage6a
@@ -991,7 +991,7 @@ where
         .output_points
         .bytecode_reduction_opening_point()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+            id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
         })?;
     let weights = bytecode_reduction_weights(input, layout)?;
     // The cycle scale recovered from the produced opening point equals the
@@ -1018,7 +1018,7 @@ where
         .output_points
         .bytecode_cycle_phase_variables()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+            id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
         })?;
     let weights = bytecode_reduction_weights(input, layout)?;
     let chunk_weights = layout
@@ -1048,7 +1048,7 @@ where
         .output_points
         .program_image_opening_point()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: program_image::cycle_phase_program_image_opening(),
+            id: program_image::cycle_phase_program_image_opening().into(),
         })?;
     let r_addr_rw = ram_val_check_address(input)?;
     let scale = layout
@@ -1077,7 +1077,7 @@ where
         .output_points
         .program_image_cycle_phase_variables()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: program_image::cycle_phase_program_image_opening(),
+            id: program_image::cycle_phase_program_image_opening().into(),
         })?;
     let r_addr_rw = ram_val_check_address(input)?;
     let scale = layout
@@ -1110,7 +1110,7 @@ where
         .output_points
         .advice_cycle_phase_opening_point(kind)
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: advice::cycle_phase_advice_opening(kind),
+            id: advice::cycle_phase_advice_opening(kind).into(),
         })?;
     let source_point = advice_source_point(input, kind)?;
     let scale = layout
@@ -1139,7 +1139,7 @@ where
         .output_points
         .advice_cycle_phase_variables(kind)
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: advice::cycle_phase_advice_opening(kind),
+            id: advice::cycle_phase_advice_opening(kind).into(),
         })?;
     let scale = layout
         .address_phase_final_output_scale(&source_point, &cycle_phase_variables, sumcheck_point)

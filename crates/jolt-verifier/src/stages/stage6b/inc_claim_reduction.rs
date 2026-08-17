@@ -131,7 +131,7 @@ impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
         _challenges: &IncClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::IncClaimReduction(public) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let opening_point = output_points.ram_inc();
         let cycle = match public {

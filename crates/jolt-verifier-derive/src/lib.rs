@@ -308,12 +308,16 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         .iter()
         .map(plan_field)
         .collect::<syn::Result<Vec<_>>>()?;
-    if plans.is_empty() {
+    let Some(first_plan) = plans.first() else {
         return Err(syn::Error::new(
             name.span(),
             "SumcheckBatch requires at least one instance field",
         ));
-    }
+    };
+    // The batch-wide alias resolver speaks one opening-id family; project it
+    // through the first member (the `.or_else` chain unifies every member's
+    // family with it, so a mixed-family batch fails to compile there).
+    let first_instance = first_plan.instance.clone();
 
     let relations = quote!(#krate::stages::relations);
 
@@ -859,7 +863,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 output_values: &#output_claims_name<#f>,
             ) -> ::core::result::Result<(), #krate::VerifierError> {
                 use ::jolt_claims::OutputClaims as _;
-                let __resolve = |__id: &::jolt_claims::protocols::jolt::JoltOpeningId| {
+                let __resolve = |__id: &#relations::OpeningIdOf<#f, #first_instance>| {
                     ::core::option::Option::<#f>::None
                         #(#resolve_arms)*
                 };

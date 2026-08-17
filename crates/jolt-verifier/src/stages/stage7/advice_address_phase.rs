@@ -38,7 +38,7 @@ pub fn trusted_advice_input_values_from_upstream<F: Field>(
     let trusted = cycle_phase
         .advice_cycle_phase_claim(JoltAdviceKind::Trusted)
         .ok_or(VerifierError::MissingOpeningClaim {
-            id: cycle_phase_advice_opening(JoltAdviceKind::Trusted),
+            id: cycle_phase_advice_opening(JoltAdviceKind::Trusted).into(),
         })?;
     Ok(TrustedAdviceAddressPhaseInputClaims { trusted })
 }
@@ -50,7 +50,7 @@ pub fn untrusted_advice_input_values_from_upstream<F: Field>(
     let untrusted = cycle_phase
         .advice_cycle_phase_claim(JoltAdviceKind::Untrusted)
         .ok_or(VerifierError::MissingOpeningClaim {
-            id: cycle_phase_advice_opening(JoltAdviceKind::Untrusted),
+            id: cycle_phase_advice_opening(JoltAdviceKind::Untrusted).into(),
         })?;
     Ok(UntrustedAdviceAddressPhaseInputClaims { untrusted })
 }
@@ -133,7 +133,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceAddressPhase<F> {
             JoltAdviceKind::Trusted,
         )) = id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let reference_opening_point = self.reference_opening_point.as_ref().ok_or_else(|| {
             advice_public_failed(
@@ -211,7 +211,7 @@ impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceAddressPhase<F> {
             JoltAdviceKind::Untrusted,
         )) = id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let reference_opening_point = self.reference_opening_point.as_ref().ok_or_else(|| {
             advice_public_failed(

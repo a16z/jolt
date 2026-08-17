@@ -100,7 +100,7 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
         _challenges: &RegistersClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RegistersClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // Every reduction output shares the one opening point.

@@ -124,7 +124,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // The uni-skip first-round Lagrange weights, evaluated at the product
@@ -148,7 +148,7 @@ impl<F: Field> ConcreteSumcheck<F> for ProductRemainder<F> {
             // `LagrangeWeight` only (plus `TauKernel`). Reject rather than silently
             // aliasing it onto the Lagrange-weight path, so a misrouted public surfaces.
             SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => {
-                Err(VerifierError::MissingStageClaimDerived { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
             // The product opening point binds the uni-skip kernel (against
             // `tau_high`) and the equality of the low remainder challenges

@@ -120,8 +120,8 @@ where
     if ram_output_check_opening_point != r_address {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: format!("{:?}", JoltRelationId::RamValCheck),
-            left: ram::ram_val(),
-            right: ram::ram_val_final(),
+            left: ram::ram_val().into(),
+            right: ram::ram_val_final().into(),
         });
     }
 

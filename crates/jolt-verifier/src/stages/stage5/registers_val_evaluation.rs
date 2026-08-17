@@ -139,7 +139,7 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
                     })?;
                 Ok(LtPolynomial::evaluate(registers_cycle, fixed_cycle))
             }
-            _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+            _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
         }
     }
 }

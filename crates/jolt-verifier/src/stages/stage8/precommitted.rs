@@ -203,7 +203,7 @@ fn advice_final_opening<F: Field>(
         cycle_phase
     };
     let source = source.ok_or(VerifierError::MissingOpeningClaim {
-        id: advice::final_advice_opening(kind),
+        id: advice::final_advice_opening(kind).into(),
     })?;
     let polynomial = match kind {
         JoltAdviceKind::Trusted => JoltCommittedPolynomial::TrustedAdvice,
@@ -230,7 +230,7 @@ fn bytecode_final_openings<F: Field>(
         cycle_phase
     };
     let source = source.ok_or(VerifierError::MissingOpeningClaim {
-        id: bytecode_reduction::final_bytecode_chunk_opening(0),
+        id: bytecode_reduction::final_bytecode_chunk_opening(0).into(),
     })?;
     if let Some(chunk_claims) = &source.opening_claim {
         if chunk_claims.len() != layout.chunk_count() {
@@ -272,7 +272,7 @@ fn program_image_final_opening<F: Field>(
         cycle_phase
     };
     let source = source.ok_or(VerifierError::MissingOpeningClaim {
-        id: program_image::final_program_image_opening(),
+        id: program_image::final_program_image_opening().into(),
     })?;
     Ok(PrecommittedFinalOpening {
         polynomial: JoltCommittedPolynomial::ProgramImageInit,

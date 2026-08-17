@@ -22,11 +22,12 @@ pub use jolt_verifier_derive::SumcheckBatch;
 
 use std::collections::BTreeSet;
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId};
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
 use jolt_transcript::Transcript;
 
+use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId, VerifierOpeningId};
 use crate::VerifierError;
 
 /// Transcript-side companion to [`OutputClaims`]: append a relation's produced
@@ -72,6 +73,17 @@ pub type SumcheckOutputClaims<F, S> =
 pub type SumcheckOutputPoints<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Outputs<::std::vec::Vec<F>>;
 
+/// A [`ConcreteSumcheck`]'s symbolic relation.
+pub type SymbolicOf<F, S> = <S as ConcreteSumcheck<F>>::Symbolic;
+/// A [`ConcreteSumcheck`]'s relation-id type, projected through its symbolic relation.
+pub type RelationIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::RelationId;
+/// A [`ConcreteSumcheck`]'s opening-id type, projected through its symbolic relation.
+pub type OpeningIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::OpeningId;
+/// A [`ConcreteSumcheck`]'s derived-id type, projected through its symbolic relation.
+pub type DerivedIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::DerivedId;
+/// A [`ConcreteSumcheck`]'s challenge-id type, projected through its symbolic relation.
+pub type ChallengeIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::ChallengeId;
+
 /// A single sumcheck instance, driven identically by the prover (while producing
 /// its proof) and the verifier (after checking it).
 ///
@@ -86,23 +98,25 @@ pub type SumcheckOutputPoints<F, S> =
 /// "a ZK opening carries no value" a compile-time fact.
 pub trait ConcreteSumcheck<F: Field>: Clone + Send + Sync
 where
-    SumcheckInputClaims<F, Self>: InputClaims<F>,
-    SumcheckOutputClaims<F, Self>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, JoltChallengeId>,
+    SumcheckInputClaims<F, Self>: InputClaims<F, OpeningIdOf<F, Self>>,
+    SumcheckOutputClaims<F, Self>: OutputClaims<F, OpeningIdOf<F, Self>>,
+    ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, ChallengeIdOf<F, Self>>,
+    RelationIdOf<F, Self>: core::fmt::Debug + Copy,
+    OpeningIdOf<F, Self>: Copy + Ord + core::fmt::Debug + Into<VerifierOpeningId>,
+    DerivedIdOf<F, Self>: Copy + core::fmt::Debug + Into<VerifierDerivedId>,
+    ChallengeIdOf<F, Self>: Copy + core::fmt::Debug + Into<VerifierChallengeId>,
 {
     /// The relation's pure symbolic algebra: id types, sumcheck spec, and the
     /// input/output `Expr`s. The concrete instance holds its `Self::Symbolic` and
-    /// sources its claim expressions and spec from it.
-    type Symbolic: SymbolicSumcheck<
-        RelationId = JoltRelationId,
-        OpeningId = JoltOpeningId,
-        DerivedId = JoltDerivedId,
-        ChallengeId = JoltChallengeId,
-    >;
+    /// sources its claim expressions and spec from it. The id family is the
+    /// symbolic relation's own — every id this trait exposes is a projection of
+    /// it, so relations from any protocol family (jolt, field-inline) implement
+    /// one trait.
+    type Symbolic: SymbolicSumcheck;
 
     fn symbolic(&self) -> &Self::Symbolic;
 
-    fn id(&self) -> JoltRelationId {
+    fn id(&self) -> RelationIdOf<F, Self> {
         Self::Symbolic::id()
     }
 
@@ -168,7 +182,7 @@ where
     /// the declaring relation, each source absorbed by another member binding an
     /// identical point slice) are pinned by hand-written tests in each declaring
     /// stage (`alias_declarations_are_valid`).
-    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)>
+    fn aliased_output_openings() -> Vec<(OpeningIdOf<F, Self>, OpeningIdOf<F, Self>)>
     where
         Self: Sized,
     {
@@ -182,7 +196,7 @@ where
     /// against them. A relation that absorbs openings its own output `Expr` does
     /// not reference (values whose constraining fold happens downstream, e.g. the
     /// product remainder's stage-6a-consumed flags) overrides this to add them.
-    fn wire_output_openings(&self) -> BTreeSet<JoltOpeningId>
+    fn wire_output_openings(&self) -> BTreeSet<OpeningIdOf<F, Self>>
     where
         Self: Sized,
     {
@@ -250,10 +264,10 @@ where
     /// `InitEval`/`InitSelector`).
     fn derive_input_term(
         &self,
-        id: &JoltDerivedId,
+        id: &DerivedIdOf<F, Self>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
-        Err(VerifierError::MissingStageClaimDerived { id: *id })
+        Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
 
     /// Resolve a `Derived` in this relation's **output** expression: from the input
@@ -264,12 +278,12 @@ where
     /// "no output deriveds"; overridden by relations that have them.
     fn derive_output_term(
         &self,
-        id: &JoltDerivedId,
+        id: &DerivedIdOf<F, Self>,
         _input_points: &SumcheckInputPoints<F, Self>,
         _output_points: &SumcheckOutputPoints<F, Self>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
-        Err(VerifierError::MissingStageClaimDerived { id: *id })
+        Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
 
     /// The input claim (claimed sum), evaluated from the input `Expr` against the
@@ -287,12 +301,12 @@ where
             |id| {
                 input_values
                     .resolve_input(id)
-                    .ok_or(VerifierError::MissingOpeningClaim { id: *id })
+                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
             },
             |id| {
                 challenges
                     .resolve_challenge(id)
-                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
             |id| self.derive_input_term(id, challenges),
         )
@@ -313,12 +327,12 @@ where
             |id| {
                 output_values
                     .resolve_output(id)
-                    .ok_or(VerifierError::MissingOpeningClaim { id: *id })
+                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
             },
             |id| {
                 challenges
                     .resolve_challenge(id)
-                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
             |id| self.derive_output_term(id, input_points, output_points, challenges),
         )
@@ -334,7 +348,8 @@ pub fn absorbed_opening_values<F, I>(claims: &SumcheckOutputClaims<F, I>) -> Vec
 where
     F: Field,
     I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Ord,
 {
     let skip: BTreeSet<_> = I::aliased_output_openings()
         .into_iter()
@@ -361,7 +376,11 @@ pub fn validate_member_presence<F, I>(
 where
     F: Field,
     I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    // `StageClaimPublicInputFailed` attributes to a typed `JoltRelationId`, so
+    // this helper is pinned to jolt-family relation ids until that diagnostic
+    // grows a composite stage id.
+    SymbolicOf<F, I>: SymbolicSumcheck<RelationId = JoltRelationId>,
 {
     match (member, claims) {
         (Some(_), Some(_)) | (None, None) => Ok(()),
@@ -370,7 +389,7 @@ where
             reason: "present instance is missing its output claims".to_string(),
         }),
         (None, Some(claims)) => Err(match claims.canonical_order().into_iter().next() {
-            Some(opening) => VerifierError::UnexpectedOpeningClaim { id: opening },
+            Some(opening) => VerifierError::UnexpectedOpeningClaim { id: opening.into() },
             None => VerifierError::StageClaimPublicInputFailed {
                 stage: <I::Symbolic as SymbolicSumcheck>::id(),
                 reason: "output claims supplied for an absent instance".to_string(),
@@ -389,24 +408,28 @@ where
 pub fn validate_member_aliases<F, I>(
     member: &I,
     claims: &SumcheckOutputClaims<F, I>,
-    resolve_source: impl Fn(&JoltOpeningId) -> Option<F>,
+    // Cross-family aliasing is intentionally unsupported: the resolver speaks
+    // the declaring member's own opening-id family, so aliases stay within it.
+    resolve_source: impl Fn(&OpeningIdOf<F, I>) -> Option<F>,
 ) -> Result<(), VerifierError>
 where
     F: Field,
     I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Copy + Into<VerifierOpeningId>,
+    RelationIdOf<F, I>: core::fmt::Debug,
 {
     for (aliased, source) in I::aliased_output_openings() {
         let target = claims
             .resolve_output(&aliased)
-            .ok_or(VerifierError::MissingOpeningClaim { id: aliased })?;
-        let source_value =
-            resolve_source(&source).ok_or(VerifierError::MissingOpeningClaim { id: source })?;
+            .ok_or(VerifierError::MissingOpeningClaim { id: aliased.into() })?;
+        let source_value = resolve_source(&source)
+            .ok_or(VerifierError::MissingOpeningClaim { id: source.into() })?;
         if target != source_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: format!("{:?}", member.id()),
-                left: aliased,
-                right: source,
+                left: aliased.into(),
+                right: source.into(),
             });
         }
     }
@@ -426,7 +449,12 @@ pub fn validate_member_output_shape<F, I>(
 where
     F: Field,
     I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Ord,
+    // `StageClaimPublicInputFailed` attributes to a typed `JoltRelationId`, so
+    // this helper is pinned to jolt-family relation ids until that diagnostic
+    // grows a composite stage id.
+    SymbolicOf<F, I>: SymbolicSumcheck<RelationId = JoltRelationId>,
 {
     let expected = member.wire_output_openings();
     let aliased: BTreeSet<_> = I::aliased_output_openings()
