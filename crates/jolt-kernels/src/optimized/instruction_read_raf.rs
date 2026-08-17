@@ -50,7 +50,7 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 #[cfg(feature = "akita")]
-use jolt_witness::witnesses::{BalancedIncLane, FusedInc};
+use jolt_witness::witnesses::{BalancedIncColumn, FusedInc};
 use jolt_witness::witnesses::{
     InstructionRafFlag, LookupIndex, MappedPc, RemappedRamAddress, TableIndex,
 };
@@ -166,14 +166,14 @@ impl InstructionCycleRow {
 
     #[cfg(feature = "akita")]
     #[inline]
-    pub(crate) fn fused_inc_hot_lane(&self, lane: BalancedIncLane) -> usize {
+    pub(crate) fn fused_inc_row(&self, column: BalancedIncColumn) -> usize {
         let magnitude = i128::from(self.fused_inc_magnitude);
         let value = if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
             -magnitude
         } else {
             magnitude
         };
-        FusedInc(value).hot_lane(lane)
+        FusedInc(value).selected_row(column)
     }
 
     #[cfg(feature = "akita")]

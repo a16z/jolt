@@ -1,7 +1,7 @@
 //! Streaming kernels for Jolt's prefix-packed trace one-hot polynomial.
 //!
-//! A trace row produces each committed hot lane. Byte zero normally denotes
-//! no stored coefficient; a per-row column mask distinguishes committed lane
+//! A trace row gives the selected one-hot row for each column. Byte zero normally
+//! denotes no stored coefficient; a per-row column mask distinguishes selected row
 //! zero for families such as RAM. Jolt's kernels consume that row-major source
 //! directly and lay the columns out as consecutive `K * T` segments inside one
 //! physical polynomial. Padding selector slots are zero.
@@ -38,7 +38,7 @@ use rayon::prelude::*;
 
 use crate::AkitaField;
 
-const NO_HOT_LANE: u8 = 0;
+const NO_SELECTED_ROW: u8 = 0;
 const MAX_WIDE_ACCUMULATIONS: usize = 1 << 15;
 const TASKS_PER_RAYON_WORKER: usize = 4;
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
@@ -48,8 +48,8 @@ const K256_ROW_BATCH: usize = 1 << 13;
 const _: () = assert!(K256_ROW_BATCH <= i16::MAX as usize);
 
 #[inline(always)]
-fn lane_is_committed(hot: u8, committed_zero_mask: u64, column: usize) -> bool {
-    hot != NO_HOT_LANE || committed_zero_mask & (1u64 << column) != 0
+fn row_is_committed(selected_row: u8, committed_zero_mask: u64, column: usize) -> bool {
+    selected_row != NO_SELECTED_ROW || committed_zero_mask & (1u64 << column) != 0
 }
 
 type AkitaWideRing<const D: usize> = WideCyclotomicRing<<AkitaField as HasWide>::Wide, D>;
@@ -125,7 +125,7 @@ impl<const D: usize> DeferredFp128Ring<D> {
     }
 }
 
-/// Groups columns that share four consecutive K=16 lane shifts. Adaptive
+/// Groups columns that share four consecutive K=16 row shifts. Adaptive
 /// dimensions use one, two, or four of these groups per ring, preserving the
 /// useful four-row reuse pattern without dimension-specific implementations.
 struct K16FourRowShiftGroups {
@@ -155,11 +155,16 @@ impl K16FourRowShiftGroups {
         })
     }
 
-    fn build(&mut self, lanes: &[u8], committed_zero_masks: &[u64], num_columns: usize) -> bool {
+    fn build(
+        &mut self,
+        selected_rows: &[u8],
+        committed_zero_masks: &[u64],
+        num_columns: usize,
+    ) -> bool {
         self.group_by_key.fill((0, u8::MAX));
         self.partial_columns.clear();
         self.num_groups = 0;
-        if lanes.len() != 4 * num_columns || committed_zero_masks.len() != 4 {
+        if selected_rows.len() != 4 * num_columns || committed_zero_masks.len() != 4 {
             return false;
         }
 
@@ -167,13 +172,13 @@ impl K16FourRowShiftGroups {
             let mut key = 0u64;
             let mut shifts = [0usize; 4];
             let mut complete = true;
-            for (row_offset, (row_lanes, &committed_zero_mask)) in lanes
+            for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
                 .chunks_exact(num_columns)
                 .zip(committed_zero_masks)
                 .enumerate()
             {
-                let hot = row_lanes[column];
-                if !lane_is_committed(hot, committed_zero_mask, column) {
+                let hot = row_indices[column];
+                if !row_is_committed(hot, committed_zero_mask, column) {
                     complete = false;
                     break;
                 }
@@ -219,7 +224,7 @@ impl K16FourRowShiftGroups {
         dst: &mut [AkitaWideRing<D>],
         a: usize,
         n_a: usize,
-        lanes: &[u8],
+        selected_rows: &[u8],
         committed_zero_masks: &[u64],
         num_columns: usize,
     ) {
@@ -246,13 +251,13 @@ impl K16FourRowShiftGroups {
         }
         for &column in &self.partial_columns {
             let column = usize::from(column);
-            for (row_offset, (row_lanes, &committed_zero_mask)) in lanes
+            for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
                 .chunks_exact(num_columns)
                 .zip(committed_zero_masks)
                 .enumerate()
             {
-                let hot = row_lanes[column];
-                if lane_is_committed(hot, committed_zero_mask, column) {
+                let hot = row_indices[column];
+                if row_is_committed(hot, committed_zero_mask, column) {
                     src.shift_accumulate_into(
                         &mut dst[column * n_a + a],
                         (self.row_start + row_offset) * 16 + usize::from(hot),
@@ -265,24 +270,24 @@ impl K16FourRowShiftGroups {
 
 /// Row-major source for the semantic columns packed into `OneHotTrace`.
 ///
-/// `fill_row` must overwrite all of `hot_lanes`. Byte zero means no committed
+/// `fill_row` must overwrite all of `selected_rows`. Byte zero means no committed
 /// entry unless [`TraceOneHotRows::committed_digit_zero_mask`] marks the column.
 pub trait TraceOneHotRows: Send + Sync + 'static {
     fn num_rows(&self) -> usize;
     fn num_columns(&self) -> usize;
-    fn fill_row(&self, row: usize, hot_lanes: &mut [u8]);
+    fn fill_row(&self, row: usize, selected_rows: &mut [u8]);
 
-    /// Bit `i` is set when column `i` commits lane zero in this row.
+    /// Bit `i` is set when column `i` commits row zero in this trace row.
     fn committed_digit_zero_mask(&self, _row: usize) -> u64 {
         0
     }
 
     /// Fills consecutive rows in row-major order, overwriting the entire buffer.
-    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u8]) {
+    fn fill_rows(&self, row_start: usize, selected_rows: &mut [u8]) {
         let num_columns = self.num_columns();
-        debug_assert_eq!(hot_lanes.len() % num_columns, 0);
-        for (row_offset, row_lanes) in hot_lanes.chunks_exact_mut(num_columns).enumerate() {
-            self.fill_row(row_start + row_offset, row_lanes);
+        debug_assert_eq!(selected_rows.len() % num_columns, 0);
+        for (row_offset, row_indices) in selected_rows.chunks_exact_mut(num_columns).enumerate() {
+            self.fill_row(row_start + row_offset, row_indices);
         }
     }
 
@@ -296,8 +301,8 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
 
 /// Default value written by [`TraceOneHotRows::fill_row`] for an empty row.
 #[must_use]
-pub const fn no_hot_lane() -> u8 {
-    NO_HOT_LANE
+pub const fn no_selected_row() -> u8 {
+    NO_SELECTED_ROW
 }
 
 /// One physical one-hot polynomial containing all trace-derived semantic
@@ -355,7 +360,7 @@ impl TracePackedOneHot {
     ) -> Result<Self, AkitaError> {
         if !one_hot_k.is_power_of_two() || one_hot_k > 256 {
             return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot K={one_hot_k} must be a power of two fitting byte lanes"
+                "trace one-hot K={one_hot_k} must be a power of two fitting u8 row indices"
             )));
         }
         if construction_ring_d == 0 || !construction_ring_d.is_power_of_two() {
@@ -623,26 +628,26 @@ fn visit_segment_ring_range<const D: usize>(
     }
     let k = source.one_hot_k;
     let num_columns = source.rows.num_columns();
-    let mut lanes = vec![NO_HOT_LANE; num_columns];
+    let mut selected_rows = vec![NO_SELECTED_ROW; num_columns];
     if k >= D {
         let rings_per_row = k / D;
         let row_start = ring_start / rings_per_row;
         let row_end = ring_end.div_ceil(rings_per_row);
         let mut buckets = vec![Vec::new(); rings_per_row];
         for row in row_start..row_end.min(source.rows.num_rows()) {
-            source.rows.fill_row(row, &mut lanes);
+            source.rows.fill_row(row, &mut selected_rows);
             let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
             for bucket in &mut buckets {
                 bucket.clear();
             }
-            for (column, &hot) in lanes.iter().enumerate() {
-                if !lane_is_committed(hot, committed_zero_mask, column) {
+            for (column, &hot) in selected_rows.iter().enumerate() {
+                if !row_is_committed(hot, committed_zero_mask, column) {
                     continue;
                 }
                 let hot = usize::from(hot);
                 if hot >= k {
                     return Err(AkitaError::InvalidInput(format!(
-                        "trace one-hot lane {hot} is outside K={k}"
+                        "trace one-hot row {hot} is outside K={k}"
                     )));
                 }
                 buckets[hot / D].push((column, hot % D));
@@ -664,16 +669,16 @@ fn visit_segment_ring_range<const D: usize>(
                 if row >= source.rows.num_rows() {
                     break;
                 }
-                source.rows.fill_row(row, &mut lanes);
+                source.rows.fill_row(row, &mut selected_rows);
                 let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
-                for (column, &hot) in lanes.iter().enumerate() {
-                    if !lane_is_committed(hot, committed_zero_mask, column) {
+                for (column, &hot) in selected_rows.iter().enumerate() {
+                    if !row_is_committed(hot, committed_zero_mask, column) {
                         continue;
                     }
                     let hot = usize::from(hot);
                     if hot >= k {
                         return Err(AkitaError::InvalidInput(format!(
-                            "trace one-hot lane {hot} is outside K={k}"
+                            "trace one-hot row {hot} is outside K={k}"
                         )));
                     }
                     contributions.push((column, row_offset * k + hot));
@@ -685,10 +690,10 @@ fn visit_segment_ring_range<const D: usize>(
     Ok(())
 }
 
-/// Visits K<D ring elements as the raw lanes for the D/K trace rows packed
+/// Visits K<D ring elements as row indices for the D/K trace rows packed
 /// into each ring. This avoids expanding the row buffer into contribution
-/// tuples when a kernel can consume lanes directly.
-fn visit_segment_ring_lane_range<const D: usize>(
+/// tuples when a kernel can consume the indices directly.
+fn visit_segment_ring_row_range<const D: usize>(
     source: &TracePackedOneHotKernelSource<'_>,
     ring_start: usize,
     ring_end: usize,
@@ -697,7 +702,7 @@ fn visit_segment_ring_lane_range<const D: usize>(
     validate_dimension::<D>(source.one_hot_k)?;
     if source.one_hot_k >= D {
         return Err(AkitaError::InvalidInput(format!(
-            "trace one-hot raw-lane traversal requires K={} < D={D}",
+            "trace one-hot row traversal requires K={} < D={D}",
             source.one_hot_k
         )));
     }
@@ -715,10 +720,10 @@ fn visit_segment_ring_lane_range<const D: usize>(
             source.rows.num_rows()
         )));
     }
-    let lane_count = num_columns.checked_mul(rows_per_ring).ok_or_else(|| {
-        AkitaError::InvalidInput("trace one-hot raw-lane buffer size overflow".to_string())
+    let row_index_count = num_columns.checked_mul(rows_per_ring).ok_or_else(|| {
+        AkitaError::InvalidInput("trace one-hot row-index buffer size overflow".to_string())
     })?;
-    let mut lanes = vec![NO_HOT_LANE; lane_count];
+    let mut selected_rows = vec![NO_SELECTED_ROW; row_index_count];
     let mut committed_zero_masks = vec![0u64; rows_per_ring];
     for ring in ring_start..ring_end {
         let row_start = ring * rows_per_ring;
@@ -727,21 +732,21 @@ fn visit_segment_ring_lane_range<const D: usize>(
             .num_rows()
             .saturating_sub(row_start)
             .min(rows_per_ring);
-        let populated_lanes = &mut lanes[..populated_rows * num_columns];
+        let populated_indices = &mut selected_rows[..populated_rows * num_columns];
         let populated_masks = &mut committed_zero_masks[..populated_rows];
-        source.rows.fill_rows(row_start, populated_lanes);
+        source.rows.fill_rows(row_start, populated_indices);
         source
             .rows
             .fill_committed_digit_zero_masks(row_start, populated_masks);
-        for &hot in populated_lanes.iter() {
-            if hot != NO_HOT_LANE && usize::from(hot) >= source.one_hot_k {
+        for &hot in populated_indices.iter() {
+            if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
                 return Err(AkitaError::InvalidInput(format!(
-                    "trace one-hot lane {hot} is outside K={}",
+                    "trace one-hot row {hot} is outside K={}",
                     source.one_hot_k
                 )));
             }
         }
-        visit(ring, populated_lanes, populated_masks);
+        visit(ring, populated_indices, populated_masks);
     }
     Ok(())
 }
@@ -769,21 +774,22 @@ fn flush_deferred_rank<const D: usize>(
 
 #[inline(always)]
 fn full_row_coefficients<const N: usize>(
-    lanes: &[u8],
+    selected_rows: &[u8],
     committed_zero_masks: &[u64],
     num_columns: usize,
     column: usize,
     one_hot_k: usize,
 ) -> Option<[usize; N]> {
-    if lanes.len() != N * num_columns || committed_zero_masks.len() != N {
+    if selected_rows.len() != N * num_columns || committed_zero_masks.len() != N {
         return None;
     }
-    let coefficients =
-        std::array::from_fn(|row| row * one_hot_k + usize::from(lanes[row * num_columns + column]));
+    let coefficients = std::array::from_fn(|row| {
+        row * one_hot_k + usize::from(selected_rows[row * num_columns + column])
+    });
     (0..N)
         .all(|row| {
-            lane_is_committed(
-                lanes[row * num_columns + column],
+            row_is_committed(
+                selected_rows[row * num_columns + column],
                 committed_zero_masks[row],
                 column,
             )
@@ -795,15 +801,19 @@ fn full_row_coefficients<const N: usize>(
 fn shift_accumulate_full_rows<const D: usize, const N: usize>(
     src: &AkitaWideRing<D>,
     dst: &mut AkitaWideRing<D>,
-    lanes: &[u8],
+    selected_rows: &[u8],
     committed_zero_masks: &[u64],
     num_columns: usize,
     column: usize,
     one_hot_k: usize,
 ) -> bool {
-    let Some(coefficients) =
-        full_row_coefficients::<N>(lanes, committed_zero_masks, num_columns, column, one_hot_k)
-    else {
+    let Some(coefficients) = full_row_coefficients::<N>(
+        selected_rows,
+        committed_zero_masks,
+        num_columns,
+        column,
+        one_hot_k,
+    ) else {
         return false;
     };
     for coefficient in coefficients {
@@ -820,7 +830,7 @@ fn shift_accumulate_full_rows<const D: usize, const N: usize>(
 fn try_shift_accumulate_full_rows<const D: usize>(
     src: &AkitaWideRing<D>,
     dst: &mut AkitaWideRing<D>,
-    lanes: &[u8],
+    selected_rows: &[u8],
     committed_zero_masks: &[u64],
     num_columns: usize,
     column: usize,
@@ -831,7 +841,7 @@ fn try_shift_accumulate_full_rows<const D: usize>(
         2 => shift_accumulate_full_rows::<D, 2>(
             src,
             dst,
-            lanes,
+            selected_rows,
             committed_zero_masks,
             num_columns,
             column,
@@ -840,7 +850,7 @@ fn try_shift_accumulate_full_rows<const D: usize>(
         4 => shift_accumulate_full_rows::<D, 4>(
             src,
             dst,
-            lanes,
+            selected_rows,
             committed_zero_masks,
             num_columns,
             column,
@@ -849,7 +859,7 @@ fn try_shift_accumulate_full_rows<const D: usize>(
         8 => shift_accumulate_full_rows::<D, 8>(
             src,
             dst,
-            lanes,
+            selected_rows,
             committed_zero_masks,
             num_columns,
             column,
@@ -858,7 +868,7 @@ fn try_shift_accumulate_full_rows<const D: usize>(
         16 => shift_accumulate_full_rows::<D, 16>(
             src,
             dst,
-            lanes,
+            selected_rows,
             committed_zero_masks,
             num_columns,
             column,
@@ -867,7 +877,7 @@ fn try_shift_accumulate_full_rows<const D: usize>(
         32 => shift_accumulate_full_rows::<D, 32>(
             src,
             dst,
-            lanes,
+            selected_rows,
             committed_zero_masks,
             num_columns,
             column,
@@ -1017,29 +1027,29 @@ fn commit_packed<const D: usize>(
                             .collect::<Option<Vec<_>>>()
                     })
                     .flatten();
-                    visit_segment_ring_lane_range::<D>(
+                    visit_segment_ring_row_range::<D>(
                         source,
                         ring_start,
                         ring_end,
-                        |ring, lanes, committed_zero_masks| {
+                        |ring, selected_rows, committed_zero_masks| {
                             let position = ring - block_ring_start;
                             let a_col = position * plan.num_digits_inner;
                             let grouped = shift_groups.as_mut().is_some_and(|groups| {
                                 groups
                                     .iter_mut()
-                                    .zip(lanes.chunks_exact(4 * num_columns))
+                                    .zip(selected_rows.chunks_exact(4 * num_columns))
                                     .zip(committed_zero_masks.chunks_exact(4))
-                                    .all(|((groups, lanes), masks)| {
-                                        groups.build(lanes, masks, num_columns)
+                                    .all(|((groups, selected_rows), masks)| {
+                                        groups.build(selected_rows, masks, num_columns)
                                     })
                             });
                             for (a, a_row) in a_rows.iter().enumerate() {
                                 let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
                                 if grouped {
                                     if let Some(groups) = &shift_groups {
-                                        for ((groups, lanes), masks) in groups
+                                        for ((groups, selected_rows), masks) in groups
                                             .iter()
-                                            .zip(lanes.chunks_exact(4 * num_columns))
+                                            .zip(selected_rows.chunks_exact(4 * num_columns))
                                             .zip(committed_zero_masks.chunks_exact(4))
                                         {
                                             groups.accumulate(
@@ -1047,7 +1057,7 @@ fn commit_packed<const D: usize>(
                                                 &mut wide,
                                                 a,
                                                 plan.n_a,
-                                                lanes,
+                                                selected_rows,
                                                 masks,
                                                 num_columns,
                                             );
@@ -1060,7 +1070,7 @@ fn commit_packed<const D: usize>(
                                     if try_shift_accumulate_full_rows(
                                         &a_wide,
                                         dst,
-                                        lanes,
+                                        selected_rows,
                                         committed_zero_masks,
                                         num_columns,
                                         column,
@@ -1069,13 +1079,14 @@ fn commit_packed<const D: usize>(
                                     ) {
                                         continue;
                                     }
-                                    for (row_offset, (row_lanes, &committed_zero_mask)) in lanes
-                                        .chunks_exact(num_columns)
-                                        .zip(committed_zero_masks)
-                                        .enumerate()
+                                    for (row_offset, (row_indices, &committed_zero_mask)) in
+                                        selected_rows
+                                            .chunks_exact(num_columns)
+                                            .zip(committed_zero_masks)
+                                            .enumerate()
                                     {
-                                        let hot = row_lanes[column];
-                                        if lane_is_committed(hot, committed_zero_mask, column) {
+                                        let hot = row_indices[column];
+                                        if row_is_committed(hot, committed_zero_mask, column) {
                                             a_wide.shift_accumulate_into(
                                                 dst,
                                                 row_offset * source.one_hot_k + usize::from(hot),
@@ -1099,7 +1110,7 @@ fn commit_packed<const D: usize>(
                     debug_assert_eq!(ring_end % rings_per_row, 0);
                     let row_start = ring_start / rings_per_row;
                     let row_end = ring_end / rings_per_row;
-                    let mut lanes = vec![NO_HOT_LANE; num_columns];
+                    let mut selected_rows = vec![NO_SELECTED_ROW; num_columns];
                     let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
                     let mut ring_masks = vec![[0u32; 4]; K256_ROW_BATCH];
                     let mut rank_deferred = vec![DeferredFp128Ring::zero(); num_columns];
@@ -1107,17 +1118,17 @@ fn commit_packed<const D: usize>(
                         let tile_len = (row_end - tile_start).min(K256_ROW_BATCH);
                         for row_offset in 0..tile_len {
                             let row = tile_start + row_offset;
-                            source.rows.fill_row(row, &mut lanes);
+                            source.rows.fill_row(row, &mut selected_rows);
                             let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
                             let masks = &mut ring_masks[row_offset];
                             *masks = [0; 4];
-                            for (column, &hot) in lanes.iter().enumerate() {
-                                if !lane_is_committed(hot, committed_zero_mask, column) {
+                            for (column, &hot) in selected_rows.iter().enumerate() {
+                                if !row_is_committed(hot, committed_zero_mask, column) {
                                     continue;
                                 }
                                 if usize::from(hot) >= source.one_hot_k {
                                     return Err(AkitaError::InvalidInput(format!(
-                                        "trace one-hot lane {hot} is outside K={}",
+                                        "trace one-hot row {hot} is outside K={}",
                                         source.one_hot_k
                                     )));
                                 }
@@ -1351,25 +1362,26 @@ fn opening_fold_packed<const D: usize>(
                 let ring_end = block_ring_start + part_end;
                 let mut folded = vec![CyclotomicRing::zero(); num_columns];
                 if source.one_hot_k < D {
-                    visit_segment_ring_lane_range::<D>(
+                    visit_segment_ring_row_range::<D>(
                         source,
                         ring_start,
                         ring_end,
-                        |ring, lanes, committed_zero_masks| {
+                        |ring, selected_rows, committed_zero_masks| {
                             let position = ring - block_ring_start;
                             match &weights {
                                 PackedOpeningWeights::Base {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
-                                    for (row_offset, (row_lanes, &committed_zero_mask)) in lanes
-                                        .chunks_exact(num_columns)
-                                        .zip(committed_zero_masks)
-                                        .enumerate()
+                                    for (row_offset, (row_indices, &committed_zero_mask)) in
+                                        selected_rows
+                                            .chunks_exact(num_columns)
+                                            .zip(committed_zero_masks)
+                                            .enumerate()
                                     {
                                         let coefficient_base = row_offset * source.one_hot_k;
-                                        for (column, &hot) in row_lanes.iter().enumerate() {
-                                            if lane_is_committed(hot, committed_zero_mask, column) {
+                                        for (column, &hot) in row_indices.iter().enumerate() {
+                                            if row_is_committed(hot, committed_zero_mask, column) {
                                                 folded[column].coeffs
                                                     [coefficient_base + usize::from(hot)] += weight;
                                             }
@@ -1380,14 +1392,15 @@ fn opening_fold_packed<const D: usize>(
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
-                                    for (row_offset, (row_lanes, &committed_zero_mask)) in lanes
-                                        .chunks_exact(num_columns)
-                                        .zip(committed_zero_masks)
-                                        .enumerate()
+                                    for (row_offset, (row_indices, &committed_zero_mask)) in
+                                        selected_rows
+                                            .chunks_exact(num_columns)
+                                            .zip(committed_zero_masks)
+                                            .enumerate()
                                     {
                                         let coefficient_base = row_offset * source.one_hot_k;
-                                        for (column, &hot) in row_lanes.iter().enumerate() {
-                                            if lane_is_committed(hot, committed_zero_mask, column) {
+                                        for (column, &hot) in row_indices.iter().enumerate() {
+                                            if row_is_committed(hot, committed_zero_mask, column) {
                                                 weight.shift_accumulate_into(
                                                     &mut folded[column],
                                                     coefficient_base + usize::from(hot),
@@ -2110,24 +2123,25 @@ fn decompose_fold_packed_with_mode<const D: usize>(
                         let num_columns = source.rows.num_columns();
                         let rows_per_ring = D / source.one_hot_k;
                         let mut coefficients = Vec::with_capacity(rows_per_ring);
-                        visit_segment_ring_lane_range::<D>(
+                        visit_segment_ring_row_range::<D>(
                             source,
                             ring_start,
                             ring_end,
-                            |ring, lanes, committed_zero_masks| {
+                            |ring, selected_rows, committed_zero_masks| {
                                 let position = ring - trace_block * num_positions;
                                 let dst = &mut compressed[position - position_start];
                                 if rows_per_ring <= 4 {
                                     for column in 0..num_columns {
                                         let mut fixed_coefficients = [0usize; 4];
                                         let mut count = 0;
-                                        for (row_offset, (row_lanes, &committed_zero_mask)) in lanes
-                                            .chunks_exact(num_columns)
-                                            .zip(committed_zero_masks)
-                                            .enumerate()
+                                        for (row_offset, (row_indices, &committed_zero_mask)) in
+                                            selected_rows
+                                                .chunks_exact(num_columns)
+                                                .zip(committed_zero_masks)
+                                                .enumerate()
                                         {
-                                            let hot = row_lanes[column];
-                                            if lane_is_committed(hot, committed_zero_mask, column) {
+                                            let hot = row_indices[column];
+                                            if row_is_committed(hot, committed_zero_mask, column) {
                                                 fixed_coefficients[count] = row_offset
                                                     * source.one_hot_k
                                                     + usize::from(hot);
@@ -2145,13 +2159,14 @@ fn decompose_fold_packed_with_mode<const D: usize>(
                                 } else {
                                     for column in 0..num_columns {
                                         coefficients.clear();
-                                        for (row_offset, (row_lanes, &committed_zero_mask)) in lanes
-                                            .chunks_exact(num_columns)
-                                            .zip(committed_zero_masks)
-                                            .enumerate()
+                                        for (row_offset, (row_indices, &committed_zero_mask)) in
+                                            selected_rows
+                                                .chunks_exact(num_columns)
+                                                .zip(committed_zero_masks)
+                                                .enumerate()
                                         {
-                                            let hot = row_lanes[column];
-                                            if lane_is_committed(hot, committed_zero_mask, column) {
+                                            let hot = row_indices[column];
+                                            if row_is_committed(hot, committed_zero_mask, column) {
                                                 coefficients.push(
                                                     row_offset * source.one_hot_k
                                                         + usize::from(hot),
@@ -2436,7 +2451,7 @@ mod tests {
     }
 
     impl TestRows {
-        fn lane(&self, row: usize, column: usize) -> u8 {
+        fn selected_row(&self, row: usize, column: usize) -> u8 {
             ((row * (2 * column + 1) + column) % self.k) as u8
         }
     }
@@ -2450,15 +2465,15 @@ mod tests {
             self.columns
         }
 
-        fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
-            for (column, hot) in hot_lanes.iter_mut().enumerate() {
-                *hot = self.lane(row, column);
+        fn fill_row(&self, row: usize, selected_rows: &mut [u8]) {
+            for (column, selected) in selected_rows.iter_mut().enumerate() {
+                *selected = self.selected_row(row, column);
             }
         }
 
         fn committed_digit_zero_mask(&self, row: usize) -> u64 {
             self.committed_zero_column
-                .filter(|&column| self.lane(row, column) == 0)
+                .filter(|&column| self.selected_row(row, column) == 0)
                 .map_or(0, |column| 1u64 << column)
         }
     }
@@ -2500,9 +2515,9 @@ mod tests {
         let expected = (0..rows)
             .flat_map(|row| {
                 (0..3).filter_map(move |column| {
-                    let lane = (row * (2 * column + 1) + column) % k;
-                    (lane != 0 || committed_zero_column == Some(column))
-                        .then_some((column, row * k + lane))
+                    let selected_row = (row * (2 * column + 1) + column) % k;
+                    (selected_row != 0 || committed_zero_column == Some(column))
+                        .then_some((column, row * k + selected_row))
                 })
             })
             .collect::<Vec<_>>();
@@ -2535,16 +2550,16 @@ mod tests {
     fn assert_k16_shift_groups<const D: usize>() {
         const COLUMNS: usize = 5;
         let rows_per_ring = D / 16;
-        let mut lanes = vec![NO_HOT_LANE; rows_per_ring * COLUMNS];
+        let mut selected_rows = vec![NO_SELECTED_ROW; rows_per_ring * COLUMNS];
         let committed_zero_masks = vec![0u64; rows_per_ring];
         for row in 0..rows_per_ring {
             let shared_hot = ((row + 1) % 15 + 1) as u8;
-            lanes[row * COLUMNS] = shared_hot;
-            lanes[row * COLUMNS + 1] = shared_hot;
-            lanes[row * COLUMNS + 2] = shared_hot;
-            lanes[row * COLUMNS + 3] = ((2 * row + 3) % 15 + 1) as u8;
-            lanes[row * COLUMNS + 4] = if row == 1 {
-                NO_HOT_LANE
+            selected_rows[row * COLUMNS] = shared_hot;
+            selected_rows[row * COLUMNS + 1] = shared_hot;
+            selected_rows[row * COLUMNS + 2] = shared_hot;
+            selected_rows[row * COLUMNS + 3] = ((2 * row + 3) % 15 + 1) as u8;
+            selected_rows[row * COLUMNS + 4] = if row == 1 {
+                NO_SELECTED_ROW
             } else {
                 ((3 * row + 5) % 15 + 1) as u8
             };
@@ -2556,17 +2571,17 @@ mod tests {
             }));
         let source: AkitaWideRing<D> = AkitaWideRing::from_ring(&source);
         let mut actual = vec![AkitaWideRing::zero(); COLUMNS];
-        for (chunk, chunk_lanes) in lanes.chunks_exact(4 * COLUMNS).enumerate() {
+        for (chunk, chunk_rows) in selected_rows.chunks_exact(4 * COLUMNS).enumerate() {
             let masks = &committed_zero_masks[4 * chunk..4 * chunk + 4];
             let mut groups = K16FourRowShiftGroups::new(COLUMNS, 4 * chunk).unwrap();
-            assert!(groups.build(chunk_lanes, masks, COLUMNS));
-            groups.accumulate(&source, &mut actual, 0, 1, chunk_lanes, masks, COLUMNS);
+            assert!(groups.build(chunk_rows, masks, COLUMNS));
+            groups.accumulate(&source, &mut actual, 0, 1, chunk_rows, masks, COLUMNS);
         }
 
         let mut expected = vec![AkitaWideRing::zero(); COLUMNS];
-        for (row, row_lanes) in lanes.chunks_exact(COLUMNS).enumerate() {
-            for (column, &hot) in row_lanes.iter().enumerate() {
-                if hot != NO_HOT_LANE {
+        for (row, row_indices) in selected_rows.chunks_exact(COLUMNS).enumerate() {
+            for (column, &hot) in row_indices.iter().enumerate() {
+                if hot != NO_SELECTED_ROW {
                     source
                         .shift_accumulate_into(&mut expected[column], 16 * row + usize::from(hot));
                 }
@@ -2658,9 +2673,10 @@ mod tests {
         let packed_indices = (0..CAPACITY)
             .flat_map(|column| {
                 (0..rows).map(move |row| {
-                    let lane = ((row * (2 * column + 1) + column) % k) as u8;
-                    (column < COLUMNS && (lane != 0 || committed_zero_column == Some(column)))
-                        .then_some(lane)
+                    let selected_row = ((row * (2 * column + 1) + column) % k) as u8;
+                    (column < COLUMNS
+                        && (selected_row != 0 || committed_zero_column == Some(column)))
+                    .then_some(selected_row)
                 })
             })
             .collect();

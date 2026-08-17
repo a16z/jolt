@@ -76,7 +76,7 @@ use jolt_verifier::stages::stage6a::booleanity::{
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_verifier::VerifierError;
 #[cfg(feature = "akita")]
-use jolt_witness::witnesses::BalancedIncLane;
+use jolt_witness::witnesses::BalancedIncColumn;
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
@@ -96,11 +96,11 @@ enum ColumnSelector {
     Bytecode(RaChunkSelector),
     Ram(RaChunkSelector),
     #[cfg(feature = "akita")]
-    UnsignedInc(BalancedIncLane),
+    UnsignedInc(BalancedIncColumn),
 }
 
 impl ColumnSelector {
-    /// The hot chunk index at `row`; `None` is a cold cycle. Mirrors the
+    /// The selected row at `row`; `None` is a cold cycle. Mirrors the
     /// trace oracle's grid materializers (`materialize_one_hot`), so
     /// gathered indices and the reference tier's dense grids describe the
     /// same one-hot polynomials.
@@ -113,7 +113,7 @@ impl ColumnSelector {
                 .remapped_ram_address()
                 .map(|address| selector.chunk_usize(address as usize)),
             #[cfg(feature = "akita")]
-            Self::UnsignedInc(lane) => Some(row.fused_inc_hot_lane(*lane)),
+            Self::UnsignedInc(column) => Some(row.fused_inc_row(*column)),
         }
     }
 }
@@ -194,12 +194,12 @@ fn column_selectors<F: Field>(
                 reason: "the packed shape requires a lattice-compatible chunk width",
             })?;
         selectors.extend((0..chunking.chunk_count()).map(|index| {
-            ColumnSelector::UnsignedInc(BalancedIncLane::Digit {
+            ColumnSelector::UnsignedInc(BalancedIncColumn::Digit {
                 width: log_k_chunk,
                 index,
             })
         }));
-        selectors.push(ColumnSelector::UnsignedInc(BalancedIncLane::Carry {
+        selectors.push(ColumnSelector::UnsignedInc(BalancedIncColumn::Carry {
             width: log_k_chunk,
         }));
     }

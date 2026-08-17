@@ -76,16 +76,16 @@ impl FusedInc {
         self.0 + Self::balanced_bias(width)
     }
 
-    /// The hot address of one centered digit or its signed carry.
-    pub fn hot_lane(self, lane: BalancedIncLane) -> usize {
-        match lane {
-            BalancedIncLane::Digit { width, index } => {
+    /// The selected row of one centered digit or its signed carry.
+    pub fn selected_row(self, column: BalancedIncColumn) -> usize {
+        match column {
+            BalancedIncColumn::Digit { width, index } => {
                 let radix = 1i128 << width;
                 let standard =
                     (self.biased_for_balanced_digits(width) >> (width * index)) & (radix - 1);
                 ((standard + radix / 2) & (radix - 1)) as usize
             }
-            BalancedIncLane::Carry { width } => {
+            BalancedIncColumn::Carry { width } => {
                 let radix = 1i128 << width;
                 let carry = self.biased_for_balanced_digits(width) >> FUSED_INC_BITS;
                 debug_assert!((-1..=1).contains(&carry));
@@ -130,30 +130,31 @@ impl Extract for FusedInc {
 
 /// Selects one centered radix digit or the signed carry above bit 63.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BalancedIncLane {
+pub enum BalancedIncColumn {
     Digit { width: usize, index: usize },
     Carry { width: usize },
 }
 
-/// The per-cycle hot address of one `BalancedIncDigit`/`BalancedIncCarry`
-/// column; every cycle is hot.
+/// The row selected by one `BalancedIncDigit`/`BalancedIncCarry` column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BalancedIncHot(pub usize);
+pub struct BalancedIncRow(pub usize);
 
-impl From<BalancedIncHot> for Option<usize> {
-    fn from(hot: BalancedIncHot) -> Self {
-        Some(hot.0)
+impl From<BalancedIncRow> for Option<usize> {
+    fn from(row: BalancedIncRow) -> Self {
+        Some(row.0)
     }
 }
 
-impl ExtractIndexed<BalancedIncLane> for BalancedIncHot {
+impl ExtractIndexed<BalancedIncColumn> for BalancedIncRow {
     fn extract_indexed(
-        lane: BalancedIncLane,
+        column: BalancedIncColumn,
         row: &TraceRow,
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(FusedInc::extract(row, next, env)?.hot_lane(lane)))
+        Ok(Self(
+            FusedInc::extract(row, next, env)?.selected_row(column),
+        ))
     }
 }
 
@@ -188,19 +189,19 @@ mod tests {
             let half = radix / 2;
             let mut reconstructed = 0i128;
             for index in 0..CHUNKS {
-                let hot = inc.hot_lane(BalancedIncLane::Digit {
+                let selected_row = inc.selected_row(BalancedIncColumn::Digit {
                     width: LOG_K_CHUNK,
                     index,
                 });
-                assert!(hot < 1 << LOG_K_CHUNK, "cycle {cycle}");
-                let digit = if (hot as i128) < half {
-                    hot as i128
+                assert!(selected_row < 1 << LOG_K_CHUNK, "cycle {cycle}");
+                let digit = if (selected_row as i128) < half {
+                    selected_row as i128
                 } else {
-                    hot as i128 - radix
+                    selected_row as i128 - radix
                 };
                 reconstructed += digit << (LOG_K_CHUNK * index);
             }
-            let carry = inc.hot_lane(BalancedIncLane::Carry { width: LOG_K_CHUNK }) as i128;
+            let carry = inc.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK }) as i128;
             let carry = if carry < half { carry } else { carry - radix };
             reconstructed += carry << FUSED_INC_BITS;
             assert_eq!(reconstructed, inc.0, "cycle {cycle}");
@@ -211,12 +212,12 @@ mod tests {
     fn zero_delta_uses_balanced_zero_digits_and_carry() {
         let padding = FusedInc(0);
         assert_eq!(
-            padding.hot_lane(BalancedIncLane::Carry { width: LOG_K_CHUNK }),
+            padding.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK }),
             0
         );
         for index in 0..CHUNKS {
             assert_eq!(
-                padding.hot_lane(BalancedIncLane::Digit {
+                padding.selected_row(BalancedIncColumn::Digit {
                     width: LOG_K_CHUNK,
                     index,
                 }),

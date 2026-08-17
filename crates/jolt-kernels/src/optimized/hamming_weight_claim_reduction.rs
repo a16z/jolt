@@ -36,7 +36,7 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 #[cfg(feature = "akita")]
-use jolt_witness::witnesses::BalancedIncLane;
+use jolt_witness::witnesses::BalancedIncColumn;
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
@@ -56,7 +56,7 @@ struct FamilySelectors {
     bytecode: Vec<RaChunkSelector>,
     ram: Vec<RaChunkSelector>,
     #[cfg(feature = "akita")]
-    balanced_inc: Vec<BalancedIncLane>,
+    balanced_inc: Vec<BalancedIncColumn>,
 }
 
 impl FamilySelectors {
@@ -122,8 +122,8 @@ fn pushforwards<F: Field>(
                 slot += 1;
             }
             #[cfg(feature = "akita")]
-            for lane in &selectors.balanced_inc {
-                partial[slot][row.fused_inc_hot_lane(*lane)] += eq;
+            for column in &selectors.balanced_inc {
+                partial[slot][row.fused_inc_row(*column)] += eq;
                 slot += 1;
             }
         }
@@ -199,12 +199,12 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             selectors
                 .balanced_inc
                 .extend((0..dimensions.chunking().chunk_count()).map(|index| {
-                    BalancedIncLane::Digit {
+                    BalancedIncColumn::Digit {
                         width: dimensions.log_k_chunk,
                         index,
                     }
                 }));
-            selectors.balanced_inc.push(BalancedIncLane::Carry {
+            selectors.balanced_inc.push(BalancedIncColumn::Carry {
                 width: dimensions.log_k_chunk,
             });
         }
@@ -319,9 +319,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
             }
             debug_assert_eq!(power, ra_terms);
             let balanced_values = (0..k_chunk)
-                .map(|lane| {
-                    balanced_inc_value(&boolean_point_msb::<F>(dimensions.log_k_chunk, lane))
-                })
+                .map(|row| balanced_inc_value(&boolean_point_msb::<F>(dimensions.log_k_chunk, row)))
                 .collect::<Vec<_>>();
             for index in 0..chunk_count {
                 let offset = ra_terms + index;

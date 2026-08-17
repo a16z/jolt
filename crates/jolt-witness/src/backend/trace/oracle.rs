@@ -242,13 +242,13 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<'_,
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
                 C::BalancedIncDigit(index) => self.materialize_balanced_inc_one_hot(
-                    crate::witnesses::BalancedIncLane::Digit {
+                    crate::witnesses::BalancedIncColumn::Digit {
                         width: self.config.one_hot.committed_chunk_bits(),
                         index,
                     },
                 ),
                 C::BalancedIncCarry => self.materialize_balanced_inc_one_hot(
-                    crate::witnesses::BalancedIncLane::Carry {
+                    crate::witnesses::BalancedIncColumn::Carry {
                         width: self.config.one_hot.committed_chunk_bits(),
                     },
                 ),

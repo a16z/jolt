@@ -21,7 +21,7 @@ use jolt_riscv::{
     JoltInstructionRow, CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 use jolt_witness::witnesses::{
-    BalancedIncLane, FusedInc, LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress,
+    BalancedIncColumn, FusedInc, LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress,
 };
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
@@ -172,13 +172,13 @@ enum OneHotTraceColumn {
     Instruction(RaChunkSelector),
     Bytecode(RaChunkSelector),
     Ram(RaChunkSelector),
-    Increment(BalancedIncLane),
+    Increment(BalancedIncColumn),
 }
 
 struct PackedTraceRows {
     num_rows: usize,
     num_columns: usize,
-    lanes: Vec<u8>,
+    selected_rows: Vec<u8>,
     ram_active_rows: Vec<u64>,
     ram_digit_zero_mask: u64,
 }
@@ -192,15 +192,15 @@ impl jolt_akita::TraceOneHotRows for PackedTraceRows {
         self.num_columns
     }
 
-    fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
+    fn fill_row(&self, row: usize, selected_rows: &mut [u8]) {
         let start = row * self.num_columns;
-        hot_lanes.copy_from_slice(&self.lanes[start..start + self.num_columns]);
+        selected_rows.copy_from_slice(&self.selected_rows[start..start + self.num_columns]);
     }
 
-    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u8]) {
-        debug_assert_eq!(hot_lanes.len() % self.num_columns, 0);
+    fn fill_rows(&self, row_start: usize, selected_rows: &mut [u8]) {
+        debug_assert_eq!(selected_rows.len() % self.num_columns, 0);
         let start = row_start * self.num_columns;
-        hot_lanes.copy_from_slice(&self.lanes[start..start + hot_lanes.len()]);
+        selected_rows.copy_from_slice(&self.selected_rows[start..start + selected_rows.len()]);
     }
 
     fn committed_digit_zero_mask(&self, row: usize) -> u64 {
@@ -216,20 +216,20 @@ impl jolt_akita::TraceOneHotRows for PackedTraceRows {
 }
 
 #[derive(Clone, Copy)]
-struct TraceLaneStatus {
+struct TraceRowStatus {
     bytecode_valid: bool,
     ram_active: bool,
 }
 
-fn fill_trace_lanes(
+fn fill_trace_row(
     row: OneHotTraceSourceRow,
     columns: &[OneHotTraceColumn],
-    lanes: &mut [u8],
-) -> TraceLaneStatus {
-    debug_assert_eq!(columns.len(), lanes.len());
+    selected_rows: &mut [u8],
+) -> TraceRowStatus {
+    debug_assert_eq!(columns.len(), selected_rows.len());
     let mut valid = true;
-    for (column, lane) in columns.iter().zip(lanes) {
-        let hot = match column {
+    for (column, selected_row) in columns.iter().zip(selected_rows) {
+        let row_index = match column {
             OneHotTraceColumn::Instruction(selector) => selector.chunk_u128(row.lookup_index.0),
             OneHotTraceColumn::Bytecode(selector) => {
                 if let Some(pc) = row.mapped_pc.0 {
@@ -243,12 +243,12 @@ fn fill_trace_lanes(
                 .ram_address
                 .0
                 .map_or(0, |address| selector.chunk_usize(address as usize)),
-            OneHotTraceColumn::Increment(lane) => row.fused_inc.hot_lane(*lane),
+            OneHotTraceColumn::Increment(column) => row.fused_inc.selected_row(*column),
         };
-        debug_assert!(hot <= u8::MAX as usize);
-        *lane = hot as u8;
+        debug_assert!(row_index <= u8::MAX as usize);
+        *selected_row = row_index as u8;
     }
-    TraceLaneStatus {
+    TraceRowStatus {
         bytecode_valid: valid,
         ram_active: row.ram_address.0.is_some(),
     }
@@ -286,13 +286,13 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
                 columns.push(OneHotTraceColumn::Ram(selector));
             }
             JoltCommittedPolynomial::BalancedIncDigit(index) => {
-                columns.push(OneHotTraceColumn::Increment(BalancedIncLane::Digit {
+                columns.push(OneHotTraceColumn::Increment(BalancedIncColumn::Digit {
                     width: log_k_chunk,
                     index: *index,
                 }));
             }
             JoltCommittedPolynomial::BalancedIncCarry => {
-                columns.push(OneHotTraceColumn::Increment(BalancedIncLane::Carry {
+                columns.push(OneHotTraceColumn::Increment(BalancedIncColumn::Carry {
                     width: log_k_chunk,
                 }));
             }
@@ -304,25 +304,25 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
         }
     }
 
-    let mut lanes = jolt_utils::unsafe_allocate_zero_vec(num_rows * num_columns);
+    let mut selected_rows = jolt_utils::unsafe_allocate_zero_vec(num_rows * num_columns);
     let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
     #[cfg(feature = "parallel")]
     if let Some(access) = witness.random_access() {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
             let bytecode_rows_valid = std::sync::atomic::AtomicBool::new(true);
-            lanes
+            selected_rows
                 .par_chunks_mut(num_columns * u64::BITS as usize)
                 .zip(ram_active_rows.par_iter_mut())
                 .enumerate()
-                .for_each(|(word_index, (word_lanes, ram_active_word))| {
-                    for (row_offset, row_lanes) in
-                        word_lanes.chunks_exact_mut(num_columns).enumerate()
+                .for_each(|(word_index, (word_rows, ram_active_word))| {
+                    for (row_offset, selected_rows) in
+                        word_rows.chunks_exact_mut(num_columns).enumerate()
                     {
                         let row_index = word_index * u64::BITS as usize + row_offset;
                         match access.window::<OneHotTraceSourceRow>(row_index) {
                             Ok(row) => {
-                                let status = fill_trace_lanes(row, &columns, row_lanes);
+                                let status = fill_trace_row(row, &columns, selected_rows);
                                 if !status.bytecode_valid {
                                     bytecode_rows_valid
                                         .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -351,7 +351,7 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
             return Ok(std::sync::Arc::new(PackedTraceRows {
                 num_rows,
                 num_columns,
-                lanes,
+                selected_rows,
                 ram_active_rows,
                 ram_digit_zero_mask,
             }));
@@ -359,12 +359,12 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
     }
 
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
-    for (row_index, (row, row_lanes)) in rows
+    for (row_index, (row, selected_rows)) in rows
         .into_iter()
-        .zip(lanes.chunks_exact_mut(num_columns))
+        .zip(selected_rows.chunks_exact_mut(num_columns))
         .enumerate()
     {
-        let status = fill_trace_lanes(row, &columns, row_lanes);
+        let status = fill_trace_row(row, &columns, selected_rows);
         if !status.bytecode_valid {
             return Err(ProverError::InvariantViolation {
                 reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
@@ -378,7 +378,7 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
     Ok(std::sync::Arc::new(PackedTraceRows {
         num_rows,
         num_columns,
-        lanes,
+        selected_rows,
         ram_active_rows,
         ram_digit_zero_mask,
     }))
