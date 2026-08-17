@@ -832,7 +832,9 @@ impl SolinasMetal {
         state_a: Option<Buffer>,
     ) -> Result<ProductRemainderSequence, MetalError> {
         if rows.device_registry_id() != self.device_registry_id() {
-            return Err(MetalError::ProductRemainderRowsDevice {
+            return Err(MetalError::BufferDevice {
+                family: "product remainder",
+                name: "rows",
                 expected: self.device_registry_id(),
                 got: rows.device_registry_id(),
             });
@@ -886,7 +888,8 @@ impl SolinasMetal {
         let openings_limits = Self::limits(&openings_pipeline);
         let reduction_limits = Self::limits(&reduction_pipeline);
         if uniskip_limits.thread_execution_width != PRODUCT_UNISKIP_SIMD_WIDTH {
-            return Err(MetalError::UnsupportedProductUniskipExecutionWidth {
+            return Err(MetalError::UnsupportedExecutionWidth {
+                family: "product uni-skip",
                 pipeline: PRODUCT_UNISKIP_PIPELINE,
                 expected: PRODUCT_UNISKIP_SIMD_WIDTH,
                 got: uniskip_limits.thread_execution_width,
@@ -899,7 +902,8 @@ impl SolinasMetal {
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != PRODUCT_REMAINDER_SIMD_WIDTH {
-                return Err(MetalError::UnsupportedProductRemainderExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "product remainder",
                     pipeline,
                     expected: PRODUCT_REMAINDER_SIMD_WIDTH,
                     got: limits.thread_execution_width,

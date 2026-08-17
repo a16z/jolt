@@ -200,7 +200,8 @@ impl SolinasMetal {
             (names.reduction, limits.reduction),
         ] {
             if pipeline_limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedOuterRemainderExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "outer remainder",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: pipeline_limits.thread_execution_width,
@@ -221,7 +222,8 @@ impl SolinasMetal {
             if let Some(state) = state {
                 let limits = Self::limits(state);
                 if limits.thread_execution_width != SIMD_WIDTH {
-                    return Err(MetalError::UnsupportedOuterRemainderExecutionWidth {
+                    return Err(MetalError::UnsupportedExecutionWidth {
+                        family: "outer remainder",
                         pipeline,
                         expected: SIMD_WIDTH,
                         got: limits.thread_execution_width,

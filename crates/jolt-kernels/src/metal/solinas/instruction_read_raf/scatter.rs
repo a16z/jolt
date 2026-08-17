@@ -289,7 +289,8 @@ impl SolinasMetal {
         let pipeline = self.compile_named_pipeline(PIPELINE)?;
         let limits = Self::limits(&pipeline);
         if limits.thread_execution_width != SIMD_WIDTH {
-            return Err(MetalError::UnsupportedAddressRafExecutionWidth {
+            return Err(MetalError::UnsupportedExecutionWidth {
+                family: "address RAF",
                 pipeline: PIPELINE,
                 expected: SIMD_WIDTH,
                 got: limits.thread_execution_width,
@@ -334,7 +335,8 @@ impl SolinasMetal {
             0
         };
         if total_threadgroup_bytes > maximum_threadgroup_bytes {
-            return Err(MetalError::AddressRafDirectThreadgroupMemory {
+            return Err(MetalError::ThreadgroupMemory {
+                family: "direct address RAF",
                 requested: total_threadgroup_bytes,
                 maximum: maximum_threadgroup_bytes,
             });

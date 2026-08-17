@@ -675,7 +675,8 @@ impl SolinasMetal {
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedInstructionInputExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "InstructionInput",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,
@@ -864,7 +865,9 @@ impl InstructionInputSequenceStorage {
             return Err(MetalError::InvalidInstructionInputRows(resident_rows.len()));
         }
         if resident_rows.device_registry_id() != self.context.device_registry_id() {
-            return Err(MetalError::InstructionInputRowsDevice {
+            return Err(MetalError::BufferDevice {
+                family: "InstructionInput",
+                name: "rows",
                 expected: self.context.device_registry_id(),
                 got: resident_rows.device_registry_id(),
             });
@@ -977,7 +980,9 @@ impl InstructionInputSequenceStorage {
             return Err(MetalError::InvalidInstructionInputRows(resident_rows.len()));
         }
         if resident_rows.device_registry_id() != self.context.device_registry_id() {
-            return Err(MetalError::InstructionInputRowsDevice {
+            return Err(MetalError::BufferDevice {
+                family: "InstructionInput",
+                name: "rows",
                 expected: self.context.device_registry_id(),
                 got: resident_rows.device_registry_id(),
             });

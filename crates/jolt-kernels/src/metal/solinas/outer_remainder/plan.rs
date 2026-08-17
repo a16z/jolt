@@ -79,7 +79,11 @@ pub(super) fn validate_opening_threadgroup_memory(
         ))?;
     let maximum = context.device.max_threadgroup_memory_length();
     if requested > maximum {
-        return Err(MetalError::OuterRemainderThreadgroupMemory { requested, maximum });
+        return Err(MetalError::ThreadgroupMemory {
+            family: "the outer remainder opening kernel",
+            requested,
+            maximum,
+        });
     }
     Ok(())
 }

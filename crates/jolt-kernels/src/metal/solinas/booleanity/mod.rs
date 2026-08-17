@@ -70,7 +70,9 @@ impl BooleanityRows {
         }
         let got = buffer.device().registry_id();
         if got != expected_device_registry_id {
-            return Err(MetalError::BooleanityRowsDevice {
+            return Err(MetalError::BufferDevice {
+                family: "booleanity",
+                name: "rows",
                 expected: expected_device_registry_id,
                 got,
             });
@@ -429,7 +431,12 @@ impl SolinasMetal {
         let expected = self.device.registry_id();
         let got = rows.device_registry_id();
         if got != expected {
-            return Err(MetalError::BooleanityRowsDevice { expected, got });
+            return Err(MetalError::BufferDevice {
+                family: "booleanity",
+                name: "rows",
+                expected,
+                got,
+            });
         }
         Ok(())
     }
@@ -517,7 +524,8 @@ impl SolinasMetal {
             (REDUCE_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedBooleanityExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "booleanity",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,
@@ -1168,7 +1176,7 @@ mod tests {
                 2,
                 BooleanitySequenceConfig::default(),
             ),
-            Err(MetalError::BooleanityRowsDevice {
+            Err(MetalError::BufferDevice { family: "booleanity", name: "rows",
                 expected: error_expected,
                 got: error_got,
             }) if error_expected == expected && error_got == got

@@ -327,7 +327,8 @@ impl SolinasMetal {
         ] {
             let got_device = buffer.device().registry_id();
             if got_device != expected_device {
-                return Err(MetalError::SpartanShiftBufferDevice {
+                return Err(MetalError::BufferDevice {
+                    family: "Spartan shift",
                     name,
                     expected: expected_device,
                     got: got_device,
@@ -489,7 +490,8 @@ impl SolinasMetal {
             .and_then(|dynamic| dynamic.checked_add(limits.static_threadgroup_memory_length))
             .ok_or(MetalError::InputTooLong(dynamic_threadgroup_bytes))?;
         if total_threadgroup_bytes > self.device.max_threadgroup_memory_length() {
-            return Err(MetalError::SpartanShiftThreadgroupMemory {
+            return Err(MetalError::ThreadgroupMemory {
+                family: "the Spartan shift fold",
                 requested: total_threadgroup_bytes,
                 maximum: self.device.max_threadgroup_memory_length(),
             });
@@ -736,7 +738,8 @@ fn validate_execution_width(
     limits: PipelineLimits,
 ) -> Result<(), MetalError> {
     if limits.thread_execution_width != SPARTAN_SHIFT_SIMD_WIDTH {
-        return Err(MetalError::UnsupportedSpartanShiftExecutionWidth {
+        return Err(MetalError::UnsupportedExecutionWidth {
+            family: "Spartan shift",
             pipeline,
             expected: SPARTAN_SHIFT_SIMD_WIDTH,
             got: limits.thread_execution_width,

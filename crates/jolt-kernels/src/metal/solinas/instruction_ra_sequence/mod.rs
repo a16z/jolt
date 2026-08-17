@@ -385,7 +385,8 @@ impl SolinasMetal {
             (REDUCE_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedInstructionRaExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "Instruction RA",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,
@@ -395,7 +396,8 @@ impl SolinasMetal {
         for (_, pipeline) in &pipelines.wide_messages {
             let limits = Self::limits(pipeline);
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedInstructionRaExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "Instruction RA",
                     pipeline: MESSAGE_WIDE_PIPELINE,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,
@@ -986,7 +988,12 @@ fn validate_plane(
     let expected = context.device.registry_id();
     let got = plane.device_registry_id();
     if got != expected {
-        return Err(MetalError::InstructionRaPlaneDevice { expected, got });
+        return Err(MetalError::BufferDevice {
+            family: "Instruction RA",
+            name: "resident plane",
+            expected,
+            got,
+        });
     }
     Ok(())
 }

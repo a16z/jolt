@@ -465,10 +465,16 @@ pub(super) fn booleanity_address_can_fallback(error: &MetalError) -> bool {
             | MetalError::WorkingSetTooLarge { .. }
             | MetalError::FunctionLookup { .. }
             | MetalError::PipelineCompilation { .. }
-            | MetalError::UnsupportedBooleanityExecutionWidth { .. }
+            | MetalError::UnsupportedExecutionWidth {
+                family: "booleanity",
+                ..
+            }
             | MetalError::InvalidThreadgroupWidth { .. }
             | MetalError::InvalidBooleanityAddressFinalizeWidth(_)
-            | MetalError::BooleanityAddressThreadgroupMemory { .. }
+            | MetalError::ThreadgroupMemory {
+                family: "booleanity address",
+                ..
+            }
     )
 }
 

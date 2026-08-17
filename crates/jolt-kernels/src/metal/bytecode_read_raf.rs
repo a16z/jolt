@@ -546,7 +546,10 @@ fn bytecode_prepare_can_fallback(error: &MetalError) -> bool {
             | MetalError::WorkingSetTooLarge { .. }
             | MetalError::FunctionLookup { .. }
             | MetalError::PipelineCompilation { .. }
-            | MetalError::UnsupportedBytecodeCycleExecutionWidth { .. }
+            | MetalError::UnsupportedExecutionWidth {
+                family: "bytecode cycle",
+                ..
+            }
             | MetalError::InvalidThreadgroupWidth { .. }
     )
 }

@@ -553,7 +553,8 @@ impl SolinasMetal {
         ];
         for (pipeline, limits) in limits {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedAddressRafExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "address RAF",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,
@@ -574,7 +575,8 @@ impl SolinasMetal {
             (PRODUCT_REDUCE_PIPELINE, cycle_reduce_limits),
         ] {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedAddressCycleExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "address cycle",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,
@@ -628,12 +630,14 @@ impl SolinasMetal {
             let maximum = self.device.max_threadgroup_memory_length();
             if requested as u64 > maximum {
                 return Err(if suffix {
-                    MetalError::AddressSuffixThreadgroupMemory {
+                    MetalError::ThreadgroupMemory {
+                        family: "the address suffix kernel",
                         requested: requested as u64,
                         maximum,
                     }
                 } else {
-                    MetalError::AddressRafDirectThreadgroupMemory {
+                    MetalError::ThreadgroupMemory {
+                        family: "direct address RAF",
                         requested: requested as u64,
                         maximum,
                     }

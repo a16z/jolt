@@ -416,7 +416,9 @@ impl SolinasMetal {
             return Err(MetalError::InvalidOuterRemainderRows(cycles));
         }
         if rows.device_registry_id() != self.device_registry_id() {
-            return Err(MetalError::OuterRemainderRowDevice {
+            return Err(MetalError::BufferDevice {
+                family: "outer remainder",
+                name: "rows",
                 expected: self.device_registry_id(),
                 got: rows.device_registry_id(),
             });
@@ -435,7 +437,9 @@ impl OuterRemainderSequenceStorage {
             return Err(MetalError::InvalidOuterRemainderRows(rows.len()));
         }
         if rows.device_registry_id() != self.storage.context.device_registry_id() {
-            return Err(MetalError::OuterRemainderRowDevice {
+            return Err(MetalError::BufferDevice {
+                family: "outer remainder",
+                name: "rows",
                 expected: self.storage.context.device_registry_id(),
                 got: rows.device_registry_id(),
             });

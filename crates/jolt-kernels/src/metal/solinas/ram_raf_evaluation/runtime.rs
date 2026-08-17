@@ -209,7 +209,9 @@ impl SolinasMetal {
             .metadata
             .validate_consumer(addresses.shape, self.device_registry_id())
             .map_err(|error| match error {
-                RamRafError::ResidentDeviceMismatch => MetalError::RamRafRowsDevice {
+                RamRafError::ResidentDeviceMismatch => MetalError::BufferDevice {
+                    family: "RAM RAF",
+                    name: "address plane",
                     expected: self.device_registry_id(),
                     got: addresses.metadata_device_registry_id(),
                 },

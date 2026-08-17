@@ -212,7 +212,8 @@ impl SolinasMetal {
             .chain([(FINALIZE_PIPELINE, finalize_limits)])
         {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedBooleanityExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "booleanity",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,
@@ -245,7 +246,8 @@ impl SolinasMetal {
             .checked_add(accumulator_bytes as u64)
             .ok_or(MetalError::InputTooLong(accumulator_bytes))?;
         if tile_threadgroup_bytes > maximum_threadgroup_bytes {
-            return Err(MetalError::BooleanityAddressThreadgroupMemory {
+            return Err(MetalError::ThreadgroupMemory {
+                family: "booleanity address",
                 requested: tile_threadgroup_bytes,
                 maximum: maximum_threadgroup_bytes,
             });
@@ -258,7 +260,8 @@ impl SolinasMetal {
             .checked_add(finalize_bytes as u64)
             .ok_or(MetalError::InputTooLong(finalize_bytes))?;
         if finalize_threadgroup_bytes > maximum_threadgroup_bytes {
-            return Err(MetalError::BooleanityAddressThreadgroupMemory {
+            return Err(MetalError::ThreadgroupMemory {
+                family: "booleanity address",
                 requested: finalize_threadgroup_bytes,
                 maximum: maximum_threadgroup_bytes,
             });

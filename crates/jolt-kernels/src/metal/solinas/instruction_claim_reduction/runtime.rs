@@ -297,7 +297,8 @@ impl SolinasMetal {
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != INSTRUCTION_CLAIM_SIMD_WIDTH {
-                return Err(MetalError::UnsupportedInstructionClaimExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "instruction claim-reduction",
                     pipeline,
                     expected: INSTRUCTION_CLAIM_SIMD_WIDTH,
                     got: limits.thread_execution_width,

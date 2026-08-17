@@ -807,7 +807,8 @@ impl SolinasMetal {
             (REDUCE_PIPELINE, reduce_limits),
         ] {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedSpartanOuterExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "Spartan outer uni-skip",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,
@@ -827,7 +828,8 @@ impl SolinasMetal {
         let reduce_scratch = byte_length::<Fp128>(threads_per_threadgroup / SIMD_WIDTH)?;
         for requested in [block_scratch, reduce_scratch] {
             if requested > self.device.max_threadgroup_memory_length() {
-                return Err(MetalError::SpartanOuterThreadgroupMemory {
+                return Err(MetalError::ThreadgroupMemory {
+                    family: "Spartan outer uni-skip",
                     requested,
                     maximum: self.device.max_threadgroup_memory_length(),
                 });

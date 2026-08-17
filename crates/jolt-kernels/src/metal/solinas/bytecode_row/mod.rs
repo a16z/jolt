@@ -166,7 +166,8 @@ impl SolinasMetal {
             (FIRST_BIND_PIPELINE, first_bind_limits),
         ] {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedBytecodeCycleExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "bytecode cycle",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,

@@ -391,7 +391,8 @@ impl SolinasMetal {
             (REDUCTION_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != SIMD_WIDTH {
-                return Err(MetalError::UnsupportedRegistersValExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "registers value evaluation",
                     pipeline,
                     expected: SIMD_WIDTH,
                     got: limits.thread_execution_width,

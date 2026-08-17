@@ -267,18 +267,6 @@ pub enum MetalError {
         e_in: usize,
         e_out: usize,
     },
-    #[error(
-        "Spartan outer uni-skip pipeline `{pipeline}` has execution width {got}, expected {expected}"
-    )]
-    UnsupportedSpartanOuterExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    #[error(
-        "Spartan outer uni-skip needs {requested} bytes of threadgroup memory, device limit is {maximum}"
-    )]
-    SpartanOuterThreadgroupMemory { requested: u64, maximum: u64 },
     #[error("Spartan outer row {row} could not be extracted: {message}")]
     SpartanOuterRowExtraction { row: usize, message: String },
     #[error("address RAF row and weight lengths differ: rows={rows}, weights={weights}")]
@@ -289,10 +277,6 @@ pub enum MetalError {
     InvalidAddressRafCondensationSuffixLength(u32),
     #[error("direct address RAF rows per threadgroup must be in 1..=65536, got {0}")]
     InvalidAddressRafDirectRowsPerThreadgroup(usize),
-    #[error(
-        "direct address RAF needs {requested} bytes of threadgroup memory, device limit is {maximum}"
-    )]
-    AddressRafDirectThreadgroupMemory { requested: u64, maximum: u64 },
     #[error("address suffix row selects unknown table {0}")]
     InvalidAddressSuffixTable(usize),
     #[error("address suffix scan requires at least one table-selected row")]
@@ -323,26 +307,6 @@ pub enum MetalError {
         count: usize,
         maximum: usize,
     },
-    #[error(
-        "address suffix kernel needs {requested} bytes of threadgroup memory, device limit is {maximum}"
-    )]
-    AddressSuffixThreadgroupMemory { requested: u64, maximum: u64 },
-    #[error(
-        "address RAF pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedAddressRafExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    #[error(
-        "address cycle pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedAddressCycleExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error("hybrid cutoff must be a power of two of at least two, got {0}")]
     InvalidHybridCutoff(usize),
     #[error(
@@ -363,18 +327,6 @@ pub enum MetalError {
         name: &'static str,
         expected: u64,
         got: u64,
-    },
-    #[error(
-        "Instruction RA resident plane belongs to Metal device {got}, but the kernel uses {expected}"
-    )]
-    InstructionRaPlaneDevice { expected: u64, got: u64 },
-    #[error(
-        "Instruction RA pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedInstructionRaExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
     },
     #[error(
         "registers value evaluation needs a power-of-two cycle count of at least four, got {0}"
@@ -402,14 +354,6 @@ pub enum MetalError {
     InvalidRegistersValState(&'static str),
     #[error("registers value evaluation index {0} is outside the 128-register domain")]
     InvalidRegistersValIndex(u8),
-    #[error(
-        "registers value evaluation pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedRegistersValExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error(transparent)]
     ProductRemainderShape(#[from] product_remainder::ProductRemainderShapeError),
     #[error("product remainder row {index} is invalid: {source}")]
@@ -417,20 +361,8 @@ pub enum MetalError {
         index: usize,
         source: product_remainder::ProductRemainderRowError,
     },
-    #[error("product remainder rows belong to Metal device {got}, expected {expected}")]
-    ProductRemainderRowsDevice { expected: u64, got: u64 },
     #[error(transparent)]
     ProductUniskipShape(#[from] product_uniskip::ProductUniskipShapeError),
-    #[error("product uni-skip rows belong to Metal device {got}, expected {expected}")]
-    ProductUniskipRowsDevice { expected: u64, got: u64 },
-    #[error(
-        "product uni-skip pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedProductUniskipExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error(transparent)]
     SpartanShiftPlan(#[from] spartan_shift::SpartanShiftPlanError),
     #[error(transparent)]
@@ -439,38 +371,12 @@ pub enum MetalError {
     InvalidSpartanShiftState(&'static str),
     #[error("Spartan shift row {row} could not be extracted: {message}")]
     SpartanShiftRowExtraction { row: usize, message: String },
-    #[error("Spartan shift {name} buffer is on device {got}, expected {expected}")]
-    SpartanShiftBufferDevice {
-        name: &'static str,
-        expected: u64,
-        got: u64,
-    },
-    #[error(
-        "Spartan shift pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedSpartanShiftExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    #[error(
-        "Spartan shift fold needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
-    )]
-    SpartanShiftThreadgroupMemory { requested: u64, maximum: u64 },
     #[error(transparent)]
     InstructionClaimShape(#[from] instruction_claim_reduction::InstructionClaimShapeError),
     #[error(transparent)]
     InstructionClaimOpening(#[from] instruction_claim_reduction::InstructionClaimOpeningError),
     #[error("invalid resident instruction claim-reduction state: {0}")]
     InvalidInstructionClaimState(&'static str),
-    #[error(
-        "instruction claim-reduction pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedInstructionClaimExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error(
         "instruction claim-reduction {phase} needs {requested} bytes of threadgroup memory, device maximum is {maximum}"
     )]
@@ -481,8 +387,6 @@ pub enum MetalError {
     },
     #[error(transparent)]
     RamRaf(#[from] ram_raf_evaluation::RamRafError),
-    #[error("RAM RAF address plane belongs to Metal device {got}, expected {expected}")]
-    RamRafRowsDevice { expected: u64, got: u64 },
     #[error(
         "RAM RAF shader reported {invalid_rows} invalid rows and {unsupported_dispatches} unsupported dispatches"
     )]
@@ -492,14 +396,6 @@ pub enum MetalError {
     },
     #[error("invalid resident product remainder state: {0}")]
     InvalidProductRemainderState(&'static str),
-    #[error(
-        "product remainder pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedProductRemainderExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error("invalid resident Instruction RA state: {0}")]
     InvalidInstructionRaState(&'static str),
     #[error("InstructionInput needs a power-of-two row count of at least four, got {0}")]
@@ -508,16 +404,6 @@ pub enum MetalError {
     InstructionInputStorageLength { expected: usize, got: usize },
     #[error("InstructionInput split weights cover {covered} pairs, expected {expected}")]
     InstructionInputWeightShape { expected: usize, covered: usize },
-    #[error("InstructionInput rows belong to Metal device {got}, but the kernel uses {expected}")]
-    InstructionInputRowsDevice { expected: u64, got: u64 },
-    #[error(
-        "InstructionInput pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedInstructionInputExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error("invalid resident InstructionInput state: {0}")]
     InvalidInstructionInputState(&'static str),
     #[error(
@@ -534,14 +420,6 @@ pub enum MetalError {
     InvalidBytecodeCycleThreadgroups(usize),
     #[error("invalid resident bytecode cycle state: {0}")]
     InvalidBytecodeCycleState(&'static str),
-    #[error(
-        "bytecode cycle pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedBytecodeCycleExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error(
         "row-derived bytecode cycle needs {expected} stages, got {points} points and {weights} weights"
     )]
@@ -570,14 +448,6 @@ pub enum MetalError {
         "split equality tables cover {covered} pairs, but the five-factor kernel needs {expected}"
     )]
     Product5WeightShape { expected: usize, covered: usize },
-    #[error(
-        "five-factor pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedProduct5ExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error("booleanity row cannot be represented by the packed Metal ABI")]
     InvalidBooleanityRow,
     #[error("booleanity needs a power-of-two row count of at least four, got {0}")]
@@ -594,8 +464,6 @@ pub enum MetalError {
         expected: usize,
         got: usize,
     },
-    #[error("Booleanity rows belong to Metal device {got}, but the kernel uses {expected}")]
-    BooleanityRowsDevice { expected: u64, got: u64 },
     #[error("booleanity split weights cover {covered} pairs, expected {expected}")]
     BooleanityWeightShape { expected: usize, covered: usize },
     #[error("Booleanity address selector tiles must contain 1..=6 selectors, got {0}")]
@@ -604,26 +472,12 @@ pub enum MetalError {
     InvalidBooleanityAddressInnerLog2(usize),
     #[error("Booleanity address finalization needs 256, 512, 768, or 1024 threads, got {0}")]
     InvalidBooleanityAddressFinalizeWidth(usize),
-    #[error(
-        "Booleanity address needs {requested} bytes of threadgroup memory, device limit is {maximum}"
-    )]
-    BooleanityAddressThreadgroupMemory { requested: u64, maximum: u64 },
-    #[error(
-        "booleanity pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedBooleanityExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
     #[error("outer remainder needs a power-of-two cycle count of at least four, got {0}")]
     InvalidOuterRemainderRows(usize),
     #[error(
         "outer remainder explicit prefix has {explicit} rows, exceeding logical length {logical}"
     )]
     OuterRemainderExplicitRows { explicit: usize, logical: usize },
-    #[error("outer remainder rows belong to Metal device {got}, but the kernel uses {expected}")]
-    OuterRemainderRowDevice { expected: u64, got: u64 },
     #[error("invalid outer remainder configuration: {0}")]
     InvalidOuterRemainderConfig(&'static str),
     #[error("invalid outer remainder state: expected {expected}, got {got}")]
@@ -652,18 +506,6 @@ pub enum MetalError {
         az: usize,
         bz: usize,
     },
-    #[error(
-        "outer remainder pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
-    )]
-    UnsupportedOuterRemainderExecutionWidth {
-        pipeline: &'static str,
-        expected: usize,
-        got: usize,
-    },
-    #[error(
-        "outer remainder opening kernel needs {requested} bytes of threadgroup memory, device limit is {maximum}"
-    )]
-    OuterRemainderThreadgroupMemory { requested: u64, maximum: u64 },
     #[error("invalid booleanity sequence state: {0}")]
     InvalidBooleanityState(&'static str),
     #[error(
@@ -682,6 +524,32 @@ pub enum MetalError {
     InvalidGpuTimestamps { start: f64, end: f64 },
     #[error("execute the invocation before reading its output")]
     NotExecuted,
+    #[error(
+        "{family} pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+    )]
+    UnsupportedExecutionWidth {
+        family: &'static str,
+        pipeline: &'static str,
+        expected: usize,
+        got: usize,
+    },
+    #[error(
+        "{family} needs {requested} bytes of threadgroup memory, but the device limit is {maximum}"
+    )]
+    ThreadgroupMemory {
+        family: &'static str,
+        requested: u64,
+        maximum: u64,
+    },
+    #[error(
+        "{family} {name} buffer belongs to Metal device {got}, but the kernel uses {expected}"
+    )]
+    BufferDevice {
+        family: &'static str,
+        name: &'static str,
+        expected: u64,
+        got: u64,
+    },
 }
 
 impl MetalError {

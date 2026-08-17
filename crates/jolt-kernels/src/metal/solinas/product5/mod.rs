@@ -232,7 +232,8 @@ impl SolinasMetal {
             (REDUCE_PIPELINE, reduction_limits),
         ] {
             if limits.thread_execution_width != PRODUCT5_SIMD_WIDTH {
-                return Err(MetalError::UnsupportedProduct5ExecutionWidth {
+                return Err(MetalError::UnsupportedExecutionWidth {
+                    family: "five-factor",
                     pipeline,
                     expected: PRODUCT5_SIMD_WIDTH,
                     got: limits.thread_execution_width,
