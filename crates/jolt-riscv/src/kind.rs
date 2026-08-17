@@ -1731,6 +1731,9 @@ impl JoltInstructionKind {
     /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ADVICE: Self = JoltInstruction::VirtualAdvice(VirtualAdvice(()));
 
+    /// Value form of `VirtualRev8W`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_REV8_W: Self = JoltInstruction::VirtualRev8W(VirtualRev8W(()));
+
     /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
         JoltInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
