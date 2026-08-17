@@ -124,7 +124,7 @@ where
 /// A committed column's derivation from the fact bundle: the increments
 /// directly, the one-hots through the consumer-held chunk selector.
 #[derive(Clone, Copy, Debug)]
-enum ColumnKind {
+pub(crate) enum ColumnKind {
     RdInc,
     RamInc,
     InstructionRa(RaChunkSelector),
@@ -133,14 +133,14 @@ enum ColumnKind {
 }
 
 impl ColumnKind {
-    const fn is_one_hot(self) -> bool {
+    pub(crate) const fn is_one_hot(self) -> bool {
         matches!(
             self,
             Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_)
         )
     }
 
-    fn increment(self, row: &CommittedColumnsWitness) -> i128 {
+    pub(crate) fn increment(self, row: &CommittedColumnsWitness) -> i128 {
         match self {
             Self::RdInc => row.rd_inc.0,
             Self::RamInc => row.ram_inc.0,
@@ -150,7 +150,7 @@ impl ColumnKind {
         }
     }
 
-    fn hot_address(self, row: &CommittedColumnsWitness) -> Option<usize> {
+    pub(crate) fn hot_address(self, row: &CommittedColumnsWitness) -> Option<usize> {
         match self {
             Self::InstructionRa(selector) => Some(selector.chunk_u128(row.lookup_index.0)),
             Self::BytecodeRa(selector) => row.bytecode_pc.0.map(|pc| selector.chunk_usize(pc)),
@@ -166,7 +166,7 @@ impl ColumnKind {
 /// Resolve `ids` to column derivations. Family sizes come from the ids
 /// themselves (the committed order carries whole families); the chunk width
 /// is the grid's.
-fn column_kinds<F: Field>(
+pub(crate) fn column_kinds<F: Field>(
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
 ) -> Result<Vec<ColumnKind>, KernelError<F>> {
@@ -317,9 +317,9 @@ impl<F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> Strea
 /// A materializing per-column consumer: scatters one column into its full
 /// grid table (address-major strides, or the flat `(K × T)` layout on
 /// widened cycle-major grids), fed row-by-row afterwards.
-struct MaterializedColumn<F> {
+pub(crate) struct MaterializedColumn<F> {
     kind: ColumnKind,
-    table: Vec<F>,
+    pub(crate) table: Vec<F>,
     cycle: usize,
     cycle_stride: usize,
     one_hot_stride: usize,
@@ -327,7 +327,7 @@ struct MaterializedColumn<F> {
 }
 
 impl<F: Field> MaterializedColumn<F> {
-    fn begin(kind: ColumnKind, grid: CommitmentGrid) -> Self {
+    pub(crate) fn begin(kind: ColumnKind, grid: CommitmentGrid) -> Self {
         // Widened cycle-major grids materialize one-hots as the flat (K × T)
         // matrix and dense columns in the plain cycle-major layout;
         // address-major grids materialize the full strided table.

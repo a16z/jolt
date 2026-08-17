@@ -117,6 +117,30 @@ BUCKETED = {
     # appears as a direct child of `prove_stage6a`. Reading `prepare` as 0.0 understated
     # this relation by ~128x. The stage-7 `shared_ra_polys::compute_all_G` is a DIFFERENT
     # call (hamming-weight's) — never add it to a booleanity total.
+    # commit / commit-phases / stage8: the three Dory MSM slots. Legacy has no
+    # `prove_stage0` — its stage-0 equivalent is
+    # `generate_and_commit_witness_polynomials`, which is the WALL number to
+    # compare against the `commit` vertical arm. The phase spec is separate
+    # because those three children are rayon-parallel, so their inclusive sums
+    # are CPU time and exceed the parent's wall clock (259.7 s against 7.6 s at
+    # 2^22, ~34x); they attribute, they do not add up. They also cannot live in
+    # one spec with the parent — `check_nesting` rejects that, correctly.
+    "commit": [
+        ("commit", ["generate_and_commit_witness_polynomials"]),
+    ],
+    "commit-phases": [
+        ("one-hot tier1", ["DoryCommitmentScheme::compute_tier1_commitment_onehot"]),
+        ("dense tier1", ["DoryCommitmentScheme::compute_tier1_commitment"]),
+        ("tier2", ["DoryCommitmentScheme::compute_tier2_commitment"]),
+    ],
+    # stage8 covers BOTH remaining slots: legacy has no separable joint-opening
+    # or advice-opening — its vector-matrix product happens inside the external
+    # dory crate via `ArkworksPolynomial::vector_matrix_product`, and it has no
+    # advice-opening at all. So the only legacy number available for those two
+    # slots is the whole stage.
+    "stage8": [
+        ("stage8", ["prove_stage8"]),
+    ],
     "booleanity-address": [
         ("prepare", ["shared_ra_polys::compute_all_G_and_ra_indices"]),
         (

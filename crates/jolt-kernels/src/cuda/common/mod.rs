@@ -5,6 +5,7 @@ pub(crate) mod device;
 pub(crate) mod error;
 pub(crate) mod half_fold;
 pub(crate) mod lt_poly;
+pub(crate) mod msm;
 pub(crate) mod one_hot_fold;
 pub(crate) mod one_hot_witness;
 pub(crate) mod pack;

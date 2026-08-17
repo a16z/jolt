@@ -1,13 +1,13 @@
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 
-use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
 mod advice_claim_reduction;
 mod booleanity;
 mod bytecode_claim_reduction;
 mod bytecode_read_raf;
+mod commitment;
 mod common;
 mod hamming_weight_claim_reduction;
 mod inc_claim_reduction;
@@ -15,6 +15,7 @@ mod instruction_claim_reduction;
 mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
+mod opening;
 mod program_image_claim_reduction;
 mod ram_hamming_booleanity;
 mod ram_output_check;
@@ -30,6 +31,7 @@ mod spartan_outer;
 mod spartan_product;
 mod spartan_shift;
 
+pub use commitment::DeviceTier1Commitment;
 pub use common::context::{shared_context, CudaKernelContext};
 pub use common::device::{as_fr_slice, fr_into, fr_vec_into, DeviceFrVec, LIMBS};
 pub use common::error::CudaError;
@@ -58,7 +60,7 @@ where
 {
     pub fn cuda() -> Self
     where
-        PCS: ModeStreamingCommitment,
+        PCS: DeviceTier1Commitment,
     {
         let mut backend = Self::reference();
         if !device_available() {
@@ -97,6 +99,9 @@ where
         backend.untrusted_advice_address = Box::new(CudaBackend);
         backend.bytecode_reduction_address = Box::new(CudaBackend);
         backend.program_image_reduction_address = Box::new(CudaBackend);
+        backend.commit = Box::new(CudaBackend);
+        backend.advice_opening = Box::new(CudaBackend);
+        backend.joint_opening = Box::new(CudaBackend);
         backend
     }
 }

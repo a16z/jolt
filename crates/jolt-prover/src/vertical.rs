@@ -55,6 +55,7 @@ use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationIn
 use jolt_claims::protocols::jolt::relations::spartan::{
     ProductRemainderInputClaims, SpartanShiftChallenges, SpartanShiftInputClaims,
 };
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_claims::protocols::jolt::{
     AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltChallengeId,
     JoltRelationId, PrecommittedClaimReduction, PrecommittedReductionLayout,
@@ -63,7 +64,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::NoChallenges;
 use jolt_dory::DoryScheme;
 use jolt_field::{Fr, FromPrimitiveInt};
-use jolt_kernels::{JoltBackend, ProofSession, ProverInputs};
+use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, ProverInputs};
 use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
 use jolt_program::preprocess::{JoltProgramPreprocessing, PublicIoMemory};
 use jolt_prover_legacy::host;
@@ -143,18 +144,21 @@ const SAFETY_MARGIN: f64 = 0.9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerticalRelation {
+    AdviceOpening,
     BooleanityAddress,
     BooleanityCycle,
     BytecodeReadRafAddress,
     BytecodeReadRafCycle,
     BytecodeReductionAddress,
     BytecodeReductionCycle,
+    Commit,
     HammingWeightClaimReduction,
     IncClaimReduction,
     InstructionClaimReduction,
     InstructionInput,
     InstructionRaVirtualization,
     InstructionReadRaf,
+    JointOpening,
     ProgramImageReductionAddress,
     ProgramImageReductionCycle,
     RamHammingBooleanity,
@@ -179,18 +183,21 @@ pub enum VerticalRelation {
 impl VerticalRelation {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::AdviceOpening => "advice-opening",
             Self::BooleanityAddress => "booleanity-address",
             Self::BooleanityCycle => "booleanity-cycle",
             Self::BytecodeReadRafAddress => "bytecode-read-raf-address",
             Self::BytecodeReadRafCycle => "bytecode-read-raf-cycle",
             Self::BytecodeReductionAddress => "bytecode-reduction-address",
             Self::BytecodeReductionCycle => "bytecode-reduction-cycle",
+            Self::Commit => "commit",
             Self::HammingWeightClaimReduction => "hamming-weight-claim-reduction",
             Self::IncClaimReduction => "inc-claim-reduction",
             Self::InstructionClaimReduction => "instruction-claim-reduction",
             Self::InstructionInput => "instruction-input",
             Self::InstructionRaVirtualization => "instruction-ra-virtualization",
             Self::InstructionReadRaf => "instruction-read-raf",
+            Self::JointOpening => "joint-opening",
             Self::ProgramImageReductionAddress => "program-image-reduction-address",
             Self::ProgramImageReductionCycle => "program-image-reduction-cycle",
             Self::RamHammingBooleanity => "ram-hamming-booleanity",
@@ -413,6 +420,22 @@ pub fn run(args: &VerticalArgs) -> Vec<VerticalTiming> {
     let mut timings = Vec::new();
     for &scale in &args.scales {
         if args.legacy {
+            assert!(
+                !matches!(
+                    args.relation,
+                    VerticalRelation::Commit
+                        | VerticalRelation::JointOpening
+                        | VerticalRelation::AdviceOpening
+                ),
+                "the Dory MSM slots have no in-harness legacy driver: legacy's commit method is \
+                 private and takes `&mut self` on the whole prover, and its joint opening happens \
+                 inside the external dory crate. Take the baseline from legacy's own trace instead \
+                 — `cargo run --release -p jolt-prover-legacy -- benchmark --name {} --scale {} \
+                 --format chrome` then `python3 scripts/legacy_relation_baseline.py \
+                 benchmark-runs/perfetto_traces/<trace>.json commit commit-phases stage8`",
+                args.name.as_str(),
+                scale,
+            );
             let timing =
                 measure_legacy_precommitted(args.relation, args.name, scale, args.bytecode_chunks);
             println!(
@@ -429,6 +452,15 @@ pub fn run(args: &VerticalArgs) -> Vec<VerticalTiming> {
             continue;
         }
         let timing = match args.relation {
+            VerticalRelation::Commit => measure_commit(args.name, scale, args.backend),
+            VerticalRelation::JointOpening => measure_joint_opening(args.name, scale, args.backend),
+            VerticalRelation::AdviceOpening => measure_advice_opening(
+                args.name,
+                scale,
+                args.backend,
+                args.bytecode_chunks,
+                JoltAdviceKind::Trusted,
+            ),
             VerticalRelation::BooleanityCycle => {
                 measure_booleanity_cycle(args.name, scale, args.backend)
             }
@@ -2390,6 +2422,191 @@ struct PrecommittedGeometry {
     log_t: usize,
     ram_log_k: usize,
     bytecode_chunk_count: usize,
+}
+
+fn with_commit_fixture<T>(
+    workload: Workload,
+    scale: u32,
+    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>, CommitmentGrid, &ProverConfig) -> T,
+) -> T {
+    let VerticalFixture {
+        program: jolt_program,
+        program_preprocessing,
+        config,
+        log_t,
+        trace: padded,
+        memory_layout,
+        ..
+    } = fixture(workload, scale);
+    let grid = CommitmentGrid {
+        total_vars: config.commitment_total_vars(&memory_layout, false, false, None),
+        log_t,
+        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
+        order: config.trace_polynomial_order,
+    };
+    let witness = TraceBackend::new(
+        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
+        JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
+    );
+    body(&witness, grid, &config)
+}
+
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    reason = "measurement harness: kernel errors fail loudly and geometry is reported to stdout"
+)]
+fn measure_commit(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
+    with_commit_fixture(workload, scale, |witness, grid, _config| {
+        let ids: Vec<JoltCommittedPolynomial> =
+            jolt_witness::JoltWitnessOracle::<Fr>::committed_order(witness)
+                .expect("committed order")
+                .into_iter()
+                .filter(|id| {
+                    !matches!(
+                        id,
+                        JoltCommittedPolynomial::TrustedAdvice
+                            | JoltCommittedPolynomial::UntrustedAdvice
+                    )
+                })
+                .collect();
+        let setup = DoryScheme::setup_prover(grid.total_vars);
+        let selected = selected_backend(backend);
+        let mut session = ProofSession::default();
+        let start = Instant::now();
+        let committed = selected
+            .commit
+            .commit_witness(
+                &mut session,
+                witness as &dyn jolt_witness::RowSource,
+                &ids,
+                grid,
+                &setup,
+            )
+            .expect("commit the witness polynomials");
+        let elapsed = start.elapsed();
+        println!(
+            "         {} committed columns, grid {} vars, {} columns per row",
+            committed.len(),
+            grid.total_vars,
+            grid.num_columns(),
+        );
+        VerticalTiming {
+            log_t: grid.log_t,
+            prepare: Duration::ZERO,
+            address: Duration::ZERO,
+            handoff: Duration::ZERO,
+            cycle: elapsed,
+            claims: Duration::ZERO,
+        }
+    })
+}
+
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    reason = "measurement harness: kernel errors fail loudly and geometry is reported to stdout"
+)]
+fn measure_joint_opening(workload: Workload, scale: u32, backend: BackendKind) -> VerticalTiming {
+    with_commit_fixture(workload, scale, |witness, grid, _config| {
+        let order: Vec<JoltCommittedPolynomial> =
+            jolt_witness::JoltWitnessOracle::<Fr>::committed_order(witness)
+                .expect("committed order")
+                .into_iter()
+                .filter(|id| {
+                    !matches!(
+                        id,
+                        JoltCommittedPolynomial::TrustedAdvice
+                            | JoltCommittedPolynomial::UntrustedAdvice
+                    )
+                })
+                .collect();
+        let tables = std::collections::BTreeMap::new();
+        let selected = selected_backend(backend);
+        let mut session = ProofSession::default();
+
+        let start = Instant::now();
+        let polynomials = selected
+            .joint_opening
+            .prepare(&mut session, witness, &order, &tables, grid)
+            .expect("prepare the joint-opening polynomials");
+        let prepare = start.elapsed();
+
+        let sigma = grid.total_vars.div_ceil(2);
+        let left = synthetic_point(1usize << (grid.total_vars - sigma), 17);
+        let start = Instant::now();
+        for polynomial in &polynomials {
+            let folded = polynomial.fold_rows(&left, sigma);
+            assert_eq!(folded.len(), 1usize << sigma, "fold width");
+        }
+        let fold = start.elapsed();
+
+        println!(
+            "         {} polynomials, grid {} vars, sigma {}",
+            polynomials.len(),
+            grid.total_vars,
+            sigma,
+        );
+        VerticalTiming {
+            log_t: grid.log_t,
+            prepare,
+            address: Duration::ZERO,
+            handoff: Duration::ZERO,
+            cycle: fold,
+            claims: Duration::ZERO,
+        }
+    })
+}
+
+#[expect(
+    clippy::expect_used,
+    clippy::print_stdout,
+    reason = "measurement harness: kernel errors fail loudly and geometry is reported to stdout"
+)]
+fn measure_advice_opening(
+    workload: Workload,
+    scale: u32,
+    backend: BackendKind,
+    bytecode_chunks: usize,
+    kind: JoltAdviceKind,
+) -> VerticalTiming {
+    with_precommitted_fixture(
+        workload,
+        scale,
+        bytecode_chunks,
+        |witness, schedule, geometry| {
+            let layout = match kind {
+                JoltAdviceKind::Trusted => schedule.trusted_advice.as_ref(),
+                JoltAdviceKind::Untrusted => schedule.untrusted_advice.as_ref(),
+            }
+            .expect("advice layout present");
+            let vars = layout
+                .precommitted()
+                .poly_opening_round_permutation_be()
+                .len();
+            let point = synthetic_point(vars, 29);
+            let selected = selected_backend(backend);
+            let mut session = ProofSession::default();
+            let start = Instant::now();
+            let value = selected
+                .advice_opening
+                .evaluate(&mut session, kind, &point, witness)
+                .expect("evaluate the advice opening");
+            let elapsed = start.elapsed();
+            println!(
+                "         {kind:?} advice, {vars} vars, value nonzero = {}",
+                value != Fr::from_u64(0)
+            );
+            VerticalTiming {
+                log_t: geometry.log_t,
+                prepare: Duration::ZERO,
+                address: Duration::ZERO,
+                handoff: Duration::ZERO,
+                cycle: elapsed,
+                claims: Duration::ZERO,
+            }
+        },
+    )
 }
 
 fn selected_backend(backend: BackendKind) -> JoltBackend<Fr, DoryScheme> {

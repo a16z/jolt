@@ -27,6 +27,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/precommitted_reduction.cu"),
     "\n",
+    include_str!("../kernels/msm.cu"),
+    "\n",
     include_str!("../kernels/scan.cu"),
     "\n",
     include_str!("../kernels/lt_poly.cu"),
@@ -193,6 +195,27 @@ pub struct CudaKernelContext {
     gruen_pair_message: CudaFunction,
     so_claims: CudaFunction,
     sop_round: CudaFunction,
+    msm_fq_add: CudaFunction,
+    msm_fq_sub: CudaFunction,
+    msm_fq_mul: CudaFunction,
+    msm_fq_batch_inverse: CudaFunction,
+    msm_g1_double: CudaFunction,
+    msm_g1_add: CudaFunction,
+    msm_g1_add_affine: CudaFunction,
+    msm_affine_denominators: CudaFunction,
+    msm_affine_combine: CudaFunction,
+    msm_from_montgomery: CudaFunction,
+    msm_digits: CudaFunction,
+    msm_bucket_count: CudaFunction,
+    msm_bucket_scatter: CudaFunction,
+    msm_segment_sum: CudaFunction,
+    msm_segment_sum_small: CudaFunction,
+    msm_bucket_reduce_parallel: CudaFunction,
+    msm_window_accumulate: CudaFunction,
+    msm_block_embed: CudaFunction,
+    msm_scatter_strided: CudaFunction,
+    msm_scatter_one_hot: CudaFunction,
+    msm_fold_rows: CudaFunction,
     pcr_round: CudaFunction,
     pcr_scatter: CudaFunction,
     pcr_value_fold: CudaFunction,
@@ -329,6 +352,28 @@ impl CudaKernelContext {
             gruen_pair_message: module.load_function("gruen_pair_message_kernel")?,
             so_claims: module.load_function("so_claims_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
+            msm_fq_add: module.load_function("msm_fq_add_kernel")?,
+            msm_fq_sub: module.load_function("msm_fq_sub_kernel")?,
+            msm_fq_mul: module.load_function("msm_fq_mul_kernel")?,
+            msm_fq_batch_inverse: module.load_function("msm_fq_batch_inverse_kernel")?,
+            msm_g1_double: module.load_function("msm_g1_double_kernel")?,
+            msm_g1_add: module.load_function("msm_g1_add_kernel")?,
+            msm_g1_add_affine: module.load_function("msm_g1_add_affine_kernel")?,
+            msm_affine_denominators: module.load_function("msm_affine_denominators_kernel")?,
+            msm_affine_combine: module.load_function("msm_affine_combine_kernel")?,
+            msm_from_montgomery: module.load_function("msm_from_montgomery_kernel")?,
+            msm_digits: module.load_function("msm_digits_kernel")?,
+            msm_bucket_count: module.load_function("msm_bucket_count_kernel")?,
+            msm_bucket_scatter: module.load_function("msm_bucket_scatter_kernel")?,
+            msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
+            msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
+            msm_bucket_reduce_parallel: module
+                .load_function("msm_bucket_reduce_parallel_kernel")?,
+            msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
+            msm_block_embed: module.load_function("msm_block_embed_kernel")?,
+            msm_scatter_strided: module.load_function("msm_scatter_strided_kernel")?,
+            msm_scatter_one_hot: module.load_function("msm_scatter_one_hot_kernel")?,
+            msm_fold_rows: module.load_function("msm_fold_rows_kernel")?,
             pcr_round: module.load_function("pcr_round_kernel")?,
             pcr_scatter: module.load_function("pcr_scatter_kernel")?,
             pcr_value_fold: module.load_function("pcr_value_fold_kernel")?,
@@ -611,6 +656,90 @@ impl CudaKernelContext {
 
     pub(crate) const fn sop_round(&self) -> &CudaFunction {
         &self.sop_round
+    }
+
+    pub(crate) const fn msm_fq_add(&self) -> &CudaFunction {
+        &self.msm_fq_add
+    }
+
+    pub(crate) const fn msm_fq_sub(&self) -> &CudaFunction {
+        &self.msm_fq_sub
+    }
+
+    pub(crate) const fn msm_fq_mul(&self) -> &CudaFunction {
+        &self.msm_fq_mul
+    }
+
+    pub(crate) const fn msm_fq_batch_inverse(&self) -> &CudaFunction {
+        &self.msm_fq_batch_inverse
+    }
+
+    pub(crate) const fn msm_g1_double(&self) -> &CudaFunction {
+        &self.msm_g1_double
+    }
+
+    pub(crate) const fn msm_g1_add(&self) -> &CudaFunction {
+        &self.msm_g1_add
+    }
+
+    pub(crate) const fn msm_g1_add_affine(&self) -> &CudaFunction {
+        &self.msm_g1_add_affine
+    }
+
+    pub(crate) const fn msm_affine_denominators(&self) -> &CudaFunction {
+        &self.msm_affine_denominators
+    }
+
+    pub(crate) const fn msm_affine_combine(&self) -> &CudaFunction {
+        &self.msm_affine_combine
+    }
+
+    pub(crate) const fn msm_from_montgomery(&self) -> &CudaFunction {
+        &self.msm_from_montgomery
+    }
+
+    pub(crate) const fn msm_digits(&self) -> &CudaFunction {
+        &self.msm_digits
+    }
+
+    pub(crate) const fn msm_bucket_count(&self) -> &CudaFunction {
+        &self.msm_bucket_count
+    }
+
+    pub(crate) const fn msm_bucket_scatter(&self) -> &CudaFunction {
+        &self.msm_bucket_scatter
+    }
+
+    pub(crate) const fn msm_segment_sum(&self) -> &CudaFunction {
+        &self.msm_segment_sum
+    }
+
+    pub(crate) const fn msm_segment_sum_small(&self) -> &CudaFunction {
+        &self.msm_segment_sum_small
+    }
+
+    pub(crate) const fn msm_bucket_reduce_parallel(&self) -> &CudaFunction {
+        &self.msm_bucket_reduce_parallel
+    }
+
+    pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {
+        &self.msm_window_accumulate
+    }
+
+    pub(crate) const fn msm_block_embed(&self) -> &CudaFunction {
+        &self.msm_block_embed
+    }
+
+    pub(crate) const fn msm_scatter_strided(&self) -> &CudaFunction {
+        &self.msm_scatter_strided
+    }
+
+    pub(crate) const fn msm_scatter_one_hot(&self) -> &CudaFunction {
+        &self.msm_scatter_one_hot
+    }
+
+    pub(crate) const fn msm_fold_rows(&self) -> &CudaFunction {
+        &self.msm_fold_rows
     }
 
     pub(crate) const fn pcr_round(&self) -> &CudaFunction {

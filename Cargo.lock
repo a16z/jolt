@@ -3551,9 +3551,13 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "common",
  "cudarc",
  "jolt-claims",
+ "jolt-crypto",
+ "jolt-dory",
  "jolt-field",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
