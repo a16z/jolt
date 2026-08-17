@@ -48,19 +48,17 @@ use super::instruction_read_raf::{shared_instruction_rows, InstructionCycleRow};
 #[cfg(feature = "parallel")]
 use super::support::merge_evals;
 use super::support::{bind_all, eq_table, pair, round_poly_from_skipped_evals};
-#[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
-use crate::metal::solinas::BooleanitySelector;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
 /// Per-family chunk selectors in canonical layout order.
-struct FamilySelectors {
-    instruction: Vec<RaChunkSelector>,
-    bytecode: Vec<RaChunkSelector>,
-    ram: Vec<RaChunkSelector>,
+pub(crate) struct FamilySelectors {
+    pub(crate) instruction: Vec<RaChunkSelector>,
+    pub(crate) bytecode: Vec<RaChunkSelector>,
+    pub(crate) ram: Vec<RaChunkSelector>,
     #[cfg(feature = "akita")]
-    unsigned_inc: Vec<UnsignedIncLane>,
+    pub(crate) unsigned_inc: Vec<UnsignedIncLane>,
 }
 
 impl FamilySelectors {
@@ -84,7 +82,7 @@ impl FamilySelectors {
         })
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.instruction.len() + self.bytecode.len() + self.ram.len() + {
             #[cfg(feature = "akita")]
             {
@@ -95,32 +93,6 @@ impl FamilySelectors {
                 0
             }
         }
-    }
-
-    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
-    fn metal_selectors(&self) -> Vec<BooleanitySelector> {
-        self.instruction
-            .iter()
-            .map(|selector| BooleanitySelector::Lookup {
-                shift: selector.shift() as u32,
-            })
-            .chain(
-                self.bytecode
-                    .iter()
-                    .map(|selector| BooleanitySelector::Bytecode {
-                        shift: selector.shift() as u32,
-                    }),
-            )
-            .chain(self.ram.iter().map(|selector| BooleanitySelector::Ram {
-                shift: selector.shift() as u32,
-            }))
-            .chain(self.unsigned_inc.iter().map(|lane| match lane {
-                UnsignedIncLane::Chunk { width, index } => BooleanitySelector::FusedInc {
-                    shift: (width * index) as u32,
-                },
-                UnsignedIncLane::Msb { .. } => BooleanitySelector::FusedIncMsb,
-            }))
-            .collect()
     }
 }
 
@@ -193,8 +165,8 @@ fn pushforwards<F: Field>(
 pub(crate) struct HammingWeightPreparePlan<F: Field> {
     rounds: usize,
     reference_cycle: Vec<F>,
-    selectors: FamilySelectors,
-    k_chunk: usize,
+    pub(crate) selectors: FamilySelectors,
+    pub(crate) k_chunk: usize,
     weight_tables: Vec<Polynomial<F>>,
     #[cfg(feature = "akita")]
     baseline_table: Polynomial<F>,
@@ -397,38 +369,6 @@ impl<F: Field> HammingWeightPreparePlan<F> {
 
     fn selectors(&self) -> &FamilySelectors {
         &self.selectors
-    }
-
-    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
-    pub(crate) fn metal_selectors(&self) -> Vec<BooleanitySelector> {
-        self.selectors.metal_selectors()
-    }
-
-    #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
-    pub(crate) fn finish_flat(
-        self,
-        flat_g_evals: Vec<F>,
-    ) -> Result<Box<dyn SumcheckKernel<F, Relation = HammingWeightClaimReduction<F>>>, KernelError<F>>
-    {
-        let expected = self
-            .selectors
-            .len()
-            .checked_mul(self.k_chunk)
-            .ok_or_else(|| KernelError::InvalidGeometry {
-                reason: "Hamming-weight pushforward mass count overflows usize".to_owned(),
-            })?;
-        if flat_g_evals.len() != expected {
-            return Err(KernelError::TableSizeMismatch {
-                table: "Metal Hamming-weight pushforward masses".to_owned(),
-                expected,
-                got: flat_g_evals.len(),
-            });
-        }
-        let g_evals = flat_g_evals
-            .chunks_exact(self.k_chunk)
-            .map(<[F]>::to_vec)
-            .collect();
-        self.finish(g_evals)
     }
 
     pub(crate) fn finish(

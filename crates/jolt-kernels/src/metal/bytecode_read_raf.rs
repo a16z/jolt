@@ -13,6 +13,11 @@ use rayon::prelude::*;
 
 use super::backend::MetalBackend;
 use super::errors::metal_error;
+#[cfg(test)]
+use super::offload::bytecode_read_raf::MetalBytecodeCycleInputs;
+use super::offload::bytecode_read_raf::{
+    prepare_metal_bytecode_cycle_shell, BytecodeCycleDenseState,
+};
 use super::solinas::bytecode_read_raf_address::{
     carrier::{ADDRESS_LOG2, INNER_LOG2},
     worklist::BYTECODE_ADDRESS_PUSHFORWARD_STAGES,
@@ -22,12 +27,9 @@ use super::solinas::{
     BooleanityRows, BytecodeCycleRowInputs, BytecodeCycleRowSequence, BytecodeCycleSequenceConfig,
     BytecodeCycleTablesMut, MetalError,
 };
-#[cfg(test)]
-use crate::optimized::bytecode_read_raf::MetalBytecodeCycleInputs;
 use crate::optimized::bytecode_read_raf::{
     prepare_bytecode_read_raf_address, prepare_bytecode_read_raf_address_from_pushforwards,
-    prepare_metal_bytecode_cycle_shell, BytecodeCycleAlgebra, BytecodeCycleDenseState, CycleKernel,
-    OptimizedBytecodeReadRafCycle,
+    BytecodeCycleAlgebra, CycleKernel, OptimizedBytecodeReadRafCycle,
 };
 #[cfg(test)]
 use crate::optimized::instruction_read_raf::InstructionCycleRow;

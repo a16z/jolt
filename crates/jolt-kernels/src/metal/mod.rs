@@ -11,6 +11,7 @@ mod instruction_claim_reduction;
 mod instruction_input;
 mod instruction_ra_virtualization;
 mod instruction_read_raf;
+pub(crate) mod offload;
 mod ram_cycle_family;
 mod ram_hamming_booleanity;
 mod ram_ra_claim_reduction;

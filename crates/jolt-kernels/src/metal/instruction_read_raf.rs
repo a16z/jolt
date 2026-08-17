@@ -10,6 +10,7 @@ use jolt_witness::{JoltWitnessPlane, PolynomialEncoding};
 
 use super::backend::MetalBackend;
 use super::errors::{metal_error, metal_prepare_error};
+use super::offload::instruction_read_raf::prepare_metal_instruction_read_raf;
 use super::solinas::bytecode_read_raf_address::{
     BytecodeAddressFusedScatterRequest, BytecodeAddressSparseStage1Carrier,
     BytecodeAddressStage1TopologyOwner,
@@ -23,9 +24,7 @@ use super::solinas::{
     RegistersValInstructionSourceLease, RegistersValInstructionSourceRequest,
     ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
 };
-use crate::optimized::instruction_read_raf::{
-    prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
-};
+use crate::optimized::instruction_read_raf::OptimizedInstructionReadRafKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, Stage5InstructionReadRafPrefetch,
     SumcheckKernel, SumcheckKernelError,

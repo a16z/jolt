@@ -11,13 +11,13 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::backend::MetalBackend;
 use super::errors::metal_error;
+use super::offload::booleanity::{prepare_metal_booleanity_cycle, BooleanityAddressMetalPlan};
 use super::solinas::{
     BooleanityAddressPushforwardConfig, BooleanityRows, BooleanitySelector, BooleanitySequence,
     BooleanitySequenceConfig, MetalError, BOOLEANITY_SOURCE_ROW_BYTES,
 };
 use crate::optimized::booleanity::{
-    prepare_metal_booleanity_cycle, prepare_optimized_booleanity_cycle, BooleanityAddressMetalPlan,
-    OptimizedBooleanityAddress, OptimizedBooleanityCycleKernel,
+    prepare_optimized_booleanity_cycle, OptimizedBooleanityAddress, OptimizedBooleanityCycleKernel,
 };
 use crate::optimized::instruction_read_raf::InstructionCycleRow;
 use crate::{

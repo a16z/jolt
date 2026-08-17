@@ -50,7 +50,7 @@ use crate::{
 
 /// The eight operand/flag tables, in output-claim declaration order:
 /// `[is_rs1, rs1, is_pc, upc, is_rs2, rs2, is_imm, imm]`.
-const NUM_TABLES: usize = 8;
+pub(crate) const NUM_TABLES: usize = 8;
 
 /// One cycle's eight operand/flag values as native scalars.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
@@ -181,7 +181,7 @@ impl<F: Field> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInp
 
 /// The column state: native rows until the first bind, eight dense tables
 /// afterwards.
-enum InputState<F: Field> {
+pub(crate) enum InputState<F: Field> {
     Native(Vec<InstructionInputRow>),
     Dense(Vec<Polynomial<F>>),
     #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -189,12 +189,12 @@ enum InputState<F: Field> {
 }
 
 pub struct OptimizedInstructionInputKernel<F: Field> {
-    log_t: usize,
-    gamma: F,
-    state: InputState<F>,
-    gruen: GruenSplitEqPolynomial<F>,
-    bind_scratch: Vec<F>,
-    rounds_bound: usize,
+    pub(crate) log_t: usize,
+    pub(crate) gamma: F,
+    pub(crate) state: InputState<F>,
+    pub(crate) gruen: GruenSplitEqPolynomial<F>,
+    pub(crate) bind_scratch: Vec<F>,
+    pub(crate) rounds_bound: usize,
 }
 
 #[cfg(feature = "allocative")]
@@ -252,18 +252,6 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
             bind_scratch: Vec::new(),
             rounds_bound: 0,
         })
-    }
-
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    pub(crate) fn new_offloaded(r_product: &[F], gamma: F) -> Self {
-        Self {
-            log_t: r_product.len(),
-            gamma,
-            state: InputState::Offloaded,
-            gruen: GruenSplitEqPolynomial::new(r_product, BindingOrder::LowToHigh),
-            bind_scratch: Vec::new(),
-            rounds_bound: 0,
-        }
     }
 
     /// The first round's `q` evaluations over the native rows: per pair and
@@ -394,7 +382,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
         self.message_from_q_evals(q_evals, round, previous_claim)
     }
 
-    fn message_from_q_evals(
+    pub(crate) fn message_from_q_evals(
         &self,
         q_evals: [F; 4],
         round: usize,
@@ -482,123 +470,9 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
     }
 }
 
-#[cfg(all(feature = "metal", target_os = "macos"))]
-impl<F: Field> OptimizedInstructionInputKernel<F> {
-    pub(crate) fn metal_copy_dense_tables(
-        &self,
-        table_ids: [usize; 2],
-        expected_rounds_bound: usize,
-        expected_elements: usize,
-    ) -> Result<[Vec<F>; 2], SumcheckError<F>> {
-        if self.rounds_bound != expected_rounds_bound {
-            return Err(instruction_input_state_error(
-                "instruction input alias snapshot has the wrong bind count",
-            ));
-        }
-        let InputState::Dense(tables) = &self.state else {
-            return Err(instruction_input_state_error(
-                "instruction input alias snapshot requires host dense tables",
-            ));
-        };
-        if table_ids
-            .iter()
-            .any(|&table| table >= tables.len() || tables[table].len() != expected_elements)
-        {
-            return Err(instruction_input_state_error(
-                "instruction input alias snapshot has the wrong table geometry",
-            ));
-        }
-        Ok(table_ids.map(|table| tables[table].evals().to_vec()))
-    }
-
-    pub(crate) fn metal_weights(&self) -> Result<(&[F], &[F]), SumcheckError<F>> {
-        if !matches!(self.state, InputState::Offloaded) {
-            return Err(instruction_input_state_error(
-                "Metal weights requested after instruction input returned to the CPU",
-            ));
-        }
-        Ok((self.gruen.e_in_current(), self.gruen.e_out_current()))
-    }
-
-    pub(crate) fn metal_bind_offloaded(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        if !matches!(self.state, InputState::Offloaded) {
-            return Err(instruction_input_state_error(
-                "Metal bind requested after instruction input returned to the CPU",
-            ));
-        }
-        if self.rounds_bound >= self.log_t {
-            return Err(instruction_input_state_error(
-                "instruction input received more binds than cycle variables",
-            ));
-        }
-        self.gruen.bind(challenge);
-        self.rounds_bound += 1;
-        Ok(())
-    }
-
-    pub(crate) fn metal_message(
-        &self,
-        q_coefficients: [F; 3],
-        round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        if !matches!(self.state, InputState::Offloaded) {
-            return Err(instruction_input_state_error(
-                "Metal message supplied after instruction input returned to the CPU",
-            ));
-        }
-        let [q_at_0, q_at_1, q_quadratic] = q_coefficients;
-        let twice_quadratic = q_quadratic + q_quadratic;
-        let q_at_2 = q_at_1 + q_at_1 - q_at_0 + twice_quadratic;
-        let q_at_3 = q_at_2 + q_at_1 - q_at_0 + twice_quadratic + twice_quadratic;
-        self.message_from_q_evals([q_at_0, q_at_1, q_at_2, q_at_3], round, previous_claim)
-    }
-
-    pub(crate) fn metal_restore_dense(
-        &mut self,
-        flat_tables: &[F],
-        elements: usize,
-    ) -> Result<(), SumcheckError<F>> {
-        if !matches!(self.state, InputState::Offloaded) {
-            return Err(instruction_input_state_error(
-                "instruction input dense tables restored more than once",
-            ));
-        }
-        if elements == 0 || !elements.is_power_of_two() || self.rounds_bound > self.log_t {
-            return Err(instruction_input_state_error(
-                "invalid instruction input dense-tail geometry",
-            ));
-        }
-        let expected_elements = 1usize
-            .checked_shl((self.log_t - self.rounds_bound) as u32)
-            .ok_or_else(|| {
-                instruction_input_state_error("instruction input table length overflow")
-            })?;
-        if elements != expected_elements {
-            return Err(instruction_input_state_error(format!(
-                "instruction input dense tail has {elements} elements per table; expected {expected_elements}"
-            )));
-        }
-        let expected_values = NUM_TABLES.checked_mul(elements).ok_or_else(|| {
-            instruction_input_state_error("instruction input readback length overflow")
-        })?;
-        if flat_tables.len() != expected_values {
-            return Err(instruction_input_state_error(format!(
-                "instruction input dense tail has {} values; expected {expected_values}",
-                flat_tables.len()
-            )));
-        }
-        self.state = InputState::Dense(
-            flat_tables
-                .chunks_exact(elements)
-                .map(|values| Polynomial::new(values.to_vec()))
-                .collect(),
-        );
-        Ok(())
-    }
-}
-
-fn instruction_input_state_error<F: Field>(message: impl Into<String>) -> SumcheckError<F> {
+pub(crate) fn instruction_input_state_error<F: Field>(
+    message: impl Into<String>,
+) -> SumcheckError<F> {
     SumcheckError::ComputeBackend {
         backend: "metal",
         message: message.into(),

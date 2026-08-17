@@ -1456,7 +1456,7 @@ mod tests {
                 let metal = MetalBackend::new(config).unwrap();
                 let mut metal_session = ProofSession::default();
                 let stage1 =
-                    crate::optimized::spartan_outer::prepare_metal_spartan_outer_witness_rows(
+                    crate::metal::offload::spartan_outer::prepare_metal_spartan_outer_witness_rows(
                         &metal.context,
                         witness,
                         1 << log_t,

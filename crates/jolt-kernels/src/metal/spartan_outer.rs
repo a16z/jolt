@@ -26,6 +26,14 @@ use rayon::prelude::*;
 use super::backend::{MetalBackend, MetalConfig};
 use super::errors::{metal_error, metal_output_error, metal_prepare_error};
 use super::instruction_input::{InstructionInputDenseStorageMode, PreparedInstructionInput};
+use super::offload::spartan_outer::{
+    prepare_metal_instruction_input_witness_rows,
+    prepare_metal_spartan_outer_shift_stage1_owner_witness_rows,
+    prepare_metal_spartan_outer_shift_witness_rows,
+    prepare_metal_spartan_outer_stage1_owner_witness_rows, prepare_metal_spartan_outer_uniskip,
+    prepare_metal_spartan_outer_witness_rows, take_metal_spartan_outer_tau,
+    InstructionReadRafStage1Ready, MetalSpartanDenseRowsError,
+};
 use super::registers_claim_reduction::{
     MetalRegistersClaimAsyncStage1Carry, MetalRegistersClaimOuterSource,
     MetalRegistersClaimPendingStage1Carry, MetalRegistersClaimStage1Carry,
@@ -49,15 +57,7 @@ use super::solinas::{
 use super::spartan_dense::SpartanDenseResidentOwner;
 use super::spartan_product::MetalProductUniskipEndpointCarrier;
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
-use crate::optimized::spartan_outer::{
-    prepare_metal_instruction_input_witness_rows,
-    prepare_metal_spartan_outer_shift_stage1_owner_witness_rows,
-    prepare_metal_spartan_outer_shift_witness_rows,
-    prepare_metal_spartan_outer_stage1_owner_witness_rows, prepare_metal_spartan_outer_uniskip,
-    prepare_metal_spartan_outer_witness_rows, take_metal_spartan_outer_tau,
-    InstructionReadRafStage1Ready, MetalSpartanDenseRowsError, OptimizedOuterRemainder,
-    OptimizedOuterUniskip,
-};
+use crate::optimized::spartan_outer::{OptimizedOuterRemainder, OptimizedOuterUniskip};
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -1661,9 +1661,8 @@ mod tests {
     use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
     use crate::optimized::harness::run_lockstep;
 
-    use crate::optimized::spartan_outer::{
-        prepare_metal_spartan_outer_witness_rows, OptimizedOuterRemainder, OptimizedOuterUniskip,
-    };
+    use crate::metal::offload::spartan_outer::prepare_metal_spartan_outer_witness_rows;
+    use crate::optimized::spartan_outer::{OptimizedOuterRemainder, OptimizedOuterUniskip};
     use crate::uniskip::UniskipKernel;
     use crate::{PrepareKernel, ProofSession, ProverInputs};
     use jolt_field::AkitaField;
