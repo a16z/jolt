@@ -8,7 +8,7 @@
 use jolt_akita::schedules::emit::{
     family_specs, keys, K16_NUM_VARS, K256_NUM_VARS, ONE_HOT_TRACE_NUM_POLYS,
 };
-use jolt_akita::schedules::{jolt_fp128_d64_onehot_k16_table, jolt_fp128_d64_onehot_k256_table};
+use jolt_akita::schedules::{jolt_fp128_onehot_k16_table, jolt_fp128_onehot_k256_table};
 
 /// Every key of a family grid resolves from its checked-in table (binary
 /// lookup over sorted entries) — no planner-DP fallback for reachable
@@ -18,12 +18,12 @@ use jolt_akita::schedules::{jolt_fp128_d64_onehot_k16_table, jolt_fp128_d64_oneh
 fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     for (table, num_polys, num_vars) in [
         (
-            jolt_fp128_d64_onehot_k16_table().expect("K16 catalog is checked in"),
+            jolt_fp128_onehot_k16_table().expect("K16 catalog is checked in"),
             ONE_HOT_TRACE_NUM_POLYS,
             K16_NUM_VARS,
         ),
         (
-            jolt_fp128_d64_onehot_k256_table().expect("K256 catalog is checked in"),
+            jolt_fp128_onehot_k256_table().expect("K256 catalog is checked in"),
             ONE_HOT_TRACE_NUM_POLYS,
             K256_NUM_VARS,
         ),
