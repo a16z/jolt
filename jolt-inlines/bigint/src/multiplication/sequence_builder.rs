@@ -99,13 +99,16 @@ impl BigIntMulSequenceBuilder {
                     if i + j == k || i + j == k - 1 {
                         // add product to accumulator
                         self.asm.emit_r::<ADD>(self.s(k), self.s(k), self.t());
-                        // test for a carry and either set or accumulate it
-                        if overwrite_carry {
-                            self.asm.emit_r::<SLTU>(self.s(k + 1), self.s(k), self.t());
-                        } else {
-                            self.asm.emit_r::<SLTU>(self.t(), self.s(k), self.t());
-                            self.asm
-                                .emit_r::<ADD>(self.s(k + 1), self.t(), self.s(k + 1));
+                        // A 256x256-bit product has no carry above its eighth output limb.
+                        if k + 1 < OUTPUT_LIMBS {
+                            // test for a carry and either set or accumulate it
+                            if overwrite_carry {
+                                self.asm.emit_r::<SLTU>(self.s(k + 1), self.s(k), self.t());
+                            } else {
+                                self.asm.emit_r::<SLTU>(self.t(), self.s(k), self.t());
+                                self.asm
+                                    .emit_r::<ADD>(self.s(k + 1), self.t(), self.s(k + 1));
+                            }
                         }
                         // after the first addition, we need to accumulate carries instead of overwriting them
                         overwrite_carry = false;
