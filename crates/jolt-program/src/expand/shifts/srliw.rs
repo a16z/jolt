@@ -14,21 +14,19 @@ pub(in crate::expand) fn expand_srliw(
     let bitmask = super::shared::right_shift_bitmask(shift as u32, 64);
 
     asm.emit_i(
-        JoltInstructionKind::VirtualMULI,
+        Kind::VirtualMULI,
         v_rs1.operand(),
         reg(rs1(instruction)?),
         1i128 << 32,
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualSRLI,
+        Kind::VirtualSRLI,
         reg(rd(instruction)?),
         v_rs1.operand(),
         bitmask as i128,
     );
     asm.emit_i(
-        JoltInstructionKind::VirtualSignExtendWord(
-            jolt_riscv::instructions::VirtualSignExtendWord(()),
-        ),
+        Kind::VirtualSignExtendWord(jolt_riscv::instructions::VirtualSignExtendWord(())),
         reg(rd(instruction)?),
         reg(rd(instruction)?),
         0,

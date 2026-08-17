@@ -12,9 +12,8 @@ use crate::{
     IV, MSG_BLOCK_LEN, MSG_SCHEDULE, NUM_ROUNDS,
 };
 use jolt_inlines_sdk::host::{
-    kinds::LUI,
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
+    InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice,
     Value::{Imm, Reg},
 };
 use jolt_inlines_sdk::jolt_asm;
@@ -122,7 +121,7 @@ impl Blake3SequenceBuilder {
         // v[8..11] = IV[0..3]
         for (i, val) in IV.iter().enumerate().take(4) {
             self.asm
-                .emit_u(LUI, *self.vr[CHAINING_VALUE_LEN + i], *val as u64);
+                .emit_u(Kind::LUI, *self.vr[CHAINING_VALUE_LEN + i], *val as u64);
         }
 
         // v[12..15] = counter, block_len, flags (loaded from memory)
@@ -318,7 +317,7 @@ impl Blake3Keyed64SequenceBuilder {
         // v[8..11] = IV[0..3]
         for (i, val) in IV.iter().enumerate().take(4) {
             self.asm
-                .emit_u(LUI, *self.vr[CHAINING_VALUE_LEN + i], *val as u64);
+                .emit_u(Kind::LUI, *self.vr[CHAINING_VALUE_LEN + i], *val as u64);
         }
 
         // v[12..15] = counter, block_len, flags
@@ -329,9 +328,9 @@ impl Blake3Keyed64SequenceBuilder {
         // Inline virtual registers are cleared by `finalize_inline`, so newly allocated
         // inline registers start at 0 across inline calls.
         self.asm
-            .emit_u(LUI, *self.vr[INTERNAL_STATE_VR_START + 14], 64);
+            .emit_u(Kind::LUI, *self.vr[INTERNAL_STATE_VR_START + 14], 64);
         self.asm.emit_u(
-            LUI,
+            Kind::LUI,
             *self.vr[INTERNAL_STATE_VR_START + 15],
             (FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT | FLAG_KEYED_HASH) as u64,
         );

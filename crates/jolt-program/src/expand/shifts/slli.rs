@@ -12,7 +12,7 @@ pub(in crate::expand) fn expand_slli(
     let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.emit_i(
-        JoltInstructionKind::VirtualMULI,
+        Kind::VirtualMULI,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         1i128 << shift,

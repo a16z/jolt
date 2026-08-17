@@ -305,7 +305,7 @@ pub use flags::{
 };
 pub use instructions::{JoltInstruction, SourceInstruction};
 pub use kind::{
-    kinds, JoltInstructionKind, JoltInstructionMeta, JoltInstructionTag, SourceInstructionKind,
+    JoltInstructionKind, JoltInstructionMeta, JoltInstructionTag, SourceInstructionKind,
     SourceInstructionMeta,
 };
 #[cfg(feature = "field-inline")]

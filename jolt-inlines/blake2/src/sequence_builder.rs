@@ -9,9 +9,8 @@
 
 use crate::{IV, SIGMA};
 use jolt_inlines_sdk::host::{
-    kinds::{LUI, XORI},
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
-    InlineOp, InlineOperands, InlineRegister, NoAdvice,
+    InlineOp, InlineOperands, InlineRegister, Kind, NoAdvice,
 };
 use jolt_inlines_sdk::jolt_asm;
 
@@ -101,7 +100,7 @@ impl Blake2SequenceBuilder {
         // v[0..7] = h[0..7]
         for i in 0..crate::STATE_VECTOR_LEN {
             self.asm.emit_i(
-                XORI,
+                Kind::XORI,
                 *self.vr[VR_WORKING_STATE_START + i],
                 *self.vr[VR_HASH_STATE_START + i],
                 0,
@@ -116,7 +115,7 @@ impl Blake2SequenceBuilder {
         {
             // Load BLAKE2b IV constants.
             let rd = *self.vr[VR_WORKING_STATE_START + crate::STATE_VECTOR_LEN + i];
-            self.asm.emit_u(LUI, rd, *value);
+            self.asm.emit_u(Kind::LUI, rd, *value);
         }
 
         let v12 = *self.vr[VR_WORKING_STATE_START + 12];

@@ -1579,27 +1579,6 @@ macro_rules! define_source_instruction_kind {
                 SourceInstruction::Noop(Noop(()))
             }
         }
-
-        /// Value-level source-kind constants, importable by name.
-        ///
-        /// The associated constants on [`SourceInstructionKind`] are shadowed by
-        /// the same-named enum variant constructors wherever the two spellings
-        /// coincide (e.g. `VirtualAdvice`), and associated constants cannot be
-        /// `use`-imported. This module carries the same constants as plain items
-        /// so call sites can `use jolt_riscv::kinds::ADD;` and write `ADD`.
-        #[expect(
-            non_upper_case_globals,
-            reason = "Kind constants preserve existing instruction spelling"
-        )]
-        pub mod kinds {
-            use super::SourceInstructionKind;
-
-            $(
-                $(#[$meta])*
-                pub const $instr: SourceInstructionKind =
-                    super::SourceInstruction::$marker(super::$marker(()));
-            )*
-        }
     };
 }
 
@@ -1738,6 +1717,15 @@ macro_rules! define_jolt_instruction_kind {
 
 crate::for_each_instruction_kind!(define_source_instruction_kind);
 crate::for_each_jolt_instruction_kind!(define_jolt_instruction_kind);
+
+impl SourceInstructionKind {
+    /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ADVICE: Self = SourceInstruction::VirtualAdvice(VirtualAdvice(()));
+
+    /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
+        SourceInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+}
 
 #[cfg(feature = "serialization")]
 impl Serialize for SourceInstructionKind {

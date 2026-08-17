@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use jolt_riscv::{NormalizedOperands, SourceInstructionKind, SourceInstructionRow};
+use jolt_riscv::{NormalizedOperands, SourceInstructionKind as Kind, SourceInstructionRow};
 
 use crate::expand::{
     allocator::{FIRST_INLINE_REGISTER, NUM_INLINE_REGISTERS},
@@ -192,7 +192,7 @@ impl InlineExpansionBuilder {
     /// finalized bytecode; source-only helpers are recursively expanded through
     /// the central `jolt-program` pipeline. The same routing applies to every
     /// `emit_*` method below.
-    pub fn emit_r(&mut self, instruction_kind: SourceInstructionKind, rd: u8, rs1: u8, rs2: u8) {
+    pub fn emit_r(&mut self, instruction_kind: Kind, rd: u8, rs1: u8, rs2: u8) {
         self.emit(SourceInstructionRowTemplate::r(
             instruction_kind,
             Self::register_operand(rd),
@@ -202,7 +202,7 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit an I-format row with an unsigned immediate.
-    pub fn emit_i(&mut self, instruction_kind: SourceInstructionKind, rd: u8, rs1: u8, imm: u64) {
+    pub fn emit_i(&mut self, instruction_kind: Kind, rd: u8, rs1: u8, imm: u64) {
         self.emit(SourceInstructionRowTemplate::i(
             instruction_kind,
             Self::register_operand(rd),
@@ -212,7 +212,7 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit a load-shaped I-format row with a signed byte offset.
-    pub fn emit_ld(&mut self, instruction_kind: SourceInstructionKind, rd: u8, rs1: u8, imm: i64) {
+    pub fn emit_ld(&mut self, instruction_kind: Kind, rd: u8, rs1: u8, imm: i64) {
         self.emit(SourceInstructionRowTemplate::i(
             instruction_kind,
             Self::register_operand(rd),
@@ -222,7 +222,7 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit a J-format virtual row or recursively expand a source-only helper.
-    pub fn emit_j(&mut self, instruction_kind: SourceInstructionKind, rd: u8, imm: u64) {
+    pub fn emit_j(&mut self, instruction_kind: Kind, rd: u8, imm: u64) {
         self.emit(SourceInstructionRowTemplate::j(
             instruction_kind,
             Self::register_operand(rd),
@@ -231,7 +231,7 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit a U-format row or recursively expand a source-only helper.
-    pub fn emit_u(&mut self, instruction_kind: SourceInstructionKind, rd: u8, imm: u64) {
+    pub fn emit_u(&mut self, instruction_kind: Kind, rd: u8, imm: u64) {
         self.emit(SourceInstructionRowTemplate::u(
             instruction_kind,
             Self::register_operand(rd),
@@ -240,7 +240,7 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit an S-format row with a signed byte offset.
-    pub fn emit_s(&mut self, instruction_kind: SourceInstructionKind, rs1: u8, rs2: u8, imm: i64) {
+    pub fn emit_s(&mut self, instruction_kind: Kind, rs1: u8, rs2: u8, imm: i64) {
         self.emit(SourceInstructionRowTemplate::s(
             instruction_kind,
             Self::register_operand(rs1),
@@ -250,7 +250,7 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit a B-format row with a signed branch offset.
-    pub fn emit_b(&mut self, instruction_kind: SourceInstructionKind, rs1: u8, rs2: u8, imm: i64) {
+    pub fn emit_b(&mut self, instruction_kind: Kind, rs1: u8, rs2: u8, imm: i64) {
         self.emit(SourceInstructionRowTemplate::b(
             instruction_kind,
             Self::register_operand(rs1),
@@ -264,7 +264,7 @@ impl InlineExpansionBuilder {
     /// These helpers are source-only pseudo-I rows: they read `rs1` and an
     /// immediate offset but do not write `rd`, so they must always be routed
     /// through recursive source expansion.
-    pub fn emit_align(&mut self, instruction_kind: SourceInstructionKind, rs1: u8, imm: i64) {
+    pub fn emit_align(&mut self, instruction_kind: Kind, rs1: u8, imm: i64) {
         self.inner
             .expand_address(instruction_kind, Self::register_operand(rs1), imm as i128);
     }
@@ -276,8 +276,8 @@ impl InlineExpansionBuilder {
     /// folded with `fold`.
     pub fn bin(
         &mut self,
-        register_kind: SourceInstructionKind,
-        immediate_kind: SourceInstructionKind,
+        register_kind: Kind,
+        immediate_kind: Kind,
         rs1: Value,
         rs2: Value,
         rd: u8,
@@ -301,14 +301,9 @@ impl InlineExpansionBuilder {
 
     /// Emit or constant-fold wrapping addition.
     pub fn add(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin(
-            SourceInstructionKind::ADD,
-            SourceInstructionKind::ADDI,
-            rs1,
-            rs2,
-            rd,
-            |x, y| x.wrapping_add(y),
-        )
+        self.bin(Kind::ADD, Kind::ADDI, rs1, rs2, rd, |x, y| {
+            x.wrapping_add(y)
+        })
     }
 
     /// Emit or constant-fold a 32-bit logical right shift.
@@ -318,7 +313,7 @@ impl InlineExpansionBuilder {
         }
         match rs1 {
             Value::Reg(rs1) => {
-                self.emit_i(SourceInstructionKind::SRLIW, rd, rs1, (shamt & 0x1f) as u64);
+                self.emit_i(Kind::SRLIW, rd, rs1, (shamt & 0x1f) as u64);
                 Value::Reg(rd)
             }
             Value::Imm(val) => Value::Imm(((val as u32) >> shamt) as u64),
@@ -335,7 +330,7 @@ impl InlineExpansionBuilder {
         let mask = ones << shamt;
         match rs1 {
             Value::Reg(rs1_reg) => {
-                self.emit_i(SourceInstructionKind::VirtualROTRIW, rd, rs1_reg, mask);
+                self.emit_i(Kind::VirtualROTRIW, rd, rs1_reg, mask);
                 Value::Reg(rd)
             }
             Value::Imm(val) => Value::Imm(((val as u32).rotate_right(shamt)) as u64),
@@ -358,33 +353,19 @@ impl InlineExpansionBuilder {
 
     /// Emit or constant-fold bitwise XOR.
     pub fn xor(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin(
-            SourceInstructionKind::XOR,
-            SourceInstructionKind::XORI,
-            rs1,
-            rs2,
-            rd,
-            |x, y| x ^ y,
-        )
+        self.bin(Kind::XOR, Kind::XORI, rs1, rs2, rd, |x, y| x ^ y)
     }
 
     /// Emit or constant-fold bitwise AND.
     pub fn and(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
-        self.bin(
-            SourceInstructionKind::AND,
-            SourceInstructionKind::ANDI,
-            rs1,
-            rs2,
-            rd,
-            |x, y| x & y,
-        )
+        self.bin(Kind::AND, Kind::ANDI, rs1, rs2, rd, |x, y| x & y)
     }
 
     /// Emit or constant-fold a 64-bit rotate-right operation.
     pub fn rotri(&mut self, rs1: Value, imm: u64, rd: u8) -> Value {
         match rs1 {
             Value::Reg(rs1) => {
-                self.emit_i(SourceInstructionKind::VirtualROTRI, rd, rs1, imm);
+                self.emit_i(Kind::VirtualROTRI, rd, rs1, imm);
                 Value::Reg(rd)
             }
             Value::Imm(val) => {
