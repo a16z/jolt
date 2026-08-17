@@ -238,6 +238,7 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 
 - Codebase uses `non_snake_case` convention for math variables: `log_T`, `ram_K`, `log_K`, etc.
 - Import types and structs, then reference them by short names; use fully qualified paths only to resolve ambiguity.
+- Before PR handoff, audit every added test and helper. Remove development-only probes, ignored tests, temporary benchmarks, diagnostic counters or histograms, and one-off fuzz or parity scaffolding. Keep permanent tests only when they add a distinct failure signal beyond existing tests, golden fixtures, or CI. If a manual diagnostic is worth keeping, make it an intentional tool or benchmark with a documented command.
 
 ### Testing Guidelines
 
