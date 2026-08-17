@@ -112,6 +112,10 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         scalars
             .par_iter()
             .map(|scalar| {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "glv_four_scalar_mul_online returns one point per base and is passed exactly one base"
+                )]
                 ArkG2(jolt_optimizations::glv_four_scalar_mul_online(scalar.0, &[base_proj])[0])
             })
             .collect()
@@ -144,6 +148,8 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+
     use super::*;
     use dory::primitives::arithmetic::{Field as DoryField, Group};
 

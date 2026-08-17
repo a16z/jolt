@@ -550,11 +550,11 @@ where
     C: Clone,
 {
     fn new(claims: &'a [VerifierOpeningClaim<F, C>]) -> Result<Self, OpeningsError> {
-        let first = claims.first().ok_or_else(|| {
+        let (first, rest) = claims.split_first().ok_or_else(|| {
             OpeningsError::InvalidBatch("batch opening requires at least one claim".to_owned())
         })?;
         let point = first.evaluation.point.clone();
-        for claim in &claims[1..] {
+        for claim in rest {
             if claim.evaluation.point != point {
                 return Err(OpeningsError::InvalidBatch(
                     "batch opening claims must use one common point".to_owned(),

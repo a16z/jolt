@@ -144,6 +144,10 @@ impl PrecommittedSchedule {
                 committed.program_image_len_words,
             ));
         }
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "log_t is an ilog2 result (< 64) and log_k_chunk a u8-derived chunk bit count (< 256); the sum cannot overflow usize"
+        )]
         let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
             log_t + log_k_chunk,
             &candidates,

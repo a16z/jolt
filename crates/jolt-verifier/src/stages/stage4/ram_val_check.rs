@@ -198,6 +198,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
         input_points: &RamValCheckInputClaims<Vec<F>>,
     ) -> Result<RamValCheckOutputClaims<Vec<F>>, VerifierError> {
         let log_t = self.trace_dimensions.log_t();
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "ram_log_k and log_t are ilog2 results (< 64); the sum cannot overflow usize"
+        )]
         let expected_len = self.ram_log_k + log_t;
         let ram_read_write_point = input_points.ram_val();
         if ram_read_write_point.len() != expected_len {
@@ -206,7 +210,9 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
                 ram_read_write_point.len()
             )));
         }
-        let r_address = &ram_read_write_point[..self.ram_log_k];
+        let r_address = ram_read_write_point.get(..self.ram_log_k).ok_or_else(|| {
+            public_input_failed("RAM read-write opening point address prefix is out of range")
+        })?;
         let cycle = self
             .trace_dimensions
             .cycle_opening_point(sumcheck_point)
@@ -265,8 +271,25 @@ impl<F: Field> ConcreteSumcheck<F> for RamValCheck<F> {
             // the produced cycle point against the fixed read-write cycle. Gamma comes
             // from the drawn `challenges` (the value `draw_challenges` produced).
             RamValCheckPublic::LtCyclePlusGamma => {
-                let output_cycle = &output_points.ram_ra()[self.ram_log_k..];
-                let fixed_cycle = &input_points.ram_val()[self.ram_log_k..];
+                let output_cycle =
+                    output_points
+                        .ram_ra()
+                        .get(self.ram_log_k..)
+                        .ok_or_else(|| {
+                            public_input_failed(
+                                "RAM value-check output opening point is shorter than the address \
+                                 width",
+                            )
+                        })?;
+                let fixed_cycle =
+                    input_points
+                        .ram_val()
+                        .get(self.ram_log_k..)
+                        .ok_or_else(|| {
+                            public_input_failed(
+                                "RAM read-write opening point is shorter than the address width",
+                            )
+                        })?;
                 Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + challenges.gamma)
             }
             // Input publics — resolved in `derive_input_term`, never in the output expr.
@@ -494,19 +517,36 @@ fn ram_val_check_advice_block<F: Field>(
             "{kind:?} advice commitment is present but configured size is zero"
         )));
     }
-    let start_index = layout
-        .remapped_word_address(start_address)
-        .map_err(public_input_failed)? as u128;
-    let advice_num_vars = ((max_size as usize) / 8).next_power_of_two().ilog2() as usize;
-    if advice_num_vars > r_address.len() {
-        return Err(public_input_failed(format!(
-            "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
-            r_address.len()
-        )));
-    }
+    let start_index = u128::from(
+        layout
+            .remapped_word_address(start_address)
+            .map_err(public_input_failed)?,
+    );
+    let max_size = usize::try_from(max_size).map_err(|_| {
+        public_input_failed(format!("{kind:?} advice size {max_size} exceeds usize"))
+    })?;
+    // Floor division mirrors the shared advice geometry in jolt-claims
+    // (`geometry/dimensions.rs`): the advice block holds `max_size / 8` words.
+    #[expect(
+        clippy::integer_division,
+        reason = "floor division bytes -> words matches the prover-shared advice geometry"
+    )]
+    let advice_num_vars = crate::num::ilog2((max_size / 8).next_power_of_two());
+    let opening_start = r_address
+        .len()
+        .checked_sub(advice_num_vars)
+        .ok_or_else(|| {
+            public_input_failed(format!(
+                "{kind:?} advice point needs {advice_num_vars} variables but RAM address has {}",
+                r_address.len()
+            ))
+        })?;
     let selector = block_selector_mle_msb(start_index, advice_num_vars, r_address)
         .map_err(public_input_failed)?;
-    let opening_point = r_address[r_address.len() - advice_num_vars..].to_vec();
+    let opening_point = r_address
+        .get(opening_start..)
+        .ok_or_else(|| public_input_failed("advice opening point is out of range"))?
+        .to_vec();
     Ok(RamValCheckAdviceBlock {
         selector,
         opening_point,
@@ -524,7 +564,11 @@ fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "test code indexes its own fixed-size fixtures"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
