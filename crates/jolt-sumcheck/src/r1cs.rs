@@ -330,7 +330,11 @@ fn polynomial_eval_lc<F: Field>(coefficients: &[Variable], point: F) -> LinearCo
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
+#[expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "tests may panic on assertion failures and index fixture data"
+)]
 mod tests {
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};

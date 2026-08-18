@@ -114,6 +114,11 @@ pub(crate) fn reduced_claim(polynomial: JoltRaPolynomial) -> JoltOpeningId {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
+
     use super::super::super::dimensions::JoltFormulaDimensionsError;
     use super::*;
     use jolt_field::{Fr, FromPrimitiveInt};

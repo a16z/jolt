@@ -609,7 +609,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend)

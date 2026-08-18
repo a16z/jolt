@@ -92,7 +92,12 @@ pub(crate) fn reconstruct_r_address<F: Field>(
     output_points
         .instruction_ra()
         .iter()
-        .flat_map(|point| point[..point.len() - cycle_len].iter().copied())
+        .flat_map(|point| {
+            // Each point is `chunk ++ r_cycle` by construction
+            // (`derive_opening_points`), so the saturation never engages.
+            let chunk_len = point.len().saturating_sub(cycle_len);
+            point.iter().take(chunk_len).copied()
+        })
         .collect()
 }
 
@@ -123,7 +128,9 @@ impl<F: Field> ConcreteSumcheck<F> for InstructionReadRaf<F> {
             .r_address
             .len()
             .checked_div(ra_count)
-            .filter(|chunk_size| chunk_size * ra_count == opening_point.r_address.len())
+            .filter(|chunk_size| {
+                chunk_size.checked_mul(ra_count) == Some(opening_point.r_address.len())
+            })
             .ok_or_else(|| {
                 public_input_failed(format!(
                     "instruction address point length {} is not divisible by virtual RA count {ra_count}",
@@ -251,7 +258,13 @@ mod tests {
     /// closed form (rather than just "nonzero") also pins the γ *power* and the
     /// leading-half slice, the two transposition traps.
     #[test]
-    #[expect(clippy::unwrap_used)]
+    #[expect(
+        clippy::unwrap_used,
+        clippy::as_conversions,
+        clippy::indexing_slicing,
+        clippy::integer_division,
+        reason = "test fixture arithmetic over compile-time dimensions"
+    )]
     fn eq_raf_flag_carries_the_canonical_address_term() {
         const LOG_T: usize = 5;
         const ADDRESS_BITS: usize = 128;

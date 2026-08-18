@@ -28,7 +28,8 @@ pub use common::jolt_device::JoltDevice;
 pub use cpu::{advice_tape_read, advice_tape_remaining, advice_tape_write, AdviceTape};
 pub use execution_backend::TracerBackend;
 pub use instruction::inline::{
-    list_registered_inlines, InlineRegistration, TracerInlineExpansionProvider,
+    list_registered_inlines, InlineAdviceContext, InlineAdviceError, InlineRegistration,
+    TracerInlineExpansionProvider,
 };
 pub use jolt_riscv::InlineExtension;
 pub use trace_row::{build_trace_rows, cycle_to_trace_row, CycleConversionError};
@@ -72,7 +73,6 @@ fn env_rows(name: &str, default: usize) -> usize {
 /// Tracing is serial by default. Setting `TRACER_PARALLEL=<workers>` opts
 /// into two-pass parallel tracing (bit-identical output); see [`parallel`].
 #[tracing::instrument(skip_all)]
-#[expect(clippy::expect_used)]
 pub fn trace(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
@@ -125,6 +125,21 @@ pub fn trace(
         }
     };
 
+    let (advice_tape_result, final_memory_state, jolt_device) = finish_emulator(emulator);
+    (
+        lazy_trace_iter,
+        trace,
+        final_memory_state,
+        jolt_device,
+        advice_tape_result,
+    )
+}
+
+/// Shared teardown for every execution path (eager [`trace`], execute-only
+/// [`execute`], and the chunked fast pass): report a guest panic (log +
+/// backtrace), then extract the advice tape, final memory, and device.
+#[expect(clippy::expect_used)]
+pub(crate) fn finish_emulator(mut emulator: Emulator) -> (cpu::AdviceTape, Memory, JoltDevice) {
     if emulator
         .get_cpu()
         .mmu
@@ -140,21 +155,15 @@ pub fn trace(
         utils::panic::display_panic_backtrace(&emulator);
     }
 
-    let advice_tape_result = emulator.take_advice_tape();
+    let advice_tape = emulator.take_advice_tape();
     let cpu = emulator.get_mut_cpu();
-    let final_memory_state = cpu.mmu.memory.memory.take_memory();
+    let final_memory = cpu.mmu.memory.memory.take_memory();
     let jolt_device = cpu
         .get_mut_mmu()
         .jolt_device
         .take()
         .expect("JoltDevice was not initialized");
-    (
-        lazy_trace_iter,
-        trace,
-        final_memory_state,
-        jolt_device,
-        advice_tape_result,
-    )
+    (advice_tape, final_memory, jolt_device)
 }
 
 /// Executes a RISC-V program to completion without materializing trace rows
@@ -173,7 +182,6 @@ pub fn trace(
 /// pass-1 driver does, via the `trace_len` delta. No valid Jolt guest hits
 /// a zero-row step mid-program.
 #[tracing::instrument(skip_all)]
-#[expect(clippy::expect_used)]
 pub fn execute(
     elf_contents: &[u8],
     elf_path: Option<&std::path::PathBuf>,
@@ -203,13 +211,7 @@ pub fn execute(
     }
 
     let executed = emulator.get_cpu().trace_len;
-    let advice_tape_result = emulator.take_advice_tape();
-    let jolt_device = emulator
-        .get_mut_cpu()
-        .get_mut_mmu()
-        .jolt_device
-        .take()
-        .expect("JoltDevice was not initialized");
+    let (advice_tape_result, _final_memory, jolt_device) = finish_emulator(emulator);
     (executed, jolt_device, advice_tape_result)
 }
 
@@ -827,8 +829,50 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
 }
 
 #[cfg(test)]
+pub(crate) mod test_utils {
+    /// Build the muldiv guest and return the ELF bytes.
+    /// Mirrors the pattern used by `host::Program::build()` in jolt-prover-legacy.
+    pub(crate) fn build_muldiv_guest() -> Vec<u8> {
+        let guest = "muldiv-guest";
+        let func = "muldiv";
+        let target_dir = format!("/tmp/jolt-guest-targets/{guest}-{func}");
+
+        let output = std::process::Command::new("jolt")
+            .args([
+                "build",
+                "-p",
+                guest,
+                "--stack-size",
+                &common::constants::DEFAULT_STACK_SIZE.to_string(),
+                "--heap-size",
+                "32768",
+                "--",
+                "--release",
+                "--target-dir",
+                &target_dir,
+                "--features",
+                "guest",
+            ])
+            .env("JOLT_FUNC_NAME", func)
+            .output()
+            .expect("failed to run jolt CLI — install with: cargo install --path .");
+
+        if !output.status.success() {
+            panic!(
+                "failed to build muldiv guest:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let elf_path = format!("{target_dir}/riscv64imac-unknown-none-elf/release/{guest}");
+        std::fs::read(&elf_path).unwrap_or_else(|e| panic!("failed to read ELF at {elf_path}: {e}"))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::build_muldiv_guest;
     use common::jolt_device::MemoryConfig;
 
     fn minimal_elf() -> Vec<u8> {
@@ -896,44 +940,6 @@ mod tests {
             ..Default::default()
         };
         let _ = setup_emulator(&elf, b"[]", &[0u8; 256], &[], &memory_config);
-    }
-
-    /// Build the muldiv guest and return the ELF bytes.
-    /// Mirrors the pattern used by `host::Program::build()` in jolt-prover-legacy.
-    fn build_muldiv_guest() -> Vec<u8> {
-        let guest = "muldiv-guest";
-        let func = "muldiv";
-        let target_dir = format!("/tmp/jolt-guest-targets/{guest}-{func}");
-
-        let output = std::process::Command::new("jolt")
-            .args([
-                "build",
-                "-p",
-                guest,
-                "--stack-size",
-                &common::constants::DEFAULT_STACK_SIZE.to_string(),
-                "--heap-size",
-                "32768",
-                "--",
-                "--release",
-                "--target-dir",
-                &target_dir,
-                "--features",
-                "guest",
-            ])
-            .env("JOLT_FUNC_NAME", func)
-            .output()
-            .expect("failed to run jolt CLI — install with: cargo install --path .");
-
-        if !output.status.success() {
-            panic!(
-                "failed to build muldiv guest:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-
-        let elf_path = format!("{target_dir}/riscv64imac-unknown-none-elf/release/{guest}");
-        std::fs::read(&elf_path).unwrap_or_else(|e| panic!("failed to read ELF at {elf_path}: {e}"))
     }
 
     const INPUTS: [u8; 6] = [0xbd, 0xaa, 0xde, 0x5, 0x11, 0x5c];

@@ -462,6 +462,10 @@ where
 /// scalar from each squeeze so a relation's stored challenge can be checked against
 /// the squeeze that produced it.
 #[cfg(test)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 pub(crate) mod draw_recording {
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_transcript::Transcript;
@@ -561,6 +565,10 @@ pub(crate) mod append_recording {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
 

@@ -1,17 +1,21 @@
 use super::*;
 
-pub(super) fn add_stage2<PCS, VC, ZkProof>(
+// Binding the scalar field to a bare `F` parameter (rather than spelling
+// `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
+// recognize the side-effect-free field arithmetic in the body.
+pub(super) fn add_stage2<F, PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-    mut builder: Builder<PCS::Field, VC::Output>,
-    values: &mut SourceValues<PCS::Field>,
-) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
+    mut builder: Builder<F, VC::Output>,
+    values: &mut SourceValues<F>,
+) -> Result<Builder<F, VC::Output>, VerifierError>
 where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
+    F: Field,
+    PCS: CommitmentScheme<Field = F>,
+    VC: VectorCommitment<Field = F>,
     VC::Output: Clone,
 {
-    let log_t = input.checked.trace_length.ilog2() as usize;
-    let log_k = input.checked.ram_K.ilog2() as usize;
+    let log_t = crate::num::ilog2(input.checked.trace_length);
+    let log_k = crate::num::ilog2(input.checked.ram_K);
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let read_write_dimensions = input.proof.rw_config.ram_dimensions(log_t, log_k);
     let product_dimensions = SpartanProductDimensions::new(log_t);
@@ -124,13 +128,20 @@ where
         eq_spartan,
     )?;
 
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "log_t and log_k are ilog2 results (< 64); the sum cannot overflow usize"
+    )]
     let active_stage2_rounds = log_t + log_k;
     let phase1_offset = input
         .stage2
         .batch_consistency
         .try_round_offset(active_stage2_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRafEvaluation, error))?
-        + read_write_dimensions.phase1_num_rounds();
+        .checked_add(read_write_dimensions.phase1_num_rounds())
+        .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
+            reason: "stage2: RAM RAF phase-1 round offset overflows usize".to_string(),
+        })?;
     let ram_raf_point = input
         .stage2
         .batch_consistency

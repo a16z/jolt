@@ -1604,6 +1604,7 @@ mod tests {
             Cycle::VirtualAssertValidUnsignedRemainder(cycle) => cycle.random(rng).into(),
             Cycle::VirtualMovsign(cycle) => cycle.random(rng).into(),
             Cycle::VirtualMULI(cycle) => cycle.random(rng).into(),
+            Cycle::VirtualMULIW(cycle) => cycle.random(rng).into(),
             Cycle::VirtualPow2(cycle) => cycle.random(rng).into(),
             Cycle::VirtualPow2I(cycle) => cycle.random(rng).into(),
             Cycle::VirtualPow2W(cycle) => cycle.random(rng).into(),
@@ -1953,6 +1954,11 @@ mod tests {
     #[test]
     fn test_muli() {
         test_read_raf_sumcheck(Some(Cycle::VirtualMULI(Default::default())));
+    }
+
+    #[test]
+    fn test_muliw() {
+        test_read_raf_sumcheck(Some(Cycle::VirtualMULIW(Default::default())));
     }
 
     #[test]

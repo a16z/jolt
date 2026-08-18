@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -116,22 +116,22 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-field",
  "akita-transcript",
  "sha3 0.10.9",
+ "smallvec",
  "tracing",
 ]
 
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-challenges",
  "akita-field",
- "akita-planner",
  "akita-schedules",
  "akita-serialization",
  "akita-transcript",
@@ -142,19 +142,20 @@ dependencies = [
 [[package]]
 name = "akita-field"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-serialization",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
+ "serde",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -174,17 +175,19 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-challenges",
  "akita-field",
+ "akita-schedules",
  "akita-types",
+ "libm",
 ]
 
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -205,15 +208,17 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
- "akita-planner",
+ "akita-challenges",
+ "akita-field",
+ "akita-types",
 ]
 
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -221,7 +226,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -235,7 +240,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-algebra",
  "akita-field",
@@ -247,7 +252,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-field",
  "akita-serialization",
@@ -258,7 +263,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -277,7 +282,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=fc2071619bea728d8f366afae0b7affaf261d495#fc2071619bea728d8f366afae0b7affaf261d495"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1d48114e6f0aefd1384a57be167037c57de99d22#1d48114e6f0aefd1384a57be167037c57de99d22"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -1488,9 +1493,9 @@ checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
 
 [[package]]
 name = "bytemuck"
-version = "1.25.0"
+version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
+checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
 name = "bytemuck_derive"
@@ -1573,9 +1578,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.3.0"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89588d05638b5b4594a3348a2d6c20277e43a7f5c5202b05cc56888475a47b8"
+checksum = "5d262e149917187838d5b42777c8253bcb64500067342904e7d429499a6f277e"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1686,6 +1691,15 @@ name = "clap_lex"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
+
+[[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "cmov"
@@ -2291,6 +2305,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "dynasm"
+version = "5.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd358e74d2f8d71a11b7a2c51c67ad5df3de06003b0596875e47bc09126c894e"
+dependencies = [
+ "bitflags 2.11.0",
+ "byteorder",
+ "lazy_static",
+ "proc-macro-error3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "dynasmrt"
+version = "5.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6efe03f6bd356ae85eeea7ee14c2bf54e664a949d089d238364b5a99afbc4116"
+dependencies = [
+ "byteorder",
+ "dynasm",
+ "fnv",
+ "memmap2",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2544,9 +2585,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+checksum = "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de"
 
 [[package]]
 name = "findshlibs"
@@ -2929,7 +2970,7 @@ dependencies = [
  "env_logger",
  "glob",
  "indexmap 2.14.0",
- "inferno 0.12.6",
+ "inferno 0.12.8",
  "itertools 0.14.0",
  "lazy_static",
  "log",
@@ -3044,9 +3085,9 @@ dependencies = [
 
 [[package]]
 name = "inferno"
-version = "0.12.6"
+version = "0.12.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90807d610575744524d9bdc69f3885d96f0e6c3354565b0828354a7ff2a262b8"
+checksum = "0c460d4fa06223667240720ab69a8045133755ae6dfbe100cf481b95e3a014f1"
 dependencies = [
  "ahash",
  "clap",
@@ -3059,7 +3100,7 @@ dependencies = [
  "log",
  "num-format",
  "once_cell",
- "quick-xml 0.39.2",
+ "quick-xml 0.41.0",
  "rgb",
  "str_stack",
 ]
@@ -3213,6 +3254,7 @@ dependencies = [
  "akita-pcs",
  "akita-planner",
  "akita-prover",
+ "akita-schedules",
  "akita-transcript",
  "akita-types",
  "criterion",
@@ -3347,6 +3389,7 @@ dependencies = [
  "jolt-program",
  "jolt-prover-legacy",
  "jolt-riscv",
+ "jolt-tracer-x86",
  "jolt-transcript",
  "jolt-verifier",
  "libc",
@@ -3610,11 +3653,9 @@ dependencies = [
  "jolt-hyperkzg",
  "jolt-poly",
  "jolt-transcript",
- "jolt-utils",
  "rand 0.8.7",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "rayon",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -3692,7 +3733,7 @@ dependencies = [
  "common",
  "hex",
  "jolt-riscv",
- "object 0.39.1",
+ "object 0.40.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3722,6 +3763,7 @@ dependencies = [
  "jolt-profiling",
  "jolt-program",
  "jolt-prover-legacy",
+ "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
@@ -3758,7 +3800,7 @@ dependencies = [
  "eyre",
  "fixedbitset 0.5.7",
  "iai-callgrind",
- "inferno 0.12.6",
+ "inferno 0.12.8",
  "itertools 0.15.0",
  "jolt-akita",
  "jolt-blindfold",
@@ -3880,6 +3922,24 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "jolt-tracer-x86"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "dynasmrt",
+ "iai-callgrind",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-platform",
+ "jolt-program",
+ "jolt-riscv",
+ "libc",
+ "postcard",
+ "rand 0.8.7",
+ "tracer",
 ]
 
 [[package]]
@@ -4602,12 +4662,21 @@ version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
 dependencies = [
- "crc32fast",
  "flate2",
+ "memchr",
+ "ruzstd",
+]
+
+[[package]]
+name = "object"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
+dependencies = [
+ "crc32fast",
  "hashbrown 0.17.0",
  "indexmap 2.14.0",
  "memchr",
- "ruzstd",
 ]
 
 [[package]]
@@ -5187,6 +5256,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro-error-attr3"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0084e6206a967a2dad822180626b2f6b07a3b379325e8f1ec0438e33a469ba7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "proc-macro-error2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5196,6 +5275,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "proc-macro-error3"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cf066225f2373bc711684792b69bdeac0356019b007e721090c24d92d5d5a50"
+dependencies = [
+ "proc-macro-error-attr3",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -5253,7 +5344,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.12.1",
  "log",
  "multimap",
@@ -5334,9 +5425,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.39.2"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "958f21e8e7ceb5a1aa7fa87fab28e7c75976e0bfe7e23ff069e0a260f894067d"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
 ]
@@ -6560,9 +6651,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.15.1"
+version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 dependencies = [
  "serde",
 ]
@@ -7049,7 +7140,7 @@ dependencies = [
  "jolt-platform",
  "jolt-program",
  "jolt-riscv",
- "object 0.39.1",
+ "object 0.40.0",
  "paste",
  "postcard",
  "rand 0.8.7",
@@ -7807,12 +7898,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "z3-src"
+version = "416.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2af0c6527de39877cf55cb87f233016573eeeb7cf77afdc1469e4b32faef832"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "z3-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c18b0a91a13522d21b3414847667de2b2056a721a3edcb5b6ee6858352d58db4"
 dependencies = [
  "pkg-config",
+ "z3-src",
 ]
 
 [[package]]
@@ -7824,6 +7925,7 @@ dependencies = [
  "paste",
  "tracer",
  "z3",
+ "z3-src",
 ]
 
 [[package]]

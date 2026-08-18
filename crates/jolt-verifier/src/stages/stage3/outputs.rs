@@ -96,6 +96,10 @@ impl<F: Field, C> Stage3Output<F, C> {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
 mod tests {
     use super::*;
     use crate::stages::relations::ConcreteSumcheck;

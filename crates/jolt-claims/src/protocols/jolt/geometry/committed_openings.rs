@@ -76,9 +76,8 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
         JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
 
-        JoltCommittedPolynomial::UnsignedIncChunk(_) | JoltCommittedPolynomial::UnsignedIncMsb => {
-            JoltRelationId::HammingWeightClaimReduction
-        }
+        JoltCommittedPolynomial::BalancedIncDigit(_)
+        | JoltCommittedPolynomial::BalancedIncCarry => JoltRelationId::HammingWeightClaimReduction,
         JoltCommittedPolynomial::UntrustedAdviceBytes => {
             JoltRelationId::UntrustedAdviceReconstruction
         }
