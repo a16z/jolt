@@ -3,9 +3,9 @@
 //!
 //! The architectural rule: `protocols/jolt` and `protocols/field_inline` are
 //! completely separate protocol families. They share algebra only through the
-//! id-free `relation_shapes` framework module, and they compose only in
+//! id-free `twist` framework module, and they compose only in
 //! `jolt-verifier` — so neither protocol module may import the other, the
-//! shapes module may reference neither, and no `field-inline` feature gate may
+//! Twist-identity module may reference neither, and no `field-inline` feature gate may
 //! appear in this crate (both families always compile here).
 
 #![expect(clippy::expect_used, reason = "test-only source-tree walking")]
@@ -101,7 +101,7 @@ fn src_dir() -> PathBuf {
 
 /// Neither protocol module imports (or otherwise names, outside comments and
 /// strings) the other: the only sanctioned sharing is the id-free
-/// `relation_shapes` algebra, and composition happens only in `jolt-verifier`.
+/// `twist` algebra, and composition happens only in `jolt-verifier`.
 #[test]
 fn protocol_modules_are_import_disjoint() {
     let mut violations = Vec::new();
@@ -126,17 +126,17 @@ fn protocol_modules_are_import_disjoint() {
     assert!(
         violations.is_empty(),
         "protocol modules must stay import-disjoint (share algebra via \
-         relation_shapes, compose in jolt-verifier):\n{}",
+         twist, compose in jolt-verifier):\n{}",
         violations.join("\n")
     );
 }
 
-/// The shared shapes module carries no protocol ids: it must not reference
+/// The shared Twist-identity module carries no protocol ids: it must not reference
 /// either protocol module.
 #[test]
-fn relation_shapes_reference_no_protocol_module() {
+fn twist_reference_no_protocol_module() {
     let mut violations = Vec::new();
-    for file in rust_sources(&src_dir().join("relation_shapes")) {
+    for file in rust_sources(&src_dir().join("twist")) {
         let code = code_text(&file);
         for needle in ["protocols::", "FieldInline", "field_inline", "Jolt"] {
             if code.contains(needle) {
@@ -146,7 +146,7 @@ fn relation_shapes_reference_no_protocol_module() {
     }
     assert!(
         violations.is_empty(),
-        "relation_shapes must stay protocol-id-free:\n{}",
+        "twist must stay protocol-id-free:\n{}",
         violations.join("\n")
     );
 }

@@ -13,7 +13,7 @@ use crate::protocols::field_inline::{
     FieldRegistersReadWritePublic, FieldRegistersTraceDimensions,
     FieldRegistersValEvaluationPublic,
 };
-use crate::relation_shapes::registers as shape;
+use crate::twist::memory_checking as twist;
 use crate::{InputClaims, NoChallenges, OutputClaims, SumcheckChallenges};
 
 /// Produced field-register read-write openings, all sharing the single FR
@@ -73,7 +73,7 @@ pub struct ReadWriteChecking {
     shape: FieldRegistersReadWriteDimensions,
 }
 
-shape::instantiate_read_write_checking! {
+twist::instantiate_read_write_checking! {
     relation = ReadWriteChecking,
     id = FieldInlineRelationId::FieldRegistersReadWriteChecking,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
@@ -127,7 +127,7 @@ pub struct ValEvaluation {
     shape: FieldRegistersTraceDimensions,
 }
 
-shape::instantiate_val_evaluation! {
+twist::instantiate_val_evaluation! {
     relation = ValEvaluation,
     id = FieldInlineRelationId::FieldRegistersValEvaluation,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),

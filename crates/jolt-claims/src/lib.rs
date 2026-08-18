@@ -28,9 +28,9 @@ mod claims;
 mod formula_error;
 mod ops;
 pub mod protocols;
-pub mod relation_shapes;
 mod sumcheck;
 mod symbolic;
+pub mod twist;
 
 pub use claim_data::{
     ChallengeDrawError, InputClaims, MissingOpeningValue, NoChallenges, NoInputs, NoOutputs,

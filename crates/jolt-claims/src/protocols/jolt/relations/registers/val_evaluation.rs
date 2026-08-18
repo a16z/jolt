@@ -9,7 +9,7 @@ use crate::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, RegistersValEvaluationPublic,
     TraceDimensions,
 };
-use crate::relation_shapes::registers as shape;
+use crate::twist::memory_checking as twist;
 use crate::{InputClaims, NoChallenges, OutputClaims};
 
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
@@ -41,7 +41,7 @@ pub struct ValEvaluation {
     shape: TraceDimensions,
 }
 
-shape::instantiate_val_evaluation! {
+twist::instantiate_val_evaluation! {
     relation = ValEvaluation,
     id = JoltRelationId::RegistersValEvaluation,
     ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),

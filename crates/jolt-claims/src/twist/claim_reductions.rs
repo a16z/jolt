@@ -1,4 +1,4 @@
-//! The register-Twist claim-reduction shapes: the value reduction (γ-fold to
+//! The Twist claim-reduction identities: the value reduction (γ-fold to
 //! the Spartan point) and the increment reduction (per-source pairs folded by
 //! a drawn challenge under Eq-pair publics).
 
@@ -9,7 +9,7 @@ use crate::{challenge, derived, opening, Expr};
 /// Id supplier for the value claim-reduction shape: three upstream openings
 /// folded by `gamma`, reduced to three openings at the shared reduction point,
 /// weighted by the `EqSpartan` public.
-pub trait RegistersValueReductionIds {
+pub trait ValueReductionIds {
     type OpeningId: Clone;
     type DerivedId: Clone;
     type ChallengeId: Clone;
@@ -24,13 +24,13 @@ pub trait RegistersValueReductionIds {
     fn eq_spartan() -> Self::DerivedId;
 }
 
-/// Per-round degree bound of the value claim-reduction shape
+/// Per-round degree bound of the value claim-reduction relation
 /// (`EqSpartan · reduced`). Rounds source: the protocol's trace dimensions
 /// (`log_t()`).
 pub const VALUE_REDUCTION_DEGREE: usize = 2;
 
 /// `c₀ + γ·c₁ + γ²·c₂` over the consumed openings.
-pub fn value_reduction_input<F: RingCore, S: RegistersValueReductionIds>(
+pub fn value_reduction_input<F: RingCore, S: ValueReductionIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma: Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> = challenge(S::gamma());
     let [c0, c1, c2] = S::consumed();
@@ -38,7 +38,7 @@ pub fn value_reduction_input<F: RingCore, S: RegistersValueReductionIds>(
 }
 
 /// `EqSpartan · (r₀ + γ·r₁ + γ²·r₂)`, expanded.
-pub fn value_reduction_output<F: RingCore, S: RegistersValueReductionIds>(
+pub fn value_reduction_output<F: RingCore, S: ValueReductionIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma: Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> = challenge(S::gamma());
     let eq_spartan = derived(S::eq_spartan());
@@ -75,7 +75,7 @@ pub trait IncrementReductionIds {
     fn gamma() -> Self::ChallengeId;
 }
 
-/// Per-round degree bound of the increment claim-reduction shape
+/// Per-round degree bound of the increment claim-reduction relation
 /// (`Eq · reduced`). Rounds source: the protocol's trace dimensions
 /// (`log_t()`).
 pub const INCREMENT_REDUCTION_DEGREE: usize = 2;
@@ -117,10 +117,10 @@ pub fn increment_reduction_output<F: RingCore, S: IncrementReductionIds>(
     expr
 }
 
-/// Instantiates the value claim-reduction shape for one protocol family from
+/// Binds the value claim-reduction identity to one memory instance from
 /// a compact id mapping table. Expands to two impls on `$relation` (which must
 /// be `struct $relation { shape: $dimensions }`): the
-/// [`RegistersValueReductionIds`] supplier and
+/// [`ValueReductionIds`] supplier and
 /// [`SymbolicSumcheck`](crate::SymbolicSumcheck) delegating expressions and
 /// degree to this shape, with rounds = `shape.log_t()` (the shape's rounds
 /// source).
@@ -138,7 +138,7 @@ macro_rules! instantiate_value_reduction {
         gamma = $gamma:expr,
         eq_spartan = $eq_spartan:expr,
     ) => {
-        impl $crate::relation_shapes::claim_reductions::RegistersValueReductionIds for $relation {
+        impl $crate::twist::claim_reductions::ValueReductionIds for $relation {
             type OpeningId = $opening_id;
             type DerivedId = $derived_id;
             type ChallengeId = $challenge_id;
@@ -177,24 +177,24 @@ macro_rules! instantiate_value_reduction {
                 self.shape.log_t()
             }
             fn degree(&self) -> usize {
-                $crate::relation_shapes::claim_reductions::VALUE_REDUCTION_DEGREE
+                $crate::twist::claim_reductions::VALUE_REDUCTION_DEGREE
             }
             fn input_expression<F: ::jolt_field::RingCore>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
-                $crate::relation_shapes::claim_reductions::value_reduction_input::<F, Self>()
+                $crate::twist::claim_reductions::value_reduction_input::<F, Self>()
             }
             fn output_expression<F: ::jolt_field::RingCore>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
-                $crate::relation_shapes::claim_reductions::value_reduction_output::<F, Self>()
+                $crate::twist::claim_reductions::value_reduction_output::<F, Self>()
             }
         }
     };
 }
 pub(crate) use instantiate_value_reduction;
 
-/// Instantiates the increment claim-reduction shape for one protocol family
+/// Binds the increment claim-reduction identity to one memory instance
 /// from a compact source-group table. Same expansion contract as
 /// [`instantiate_value_reduction`]; `groups` is the
 /// [`IncrementReductionGroup`] vector in γ offset order, with rounds =
@@ -211,16 +211,13 @@ macro_rules! instantiate_increment_reduction {
         groups = $groups:expr,
         gamma = $gamma:expr,
     ) => {
-        impl $crate::relation_shapes::claim_reductions::IncrementReductionIds for $relation {
+        impl $crate::twist::claim_reductions::IncrementReductionIds for $relation {
             type OpeningId = $opening_id;
             type DerivedId = $derived_id;
             type ChallengeId = $challenge_id;
 
             fn groups() -> Vec<
-                $crate::relation_shapes::claim_reductions::IncrementReductionGroup<
-                    $opening_id,
-                    $derived_id,
-                >,
+                $crate::twist::claim_reductions::IncrementReductionGroup<$opening_id, $derived_id>,
             > {
                 $groups
             }
@@ -249,17 +246,17 @@ macro_rules! instantiate_increment_reduction {
                 self.shape.log_t()
             }
             fn degree(&self) -> usize {
-                $crate::relation_shapes::claim_reductions::INCREMENT_REDUCTION_DEGREE
+                $crate::twist::claim_reductions::INCREMENT_REDUCTION_DEGREE
             }
             fn input_expression<F: ::jolt_field::RingCore>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
-                $crate::relation_shapes::claim_reductions::increment_reduction_input::<F, Self>()
+                $crate::twist::claim_reductions::increment_reduction_input::<F, Self>()
             }
             fn output_expression<F: ::jolt_field::RingCore>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
-                $crate::relation_shapes::claim_reductions::increment_reduction_output::<F, Self>()
+                $crate::twist::claim_reductions::increment_reduction_output::<F, Self>()
             }
         }
     };
@@ -274,7 +271,7 @@ mod tests {
 
     struct Toy;
 
-    impl RegistersValueReductionIds for Toy {
+    impl ValueReductionIds for Toy {
         type OpeningId = Opening;
         type DerivedId = Derived;
         type ChallengeId = Challenge;
@@ -321,7 +318,7 @@ mod tests {
         }
     }
 
-    /// Structural pin: the builders must reproduce the pre-shape hand-written
+    /// Structural pin: the builders must reproduce the previously hand-written
     /// term sequence exactly (the BlindFold lowering consumes terms in order).
     #[test]
     fn value_reduction_terms_match_the_hand_written_construction() {
@@ -338,7 +335,7 @@ mod tests {
         assert_eq!(value_reduction_output::<Fr, Toy>(), expected_output);
     }
 
-    /// Structural pin against the pre-shape jolt construction (the four-way
+    /// Structural pin against the previously hand-written jolt construction (the four-way
     /// γ-fold input and the two-group output fold): group 0 carries no γ
     /// offset factors, group 1 rides γ².
     #[test]

@@ -10,7 +10,7 @@ use crate::protocols::field_inline::{
     FieldRegistersIncClaimReductionChallenge, FieldRegistersIncClaimReductionPublic,
     FieldRegistersTraceDimensions,
 };
-use crate::relation_shapes::claim_reductions as shape;
+use crate::twist::claim_reductions as twist;
 use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// The single reduced `FieldRdInc` opening handed to the final opening planner.
@@ -57,7 +57,7 @@ pub struct ClaimReduction {
     shape: FieldRegistersTraceDimensions,
 }
 
-shape::instantiate_increment_reduction! {
+twist::instantiate_increment_reduction! {
     relation = ClaimReduction,
     id = FieldInlineRelationId::FieldRegistersIncClaimReduction,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
@@ -65,7 +65,7 @@ shape::instantiate_increment_reduction! {
     challenges = FieldRegistersIncClaimReductionChallenges,
     inputs = FieldRegistersIncClaimReductionInputClaims,
     outputs = FieldRegistersIncClaimReductionOutputClaims,
-    groups = vec![shape::IncrementReductionGroup {
+    groups = vec![twist::IncrementReductionGroup {
         consumed: [field_rd_inc_read_write(), field_rd_inc_val_evaluation()],
         eq_publics: [
             FieldRegistersIncClaimReductionPublic::EqReadWrite.into(),

@@ -2,7 +2,7 @@
 //! instantiations.
 //!
 //! Ownership rule: this module owns the jolt ids and instantiates the shared
-//! relation shapes (`crate::relation_shapes`) with them; the shapes own the
+//! Twist identities (`crate::twist`) with them; that module owns the
 //! algebra. `protocols::field_inline` is a completely separate protocol family
 //! — the two protocol modules never import each other, and their composition
 //! happens only in `jolt-verifier` (pinned by the

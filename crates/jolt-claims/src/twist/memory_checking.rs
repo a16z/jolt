@@ -1,4 +1,4 @@
-//! The register-Twist read/write-checking and val-evaluation shapes.
+//! The Twist read/write-checking and value-evaluation identities.
 
 use jolt_field::RingCore;
 
@@ -7,7 +7,7 @@ use crate::{challenge, derived, opening, Expr};
 /// Id supplier for the register read/write-checking shape: three consumed
 /// value openings folded by `gamma`, five produced openings at the shared
 /// read-write point, weighted by the `EqCycle` public.
-pub trait RegistersReadWriteIds {
+pub trait ReadWriteCheckingIds {
     type OpeningId: Clone;
     type DerivedId: Clone;
     type ChallengeId: Clone;
@@ -28,13 +28,13 @@ pub trait RegistersReadWriteIds {
     fn eq_cycle() -> Self::DerivedId;
 }
 
-/// Per-round degree bound of the read/write-checking shape
+/// Per-round degree bound of the read/write-checking relation
 /// (`EqCycle · access · Val`). Rounds source: the protocol's read-write
 /// dimensions (`read_write_rounds()`).
 pub const READ_WRITE_CHECKING_DEGREE: usize = 3;
 
 /// `rd + γ·rs1 + γ²·rs2` over the consumed value openings.
-pub fn read_write_checking_input<F: RingCore, S: RegistersReadWriteIds>(
+pub fn read_write_checking_input<F: RingCore, S: ReadWriteCheckingIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma = challenge(S::gamma());
     opening(S::rd_value())
@@ -43,7 +43,7 @@ pub fn read_write_checking_input<F: RingCore, S: RegistersReadWriteIds>(
 }
 
 /// `EqCycle · (RdWa·Inc + RdWa·Val + γ·Rs1Ra·Val + γ²·Rs2Ra·Val)`, expanded.
-pub fn read_write_checking_output<F: RingCore, S: RegistersReadWriteIds>(
+pub fn read_write_checking_output<F: RingCore, S: ReadWriteCheckingIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     let gamma = challenge(S::gamma());
     let eq_cycle = derived(S::eq_cycle());
@@ -55,7 +55,7 @@ pub fn read_write_checking_output<F: RingCore, S: RegistersReadWriteIds>(
 
 /// Id supplier for the register val-evaluation shape: one consumed `Val`
 /// opening, two produced openings weighted by the `LtCycle` public.
-pub trait RegistersValEvaluationIds {
+pub trait ValEvaluationIds {
     type OpeningId: Clone;
     type DerivedId: Clone;
     type ChallengeId: Clone;
@@ -70,29 +70,29 @@ pub trait RegistersValEvaluationIds {
     fn lt_cycle() -> Self::DerivedId;
 }
 
-/// Per-round degree bound of the val-evaluation shape (`LtCycle · Inc · Wa`).
+/// Per-round degree bound of the value-evaluation relation (`LtCycle · Inc · Wa`).
 /// Rounds source: the protocol's trace dimensions (`log_t()`).
 pub const VAL_EVALUATION_DEGREE: usize = 3;
 
 /// The bare consumed `Val` opening.
-pub fn val_evaluation_input<F: RingCore, S: RegistersValEvaluationIds>(
+pub fn val_evaluation_input<F: RingCore, S: ValEvaluationIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     opening(S::registers_val())
 }
 
 /// `LtCycle · Inc · Wa`.
-pub fn val_evaluation_output<F: RingCore, S: RegistersValEvaluationIds>(
+pub fn val_evaluation_output<F: RingCore, S: ValEvaluationIds>(
 ) -> Expr<F, S::OpeningId, S::DerivedId, S::ChallengeId> {
     derived(S::lt_cycle()) * opening(S::rd_inc()) * opening(S::rd_wa())
 }
 
-/// Instantiates the read/write-checking shape for one protocol family from a
+/// Binds the read/write-checking identity to one memory instance from a
 /// compact id mapping table. Expands to two impls on `$relation` (which must
 /// be `struct $relation { shape: $dimensions }`): the
-/// [`RegistersReadWriteIds`] supplier mapping each role to the given id
+/// [`ReadWriteCheckingIds`] supplier mapping each role to the given id
 /// constructor, and [`SymbolicSumcheck`](crate::SymbolicSumcheck) delegating
-/// expressions and degree to this shape, with rounds =
-/// `shape.read_write_rounds()` (the shape's rounds source).
+/// expressions and degree to this identity, with rounds =
+/// `shape.read_write_rounds()` (the dimensions' rounds source).
 macro_rules! instantiate_read_write_checking {
     (
         relation = $relation:ident,
@@ -113,7 +113,7 @@ macro_rules! instantiate_read_write_checking {
         gamma = $gamma:expr,
         eq_cycle = $eq_cycle:expr,
     ) => {
-        impl $crate::relation_shapes::registers::RegistersReadWriteIds for $relation {
+        impl $crate::twist::memory_checking::ReadWriteCheckingIds for $relation {
             type OpeningId = $opening_id;
             type DerivedId = $derived_id;
             type ChallengeId = $challenge_id;
@@ -170,27 +170,27 @@ macro_rules! instantiate_read_write_checking {
                 self.shape.read_write_rounds()
             }
             fn degree(&self) -> usize {
-                $crate::relation_shapes::registers::READ_WRITE_CHECKING_DEGREE
+                $crate::twist::memory_checking::READ_WRITE_CHECKING_DEGREE
             }
             fn input_expression<F: ::jolt_field::RingCore>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
-                $crate::relation_shapes::registers::read_write_checking_input::<F, Self>()
+                $crate::twist::memory_checking::read_write_checking_input::<F, Self>()
             }
             fn output_expression<F: ::jolt_field::RingCore>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
-                $crate::relation_shapes::registers::read_write_checking_output::<F, Self>()
+                $crate::twist::memory_checking::read_write_checking_output::<F, Self>()
             }
         }
     };
 }
 pub(crate) use instantiate_read_write_checking;
 
-/// Instantiates the val-evaluation shape for one protocol family from a
+/// Binds the value-evaluation identity to one memory instance from a
 /// compact id mapping table. Same expansion contract as
 /// [`instantiate_read_write_checking`], with rounds = `shape.log_t()` (the
-/// shape's rounds source).
+/// dimensions' rounds source).
 macro_rules! instantiate_val_evaluation {
     (
         relation = $relation:ident,
@@ -205,7 +205,7 @@ macro_rules! instantiate_val_evaluation {
         rd_wa = $rd_wa:expr,
         lt_cycle = $lt_cycle:expr,
     ) => {
-        impl $crate::relation_shapes::registers::RegistersValEvaluationIds for $relation {
+        impl $crate::twist::memory_checking::ValEvaluationIds for $relation {
             type OpeningId = $opening_id;
             type DerivedId = $derived_id;
             type ChallengeId = $challenge_id;
@@ -244,17 +244,17 @@ macro_rules! instantiate_val_evaluation {
                 self.shape.log_t()
             }
             fn degree(&self) -> usize {
-                $crate::relation_shapes::registers::VAL_EVALUATION_DEGREE
+                $crate::twist::memory_checking::VAL_EVALUATION_DEGREE
             }
             fn input_expression<F: ::jolt_field::RingCore>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
-                $crate::relation_shapes::registers::val_evaluation_input::<F, Self>()
+                $crate::twist::memory_checking::val_evaluation_input::<F, Self>()
             }
             fn output_expression<F: ::jolt_field::RingCore>(
                 &self,
             ) -> $crate::Expr<F, $opening_id, $derived_id, $challenge_id> {
-                $crate::relation_shapes::registers::val_evaluation_output::<F, Self>()
+                $crate::twist::memory_checking::val_evaluation_output::<F, Self>()
             }
         }
     };
@@ -269,7 +269,7 @@ mod tests {
 
     struct Toy;
 
-    impl RegistersReadWriteIds for Toy {
+    impl ReadWriteCheckingIds for Toy {
         type OpeningId = Opening;
         type DerivedId = Derived;
         type ChallengeId = Challenge;
@@ -306,7 +306,7 @@ mod tests {
         }
     }
 
-    impl RegistersValEvaluationIds for Toy {
+    impl ValEvaluationIds for Toy {
         type OpeningId = Opening;
         type DerivedId = Derived;
         type ChallengeId = Challenge;
@@ -325,7 +325,7 @@ mod tests {
         }
     }
 
-    /// Structural pin: the builders must reproduce the pre-shape hand-written
+    /// Structural pin: the builders must reproduce the previously hand-written
     /// term sequence exactly (the BlindFold lowering consumes terms in order).
     #[test]
     fn read_write_checking_terms_match_the_hand_written_construction() {

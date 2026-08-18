@@ -11,7 +11,7 @@ use crate::protocols::jolt::{
     IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltDerivedId,
     JoltOpeningId, JoltRelationId, TraceDimensions,
 };
-use crate::relation_shapes::claim_reductions as shape;
+use crate::twist::claim_reductions as twist;
 use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
@@ -61,7 +61,7 @@ pub struct ClaimReduction {
 // RAM group first, registers group second — the relation's γ offset order.
 // The lattice `read_raf` fold consumes the same four openings in this order at
 // its own gamma powers.
-shape::instantiate_increment_reduction! {
+twist::instantiate_increment_reduction! {
     relation = ClaimReduction,
     id = JoltRelationId::IncClaimReduction,
     ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),
@@ -70,7 +70,7 @@ shape::instantiate_increment_reduction! {
     inputs = IncClaimReductionInputClaims,
     outputs = IncClaimReductionOutputClaims,
     groups = vec![
-        shape::IncrementReductionGroup {
+        twist::IncrementReductionGroup {
             consumed: [ram_inc(), ram_inc_val_check()],
             eq_publics: [
                 IncClaimReductionPublic::EqRamReadWrite.into(),
@@ -78,7 +78,7 @@ shape::instantiate_increment_reduction! {
             ],
             reduced: ram_inc_reduced(),
         },
-        shape::IncrementReductionGroup {
+        twist::IncrementReductionGroup {
             consumed: [rd_inc_read_write(), rd_inc_val_evaluation()],
             eq_publics: [
                 IncClaimReductionPublic::EqRegistersReadWrite.into(),

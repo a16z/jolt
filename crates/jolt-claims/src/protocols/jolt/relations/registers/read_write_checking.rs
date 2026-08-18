@@ -10,7 +10,7 @@ use crate::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, ReadWriteDimensions,
     RegistersReadWriteChallenge, RegistersReadWritePublic,
 };
-use crate::relation_shapes::registers as shape;
+use crate::twist::memory_checking as twist;
 use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced register read-write openings, all sharing the single read-write
@@ -65,7 +65,7 @@ pub struct ReadWriteChecking {
     shape: ReadWriteDimensions,
 }
 
-shape::instantiate_read_write_checking! {
+twist::instantiate_read_write_checking! {
     relation = ReadWriteChecking,
     id = JoltRelationId::RegistersReadWriteChecking,
     ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),

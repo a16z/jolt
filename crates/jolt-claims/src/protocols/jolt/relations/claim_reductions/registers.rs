@@ -10,7 +10,7 @@ use crate::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
-use crate::relation_shapes::claim_reductions as shape;
+use crate::twist::claim_reductions as twist;
 use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
@@ -61,7 +61,7 @@ pub struct ClaimReduction {
     shape: TraceDimensions,
 }
 
-shape::instantiate_value_reduction! {
+twist::instantiate_value_reduction! {
     relation = ClaimReduction,
     id = JoltRelationId::RegistersClaimReduction,
     ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),

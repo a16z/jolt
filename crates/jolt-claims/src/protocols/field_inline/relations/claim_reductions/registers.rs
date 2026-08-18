@@ -11,7 +11,7 @@ use crate::protocols::field_inline::{
     FieldRegistersClaimReductionChallenge, FieldRegistersClaimReductionPublic,
     FieldRegistersTraceDimensions,
 };
-use crate::relation_shapes::claim_reductions as shape;
+use crate::twist::claim_reductions as twist;
 use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced field-register claim-reduction openings (`FieldRdValue`,
@@ -66,7 +66,7 @@ pub struct ClaimReduction {
     shape: FieldRegistersTraceDimensions,
 }
 
-shape::instantiate_value_reduction! {
+twist::instantiate_value_reduction! {
     relation = ClaimReduction,
     id = FieldInlineRelationId::FieldRegistersClaimReduction,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
