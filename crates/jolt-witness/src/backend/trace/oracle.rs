@@ -90,8 +90,8 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::UnsignedIncChunk(_)
-                | C::UnsignedIncMsb
+                C::BalancedIncDigit(_)
+                | C::BalancedIncCarry
                 | C::TrustedAdviceBytes
                 | C::UntrustedAdviceBytes
                 | C::BytecodeRegisterSelector { .. }
@@ -194,8 +194,8 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::UnsignedIncChunk(_)
-                | C::UnsignedIncMsb
+                C::BalancedIncDigit(_)
+                | C::BalancedIncCarry
                 | C::TrustedAdviceBytes
                 | C::UntrustedAdviceBytes
                 | C::BytecodeRegisterSelector { .. }

@@ -189,14 +189,13 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
     let (object_setup, verifier_setup) =
         <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
             .expect("transparent packed setup");
-    let program_one_hot_commitment = program_one_hot.commitment.clone();
     let proof = prover
         .prove_packed(&object_setup, None, Some(&program_one_hot))
         .expect("packed prover");
     let preprocessing = akita_verifier_preprocessing(
         &prover_preprocessing,
         verifier_setup,
-        Some(program_one_hot_commitment),
+        Some(&program_one_hot),
     );
     AkitaFixtureCase {
         preprocessing,
