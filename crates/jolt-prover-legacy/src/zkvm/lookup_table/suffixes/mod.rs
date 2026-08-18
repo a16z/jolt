@@ -33,6 +33,7 @@ use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use align_addr::AlignAddrSuffix;
 use and::AndSuffix;
 use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
@@ -47,6 +48,7 @@ use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
 
+pub mod align_addr;
 pub mod and;
 pub mod change_divisor;
 pub mod change_divisor_w;
@@ -152,6 +154,7 @@ pub enum Suffixes {
     WindowSignPow2,
     Pow2OffsetB,
     Pow2OffsetH,
+    AlignAddr,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -237,6 +240,7 @@ impl Suffixes {
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
             Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
             Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
+            Suffixes::AlignAddr => AlignAddrSuffix::<XLEN>::suffix_mle(b),
         }
     }
 }

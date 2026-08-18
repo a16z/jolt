@@ -178,6 +178,7 @@ macro_rules! for_each_instruction_kind {
                 VirtualPext => Pext => "jolt.virtual.pext",
                 VirtualWindowMaskB => WindowMaskB => "jolt.virtual.windowmaskb",
                 VirtualWindowMaskH => WindowMaskH => "jolt.virtual.windowmaskh",
+                VirtualAlignAddr => AlignAddr => "jolt.virtual.alignaddr",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -278,6 +279,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualMULIW => MulIW => (0x008e, "jolt.virtual.muliw"),
                 VirtualWindowMaskW => WindowMaskW => (0x008f, "jolt.virtual.windowmaskw"),
                 VirtualPextSigned => PextSigned => (0x0090, "jolt.virtual.pextsigned"),
+                VirtualAlignAddr => AlignAddr => (0x0091, "jolt.virtual.alignaddr"),
                 VirtualPext => Pext => (0x0092, "jolt.virtual.pext"),
                 VirtualWindowMaskB => WindowMaskB => (0x0093, "jolt.virtual.windowmaskb"),
                 VirtualWindowMaskH => WindowMaskH => (0x0094, "jolt.virtual.windowmaskh"),

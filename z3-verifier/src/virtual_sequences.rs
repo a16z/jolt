@@ -46,6 +46,7 @@ use tracer::{
         sub::SUB,
         subw::SUBW,
         virtual_advice::VirtualAdvice,
+        virtual_align_addr::VirtualAlignAddr,
         virtual_assert_eq::VirtualAssertEQ,
         virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
         virtual_assert_lte::VirtualAssertLTE,
@@ -448,15 +449,22 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                 .bvshl(shift.zero_ext(cpu.bv_bits))
                 .extract(cpu.bv_bits - 1, 0)
         }
+        Instruction::VirtualAlignAddr(VirtualAlignAddr { operands, .. }) => {
+            // (rs1 + imm) & !7: the containing doubleword address. The mask
+            // constant truncates to bv_bits, so reduced widths stay faithful.
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let imm = normalize_imm(operands.imm);
+            cpu.x[operands.rd as usize] = (rs1 + imm) & cpu.bv_u64(-8i64 as u64);
+        }
         Instruction::VirtualWindowMaskW(VirtualWindowMaskW { operands, .. }) => {
-            let ea = cpu.x[operands.rs1 as usize].clone();
+            let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
             let bit2 = ea.extract(2, 2).zero_ext(cpu.bv_bits - 1);
             let shift = bit2 * cpu.bv_u64(cpu.word_bits as u64);
             let word_mask = cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
             cpu.x[operands.rd as usize] = word_mask.bvshl(shift);
         }
         Instruction::VirtualWindowMaskB(VirtualWindowMaskB { operands, .. }) => {
-            let ea = cpu.x[operands.rs1 as usize].clone();
+            let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
             let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
             // One of 8 lanes of bv_bits/8 bits each; scales with the reduced
             // solver widths.
@@ -466,7 +474,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.x[operands.rd as usize] = byte_mask.bvshl(shift);
         }
         Instruction::VirtualWindowMaskH(VirtualWindowMaskH { operands, .. }) => {
-            let ea = cpu.x[operands.rs1 as usize].clone();
+            let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
             let offset = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2);
             // One of 4 lanes of bv_bits/4 bits each; scales with the reduced
             // solver widths.

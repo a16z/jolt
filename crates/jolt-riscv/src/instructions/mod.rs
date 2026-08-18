@@ -106,6 +106,7 @@ pub use m::Rem;
 pub use m::RemU;
 pub use m::RemUW;
 pub use m::RemW;
+pub use virt::AlignAddr;
 pub use virt::MovSign;
 pub use virt::MulI;
 pub use virt::MulIW;
@@ -414,6 +415,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     Pext(Pext<T>),
     WindowMaskB(WindowMaskB<T>),
     WindowMaskH(WindowMaskH<T>),
+    AlignAddr(AlignAddr<T>),
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
@@ -626,6 +628,7 @@ impl_jolt_instructions_flags! {
     Pext => VirtualPext,
     WindowMaskB => VirtualWindowMaskB,
     WindowMaskH => VirtualWindowMaskH,
+    AlignAddr => VirtualAlignAddr,
     VirtualAdvice => VirtualAdvice,
     VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,
