@@ -1,3 +1,4 @@
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
@@ -79,6 +80,7 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: JoltLookupTable + Defaul
 pub mod prefixes;
 pub mod suffixes;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
@@ -175,6 +177,7 @@ pub enum LookupTables<const XLEN: usize> {
     Pext(PextTable<XLEN>),
     WindowMaskB(WindowMaskBTable<XLEN>),
     WindowMaskH(WindowMaskHTable<XLEN>),
+    AlignAddr(AlignAddrTable<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -232,6 +235,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.materialize(),
             LookupTables::WindowMaskB(table) => table.materialize(),
             LookupTables::WindowMaskH(table) => table.materialize(),
+            LookupTables::AlignAddr(table) => table.materialize(),
         }
     }
 
@@ -282,6 +286,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.materialize_entry(index),
             LookupTables::WindowMaskB(table) => table.materialize_entry(index),
             LookupTables::WindowMaskH(table) => table.materialize_entry(index),
+            LookupTables::AlignAddr(table) => table.materialize_entry(index),
         }
     }
 
@@ -336,6 +341,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.evaluate_mle(r),
             LookupTables::WindowMaskB(table) => table.evaluate_mle(r),
             LookupTables::WindowMaskH(table) => table.evaluate_mle(r),
+            LookupTables::AlignAddr(table) => table.evaluate_mle(r),
         }
     }
 
@@ -386,6 +392,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.suffixes(),
             LookupTables::WindowMaskB(table) => table.suffixes(),
             LookupTables::WindowMaskH(table) => table.suffixes(),
+            LookupTables::AlignAddr(table) => table.suffixes(),
         }
     }
 
@@ -440,6 +447,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::Pext(table) => table.combine(prefixes, suffixes),
             LookupTables::WindowMaskB(table) => table.combine(prefixes, suffixes),
             LookupTables::WindowMaskH(table) => table.combine(prefixes, suffixes),
+            LookupTables::AlignAddr(table) => table.combine(prefixes, suffixes),
         }
     }
 }

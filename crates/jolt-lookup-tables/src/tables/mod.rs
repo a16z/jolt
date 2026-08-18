@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::traits::LookupTable;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
@@ -60,6 +61,7 @@ pub mod xor;
 pub use prefixes::{PrefixEval, Prefixes};
 pub use suffixes::{SuffixEval, Suffixes};
 
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
@@ -168,6 +170,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     Pext(PextTable<XLEN>),
     WindowMaskB(WindowMaskBTable<XLEN>),
     WindowMaskH(WindowMaskHTable<XLEN>),
+    AlignAddr(AlignAddrTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -222,6 +225,7 @@ macro_rules! dispatch {
             Self::Pext($t) => $expr,
             Self::WindowMaskB($t) => $expr,
             Self::WindowMaskH($t) => $expr,
+            Self::AlignAddr($t) => $expr,
         }
     };
 }

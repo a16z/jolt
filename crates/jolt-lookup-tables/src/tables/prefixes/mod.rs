@@ -7,6 +7,7 @@
 //! value becomes the prefix's checkpoint for the next phase. Checkpoints are
 //! initialized via [`SparseDensePrefix::default_checkpoint`].
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod change_divisor;
@@ -163,6 +164,7 @@ pub enum Prefixes {
     WindowSignPow2,
     Pow2OffsetB,
     Pow2OffsetH,
+    AlignAddr,
 }
 
 /// Total number of prefix variants.
@@ -229,6 +231,7 @@ macro_rules! dispatch_prefix {
             Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
             Prefixes::Pow2OffsetB => pow2_offset::Pow2OffsetPrefix::<0>::$method($($args),*),
             Prefixes::Pow2OffsetH => pow2_offset::Pow2OffsetPrefix::<1>::$method($($args),*),
+            Prefixes::AlignAddr => align_addr::AlignAddrPrefix::$method($($args),*),
         }
     };
 }

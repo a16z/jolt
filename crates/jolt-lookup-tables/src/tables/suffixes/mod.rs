@@ -10,6 +10,7 @@
 
 use crate::lookup_bits::LookupBits;
 
+mod align_addr;
 mod and;
 mod andnot;
 mod change_divisor;
@@ -55,6 +56,7 @@ mod xor;
 mod xor_rot;
 mod xor_rotw;
 
+use align_addr::AlignAddrSuffix;
 use and::AndSuffix;
 use andnot::AndNotSuffix;
 use change_divisor::ChangeDivisorSuffix;
@@ -169,6 +171,7 @@ pub enum Suffixes {
     WindowSignPow2,
     Pow2OffsetB,
     Pow2OffsetH,
+    AlignAddr,
 }
 
 /// Total number of suffix variants.
@@ -252,6 +255,7 @@ impl Suffixes {
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
             Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
             Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
+            Suffixes::AlignAddr => AlignAddrSuffix::suffix_mle(b),
         }
     }
 

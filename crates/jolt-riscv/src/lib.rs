@@ -163,6 +163,7 @@ macro_rules! for_each_instruction_kind {
                 VirtualPext => Pext => "jolt.virtual.pext",
                 VirtualWindowMaskB => WindowMaskB => "jolt.virtual.windowmaskb",
                 VirtualWindowMaskH => WindowMaskH => "jolt.virtual.windowmaskh",
+                VirtualAlignAddr => AlignAddr => "jolt.virtual.alignaddr",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -261,6 +262,8 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualPext => Pext => (0x008b, "jolt.virtual.pext"),
                 VirtualWindowMaskB => WindowMaskB => (0x008c, "jolt.virtual.windowmaskb"),
                 VirtualWindowMaskH => WindowMaskH => (0x008d, "jolt.virtual.windowmaskh"),
+                // 0x008e-0x0090 are reserved by the narrow-store slice.
+                VirtualAlignAddr => AlignAddr => (0x0091, "jolt.virtual.alignaddr"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

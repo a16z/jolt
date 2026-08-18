@@ -354,6 +354,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstruction::Pext(_) => LookupTables::Pext(Default::default()),
             JoltInstruction::WindowMaskB(_) => LookupTables::WindowMaskB(Default::default()),
             JoltInstruction::WindowMaskH(_) => LookupTables::WindowMaskH(Default::default()),
+            JoltInstruction::AlignAddr(_) => LookupTables::AlignAddr(Default::default()),
             #[cfg(feature = "field-inline")]
             JoltInstruction::FieldAdd(_)
             | JoltInstruction::FieldSub(_)
@@ -505,7 +506,8 @@ define_rv64imac_trait_impls! {
         VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
         VirtualWindowMaskW, VirtualPextSigned,
-        VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH
+        VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
+        VirtualAlignAddr
     ]
 }
 
@@ -541,6 +543,7 @@ pub mod sub;
 pub mod virtual_advice;
 pub mod virtual_advice_len;
 pub mod virtual_advice_load;
+pub mod virtual_align_addr;
 pub mod virtual_assert_eq;
 pub mod virtual_assert_halfword_alignment;
 pub mod virtual_assert_lte;

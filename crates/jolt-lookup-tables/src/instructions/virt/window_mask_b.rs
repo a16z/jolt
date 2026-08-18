@@ -8,12 +8,18 @@ impl_lookup_table!(WindowMaskB, Some(WindowMaskB));
 impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for WindowMaskB<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        (self.0.rs1_val().unwrap_or(0) & mask, 0)
+        (
+            self.0.rs1_val().unwrap_or(0) & mask,
+            Into::<jolt_riscv::JoltInstructionRow>::into(self.0.instruction())
+                .operands
+                .imm
+                & mask as i128,
+        )
     }
 
     fn to_lookup_operands(&self) -> (u64, u128) {
         let (x, y) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        (0, x as u128 + y as u64 as u128)
+        (0, (x as i128 + y) as u128)
     }
 
     fn to_lookup_index(&self) -> u128 {

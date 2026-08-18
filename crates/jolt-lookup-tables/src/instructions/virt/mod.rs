@@ -3,6 +3,7 @@
 pub mod advice;
 pub mod advice_len;
 pub mod advice_load;
+pub mod align_addr;
 pub mod assert_eq;
 pub mod assert_halfword_alignment;
 pub mod assert_lte;
