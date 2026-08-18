@@ -15,20 +15,20 @@ pub(in crate::expand) fn expand_divw(
     let remainder = asm.allocate()?;
 
     jolt_asm!(asm, {
-        sextw dividend.operand(), reg(rs1(instruction)?);
-        sextw divisor.operand(), reg(rs2(instruction)?);
-        advice quotient.operand();
-        assert_valid_div0 divisor.operand(), quotient.operand();
-        negate_if dividend_magnitude.operand(), dividend.operand(), dividend.operand();
-        negate_if divisor_magnitude.operand(), divisor.operand(), divisor.operand();
-        xor quotient_sign.operand(), dividend.operand(), divisor.operand();
-        negate_if quotient_magnitude.operand(), quotient_sign.operand(), quotient.operand();
-        assert_mul_u_no_overflow quotient_magnitude.operand(), divisor_magnitude.operand();
-        mul remainder.operand(), quotient_magnitude.operand(), divisor_magnitude.operand();
-        assert_lte remainder.operand(), dividend_magnitude.operand();
-        sub remainder.operand(), dividend_magnitude.operand(), remainder.operand();
-        assert_valid_unsigned_remainder remainder.operand(), divisor_magnitude.operand();
-        sextw reg(rd(instruction)?), quotient.operand();
+        sextw dividend, reg(rs1(instruction)?);
+        sextw divisor, reg(rs2(instruction)?);
+        advice quotient;
+        assert_valid_div0 divisor, quotient;
+        negate_if dividend_magnitude, dividend, dividend;
+        negate_if divisor_magnitude, divisor, divisor;
+        xor quotient_sign, dividend, divisor;
+        negate_if quotient_magnitude, quotient_sign, quotient;
+        assert_mul_u_no_overflow quotient_magnitude, divisor_magnitude;
+        mul remainder, quotient_magnitude, divisor_magnitude;
+        assert_lte remainder, dividend_magnitude;
+        sub remainder, dividend_magnitude, remainder;
+        assert_valid_unsigned_remainder remainder, divisor_magnitude;
+        sextw reg(rd(instruction)?), quotient;
     });
 
     asm.release_many([

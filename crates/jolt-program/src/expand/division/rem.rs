@@ -13,15 +13,15 @@ pub(in crate::expand) fn expand_rem(
     let remainder_magnitude = asm.allocate()?;
 
     jolt_asm!(asm, {
-        advice quotient_magnitude.operand();
-        negate_if dividend_magnitude.operand(), dividend, dividend;
-        negate_if divisor_magnitude.operand(), divisor, divisor;
-        assert_mul_u_no_overflow quotient_magnitude.operand(), divisor_magnitude.operand();
-        mul remainder_magnitude.operand(), quotient_magnitude.operand(), divisor_magnitude.operand();
-        assert_lte remainder_magnitude.operand(), dividend_magnitude.operand();
-        sub remainder_magnitude.operand(), dividend_magnitude.operand(), remainder_magnitude.operand();
-        assert_valid_unsigned_remainder remainder_magnitude.operand(), divisor_magnitude.operand();
-        negate_if reg(rd(instruction)?), dividend, remainder_magnitude.operand();
+        advice quotient_magnitude;
+        negate_if dividend_magnitude, dividend, dividend;
+        negate_if divisor_magnitude, divisor, divisor;
+        assert_mul_u_no_overflow quotient_magnitude, divisor_magnitude;
+        mul remainder_magnitude, quotient_magnitude, divisor_magnitude;
+        assert_lte remainder_magnitude, dividend_magnitude;
+        sub remainder_magnitude, dividend_magnitude, remainder_magnitude;
+        assert_valid_unsigned_remainder remainder_magnitude, divisor_magnitude;
+        negate_if reg(rd(instruction)?), dividend, remainder_magnitude;
     });
 
     asm.release_many([

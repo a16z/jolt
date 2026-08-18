@@ -18,6 +18,12 @@ impl TempId {
     }
 }
 
+impl From<TempId> for RegisterOperand {
+    fn from(temp: TempId) -> Self {
+        Self::Temp(temp)
+    }
+}
+
 /// Symbolic inline-register placeholder, resolved to the inline virtual
 /// register pool during materialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,29 +226,29 @@ impl ExpansionBuilder {
     pub(super) fn emit_r(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rd: RegisterOperand,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
     ) {
         self.instruction(SourceInstructionRowTemplate::r(
             instruction_kind.into(),
-            rd,
-            rs1,
-            rs2,
+            rd.into(),
+            rs1.into(),
+            rs2.into(),
         ));
     }
 
     pub(super) fn emit_i(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rd: RegisterOperand,
-        rs1: RegisterOperand,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) {
         self.instruction(SourceInstructionRowTemplate::i(
             instruction_kind.into(),
-            rd,
-            rs1,
+            rd.into(),
+            rs1.into(),
             imm,
         ));
     }
@@ -250,12 +256,12 @@ impl ExpansionBuilder {
     pub(super) fn emit_j(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rd: RegisterOperand,
+        rd: impl Into<RegisterOperand>,
         imm: i128,
     ) {
         self.instruction(SourceInstructionRowTemplate::j(
             instruction_kind.into(),
-            rd,
+            rd.into(),
             imm,
         ));
     }
@@ -263,12 +269,12 @@ impl ExpansionBuilder {
     pub(super) fn emit_u(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rd: RegisterOperand,
+        rd: impl Into<RegisterOperand>,
         imm: i128,
     ) {
         self.instruction(SourceInstructionRowTemplate::u(
             instruction_kind.into(),
-            rd,
+            rd.into(),
             imm,
         ));
     }
@@ -276,14 +282,14 @@ impl ExpansionBuilder {
     pub(super) fn emit_b(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
         imm: i128,
     ) {
         self.instruction(SourceInstructionRowTemplate::b(
             instruction_kind.into(),
-            rs1,
-            rs2,
+            rs1.into(),
+            rs2.into(),
             imm,
         ));
     }
@@ -291,14 +297,14 @@ impl ExpansionBuilder {
     pub(super) fn emit_s(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
         imm: i128,
     ) {
         self.instruction(SourceInstructionRowTemplate::s(
             instruction_kind.into(),
-            rs1,
-            rs2,
+            rs1.into(),
+            rs2.into(),
             imm,
         ));
     }
@@ -306,8 +312,8 @@ impl ExpansionBuilder {
     pub(super) fn emit_ld(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rd: RegisterOperand,
-        rs1: RegisterOperand,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) {
         self.emit_i(instruction_kind, rd, rs1, imm);
@@ -324,12 +330,12 @@ impl ExpansionBuilder {
     pub(super) fn emit_address(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rs1: RegisterOperand,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) {
         self.instruction(SourceInstructionRowTemplate::address(
             instruction_kind.into(),
-            rs1,
+            rs1.into(),
             format_i_imm(imm),
         ));
     }

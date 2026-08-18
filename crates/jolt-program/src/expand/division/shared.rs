@@ -16,25 +16,25 @@ pub(in crate::expand) fn expand_unsigned_word_div_rem(
     };
 
     jolt_asm!(asm, {
-        zextw dividend.operand(), reg(rs1(instruction)?);
-        zextw divisor.operand(), reg(rs2(instruction)?);
-        advice quotient.operand();
-        assert_mul_u_no_overflow quotient.operand(), divisor.operand();
-        mul remainder.operand(), quotient.operand(), divisor.operand();
-        assert_lte remainder.operand(), dividend.operand();
-        sub remainder.operand(), dividend.operand(), remainder.operand();
-        assert_valid_unsigned_remainder remainder.operand(), divisor.operand();
+        zextw dividend, reg(rs1(instruction)?);
+        zextw divisor, reg(rs2(instruction)?);
+        advice quotient;
+        assert_mul_u_no_overflow quotient, divisor;
+        mul remainder, quotient, divisor;
+        assert_lte remainder, dividend;
+        sub remainder, dividend, remainder;
+        assert_valid_unsigned_remainder remainder, divisor;
     });
 
     if remainder_output {
         jolt_asm!(asm, {
-            sextw reg(rd(instruction)?), remainder.operand();
+            sextw reg(rd(instruction)?), remainder;
         });
     } else {
         jolt_asm!(asm, {
-            sextw remainder.operand(), quotient.operand();
-            assert_valid_div0 divisor.operand(), remainder.operand();
-            addi reg(rd(instruction)?), remainder.operand(), 0;
+            sextw remainder, quotient;
+            assert_valid_div0 divisor, remainder;
+            addi reg(rd(instruction)?), remainder, 0;
         });
     }
 
