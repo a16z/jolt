@@ -30,9 +30,7 @@ mod tests;
 pub use allocator::ExpansionAllocator;
 pub use error::ExpansionError;
 pub use grammar::{is_source_only, ExpandedInstructionSequence};
-pub use inline::{
-    InlineExpansionBuilder, InlineInstruction, InlineOperands, InlineRegister, Value,
-};
+pub use inline::{InlineExpansionBuilder, InlineOperands, InlineRegister, Value};
 
 use allocator::{
     mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,

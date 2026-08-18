@@ -11,13 +11,13 @@ pub(in crate::expand) fn expand_sllw(
     let v_pow2 = asm.allocate()?;
 
     asm.emit_i(
-        JoltInstructionKind::VirtualPow2W,
+        Kind::VirtualPow2W,
         v_pow2.operand(),
         reg(rs2(instruction)?),
         0,
     );
     asm.emit_r(
-        JoltInstructionKind::MULW,
+        Kind::MULW,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         v_pow2.operand(),
