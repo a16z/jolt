@@ -9,9 +9,6 @@
 //! slots.
 
 use common::jolt_device::JoltDevice;
-use jolt_claims::protocols::jolt::geometry::dimensions::{
-    PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-};
 use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
@@ -21,6 +18,9 @@ use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
+use jolt_r1cs::constraints::jolt::{
+    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+};
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
@@ -113,11 +113,14 @@ where
                 .spartan_product_uniskip
                 .first_round_poly(session, &[tau_high])
         })?;
+    // The COMPOSED jolt-r1cs uni-skip shape (feature-aware): identical to the
+    // jolt-claims RV64-only constants FR-off, the FR-extended lane domain
+    // under `field-inline` — the shape the verifier's stage-2 uni-skip checks.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         uniskip_input_claim,
-        PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-        PRODUCT_UNISKIP_DOMAIN_SIZE,
+        SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+        SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
         transcript,
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
@@ -197,4 +200,38 @@ where
         #[cfg(feature = "zk")]
         committed_witness,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FR-off, the composed jolt-r1cs product uni-skip constants equal the
+    /// jolt-claims RV64-only constants this recipe previously passed — the
+    /// swap is byte-neutral.
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn product_uniskip_constants_match_the_rv64_only_values() {
+        use jolt_claims::protocols::jolt::geometry::dimensions::{
+            PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+        };
+
+        assert_eq!(
+            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+            PRODUCT_UNISKIP_DOMAIN_SIZE
+        );
+        assert_eq!(
+            SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+            PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
+        );
+    }
+
+    /// FR-on, the composed product domain carries the two FR lanes — the
+    /// spec's 5-point domain and its degree-12 first round.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn product_uniskip_constants_are_the_composed_fr_domains() {
+        assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);
+        assert_eq!(SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE, 12);
+    }
 }

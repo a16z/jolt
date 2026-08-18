@@ -7,14 +7,14 @@
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
 //! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
-use jolt_claims::protocols::jolt::geometry::dimensions::{
-    OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-};
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
+use jolt_r1cs::constraints::jolt::{
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+};
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
@@ -72,11 +72,14 @@ where
 
     let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
         .in_scope(|| backend.spartan_outer_uniskip.first_round_poly(session, &[]))?;
+    // The COMPOSED jolt-r1cs uni-skip shape (feature-aware): identical to the
+    // jolt-claims RV64-only constants FR-off, the FR-extended row domain under
+    // `field-inline` — the shape the verifier's stage-1 uni-skip checks.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
-        OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-        OUTER_UNISKIP_DOMAIN_SIZE,
+        SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+        SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
         transcript,
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
@@ -124,4 +127,35 @@ where
         #[cfg(feature = "zk")]
         committed_witness,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FR-off, the composed jolt-r1cs outer uni-skip constants equal the
+    /// jolt-claims RV64-only constants this recipe previously passed — the
+    /// swap is byte-neutral.
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn outer_uniskip_constants_match_the_rv64_only_values() {
+        use jolt_claims::protocols::jolt::geometry::dimensions::{
+            OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+        };
+
+        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_DOMAIN_SIZE);
+        assert_eq!(
+            SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+            OUTER_UNISKIP_FIRST_ROUND_DEGREE
+        );
+    }
+
+    /// FR-on, the composed outer domain carries the appended FR rows — the
+    /// spec's 14-point domain and its degree-39 first round.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn outer_uniskip_constants_are_the_composed_fr_domains() {
+        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 14);
+        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 39);
+    }
 }
