@@ -61,7 +61,7 @@ pub fn claim_reduction_inputs<F: Field>(
 /// Spartan-outer segment) to the composed product uni-skip. They enter the
 /// composed input exactly as the ordinary lanes do — Lagrange-weighted at the
 /// lane indices following them. Fail-closed on a missing stage-1 FR carrier.
-pub(super) fn attach_uniskip_inputs<F: Field>(
+pub fn attach_uniskip_inputs<F: Field>(
     uniskip: &ProductUniskip<F>,
     stage1: &Stage1ClearOutput<F>,
 ) -> Result<(), VerifierError> {
@@ -89,7 +89,7 @@ pub(super) fn attach_uniskip_inputs<F: Field>(
 /// relations bind the same batch-point suffix and derive the same reversed
 /// opening point (pinned by
 /// `field_registers_claim_reduction_shares_the_product_remainder_point`).
-pub(super) fn attach_product_outputs<F: Field>(
+pub fn attach_product_outputs<F: Field>(
     sumchecks: &Stage2BatchSumchecks<F>,
     claims: &Stage2OutputClaims<F>,
 ) -> Result<FieldRegistersProductOutputClaims<F>, VerifierError> {
@@ -163,7 +163,7 @@ fn validate_product_aliases<F: Field>(
 /// The composed stage-2 committed row count: the member openings plus the
 /// three FR product-appendage rows spliced after the product-remainder outputs
 /// — the clear absorb order exactly.
-pub(super) fn composed_output_claim_count(base: usize) -> Result<usize, VerifierError> {
+pub fn composed_output_claim_count(base: usize) -> Result<usize, VerifierError> {
     base.checked_add(
         jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings()
             .len(),

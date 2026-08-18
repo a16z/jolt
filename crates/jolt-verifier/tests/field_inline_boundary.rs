@@ -101,8 +101,8 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ),
     (
         "stages/stage2/product_remainder.rs",
-        5,
-        "FR appendage carrier + override",
+        6,
+        "FR appendage carrier + accessor + override",
     ),
     (
         "stages/stage6a/bytecode_read_raf.rs",

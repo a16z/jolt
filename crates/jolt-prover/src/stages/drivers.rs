@@ -62,21 +62,23 @@ mod stage2 {
     jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover);
 
     // The field-inline batch suppresses the generated absorb (the verifier's
-    // committed row order splices the FR product appendage mid-batch), so the
-    // driver needs a curation override — which no backend can honestly
-    // satisfy until the FR product wiring lands (the next commit). Fail
-    // closed here; the recipe's composed uni-skip input claim already
-    // rejects earlier (the FR lane inputs are never attached).
+    // committed row order splices the FR product appendage after the
+    // product-remainder outputs), so the driver curates through the
+    // verifier's own composed `opening_values`, feeding it the appendage the
+    // composed remainder kernel published on the (Arc-shared) relation. Fail
+    // closed when a backend served no appendage.
     #[cfg(feature = "field-inline")]
     jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover
-        curate = |_batch, _claims, _points| {
-            Err(jolt_verifier::VerifierError::StageClaimSumcheckFailed {
-                stage: "Stage2Batch".to_string(),
-                reason: "field-inline proving pending the FR product wiring: the curated \
-                         stage-2 absorb needs the FR product appendage"
-                    .to_string(),
-            }
-            .into())
+        curate = |batch, claims, points| {
+            let appendage = batch.product_remainder.field_inline_outputs().ok_or_else(|| {
+                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                    stage: "Stage2Batch".to_string(),
+                    reason: "the curated stage-2 absorb needs the FR product appendage, \
+                             but the remainder kernel published none"
+                        .to_string(),
+                }
+            })?;
+            Ok(batch.opening_values(claims, appendage))
         },
     );
 }

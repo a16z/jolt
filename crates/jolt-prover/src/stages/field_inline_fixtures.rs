@@ -231,6 +231,29 @@ pub(crate) fn fr_arithmetic_backend() -> TraceBackend<OwnedTrace> {
     fr_backend(vec![load_a, load_b, mul, jal.instruction], rows)
 }
 
+/// The stage recipes' derived-config shape for the fixture traces: the same
+/// derivation `ProverConfig::derive` performs, at the fixture's scale (no
+/// RAM traffic, so `ram_K` stays at a small power of two).
+pub(crate) fn test_prover_config() -> crate::ProverConfig {
+    // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
+    const RAM_LOG_K: usize = 6;
+    crate::ProverConfig {
+        trace_length: 1 << LOG_T,
+        ram_K: 1 << RAM_LOG_K,
+        rw_config: jolt_claims::protocols::jolt::JoltReadWriteConfig {
+            ram_rw_phase1_num_rounds: LOG_T as u8,
+            ram_rw_phase2_num_rounds: RAM_LOG_K as u8,
+            registers_rw_phase1_num_rounds: LOG_T as u8,
+            registers_rw_phase2_num_rounds: common::constants::REGISTER_COUNT.ilog2() as u8,
+        },
+        one_hot_config: JoltOneHotConfig {
+            log_k_chunk: 4,
+            lookups_ra_virtual_log_k_chunk: 16,
+        },
+        trace_polynomial_order: Default::default(),
+    }
+}
+
 /// A well-formed memory layout for the fixture traces (the default layout is
 /// degenerate: its lowest mapped address is zero, which `PublicIoMemory`
 /// rejects).

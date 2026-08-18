@@ -58,10 +58,13 @@ pub struct ProductRemainder<F: Field> {
     /// stage-2 verifier from the proof's FR product appendage before the batch
     /// check. The composed `expected_output` folds them into the two factors at
     /// the lane indices following the ordinary lanes.
+    /// Behind an `Arc` so relation clones share the cell — the prove-side
+    /// composed kernel clones the batch's relation instance and its write
+    /// must be visible to the driver's curation and expected-output fold.
     #[cfg(feature = "field-inline")]
-    field_inline_outputs: std::sync::OnceLock<
-        jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims<
-            F,
+    field_inline_outputs: std::sync::Arc<
+        std::sync::OnceLock<
+            jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims<F>,
         >,
     >,
 }
@@ -79,7 +82,7 @@ impl<F: Field> ProductRemainder<F> {
             tau_high,
             tau_low,
             #[cfg(feature = "field-inline")]
-            field_inline_outputs: std::sync::OnceLock::new(),
+            field_inline_outputs: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -99,6 +102,18 @@ impl<F: Field> ProductRemainder<F> {
             ));
         }
         Ok(())
+    }
+
+    /// The FR product-row opening values, once supplied — read by the
+    /// prove-side driver's curated absorb and the stage-2 recipe's claim
+    /// assembly.
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_outputs(
+        &self,
+    ) -> Option<
+        &jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims<F>,
+    >{
+        self.field_inline_outputs.get()
     }
 }
 
