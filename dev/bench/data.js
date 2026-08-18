@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787005286956,
+  "lastUpdate": 1787018639945,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -138982,6 +138982,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866128,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7898176b9de2e8679180ea9ff2e0f2d560e3109e",
+          "message": "feat(akita): specialize prefix-packed commitments (#1731)\n\n* feat(openings): add fixed-capacity prefix layouts\n\n* refactor(akita): port adapter to group-local points\n\n* feat(akita): prefix-pack virtualized one-hot trace\n\n* refactor(openings): specialize prefix-packed openings\n\n* feat(akita): support D128 one-hot commitments\n\n* perf(akita): catalog prefix-packed schedules\n\n* perf(akita): restore rank-aware large-trace schedules\n\n* chore(deps): remove unused packed-opening dependencies\n\n* chore(akita): align protocol stack with current planner\n\n* ci(akita): serialize prover fixture tests\n\n* chore(akita): pin rustfmt-stable schedule emitter\n\n* fix(openings): retain tracing for current instrumentation\n\n* fix(claims): expose packed outputs to heap profiler\n\n* chore(akita): track reviewed planner head\n\n* revert(akita): drop payload-slack schedule selection\n\nUpstream review (akita#344, closed) rejected baking a payload-slack\npolicy into catalog identity. Remove the preset slack overrides, pin\nakita at upstream main, and regenerate the K16/K256 catalogs under the\ndefault min-payload objective. Geometry pin tests now assert D64 rank 7\n(P=2^20) and D128 rank 4 (P=2^18, 11 GiB setup envelope).\n\n* fix(merge): adapt to main's Math move and fmt-stable catalogs\n\njolt-utils now owns the Math trait; the generated catalog headers are\nrustfmt-formatted (the emitter's fixed import list is not fmt-stable),\ngen_jolt_schedules formats its output, and the drift oracle compares\nschedule data with the import boilerplate stripped.\n\n* fix(merge): pass explicit ram hamming default in the kernels fixture\n\nThe prefix-packed statement adds a fifth constructor argument; the\nDory-shape fixture carries no packed RAM hamming weight.\n\n* test(fs): bless the inventory for the prefix-packed transcript surface\n\nThe prefix-packed layout absorbs (claim label, logical arity, slot\ncapacity, layout digest), the D128 ring-dimension binding, and the\nplural program one-hot commitments replace the retired generic packing\nabsorbs. All are the protocol changes this PR reviews.\n\n* fix(claims): pad auxiliary object capacity to the dense planner floor\n\nAkita's dense DP planner has no fold schedule below 13 variables for\nsingle-polynomial groups, so a guest needing only a couple bytes of\ntrusted/untrusted advice (an 11-variable byte-one-hot cell domain, or a\ntiny program image) failed at advice_object_setup with\nUnsupportedSchedule before anything was committed.\n\nPrefixPackedObjectPlan::new now widens slot capacity — never column\narity — until the physical polynomial reaches\nMIN_AUXILIARY_PACKED_NUM_VARS = 14 (one above the measured floor, whose\nsetup envelope is also smaller than 13's). Claim reduction is unchanged:\nthe padding rides the existing unused-slot mechanism, absorbed via the\nlayout digest and reduce_claims before the selector is sampled, and both\nprover and verifier derive plans through this one constructor. Shapes\nalready at or above 14 variables are untouched.\n\nTests pin the padded plan shapes at and below the boundary, the\nslot-zero claim embedding on a padded plan, and a full\ncommit/reduce/open/verify roundtrip of an 8-byte advice region (which\nfails with the clamp disabled). A guest-level e2e with a below-floor\nadvice region is left as a follow-up; the object-level roundtrip plus\nthe shared plan constructor cover the derivation chain.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* docs(akita): correct the increment carry column's description\n\nThe balanced-digit re-encoding turned the former MSB bit into a signed carry\nabove bit 63, valued in {-1, 0, 1} and stored as `carry.rem_euclid(K)`, so its\nhot lane is 0, 1, or K-1. Four doc comments still described it as a bit whose\n\"hot address is zero or one\".\n\nAlso record that Booleanity consumes the lane-zero-inclusive columns while the\ncommitment omits lane zero — the pairing Stage 7's reconstruction depends on.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(akita): rename the increment columns to match the balanced encoding\n\n`UnsignedIncChunk`/`UnsignedIncMsb` were kept as compatibility names when the\nfused increment moved to balanced digits, but nothing about the columns is\nunsigned and there is no MSB: they are centered radix-K digits and a signed\ncarry. Rename them, and the vocabulary around them, to say so:\n\n  UnsignedIncChunk    -> BalancedIncDigit\n  UnsignedIncMsb      -> BalancedIncCarry\n  UnsignedIncChunking -> BalancedIncChunking\n  UNSIGNED_INC_BITS   -> FUSED_INC_BITS\n\nMechanical: variant declaration order is unchanged (so `Ord` and the appended-\nfor-codec-stability positions are untouched), and the OneHotTrace layout digest\nhashes explicit per-variant tags rather than names, so this is not a protocol\nchange. Also refresh the prose that still described the shifted `delta + 2^64`\nencoding, including the spec's decode identity and padding invariant, and point\nthe synthetic booleanity fixture at the balanced encoder.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): stop asserting the carry's {-1,0,+1} range as enforced\n\nThe carry column is an ordinary full-K one-hot column: booleanity plus the\ndefinitional column sum pin it to the same [-K/2, K/2) alphabet as the digits,\nand nothing restricts its hot lane to {0, 1, K-1}. That set is a property of\nthe honest encoder, and the release build's only guard is a debug_assert. The\ncomments added a commit ago said otherwise, repeating the mistake they replaced.\n\nRecord the argument that makes the slack safe, since nothing tests it: the\nbalanced numeral is injective onto a contiguous K*2^64 window, fp128 leaves 56\nbits over 2^71, and base mode commits Inc with no range relation at all, so\nthis decomposition is strictly stronger than the non-akita baseline. Note too\nthat pinning the carry would still not yield a 64-bit range check -- the digit\ncolumns alone already span 2^64 consecutive integers.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): record where the RAM activation is pinned\n\nRamRa is the one OneHotTrace family whose activation is a prover-supplied claim\nrather than the constant 1, so its hamming leg is deliberately vacuous and base\nmode's direct tie (sum_k ra(k, r_cycle) = A against committed data) has no\nanalogue on this path. A is instead pinned by a five-hop chain ending at rv64\nrows 0/1, and that chain works only because unmap(0) = lowest_address is\nnonzero -- an invariant currently asserted prover-side only. None of this was\nwritten down, and two reviewers independently read the vacuous leg as a\nsoundness hole before reconstructing the chain.\n\nAlso refresh the stale HammingWeightClaimReductionPublic listing, which still\nnamed the removed IdentityAtAddress.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(akita): fold the lane-zero baselines into the hamming reduction's input claim\n\nThe lattice hamming reduction consumed the RAM activation through a\n`RamHammingWeight` derived in its output expression -- a prover-originated\nclaim riding the channel reserved for verifier-computed publics, because the\nexpression language has no source kind for a consumed opening on the output\nside. Restate each leg's identity with the baseline on the input side instead:\n\n  before: input gamma^e * c;             output (w(rho) - w(0))*V + eq(rho,0)*w(0)*A\n  after:  input gamma^e * (c - w(0)*A);  output (w(rho) - w(0))*V\n\nThe enforced equations are unchanged (c = Q~(w) + w(0)*(A - S), per gamma\npower). Consequences:\n\n- `A` is now consumed as an ordinary input opening\n  (`opening(ram_hamming_weight())`, provenance `from = RamHammingBooleanity`),\n  exactly as in base mode; the `RamHammingWeight` and `EqDefault` publics are\n  deleted, so every remaining `HammingWeightClaimReductionPublic` is a pure\n  function of transcript-fixed points.\n- The hamming legs vanish uniformly (w == 1 makes c - w(0)*A identically\n  zero): `Sum_k L(k,t) = A(t)` holds by construction once lane zero is defined\n  as `A - Sum Q`. Their gamma powers are left unused rather than renumbered so\n  the layout and the shared prover's `gamma_powers` indexing stay aligned with\n  base mode, where the hamming leg is a real anchor.\n- The output expression is purely sparse, so the prover drops the eq_zero\n  polynomial and the baseline_scale term from the summand and per-round binds.\n- The stage-7 verifier loses the stashed `ram_hamming_weight: Option<F>` and\n  gains a `derive_input_term` for the `*AtDefault` weights (the `RamValCheck`\n  input-public pattern).\n\nBase (non-akita) mode is untouched: `implicit_zero` is set only by\n`new_lattice`, and the base symbolic relation keeps its hamming leg.\n\nAkita proof bytes change (input claim and round polynomials); prover,\nverifier, and fixtures move together, as this PR already requires.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* fix(verifier): reject zero-based RAM remaps fail-closed\n\nThe stage-2 RAF-evaluation unmap is `8k + lowest_address`, and the lattice\nlane-zero reconstruction relies on `unmap(0) = lowest_address != 0` to\ndistinguish \"no RAM access\" from an access at remapped word zero -- the one\nresidual freedom booleanity and the activation claim leave open. That\nprecondition was asserted prover-side only (`UnmapRamAddressPolynomial::new`);\na verifier handed a zero-based memory layout would have accepted proofs the\nRAF identity can no longer discriminate.\n\nEnforce it in `validate_inputs` / `validate_inputs_from_parts`, mirroring the\nprover's `start_address > 8` bound, and pin it with a regression test.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): specify digit-zero virtualization with the flag-derived RAM activation\n\n* feat(akita): derive the RAM activation from the load/store flags\n\nDigit-zero virtualization per specs/digit-zero-virtualization.md: the\nstage-7 slot becomes LatticeDigitZeroClaimReduction (two gamma powers per\nRA family, one per increment column, then the decode power; the reserved\nhamming powers are gone), and the RAM activation M_RAM = Load + Store is\nsupplied by a new stage-6b RamActivationBooleanity member that binds the\nflag columns and proves the activation sum Boolean, replacing the\nprover-supplied RamHammingWeight claim, its A^2 = A sumcheck, and the\nfive-hop pinning argument on this path. The check is deliberately a\nsingle booleanity on the sum: the columns are virtual, so a gamma-batch\nof per-flag legs would admit non-Boolean solutions chosen after the\ndraws.\n\nBase mode is untouched semantically; its proof bytes re-encode because\nthe appended SumcheckId codec tag shifts the derived OpeningId tag bases\n(values and transcript unchanged). Layout digest bumped to\ndigit-zero-balanced-inc/v6; the implicit-zero/lane vocabulary is renamed\nto the digit-zero notation throughout the lattice path; tamper manifests\ncover the two new flag wires.\n\n* docs(akita): pin down why the activation zero-check binds over virtual columns\n\nA zero-check at a pre-known reference point over never-committed columns is\nnot pointwise-binding in isolation (true of the previous A^2 = A gadget too).\nRecord the composite argument: stage-7 overdetermination pins the gadget's\noutput value to the one consistent polynomial; the recentering identities\nconfine that polynomial's per-cycle values to commitment-determined finite\nsets whose quadratic misses zero exactly on weight >= 2 cycles; and the\nstage-1 reference point postdates the stage-0 commitment, so Schwartz-Zippel\nover those sets kills every such cycle. Also correct step 2: the\nempty-committed-row bit persists to that point in the argument, same as the\nprevious construction, and is closed by the RAF pincer in step 3.\n\n* docs(akita): FLAG open soundness gap in the RAM activation booleanity\n\nAdversarial review: the RamActivationBooleanity check proves\n(B^2-B)~(r1)=0 with B=Load+Store a virtual column materialized at stage 6b\nand r1 the stage-1 reference point drawn five stages earlier, and the two\nflag openings are tied to nothing else (verified: no link to the\nbytecode-bound Spartan flags or committed data). A booleanity zero-check\nbinds only when its point postdates the polynomial, so this does NOT force\nB Boolean. Base mode was sound because its hamming leg pinned H=sum ra to\nstage-0 committed rows before r1; digit-zero deleted that leg. The prior\nthree-move Schwartz-Zippel argument assumed r1 postdates the free\ndigit-zero/flag choices and is invalid.\n\nRAM per-cycle one-hotness therefore has no valid proof on this branch;\ninstruction/bytecode/increment families (activation = 1, Theorem 1) are\nunaffected. Records candidate hardenings for the human soundness review.\nDo not ship the RAM activation on the current argument.\n\n* docs(akita): don't virtualize RAM — full-commit + base hamming is the sound fix\n\nAdversarial review confirmed a real (not conjectural) break: the Twist\nread/write + val-check + output-check chain is linear in ra with no\nmultiset/one-hot check, so a weight-2 RAM tensor on an access cycle is\naccepted end to end — a malicious committed program forges M_RAM=2 and\nmakes a load return an attacker value, with booleanity/RAF/Spartan/\nread-write/val-check/output-check all satisfied. Latent in every\nvirtualized-RAM form (RamHammingWeight five-hop or Load+Store), because\nM_RAM's booleanity is checked at a reference point that predates the\nvirtual column, and RAF/Spartan constrain only the address sum not the\nweight.\n\nFix: don't virtualize RAM. Full-commit makes Sigma_k ra = H a real\nstage-0 tie, so RamHammingBooleanity's H^2=H at the stage-1 point is\nsound. Digit-zero stays for instruction/bytecode/increment (activation=1,\nTheorem 1, unconditionally sound). Spec rewritten to this design.\n\n* fix(akita): limit digit-zero virtualization to unit activation\n\n* test(akita): check packed fixture coverage\n\n* chore(akita): update adaptive schedule API\n\n* chore(fs): refresh Akita transcript inventory\n\n* fix(verifier): validate runtime bytecode aliases\n\n* refactor(akita): call one-hot values rows\n\n* refactor(verifier): collapse the stage-7 base/lattice name seam into one place\n\nStage 7 fills one protocol slot (`JoltRelationId::HammingWeightClaimReduction`)\nwith two symbolic relations: the base `ClaimReduction`, or under `akita` the\n`LatticeDigitZeroClaimReduction`. The choice was spelled out in four places and\nthree idioms — a `pub use ... as ...` alias pair in the relation module, private\n`HammingDimensions`/`HammingSymbolic` aliases 280 lines below it, a second copy\nof the alias pair in `outputs.rs`'s test module, and an inline fully-qualified\nlattice path plus a hand-rolled error map in `verify.rs` — so reading any one\nsite did not tell you which algebra was live.\n\nCollapse all of it into a single private `mode` module that both arms populate\nwith the same four alias names, re-exported under the slot's\n`HammingWeightClaimReduction*` vocabulary. Consumers now import those names and\ncarry no `cfg` of their own. The abbreviated `HammingDimensions`/`HammingSymbolic`\noutliers become `HammingWeightClaimReductionDimensions`/`...Symbolic` so stage 7\nspeaks one family of names; the differing fallibility of the two `Dimensions::new`\nconstructors moves behind `hamming_weight_claim_reduction_dimensions`, which is\nwhat removes the last `cfg` from `verify.rs` and from the `outputs.rs` test.\n\nNames are unchanged on both sides of the seam, per review: the relation id is\nprotocol data (opening ids, transcript labels, tamper-manifest paths, layout\ndigest) and `LatticeDigitZeroClaimReduction` is the honest name at its definition\nsite. Only the translation between them is consolidated. The module docs at both\nends now state the one-slot/two-relations design explicitly.\n\nNo algebra, wire format, or Fiat-Shamir change.\n\nGates: six clippy lanes (`--all --features host`, `host,zk`, `-p jolt-verifier`\nbase / `akita` / `akita,prover-fixtures`, `-p jolt-prover-legacy --features\nakita`), all `-D warnings`; `cargo fmt`; jolt-verifier 79/79 base and 82/82\nakita; akita fixtures + tamper sweep 89/89 (three completeness fixtures, clear-claim\nand commitment-wire tamper sweeps).\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mzhu@a16z.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2026-08-17T17:56:13-07:00",
+          "tree_id": "3cf7566eede422090a74da55740338f86a60bc1d",
+          "url": "https://github.com/a16z/jolt/commit/7898176b9de2e8679180ea9ff2e0f2d560e3109e"
+        },
+        "date": 1787018633721,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.4518,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 873204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3225,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 506792,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 506984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 497476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.716,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5873,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 502224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0726,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 506540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.4341,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 201156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4269,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 865776,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5585,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500164,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4617,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 504656,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.1726,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8204,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.315,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1101560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.3811,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 648484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 90.7849,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2126276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.3996,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 499276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5297,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 506984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.6796,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 867556,
             "unit": "KB",
             "extra": ""
           }
