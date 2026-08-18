@@ -18,22 +18,27 @@ mod stage1 {
     #[cfg(not(feature = "field-inline"))]
     jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover);
 
-    // The composed stage-1 committed/absorb order appends the 13 FR-local
-    // Spartan-outer openings after the 35 member openings (the verifier's
-    // composed row order), which the generated member absorb cannot express —
-    // and no backend can supply the FR values until the FR witness wiring
-    // lands (milestone 11). Fail closed here so an FR-on prover cannot emit a
-    // 35-row shell the FR-on verifier would reject at the committed count.
+    // The composed stage-1 committed/absorb order: the 35 member openings,
+    // then the 13 FR-local Spartan-outer appendage values the composed
+    // remainder kernel published on the (Arc-shared) relation — the
+    // verifier's composed row order, which the generated member absorb
+    // cannot express. Fail closed when a backend served no appendage, so an
+    // FR-on prover cannot emit a 35-row shell the FR-on verifier would
+    // reject at the committed count.
     #[cfg(feature = "field-inline")]
     jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover
-        curate = |_batch, _claims, _points| {
-            Err(jolt_verifier::VerifierError::StageClaimSumcheckFailed {
-                stage: "Stage1Batch".to_string(),
-                reason: "field-inline proving pending witness wiring (milestone 11): the \
-                         composed stage-1 absorb needs the FR Spartan-outer appendage"
-                    .to_string(),
-            }
-            .into())
+        curate = |batch, claims, points| {
+            let mut values = batch.opening_values(claims);
+            let field_inline = batch.outer_remainder.field_inline_outputs().ok_or_else(|| {
+                jolt_verifier::VerifierError::StageClaimSumcheckFailed {
+                    stage: "Stage1Batch".to_string(),
+                    reason: "the composed stage-1 absorb needs the FR Spartan-outer \
+                             appendage, but the remainder kernel published none"
+                        .to_string(),
+                }
+            })?;
+            values.extend_from_slice(field_inline);
+            Ok(values)
         },
     );
 }
@@ -59,15 +64,16 @@ mod stage2 {
     // The field-inline batch suppresses the generated absorb (the verifier's
     // committed row order splices the FR product appendage mid-batch), so the
     // driver needs a curation override — which no backend can honestly
-    // satisfy until the FR witness wiring lands (milestone 11). Fail closed
-    // here; the stage-2 recipe's input assembly already rejects earlier.
+    // satisfy until the FR product wiring lands (the next commit). Fail
+    // closed here; the recipe's composed uni-skip input claim already
+    // rejects earlier (the FR lane inputs are never attached).
     #[cfg(feature = "field-inline")]
     jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover
         curate = |_batch, _claims, _points| {
             Err(jolt_verifier::VerifierError::StageClaimSumcheckFailed {
                 stage: "Stage2Batch".to_string(),
-                reason: "field-inline proving pending witness wiring (milestone 11): the \
-                         curated stage-2 absorb needs the FR product appendage"
+                reason: "field-inline proving pending the FR product wiring: the curated \
+                         stage-2 absorb needs the FR product appendage"
                     .to_string(),
             }
             .into())

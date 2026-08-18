@@ -91,8 +91,8 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // stage's field_inline seam or jolt-claims composed-lane helpers).
     (
         "stages/stage1/outer_remainder.rs",
-        7,
-        "FR appendage carrier + override",
+        8,
+        "FR appendage carrier + accessor + override",
     ),
     (
         "stages/stage2/product_uniskip.rs",

@@ -8,6 +8,8 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use crate::ProverConfig;
 
 mod drivers;
+#[cfg(all(test, feature = "field-inline"))]
+pub(crate) mod field_inline_fixtures;
 pub mod stage0;
 pub mod stage1;
 pub mod stage2;

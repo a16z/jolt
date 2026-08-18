@@ -154,11 +154,13 @@ pub struct OuterRemainder<F: Field> {
     /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
     coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
     /// The 13 FR-local Spartan-outer opening values (appended-column order),
-    /// set by `stage1::verify` from the proof's claims before the batch check.
-    /// The composed `expected_output` consumes them alongside the 35 ordinary
-    /// openings.
+    /// set by `stage1::verify` from the proof's claims before the batch check
+    /// (prove side: by the composed remainder kernel once fully bound). Behind
+    /// an `Arc` so relation clones share the cell — the prove-side kernel
+    /// clones the batch's relation instance and its write must be visible to
+    /// the driver's curation and expected-output fold.
     #[cfg(feature = "field-inline")]
-    field_inline_outputs: std::sync::OnceLock<Vec<F>>,
+    field_inline_outputs: std::sync::Arc<std::sync::OnceLock<Vec<F>>>,
 }
 
 impl<F: Field> OuterRemainder<F> {
@@ -177,7 +179,7 @@ impl<F: Field> OuterRemainder<F> {
             bound_point: std::sync::OnceLock::new(),
             coefficients: std::sync::OnceLock::new(),
             #[cfg(feature = "field-inline")]
-            field_inline_outputs: std::sync::OnceLock::new(),
+            field_inline_outputs: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -198,6 +200,14 @@ impl<F: Field> OuterRemainder<F> {
             ));
         }
         Ok(())
+    }
+
+    /// The FR-local Spartan-outer opening values, once supplied — read by the
+    /// prove-side driver's curated absorb and the stage-1 recipe's claim
+    /// assembly.
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_outputs(&self) -> Option<&[F]> {
+        self.field_inline_outputs.get().map(Vec::as_slice)
     }
 
     /// The expanded `SpartanOuterPublic` coefficient table, built on first use from
