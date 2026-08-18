@@ -29,7 +29,7 @@ use jolt_verifier::{
         stage1::outputs::Stage1OutputClaims,
         stage6b::outputs::{
             BooleanityOutputClaims, BytecodeReadRafOutputClaims, IncClaimReductionOutputClaims,
-            Stage6bOutputClaims,
+            RamHammingBooleanityOutputClaims, Stage6bOutputClaims,
         },
         stage7::{
             advice_address_phase::{
@@ -63,9 +63,8 @@ use jolt_verifier::{
         },
         stage6b::outputs::{
             BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
-            ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
-            RamRaVirtualizationOutputClaims, TrustedAdviceCyclePhaseOutputClaims,
-            UntrustedAdviceCyclePhaseOutputClaims,
+            ProgramImageReductionCyclePhaseOutputClaims, RamRaVirtualizationOutputClaims,
+            TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
         },
         stage7::committed_reduction_address_phase::{
             BytecodeReductionAddressPhaseOutputClaims,
@@ -639,7 +638,7 @@ mod packed {
     use jolt_claims::protocols::jolt::lattice::relations::bytecode_reconstruction::{
         self, BytecodeChunkReconstructionOutputClaims,
     };
-    use jolt_claims::protocols::jolt::lattice::relations::hamming_weight as lattice_hamming;
+    use jolt_claims::protocols::jolt::lattice::relations::digit_zero as lattice_digit_zero;
     use jolt_claims::protocols::jolt::lattice::relations::program_image_reconstruction::{
         self, ProgramImageReconstructionOutputClaims,
     };
@@ -650,7 +649,9 @@ mod packed {
     use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
     use jolt_verifier::proof::ClearProofClaims;
     use jolt_verifier::stages::stage1::outputs::Stage1OutputClaims;
-    use jolt_verifier::stages::stage6b::outputs::Stage6bOutputClaims;
+    use jolt_verifier::stages::stage6b::outputs::{
+        RamHammingBooleanityOutputClaims, Stage6bOutputClaims,
+    };
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
     };
@@ -662,7 +663,7 @@ mod packed {
     /// The packed (akita) analog of the base clear-claims projection: the
     /// base stage payloads plus the reconstruction phase cells, with the
     /// lattice stage-6b/7 shapes (the read-raf carries the fused-inc opening;
-    /// booleanity carries the unsigned-inc columns; there is no stage-6b inc
+    /// booleanity carries the increment columns; there is no stage-6b inc
     /// slot).
     pub(crate) fn build_packed_clear_claims<F: Field>(
         claims: impl IntoIterator<Item = (jolt::JoltOpeningId, F)>,
@@ -745,14 +746,14 @@ mod packed {
                 JoltRelationId::Booleanity,
             )
         });
-        let unsigned_inc_chunks = indexed_family(claims, |index| {
+        let balanced_inc_digits = indexed_family(claims, |index| {
             JoltOpeningId::committed(
-                JoltCommittedPolynomial::UnsignedIncChunk(index),
+                JoltCommittedPolynomial::BalancedIncDigit(index),
                 JoltRelationId::Booleanity,
             )
         });
-        let unsigned_inc_msb = claims.require(JoltOpeningId::committed(
-            JoltCommittedPolynomial::UnsignedIncMsb,
+        let balanced_inc_carry = claims.require(JoltOpeningId::committed(
+            JoltCommittedPolynomial::BalancedIncCarry,
             JoltRelationId::Booleanity,
         ))?;
 
@@ -774,8 +775,8 @@ mod packed {
                 instruction_ra: booleanity_instruction_ra,
                 bytecode_ra: booleanity_bytecode_ra,
                 ram_ra: booleanity_ram_ra,
-                unsigned_inc_chunks,
-                unsigned_inc_msb,
+                balanced_inc_digits,
+                balanced_inc_carry,
             },
             ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: claims.require(ram::ram_hamming_weight())?,
@@ -824,10 +825,13 @@ mod packed {
             });
         }
 
-        let chunks = indexed_family(claims, lattice_hamming::reduced_unsigned_inc_chunk_opening);
+        let chunks = indexed_family(
+            claims,
+            lattice_digit_zero::reduced_balanced_inc_digit_opening,
+        );
         if chunks.is_empty() {
             return Err(VerifierError::MissingOpeningClaim {
-                id: lattice_hamming::reduced_unsigned_inc_chunk_opening(0),
+                id: lattice_digit_zero::reduced_balanced_inc_digit_opening(0),
             });
         }
 
@@ -836,9 +840,9 @@ mod packed {
                 instruction_ra,
                 bytecode_ra,
                 ram_ra,
-                unsigned_inc_chunks: chunks,
-                unsigned_inc_msb: claims
-                    .require(lattice_hamming::reduced_unsigned_inc_msb_opening())?,
+                balanced_inc_digits: chunks,
+                balanced_inc_carry: claims
+                    .require(lattice_digit_zero::reduced_balanced_inc_carry_opening())?,
             },
             trusted_advice: advice_address_phase_claim_from_openings(
                 claims,

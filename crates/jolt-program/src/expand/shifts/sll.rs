@@ -18,7 +18,7 @@ pub(in crate::expand) fn expand_sll(
         0,
     );
     asm.emit_r(
-        JoltInstructionKind::MUL,
+        Kind::MUL,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         v_pow2.operand(),

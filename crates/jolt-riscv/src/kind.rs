@@ -1706,6 +1706,27 @@ macro_rules! define_jolt_instruction_kind {
 crate::for_each_instruction_kind!(define_source_instruction_kind);
 crate::for_each_jolt_instruction_kind!(define_jolt_instruction_kind);
 
+impl SourceInstructionKind {
+    /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ADVICE: Self = SourceInstruction::VirtualAdvice(VirtualAdvice(()));
+
+    /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
+        SourceInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+}
+
+impl JoltInstructionKind {
+    /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ADVICE: Self = JoltInstruction::VirtualAdvice(VirtualAdvice(()));
+
+    /// Value form of `VirtualRev8W`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_REV8_W: Self = JoltInstruction::VirtualRev8W(VirtualRev8W(()));
+
+    /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
+        JoltInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+}
+
 #[cfg(feature = "serialization")]
 impl Serialize for SourceInstructionKind {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
