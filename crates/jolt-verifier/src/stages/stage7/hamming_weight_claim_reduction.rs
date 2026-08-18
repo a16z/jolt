@@ -341,7 +341,7 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         _challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero => {
@@ -360,7 +360,7 @@ impl<F: Field> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
             HammingWeightClaimReductionPublic::EqBooleanity
             | HammingWeightClaimReductionPublic::EqVirtualization(_)
             | HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
-                Err(VerifierError::MissingStageClaimDerived { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }
     }

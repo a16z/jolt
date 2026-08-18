@@ -545,16 +545,16 @@ fn validate_bytecode_ra_aliases<F: Field>(
 
         let polynomial = JoltCommittedPolynomial::BytecodeRa(index);
         let source_id = JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf);
-        let source_claim = claims
-            .bytecode_read_raf
-            .bytecode_ra
-            .get(index)
-            .ok_or(VerifierError::MissingOpeningClaim { id: source_id })?;
+        let source_claim = claims.bytecode_read_raf.bytecode_ra.get(index).ok_or(
+            VerifierError::MissingOpeningClaim {
+                id: source_id.into(),
+            },
+        )?;
         if booleanity_claim != source_claim {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: format!("{:?}", JoltRelationId::Booleanity),
-                left: JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity),
-                right: source_id,
+                left: JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity).into(),
+                right: source_id.into(),
             });
         }
     }
