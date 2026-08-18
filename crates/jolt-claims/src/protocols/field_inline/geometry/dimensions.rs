@@ -1,6 +1,6 @@
 use jolt_field::Field;
 
-use crate::protocols::jolt::geometry::dimensions::JoltFormulaPointError;
+use crate::formula_error::JoltFormulaPointError;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct FieldRegistersTraceDimensions {

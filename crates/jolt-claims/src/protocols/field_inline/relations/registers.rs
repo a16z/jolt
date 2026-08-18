@@ -1,6 +1,5 @@
 //! field_inline registers symbolic sumcheck relations.
 
-use jolt_field::RingCore;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::field_inline::geometry::registers::{
@@ -9,13 +8,13 @@ use crate::protocols::field_inline::geometry::registers::{
     field_rs1_ra_read_write, field_rs1_value_claim, field_rs2_ra_read_write, field_rs2_value_claim,
 };
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlineRelationId, FieldRegistersReadWriteChallenge, FieldRegistersReadWriteDimensions,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId, FieldInlineRelationId,
+    FieldRegistersReadWriteChallenge, FieldRegistersReadWriteDimensions,
     FieldRegistersReadWritePublic, FieldRegistersTraceDimensions,
     FieldRegistersValEvaluationPublic,
 };
-use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
+use crate::relation_shapes::registers as shape;
+use crate::{InputClaims, NoChallenges, OutputClaims, SumcheckChallenges};
 
 /// Produced field-register read-write openings, all sharing the single FR
 /// read-write opening point. Generic over the opening cell (`F` for the
@@ -74,55 +73,24 @@ pub struct ReadWriteChecking {
     shape: FieldRegistersReadWriteDimensions,
 }
 
-impl SymbolicSumcheck for ReadWriteChecking {
-    type RelationId = FieldInlineRelationId;
-    type OpeningId = FieldInlineOpeningId;
-    type DerivedId = FieldInlineDerivedId;
-    type ChallengeId = FieldInlineChallengeId;
-    type Shape = FieldRegistersReadWriteDimensions;
-    type Challenges<F> = FieldRegistersReadWriteChallenges<F>;
-    type Inputs<C> = FieldRegistersReadWriteInputClaims<C>;
-    type Outputs<C> = FieldRegistersReadWriteOutputClaims<C>;
-
-    fn new(shape: FieldRegistersReadWriteDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> FieldInlineRelationId {
-        FieldInlineRelationId::FieldRegistersReadWriteChecking
-    }
-
-    fn rounds(&self) -> usize {
-        self.shape.read_write_rounds()
-    }
-
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = challenge(FieldRegistersReadWriteChallenge::Gamma);
-        opening(field_rd_value_claim())
-            + gamma.clone() * opening(field_rs1_value_claim())
-            + gamma.clone().pow(2) * opening(field_rs2_value_claim())
-    }
-
-    fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = challenge(FieldRegistersReadWriteChallenge::Gamma);
-        let eq_cycle = derived(FieldRegistersReadWritePublic::EqCycle);
-        eq_cycle.clone() * opening(field_rd_wa_read_write()) * opening(field_rd_inc_read_write())
-            + eq_cycle.clone()
-                * opening(field_rd_wa_read_write())
-                * opening(field_registers_val_read_write())
-            + eq_cycle.clone()
-                * gamma.clone()
-                * opening(field_rs1_ra_read_write())
-                * opening(field_registers_val_read_write())
-            + eq_cycle
-                * gamma.pow(2)
-                * opening(field_rs2_ra_read_write())
-                * opening(field_registers_val_read_write())
-    }
+shape::instantiate_read_write_checking! {
+    relation = ReadWriteChecking,
+    id = FieldInlineRelationId::FieldRegistersReadWriteChecking,
+    ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
+    dimensions = FieldRegistersReadWriteDimensions,
+    challenges = FieldRegistersReadWriteChallenges,
+    inputs = FieldRegistersReadWriteInputClaims,
+    outputs = FieldRegistersReadWriteOutputClaims,
+    rd_value = field_rd_value_claim(),
+    rs1_value = field_rs1_value_claim(),
+    rs2_value = field_rs2_value_claim(),
+    registers_val = field_registers_val_read_write(),
+    rs1_ra = field_rs1_ra_read_write(),
+    rs2_ra = field_rs2_ra_read_write(),
+    rd_wa = field_rd_wa_read_write(),
+    rd_inc = field_rd_inc_read_write(),
+    gamma = FieldRegistersReadWriteChallenge::Gamma,
+    eq_cycle = FieldRegistersReadWritePublic::EqCycle,
 }
 
 /// Produced field-register val-evaluation openings. Field declaration order is
@@ -159,46 +127,24 @@ pub struct ValEvaluation {
     shape: FieldRegistersTraceDimensions,
 }
 
-impl SymbolicSumcheck for ValEvaluation {
-    type RelationId = FieldInlineRelationId;
-    type OpeningId = FieldInlineOpeningId;
-    type DerivedId = FieldInlineDerivedId;
-    type ChallengeId = FieldInlineChallengeId;
-    type Shape = FieldRegistersTraceDimensions;
-    type Challenges<F> = crate::NoChallenges<F>;
-    type Inputs<C> = FieldRegistersValEvaluationInputClaims<C>;
-    type Outputs<C> = FieldRegistersValEvaluationOutputClaims<C>;
-
-    fn new(shape: FieldRegistersTraceDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> FieldInlineRelationId {
-        FieldInlineRelationId::FieldRegistersValEvaluation
-    }
-
-    fn rounds(&self) -> usize {
-        self.shape.log_t()
-    }
-
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        opening(field_registers_val_read_write())
-    }
-
-    fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        derived(FieldRegistersValEvaluationPublic::LtCycle)
-            * opening(field_rd_inc_val_evaluation())
-            * opening(field_rd_wa_val_evaluation())
-    }
+shape::instantiate_val_evaluation! {
+    relation = ValEvaluation,
+    id = FieldInlineRelationId::FieldRegistersValEvaluation,
+    ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
+    dimensions = FieldRegistersTraceDimensions,
+    challenges = NoChallenges,
+    inputs = FieldRegistersValEvaluationInputClaims,
+    outputs = FieldRegistersValEvaluationOutputClaims,
+    registers_val = field_registers_val_read_write(),
+    rd_inc = field_rd_inc_val_evaluation(),
+    rd_wa = field_rd_wa_val_evaluation(),
+    lt_cycle = FieldRegistersValEvaluationPublic::LtCycle,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SymbolicSumcheck;
 
     use crate::protocols::field_inline::geometry::registers::{
         read_write_checking_input_openings, read_write_checking_output_openings,

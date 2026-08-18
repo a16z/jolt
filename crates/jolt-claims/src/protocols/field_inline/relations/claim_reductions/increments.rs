@@ -1,20 +1,17 @@
 //! field_inline rd-inc claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
-
 use crate::protocols::field_inline::geometry::claim_reductions::increments::{
     field_rd_inc_read_write, field_rd_inc_reduced, field_rd_inc_val_evaluation,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlineRelationId, FieldRegistersIncClaimReductionChallenge,
-    FieldRegistersIncClaimReductionPublic, FieldRegistersTraceDimensions,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId, FieldInlineRelationId,
+    FieldRegistersIncClaimReductionChallenge, FieldRegistersIncClaimReductionPublic,
+    FieldRegistersTraceDimensions,
 };
-use crate::{
-    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
-};
+use crate::relation_shapes::claim_reductions as shape;
+use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// The single reduced `FieldRdInc` opening handed to the final opening planner.
 /// Mirrors `geometry::claim_reductions::increments::claim_reduction_output_openings()`.
@@ -60,50 +57,29 @@ pub struct ClaimReduction {
     shape: FieldRegistersTraceDimensions,
 }
 
-impl SymbolicSumcheck for ClaimReduction {
-    type RelationId = FieldInlineRelationId;
-    type OpeningId = FieldInlineOpeningId;
-    type DerivedId = FieldInlineDerivedId;
-    type ChallengeId = FieldInlineChallengeId;
-    type Shape = FieldRegistersTraceDimensions;
-    type Challenges<F> = FieldRegistersIncClaimReductionChallenges<F>;
-    type Inputs<C> = FieldRegistersIncClaimReductionInputClaims<C>;
-    type Outputs<C> = FieldRegistersIncClaimReductionOutputClaims<C>;
-
-    fn new(shape: FieldRegistersTraceDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> FieldInlineRelationId {
-        FieldInlineRelationId::FieldRegistersIncClaimReduction
-    }
-
-    fn rounds(&self) -> usize {
-        self.shape.log_t()
-    }
-
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
-
-        opening(field_rd_inc_read_write()) + gamma * opening(field_rd_inc_val_evaluation())
-    }
-
-    fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
-
-        let output_coeff = derived(FieldRegistersIncClaimReductionPublic::EqReadWrite)
-            + gamma * derived(FieldRegistersIncClaimReductionPublic::EqValEvaluation);
-        output_coeff * opening(field_rd_inc_reduced())
-    }
+shape::instantiate_increment_reduction! {
+    relation = ClaimReduction,
+    id = FieldInlineRelationId::FieldRegistersIncClaimReduction,
+    ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
+    dimensions = FieldRegistersTraceDimensions,
+    challenges = FieldRegistersIncClaimReductionChallenges,
+    inputs = FieldRegistersIncClaimReductionInputClaims,
+    outputs = FieldRegistersIncClaimReductionOutputClaims,
+    groups = vec![shape::IncrementReductionGroup {
+        consumed: [field_rd_inc_read_write(), field_rd_inc_val_evaluation()],
+        eq_publics: [
+            FieldRegistersIncClaimReductionPublic::EqReadWrite.into(),
+            FieldRegistersIncClaimReductionPublic::EqValEvaluation.into(),
+        ],
+        reduced: field_rd_inc_reduced(),
+    }],
+    gamma = FieldRegistersIncClaimReductionChallenge::Gamma,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SymbolicSumcheck;
 
     use crate::protocols::field_inline::geometry::claim_reductions::increments::{
         claim_reduction_input_openings, claim_reduction_output_openings,

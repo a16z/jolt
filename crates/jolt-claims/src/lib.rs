@@ -25,8 +25,10 @@ extern crate self as jolt_claims;
 
 mod claim_data;
 mod claims;
+mod formula_error;
 mod ops;
 pub mod protocols;
+pub mod relation_shapes;
 mod sumcheck;
 mod symbolic;
 

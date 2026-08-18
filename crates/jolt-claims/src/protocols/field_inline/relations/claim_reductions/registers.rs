@@ -1,7 +1,5 @@
 //! field_inline registers claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
-
 use crate::protocols::field_inline::geometry::claim_reductions::registers::{
     field_rd_value_reduced, field_rd_value_spartan, field_rs1_value_reduced,
     field_rs1_value_spartan, field_rs2_value_reduced, field_rs2_value_spartan,
@@ -9,13 +7,12 @@ use crate::protocols::field_inline::geometry::claim_reductions::registers::{
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineExpr, FieldInlineOpeningId,
-    FieldInlineRelationId, FieldRegistersClaimReductionChallenge,
-    FieldRegistersClaimReductionPublic, FieldRegistersTraceDimensions,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId, FieldInlineRelationId,
+    FieldRegistersClaimReductionChallenge, FieldRegistersClaimReductionPublic,
+    FieldRegistersTraceDimensions,
 };
-use crate::{
-    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
-};
+use crate::relation_shapes::claim_reductions as shape;
+use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced field-register claim-reduction openings (`FieldRdValue`,
 /// `FieldRs1Value`, `FieldRs2Value` reduced to the Spartan point), all sharing
@@ -69,53 +66,32 @@ pub struct ClaimReduction {
     shape: FieldRegistersTraceDimensions,
 }
 
-impl SymbolicSumcheck for ClaimReduction {
-    type RelationId = FieldInlineRelationId;
-    type OpeningId = FieldInlineOpeningId;
-    type DerivedId = FieldInlineDerivedId;
-    type ChallengeId = FieldInlineChallengeId;
-    type Shape = FieldRegistersTraceDimensions;
-    type Challenges<F> = FieldRegistersClaimReductionChallenges<F>;
-    type Inputs<C> = FieldRegistersClaimReductionInputClaims<C>;
-    type Outputs<C> = FieldRegistersClaimReductionOutputClaims<C>;
-
-    fn new(shape: FieldRegistersTraceDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> FieldInlineRelationId {
-        FieldInlineRelationId::FieldRegistersClaimReduction
-    }
-
-    fn rounds(&self) -> usize {
-        self.shape.log_t()
-    }
-
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = challenge(FieldRegistersClaimReductionChallenge::Gamma);
-
-        opening(field_rd_value_spartan())
-            + gamma.clone() * opening(field_rs1_value_spartan())
-            + gamma.clone().pow(2) * opening(field_rs2_value_spartan())
-    }
-
-    fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
-        let gamma = challenge(FieldRegistersClaimReductionChallenge::Gamma);
-        let eq_spartan = derived(FieldRegistersClaimReductionPublic::EqSpartan);
-
-        eq_spartan.clone() * opening(field_rd_value_reduced())
-            + eq_spartan.clone() * gamma.clone() * opening(field_rs1_value_reduced())
-            + eq_spartan * gamma.pow(2) * opening(field_rs2_value_reduced())
-    }
+shape::instantiate_value_reduction! {
+    relation = ClaimReduction,
+    id = FieldInlineRelationId::FieldRegistersClaimReduction,
+    ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
+    dimensions = FieldRegistersTraceDimensions,
+    challenges = FieldRegistersClaimReductionChallenges,
+    inputs = FieldRegistersClaimReductionInputClaims,
+    outputs = FieldRegistersClaimReductionOutputClaims,
+    consumed = [
+        field_rd_value_spartan(),
+        field_rs1_value_spartan(),
+        field_rs2_value_spartan(),
+    ],
+    reduced = [
+        field_rd_value_reduced(),
+        field_rs1_value_reduced(),
+        field_rs2_value_reduced(),
+    ],
+    gamma = FieldRegistersClaimReductionChallenge::Gamma,
+    eq_spartan = FieldRegistersClaimReductionPublic::EqSpartan,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SymbolicSumcheck;
 
     use crate::protocols::field_inline::geometry::claim_reductions::registers::{
         claim_reduction_input_openings, claim_reduction_output_openings,
