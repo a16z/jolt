@@ -424,8 +424,8 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
         instruction_ra,
         bytecode_ra: booleanity_bytecode_ra,
         ram_ra,
-        unsigned_inc_chunks,
-        unsigned_inc_msb,
+        balanced_inc_digits,
+        balanced_inc_carry,
     } = booleanity;
     for scalar in instruction_ra.iter_mut() {
         f(scalar);
@@ -436,10 +436,10 @@ fn visit_stage6b<F: Field>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMu
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    for scalar in unsigned_inc_chunks.iter_mut() {
+    for scalar in balanced_inc_digits.iter_mut() {
         f(scalar);
     }
-    f(unsigned_inc_msb);
+    f(balanced_inc_carry);
     let RamHammingBooleanityOutputClaims { ram_hamming_weight } = ram_hamming_booleanity;
     f(ram_hamming_weight);
     let RamRaVirtualizationOutputClaims {
@@ -491,8 +491,8 @@ fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(
         instruction_ra,
         bytecode_ra,
         ram_ra,
-        unsigned_inc_chunks,
-        unsigned_inc_msb,
+        balanced_inc_digits,
+        balanced_inc_carry,
     } = hamming_weight_claim_reduction;
     for scalar in instruction_ra.iter_mut() {
         f(scalar);
@@ -503,10 +503,10 @@ fn visit_stage7<F: Field>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    for scalar in unsigned_inc_chunks.iter_mut() {
+    for scalar in balanced_inc_digits.iter_mut() {
         f(scalar);
     }
-    f(unsigned_inc_msb);
+    f(balanced_inc_carry);
     if let Some(TrustedAdviceAddressPhaseOutputClaims { trusted }) = trusted_advice {
         f(trusted);
     }
@@ -728,7 +728,7 @@ fn every_commitment_wire_rejects_perturbation() {
 }
 
 /// Proof-shape tampers: a swapped phase proof, dropped reconstruction /
-/// auxiliary proofs, and an auxiliary evaluation offset — each fail-closed.
+/// auxiliary proofs, and swapped auxiliary object proofs — each fail-closed.
 #[test]
 fn akita_proof_shape_tampers_reject() {
     let muldiv = akita_muldiv_case();
@@ -742,18 +742,16 @@ fn akita_proof_shape_tampers_reject() {
     assert_rejects(advice.verify_proof(&proof));
 
     let mut proof = advice.proof.clone();
-    proof.joint_opening_proof.auxiliary = None;
+    proof.joint_opening_proof.auxiliary.clear();
     assert_rejects(advice.verify_proof(&proof));
 
     let committed = akita_committed_muldiv_case();
     let mut proof = committed.proof.clone();
-    proof.joint_opening_proof.auxiliary = None;
+    proof.joint_opening_proof.auxiliary.clear();
     assert_rejects(committed.verify_proof(&proof));
 
     let mut proof = committed.proof.clone();
-    if let Some(auxiliary) = proof.joint_opening_proof.auxiliary.as_mut() {
-        auxiliary.evaluations[0] += one();
-    }
+    proof.joint_opening_proof.auxiliary.swap(0, 1);
     assert_rejects(committed.verify_proof(&proof));
 }
 

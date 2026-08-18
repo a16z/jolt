@@ -1,16 +1,13 @@
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_secp256r1::{Fq, Fr};
 use jolt_inlines_sdk::host::{
-    instruction::{
-        add::ADD, ld::LD, lui::LUI, mul::MUL, mulhu::MULHU, sd::SD, virtual_advice::VirtualAdvice,
-        virtual_assert_eq::VirtualAssertEQ, virtual_assert_lte::VirtualAssertLTE,
-    },
     limbs_to_nbiguint, load_field_element_limbs, mulq_division_advice, mulq_quotient_advice,
     ExpandedInstructionSequence, ExpansionError, FieldElementLimbs, FormatInline, InlineAdvice,
     InlineAdviceContext, InlineAdviceError, InlineBuilderExt, InlineExpansionBuilder, InlineOp,
-    InlineOperands, InlineRegister, ModularDivisionAdvice, MulAccExt, MulqType, QuotientAdvice,
-    SignedU128Advice,
+    InlineOperands, InlineRegister, Kind, ModularDivisionAdvice, MulAccExt, MulqType,
+    QuotientAdvice, SignedU128Advice,
 };
+use jolt_inlines_sdk::jolt_asm;
 use num_bigint::BigInt as NBigInt;
 
 // p = 2^256 - q for base field:
@@ -167,8 +164,9 @@ impl P256Mulq {
                 MulqType::Mul => {
                     // if mul, load a and b
                     self.asm
-                        .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
-                    self.asm.emit_ld::<LD>(
+                        .emit_ld(Kind::LD, *self.a[i], self.operands.rs1, i as i64 * 8);
+                    self.asm.emit_ld(
+                        Kind::LD,
                         *self.b.as_ref().unwrap()[i],
                         self.operands.rs2,
                         i as i64 * 8,
@@ -177,50 +175,55 @@ impl P256Mulq {
                 MulqType::Square => {
                     // if square load only a
                     self.asm
-                        .emit_ld::<LD>(*self.a[i], self.operands.rs1, i as i64 * 8);
+                        .emit_ld(Kind::LD, *self.a[i], self.operands.rs1, i as i64 * 8);
                 }
                 MulqType::Div => {
                     // if div load b and
-                    self.asm.emit_ld::<LD>(
+                    self.asm.emit_ld(
+                        Kind::LD,
                         *self.b.as_ref().unwrap()[i],
                         self.operands.rs2,
                         i as i64 * 8,
                     );
-                    // load c into a, immediately copy it to memory
-                    // the inline will error out if a != b * c mod q later, ensuring correctness
-                    self.asm.emit_j::<VirtualAdvice>(*self.a[i], 0);
-                    self.asm
-                        .emit_s::<SD>(self.operands.rs3, *self.a[i], i as i64 * 8);
+                    // load c into a; the inline errors out if a != b * c mod q
+                    // later, and only then is c stored to memory (see the store
+                    // loop at the end of this sequence)
+                    self.asm.emit_j(Kind::VIRTUAL_ADVICE, *self.a[i], 0);
                 }
             }
-            self.asm.emit_j::<VirtualAdvice>(*self.w[i], 0);
+            self.asm.emit_j(Kind::VIRTUAL_ADVICE, *self.w[i], 0);
         }
 
         // load p constants into p1, p2, p3
         if self.is_scalar_field {
             // Scalar field: p = [0x0C46353D039CDAAF, 0x4319055258E8617B, 0, 0x00000000FFFFFFFF]
             // p1 = p[0], p2 = p[1], p3 = p[3]
-            self.asm.emit_u::<LUI>(*self.p1, P256_NEG_N[0]);
-            self.asm.emit_u::<LUI>(*self.p2, P256_NEG_N[1]);
-            self.asm.emit_u::<LUI>(*self.p3, P256_NEG_N[3]);
+            self.asm.emit_u(Kind::LUI, *self.p1, P256_NEG_N[0]);
+            self.asm.emit_u(Kind::LUI, *self.p2, P256_NEG_N[1]);
+            self.asm.emit_u(Kind::LUI, *self.p3, P256_NEG_N[3]);
         } else {
             // Base field: p = [1, 0xFFFFFFFF00000000, 0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFE]
             // p[0] = 1 is implicit (handled as ADD)
             // p1 = p[1], p2 = p[2], p3 = p[3]
-            self.asm.emit_u::<LUI>(*self.p1, P256_PQ[1]);
-            self.asm.emit_u::<LUI>(*self.p2, P256_PQ[2]);
-            self.asm.emit_u::<LUI>(*self.p3, P256_PQ[3]);
+            self.asm.emit_u(Kind::LUI, *self.p1, P256_PQ[1]);
+            self.asm.emit_u(Kind::LUI, *self.p2, P256_PQ[2]);
+            self.asm.emit_u(Kind::LUI, *self.p3, P256_PQ[3]);
         }
 
         // compute ab + wp into result limbs
         // special handling for bottom limb r[0]
         match self.op_type {
             MulqType::Square => {
-                self.asm.emit_r::<MUL>(*self.r[0], *self.a[0], *self.a[0]);
+                self.asm
+                    .emit_r(Kind::MUL, *self.r[0], *self.a[0], *self.a[0]);
             }
             _ => {
-                self.asm
-                    .emit_r::<MUL>(*self.r[0], *self.a[0], *self.b.as_ref().unwrap()[0]);
+                self.asm.emit_r(
+                    Kind::MUL,
+                    *self.r[0],
+                    *self.a[0],
+                    *self.b.as_ref().unwrap()[0],
+                );
             }
         }
 
@@ -238,11 +241,12 @@ impl P256Mulq {
         // if div, verify that the lowest limb matches the lowest limb of the actual argument a
         match self.op_type {
             MulqType::Div => {
-                self.asm.emit_ld::<LD>(*self.aux, self.operands.rs1, 0);
-                self.asm.emit_b::<VirtualAssertEQ>(*self.r[0], *self.aux, 0);
+                self.asm.emit_ld(Kind::LD, *self.aux, self.operands.rs1, 0);
+                self.asm
+                    .emit_b(Kind::VirtualAssertEQ, *self.r[0], *self.aux, 0);
             }
             _ => {
-                self.asm.emit_s::<SD>(self.operands.rs3, *self.r[0], 0);
+                self.asm.emit_s(Kind::SD, self.operands.rs3, *self.r[0], 0);
             }
         }
 
@@ -523,16 +527,18 @@ impl P256Mulq {
                 match self.op_type {
                     MulqType::Div => {
                         self.asm
-                            .emit_ld::<LD>(*self.aux, self.operands.rs1, k as i64 * 8);
-                        self.asm.emit_b::<VirtualAssertEQ>(rk, *self.aux, 0);
+                            .emit_ld(Kind::LD, *self.aux, self.operands.rs1, k as i64 * 8);
+                        self.asm.emit_b(Kind::VirtualAssertEQ, rk, *self.aux, 0);
                     }
                     _ => {
-                        self.asm.emit_s::<SD>(self.operands.rs3, rk, k as i64 * 8);
+                        self.asm
+                            .emit_s(Kind::SD, self.operands.rs3, rk, k as i64 * 8);
                     }
                 }
             // verify that the upper limbs match w
             } else if k >= 4 {
-                self.asm.emit_b::<VirtualAssertEQ>(rk, *self.w[k - 4], 0);
+                self.asm
+                    .emit_b(Kind::VirtualAssertEQ, rk, *self.w[k - 4], 0);
             }
         }
 
@@ -544,26 +550,44 @@ impl P256Mulq {
         // The review proof that this cannot overflow is in the sequence builder
         // review document: since the true value at k=7 equals w[3] < 2^64,
         // and each addend is bounded, the intermediate sums stay below 2^64.
-        self.asm.emit_r::<MULHU>(*self.aux, *self.w[3], *self.p3);
-        self.asm.emit_r::<ADD>(*self.r[1], *self.r[1], *self.aux);
+        self.asm
+            .emit_r(Kind::MULHU, *self.aux, *self.w[3], *self.p3);
+        self.asm
+            .emit_r(Kind::ADD, *self.r[1], *self.r[1], *self.aux);
 
         // high(a[3]*b[3]) or high(a[3]*a[3])
         match self.op_type {
             MulqType::Square => {
-                self.asm.emit_r::<MULHU>(*self.aux, *self.a[3], *self.a[3]);
+                self.asm
+                    .emit_r(Kind::MULHU, *self.aux, *self.a[3], *self.a[3]);
             }
             _ => {
-                self.asm
-                    .emit_r::<MULHU>(*self.aux, *self.a[3], *self.b.as_ref().unwrap()[3]);
+                self.asm.emit_r(
+                    Kind::MULHU,
+                    *self.aux,
+                    *self.a[3],
+                    *self.b.as_ref().unwrap()[3],
+                );
             }
         }
-        self.asm.emit_r::<ADD>(*self.r[1], *self.r[1], *self.aux);
-        // verify that w[3] matches top limb
-        self.asm
-            .emit_b::<VirtualAssertEQ>(*self.r[1], *self.w[3], 0);
-        // ensure no overflow
-        self.asm
-            .emit_b::<VirtualAssertLTE>(*self.aux, *self.r[1], 0);
+        jolt_asm!(self.asm, {
+            add *self.r[1], *self.r[1], *self.aux;
+            // verify that w[3] matches top limb
+            assert_eq *self.r[1], *self.w[3];
+            // ensure no overflow
+            assert_lte *self.aux, *self.r[1];
+        });
+
+        // WARNING: the division result must be stored only after the checks
+        // above. `rs3` may alias `rs1`, in which case an earlier store would
+        // overwrite the dividend and reduce `cb + wp == 2^256 w + a` to a
+        // tautology, admitting an arbitrary quotient.
+        if let MulqType::Div = self.op_type {
+            for i in 0..4 {
+                self.asm
+                    .emit_s(Kind::SD, self.operands.rs3, *self.a[i], i as i64 * 8);
+            }
+        }
 
         // clean up inline
         self.asm.release_many(self.a);

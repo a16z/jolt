@@ -129,13 +129,15 @@ pub trait CommitmentScheme: Commitment {
 }
 
 /// Transparent derivation of a singleton commitment-object setup from the
-/// object's public shape alone (one polynomial at `num_vars`, fixed seed):
-/// prover and verifier re-derive byte-identical setups independently, so
-/// auxiliary packed objects (advice byte columns, the precommitted program)
-/// need no setup ceremony or transport.
+/// object's public shape alone (one polynomial at `num_vars`, seeded by the
+/// object plan's layout digest): prover and verifier re-derive
+/// byte-identical setups independently, so auxiliary packed objects (advice
+/// byte columns, the precommitted program) need no setup ceremony or
+/// transport.
 pub trait TransparentObjectSetup: CommitmentScheme {
     fn transparent_object_setup(
         num_vars: usize,
+        layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 }
 
@@ -576,11 +578,11 @@ where
     C: Clone,
 {
     fn new(claims: &'a [VerifierOpeningClaim<F, C>]) -> Result<Self, OpeningsError> {
-        let first = claims.first().ok_or_else(|| {
+        let (first, rest) = claims.split_first().ok_or_else(|| {
             OpeningsError::InvalidBatch("batch opening requires at least one claim".to_owned())
         })?;
         let point = first.evaluation.point.clone();
-        for claim in &claims[1..] {
+        for claim in rest {
             if claim.evaluation.point != point {
                 return Err(OpeningsError::InvalidBatch(
                     "batch opening claims must use one common point".to_owned(),

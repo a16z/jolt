@@ -113,7 +113,15 @@ impl<F: Field> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         match public_id {
             RegistersReadWritePublic::EqCycle => {
                 let fixed_cycle = input_points.rd_write_value();
-                let registers_cycle = &output_points.registers_val()[REGISTER_ADDRESS_BITS..];
+                let registers_cycle = output_points
+                    .registers_val()
+                    .get(REGISTER_ADDRESS_BITS..)
+                    .ok_or_else(|| {
+                        public_input_failed(
+                            "register read-write opening point is shorter than the register \
+                             address width",
+                        )
+                    })?;
                 try_eq_mle(fixed_cycle, registers_cycle).map_err(public_input_failed)
             }
         }

@@ -1,4 +1,4 @@
-use jolt_claims::protocols::jolt::lattice::UNSIGNED_INC_BITS;
+use jolt_claims::protocols::jolt::lattice::FUSED_INC_BITS;
 use jolt_field::Field;
 use jolt_program::execution::{RamAccess, TraceRow};
 use jolt_riscv::CircuitFlags;
@@ -63,24 +63,39 @@ impl Extract for RamInc {
 pub struct FusedInc(pub i128);
 
 impl FusedInc {
-    /// The shifted unsigned encoding `2^64 + delta`: the MSB and low-64-bit
-    /// chunks. Padding (`delta = 0`) encodes as MSB hot with every chunk at
-    /// hot lane zero.
-    fn shifted(self) -> u128 {
-        debug_assert!(self.0.unsigned_abs() < 1u128 << UNSIGNED_INC_BITS);
-        (self.0 + (1i128 << UNSIGNED_INC_BITS)) as u128
+    /// The encoder bias `(K/2)·(2^64 − 1)/(K − 1)` for radix `K = 2^width`:
+    /// every centered digit of the biased zero is exactly `K/2`, so
+    /// `delta = 0` lands every digit (and the carry) on lane 0.
+    fn balanced_bias(width: usize) -> i128 {
+        debug_assert!(width > 0 && FUSED_INC_BITS.is_multiple_of(width));
+        let radix = 1i128 << width;
+        (radix / 2) * (((1i128 << FUSED_INC_BITS) - 1) / (radix - 1))
     }
 
-    /// The hot address of one lane of the shifted encoding's one-hot
-    /// decomposition.
-    pub fn hot_lane(self, lane: UnsignedIncLane) -> usize {
-        let shifted = self.shifted();
+    fn biased_for_balanced_digits(self, width: usize) -> i128 {
+        debug_assert!(self.0.unsigned_abs() < 1u128 << FUSED_INC_BITS);
+        self.0 + Self::balanced_bias(width)
+    }
+
+    /// The hot address of one lane of the balanced one-hot decomposition:
+    /// the centered radix-`2^width` digit (or the signed carry above bit 63)
+    /// encoded modulo the radix. Lane `j` decodes to `j` if `j < K/2`, else
+    /// `j − K`.
+    pub fn hot_lane(self, lane: BalancedIncLane) -> usize {
         match lane {
-            UnsignedIncLane::Chunk { width, index } => {
-                let low = shifted & ((1u128 << UNSIGNED_INC_BITS) - 1);
-                ((low >> (width * index)) & ((1u128 << width) - 1)) as usize
+            BalancedIncLane::Digit { width, index } => {
+                let radix = 1i128 << width;
+                let mask = radix - 1;
+                let standard_digit =
+                    (self.biased_for_balanced_digits(width) >> (width * index)) & mask;
+                ((standard_digit + radix / 2) & mask) as usize
             }
-            UnsignedIncLane::Msb => (shifted >> UNSIGNED_INC_BITS) as usize,
+            BalancedIncLane::Carry { width } => {
+                let radix = 1i128 << width;
+                let carry = self.biased_for_balanced_digits(width) >> FUSED_INC_BITS;
+                debug_assert!((-1..=1).contains(&carry));
+                carry.rem_euclid(radix) as usize
+            }
         }
     }
 }
@@ -118,30 +133,30 @@ impl Extract for FusedInc {
     }
 }
 
-/// Selects one lane of the fused increment's one-hot decomposition: a
-/// `width`-bit chunk of the shifted encoding's low 64 bits (indexed from the
-/// least significant chunk), or the MSB.
+/// Selects one lane of the fused increment's balanced one-hot decomposition:
+/// a centered `width`-bit digit (indexed from the least significant digit),
+/// or the signed carry above bit 63.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnsignedIncLane {
-    Chunk { width: usize, index: usize },
-    Msb,
+pub enum BalancedIncLane {
+    Digit { width: usize, index: usize },
+    Carry { width: usize },
 }
 
-/// The per-cycle hot address of one `UnsignedIncChunk`/`UnsignedIncMsb`
-/// column; every cycle is hot (padding rows land on lane 0 of each chunk and
-/// lane 1 of the msb).
+/// The per-cycle hot address of one `BalancedIncDigit`/`BalancedIncCarry`
+/// column; every cycle is hot (padding rows land on lane 0 of every digit
+/// and of the carry).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct UnsignedIncHot(pub usize);
+pub struct BalancedIncHot(pub usize);
 
-impl From<UnsignedIncHot> for Option<usize> {
-    fn from(hot: UnsignedIncHot) -> Self {
+impl From<BalancedIncHot> for Option<usize> {
+    fn from(hot: BalancedIncHot) -> Self {
         Some(hot.0)
     }
 }
 
-impl ExtractIndexed<UnsignedIncLane> for UnsignedIncHot {
+impl ExtractIndexed<BalancedIncLane> for BalancedIncHot {
     fn extract_indexed(
-        lane: UnsignedIncLane,
+        lane: BalancedIncLane,
         row: &TraceRow,
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
@@ -155,7 +170,7 @@ mod tests {
     use super::*;
 
     const LOG_K_CHUNK: usize = 8;
-    const CHUNKS: usize = UNSIGNED_INC_BITS / LOG_K_CHUNK;
+    const DIGITS: usize = FUSED_INC_BITS / LOG_K_CHUNK;
 
     fn fused_trace() -> Vec<FusedInc> {
         [
@@ -174,34 +189,43 @@ mod tests {
         .collect()
     }
 
-    #[test]
-    fn chunks_and_msb_reconstruct_the_shifted_fused_increment() {
-        for (cycle, inc) in fused_trace().iter().enumerate() {
-            let mut reconstructed = 0u128;
-            for index in 0..CHUNKS {
-                let hot = inc.hot_lane(UnsignedIncLane::Chunk {
-                    width: LOG_K_CHUNK,
-                    index,
-                });
-                assert!(hot < 1 << LOG_K_CHUNK, "cycle {cycle}");
-                reconstructed |= (hot as u128) << (LOG_K_CHUNK * index);
-            }
-            reconstructed |= (inc.hot_lane(UnsignedIncLane::Msb) as u128) << UNSIGNED_INC_BITS;
-            assert_eq!(
-                reconstructed as i128 - (1i128 << UNSIGNED_INC_BITS),
-                inc.0,
-                "cycle {cycle}"
-            );
+    fn centered(row: usize, radix: i128) -> i128 {
+        if (row as i128) < radix / 2 {
+            row as i128
+        } else {
+            row as i128 - radix
         }
     }
 
     #[test]
-    fn padding_cycles_encode_msb_hot_and_zero_digits() {
+    fn balanced_digits_and_carry_reconstruct_the_fused_increment() {
+        let radix = 1i128 << LOG_K_CHUNK;
+        for (cycle, inc) in fused_trace().iter().enumerate() {
+            let mut reconstructed = 0i128;
+            for index in 0..DIGITS {
+                let hot = inc.hot_lane(BalancedIncLane::Digit {
+                    width: LOG_K_CHUNK,
+                    index,
+                });
+                assert!(hot < 1 << LOG_K_CHUNK, "cycle {cycle}");
+                reconstructed += centered(hot, radix) << (LOG_K_CHUNK * index);
+            }
+            let carry = inc.hot_lane(BalancedIncLane::Carry { width: LOG_K_CHUNK });
+            reconstructed += centered(carry, radix) << FUSED_INC_BITS;
+            assert_eq!(reconstructed, inc.0, "cycle {cycle}");
+        }
+    }
+
+    #[test]
+    fn padding_cycles_encode_every_lane_at_digit_zero() {
         let padding = FusedInc(0);
-        assert_eq!(padding.hot_lane(UnsignedIncLane::Msb), 1);
-        for index in 0..CHUNKS {
+        assert_eq!(
+            padding.hot_lane(BalancedIncLane::Carry { width: LOG_K_CHUNK }),
+            0
+        );
+        for index in 0..DIGITS {
             assert_eq!(
-                padding.hot_lane(UnsignedIncLane::Chunk {
+                padding.hot_lane(BalancedIncLane::Digit {
                     width: LOG_K_CHUNK,
                     index,
                 }),

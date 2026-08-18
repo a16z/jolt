@@ -278,11 +278,11 @@ impl CanonicalSerialize for CommittedPolynomial {
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
             Self::ProgramImageInit => 8u8.serialize_with_mode(writer, compress),
-            Self::UnsignedIncChunk(i) => {
+            Self::BalancedIncDigit(i) => {
                 9u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
-            Self::UnsignedIncMsb => 10u8.serialize_with_mode(writer, compress),
+            Self::BalancedIncCarry => 10u8.serialize_with_mode(writer, compress),
             Self::BytecodeRegisterSelector(chunk, lane) => {
                 11u8.serialize_with_mode(&mut writer, compress)?;
                 (u8::try_from(*chunk).unwrap()).serialize_with_mode(&mut writer, compress)?;
@@ -325,13 +325,13 @@ impl CanonicalSerialize for CommittedPolynomial {
             | Self::TrustedAdvice
             | Self::UntrustedAdvice
             | Self::ProgramImageInit
-            | Self::UnsignedIncMsb
+            | Self::BalancedIncCarry
             | Self::ProgramImageBytes => 1,
             Self::InstructionRa(_)
             | Self::BytecodeRa(_)
             | Self::RamRa(_)
             | Self::BytecodeChunk(_)
-            | Self::UnsignedIncChunk(_)
+            | Self::BalancedIncDigit(_)
             | Self::BytecodeLookupSelector(_)
             | Self::BytecodeRafFlag(_)
             | Self::BytecodeUnexpandedPcBytes(_)
@@ -380,9 +380,9 @@ impl CanonicalDeserialize for CommittedPolynomial {
                 8 => Self::ProgramImageInit,
                 9 => {
                     let i = u8::deserialize_with_mode(reader, compress, validate)?;
-                    Self::UnsignedIncChunk(i as usize)
+                    Self::BalancedIncDigit(i as usize)
                 }
-                10 => Self::UnsignedIncMsb,
+                10 => Self::BalancedIncCarry,
                 11 => {
                     let chunk = u8::deserialize_with_mode(&mut reader, compress, validate)?;
                     let lane = u8::deserialize_with_mode(reader, compress, validate)?;
@@ -666,8 +666,8 @@ mod tests {
                 | CommittedPolynomial::UntrustedAdvice
                 | CommittedPolynomial::BytecodeChunk(_)
                 | CommittedPolynomial::ProgramImageInit
-                | CommittedPolynomial::UnsignedIncChunk(_)
-                | CommittedPolynomial::UnsignedIncMsb
+                | CommittedPolynomial::BalancedIncDigit(_)
+                | CommittedPolynomial::BalancedIncCarry
                 | CommittedPolynomial::BytecodeRegisterSelector(..)
                 | CommittedPolynomial::BytecodeCircuitFlag(..)
                 | CommittedPolynomial::BytecodeInstructionFlag(..)
@@ -688,8 +688,8 @@ mod tests {
             CommittedPolynomial::UntrustedAdvice,
             CommittedPolynomial::BytecodeChunk(4),
             CommittedPolynomial::ProgramImageInit,
-            CommittedPolynomial::UnsignedIncChunk(5),
-            CommittedPolynomial::UnsignedIncMsb,
+            CommittedPolynomial::BalancedIncDigit(5),
+            CommittedPolynomial::BalancedIncCarry,
             CommittedPolynomial::BytecodeRegisterSelector(1, 2),
             CommittedPolynomial::BytecodeCircuitFlag(0, 7),
             CommittedPolynomial::BytecodeInstructionFlag(1, 3),

@@ -1,30 +1,28 @@
-//! Packed stage 8: the final opening — one native same-point Akita batch for
-//! the `OneHotTrace` group, plus a joint packed opening for the auxiliary
-//! commitment objects (advice byte columns, `ProgramOneHot`).
+//! Packed stage 8: the final opening — the `OneHotTrace` prefix-packed
+//! claim reduction and its one native Akita opening, then one packed opening
+//! per auxiliary commitment object (advice byte columns, the `ProgramOneHot`
+//! objects).
 //!
-//! Pure orchestration mirroring `stage8::packed::verify`: the per-column leaf
-//! claims come from the verifier's promoted `leaf_claims` resolution over the
-//! stage-7 and reconstruction outputs, the shared canonical point from the
-//! layout's own `column_point` math, and the auxiliary statements from the
-//! promoted `object_statement` assembly. The prover-only work is supplying
-//! the group hint (stage 0's commit) and the auxiliary objects' witnesses.
+//! Pure orchestration mirroring `stage8::packed::verify`: the per-column
+//! leaf claims come from the verifier's promoted `leaf_claims` resolution
+//! over the stage-7 and reconstruction outputs, the packed `OneHotTrace`
+//! statement from the promoted `one_hot_trace_packed_claims` assembly, and
+//! each auxiliary object's claims from the promoted `object_leaf_claims`.
+//! The prover-only work is supplying the packed polynomial's hint (stage 0's
+//! commit) and the auxiliary objects' witnesses.
 
-use jolt_claims::protocols::jolt::lattice::packing::advice_bytes_packing;
-use jolt_claims::protocols::jolt::lattice::{
-    precommitted_packing, OneHotTraceShape, ONE_HOT_TRACE_LAYOUT,
-};
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltRelationId};
+use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_openings::{
-    prove_packed_openings, CommitmentScheme, PackedProverGroup, PackedProverObject,
-    PrefixPackedStatement, PrefixPacking,
-};
+use jolt_openings::CommitmentScheme;
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::AkitaJointOpeningProof;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
-use jolt_verifier::stages::stage8::packed::{leaf_claims, object_statement};
+use jolt_verifier::stages::stage8::packed::{
+    leaf_claims, object_leaf_claims, one_hot_trace_packed_claims,
+};
 use jolt_verifier::stages::stage8::reconstruction::ReconstructionClearOutput;
 use jolt_verifier::{CheckedInputs, VerifierError};
 
@@ -38,8 +36,10 @@ fn batch_failed<F: Field>(reason: impl ToString) -> ProverError<F> {
 }
 
 /// Prove packed stage 8 on `transcript` (positioned at the reconstruction
-/// boundary): the native `OneHotTrace` same-point batch from the group hint,
-/// then the auxiliary packed openings in canonical object order.
+/// boundary): the `OneHotTrace` prefix-packed reduction and its native
+/// opening from the group hint, then the auxiliary packed openings in
+/// canonical object order (untrusted advice, trusted advice, the
+/// `ProgramOneHot` objects).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage8<F, PCS, VC, T>(
@@ -53,7 +53,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
     transcript: &mut T,
-) -> Result<AkitaJointOpeningProof<F, PCS::Proof>, ProverError<F>>
+) -> Result<AkitaJointOpeningProof<PCS::Proof>, ProverError<F>>
 where
     F: Field,
     PCS: CommitmentScheme<Field = F>,
@@ -81,123 +81,82 @@ where
     // verifier resolves them.
     let leaves = leaf_claims(stage7, reconstruction);
 
-    // OneHotTrace opens as one native same-point batch: each column's leaf
-    // point maps to the shared canonical point through the layout.
-    let mut common_point: Option<Vec<F>> = None;
-    let mut evaluations = Vec::with_capacity(plan.columns.len());
-    for polynomial in &plan.columns {
-        let claim = leaves.get(polynomial).ok_or_else(|| {
-            batch_failed::<F>(format!(
-                "missing final OneHotTrace claim for {polynomial:?}"
-            ))
-        })?;
-        let point = ONE_HOT_TRACE_LAYOUT
-            .column_point(*polynomial, chunk_width, claim.point.as_slice())
-            .map_err(batch_failed::<F>)?;
-        if let Some(expected) = &common_point {
-            if expected != &point {
-                return Err(batch_failed::<F>(format!(
-                    "OneHotTrace column {polynomial:?} does not share the canonical opening point"
-                )));
-            }
-        } else {
-            common_point = Some(point);
-        }
-        evaluations.push(claim.value);
-    }
-    let common_point =
-        common_point.ok_or_else(|| batch_failed::<F>("OneHotTrace has no columns"))?;
-    let shapes: Vec<CommittedOneHotShape> = plan
-        .columns
-        .iter()
-        .map(|_| CommittedOneHotShape {
-            num_vars: plan.column_arity,
-        })
-        .collect();
-    let shape_refs: Vec<&dyn MultilinearPoly<F>> = shapes
-        .iter()
-        .map(|shape| shape as &dyn MultilinearPoly<F>)
-        .collect();
-    // The packed sibling of the homomorphic path's stage-8 batch seam: one
-    // native same-point opening over the whole group.
-    let one_hot_trace =
-        tracing::info_span!("CommitmentScheme::open_batch", columns = evaluations.len())
-            .in_scope(|| {
-                PCS::open_batch(
-                    &shape_refs,
-                    &common_point,
-                    &evaluations,
-                    &preprocessing.pcs_setup,
-                    one_hot_trace_hint,
-                    transcript,
-                )
-            })
-            .map_err(batch_failed::<F>)?;
+    // OneHotTrace: assemble the shared-point packed statement, reduce it to
+    // one physical claim on the transcript, and open it natively from the
+    // stage-0 hint (the hint owns the witness; the polynomial argument is a
+    // shape-only stand-in).
+    let packed_claims =
+        one_hot_trace_packed_claims(&plan, chunk_width, &leaves).map_err(ProverError::Verifier)?;
+    let packed_claim = plan
+        .packing()
+        .reduce_claims(&packed_claims, transcript)
+        .map_err(batch_failed::<F>)?;
+    let shape = CommittedOneHotShape {
+        num_vars: plan.packing().packed_num_vars(),
+    };
+    let one_hot_trace = tracing::info_span!(
+        "CommitmentScheme::open_batch",
+        packed_num_vars = shape.num_vars
+    )
+    .in_scope(|| {
+        PCS::open_batch(
+            &[&shape as &dyn MultilinearPoly<F>],
+            packed_claim.point.as_slice(),
+            std::slice::from_ref(&packed_claim.value),
+            &preprocessing.pcs_setup,
+            one_hot_trace_hint,
+            transcript,
+        )
+    })
+    .map_err(batch_failed::<F>)?;
 
     // The auxiliary packed objects in canonical order: untrusted advice,
-    // trusted advice, ProgramOneHot. Packings and statements are owned here;
-    // the borrowed object views assemble below.
-    struct Auxiliary<'a, PCS: CommitmentScheme> {
-        packing: PrefixPacking<JoltCommittedPolynomial>,
-        statement: PrefixPackedStatement<PCS::Field, JoltCommittedPolynomial, PCS::Output>,
-        polynomial: &'a dyn MultilinearPoly<PCS::Field>,
-        setup: &'a PCS::ProverSetup,
-        hint: PCS::OpeningHint,
-    }
-    let mut auxiliaries: Vec<Auxiliary<'_, PCS>> = Vec::new();
-    for (kind, object) in [
-        (JoltAdviceKind::Untrusted, untrusted_advice),
-        (JoltAdviceKind::Trusted, trusted_advice),
-    ] {
-        let Some(object) = object else { continue };
-        let packing = advice_bytes_packing(kind, object.word_vars).map_err(batch_failed::<F>)?;
-        let statement = object_statement(&packing, object.commitment.clone(), &leaves)
-            .map_err(ProverError::Verifier)?;
-        auxiliaries.push(Auxiliary {
-            packing,
-            statement,
-            polynomial: &object.byte_column,
-            setup: &object.setup,
-            hint: object.hint.clone(),
-        });
-    }
-    if let Some(object) = program {
-        let packing = precommitted_packing(&object.shape).map_err(batch_failed::<F>)?;
-        let statement = object_statement(&packing, object.commitment.clone(), &leaves)
-            .map_err(ProverError::Verifier)?;
-        auxiliaries.push(Auxiliary {
-            packing,
-            statement,
-            polynomial: &object.witness,
-            setup: &object.setup,
-            hint: object.hint.clone(),
-        });
-    }
-
-    let auxiliary = if auxiliaries.is_empty() {
-        None
-    } else {
-        let groups = auxiliaries
-            .iter()
-            .enumerate()
-            .map(|(index, auxiliary)| {
-                PackedProverGroup::singleton(index, Some(auxiliary.hint.clone()))
-            })
-            .collect();
-        let objects: Vec<PackedProverObject<'_, PCS, JoltCommittedPolynomial>> = auxiliaries
-            .iter()
-            .map(|auxiliary| PackedProverObject {
-                packing: &auxiliary.packing,
-                statement: &auxiliary.statement,
-                polynomial: auxiliary.polynomial,
-                setup: auxiliary.setup,
-            })
-            .collect();
-        Some(prove_packed_openings(objects, groups, transcript).map_err(batch_failed::<F>)?)
+    // trusted advice, the ProgramOneHot objects (bytecode, then image). Each
+    // reduces its own claims on the transcript and opens natively.
+    let open_object = |plan: &jolt_claims::protocols::jolt::lattice::PrefixPackedObjectPlan,
+                       polynomial: &dyn MultilinearPoly<F>,
+                       setup: &PCS::ProverSetup,
+                       hint: PCS::OpeningHint,
+                       transcript: &mut T|
+     -> Result<PCS::Proof, ProverError<F>> {
+        let claims = object_leaf_claims(plan, &leaves).map_err(ProverError::Verifier)?;
+        let semantic_claims = plan.packed_claims(&claims).map_err(batch_failed::<F>)?;
+        let physical_claim = plan
+            .packing()
+            .reduce_claims(&semantic_claims, transcript)
+            .map_err(batch_failed::<F>)?;
+        PCS::open(
+            polynomial,
+            physical_claim.point.as_slice(),
+            physical_claim.value,
+            setup,
+            Some(hint),
+            transcript,
+        )
+        .map_err(batch_failed::<F>)
     };
 
-    Ok(AkitaJointOpeningProof {
-        one_hot_trace,
-        auxiliary,
-    })
+    let mut auxiliary = Vec::new();
+    for object in [untrusted_advice, trusted_advice].into_iter().flatten() {
+        auxiliary.push(open_object(
+            &object.plan,
+            &object.byte_column,
+            &object.setup,
+            object.hint.clone(),
+            transcript,
+        )?);
+    }
+    if let Some(program) = program {
+        for object in &program.objects {
+            auxiliary.push(open_object(
+                &object.plan,
+                &object.witness,
+                &object.setup,
+                object.hint.clone(),
+                transcript,
+            )?);
+        }
+    }
+
+    Ok(AkitaJointOpeningProof::new(one_hot_trace, auxiliary))
 }

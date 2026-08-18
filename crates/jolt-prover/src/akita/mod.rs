@@ -2,19 +2,20 @@
 //! sibling.
 //!
 //! The pipeline mirrors `jolt-prover-legacy`'s `zkvm::packed` with the
-//! lattice stage swaps: one native Akita commitment group `OneHotTrace`
-//! replaces the per-polynomial streaming Dory commits at stage 0, the
-//! nine-stage bytecode read-raf discharges the reduced inc claims through its
-//! fused-inc val stages, the lattice booleanity carries the fused-inc
-//! columns, stage 7 folds the increment one-hot claims into the
-//! hamming-weight claim reduction, the reconstruction phase settles the
-//! auxiliary advice/bytecode/image columns at the head of the stage-8 region,
-//! and stage 8 uses one native same-point Akita opening for `OneHotTrace`
-//! plus packed openings for auxiliaries.
+//! lattice stage swaps: one prefix-packed `OneHotTrace` polynomial (with the
+//! virtualized families' digit-zero rows omitted) replaces the
+//! per-polynomial streaming Dory commits at stage 0, the nine-stage bytecode
+//! read-raf discharges the reduced inc claims through its fused-inc val
+//! stages, the lattice booleanity carries the balanced-inc columns, stage 7
+//! runs the digit-zero claim reduction (recentered legs plus the balanced
+//! decode), the reconstruction phase settles the auxiliary
+//! advice/bytecode/image columns at the head of the stage-8 region, and
+//! stage 8 reduces the `OneHotTrace` columns to one native Akita opening
+//! plus one packed opening per auxiliary object.
 //!
 //! Everything here stays generic over the scheme through the `jolt-openings`
 //! seams ([`commit_batch`](CommitmentScheme::commit_batch)/
-//! [`open_batch`](CommitmentScheme::open_batch) for the native group,
+//! [`open_batch`](CommitmentScheme::open_batch) for the packed polynomial,
 //! [`TransparentObjectSetup`] for the auxiliary objects); the concrete Akita
 //! types bind at the call site.
 
@@ -112,6 +113,7 @@ where
         Self {
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
+                round_scheduler: Box::new(ReferenceBackend),
                 spartan_outer_uniskip: Box::new(ReferenceBackend),
                 spartan_outer_remainder: Box::new(jolt_kernels::reference::spartan_outer::ReferenceOuterRemainder),
                 spartan_product_uniskip: Box::new(ReferenceBackend),
@@ -180,19 +182,20 @@ where
 /// opening).
 ///
 /// `trusted_advice` and `program_one_hot` are the precommitted auxiliary
-/// objects' commitments, passed exactly when the guest consumes trusted
+/// objects' commitments (the latter in canonical object order: bytecode,
+/// then program image), passed exactly when the guest consumes trusted
 /// advice / the preprocessing is committed-program. The objects' opening
 /// material is transparently re-derived at prove time (the byte columns from
 /// the public advice bytes / the retained full program, the setups from the
-/// public shapes with the fixed seed) and cross-checked against the passed
-/// commitments. Untrusted advice needs no input — its one-hot column is
-/// committed at prove time from the public advice bytes.
+/// public shapes seeded by the plan digests) and cross-checked against the
+/// passed commitments. Untrusted advice needs no input — its one-hot column
+/// is committed at prove time from the public advice bytes.
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&PCS::Output>,
-    program_one_hot: Option<&PCS::Output>,
+    program_one_hot: Option<&[PCS::Output]>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>

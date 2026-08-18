@@ -914,11 +914,11 @@ fn convert_committed_polynomial(
         prover_witness::CommittedPolynomial::ProgramImageInit => {
             JoltCommittedPolynomial::ProgramImageInit
         }
-        prover_witness::CommittedPolynomial::UnsignedIncChunk(index) => {
-            JoltCommittedPolynomial::UnsignedIncChunk(index)
+        prover_witness::CommittedPolynomial::BalancedIncDigit(index) => {
+            JoltCommittedPolynomial::BalancedIncDigit(index)
         }
-        prover_witness::CommittedPolynomial::UnsignedIncMsb => {
-            JoltCommittedPolynomial::UnsignedIncMsb
+        prover_witness::CommittedPolynomial::BalancedIncCarry => {
+            JoltCommittedPolynomial::BalancedIncCarry
         }
         prover_witness::CommittedPolynomial::BytecodeRegisterSelector(chunk, lane) => {
             JoltCommittedPolynomial::BytecodeRegisterSelector {

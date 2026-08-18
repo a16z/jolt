@@ -1,9 +1,15 @@
+#![expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions inside Result-returning tests"
+)]
+#![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+
 use super::*;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{
-    JoltInstruction, JoltInstructionProfile, SourceExtension, SourceInlineKey,
-    SourceInstructionRow, RV64IMAC_JOLT,
+    JoltInstruction, JoltInstructionKind as Kind, JoltInstructionProfile, SourceExtension,
+    SourceInlineKey, SourceInstructionRow, RV64IMAC_JOLT,
 };
 #[cfg(feature = "serialization")]
 use serde::Deserialize;
@@ -200,7 +206,7 @@ fn inline_rd_zero_is_remapped_before_provider() -> Result<(), ExpansionError> {
             let rd = row.operands.rd.ok_or(ExpansionError::MalformedInstruction(
                 "inline row missing rd",
             ))?;
-            builder.emit_i::<jolt_riscv::instructions::Addi>(rd, 0, 0);
+            builder.emit_i(Kind::ADDI, rd, 0, 0);
             builder.finalize()
         }
     }
@@ -292,7 +298,7 @@ fn inline_provider_output_is_validated_and_stamped() {
             _profile: jolt_riscv::JoltInstructionProfile,
         ) -> Result<ExpandedInstructionSequence, ExpansionError> {
             let mut builder = InlineExpansionBuilder::new(*instruction.row());
-            builder.emit_r::<jolt_riscv::instructions::Mul>(1, 2, 3);
+            builder.emit_r(Kind::MUL, 1, 2, 3);
             builder.finalize()
         }
     }
@@ -321,7 +327,7 @@ fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError>
             let row = instruction.row();
             let mut builder = InlineExpansionBuilder::new(*row);
             let register = builder.allocate_for_inline()?;
-            builder.emit_i::<jolt_riscv::instructions::Addi>(*register, 0, 1);
+            builder.emit_i(Kind::ADDI, *register, 0, 1);
             builder.release(register);
             builder.finalize()
         }
@@ -362,7 +368,7 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
             let row = instruction.row();
             let mut builder = InlineExpansionBuilder::new(*row);
             for _ in 0..=materialize::MAX_FINAL_ROWS_PER_SOURCE {
-                builder.emit_i::<jolt_riscv::instructions::Addi>(0, 0, 0);
+                builder.emit_i(Kind::ADDI, 0, 0, 0);
             }
             builder.finalize()
         }
@@ -401,7 +407,7 @@ fn source_only_expanders_are_not_target_legal() {
     }
 
     assert_source_only! {
-        ADDIW, ADDW, SUBW, MULH, MULHSU, MULW,
+        MULH, MULHSU,
         LB, LBU, LH, LHU, LW, LWU,
         AdviceLB, AdviceLH, AdviceLW, AdviceLD,
         AMOADDD, AMOANDD, AMOORD, AMOXORD, AMOSWAPD,
@@ -412,7 +418,7 @@ fn source_only_expanders_are_not_target_legal() {
         DIV, DIVU, DIVW, DIVUW, REM, REMU, REMW, REMUW,
         SB, SCD, SCW, SH, SW,
         CSRRW, CSRRS, EBREAK, ECALL, MRET,
-        SLL, SLLI, SLLW, SLLIW, SRL, SRLI, SRA, SRAI,
+        SLL, SLLI, SLLIW, SLLW, SRL, SRLI, SRA, SRAI,
         SRLIW, SRAIW, SRLW, SRAW,
     }
     assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);

@@ -90,11 +90,11 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::UnsignedIncChunk(index) => {
-                    require_index(index, self.unsigned_inc_chunk_count()?)?;
+                C::BalancedIncDigit(index) => {
+                    require_index(index, self.balanced_inc_digit_count()?)?;
                     Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
                 }
-                C::UnsignedIncMsb => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
+                C::BalancedIncCarry => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
                 C::TrustedAdviceBytes => {
                     if !self.config.include_trusted_advice {
                         return Err(WitnessError::UnknownOracle {
@@ -184,8 +184,8 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         }
     }
 
-    fn unsigned_inc_chunk_count(&self) -> Result<usize, WitnessError> {
-        jolt_claims::protocols::jolt::lattice::UnsignedIncChunking::new(
+    fn balanced_inc_digit_count(&self) -> Result<usize, WitnessError> {
+        jolt_claims::protocols::jolt::lattice::BalancedIncChunking::new(
             self.config.one_hot.committed_chunk_bits(),
         )
         .map(|chunking| chunking.chunk_count())
@@ -241,15 +241,17 @@ impl<F: Field, T: TraceSource + Clone> JoltWitnessOracle<F> for TraceBackend<T> 
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::UnsignedIncChunk(index) => self.materialize_unsigned_inc_one_hot(
-                    crate::witnesses::UnsignedIncLane::Chunk {
+                C::BalancedIncDigit(index) => self.materialize_balanced_inc_one_hot(
+                    crate::witnesses::BalancedIncLane::Digit {
                         width: self.config.one_hot.committed_chunk_bits(),
                         index,
                     },
                 ),
-                C::UnsignedIncMsb => {
-                    self.materialize_unsigned_inc_one_hot(crate::witnesses::UnsignedIncLane::Msb)
-                }
+                C::BalancedIncCarry => self.materialize_balanced_inc_one_hot(
+                    crate::witnesses::BalancedIncLane::Carry {
+                        width: self.config.one_hot.committed_chunk_bits(),
+                    },
+                ),
                 C::TrustedAdviceBytes => self.materialize_trusted_advice_bytes(),
                 C::UntrustedAdviceBytes => self.materialize_untrusted_advice_bytes(),
                 C::BytecodeRegisterSelector { .. }

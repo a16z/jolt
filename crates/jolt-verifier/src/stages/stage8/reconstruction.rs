@@ -81,10 +81,12 @@ fn byte_decode_leg<F: Field>(
     bound: usize,
     fail: fn(&'static str) -> VerifierError,
 ) -> Result<F, VerifierError> {
-    if opening_point.len() < bound {
-        return Err(fail("cell point is below the (byte ‖ place) prefix"));
-    }
-    let (r_byte, r_place) = opening_point[..bound].split_at(BYTE_BITS);
+    let prefix = opening_point
+        .get(..bound)
+        .ok_or_else(|| fail("cell point is below the (byte ‖ place) prefix"))?;
+    let (r_byte, r_place) = prefix
+        .split_at_checked(BYTE_BITS)
+        .ok_or_else(|| fail("cell point prefix is shorter than the byte variables"))?;
     Ok(byte_decode_weight(r_byte, r_place))
 }
 
@@ -159,8 +161,13 @@ impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceReconstructionInstance<F> 
                 try_eq_mle(opening_point, r_reference).map_err(untrusted_public_failed)
             }
             UntrustedAdviceReconstructionPublic::EqPlaceWord => {
-                try_eq_mle(&opening_point[BYTE_BITS..], &r_reference[BYTE_BITS..])
-                    .map_err(untrusted_public_failed)
+                let place_word = opening_point.get(BYTE_BITS..).ok_or_else(|| {
+                    untrusted_public_failed("cell point is shorter than the byte variables")
+                })?;
+                let reference_place_word = r_reference.get(BYTE_BITS..).ok_or_else(|| {
+                    untrusted_public_failed("reference point is shorter than the byte variables")
+                })?;
+                try_eq_mle(place_word, reference_place_word).map_err(untrusted_public_failed)
             }
             UntrustedAdviceReconstructionPublic::ByteDecode => {
                 Ok(byte_decode_weight(r_byte, r_place))
@@ -241,6 +248,10 @@ pub struct BytecodeChunkReconstructionInstance<F: Field> {
 }
 
 impl<F: Field> BytecodeChunkReconstructionInstance<F> {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "lane layout constants satisfy lookup_start < raf_flag_idx, and the byte/log terms are small constants; nothing here can overflow usize"
+    )]
     fn own_vars(&self) -> BytecodeLegVars {
         BytecodeLegVars {
             total: SymbolicSumcheck::rounds(&self.symbolic),
@@ -261,15 +272,33 @@ struct BytecodeLegVars {
 }
 
 impl BytecodeLegVars {
+    /// The split index between a leg's missing high coordinates and its own
+    /// low-order tail of the bound vector.
+    fn missing_vars(&self, bound_len: usize, own: usize) -> Result<usize, VerifierError> {
+        self.total
+            .checked_sub(own)
+            .filter(|missing| *missing <= bound_len)
+            .ok_or_else(|| {
+                bytecode_public_failed("bound vector is shorter than the reconstruction leg")
+            })
+    }
+
     /// The leg's own point: the low-order `own` tail of the bound vector.
-    fn leg_point<'a, F>(&self, bound: &'a [F], own: usize) -> &'a [F] {
-        &bound[self.total - own..]
+    fn leg_point<'a, F>(&self, bound: &'a [F], own: usize) -> Result<&'a [F], VerifierError> {
+        let missing = self.missing_vars(bound.len(), own)?;
+        bound.get(missing..).ok_or_else(|| {
+            bytecode_public_failed("bound vector is shorter than the reconstruction leg")
+        })
     }
 
     /// The zero-pin factor of a leg's missing high coordinates:
     /// `eq(v_missing, 0) = Π (1 − v_i)`.
-    fn zero_pin<F: Field>(&self, bound: &[F], own: usize) -> F {
-        eq_index_msb(&bound[..self.total - own], 0)
+    fn zero_pin<F: Field>(&self, bound: &[F], own: usize) -> Result<F, VerifierError> {
+        let missing = self.missing_vars(bound.len(), own)?;
+        let missing_coordinates = bound.get(..missing).ok_or_else(|| {
+            bytecode_public_failed("bound vector is shorter than the reconstruction leg")
+        })?;
+        Ok(eq_index_msb(missing_coordinates, 0))
     }
 }
 
@@ -288,15 +317,21 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeChunkReconstructionInstance<F> {
         let vars = self.own_vars();
         let bound = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         let chunks = self.dimensions.chunks;
-        let leg = |own: usize| [vars.leg_point(&bound, own), self.r_row.as_slice()].concat();
+        let leg = |own: usize| -> Result<Vec<F>, VerifierError> {
+            Ok([vars.leg_point(&bound, own)?, self.r_row.as_slice()].concat())
+        };
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "chunks is the validated bytecode chunk count of an in-memory program and the lane multipliers are small constants; the products cannot overflow usize"
+        )]
         Ok(BytecodeChunkReconstructionOutputClaims {
-            register_selectors: vec![leg(vars.selector); chunks * BytecodeRegisterLane::ALL.len()],
+            register_selectors: vec![leg(vars.selector)?; chunks * BytecodeRegisterLane::ALL.len()],
             circuit_flags: vec![self.r_row.clone(); chunks * jolt_riscv::NUM_CIRCUIT_FLAGS],
             instruction_flags: vec![self.r_row.clone(); chunks * jolt_riscv::NUM_INSTRUCTION_FLAGS],
-            lookup_selectors: vec![leg(vars.lookup); chunks],
+            lookup_selectors: vec![leg(vars.lookup)?; chunks],
             raf_flags: vec![self.r_row.clone(); chunks],
-            pc_bytes: vec![leg(vars.pc); chunks],
-            imm_bytes: vec![leg(vars.imm); chunks],
+            pc_bytes: vec![leg(vars.pc)?; chunks],
+            imm_bytes: vec![leg(vars.imm)?; chunks],
         })
     }
 
@@ -339,34 +374,43 @@ impl<F: Field> ConcreteSumcheck<F> for BytecodeChunkReconstructionInstance<F> {
                 selector_block_weight(
                     &self.r_lane,
                     block_start,
-                    vars.leg_point(bound, vars.selector),
+                    vars.leg_point(bound, vars.selector)?,
                     register_count,
-                ) * vars.zero_pin(bound, vars.selector)
+                ) * vars.zero_pin(bound, vars.selector)?
             }
             BytecodeChunkReconstructionPublic::LaneWeight(lane) => {
-                eq_index_msb::<F>(&self.r_lane, *lane as u128) * vars.zero_pin(bound, 0)
+                eq_index_msb::<F>(&self.r_lane, crate::num::u128_from_usize(*lane))
+                    * vars.zero_pin(bound, 0)?
             }
             BytecodeChunkReconstructionPublic::LookupSelectorWeight => {
                 selector_block_weight(
                     &self.r_lane,
                     layout.lookup_start,
-                    vars.leg_point(bound, vars.lookup),
-                    layout.raf_flag_idx - layout.lookup_start,
-                ) * vars.zero_pin(bound, vars.lookup)
+                    vars.leg_point(bound, vars.lookup)?,
+                    // The lane layout satisfies lookup_start < raf_flag_idx by
+                    // construction, so the subtraction is exact.
+                    layout.raf_flag_idx.saturating_sub(layout.lookup_start),
+                ) * vars.zero_pin(bound, vars.lookup)?
             }
             BytecodeChunkReconstructionPublic::PcByteDecode => {
-                let leg = vars.leg_point(bound, vars.pc);
-                let (r_byte, r_place) = leg.split_at(BYTE_BITS);
-                eq_index_msb::<F>(&self.r_lane, layout.unexp_pc_idx as u128)
-                    * byte_decode_weight(r_byte, r_place)
-                    * vars.zero_pin(bound, vars.pc)
+                let leg = vars.leg_point(bound, vars.pc)?;
+                let (r_byte, r_place) = leg.split_at_checked(BYTE_BITS).ok_or_else(|| {
+                    bytecode_public_failed("pc leg is shorter than the byte variables")
+                })?;
+                eq_index_msb::<F>(
+                    &self.r_lane,
+                    crate::num::u128_from_usize(layout.unexp_pc_idx),
+                ) * byte_decode_weight(r_byte, r_place)
+                    * vars.zero_pin(bound, vars.pc)?
             }
             BytecodeChunkReconstructionPublic::ImmByteDecode => {
-                let leg = vars.leg_point(bound, vars.imm);
-                let (r_byte, r_place) = leg.split_at(BYTE_BITS);
-                eq_index_msb::<F>(&self.r_lane, layout.imm_idx as u128)
+                let leg = vars.leg_point(bound, vars.imm)?;
+                let (r_byte, r_place) = leg.split_at_checked(BYTE_BITS).ok_or_else(|| {
+                    bytecode_public_failed("imm leg is shorter than the byte variables")
+                })?;
+                eq_index_msb::<F>(&self.r_lane, crate::num::u128_from_usize(layout.imm_idx))
                     * byte_decode_weight(r_byte, r_place)
-                    * vars.zero_pin(bound, vars.imm)
+                    * vars.zero_pin(bound, vars.imm)?
             }
         })
     }

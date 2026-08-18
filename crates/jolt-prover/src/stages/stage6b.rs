@@ -170,9 +170,11 @@ where
     // `impl_stage_prover` invocation site (the promoted verifier helper's
     // canonical order, including the runtime booleanity-vs-bytecode point
     // dedup).
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,

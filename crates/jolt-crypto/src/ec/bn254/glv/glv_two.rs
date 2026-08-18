@@ -27,6 +27,10 @@ pub(crate) fn shamir_glv_mul_2d(
     for bit_idx in (0..max_bits).rev() {
         result = result.double();
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "i < 2 from enumerating fixed-size-2 arrays; signs is also [bool; 2]"
+        )]
         for (i, (coeff, &base)) in coeffs.iter().zip(bases.iter()).enumerate() {
             if coeff.get_bit(bit_idx) {
                 if signs[i] {
@@ -71,6 +75,10 @@ impl PrecomputedShamir2Table {
     }
 
     #[inline]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "point_mask and sign_mask are 2-bit values, so the index is < 16"
+    )]
     fn get(&self, point_mask: usize, sign_mask: usize) -> G1Projective {
         self.table[point_mask | (sign_mask << 2)]
     }
@@ -95,6 +103,10 @@ fn shamir_glv_mul_2d_precomputed(
         let mut point_mask = 0;
         let mut sign_mask = 0;
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "i < 2 from enumerating a fixed-size-2 array; signs is also [bool; 2]"
+        )]
         for (i, coeff) in coeffs.iter().enumerate() {
             if coeff.get_bit(bit_idx) {
                 point_mask |= 1 << i;

@@ -337,8 +337,8 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 if matches!(
                     id.polynomial_id(),
                     JoltPolynomialId::Committed(
-                        JoltCommittedPolynomial::UnsignedIncChunk(_)
-                            | JoltCommittedPolynomial::UnsignedIncMsb,
+                        JoltCommittedPolynomial::BalancedIncDigit(_)
+                            | JoltCommittedPolynomial::BalancedIncCarry,
                     )
                 ) && !opening_tables.contains_key(id)
                 {

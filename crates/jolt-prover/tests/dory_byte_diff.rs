@@ -18,6 +18,7 @@
 //! (`advice_consumer`, `committed_muldiv`, `address_major`,
 //! `advice_committed`) are whole-proof ratchets over the mode ×
 //! trace-order matrix, sharing the `support` scaffolding.
+//! `inline_sha3` adds a minimal inline-bearing whole-proof ratchet.
 //! `chunk_boundary` is the scale arm: a real 2^17-cycle trace, one power
 //! past the optimized backend's 2^16-row streaming chunk, proved both
 //! slice-backed and behind a re-emulating source (the forced chunk walk).
@@ -550,7 +551,6 @@ mod muldiv {
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = &public_io.memory_layout;
         let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
-
         let program_preprocessing = verifier_preprocessing
             .program
             .as_full_arc()
@@ -986,6 +986,15 @@ mod muldiv {
         // stage (its RAM kernels replace the naive grid materialization).
         assert_backend_matches_legacy(&JoltBackend::optimized());
 
+        // Invariant 8: reorder/defer via the rounds slot still matches legacy.
+        let mut chaos_backend = JoltBackend::reference();
+        chaos_backend.round_scheduler = Box::new(chaos_traversal::ChaosTraversal);
+        assert_backend_matches_legacy(&chaos_backend);
+        assert!(
+            chaos_traversal::rounds_driven() > 0,
+            "the rounds slot never reached prove_batch, so invariance was not exercised",
+        );
+
         // The full-proof ratchet: the top-level prove() runs the same stage
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.
@@ -1007,6 +1016,74 @@ mod muldiv {
             .expect("top-level prove");
             assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+        }
+
+        let chaos_proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &chaos_backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove under chaos traversal");
+        assert_eq!(
+            chaos_proof, legacy_proof,
+            "assembled proof diverged under a reordering traversal"
+        );
+        assert!(
+            chaos_traversal::rounds_driven() > 0,
+            "the rounds slot never reached prove_batch, so invariance was not exercised",
+        );
+    }
+
+    mod chaos_traversal {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use jolt_field::Fr;
+        use jolt_kernels::{BuildRoundScheduler, ProofSession};
+        use jolt_sumcheck::{MemberFinish, MemberRound, RoundScheduler, SumcheckError};
+
+        // Without this counter the ratchet passes vacuously via SequentialRounds.
+        static ROUNDS_DRIVEN: AtomicUsize = AtomicUsize::new(0);
+
+        pub fn rounds_driven() -> usize {
+            ROUNDS_DRIVEN.swap(0, Ordering::Relaxed)
+        }
+
+        struct ChaosRounds;
+
+        impl RoundScheduler<Fr> for ChaosRounds {
+            fn batch_prove_round(
+                &mut self,
+                work: &mut [MemberRound<'_, Fr>],
+            ) -> Result<(), SumcheckError<Fr>> {
+                let _ = ROUNDS_DRIVEN.fetch_add(1, Ordering::Relaxed);
+                work.reverse();
+                for item in work.iter_mut() {
+                    item.run()?;
+                }
+                Ok(())
+            }
+
+            fn batch_finish_rounds(
+                &mut self,
+                finishes: &mut [MemberFinish<'_, Fr>],
+            ) -> Result<(), SumcheckError<Fr>> {
+                for item in finishes.iter_mut().rev() {
+                    item.run()?;
+                }
+                Ok(())
+            }
+        }
+
+        pub struct ChaosTraversal;
+
+        impl BuildRoundScheduler<Fr> for ChaosTraversal {
+            fn build(&self, _session: &mut ProofSession) -> Box<dyn RoundScheduler<Fr>> {
+                Box::new(ChaosRounds)
+            }
         }
     }
 }
@@ -1757,6 +1834,122 @@ mod advice_committed {
                 Some(&trusted.converted),
             );
         }
+    }
+}
+
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
+#[expect(clippy::expect_used)]
+mod inline_sha3 {
+    // Anchor the Keccak inline registration into this test binary.
+    extern crate jolt_inlines_keccak256;
+
+    use std::sync::Arc;
+
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_program::execution::JoltProgram;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing};
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+    use jolt_prover_legacy::zkvm::RV64IMACProver;
+    use jolt_riscv::JoltInstructionKind;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
+
+    use super::support;
+
+    const KECCAK_ROTRI_ROWS: usize = 696;
+
+    #[test]
+    fn prover_matches_legacy_on_sha3_inline() {
+        let mut program = host::Program::new("sha3-guest");
+        let inputs = postcard::to_stdvec(&[5u8; 32]).expect("serialize input");
+
+        let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
+        let shared = JoltSharedPreprocessing::new(
+            guest.program,
+            guest.io_device.memory_layout.clone(),
+            support::MAX_PADDED_TRACE_LENGTH,
+        );
+        let legacy_preprocessing = LegacyProverPreprocessing::new(shared);
+        let legacy_prover = RV64IMACProver::gen_from_elf(
+            &legacy_preprocessing,
+            &guest.elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
+        let public_io = legacy_prover.program_io.clone();
+        let (legacy_proof, _) = legacy_prover.prove().expect("legacy prove");
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
+        let memory_layout = &public_io.memory_layout;
+        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        assert_eq!(
+            trace_output
+                .trace
+                .rows()
+                .iter()
+                .filter(|row| {
+                    row.instruction.instruction_kind == JoltInstructionKind::VirtualROTRI
+                })
+                .count(),
+            KECCAK_ROTRI_ROWS,
+            "one Keccak permutation must be expanded into the modular trace",
+        );
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full_arc()
+            .expect("full program preprocessing");
+        let config = support::derive_config_pinned(
+            &trace_output,
+            memory_layout,
+            &verifier_preprocessing,
+            TracePolynomialOrder::CycleMajor,
+            None,
+            &legacy_proof,
+            support::MAX_PADDED_TRACE_LENGTH,
+        );
+        let padded_output = support::pad_trace(trace_output, config.trace_length);
+        let witness = Arc::new(TraceBackend::new(
+            support::witness_config(&config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        ));
+        let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                support::MAX_PADDED_TRACE_LENGTH,
+            )),
+            committed_program: None,
+        };
+
+        let backend = JoltBackend::<Fr, DoryScheme>::optimized();
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                witness,
+                &public_io,
+            )
+            .expect("modular prove");
+        assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
+        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
     }
 }
 

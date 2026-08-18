@@ -4,14 +4,15 @@
 //! shape-only stand-ins the native openings take.
 
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-use jolt_claims::protocols::jolt::lattice::geometry::{word_byte_num_vars, WORD_BYTES};
+use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
 use jolt_claims::protocols::jolt::lattice::{
-    precommitted_packing, OneHotTraceLayoutPlan, PrecommittedPackingShape,
+    advice_bytes_packing_plan, precommitted_packing_plan, OneHotTraceLayoutPlan,
+    PrecommittedPackingShape, PrefixPackedObjectPlan,
 };
-use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltCommittedPolynomial};
+use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_field::{Field, FixedByteSize};
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
-use jolt_openings::{CommitmentScheme, OpeningsError, PrefixPacking, TransparentObjectSetup};
+use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::{
@@ -19,7 +20,7 @@ use jolt_riscv::{
     JoltInstructionRow, CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 use jolt_witness::witnesses::{
-    FusedInc, LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress, UnsignedIncLane,
+    BalancedIncLane, FusedInc, LookupIndex, MappedPc, RaChunkSelector, RemappedRamAddress,
 };
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
@@ -162,9 +163,49 @@ struct OneHotTraceSourceRow {
     fused_inc: FusedInc,
 }
 
-/// Builds the native `OneHotTrace` columns from the witness plane's typed
-/// per-cycle rows, in the plan's canonical column order. Every hot index fits
-/// the `u8` lane domain (`K` is at most 256).
+/// Digit-zero treatment of one `OneHotTrace` column
+/// (`specs/digit-zero-virtualization.md`): virtualized families omit their
+/// hot-row-zero cells from the committed polynomial (the reduction
+/// reconstructs them from the column activation), RAM commits every row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DigitZeroRow {
+    Committed,
+    Virtualized,
+}
+
+/// Scatters per-column hot rows into the single prefix-packed `OneHotTrace`
+/// polynomial: column `i` occupies selector slot `i`, unused capacity slots
+/// stay empty, and virtualized columns' row-zero cells are omitted. Mirrors
+/// the legacy prover's `pack_one_hot_columns` convention — the byte-diff
+/// suite pins the two together.
+fn pack_one_hot_columns(
+    k: usize,
+    slot_capacity: usize,
+    columns: Vec<(Vec<Option<u8>>, DigitZeroRow)>,
+) -> OneHotPolynomial {
+    assert!(slot_capacity.is_power_of_two());
+    assert!(!columns.is_empty() && columns.len() <= slot_capacity);
+    let rows = columns[0].0.len();
+    assert!(columns.iter().all(|(column, _)| column.len() == rows));
+
+    let mut indices = Vec::with_capacity(slot_capacity * rows);
+    for (column, digit_zero_row) in columns {
+        indices.extend(column.into_iter().map(|row| match row {
+            Some(0) if digit_zero_row == DigitZeroRow::Virtualized => None,
+            None => None,
+            Some(row) => {
+                assert!((row as usize) < k);
+                Some(row)
+            }
+        }));
+    }
+    indices.resize(slot_capacity * rows, None);
+    OneHotPolynomial::new(k, indices)
+}
+
+/// Builds the physical prefix-packed `OneHotTrace` polynomial from the
+/// witness plane's typed per-cycle rows, in the plan's canonical column
+/// order. Every hot index fits the `u8` lane domain (`K` is at most 256).
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
 pub fn assemble_one_hot_trace<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
@@ -172,7 +213,7 @@ pub fn assemble_one_hot_trace<F: Field>(
     ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
     log_t: usize,
-) -> Result<Vec<OneHotPolynomial>, ProverError<F>> {
+) -> Result<OneHotPolynomial, ProverError<F>> {
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, 1usize << log_t)?;
     let k = 1usize << log_k_chunk;
     let hot_u8 = |hot: usize| -> Result<u8, ProverError<F>> {
@@ -180,15 +221,16 @@ pub fn assemble_one_hot_trace<F: Field>(
             reason: "OneHotTrace K is at most the u8 lane domain",
         })
     };
-    let mut columns = Vec::with_capacity(plan.columns.len());
-    for polynomial in &plan.columns {
+    let mut columns = Vec::with_capacity(plan.packing().ids().len());
+    for polynomial in plan.packing().ids() {
         let mut indices: Vec<Option<u8>> = Vec::with_capacity(rows.len());
-        match polynomial {
+        let digit_zero_row = match polynomial {
             JoltCommittedPolynomial::InstructionRa(index) => {
                 let selector = RaChunkSelector::new(*index, ra_layout.instruction(), log_k_chunk)?;
                 for row in &rows {
                     indices.push(Some(hot_u8(selector.chunk_u128(row.lookup_index.0))?));
                 }
+                DigitZeroRow::Virtualized
             }
             JoltCommittedPolynomial::BytecodeRa(index) => {
                 let selector = RaChunkSelector::new(*index, ra_layout.bytecode(), log_k_chunk)?;
@@ -198,6 +240,7 @@ pub fn assemble_one_hot_trace<F: Field>(
                     })?;
                     indices.push(Some(hot_u8(selector.chunk_usize(pc))?));
                 }
+                DigitZeroRow::Virtualized
             }
             JoltCommittedPolynomial::RamRa(index) => {
                 let selector = RaChunkSelector::new(*index, ra_layout.ram(), log_k_chunk)?;
@@ -207,36 +250,46 @@ pub fn assemble_one_hot_trace<F: Field>(
                         None => None,
                     });
                 }
+                DigitZeroRow::Committed
             }
-            JoltCommittedPolynomial::UnsignedIncChunk(index) => {
-                let lane = UnsignedIncLane::Chunk {
+            JoltCommittedPolynomial::BalancedIncDigit(index) => {
+                let lane = BalancedIncLane::Digit {
                     width: log_k_chunk,
                     index: *index,
                 };
                 for row in &rows {
                     indices.push(Some(hot_u8(row.fused_inc.hot_lane(lane))?));
                 }
+                DigitZeroRow::Virtualized
             }
-            JoltCommittedPolynomial::UnsignedIncMsb => {
+            JoltCommittedPolynomial::BalancedIncCarry => {
+                let lane = BalancedIncLane::Carry { width: log_k_chunk };
                 for row in &rows {
-                    indices.push(Some(hot_u8(row.fused_inc.hot_lane(UnsignedIncLane::Msb))?));
+                    indices.push(Some(hot_u8(row.fused_inc.hot_lane(lane))?));
                 }
+                DigitZeroRow::Virtualized
             }
             _ => {
                 return Err(ProverError::InvariantViolation {
                     reason: "OneHotTrace plan contains only canonical columns",
                 })
             }
-        }
-        columns.push(OneHotPolynomial::new(k, indices));
+        };
+        columns.push((indices, digit_zero_row));
     }
-    Ok(columns)
+    Ok(pack_one_hot_columns(
+        k,
+        plan.packing().slot_capacity(),
+        columns,
+    ))
 }
 
 /// A packed advice commitment object (`UntrustedAdviceOneHot` per proof,
-/// `TrustedAdviceOneHot` precommitted): the byte one-hot column and its
-/// commitment data over the transparent per-object setup.
+/// `TrustedAdviceOneHot` precommitted): the byte one-hot column, its
+/// canonical object plan, and its commitment data over the transparent
+/// per-object setup.
 pub struct AdviceOneHot<PCS: CommitmentScheme> {
+    pub plan: PrefixPackedObjectPlan,
     pub byte_column: SparseUnitPolynomial<PCS::Field>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
@@ -247,10 +300,11 @@ pub struct AdviceOneHot<PCS: CommitmentScheme> {
 /// Builds a packed advice byte commitment object from raw advice bytes: per
 /// `(place ‖ word)` row the hot value is the advice byte, zero-padded past
 /// the actual advice length — the same zero padding the base word polynomial
-/// carries. The setup is derived from the public advice shape with the same
-/// fixed seed on both sides (the setup is transparent).
+/// carries. The setup is derived from the public advice shape, seeded by the
+/// plan's layout digest, so both sides re-derive it byte-identically.
 #[tracing::instrument(skip_all, name = "commit_advice_one_hot")]
 pub fn commit_advice_one_hot<PCS>(
+    kind: JoltAdviceKind,
     advice_bytes: &[u8],
     max_advice_bytes: usize,
 ) -> Result<AdviceOneHot<PCS>, ProverError<PCS::Field>>
@@ -262,9 +316,10 @@ where
             reason: "advice bytes exceed the configured maximum advice size",
         });
     }
-    let words = (max_advice_bytes / 8).next_power_of_two().max(1);
-    let word_vars = words.ilog2() as usize;
-    let cell_vars = word_byte_num_vars(word_vars);
+    let words = max_advice_bytes / 8;
+    let word_vars = words.next_power_of_two().max(1).ilog2() as usize;
+    let plan = advice_bytes_packing_plan(kind, word_vars).map_err(commit_failed)?;
+    let cell_vars = plan.packing().packed_num_vars();
     let limb_bits = WORD_BYTES.ilog2() as usize;
     let mut one_positions = Vec::with_capacity(WORD_BYTES * words);
     for limb in 0..WORD_BYTES {
@@ -278,9 +333,10 @@ where
     }
     let byte_column = SparseUnitPolynomial::new(cell_vars, one_positions);
     let (setup, _verifier_setup) =
-        PCS::transparent_object_setup(cell_vars).map_err(commit_failed)?;
+        PCS::transparent_object_setup(cell_vars, plan.layout_digest()).map_err(commit_failed)?;
     let (commitment, hint) = PCS::commit(&byte_column, &setup).map_err(commit_failed)?;
     Ok(AdviceOneHot {
+        plan,
         byte_column,
         commitment,
         hint,
@@ -289,7 +345,7 @@ where
     })
 }
 
-fn commit_failed<F: Field>(error: OpeningsError) -> ProverError<F> {
+fn commit_failed<F: Field>(error: impl ToString) -> ProverError<F> {
     ProverError::Verifier(
         jolt_verifier::VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
@@ -297,21 +353,29 @@ fn commit_failed<F: Field>(error: OpeningsError) -> ProverError<F> {
     )
 }
 
-/// The precommitted `ProgramOneHot` commitment object (committed-program
-/// mode): the packed sub-column witness (bytecode lanes + program image), its
-/// commitment/hint, the shape-exact transparent setup, and the packing shape.
-pub struct ProgramOneHot<PCS: CommitmentScheme> {
-    pub shape: PrecommittedPackingShape,
+/// One precommitted `ProgramOneHot` commitment object: the object's packed
+/// sub-column witness, its commitment/hint, the shape-exact transparent
+/// setup, and its canonical plan.
+pub struct ProgramOneHotObject<PCS: CommitmentScheme> {
+    pub plan: PrefixPackedObjectPlan,
     pub witness: SparseUnitPolynomial<PCS::Field>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub setup: PCS::ProverSetup,
 }
 
-/// Assembles and commits `ProgramOneHot` from the full (public) program:
-/// every bytecode sub-column plus the program image, packed per the canonical
-/// `precommitted_packing`. The imm lane uses the field's canonical byte
-/// width, so negative immediates (`p − |imm|`) reconstruct exactly.
+/// The precommitted `ProgramOneHot` commitment objects (committed-program
+/// mode) in canonical order: the bytecode-lane object, then the program-image
+/// object.
+pub struct ProgramOneHot<PCS: CommitmentScheme> {
+    pub objects: Vec<ProgramOneHotObject<PCS>>,
+}
+
+/// Assembles and commits the `ProgramOneHot` objects from the full (public)
+/// program: every bytecode sub-column, and the program image as its own
+/// object, packed per the canonical `precommitted_packing_plan`. The imm
+/// lane uses the field's canonical byte width, so negative immediates
+/// (`p − |imm|`) reconstruct exactly.
 #[tracing::instrument(skip_all, name = "commit_program_one_hot")]
 pub fn commit_program_one_hot<PCS>(
     program: &JoltProgramPreprocessing,
@@ -341,31 +405,35 @@ where
         imm_byte_width,
         program_image_log_words: Some(image_words.len().ilog2() as usize),
     };
-    let packing = precommitted_packing(&shape).map_err(|error| {
-        ProverError::Verifier(
-            jolt_verifier::VerifierError::FinalOpeningVerificationFailed {
-                reason: error.to_string(),
-            },
-        )
-    })?;
-    let one_positions = assemble_precommitted_witness::<PCS::Field>(
-        &packing,
-        &program.bytecode.bytecode,
-        log_bytecode_rows,
-        imm_byte_width,
-        Some(&image_words),
-    )?;
-    let witness = SparseUnitPolynomial::new(packing.packed_num_vars, one_positions);
-    let (setup, _verifier_setup) =
-        PCS::transparent_object_setup(packing.packed_num_vars).map_err(commit_failed)?;
-    let (commitment, hint) = PCS::commit(&witness, &setup).map_err(commit_failed)?;
-    Ok(ProgramOneHot {
-        shape,
-        witness,
-        commitment,
-        hint,
-        setup,
-    })
+    let plan = precommitted_packing_plan(&shape).map_err(commit_failed)?;
+    let objects = plan
+        .objects()
+        .map(|object_plan| {
+            let one_positions = assemble_precommitted_witness::<PCS::Field>(
+                object_plan,
+                &program.bytecode.bytecode,
+                log_bytecode_rows,
+                imm_byte_width,
+                Some(&image_words),
+            )?;
+            let witness =
+                SparseUnitPolynomial::new(object_plan.packing().packed_num_vars(), one_positions);
+            let (setup, _verifier_setup) = PCS::transparent_object_setup(
+                object_plan.packing().packed_num_vars(),
+                object_plan.layout_digest(),
+            )
+            .map_err(commit_failed)?;
+            let (commitment, hint) = PCS::commit(&witness, &setup).map_err(commit_failed)?;
+            Ok(ProgramOneHotObject {
+                plan: object_plan.clone(),
+                witness,
+                commitment,
+                hint,
+                setup,
+            })
+        })
+        .collect::<Result<Vec<_>, ProverError<PCS::Field>>>()?;
+    Ok(ProgramOneHot { objects })
 }
 
 /// The padded program-image words: the RAM preprocessing's bytecode words,
@@ -406,14 +474,14 @@ const _: () = {
     }
 };
 
-/// Scatters the precommitted `ProgramOneHot` sub-columns (per-chunk bytecode
-/// lanes and the program image) into one-positions of the packed precommitted
-/// witness, per the canonical `precommitted_packing` slots. Row domain per
-/// chunk is `2^log_bytecode_rows` (bytecode rows, zero-padded); byte one-hot
-/// columns encode padding as hot-lane-0 hot (never all-zero), the
-/// selector/flag columns leave padding rows empty.
+/// Scatters one precommitted `ProgramOneHot` object's sub-columns (per-chunk
+/// bytecode lanes, or the program image) into one-positions of its packed
+/// witness, per the object plan's canonical slots. Row domain per chunk is
+/// `2^log_bytecode_rows` (bytecode rows, zero-padded); byte one-hot columns
+/// encode padding as hot-lane-0 hot (never all-zero), the selector/flag
+/// columns leave padding rows empty.
 pub fn assemble_precommitted_witness<F: Field>(
-    packing: &PrefixPacking<JoltCommittedPolynomial>,
+    plan: &PrefixPackedObjectPlan,
     instructions: &[JoltInstructionRow],
     log_bytecode_rows: usize,
     imm_byte_width: usize,
@@ -438,7 +506,15 @@ pub fn assemble_precommitted_witness<F: Field>(
     };
 
     let mut one_positions = Vec::new();
-    for (column, slot) in packing {
+    for column in plan.packing().ids() {
+        let mut push = |local: usize| -> Result<(), ProverError<F>> {
+            one_positions.push(
+                plan.packing()
+                    .packed_index(column, local)
+                    .map_err(commit_failed)?,
+            );
+            Ok(())
+        };
         match column {
             JoltCommittedPolynomial::BytecodeRegisterSelector { chunk, lane } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
@@ -448,23 +524,21 @@ pub fn assemble_precommitted_witness<F: Field>(
                         BytecodeRegisterLane::Rd => instruction.operands.rd,
                     };
                     if let Some(register) = register {
-                        one_positions.push(
-                            slot.packed_index(((register as usize) << log_bytecode_rows) | row),
-                        );
+                        push(((register as usize) << log_bytecode_rows) | row)?;
                     }
                 }
             }
             JoltCommittedPolynomial::BytecodeCircuitFlag { chunk, flag } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if decode_row(instruction).circuit_flags()[CIRCUIT_FLAGS[*flag]] {
-                        one_positions.push(slot.packed_index(row));
+                        push(row)?;
                     }
                 }
             }
             JoltCommittedPolynomial::BytecodeInstructionFlag { chunk, flag } => {
                 for (row, instruction) in chunk_rows(*chunk).iter().enumerate() {
                     if decode_row(instruction).instruction_flags()[INSTRUCTION_FLAG_ORDER[*flag]] {
-                        one_positions.push(slot.packed_index(row));
+                        push(row)?;
                     }
                 }
             }
@@ -473,8 +547,7 @@ pub fn assemble_precommitted_witness<F: Field>(
                     if let Some(table) =
                         InstructionLookupTable::<XLEN>::lookup_table(&decode_row(instruction))
                     {
-                        one_positions
-                            .push(slot.packed_index((table.index() << log_bytecode_rows) | row));
+                        push((table.index() << log_bytecode_rows) | row)?;
                     }
                 }
             }
@@ -484,7 +557,7 @@ pub fn assemble_precommitted_witness<F: Field>(
                         .circuit_flags()
                         .is_interleaved_operands()
                     {
-                        one_positions.push(slot.packed_index(row));
+                        push(row)?;
                     }
                 }
             }
@@ -496,9 +569,7 @@ pub fn assemble_precommitted_witness<F: Field>(
                         let byte = instructions.get(row).map_or(0, |instruction| {
                             ((instruction.address as u64) >> (8 * limb)) as u8
                         }) as usize;
-                        one_positions.push(slot.packed_index(
-                            (((byte << limb_bits) | limb) << log_bytecode_rows) | row,
-                        ));
+                        push((((byte << limb_bits) | limb) << log_bytecode_rows) | row)?;
                     }
                 }
             }
@@ -510,10 +581,10 @@ pub fn assemble_precommitted_witness<F: Field>(
                         None => vec![0u8; imm_byte_width],
                     };
                     for (limb, byte) in bytes.into_iter().enumerate() {
-                        one_positions.push(slot.packed_index(
+                        push(
                             ((((byte as usize) << imm_limb_bits) | limb) << log_bytecode_rows)
                                 | row,
-                        ));
+                        )?;
                     }
                 }
             }
@@ -522,7 +593,13 @@ pub fn assemble_precommitted_witness<F: Field>(
                     reason: "program image words missing for ProgramOneHot",
                 })?;
                 let limb_bits = WORD_BYTES.ilog2() as usize;
-                let word_vars = slot.num_vars - 8 - limb_bits;
+                let word_vars =
+                    plan.logical_num_vars(*column)
+                        .ok_or(ProverError::InvariantViolation {
+                            reason: "the object plan carries no ProgramImageBytes arity",
+                        })?
+                        - 8
+                        - limb_bits;
                 debug_assert!(words.len() <= 1 << word_vars);
                 for limb in 0..WORD_BYTES {
                     for word_index in 0..(1usize << word_vars) {
@@ -530,9 +607,7 @@ pub fn assemble_precommitted_witness<F: Field>(
                             .get(word_index)
                             .map_or(0, |word| (word >> (8 * limb)) as u8)
                             as usize;
-                        one_positions.push(slot.packed_index(
-                            (((byte << limb_bits) | limb) << word_vars) | word_index,
-                        ));
+                        push((((byte << limb_bits) | limb) << word_vars) | word_index)?;
                     }
                 }
             }

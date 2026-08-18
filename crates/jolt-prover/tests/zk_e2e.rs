@@ -308,17 +308,21 @@ mod support {
     reason = "integration tests should fail loudly"
 )]
 mod zk {
+    // Anchor the Keccak inline registration into this test binary.
+    extern crate jolt_inlines_keccak256;
+
     use std::sync::Arc;
 
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, TraceRow};
     use jolt_prover::{CommittedProgramProverData, JoltBackend, JoltProverPreprocessing};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+    use jolt_riscv::JoltInstructionKind;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::preprocessing::ProgramPreprocessing;
     use jolt_verifier::proof::JoltProofClaims;
@@ -326,15 +330,19 @@ mod zk {
 
     use super::support;
 
-    fn prove_muldiv_zk(
+    const KECCAK_ROTRI_ROWS: usize = 696;
+
+    fn prove_guest_zk(
+        guest_name: &str,
+        inputs: Vec<u8>,
         backend: JoltBackend<Fr, DoryScheme>,
+        inspect_trace: impl FnOnce(&[TraceRow]),
     ) -> (
         support::VerifierPreprocessing,
         common::jolt_device::JoltDevice,
         support::Proof,
     ) {
-        let mut program = host::Program::new("muldiv-guest");
-        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
+        let mut program = host::Program::new(guest_name);
 
         // Legacy host preprocessing carries the program metadata and — under
         // the zk feature — the BlindFold vector-commitment setup.
@@ -356,6 +364,7 @@ mod zk {
         let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
         let memory_layout = io_device.memory_layout.clone();
         let trace_output = support::trace_modular(&jolt_program, &memory_layout, &inputs, &[], &[]);
+        inspect_trace(trace_output.trace.rows());
         let public_io = trace_output.device.clone();
         let program_preprocessing = verifier_preprocessing
             .program
@@ -386,6 +395,21 @@ mod zk {
         (prover_preprocessing.verifier, public_io, proof)
     }
 
+    fn prove_muldiv_zk(
+        backend: JoltBackend<Fr, DoryScheme>,
+    ) -> (
+        support::VerifierPreprocessing,
+        common::jolt_device::JoltDevice,
+        support::Proof,
+    ) {
+        prove_guest_zk(
+            "muldiv-guest",
+            postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
+            backend,
+            |_| {},
+        )
+    }
+
     #[test]
     fn zk_muldiv_modular_proof_is_accepted() {
         support::with_zk_stack(|| {
@@ -411,6 +435,33 @@ mod zk {
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             support::verify_modular(&preprocessing, &public_io, &proof, None)
                 .expect("optimized-backend ZK proof must verify");
+        });
+    }
+
+    #[test]
+    fn zk_sha3_inline_modular_proof_is_accepted() {
+        support::with_zk_stack(|| {
+            let inputs = postcard::to_stdvec(&[5u8; 32]).expect("serialize input");
+            let (preprocessing, public_io, proof) = prove_guest_zk(
+                "sha3-guest",
+                inputs,
+                JoltBackend::<Fr, DoryScheme>::optimized(),
+                |rows| {
+                    assert_eq!(
+                        rows.iter()
+                            .filter(|row| {
+                                row.instruction.instruction_kind
+                                    == JoltInstructionKind::VirtualROTRI
+                            })
+                            .count(),
+                        KECCAK_ROTRI_ROWS,
+                        "one Keccak permutation must be expanded into the modular trace",
+                    );
+                },
+            );
+            assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
+            support::verify_modular(&preprocessing, &public_io, &proof, None)
+                .expect("modular SHA3 ZK proof must verify");
         });
     }
 

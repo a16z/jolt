@@ -97,6 +97,10 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         input_points: &RamRaClaimReductionInputClaims<Vec<F>>,
     ) -> Result<RamRaClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         let log_t = self.trace_dimensions.log_t();
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "ram_log_k and log_t are ilog2 results (< 64); the sum cannot overflow usize"
+        )]
         let expected_len = self.ram_log_k + log_t;
         for (label, point) in [
             ("RAF", input_points.raf()),
@@ -110,9 +114,14 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
                 )));
             }
         }
-        let address = &input_points.read_write()[..self.ram_log_k];
-        if &input_points.raf()[..self.ram_log_k] != address
-            || &input_points.val_check()[..self.ram_log_k] != address
+        let address = input_points
+            .read_write()
+            .get(..self.ram_log_k)
+            .ok_or_else(|| {
+                public_input_failed("RAM read-write opening point address prefix is out of range")
+            })?;
+        if input_points.raf().get(..self.ram_log_k) != Some(address)
+            || input_points.val_check().get(..self.ram_log_k) != Some(address)
         {
             return Err(public_input_failed(
                 "RAM input openings disagree on the address prefix",
@@ -138,16 +147,24 @@ impl<F: Field> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         let JoltDerivedId::RamRaClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: *id });
         };
-        let output_cycle = &output_points.ram_ra()[self.ram_log_k..];
+        let output_cycle = output_points
+            .ram_ra()
+            .get(self.ram_log_k..)
+            .ok_or_else(|| {
+                public_input_failed("RAM RA opening point is shorter than the address width")
+            })?;
         let fixed_cycle = match public_id {
-            RamRaClaimReductionPublic::EqCycleRaf => &input_points.raf()[self.ram_log_k..],
+            RamRaClaimReductionPublic::EqCycleRaf => input_points.raf().get(self.ram_log_k..),
             RamRaClaimReductionPublic::EqCycleReadWrite => {
-                &input_points.read_write()[self.ram_log_k..]
+                input_points.read_write().get(self.ram_log_k..)
             }
             RamRaClaimReductionPublic::EqCycleValCheck => {
-                &input_points.val_check()[self.ram_log_k..]
+                input_points.val_check().get(self.ram_log_k..)
             }
-        };
+        }
+        .ok_or_else(|| {
+            public_input_failed("RAM input opening point is shorter than the address width")
+        })?;
         try_eq_mle(fixed_cycle, output_cycle).map_err(public_input_failed)
     }
 }

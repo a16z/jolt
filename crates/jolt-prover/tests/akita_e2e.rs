@@ -289,17 +289,17 @@ mod muldiv {
             verify(&tamper(&|claims| claims
                 .stage7
                 .hamming_weight_claim_reduction
-                .unsigned_inc_chunks[0] += one))
+                .balanced_inc_digits[0] += one))
             .is_err(),
-            "tampered unsigned-inc chunk final must be rejected"
+            "tampered balanced-inc digit final must be rejected"
         );
         assert!(
             verify(&tamper(&|claims| claims
                 .stage7
                 .hamming_weight_claim_reduction
-                .unsigned_inc_msb += one))
+                .balanced_inc_carry += one))
             .is_err(),
-            "tampered unsigned-inc msb final must be rejected"
+            "tampered balanced-inc carry final must be rejected"
         );
     }
 
@@ -510,15 +510,9 @@ mod advice {
         .expect("packed prover should produce a verifier-native proof");
         assert!(proof.untrusted_advice_commitment.is_some());
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // OneHotTrace is discharged by its native same-point batch. The two
-        // advice commitment objects remain in the auxiliary packed opening.
-        let auxiliary = proof
-            .joint_opening_proof
-            .auxiliary
-            .as_ref()
-            .expect("advice requires an auxiliary opening");
-        assert_eq!(auxiliary.openings.len(), 2);
-        assert_eq!(auxiliary.evaluations.len(), 2);
+        // OneHotTrace is discharged by its native packed opening. The two
+        // advice commitment objects each carry their own auxiliary opening.
+        assert_eq!(proof.joint_opening_proof.auxiliary.len(), 2);
 
         let verify = |proof: &AkitaJoltProof| {
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
@@ -530,23 +524,16 @@ mod advice {
         };
         verify(&proof).expect("packed verifier should accept the packed proof");
 
-        // Per-object tampers: a mutated claimed evaluation breaks that
-        // object's native opening; a dropped reconstruction proof breaks the
-        // fail-closed presence rule. The two advice objects hold the last two
-        // per-object evaluations.
-        for object in 0..2 {
-            let mut tampered = proof.clone();
-            tampered
-                .joint_opening_proof
-                .auxiliary
-                .as_mut()
-                .expect("advice requires an auxiliary opening")
-                .evaluations[object] += AkitaField::from_u64(1);
-            assert!(
-                verify(&tampered).is_err(),
-                "tampered object-{object} evaluation must be rejected"
-            );
-        }
+        // Per-object tampers: each auxiliary proof is bound to its own
+        // object's reduced claim and setup, so swapping the two advice
+        // objects' proofs breaks both native openings; a dropped
+        // reconstruction proof breaks the fail-closed presence rule.
+        let mut tampered = proof.clone();
+        tampered.joint_opening_proof.auxiliary.swap(0, 1);
+        assert!(
+            verify(&tampered).is_err(),
+            "swapped auxiliary opening proofs must be rejected"
+        );
         let mut tampered = proof.clone();
         tampered.stages.reconstruction_sumcheck_proof = None;
         assert!(
@@ -554,7 +541,7 @@ mod advice {
             "a dropped reconstruction proof must be rejected"
         );
         let mut tampered = proof.clone();
-        tampered.joint_opening_proof.auxiliary = None;
+        tampered.joint_opening_proof.auxiliary.clear();
         assert!(
             verify(&tampered).is_err(),
             "a dropped auxiliary opening proof must be rejected"
@@ -724,11 +711,15 @@ mod committed {
             legacy_prover.one_hot_trace_setup_params(),
         )
         .expect("the transparent packed setup must derive");
-        let program_one_hot_commitment = program_one_hot.commitment.clone();
+        let program_one_hot_commitments: Vec<_> = program_one_hot
+            .objects
+            .iter()
+            .map(|object| object.commitment.clone())
+            .collect();
         let verifier_preprocessing = akita_verifier_preprocessing(
             &legacy_preprocessing,
             verifier_setup,
-            Some(program_one_hot_commitment.clone()),
+            Some(&program_one_hot),
         );
 
         // --- Modular side. The full program is rebuilt from the legacy
@@ -766,21 +757,19 @@ mod committed {
             &prover_preprocessing,
             &config,
             None,
-            Some(&program_one_hot_commitment),
+            Some(&program_one_hot_commitments),
             &witness,
             &public_io,
         )
         .expect("packed prover should produce a verifier-native proof");
         assert!(proof.stages.reconstruction_sumcheck_proof.is_some());
-        // OneHotTrace is discharged by its native same-point batch;
-        // ProgramOneHot is the only auxiliary packed object.
-        let auxiliary = proof
-            .joint_opening_proof
-            .auxiliary
-            .as_ref()
-            .expect("committed-program mode requires an auxiliary opening");
-        assert_eq!(auxiliary.openings.len(), 1);
-        assert_eq!(auxiliary.evaluations.len(), 1);
+        // OneHotTrace is discharged by its native packed opening; the
+        // ProgramOneHot objects (bytecode, then image) are the auxiliary
+        // packed objects.
+        assert_eq!(
+            proof.joint_opening_proof.auxiliary.len(),
+            program_one_hot.objects.len()
+        );
 
         let verify = |proof: &AkitaJoltProof| {
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
@@ -792,19 +781,14 @@ mod committed {
         };
         verify(&proof).expect("packed verifier should accept the committed packed proof");
 
-        // Tampers: the ProgramOneHot claimed evaluation (last object) breaks
-        // its native opening; a mutated reconstruction wire breaks the
-        // batched output check.
+        // Tampers: a dropped ProgramOneHot object proof breaks the
+        // fail-closed object-count rule; a mutated reconstruction wire
+        // breaks the batched output check.
         let mut tampered = proof.clone();
-        tampered
-            .joint_opening_proof
-            .auxiliary
-            .as_mut()
-            .expect("committed-program mode requires an auxiliary opening")
-            .evaluations[0] += AkitaField::from_u64(1);
+        let _ = tampered.joint_opening_proof.auxiliary.pop();
         assert!(
             verify(&tampered).is_err(),
-            "tampered ProgramOneHot evaluation must be rejected"
+            "a dropped ProgramOneHot opening proof must be rejected"
         );
         let mut tampered = proof.clone();
         let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
