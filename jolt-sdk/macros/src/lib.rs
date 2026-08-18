@@ -1347,27 +1347,6 @@ impl MacroBuilder {
     fn make_wasm_function(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let verify_wasm_fn_name = Ident::new(&format!("verify_{fn_name}"), fn_name.span());
-        let has_trusted_advice = !self.trusted_func_args.is_empty();
-        let trusted_advice_parameter = has_trusted_advice.then(|| {
-            quote! {
-                , trusted_advice_commitment_bytes: &[u8]
-            }
-        });
-        let deserialize_trusted_advice = has_trusted_advice.then(|| {
-            quote! {
-                let trusted_advice_commitment:
-                    Option<jolt::VerifierTrustedAdviceCommitment> =
-                    match jolt::deserialize_verifier_object(trusted_advice_commitment_bytes) {
-                        Ok(commitment) => commitment,
-                        Err(_) => return false,
-                    };
-            }
-        });
-        let trusted_advice_argument = if has_trusted_advice {
-            quote! { trusted_advice_commitment.as_ref() }
-        } else {
-            quote! { None }
-        };
 
         quote! {
             #[cfg(all(target_arch = "wasm32", not(feature = "guest")))]
@@ -1375,8 +1354,8 @@ impl MacroBuilder {
             pub fn #verify_wasm_fn_name(
                 preprocessing_data: &[u8],
                 proof_bytes: &[u8],
-                io_bytes: &[u8]
-                #trusted_advice_parameter
+                io_bytes: &[u8],
+                trusted_advice_commitment_bytes: &[u8],
             ) -> bool {
                 let preprocessing: jolt::JoltVerifierPreprocessing =
                     match jolt::deserialize_verifier_object(preprocessing_data) {
@@ -1393,7 +1372,16 @@ impl MacroBuilder {
                     Ok(io_device) => io_device,
                     Err(_) => return false,
                 };
-                #deserialize_trusted_advice
+                let trusted_advice_commitment:
+                    Option<jolt::VerifierTrustedAdviceCommitment> =
+                    if trusted_advice_commitment_bytes.is_empty() {
+                        None
+                    } else {
+                        match jolt::deserialize_verifier_object(trusted_advice_commitment_bytes) {
+                            Ok(commitment) => commitment,
+                            Err(_) => return false,
+                        }
+                    };
 
                 jolt::jolt_verifier::verify::<
                     jolt::VerifierField,
@@ -1404,7 +1392,7 @@ impl MacroBuilder {
                     &preprocessing,
                     &io_device,
                     &proof,
-                    #trusted_advice_argument,
+                    trusted_advice_commitment.as_ref(),
                 ).is_ok()
             }
         }
@@ -1547,22 +1535,6 @@ mod tests {
 
         assert!(generated.contains("wasm_bindgen :: prelude :: wasm_bindgen"));
         assert!(generated.contains("jolt :: deserialize_verifier_object"));
-        assert!(!generated.contains("trusted_advice_commitment_bytes"));
-        assert!(generated.contains("& proof , None"));
-    }
-
-    #[test]
-    fn wasm_verifier_deserializes_trusted_advice_commitment() {
-        let builder = wasm_builder(syn::parse_quote! {
-            fn example(input: jolt::TrustedAdvice<u32>) -> u32 {
-                *input
-            }
-        });
-
-        let generated = builder.make_wasm_function();
-        syn::parse2::<syn::File>(generated.clone()).expect("generated WASM verifier must parse");
-        let generated = generated.to_string();
-
         assert!(generated.contains("trusted_advice_commitment_bytes"));
         assert!(generated.contains("Option < jolt :: VerifierTrustedAdviceCommitment >"));
         assert!(generated.contains("trusted_advice_commitment . as_ref ()"));

@@ -151,11 +151,8 @@ log.workspace = true
 env_logger.workspace = true
 zeroos-build.workspace = true
 
-ark-bn254.workspace = true
-
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-prover-legacy = { workspace = true, features = ["default"] }
-common = { workspace = true, features = ["std"] }
 
 [profile.test]
 opt-level = 3
