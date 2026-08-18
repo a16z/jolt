@@ -55,6 +55,38 @@ pub trait FieldInlineRegisterReadWriteRows<F: Field> {
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
 }
 
+/// The object-safe field-inline witness surface a prover reads off the
+/// witness plane: shapes and dense tables over the field-inline id
+/// vocabulary, the committed-order tail, and (via the supertrait) the
+/// register replay rows the read-write kernels fold. Deliberately minimal —
+/// later units extend it as the FR kernels land.
+pub trait FieldInlineWitnessOracle<F: Field>:
+    FieldInlineRegisterReadWriteRows<F> + Send + Sync
+{
+    fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError>;
+
+    /// Materializes the oracle's dense field-element evaluations, row-major
+    /// over the domain declared by [`shape`](Self::shape).
+    fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError>;
+
+    /// The proof-payload order of the field-inline committed polynomials.
+    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial>;
+}
+
+impl<F: Field> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness {
+    fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError> {
+        TraceBackedFieldInlineWitness::shape(self, id)
+    }
+
+    fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError> {
+        TraceBackedFieldInlineWitness::oracle_table::<F>(self, id)
+    }
+
+    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
+        TraceBackedFieldInlineWitness::committed_order(self)
+    }
+}
+
 pub struct TraceBackedFieldInlineWitness {
     log_t: usize,
     program: Arc<JoltProgram>,
