@@ -100,6 +100,20 @@ where
         commit_streaming(source, ids, grid, setup, superchunk_cycles())
     }
 
+    #[cfg(feature = "field-inline")]
+    fn commit_field_inline_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn JoltWitnessPlane<F>,
+        ids: &[jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<crate::commitment::FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+        // One dense trace-domain column today; the reference pass is already
+        // the right shape, and sharing it keeps the tiers byte-identical.
+        ReferenceBackend.commit_field_inline_witness(session, source, ids, grid, setup)
+    }
+
     fn commit_advice(
         &self,
         session: &mut ProofSession,

@@ -20,6 +20,10 @@
 //! commits run, full matrix height included (its trailing identity rows are
 //! part of the wire hint).
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{
+    FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
+};
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltPolynomialId, TracePolynomialOrder,
 };
@@ -29,6 +33,8 @@ use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, StreamConsumer};
 
+#[cfg(feature = "field-inline")]
+use crate::commitment::FieldInlineWitnessCommitment;
 use crate::commitment::{
     finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
     CommittedColumnsWitness, ModeStreamingCommitment, WitnessCommitment,
@@ -98,6 +104,19 @@ where
     }
 
     // Instrumented at the stage-0 call boundary, like `commit_witness`.
+    #[cfg(feature = "field-inline")]
+    fn commit_field_inline_witness(
+        &self,
+        _session: &mut ProofSession,
+        source: &dyn JoltWitnessPlane<F>,
+        ids: &[FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+        commit_field_inline_columns::<F, PCS>(source, ids, grid, setup)
+    }
+
+    // Instrumented at the stage-0 call boundary, like `commit_witness`.
     fn commit_advice(
         &self,
         _session: &mut ProofSession,
@@ -133,6 +152,11 @@ pub(crate) enum ColumnKind {
     InstructionRa(RaChunkSelector),
     BytecodeRa(RaChunkSelector),
     RamRa(RaChunkSelector),
+    /// Dense over the trace domain like the increments, but field-valued:
+    /// committed from the plane's field-inline oracle, never from the
+    /// [`CommittedColumnsWitness`] stream.
+    #[cfg(feature = "field-inline")]
+    FieldRdInc,
 }
 
 impl ColumnKind {
@@ -150,6 +174,10 @@ impl ColumnKind {
             Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_) => {
                 unreachable!("one-hot columns go through hot_address")
             }
+            #[cfg(feature = "field-inline")]
+            Self::FieldRdInc => {
+                unreachable!("field-inline columns commit from the field-inline oracle")
+            }
         }
     }
 
@@ -162,19 +190,55 @@ impl ColumnKind {
                 .0
                 .map(|address| selector.chunk_usize(address as usize)),
             Self::RdInc | Self::RamInc => unreachable!("increments go through increment"),
+            #[cfg(feature = "field-inline")]
+            Self::FieldRdInc => {
+                unreachable!("field-inline columns commit from the field-inline oracle")
+            }
         }
+    }
+}
+
+/// A committed-column id at the commit-kernel seam: the jolt family always,
+/// the field-inline family under the composed protocol. Kernel-local
+/// composite — the jolt-claims id namespaces stay disjoint (the same pattern
+/// as jolt-verifier's `VerifierOpeningId`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommittedColumnId {
+    Jolt(JoltCommittedPolynomial),
+    #[cfg(feature = "field-inline")]
+    FieldInline(FieldInlineCommittedPolynomial),
+}
+
+impl From<JoltCommittedPolynomial> for CommittedColumnId {
+    fn from(id: JoltCommittedPolynomial) -> Self {
+        Self::Jolt(id)
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl From<FieldInlineCommittedPolynomial> for CommittedColumnId {
+    fn from(id: FieldInlineCommittedPolynomial) -> Self {
+        Self::FieldInline(id)
     }
 }
 
 /// Resolve `ids` to column derivations. Family sizes come from the ids
 /// themselves (the committed order carries whole families); the chunk width
-/// is the grid's.
-pub(crate) fn column_kinds<F: Field>(
-    ids: &[JoltCommittedPolynomial],
+/// is the grid's. Generic over the id family so the jolt call sites stay
+/// unchanged while the field-inline pass resolves through the same table.
+pub(crate) fn column_kinds<F: Field, Id: Copy + Into<CommittedColumnId>>(
+    ids: &[Id],
     grid: CommitmentGrid,
 ) -> Result<Vec<ColumnKind>, KernelError<F>> {
+    let ids: Vec<CommittedColumnId> = ids.iter().map(|&id| id.into()).collect();
     let family_size = |matches: fn(JoltCommittedPolynomial) -> bool| {
-        ids.iter().copied().filter(|&id| matches(id)).count()
+        ids.iter()
+            .filter(|&&id| match id {
+                CommittedColumnId::Jolt(id) => matches(id),
+                #[cfg(feature = "field-inline")]
+                CommittedColumnId::FieldInline(_) => false,
+            })
+            .count()
     };
     let instruction_chunks =
         family_size(|id| matches!(id, JoltCommittedPolynomial::InstructionRa(_)));
@@ -185,22 +249,91 @@ pub(crate) fn column_kinds<F: Field>(
     };
     ids.iter()
         .map(|&id| match id {
-            JoltCommittedPolynomial::RdInc => Ok(ColumnKind::RdInc),
-            JoltCommittedPolynomial::RamInc => Ok(ColumnKind::RamInc),
-            JoltCommittedPolynomial::InstructionRa(index) => Ok(ColumnKind::InstructionRa(
-                selector(index, instruction_chunks)?,
-            )),
-            JoltCommittedPolynomial::BytecodeRa(index) => {
-                Ok(ColumnKind::BytecodeRa(selector(index, bytecode_chunks)?))
+            CommittedColumnId::Jolt(id) => match id {
+                JoltCommittedPolynomial::RdInc => Ok(ColumnKind::RdInc),
+                JoltCommittedPolynomial::RamInc => Ok(ColumnKind::RamInc),
+                JoltCommittedPolynomial::InstructionRa(index) => Ok(ColumnKind::InstructionRa(
+                    selector(index, instruction_chunks)?,
+                )),
+                JoltCommittedPolynomial::BytecodeRa(index) => {
+                    Ok(ColumnKind::BytecodeRa(selector(index, bytecode_chunks)?))
+                }
+                JoltCommittedPolynomial::RamRa(index) => {
+                    Ok(ColumnKind::RamRa(selector(index, ram_chunks)?))
+                }
+                _ => Err(KernelError::InvalidGeometry {
+                    reason: format!(
+                        "{id:?} is not a trace-derived column (advice commits through commit_advice)"
+                    ),
+                }),
+            },
+            #[cfg(feature = "field-inline")]
+            CommittedColumnId::FieldInline(FieldInlineCommittedPolynomial::FieldRdInc) => {
+                Ok(ColumnKind::FieldRdInc)
             }
-            JoltCommittedPolynomial::RamRa(index) => {
-                Ok(ColumnKind::RamRa(selector(index, ram_chunks)?))
+        })
+        .collect()
+}
+
+/// The shared field-inline commit pass, used by every `CommitWitness` tier:
+/// each FR column is dense over the trace domain and placed exactly like the
+/// jolt increment columns (contiguous cycle-major; address slot zero of each
+/// cycle block address-major), so the stage-8 embedding treats `FieldRdInc`
+/// like `RdInc`.
+#[cfg(feature = "field-inline")]
+pub(crate) fn commit_field_inline_columns<F, PCS>(
+    source: &dyn JoltWitnessPlane<F>,
+    ids: &[FieldInlineCommittedPolynomial],
+    grid: CommitmentGrid,
+    setup: &PCS::ProverSetup,
+) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>>
+where
+    F: Field,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
+{
+    let kinds = column_kinds::<F, _>(ids, grid)?;
+    let oracle = source.field_inline().ok_or(KernelError::Unsupported {
+        reason: "field-inline commit requires a witness plane serving the field-inline oracle",
+    })?;
+    let cycles = 1usize << grid.log_t;
+    ids.iter()
+        .zip(kinds)
+        .map(|(&id, kind)| {
+            if kind.is_one_hot() {
+                return Err(KernelError::InvalidGeometry {
+                    reason: format!("{id:?} is not a dense trace-domain column"),
+                });
             }
-            _ => Err(KernelError::InvalidGeometry {
-                reason: format!(
-                    "{id:?} is not a trace-derived column (advice commits through commit_advice)"
-                ),
-            }),
+            let values = oracle.oracle_table(FieldInlinePolynomialId::Committed(id))?;
+            if values.len() != cycles {
+                return Err(KernelError::InvalidGeometry {
+                    reason: format!(
+                        "{id:?} has {} evaluations, the trace domain holds {cycles}",
+                        values.len()
+                    ),
+                });
+            }
+            let table = match grid.order {
+                TracePolynomialOrder::CycleMajor => values,
+                TracePolynomialOrder::AddressMajor => {
+                    let mut table: Vec<F> = unsafe_allocate_zero_vec(1usize << grid.total_vars);
+                    let stride = grid.cycle_stride();
+                    for (cycle, value) in values.into_iter().enumerate() {
+                        table[cycle * stride] = value;
+                    }
+                    table
+                }
+            };
+            let mut partial = PCS::begin(setup);
+            for row in table.chunks(grid.num_columns()) {
+                PCS::feed(&mut partial, row, setup);
+            }
+            let (commitment, hint) = finish_streamed::<PCS>(partial, setup);
+            Ok(FieldInlineWitnessCommitment {
+                id,
+                commitment,
+                hint,
+            })
         })
         .collect()
 }

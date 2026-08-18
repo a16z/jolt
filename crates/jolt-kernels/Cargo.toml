@@ -27,7 +27,13 @@ zk = []
 # Field-inline (FR) protocol composition: the stage-2 FR claim-reduction
 # kernel slot. The reference slot fails closed until the FR witness wiring
 # lands (milestone 11). Selected by jolt-prover's `field-inline` feature.
-field-inline = ["jolt-claims/field-inline", "jolt-verifier/field-inline"]
+field-inline = [
+  "jolt-claims/field-inline",
+  "jolt-verifier/field-inline",
+  # The commit kernel reads the FR columns off the witness plane's
+  # field-inline oracle seam.
+  "jolt-witness/field-inline",
+]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
