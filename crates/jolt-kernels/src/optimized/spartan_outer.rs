@@ -400,8 +400,9 @@ pub struct OptimizedOuterUniskip;
 
 impl OptimizedOuterUniskip {
     /// The post-collection half of [`UniskipKernel::prepare`], for the
-    /// in-module parity tests (which construct rows directly).
-    #[cfg(test)]
+    /// in-module parity tests (which construct rows directly; FR-off with
+    /// them — the optimized tier is rv64-only).
+    #[cfg(all(test, not(feature = "field-inline")))]
     fn prepare_from_rows<F: Field>(
         session: &mut ProofSession,
         log_t: usize,
@@ -978,18 +979,27 @@ impl<F: Field> SumcheckKernel<F> for OuterRemainderKernel<F> {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::jolt::JoltPolynomialId;
+    // Parity-test-only imports, FR-off with the tests they serve (the
+    // optimized tier is rv64-only; see the parity tests' WHY).
+    #[cfg(not(feature = "field-inline"))]
     use jolt_claims::NoChallenges;
+    #[cfg(not(feature = "field-inline"))]
     use jolt_field::signed::S128;
     use jolt_field::{Fr, FromPrimitiveInt};
+    #[cfg(not(feature = "field-inline"))]
     use jolt_verifier::stages::stage1::outer_remainder::{
         outer_remainder_input_values_from_uniskip_output, OuterRemainderInputClaims,
     };
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
-    use jolt_witness::{BundleSource, FixedBackend, JoltWitnessOracle, PolynomialEncoding, Shape};
+    use jolt_witness::{BundleSource, JoltWitnessOracle};
+    #[cfg(not(feature = "field-inline"))]
+    use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
 
     use super::*;
+    #[cfg(not(feature = "field-inline"))]
     use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
+    #[cfg(not(feature = "field-inline"))]
     use crate::ReferenceBackend;
 
     /// The `ToField` image of one canonical R1CS input, straight off the
@@ -1040,6 +1050,7 @@ mod tests {
     /// two-limb `u128`/`S128` values (both wide B-row paths), diverse flags.
     /// No satisfying-witness structure — parity must hold pointwise on any
     /// witness.
+    #[cfg(all(test, not(feature = "field-inline")))]
     fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanOuterRow> {
         let mut state = seed | 1;
         let mut next = move || {
@@ -1108,6 +1119,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(all(test, not(feature = "field-inline")))]
     fn fixed_backend_from_rows(log_t: usize, rows: &[SpartanOuterRow]) -> FixedBackend<Fr> {
         let mut backend = FixedBackend::new();
         for (index, variable) in SPARTAN_OUTER_R1CS_INPUTS.iter().enumerate() {
@@ -1130,6 +1142,7 @@ mod tests {
     /// `Σ_{t,s} kernel · eq(τ_low, (t,s)) · Az(t,s) · Bz(t,s)`, computed
     /// through the public `jolt-r1cs` column-weight path (independent of both
     /// kernels' row-value pipelines).
+    #[cfg(all(test, not(feature = "field-inline")))]
     fn true_input_claim(rows: &[SpartanOuterRow], tau: &[Fr], r0: Fr, log_t: usize) -> Fr {
         let tau_low = &tau[..=log_t];
         let tau_high = tau[log_t + 1];
@@ -1161,6 +1174,7 @@ mod tests {
     /// One full parity case: uni-skip polynomial, every remainder round
     /// polynomial, typed output claims, and both kernels' derived-table
     /// validation — reference and optimized fed identical `ProverInputs`.
+    #[cfg(all(test, not(feature = "field-inline")))]
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
         let rows = synthetic_rows(log_t, seed);
         let tau: Vec<Fr> = (0..log_t + 2)
@@ -1266,6 +1280,12 @@ mod tests {
     /// Synthetic parity across sizes spanning the uni-skip boundary and
     /// degenerate small domains. The sample backend only supplies the (never
     /// read) witness-plane argument of the remainder `prepare` calls.
+    // The optimized spartan tier is rv64-only: under `field-inline` the
+    // reference kernels serve the COMPOSED R1CS (48 columns / FR lanes),
+    // which this tier does not implement yet, so reference/optimized parity
+    // is not a meaningful FR-on statement until the optimized composition
+    // lands (post-milestone-11).
+    #[cfg(not(feature = "field-inline"))]
     #[test]
     fn synthetic_parity_with_reference_kernels() {
         with_sample_backend(|dummy| {
@@ -1279,6 +1299,12 @@ mod tests {
     /// walk against the reference's oracle tables, with the genuine uni-skip
     /// output claim feeding the remainder (a satisfying witness, so the
     /// uni-skip reduction and the joint-domain sum agree).
+    // The optimized spartan tier is rv64-only: under `field-inline` the
+    // reference kernels serve the COMPOSED R1CS (48 columns / FR lanes),
+    // which this tier does not implement yet, so reference/optimized parity
+    // is not a meaningful FR-on statement until the optimized composition
+    // lands (post-milestone-11).
+    #[cfg(not(feature = "field-inline"))]
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
         with_sample_backend(|backend| {

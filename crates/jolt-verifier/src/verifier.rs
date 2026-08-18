@@ -1409,6 +1409,31 @@ mod tests {
         ));
     }
 
+    /// The FR-on BlindFold generator budget must fit the largest committed
+    /// round of the composed protocol: the Spartan outer uni-skip first round
+    /// (degree `SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE`, one coefficient
+    /// more), or `commit_round` fails closed at proving time.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn blindfold_generator_budget_covers_the_composed_uniskip_rounds() {
+        use jolt_r1cs::constraints::jolt::{
+            SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+        };
+
+        const {
+            assert!(
+                common::constants::MAX_BLINDFOLD_GENERATORS
+                    > SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE
+            );
+        }
+        const {
+            assert!(
+                common::constants::MAX_BLINDFOLD_GENERATORS
+                    > SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
+            );
+        }
+    }
+
     #[cfg(feature = "zk")]
     #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {

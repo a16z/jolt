@@ -869,6 +869,26 @@ mod tests {
                         [..REGISTER_ADDRESS_BITS],
                     stage_gammas: std::array::from_fn(|s| stage_gammas[s].as_slice()),
                 }),
+                // Inert here: this test drives prepare/output_claims only, never
+                // the composed expected_output that reads the FR fold.
+                #[cfg(feature = "field-inline")]
+                field_inline:
+                    jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold {
+                        table:
+                            jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeTable {
+                                rows: Vec::new(),
+                                field_register_log_k:
+                                    jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K,
+                            },
+                        read_write_address: Vec::new(),
+                        read_write_cycle: Vec::new(),
+                        val_evaluation_address: Vec::new(),
+                        val_evaluation_cycle: Vec::new(),
+                        gammas:
+                            jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(
+                                &address_challenges,
+                            ),
+                    },
             })
             .unwrap();
             let cycle_challenges = BytecodeReadRafCyclePhaseCommittedChallenges { gamma: fr(19) };

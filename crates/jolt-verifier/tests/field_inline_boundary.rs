@@ -32,7 +32,11 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // The require_field_inline_slices gate pair (fail-closed until FR prover
     // fixtures exist), the payload presence check, the FR commitment absorb
     // seam, and the mode-specific test fixtures.
-    ("verifier.rs", 10, "gate + commitment absorb seam"),
+    (
+        "verifier.rs",
+        11,
+        "gate + commitment absorb seam + budget test",
+    ),
     // Module registration of the shared FR bytecode side-table seam.
     ("stages/mod.rs", 1, "seam module registration"),
     // Per-stage seam-module and FR-twin module registrations.

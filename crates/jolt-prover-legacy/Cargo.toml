@@ -71,6 +71,7 @@ pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
 challenge-254-bit = []
 field-inline = [
+  "common/field-inline",
   "jolt-lookup-tables/field-inline",
   "jolt-program/field-inline",
   "jolt-riscv/field-inline",

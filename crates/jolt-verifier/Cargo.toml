@@ -19,6 +19,7 @@ allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = ["jolt-prover-legacy/host"]
 fs-audit = []
 field-inline = [
+  "common/field-inline",
   "jolt-claims/field-inline",
   "jolt-lookup-tables/field-inline",
   "jolt-program/field-inline",
