@@ -1673,12 +1673,12 @@ macro_rules! define_jolt_instruction_kind {
         }
 
         impl SourceInstructionKind {
-            pub const fn from_jolt_kind(kind: JoltInstructionKind) -> Option<Self> {
+            pub const fn from_jolt_kind(kind: JoltInstructionKind) -> Self {
                 match kind {
-                    JoltInstruction::Noop(_) => Some(SourceInstruction::Noop(Noop(()))),
+                    JoltInstruction::Noop(_) => SourceInstruction::Noop(Noop(())),
                     $(
                         $(#[$meta])*
-                        JoltInstruction::$marker(_) => Some(SourceInstruction::$marker($marker(()))),
+                        JoltInstruction::$marker(_) => SourceInstruction::$marker($marker(())),
                     )*
                 }
             }
@@ -1700,6 +1700,12 @@ macro_rules! define_jolt_instruction_kind {
                 JoltInstruction::Noop(Noop(()))
             }
         }
+
+        impl From<JoltInstructionKind> for SourceInstructionKind {
+            fn from(kind: JoltInstructionKind) -> Self {
+                Self::from_jolt_kind(kind)
+            }
+        }
     };
 }
 
@@ -1713,6 +1719,11 @@ impl SourceInstructionKind {
     /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
         SourceInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+    /// Value form of `VirtualSignExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_SIGN_EXTEND_WORD: Self =
+        SourceInstruction::VirtualSignExtendWord(VirtualSignExtendWord(()));
+    /// Value form of `VirtualNegateIf`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_NEGATE_IF: Self = SourceInstruction::VirtualNegateIf(VirtualNegateIf(()));
 }
 
 impl JoltInstructionKind {
@@ -1725,6 +1736,11 @@ impl JoltInstructionKind {
     /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
         JoltInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+    /// Value form of `VirtualSignExtendWord`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_SIGN_EXTEND_WORD: Self =
+        JoltInstruction::VirtualSignExtendWord(VirtualSignExtendWord(()));
+    /// Value form of `VirtualNegateIf`; the enum constructor shadows its CamelCase constant.
+    pub const VIRTUAL_NEGATE_IF: Self = JoltInstruction::VirtualNegateIf(VirtualNegateIf(()));
 }
 
 #[cfg(feature = "serialization")]
