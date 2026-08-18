@@ -55,13 +55,13 @@ CATEGORY_LABELS = {
     "helper": "Diff in helper scripts",
 }
 
-# Short row labels for the diff-fenced table rendering.
-TABLE_LABELS = {
-    "code": "actual code",
-    "tests": "tests",
-    "docs": "docs",
-    "fixtures": "fixtures",
-    "helper": "helper scripts",
+# GitHub-rendered labels for the sticky PR comment.
+MARKDOWN_CATEGORIES = {
+    "code": ("⌨️", "Actual code"),
+    "tests": ("🧪", "Tests"),
+    "docs": ("📚", "Docs"),
+    "fixtures": ("📦", "Fixtures"),
+    "helper": ("🔧", "Helper scripts"),
 }
 
 COMMENT_MARKER = "<!-- diff-classifier -->"
@@ -744,66 +744,57 @@ def format_summary(totals: dict[str, dict[str, int]]) -> str:
     return "\n".join(lines)
 
 
-def format_diff_table(totals: dict[str, dict[str, int]]) -> str:
-    """Aligned table for a ```diff fence: `+` rows render green, `-` rows red.
+def format_markdown(totals: dict[str, dict[str, int]]) -> str:
+    def delta(value: int, prefix: str) -> str:
+        return f"{prefix}{value:,}" if value else "0"
 
-    Color is per-line, so each category becomes a pair of lines — the added
-    count on a `+` line, the removed count on a `-` line. Zero sides are
-    omitted; an all-zero category collapses to one neutral line.
-    """
     total_added = sum(totals[cat]["added"] for cat in CATEGORIES)
     total_removed = sum(totals[cat]["removed"] for cat in CATEGORIES)
-    rows = [
-        (TABLE_LABELS[cat], totals[cat]["added"], totals[cat]["removed"])
-        for cat in CATEGORIES
-    ]
-    rows.append(("total", total_added, total_removed))
+    code_added = totals["code"]["added"]
+    code_removed = totals["code"]["removed"]
+    code_changed = code_added + code_removed
+    code_unit = "line" if code_changed == 1 else "lines"
 
-    name_w = max(len(name) for name, _, _ in rows)
-    added_w = max(len("added"), *(len(f"+{a}") for _, a, _ in rows))
-    removed_w = max(len("removed"), *(len(f"-{r}") for _, _, r in rows))
-
-    # Header prefix "@@ " is one char wider than the "+ "/"- " row prefixes,
-    # so its name field is one char narrower to keep the columns aligned.
     lines = [
-        "@@ "
-        + " " * (name_w - 1)
-        + "added".rjust(added_w)
-        + "  "
-        + "removed".rjust(removed_w)
-        + " @@"
+        COMMENT_MARKER,
+        "## 📏 PR diff",
+        "",
+        "> [!NOTE]",
+        f"> ### Actual code changed: **{code_changed:,} {code_unit}**",
+        f"> 🟢 **{delta(code_added, '+')} added** &nbsp;&nbsp; "
+        f"🔴 **{delta(code_removed, MINUS)} removed**",
+        ">",
+        "> Tests, docs, fixtures, and helper scripts excluded.",
+        "",
+        "| Category | 🟢 Added | 🔴 Removed | Changed |",
+        "|:--|--:|--:|--:|",
     ]
-
-    def emit(name: str, added: int, removed: int) -> None:
-        if added == 0 and removed == 0:
+    for cat in CATEGORIES:
+        icon, label = MARKDOWN_CATEGORIES[cat]
+        added = totals[cat]["added"]
+        removed = totals[cat]["removed"]
+        changed = added + removed
+        if cat == "code":
             lines.append(
-                "  "
-                + name.ljust(name_w)
-                + "0".rjust(added_w)
-                + "  "
-                + "0".rjust(removed_w)
+                f"| {icon} **{label}** | **{delta(added, '+')}** | "
+                f"**{delta(removed, MINUS)}** | **{changed:,}** |"
             )
-            return
-        if added:
-            lines.append("+ " + name.ljust(name_w) + f"+{added}".rjust(added_w))
-        if removed:
+        else:
             lines.append(
-                "- "
-                + name.ljust(name_w)
-                + " " * added_w
-                + "  "
-                + f"-{removed}".rjust(removed_w)
+                f"| {icon} {label} | {delta(added, '+')} | "
+                f"{delta(removed, MINUS)} | {changed:,} |"
             )
-
-    for name, added, removed in rows[:-1]:
-        emit(name, added, removed)
-    lines.append("  " + "-" * (name_w + added_w + removed_w + 2))
-    emit(*rows[-1])
+    lines.extend(
+        [
+            f"| **Total diff** | **{delta(total_added, '+')}** | "
+            f"**{delta(total_removed, MINUS)}** | "
+            f"**{total_added + total_removed:,}** |",
+            "",
+            "<sub>Every changed line is classified once.</sub>",
+            "",
+        ]
+    )
     return "\n".join(lines)
-
-
-def format_markdown(totals: dict[str, dict[str, int]]) -> str:
-    return f"{COMMENT_MARKER}\n```diff\n{format_diff_table(totals)}\n```\n"
 
 
 def format_details(per_file: dict[str, dict[str, int]]) -> str:
