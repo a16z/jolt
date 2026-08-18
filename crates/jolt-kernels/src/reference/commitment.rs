@@ -25,8 +25,9 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, StreamConsumer};
 
 use crate::commitment::{
     finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
@@ -46,7 +47,7 @@ where
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        source: &dyn RowSource,
+        source: &dyn JoltWitnessPlane<F>,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
@@ -122,7 +123,9 @@ where
 }
 
 /// A committed column's derivation from the fact bundle: the increments
-/// directly, the one-hots through the consumer-held chunk selector.
+/// directly, the one-hots through the consumer-held chunk selector. Shared
+/// with the optimized joint-opening kernel — the opened values must be the
+/// committed values, so both derive through this one type.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ColumnKind {
     RdInc,
@@ -345,7 +348,7 @@ impl<F: Field> MaterializedColumn<F> {
         };
         Self {
             kind,
-            table: vec![F::zero(); table_len],
+            table: unsafe_allocate_zero_vec(table_len),
             cycle: 0,
             cycle_stride: if grid.order == TracePolynomialOrder::AddressMajor {
                 grid.cycle_stride()

@@ -15,7 +15,12 @@ workspace = true
 default = ["parallel"]
 # Shallow heap visitation of the proof session (profile harness flamegraphs).
 allocative = ["dep:allocative"]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
+parallel = [
+  "dep:rayon",
+  "jolt-poly/parallel",
+  "jolt-utils/parallel",
+  "jolt-witness/parallel",
+]
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
@@ -35,9 +40,11 @@ jolt-kernels-derive.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
+jolt-program.workspace = true
 jolt-riscv.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck.workspace = true
+jolt-utils.workspace = true
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rayon = { workspace = true, optional = true }
@@ -48,19 +55,21 @@ tracing.workspace = true
 ark-bn254.workspace = true
 ark-ec.workspace = true
 ark-ff.workspace = true
-rand.workspace = true
-tracer = { workspace = true, features = ["test-utils"] }
-common.workspace = true
+common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-dory.workspace = true
 jolt-program.workspace = true
 jolt-prover-legacy = { workspace = true, features = ["default"] }
-jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
+jolt-witness = { workspace = true, features = ["test-utils"] }
 proptest.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
 rayon.workspace = true
 strum.workspace = true
+tracer = { workspace = true, features = ["test-utils"] }
 
 [[example]]
 name = "cuda_primitive_bench"

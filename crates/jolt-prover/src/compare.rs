@@ -5,6 +5,7 @@
     reason = "comparison harness: fail loudly and report to stdout"
 )]
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use jolt_crypto::{Bn254G1, Pedersen};
@@ -156,11 +157,13 @@ pub fn run(args: &CompareArgs) -> Comparison {
         DoryCommitmentScheme,
     >::new(shared);
     let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
-    let program_preprocessing = verifier_preprocessing
-        .program
-        .as_full()
-        .expect("full program preprocessing")
-        .clone();
+    let program_preprocessing = Arc::new(
+        verifier_preprocessing
+            .program
+            .as_full()
+            .expect("full program preprocessing")
+            .clone(),
+    );
 
     let mut legacy_proof_bytes = None;
     let legacy = (!args.skip_legacy).then(|| {
@@ -207,7 +210,7 @@ pub fn run(args: &CompareArgs) -> Comparison {
         return comparison;
     }
 
-    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
     let config = ProverConfig::derive::<Fr>(
         trace_output.trace.rows(),
@@ -219,14 +222,14 @@ pub fn run(args: &CompareArgs) -> Comparison {
     .expect("derive config");
     let public_io = trace_output.device.clone();
     let padded_output = pad_trace(trace_output, config.trace_length);
-    let witness = TraceBackend::new(
+    let witness = Arc::new(TraceBackend::new(
         JoltVmWitnessConfig::new(
             config.trace_length.ilog2() as usize,
             config.ram_K,
             config.one_hot_config,
         ),
         JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-    );
+    ));
     let total_vars =
         config.one_hot_config.committed_chunk_bits() + config.trace_length.ilog2() as usize;
     let total_vars = total_vars
@@ -240,6 +243,7 @@ pub fn run(args: &CompareArgs) -> Comparison {
 
     let backend = match args.backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -253,7 +257,7 @@ pub fn run(args: &CompareArgs) -> Comparison {
             &prover_preprocessing,
             &config,
             None,
-            &witness,
+            Arc::clone(&witness),
             &public_io,
         )
         .expect("modular prove");

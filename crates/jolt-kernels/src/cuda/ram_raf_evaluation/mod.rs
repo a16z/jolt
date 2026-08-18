@@ -143,6 +143,7 @@ impl<F: Field> SumcheckKernel<F> for DenseProductKernel<F, RamRafEvaluation<F>> 
 )]
 mod tests {
     use std::collections::BTreeSet;
+    use std::sync::Arc;
 
     use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
@@ -237,7 +238,7 @@ mod tests {
     fn with_raf_witness<R>(
         ram_k: usize,
         seed: u64,
-        body: impl FnOnce(&TraceBackend<'_, OwnedTrace>, u64) -> R,
+        body: impl FnOnce(&TraceBackend<OwnedTrace>, u64) -> R,
     ) -> R {
         let instruction = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::XOR,
@@ -257,7 +258,7 @@ mod tests {
             ..MemoryConfig::default()
         });
         let lowest_address = memory_layout.get_lowest_address();
-        let preprocessing = JoltProgramPreprocessing {
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 vec![instruction],
                 instruction.address as u64,
@@ -267,11 +268,12 @@ mod tests {
             ram: RAMPreprocessing::default(),
             memory_layout: memory_layout.clone(),
             max_padded_trace_length: 1usize << LOG_T,
-        };
-        let program = JoltProgram::default();
+        });
+        let program = Arc::new(JoltProgram::default());
         let trace = TraceOutput::new(
             OwnedTrace::new(raf_rows(instruction, &memory_layout, ram_k, seed)),
             Default::default(),
+            None,
             None,
         );
         let backend = TraceBackend::new(

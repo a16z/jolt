@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::constants::XLEN as RISCV_XLEN;
@@ -330,8 +331,8 @@ where
 }
 
 struct VerticalFixture {
-    program: JoltProgram,
-    program_preprocessing: JoltProgramPreprocessing,
+    program: Arc<JoltProgram>,
+    program_preprocessing: Arc<JoltProgramPreprocessing>,
     config: ProverConfig,
     log_t: usize,
     trace: TraceOutput<OwnedTrace>,
@@ -367,12 +368,14 @@ fn fixture(workload: Workload, scale: u32) -> VerticalFixture {
         DoryCommitmentScheme,
     >::new(shared);
     let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy);
-    let program_preprocessing = verifier_preprocessing
-        .program
-        .as_full()
-        .expect("full program preprocessing")
-        .clone();
-    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+    let program_preprocessing = Arc::new(
+        verifier_preprocessing
+            .program
+            .as_full()
+            .expect("full program preprocessing")
+            .clone(),
+    );
+    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
 
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
     let config = ProverConfig::derive::<Fr>(
@@ -655,6 +658,7 @@ fn measure_instruction_read_raf(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -752,6 +756,7 @@ fn measure_instruction_ra_virtualization(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -838,6 +843,7 @@ fn measure_booleanity_cycle(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -927,6 +933,7 @@ fn measure_bytecode_read_raf_cycle(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1007,6 +1014,7 @@ fn measure_ram_ra_virtualization(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1079,6 +1087,7 @@ fn measure_ram_val_check(workload: Workload, scale: u32, backend: BackendKind) -
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1123,12 +1132,14 @@ fn measure_ram_read_write(workload: Workload, scale: u32, backend: BackendKind) 
         DoryCommitmentScheme,
     >::new(shared);
     let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy);
-    let program_preprocessing = verifier_preprocessing
-        .program
-        .as_full()
-        .expect("full program preprocessing")
-        .clone();
-    let jolt_program = JoltProgram::from_elf_bytes(elf_contents);
+    let program_preprocessing = Arc::new(
+        verifier_preprocessing
+            .program
+            .as_full()
+            .expect("full program preprocessing")
+            .clone(),
+    );
+    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
 
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
     let config = ProverConfig::derive::<Fr>(
@@ -1179,6 +1190,7 @@ fn measure_ram_read_write(workload: Workload, scale: u32, backend: BackendKind) 
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1258,6 +1270,7 @@ fn measure_registers_read_write(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1308,6 +1321,7 @@ fn measure_spartan_outer(workload: Workload, scale: u32, backend: BackendKind) -
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1407,6 +1421,7 @@ fn measure_spartan_shift(workload: Workload, scale: u32, backend: BackendKind) -
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1467,6 +1482,7 @@ fn measure_instruction_input(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1526,6 +1542,7 @@ fn measure_registers_claim_reduction(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1585,6 +1602,7 @@ fn measure_instruction_claim_reduction(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1652,6 +1670,7 @@ fn measure_inc_claim_reduction(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1710,6 +1729,7 @@ fn measure_ram_hamming_booleanity(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1771,6 +1791,7 @@ fn measure_registers_val_evaluation(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1841,6 +1862,7 @@ fn measure_ram_ra_claim_reduction(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -1927,6 +1949,7 @@ fn measure_hamming_weight_claim_reduction(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -2002,6 +2025,7 @@ fn measure_ram_raf_evaluation(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -2066,6 +2090,7 @@ fn measure_ram_output_check(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -2147,6 +2172,7 @@ fn measure_booleanity_address(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -2241,6 +2267,7 @@ fn measure_bytecode_read_raf_address(
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -2288,6 +2315,7 @@ fn measure_spartan_product(workload: Workload, scale: u32, backend: BackendKind)
 
     let selected = match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     };
@@ -2388,7 +2416,7 @@ fn with_precommitted_fixture<T>(
     workload: Workload,
     scale: u32,
     bytecode_chunks: usize,
-    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>, &PrecommittedSchedule, PrecommittedGeometry) -> T,
+    body: impl FnOnce(&TraceBackend<OwnedTrace>, &PrecommittedSchedule, PrecommittedGeometry) -> T,
 ) -> T {
     let PrecommittedFixture {
         fixture,
@@ -2427,7 +2455,7 @@ struct PrecommittedGeometry {
 fn with_commit_fixture<T>(
     workload: Workload,
     scale: u32,
-    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>, CommitmentGrid, &ProverConfig) -> T,
+    body: impl FnOnce(&TraceBackend<OwnedTrace>, CommitmentGrid, &ProverConfig) -> T,
 ) -> T {
     let VerticalFixture {
         program: jolt_program,
@@ -2476,13 +2504,7 @@ fn measure_commit(workload: Workload, scale: u32, backend: BackendKind) -> Verti
         let start = Instant::now();
         let committed = selected
             .commit
-            .commit_witness(
-                &mut session,
-                witness as &dyn jolt_witness::RowSource,
-                &ids,
-                grid,
-                &setup,
-            )
+            .commit_witness(&mut session, witness, &ids, grid, &setup)
             .expect("commit the witness polynomials");
         let elapsed = start.elapsed();
         println!(
@@ -2527,13 +2549,7 @@ fn measure_joint_opening(workload: Workload, scale: u32, backend: BackendKind) -
         let setup = DoryScheme::setup_prover(grid.total_vars);
         let _ = selected
             .commit
-            .commit_witness(
-                &mut session,
-                witness as &dyn jolt_witness::RowSource,
-                &order,
-                grid,
-                &setup,
-            )
+            .commit_witness(&mut session, witness, &order, grid, &setup)
             .expect("warm the session the way stage 0 does before stage 8 runs");
 
         let start = Instant::now();
@@ -2623,6 +2639,7 @@ fn measure_advice_opening(
 fn selected_backend(backend: BackendKind) -> JoltBackend<Fr, DoryScheme> {
     match backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
         #[cfg(feature = "cuda")]
         BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
     }

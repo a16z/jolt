@@ -179,6 +179,7 @@ pub(crate) mod legacy_fixture {
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use std::sync::Arc;
     use strum::IntoEnumIterator;
     use tracer::instruction::{Cycle, RAMRead, RAMWrite};
 
@@ -267,7 +268,7 @@ pub(crate) mod legacy_fixture {
         ram_k: usize,
         one_hot: JoltOneHotConfig,
         seed: u64,
-        body: impl FnOnce(&TraceBackend<'_, OwnedTrace>, &LegacyFixture) -> R,
+        body: impl FnOnce(&TraceBackend<OwnedTrace>, &LegacyFixture) -> R,
     ) -> R {
         let memory_layout = MemoryLayout::new(&MemoryConfig {
             program_size: Some(1 << 12),
@@ -312,14 +313,19 @@ pub(crate) mod legacy_fixture {
             })
             .collect();
 
-        let preprocessing = JoltProgramPreprocessing {
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: bytecode.clone(),
             ram: RAMPreprocessing::default(),
             memory_layout: memory_layout.clone(),
             max_padded_trace_length: cycles,
-        };
-        let program = JoltProgram::default();
-        let output = TraceOutput::new(OwnedTrace::new(rows.clone()), Default::default(), None);
+        });
+        let program = Arc::new(JoltProgram::default());
+        let output = TraceOutput::new(
+            OwnedTrace::new(rows.clone()),
+            Default::default(),
+            None,
+            None,
+        );
         let backend = TraceBackend::new(
             JoltVmWitnessConfig::new(log_t, ram_k, one_hot),
             JoltVmWitnessInputs::new(&program, &preprocessing, output),

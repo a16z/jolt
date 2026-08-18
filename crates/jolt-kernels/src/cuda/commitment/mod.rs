@@ -11,7 +11,9 @@ use jolt_crypto::Bn254G1;
 use jolt_dory::DoryScheme;
 use jolt_field::Field;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
+use jolt_witness::{
+    stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, RowSource, StreamConsumer,
+};
 
 use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
@@ -261,7 +263,7 @@ where
     fn commit_witness(
         &self,
         session: &mut ProofSession,
-        source: &dyn RowSource,
+        source: &dyn JoltWitnessPlane<F>,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
@@ -387,7 +389,7 @@ mod tests {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_openings::CommitmentScheme;
-    use jolt_witness::{JoltWitnessOracle, RowSource};
+    use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 
     use super::CudaBackend;
     use crate::commitment::{CommitWitness, CommitmentGrid, WitnessCommitment};
@@ -439,19 +441,13 @@ mod tests {
 
     fn commit_columns(
         backend: &dyn CommitWitness<Fr, DoryScheme>,
-        witness: &(impl JoltWitnessOracle<Fr> + RowSource),
+        witness: &impl JoltWitnessPlane<Fr>,
         grid: CommitmentGrid,
     ) -> Vec<WitnessCommitment<DoryScheme>> {
         let ids = trace_ids(witness);
         let setup = DoryScheme::setup_prover(grid.total_vars);
         backend
-            .commit_witness(
-                &mut ProofSession::default(),
-                witness as &dyn RowSource,
-                &ids,
-                grid,
-                &setup,
-            )
+            .commit_witness(&mut ProofSession::default(), witness, &ids, grid, &setup)
             .expect("commit_witness")
     }
 

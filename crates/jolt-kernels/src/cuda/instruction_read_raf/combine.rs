@@ -128,7 +128,7 @@ pub fn combine_terms(table: LookupTableKind<RISCV_XLEN>) -> Result<Vec<CombineTe
             term(S1, Some(P::Eq), slot(Suffixes::LessThan)),
             term(S1, Some(P::Eq), slot(Suffixes::Eq)),
         ],
-        K::SignExtendHalfWord(_) => vec![
+        K::SignExtendWord(_) => vec![
             term(S1, Some(P::LowerHalfWord), one),
             term(S1, None, slot(Suffixes::LowerHalfWord)),
             term(

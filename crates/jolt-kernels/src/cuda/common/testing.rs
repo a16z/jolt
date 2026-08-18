@@ -32,6 +32,7 @@ use jolt_witness::{
     TraceBackend, WitnessError,
 };
 use proptest::prelude::*;
+use std::sync::Arc;
 
 use crate::reference::ReferenceBackend;
 use crate::{PrepareKernel, ProofSession, ProverInputs};
@@ -315,7 +316,7 @@ pub fn with_instruction_witness<R>(
     log_t: usize,
     one_hot: JoltOneHotConfig,
     seed: u64,
-    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+    body: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
 ) -> R {
     let instruction = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::XOR,
@@ -330,7 +331,7 @@ pub fn with_instruction_witness<R>(
         is_first_in_sequence: false,
         is_compressed: false,
     };
-    let preprocessing = JoltProgramPreprocessing {
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
             vec![instruction],
             instruction.address as u64,
@@ -340,11 +341,12 @@ pub fn with_instruction_witness<R>(
         ram: RAMPreprocessing::default(),
         memory_layout: MemoryLayout::default(),
         max_padded_trace_length: 1usize << log_t,
-    };
-    let program = JoltProgram::default();
+    });
+    let program = Arc::new(JoltProgram::default());
     let trace = TraceOutput::new(
         OwnedTrace::new(instruction_rows(instruction, log_t, seed)),
         Default::default(),
+        None,
         None,
     );
     let backend = TraceBackend::new(
@@ -438,7 +440,7 @@ pub fn with_ram_witness<R>(
     ram_k: usize,
     one_hot: JoltOneHotConfig,
     seed: u64,
-    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+    body: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
 ) -> R {
     let instruction = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::XOR,
@@ -457,7 +459,7 @@ pub fn with_ram_witness<R>(
         program_size: Some(1 << 12),
         ..MemoryConfig::default()
     });
-    let preprocessing = JoltProgramPreprocessing {
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
             vec![instruction],
             instruction.address as u64,
@@ -467,11 +469,12 @@ pub fn with_ram_witness<R>(
         ram: RAMPreprocessing::default(),
         memory_layout: memory_layout.clone(),
         max_padded_trace_length: 1usize << log_t,
-    };
-    let program = JoltProgram::default();
+    });
+    let program = Arc::new(JoltProgram::default());
     let trace = TraceOutput::new(
         OwnedTrace::new(ram_rows(instruction, log_t, &memory_layout, ram_k, seed)),
         Default::default(),
+        None,
         None,
     );
     let backend = TraceBackend::new(
@@ -607,7 +610,7 @@ pub fn with_one_hot_witness<R>(
     ram_k: usize,
     one_hot: JoltOneHotConfig,
     seed: u64,
-    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>, usize) -> R,
+    body: impl FnOnce(&TraceBackend<OwnedTrace>, usize) -> R,
 ) -> R {
     let bytecode = one_hot_bytecode(bytecode_rows);
     let entry_address = bytecode[0].address as u64;
@@ -615,15 +618,15 @@ pub fn with_one_hot_witness<R>(
         program_size: Some(1 << 12),
         ..MemoryConfig::default()
     });
-    let preprocessing = JoltProgramPreprocessing {
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(bytecode, entry_address, RV64IMAC_JOLT)
             .expect("one-hot bytecode fixture"),
         ram: RAMPreprocessing::default(),
         memory_layout: memory_layout.clone(),
         max_padded_trace_length: 1usize << log_t,
-    };
+    });
     let bytecode_len = preprocessing.bytecode.code_size;
-    let program = JoltProgram::default();
+    let program = Arc::new(JoltProgram::default());
     let trace = TraceOutput::new(
         OwnedTrace::new(one_hot_rows(
             log_t,
@@ -633,6 +636,7 @@ pub fn with_one_hot_witness<R>(
             seed,
         )),
         Default::default(),
+        None,
         None,
     );
     let backend = TraceBackend::new(
@@ -786,7 +790,7 @@ pub fn with_r1cs_witness<R>(
     ram_k: usize,
     one_hot: JoltOneHotConfig,
     seed: u64,
-    body: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+    body: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
 ) -> R {
     let bytecode = r1cs_bytecode();
     let entry_address = bytecode[0].address as u64;
@@ -794,17 +798,18 @@ pub fn with_r1cs_witness<R>(
         program_size: Some(1 << 12),
         ..MemoryConfig::default()
     });
-    let preprocessing = JoltProgramPreprocessing {
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(bytecode.clone(), entry_address, RV64IMAC_JOLT)
             .expect("r1cs bytecode fixture"),
         ram: RAMPreprocessing::default(),
         memory_layout: memory_layout.clone(),
         max_padded_trace_length: 1usize << log_t,
-    };
-    let program = JoltProgram::default();
+    });
+    let program = Arc::new(JoltProgram::default());
     let trace = TraceOutput::new(
         OwnedTrace::new(r1cs_rows(&bytecode, log_t, &memory_layout, ram_k, seed)),
         Default::default(),
+        None,
         None,
     );
     let backend = TraceBackend::new(

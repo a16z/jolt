@@ -594,7 +594,7 @@ impl<F: Field> DevicePrecommittedTables<F> {
             .chain(std::iter::once(&tables.eq))
             .chain(tables.aux.iter())
         {
-            host.extend_from_slice(require_fr_slice(row)?);
+            host.extend_from_slice(require_fr_slice(row.evals())?);
         }
         Ok(Self {
             context,

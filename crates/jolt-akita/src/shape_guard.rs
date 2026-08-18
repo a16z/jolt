@@ -186,8 +186,12 @@ fn validate_proof_shape(
         schedule.root.output_witness_len,
         schedule.recursive_folds.first().map(|step| &step.params),
     )?;
-    for (index, level_shape) in shape.recursive_folds.iter().enumerate() {
-        let step = &schedule.recursive_folds[index];
+    for (index, (level_shape, step)) in shape
+        .recursive_folds
+        .iter()
+        .zip(schedule.recursive_folds.iter())
+        .enumerate()
+    {
         validate_level_shape(
             level_shape,
             &step.params.witness,

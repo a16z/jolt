@@ -28,7 +28,9 @@ use jolt_kernels::{
     PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{ProveRounds, RecordedSumcheck, SumcheckError, SumcheckRecorder};
+use jolt_sumcheck::{
+    ProveRounds, RecordedSumcheck, RoundScheduler, SumcheckError, SumcheckRecorder,
+};
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -65,6 +67,7 @@ pub trait StageProver<F: Field>: Sized {
         &self,
         kernels: &B,
         session: &mut ProofSession,
+        scheduler: &mut dyn RoundScheduler<F>,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &Self::InputClaims,
         input_points: &Self::InputPoints,
@@ -498,6 +501,7 @@ macro_rules! impl_stage_prover {
                 &self,
                 kernels: &B,
                 session: &mut ::jolt_kernels::ProofSession,
+                scheduler: &mut dyn ::jolt_sumcheck::RoundScheduler<F>,
                 witness: &dyn ::jolt_witness::JoltWitnessPlane<F>,
                 inputs: &Self::InputClaims,
                 input_points: &Self::InputPoints,
@@ -549,6 +553,7 @@ macro_rules! impl_stage_prover {
                 let __proved = ::jolt_sumcheck::prove_batch(
                     &__batch,
                     &mut __rounds,
+                    scheduler,
                     &mut recorder,
                     transcript,
                 )?;

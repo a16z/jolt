@@ -11,7 +11,7 @@ use crate::{WitnessError, JOLT_VM_LABEL};
 pub(crate) const ONE_HOT_REASON: &str =
     "not a one-hot polynomial with a per-cycle hot address; use oracle_table";
 
-impl<T: TraceSource + Clone> TraceBackend<'_, T> {
+impl<T: TraceSource + Clone> TraceBackend<T> {
     fn ram_hot_indices(&self) -> Result<Vec<Option<usize>>, WitnessError> {
         let cycles = checked_pow2(self.config.log_t)?;
         let mut indices = Vec::with_capacity(cycles);
@@ -69,7 +69,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     }
 }
 
-impl<T: TraceSource + Clone> OneHotSource for TraceBackend<'_, T> {
+impl<T: TraceSource + Clone> OneHotSource for TraceBackend<T> {
     fn hot_indices(&self, id: JoltPolynomialId) -> Result<Vec<Option<usize>>, WitnessError> {
         match id {
             JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamRa) => self.ram_hot_indices(),

@@ -7,7 +7,7 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::Field;
 use jolt_poly::MultilinearPoly;
-use jolt_witness::JoltWitnessOracle;
+use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 
 use super::common::context::CudaKernelContext;
 use super::common::device::{fr_into, fr_vec_into, require_fr_slice, DeviceFrVec};
@@ -402,7 +402,7 @@ impl<F: Field> JointOpeningPolynomials<F> for CudaBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
-        witness: &dyn JoltWitnessOracle<F>,
+        witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
@@ -484,7 +484,7 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::MultilinearPoly;
     use jolt_program::execution::OwnedTrace;
-    use jolt_witness::{JoltWitnessOracle, TraceBackend};
+    use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane, TraceBackend};
     use proptest::prelude::*;
 
     use super::{CudaBackend, NO_HOT};
@@ -568,10 +568,10 @@ mod tests {
         }
     }
 
-    fn polynomial_facts(
+    fn polynomial_facts<W: JoltWitnessPlane<Fr>>(
         backend: &dyn JointOpeningPolynomials<Fr>,
         session: &mut ProofSession,
-        witness: &dyn JoltWitnessOracle<Fr>,
+        witness: &W,
         tables: &BTreeMap<JoltCommittedPolynomial, Vec<Fr>>,
         probe: &OpeningProbe,
     ) -> Vec<PolynomialFacts> {
@@ -592,7 +592,7 @@ mod tests {
             .collect()
     }
 
-    fn warm_session(witness: &TraceBackend<'_, OwnedTrace>, log_t: usize) -> ProofSession {
+    fn warm_session(witness: &TraceBackend<OwnedTrace>, log_t: usize) -> ProofSession {
         let mut session = ProofSession::default();
         let _ =
             cached_bundles::<CommittedColumnsWitness, _>(&mut session, witness, 1usize << log_t)
@@ -877,7 +877,7 @@ mod tests {
             let _ = CommitWitness::<Fr, DoryScheme>::commit_witness(
                 &CudaBackend,
                 &mut session,
-                witness as &dyn jolt_witness::RowSource,
+                witness,
                 &committed,
                 grid,
                 &setup,

@@ -10,13 +10,14 @@ use jolt_program::{
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+use std::sync::Arc;
 
 use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{BundleSource, JoltWitnessOracle, WitnessBundle};
 
 /// Runs `f` against a small canned backend: two real cycles (an ADDI with
 /// register activity and RAM traffic, then a RAM write) padded to `2^2`.
-pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R) -> R {
+pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
     with_sample_backend_config(64, 0x8000_1000, f)
 }
 
@@ -24,7 +25,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R
 fn with_sample_backend_config<R>(
     ram_k: usize,
     ram_base: u64,
-    f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+    f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
 ) -> R {
     let instruction = JoltInstructionRow {
         instruction_kind: JoltInstructionKind::ADDI,
@@ -39,7 +40,7 @@ fn with_sample_backend_config<R>(
         is_first_in_sequence: false,
         is_compressed: false,
     };
-    let preprocessing = JoltProgramPreprocessing {
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
         bytecode: BytecodePreprocessing::preprocess(
             vec![instruction],
             instruction.address as u64,
@@ -49,8 +50,8 @@ fn with_sample_backend_config<R>(
         ram: RAMPreprocessing::default(),
         memory_layout: Default::default(),
         max_padded_trace_length: 4,
-    };
-    let program = JoltProgram::default();
+    });
+    let program = Arc::new(JoltProgram::default());
     let rows = vec![
         TraceRow {
             instruction,
@@ -93,13 +94,13 @@ fn with_sample_backend_config<R>(
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None),
+        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)
 }
 
-pub fn with_ram_sized_backend<R>(f: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R) -> R {
+pub fn with_ram_sized_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
     with_sample_backend_config(RAM_SIZED_K, RAM_SIZED_BASE, f)
 }
 
@@ -114,7 +115,7 @@ const RAM_SIZED_BASE: u64 = 0x40;
 #[expect(clippy::unwrap_used, reason = "test assertion helper")]
 pub fn assert_bundle_column_matches<B>(id: JoltPolynomialId, value: impl Fn(&B) -> Fr)
 where
-    B: WitnessBundle + Clone + Send + Sync,
+    B: WitnessBundle + Copy + Send + Sync,
 {
     with_sample_backend(|backend| {
         assert!(

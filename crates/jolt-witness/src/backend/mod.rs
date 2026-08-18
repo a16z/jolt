@@ -77,11 +77,11 @@ pub trait OneHotSource {
 /// stages row vectors on the side), and the program view.
 /// Blanket-implemented; the supertrait set is exactly what kernels consume.
 pub trait JoltWitnessPlane<F: Field>:
-    JoltWitnessOracle<F> + RowSource + ProgramSource + OneHotSource
+    JoltWitnessOracle<F> + RowSource + ProgramSource + OneHotSource + Send + Sync
 {
 }
 
 impl<F: Field, T> JoltWitnessPlane<F> for T where
-    T: JoltWitnessOracle<F> + RowSource + ProgramSource + OneHotSource
+    T: JoltWitnessOracle<F> + RowSource + ProgramSource + OneHotSource + Send + Sync
 {
 }

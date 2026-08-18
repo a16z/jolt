@@ -13,6 +13,7 @@ use jolt_field::{Field, RingCore};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_utils::log2_power_of_two;
 
 use crate::{derived, opening};
 
@@ -22,7 +23,7 @@ use super::super::super::{
 };
 use super::super::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
 use super::super::dimensions::{
-    log2_power_of_two, CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
+    CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
 use super::super::error::{require_len, require_opening_point_len, JoltFormulaPointError};
 use super::precommitted::{

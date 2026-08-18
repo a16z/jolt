@@ -29,6 +29,19 @@ impl AdviceTape {
         Self::default()
     }
 
+    /// Build a tape from raw bytes with the read cursor at 0.
+    pub fn from_bytes(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            read_position: 0,
+        }
+    }
+
+    /// Consume the tape, returning its raw bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.data
+    }
+
     /// Append bytes to the advice tape (called during first emulation pass)
     pub fn write(&mut self, bytes: &[u8]) {
         self.data.extend_from_slice(bytes);
@@ -84,7 +97,6 @@ pub fn advice_tape_remaining(cpu: &Cpu) -> usize {
     cpu.advice_tape.remaining()
 }
 
-use crate::instruction::format::NormalizedOperands;
 use crate::utils::panic::CallFrame;
 #[cfg(not(feature = "std"))]
 use alloc::collections::VecDeque;
@@ -179,7 +191,7 @@ const CSR_MIP_ADDRESS: u16 = 0x344;
 const _CSR_PMPCFG0_ADDRESS: u16 = 0x3a0;
 const _CSR_PMPADDR0_ADDRESS: u16 = 0x3b0;
 const _CSR_MCYCLE_ADDRESS: u16 = 0xb00;
-const CSR_CYCLE_ADDRESS: u16 = 0xc00;
+const _CSR_CYCLE_ADDRESS: u16 = 0xc00;
 const CSR_TIME_ADDRESS: u16 = 0xc01;
 const _CSR_INSERT_ADDRESS: u16 = 0xc02;
 const _CSR_MHARTID_ADDRESS: u16 = 0xf14;
@@ -196,6 +208,133 @@ struct ActiveMarker {
     label: String,
     start_instrs: u64,      // executed_instrs  at ‘start’
     start_trace_len: usize, // trace.len()      at ‘start’
+}
+
+/// Host-side I/O mode. `Replay` suppresses effects that must happen exactly
+/// once per program run — stdout prints, cycle-marker bookkeeping,
+/// advice-tape appends, call-stack tracking — so a parallel-trace worker
+/// re-executing a chunk does not repeat what pass-1 already did.
+/// Guest-visible effects (JoltDevice loads/stores, advice reads) stay live
+/// in both modes: trace rows depend on them.
+///
+/// Load-bearing assumption: a guest never appends to the advice tape and
+/// reads those bytes back within the same run. The SDK's two-pass advice
+/// design guarantees this (writes happen in `compute_advice` execute passes,
+/// reads in trace passes); a same-chunk append-then-read would replay
+/// wrongly under suppression, and the chunk-boundary paranoia compare flags
+/// the tape divergence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostIo {
+    Live,
+    Replay,
+}
+
+/// Architectural CPU state captured at a tick boundary — everything a
+/// bit-exact trace-mode chunk replay needs, and nothing run-scoped: cycle
+/// markers and the call stack stay with pass-1 (host-side logging), and the
+/// virtual-register allocator is rebuilt fresh per worker (its guards are
+/// strictly intra-tick, and cloning would share the `Arc<Mutex>` across
+/// threads).
+#[derive(Clone, Debug)]
+pub(crate) struct ChunkCpuState {
+    clock: u64,
+    privilege_mode: PrivilegeMode,
+    wfi: bool,
+    x: [i64; REGISTER_COUNT as usize],
+    f: [f64; 32],
+    pc: u64,
+    /// Boxed: 32 KB, keeps checkpoints cheap to move.
+    csr: Box<[u64; CSR_CAPACITY]>,
+    reservation: u64,
+    is_reservation_set: bool,
+    reservation_width: ReservationWidth,
+    trace_len: usize,
+    executed_instrs: u64,
+    /// Unread advice-tape suffix; the replay tape is exactly this suffix
+    /// with read position 0. Appends are suppressed in replay ([`HostIo`]).
+    advice_suffix: Vec<u8>,
+    #[cfg(feature = "field-inline")]
+    field_registers: FieldRegisterFile,
+}
+
+impl ChunkCpuState {
+    /// First difference between this captured boundary state and `cpu`'s
+    /// current state (`None` = equal). Paranoia check: a worker finishing
+    /// chunk k must land exactly on checkpoint k+1's capture. `trace_len` is
+    /// row-uniform across modes and is compared too — a replay row-count
+    /// drift shows up here at the boundary that caused it.
+    pub(crate) fn diff_vs_cpu(&self, cpu: &Cpu) -> Option<String> {
+        if self.trace_len != cpu.trace_len {
+            return Some(format!(
+                "trace_len: {} vs {}",
+                self.trace_len, cpu.trace_len
+            ));
+        }
+        if self.pc != cpu.pc {
+            return Some(format!("pc: {:#x} vs {:#x}", self.pc, cpu.pc));
+        }
+        for i in 0..REGISTER_COUNT as usize {
+            if self.x[i] != cpu.x[i] {
+                return Some(format!("x[{i}]: {:#x} vs {:#x}", self.x[i], cpu.x[i]));
+            }
+        }
+        for i in 0..CSR_CAPACITY {
+            if self.csr[i] != cpu.csr[i] {
+                return Some(format!(
+                    "csr[{i:#x}]: {:#x} vs {:#x}",
+                    self.csr[i], cpu.csr[i]
+                ));
+            }
+        }
+        if self.clock != cpu.clock {
+            return Some(format!("clock: {} vs {}", self.clock, cpu.clock));
+        }
+        if self.wfi != cpu.wfi {
+            return Some(format!("wfi: {} vs {}", self.wfi, cpu.wfi));
+        }
+        if core::mem::discriminant(&self.privilege_mode)
+            != core::mem::discriminant(&cpu.privilege_mode)
+        {
+            return Some(format!(
+                "privilege_mode: {:?} vs {:?}",
+                self.privilege_mode, cpu.privilege_mode
+            ));
+        }
+        if (
+            self.reservation,
+            self.is_reservation_set,
+            self.reservation_width,
+        ) != (
+            cpu.reservation,
+            cpu.is_reservation_set,
+            cpu.reservation_width,
+        ) {
+            return Some(format!(
+                "reservation: ({:#x}, {}, {:?}) vs ({:#x}, {}, {:?})",
+                self.reservation,
+                self.is_reservation_set,
+                self.reservation_width,
+                cpu.reservation,
+                cpu.is_reservation_set,
+                cpu.reservation_width
+            ));
+        }
+        if self.executed_instrs != cpu.executed_instrs {
+            return Some(format!(
+                "executed_instrs: {} vs {}",
+                self.executed_instrs, cpu.executed_instrs
+            ));
+        }
+        let cpu_suffix = &cpu.advice_tape.data[cpu.advice_tape.read_position..];
+        if self.advice_suffix != cpu_suffix {
+            return Some(format!(
+                "advice suffix: {} bytes vs {} bytes (or contents differ)",
+                self.advice_suffix.len(),
+                cpu_suffix.len()
+            ));
+        }
+        None
+    }
 }
 
 /// Emulates a RISC-V CPU core
@@ -223,8 +362,12 @@ pub struct Cpu {
     pub vr_allocator: VirtualRegisterAllocator,
     /// Call stack tracking (circular buffer)
     call_stack: VecDeque<CallFrame>,
+    /// Whether call frames snapshot the register file (JOLT_BACKTRACE=full).
+    capture_backtrace_registers: bool,
     /// Advice tape for runtime advice system
     pub advice_tape: AdviceTape,
+    /// Live in pass-1/serial runs; Replay in parallel-trace workers.
+    host_io: HostIo,
     #[cfg(feature = "field-inline")]
     pub field_registers: FieldRegisterFile,
 }
@@ -391,13 +534,23 @@ impl Cpu {
             active_markers: FnvHashMap::default(),
             vr_allocator: VirtualRegisterAllocator::new(),
             call_stack: VecDeque::with_capacity(MAX_CALL_STACK_DEPTH),
+            capture_backtrace_registers: std::env::var("JOLT_BACKTRACE")
+                .map(|v| v.eq_ignore_ascii_case("full"))
+                .unwrap_or(false),
             advice_tape: AdviceTape::new(),
+            host_io: HostIo::Live,
             #[cfg(feature = "field-inline")]
             field_registers: FieldRegisterFile::default(),
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
         cpu
+    }
+
+    /// Set the host-I/O mode (see [`HostIo`]). Workers replaying chunks run
+    /// in `Replay` for their whole lifetime.
+    pub(crate) fn set_host_io(&mut self, mode: HostIo) {
+        self.host_io = mode;
     }
 
     /// trap wrapper for cycle tracking tool
@@ -483,14 +636,18 @@ impl Cpu {
             Ok(()) => {}
             Err(e) => self.handle_exception(e, instruction_address),
         }
-        self.mmu.tick();
-        self.handle_interrupt(self.pc);
+        // Jolt guests have no interrupt sources (no CLINT/PLIC) and cannot
+        // write MIP (unsupported CSR rejected at decode), so pending-interrupt
+        // handling is gated on a single always-zero load. handle_interrupt is
+        // a no-op when MIP is 0.
+        if self.read_csr_raw(CSR_MIP_ADDRESS) != 0 {
+            self.handle_interrupt(self.pc);
+        }
         self.clock = self.clock.wrapping_add(1);
-
-        // cpu core clock : mtime clock in clint = 8 : 1 is
-        // just an arbitrary ratio.
-        // @TODO: Implement more properly
-        self.write_csr_raw(CSR_CYCLE_ADDRESS, self.clock * 8);
+        // Historical per-tick bookkeeping removed as provably dead state: the
+        // Mmu's own clock (field and `tick` both deleted) was never read, and
+        // CSR_CYCLE (0xc00) is not in the supported-CSR whitelist, so no guest
+        // instruction can ever observe the `clock * 8` value once stored there.
     }
 
     // @TODO: Rename?
@@ -502,6 +659,75 @@ impl Cpu {
             return Ok(());
         }
 
+        let instr = match self.mmu.decode_cache.lookup(self.pc) {
+            Some(cached) => {
+                let instr = cached.instr;
+                self.pc = self.pc.wrapping_add(cached.len as u64);
+                instr
+            }
+            None => self.decode_and_cache()?,
+        };
+
+        match trace {
+            None => {
+                // Rows are counted inside the walk (`RISCVTrace::trace` with
+                // no sink bumps trace_len once per suppressed row), keeping
+                // trace_len row-uniform across modes.
+                instr.execute(self);
+            }
+            Some(trace_vec) => {
+                let rows_before = trace_vec.len();
+                instr.trace(self, Some(&mut *trace_vec));
+                self.trace_len += trace_vec.len() - rows_before;
+            }
+        }
+
+        // check if current instruction is real or not for cycle profiling
+        if instr.is_real() {
+            self.executed_instrs += 1;
+        }
+        self.x[0] = 0; // hardwired zero
+
+        Ok(())
+    }
+
+    /// Runs `f` with `source`'s inline sequence, cached per PC alongside the
+    /// decoded instruction.
+    ///
+    /// Expansion is a pure function of the instruction: `inline_sequence`
+    /// builds a fresh `ExpansionAllocator` per call and every virtual-register
+    /// guard is released by the time it returns, so the first execution's
+    /// sequence can be reused by later executions at the same PC. Callers that
+    /// need per-execution advice values patch them into *copies* of the rows,
+    /// never into the cached template.
+    ///
+    /// The rows are moved out of the cache entry while `f` runs (so `f` can
+    /// borrow the CPU mutably) and put back afterwards. Text-store
+    /// invalidation clears the decode slot, orphaning the entry along with its
+    /// expansion, so a rewritten instruction can never be served stale rows.
+    #[inline]
+    pub(crate) fn with_cached_inline_sequence(
+        &mut self,
+        source: &Instruction,
+        f: impl FnOnce(&mut Cpu, &[Instruction]),
+    ) {
+        let token = self.mmu.decode_cache.expansion_slot(source);
+        let rows: Box<[Instruction]> = token
+            .and_then(|index| self.mmu.decode_cache.take_expansion(index))
+            .unwrap_or_else(|| {
+                source
+                    .inline_sequence(&self.vr_allocator)
+                    .into_boxed_slice()
+            });
+        f(self, &rows);
+        if let Some(index) = token {
+            self.mmu.decode_cache.put_expansion(index, rows);
+        }
+    }
+
+    /// Decode-cache miss path: fetch, decode, and cache the instruction at the
+    /// current PC. Advances the PC past the instruction.
+    fn decode_and_cache(&mut self) -> Result<Instruction, Trap> {
         let original_word = self.fetch()?;
         let instruction_address = normalize_u64(self.pc);
         let is_compressed = (original_word & 0x3) != 0x3;
@@ -517,27 +743,13 @@ impl Cpu {
         };
 
         let instr = Instruction::decode(word, instruction_address, is_compressed)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Failed to decode instruction: word=0x{word:08x}, address=0x{instruction_address:x}, compressed={is_compressed}: {e}"
-                )
-            });
-
-        if trace.is_none() {
-            instr.execute(self);
-            self.trace_len += 1;
-        } else {
-            instr.trace(self, trace);
-            self.trace_len += instr.inline_sequence(&self.vr_allocator).len();
-        }
-
-        // check if current instruction is real or not for cycle profiling
-        if instr.is_real() {
-            self.executed_instrs += 1;
-        }
-        self.x[0] = 0; // hardwired zero
-
-        Ok(())
+            .unwrap_or_else(|e| decode_failure(word, instruction_address, is_compressed, e));
+        self.mmu.decode_cache.insert(
+            instruction_address,
+            instr,
+            if is_compressed { 2 } else { 4 },
+        );
+        Ok(instr)
     }
 
     fn handle_interrupt(&mut self, instruction_address: u64) {
@@ -1030,6 +1242,9 @@ impl Cpu {
     }
 
     pub fn handle_jolt_cycle_marker(&mut self, ptr: u32, len: u32, event: u32) -> Result<(), Trap> {
+        if self.host_io == HostIo::Replay {
+            return Ok(());
+        }
         match event {
             JOLT_CYCLE_MARKER_START => {
                 let label = self.read_string(ptr, len)?; // guest NUL-string
@@ -1074,6 +1289,9 @@ impl Cpu {
     }
 
     pub fn handle_jolt_print(&mut self, ptr: u32, len: u32, event_type: u32) -> Result<(), Trap> {
+        if self.host_io == HostIo::Replay {
+            return Ok(());
+        }
         let message = self.read_string(ptr, len)?;
         if event_type == JOLT_PRINT_STRING {
             print!("{message}");
@@ -1086,6 +1304,11 @@ impl Cpu {
     }
 
     pub fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
+        // Pass-1 already appended these bytes; a replay append would corrupt
+        // the worker's suffix-relative read offsets.
+        if self.host_io == HostIo::Replay {
+            return Ok(());
+        }
         // Read bytes from guest memory and write to advice tape
         let mut bytes = Vec::with_capacity(len as usize);
         for i in 0..len {
@@ -1110,7 +1333,11 @@ impl Cpu {
     /// Track a function call (JAL/JALR instruction that saves callsite information)
     /// Optimized for minimal overhead - just append to a circular buffer (VecDeque)
     #[inline]
-    pub fn track_call(&mut self, return_address: u64, operands: NormalizedOperands) {
+    pub fn track_call(&mut self, return_address: u64) {
+        // Backtraces are pass-1's job; workers do not maintain a call stack.
+        if self.host_io == HostIo::Replay {
+            return;
+        }
         // Simple circular buffer - if full, overwrite oldest
         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
             self.call_stack.pop_front();
@@ -1118,8 +1345,9 @@ impl Cpu {
 
         self.call_stack.push_back(CallFrame {
             call_site: return_address,
-            x: self.x,
-            operands,
+            // Register snapshots are only displayed by JOLT_BACKTRACE=full;
+            // skip the bulk copy unless that mode was requested.
+            x: self.capture_backtrace_registers.then(|| Box::new(self.x)),
             cycle_count: self.trace_len,
         });
     }
@@ -1151,10 +1379,207 @@ impl Cpu {
             active_markers: self.active_markers.clone(),
             vr_allocator: self.vr_allocator.clone(),
             call_stack: self.call_stack.clone(),
+            capture_backtrace_registers: self.capture_backtrace_registers,
             advice_tape: self.advice_tape.clone(),
+            host_io: self.host_io,
             #[cfg(feature = "field-inline")]
             field_registers: self.field_registers.clone(),
         }
+    }
+
+    /// Capture chunk-replay CPU state. Must be called at a tick boundary.
+    ///
+    /// The destructure is exhaustive on purpose: adding a `Cpu` field fails
+    /// compilation here until the field is classified as captured, dropped,
+    /// or worker-fresh.
+    pub(crate) fn capture_chunk_state(&self) -> ChunkCpuState {
+        let Cpu {
+            clock,
+            privilege_mode,
+            wfi,
+            x,
+            f,
+            pc,
+            csr,
+            // Memory image, JoltDevice and decode cache are captured by the
+            // checkpoint layer (see `parallel::ChunkCheckpoint`).
+            mmu: _,
+            reservation,
+            is_reservation_set,
+            reservation_width,
+            // Constants, re-established by worker construction.
+            _dump_flag: _,
+            unsigned_data_mask: _,
+            trace_len,
+            executed_instrs,
+            // Pass-1-only logging/bookkeeping.
+            active_markers: _,
+            // Fresh per worker: guards are strictly intra-tick, and cloning
+            // would share the Arc<Mutex> across threads.
+            vr_allocator,
+            // Pass-1 owns panic backtraces.
+            call_stack: _,
+            capture_backtrace_registers: _,
+            advice_tape,
+            // Worker-owned mode flag.
+            host_io: _,
+            #[cfg(feature = "field-inline")]
+            field_registers,
+        } = self;
+        debug_assert!(
+            vr_allocator.is_quiescent(),
+            "chunk capture with outstanding virtual-register guards (mid-tick capture?)"
+        );
+        ChunkCpuState {
+            clock: *clock,
+            privilege_mode: *privilege_mode,
+            wfi: *wfi,
+            x: *x,
+            f: *f,
+            pc: *pc,
+            csr: Box::new(*csr),
+            reservation: *reservation,
+            is_reservation_set: *is_reservation_set,
+            reservation_width: *reservation_width,
+            trace_len: *trace_len,
+            executed_instrs: *executed_instrs,
+            advice_suffix: advice_tape.data[advice_tape.read_position..].to_vec(),
+            #[cfg(feature = "field-inline")]
+            field_registers: field_registers.clone(),
+        }
+    }
+
+    /// Install captured chunk state into this (worker) CPU. Counterpart of
+    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDevice outputs and
+    /// decode cache are installed by the checkpoint layer.
+    pub(crate) fn install_chunk_state(&mut self, state: &ChunkCpuState) {
+        debug_assert!(
+            self.vr_allocator.is_quiescent(),
+            "chunk install with outstanding virtual-register guards"
+        );
+        self.clock = state.clock;
+        self.privilege_mode = state.privilege_mode;
+        self.wfi = state.wfi;
+        self.x = state.x;
+        self.f = state.f;
+        self.pc = state.pc;
+        self.csr = *state.csr;
+        self.reservation = state.reservation;
+        self.is_reservation_set = state.is_reservation_set;
+        self.reservation_width = state.reservation_width;
+        self.trace_len = state.trace_len;
+        self.executed_instrs = state.executed_instrs;
+        self.active_markers.clear();
+        self.call_stack.clear();
+        self.advice_tape = AdviceTape::from_bytes(state.advice_suffix.clone());
+        #[cfg(feature = "field-inline")]
+        {
+            self.field_registers = state.field_registers.clone();
+        }
+    }
+
+    /// First architectural-state difference vs `other`, as a human-readable
+    /// report (`None` = equal).
+    ///
+    /// Compares everything a trace-mode chunk replay depends on: pc, the full
+    /// register file (including virtual registers), the CSR array, clock, wfi,
+    /// privilege mode, the LR/SC reservation triple, the advice tape (data and
+    /// read position), `executed_instrs`, `trace_len` (row-uniform across
+    /// trace and execute modes), and JoltDevice outputs/panic. Excludes
+    /// host-side bookkeeping (markers, call stack) and the dead `f`
+    /// registers. Memory is not compared — callers hash it separately.
+    pub fn arch_state_diff(&self, other: &Cpu) -> Option<String> {
+        if self.trace_len != other.trace_len {
+            return Some(format!(
+                "trace_len: {} vs {}",
+                self.trace_len, other.trace_len
+            ));
+        }
+        if self.pc != other.pc {
+            return Some(format!("pc: {:#x} vs {:#x}", self.pc, other.pc));
+        }
+        for i in 0..REGISTER_COUNT as usize {
+            if self.x[i] != other.x[i] {
+                return Some(format!("x[{i}]: {:#x} vs {:#x}", self.x[i], other.x[i]));
+            }
+        }
+        for i in 0..CSR_CAPACITY {
+            if self.csr[i] != other.csr[i] {
+                return Some(format!(
+                    "csr[{i:#x}]: {:#x} vs {:#x}",
+                    self.csr[i], other.csr[i]
+                ));
+            }
+        }
+        if self.clock != other.clock {
+            return Some(format!("clock: {} vs {}", self.clock, other.clock));
+        }
+        if self.wfi != other.wfi {
+            return Some(format!("wfi: {} vs {}", self.wfi, other.wfi));
+        }
+        if core::mem::discriminant(&self.privilege_mode)
+            != core::mem::discriminant(&other.privilege_mode)
+        {
+            return Some(format!(
+                "privilege_mode: {:?} vs {:?}",
+                self.privilege_mode, other.privilege_mode
+            ));
+        }
+        if (
+            self.reservation,
+            self.is_reservation_set,
+            self.reservation_width,
+        ) != (
+            other.reservation,
+            other.is_reservation_set,
+            other.reservation_width,
+        ) {
+            return Some(format!(
+                "reservation: ({:#x}, {}, {:?}) vs ({:#x}, {}, {:?})",
+                self.reservation,
+                self.is_reservation_set,
+                self.reservation_width,
+                other.reservation,
+                other.is_reservation_set,
+                other.reservation_width
+            ));
+        }
+        if self.advice_tape.read_position != other.advice_tape.read_position {
+            return Some(format!(
+                "advice_tape.read_position: {} vs {}",
+                self.advice_tape.read_position, other.advice_tape.read_position
+            ));
+        }
+        if self.advice_tape.data != other.advice_tape.data {
+            return Some(format!(
+                "advice_tape.data: {} bytes vs {} bytes (or contents differ)",
+                self.advice_tape.data.len(),
+                other.advice_tape.data.len()
+            ));
+        }
+        if self.executed_instrs != other.executed_instrs {
+            return Some(format!(
+                "executed_instrs: {} vs {}",
+                self.executed_instrs, other.executed_instrs
+            ));
+        }
+        match (&self.mmu.jolt_device, &other.mmu.jolt_device) {
+            (Some(a), Some(b)) => {
+                if a.outputs != b.outputs {
+                    return Some(format!(
+                        "jolt_device.outputs: {} bytes vs {} bytes (or contents differ)",
+                        a.outputs.len(),
+                        b.outputs.len()
+                    ));
+                }
+                if a.panic != b.panic {
+                    return Some(format!("jolt_device.panic: {} vs {}", a.panic, b.panic));
+                }
+            }
+            (None, None) => {}
+            _ => return Some("jolt_device: present vs absent".to_string()),
+        }
+        None
     }
 }
 
@@ -1216,6 +1641,14 @@ pub fn get_register_name(num: usize) -> &'static str {
 
 fn normalize_u64(value: u64) -> u64 {
     value
+}
+
+#[cold]
+#[inline(never)]
+fn decode_failure(word: u32, address: u64, compressed: bool, e: impl core::fmt::Display) -> ! {
+    panic!(
+        "Failed to decode instruction: word=0x{word:08x}, address=0x{address:x}, compressed={compressed}: {e}"
+    )
 }
 
 #[cfg(test)]
@@ -1468,6 +1901,9 @@ mod test_cpu {
 
     #[test]
     fn exception() {
+        // ECALL executes through its inline sequence in both modes (execute
+        // mode mirrors trace mode), so trap state lives in the CSR virtual
+        // registers: vr34 = mtvec, vr36 = mepc, vr37 = mcause.
         let handler_vector = 0x10000000;
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(4);
@@ -1476,21 +1912,17 @@ mod test_cpu {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
-        cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
+        cpu.x[34] = handler_vector as i64;
         cpu.update_pc(DRAM_BASE);
 
         cpu.tick(None);
 
-        // Interrupt happened and moved to handler
+        // Trap happened and moved to handler (via the mtvec virtual register)
         assert_eq!(handler_vector, cpu.read_pc());
 
-        // CSR Cause register holds the reason what caused the trap
-        assert_eq!(0xb, cpu.read_csr_raw(CSR_MCAUSE_ADDRESS));
-
-        // @TODO: Test post CSR status register
-        // @TODO: Test privilege levels
-        // @TODO: Test delegation
-        // @TODO: Test vector type handlers
+        // mepc/mcause virtual registers hold the faulting pc and cause
+        assert_eq!(DRAM_BASE as i64, cpu.x[36]);
+        assert_eq!(0xb, cpu.x[37]);
     }
 
     #[test]

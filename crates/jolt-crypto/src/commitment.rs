@@ -224,9 +224,18 @@ impl Error for VectorOpeningError {}
 /// Not all commitment schemes have this property (e.g., hash-based schemes
 /// do not). Pedersen and lattice-based schemes do.
 ///
+/// # Invariant: `Default` is the additive identity
+///
+/// `Default::default()` must be the neutral element of `add`:
+/// `add(&C::default(), c) == c` for all `c`. Aggregation
+/// (`combine_commitments`) seeds both its serial fold and its parallel
+/// reduction with `C::default()`, so a non-identity default adds an
+/// unintended offset to every aggregate.
+///
 /// Blanket-implemented for [`JoltGroup`](crate::JoltGroup) over any field
-/// (via `scalar_mul` + addition). Non-group commitment types (e.g., lattice
-/// vectors) can implement this trait directly for their native scalar field.
+/// (via `scalar_mul` + addition; `JoltGroup` requires `Default == identity`).
+/// Non-group commitment types (e.g., lattice vectors) can implement this
+/// trait directly for their native scalar field.
 pub trait HomomorphicCommitment<F: Field>: Clone + Default {
     /// Computes `c1 + c2`.
     #[must_use]

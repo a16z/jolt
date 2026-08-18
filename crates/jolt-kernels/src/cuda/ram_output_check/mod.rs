@@ -182,6 +182,8 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for CudaBackend {
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    use std::sync::Arc;
+
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
@@ -282,7 +284,7 @@ mod tests {
 
     fn with_output_check_witness<R>(
         ram_k: usize,
-        body: impl FnOnce(&TraceBackend<'_, OwnedTrace>) -> R,
+        body: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
     ) -> R {
         let instruction = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::XOR,
@@ -300,7 +302,7 @@ mod tests {
         let witness_device = device(&WITNESS_OUTPUTS);
         let memory_layout = witness_device.memory_layout.clone();
         let lowest = memory_layout.get_lowest_address();
-        let preprocessing = JoltProgramPreprocessing {
+        let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
                 vec![instruction],
                 instruction.address as u64,
@@ -310,12 +312,13 @@ mod tests {
             ram: RAMPreprocessing::default(),
             memory_layout,
             max_padded_trace_length: 1usize << LOG_T,
-        };
-        let program = JoltProgram::default();
+        });
+        let program = Arc::new(JoltProgram::default());
         let trace = TraceOutput::new(
             OwnedTrace::new(output_rows(instruction, lowest, ram_k)),
             witness_device,
             Some(final_memory()),
+            None,
         );
         let backend = TraceBackend::new(
             JoltVmWitnessConfig::new(LOG_T, ram_k, one_hot()),
