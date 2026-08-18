@@ -766,29 +766,27 @@ def format_markdown(totals: dict[str, dict[str, int]]) -> str:
         ">",
         "> Tests, docs, fixtures, and helper scripts excluded.",
         "",
-        "| Category | 🟢 Added | 🔴 Removed | Changed |",
-        "|:--|--:|--:|--:|",
+        "| Category | 🟢 Added | 🔴 Removed |",
+        "|:--|--:|--:|",
     ]
     for cat in CATEGORIES:
         icon, label = MARKDOWN_CATEGORIES[cat]
         added = totals[cat]["added"]
         removed = totals[cat]["removed"]
-        changed = added + removed
         if cat == "code":
             lines.append(
                 f"| {icon} **{label}** | **{delta(added, '+')}** | "
-                f"**{delta(removed, MINUS)}** | **{changed:,}** |"
+                f"**{delta(removed, MINUS)}** |"
             )
         else:
             lines.append(
                 f"| {icon} {label} | {delta(added, '+')} | "
-                f"{delta(removed, MINUS)} | {changed:,} |"
+                f"{delta(removed, MINUS)} |"
             )
     lines.extend(
         [
             f"| **Total diff** | **{delta(total_added, '+')}** | "
-            f"**{delta(total_removed, MINUS)}** | "
-            f"**{total_added + total_removed:,}** |",
+            f"**{delta(total_removed, MINUS)}** |",
             "",
             "<sub>Every changed line is classified once.</sub>",
             "",
