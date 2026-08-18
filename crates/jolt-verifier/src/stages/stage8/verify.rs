@@ -49,8 +49,7 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 /// stage-8 recipe assembles its PCS batch statement through the same
 /// [`batch_entries`] wiring. The id is the composite [`VerifierOpeningId`] so
 /// the composed plan can carry the field-inline entry alongside the jolt ones
-/// (under `field-inline`, spliced by
-/// [`splice_field_inline_final_opening`]).
+/// (under `field-inline`, spliced by the stage-8 `field_inline` seam).
 pub struct Stage8BatchEntry<'a, F: Field, C> {
     pub id: crate::stages::ids::VerifierOpeningId,
     pub commitment: &'a C,
@@ -151,14 +150,10 @@ where
         &precommitted_finals,
         clear_claims,
     )?;
-    // The composed plan: the reduced `FieldRdInc` joins the joint opening RLC
-    // at the spec's position (after `RdInc@IncClaimReduction`, before the RA
-    // families), sourced from the FR commitment payload and the stage-6b FR
-    // increment reduction.
     #[cfg(feature = "field-inline")]
     let entries = {
         let mut entries = entries;
-        splice_field_inline_final_opening(
+        super::field_inline::splice_final_opening(
             &mut entries,
             &proof.commitments,
             &opening_point,
@@ -462,60 +457,6 @@ where
     Ok(entries)
 }
 
-/// Splice the reduced `FieldRdInc` final opening into the batch entries at the
-/// spec's position — immediately after `RdInc@IncClaimReduction`, before the
-/// RA families (`specs/field-inline-protocol.md`, the field-inline
-/// final-opening order). Mirrors `RdInc`'s treatment exactly: the commitment
-/// comes from the proof's FR payload (present fail-closed), the claim and
-/// point from the stage-6b FR increment reduction, and the dense embedding
-/// scale through the same `commitment_embedding_scale` helper. Public because
-/// the prover's stage-8 recipe splices its PCS batch statement identically.
-#[cfg(all(feature = "field-inline", not(feature = "akita")))]
-pub fn splice_field_inline_final_opening<'a, F, C>(
-    entries: &mut Vec<Stage8BatchEntry<'a, F, C>>,
-    commitments: &'a JoltCommitments<C>,
-    opening_point: &[F],
-    field_inline_opening_point: &[F],
-    opening_claim: Option<F>,
-) -> Result<(), VerifierError>
-where
-    F: Field,
-{
-    use crate::stages::ids::VerifierOpeningId;
-    use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
-
-    let field_inline =
-        commitments
-            .field_inline
-            .as_ref()
-            .ok_or(VerifierError::MissingProofPayload {
-                field: "commitments.field_inline",
-            })?;
-    let rd_inc_id: VerifierOpeningId = JoltOpeningId::committed(
-        JoltCommittedPolynomial::RdInc,
-        JoltRelationId::IncClaimReduction,
-    )
-    .into();
-    let splice_position = entries
-        .iter()
-        .position(|entry| entry.id == rd_inc_id)
-        .and_then(|position| position.checked_add(1))
-        .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-            reason: "the final opening batch has no RdInc entry to anchor the FieldRdInc splice"
-                .to_string(),
-        })?;
-    entries.insert(
-        splice_position,
-        Stage8BatchEntry {
-            id: field_rd_inc_reduced().into(),
-            commitment: &field_inline.field_registers.rd_inc,
-            opening_claim,
-            scale: commitment_embedding_scale(opening_point, field_inline_opening_point),
-        },
-    );
-    Ok(())
-}
-
 #[cfg(not(feature = "akita"))]
 fn require_commitment_layout<C>(
     commitments: &JoltCommitments<C>,
@@ -524,11 +465,7 @@ fn require_commitment_layout<C>(
     // The FR commitment payload is part of the expected layout: the composed
     // final opening cannot assemble without the `FieldRdInc` commitment.
     #[cfg(feature = "field-inline")]
-    if commitments.field_inline.is_none() {
-        return Err(VerifierError::MissingProofPayload {
-            field: "commitments.field_inline",
-        });
-    }
+    super::field_inline::require_commitment(commitments)?;
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "layout totals are small per-polynomial chunk counts; the sum cannot overflow usize"
@@ -632,7 +569,7 @@ mod tests {
         let field_point = [3u64, 5].map(Fr::from_u64);
 
         let mut entries = base_entries(true);
-        splice_field_inline_final_opening(
+        crate::stages::stage8::field_inline::splice_final_opening(
             &mut entries,
             &commitments,
             &opening_point,
@@ -670,7 +607,7 @@ mod tests {
 
         // Advice-free batches splice at the same anchor position.
         let mut without_advice = base_entries(false);
-        splice_field_inline_final_opening(
+        crate::stages::stage8::field_inline::splice_final_opening(
             &mut without_advice,
             &commitments,
             &opening_point,
@@ -694,7 +631,7 @@ mod tests {
         let opening_point = [2u64, 3].map(Fr::from_u64);
         let without_payload = JoltCommitments::new((), (), Vec::new(), Vec::new(), Vec::new());
         assert!(matches!(
-            splice_field_inline_final_opening(
+            crate::stages::stage8::field_inline::splice_final_opening(
                 &mut base_entries(false),
                 &without_payload,
                 &opening_point,
@@ -712,7 +649,7 @@ mod tests {
             });
         let mut anchorless: Vec<Stage8BatchEntry<'_, Fr, ()>> = Vec::new();
         assert!(matches!(
-            splice_field_inline_final_opening(
+            crate::stages::stage8::field_inline::splice_final_opening(
                 &mut anchorless,
                 &commitments,
                 &opening_point,

@@ -26,31 +26,10 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_poly::try_eq_mle;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
-
-/// Wire the consumed FR value opening *values* from stage 1's composed outer
-/// sumcheck (the FR-local appended segment). Fail-closed: an FR-on proof whose
-/// stage-1 carrier lacks the FR payload cannot feed this reduction.
-pub fn field_registers_claim_reduction_input_values_from_upstream<F: Field>(
-    stage1: &Stage1ClearOutput<F>,
-) -> Result<FieldRegistersClaimReductionInputClaims<F>, VerifierError> {
-    let outer =
-        stage1
-            .field_inline_output_values
-            .as_ref()
-            .ok_or(VerifierError::MissingProofPayload {
-                field: "stage1.field_inline_output_values",
-            })?;
-    Ok(FieldRegistersClaimReductionInputClaims {
-        rd_value: outer.rd_value,
-        rs1_value: outer.rs1_value,
-        rs2_value: outer.rs2_value,
-    })
-}
 
 #[derive(Clone)]
 pub struct FieldRegistersClaimReduction<F: Field> {
@@ -90,7 +69,7 @@ impl<F: Field> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &FieldRegistersClaimReductionInputClaims<Vec<F>>,
     ) -> Result<FieldRegistersClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        let opening_point = derivations::reversed(sumcheck_point);
         Ok(FieldRegistersClaimReductionOutputClaims {
             rd_value: opening_point.clone(),
             rs1_value: opening_point.clone(),
@@ -110,10 +89,11 @@ impl<F: Field> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
         };
         match public_id {
             // The reduced openings share one opening point; bind it against the
-            // low product remainder challenges (`tau_low`) — the same
-            // derivation as the instruction claim reduction's `EqSpartan`.
+            // low product remainder challenges (`tau_low`) — literally the
+            // instruction claim reduction's `EqSpartan` derivation.
             FieldRegistersClaimReductionPublic::EqSpartan => {
-                try_eq_mle(output_points.rd_value(), &self.tau_low).map_err(public_input_failed)
+                derivations::eq_at_point(output_points.rd_value(), &self.tau_low)
+                    .map_err(public_input_failed)
             }
         }
     }

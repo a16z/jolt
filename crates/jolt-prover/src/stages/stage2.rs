@@ -144,8 +144,8 @@ where
         ),
         #[cfg(feature = "field-inline")]
         field_registers_claim_reduction:
-            jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction::new(
-                jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
+            jolt_verifier::stages::stage2::field_inline::claim_reduction_member(
+                log_t,
                 tau_low.clone(),
             ),
         ram_raf_evaluation: RamRafEvaluation::new(

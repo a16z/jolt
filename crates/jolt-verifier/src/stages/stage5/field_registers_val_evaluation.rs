@@ -20,32 +20,10 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::Field;
-use jolt_poly::LtPolynomial;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
 use crate::VerifierError;
-
-/// Wire the consumed `FieldRegistersVal` opening *value* from the upstream FR
-/// read-write checking (stage 4). The upstream cell is a plain (non-optional)
-/// field of the FR-on stage-4 claims, so presence is a compile-time fact.
-pub fn field_registers_val_evaluation_input_values_from_upstream<F: Field>(
-    stage4: &Stage4OutputClaims<F>,
-) -> FieldRegistersValEvaluationInputClaims<F> {
-    FieldRegistersValEvaluationInputClaims {
-        registers_val: stage4.field_registers_read_write.registers_val,
-    }
-}
-
-/// Wire the consumed `FieldRegistersVal` opening *point* from the upstream FR
-/// read-write checking (stage 4).
-pub fn field_registers_val_evaluation_input_points_from_upstream<F: Field>(
-    stage4: &Stage4OutputPoints<F>,
-) -> FieldRegistersValEvaluationInputClaims<Vec<F>> {
-    FieldRegistersValEvaluationInputClaims {
-        registers_val: stage4.field_registers_read_write_point().to_vec(),
-    }
-}
 
 #[derive(Clone)]
 pub struct FieldRegistersValEvaluation<F: Field> {
@@ -87,23 +65,13 @@ impl<F: Field> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
         sumcheck_point: &[F],
         input_points: &FieldRegistersValEvaluationInputClaims<Vec<F>>,
     ) -> Result<FieldRegistersValEvaluationOutputClaims<Vec<F>>, VerifierError> {
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "FIELD_REGISTERS_LOG_K is a small constant and log_t an ilog2 result (< 64); the sum cannot overflow usize"
-        )]
-        let expected_len = FIELD_REGISTERS_LOG_K + self.trace_dimensions.log_t();
-        let register_point = input_points.registers_val();
-        if register_point.len() != expected_len {
-            return Err(public_input_failed(format!(
-                "field-register read-write opening point has {} variables, expected {expected_len}",
-                register_point.len()
-            )));
-        }
-        let address = register_point.get(..FIELD_REGISTERS_LOG_K).ok_or_else(|| {
-            public_input_failed(
-                "field-register read-write opening point address prefix is out of range",
-            )
-        })?;
+        let address = derivations::val_evaluation_address(
+            input_points.registers_val(),
+            FIELD_REGISTERS_LOG_K,
+            self.trace_dimensions.log_t(),
+            "field-register",
+        )
+        .map_err(public_input_failed)?;
         let cycle = self
             .trace_dimensions
             .cycle_opening_point(sumcheck_point)
@@ -128,29 +96,16 @@ impl<F: Field> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
         };
         match public_id {
             // Own cycle sub-point first, upstream FR read/write cycle second —
-            // the ordinary `RegistersValEvaluation` `LtCycle` argument order
-            // (the spec's `Lt(r_field_val.cycle, r_field_rw.cycle)`).
-            FieldRegistersValEvaluationPublic::LtCycle => {
-                let registers_cycle = output_points
-                    .rd_inc()
-                    .get(FIELD_REGISTERS_LOG_K..)
-                    .ok_or_else(|| {
-                        public_input_failed(
-                            "rd_inc opening point is shorter than the field-register address \
-                             width",
-                        )
-                    })?;
-                let fixed_cycle = input_points
-                    .registers_val()
-                    .get(FIELD_REGISTERS_LOG_K..)
-                    .ok_or_else(|| {
-                        public_input_failed(
-                            "field-register read-write opening point is shorter than the \
-                             field-register address width",
-                        )
-                    })?;
-                Ok(LtPolynomial::evaluate(registers_cycle, fixed_cycle))
-            }
+            // literally the ordinary `RegistersValEvaluation` `LtCycle`
+            // derivation at the FR geometry (the spec's
+            // `Lt(r_field_val.cycle, r_field_rw.cycle)`).
+            FieldRegistersValEvaluationPublic::LtCycle => derivations::lt_at_cycle(
+                output_points.rd_inc(),
+                input_points.registers_val(),
+                FIELD_REGISTERS_LOG_K,
+                "field-register",
+            )
+            .map_err(public_input_failed),
         }
     }
 }
@@ -163,15 +118,9 @@ impl<F: Field> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
 )]
 mod tests {
     use super::*;
+    use jolt_poly::LtPolynomial;
 
-    use jolt_claims::protocols::jolt::geometry::dimensions::{
-        TraceDimensions, REGISTER_ADDRESS_BITS,
-    };
-    use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
-    use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
     use jolt_field::{Fr, FromPrimitiveInt};
-
-    use crate::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -217,67 +166,5 @@ mod tests {
             )
             .unwrap();
         assert_eq!(lt, LtPolynomial::evaluate(&own_cycle, &upstream_cycle));
-    }
-
-    /// The FR `LtCycle` mirrors the ordinary registers val-evaluation
-    /// derivation exactly: fed the same two cycle sub-points (behind each
-    /// family's own address-prefix width), the two publics are equal.
-    #[test]
-    fn field_registers_lt_cycle_matches_registers_val_evaluation_derivation() {
-        let log_t = 4usize;
-        let jolt_relation = RegistersValEvaluation::<Fr>::new(TraceDimensions::new(log_t));
-        let field_relation =
-            FieldRegistersValEvaluation::<Fr>::new(FieldRegistersTraceDimensions::new(log_t));
-
-        let upstream_cycle: Vec<Fr> = (0..log_t as u64).map(|i| fr(50 + i)).collect();
-        let point: Vec<Fr> = (0..log_t as u64).map(|i| fr(70 + i)).collect();
-
-        let jolt_input_points = RegistersValEvaluationInputClaims::<Vec<Fr>> {
-            registers_val: [
-                vec![fr(1); REGISTER_ADDRESS_BITS].as_slice(),
-                upstream_cycle.as_slice(),
-            ]
-            .concat(),
-        };
-        let field_input_points = FieldRegistersValEvaluationInputClaims::<Vec<Fr>> {
-            registers_val: [
-                vec![fr(2); FIELD_REGISTERS_LOG_K].as_slice(),
-                upstream_cycle.as_slice(),
-            ]
-            .concat(),
-        };
-
-        let jolt_points = jolt_relation
-            .derive_opening_points(&point, &jolt_input_points)
-            .unwrap();
-        let field_points = field_relation
-            .derive_opening_points(&point, &field_input_points)
-            .unwrap();
-        // Both instances bind the same cycle point behind their address prefixes.
-        assert_eq!(
-            jolt_points.rd_inc().get(REGISTER_ADDRESS_BITS..),
-            field_points.rd_inc().get(FIELD_REGISTERS_LOG_K..),
-        );
-
-        let jolt_lt = jolt_relation
-            .derive_output_term(
-                &JoltDerivedId::RegistersValEvaluation(RegistersValEvaluationPublic::LtCycle),
-                &jolt_input_points,
-                &jolt_points,
-                &NoChallenges::default(),
-            )
-            .unwrap();
-        let field_lt = field_relation
-            .derive_output_term(
-                &FieldInlineDerivedId::FieldRegistersValEvaluation(
-                    FieldRegistersValEvaluationPublic::LtCycle,
-                ),
-                &field_input_points,
-                &field_points,
-                &NoChallenges::default(),
-            )
-            .unwrap();
-
-        assert_eq!(field_lt, jolt_lt);
     }
 }

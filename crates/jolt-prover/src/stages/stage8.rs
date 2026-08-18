@@ -150,7 +150,7 @@ where
     #[cfg(feature = "field-inline")]
     let entries = {
         let mut entries = entries;
-        jolt_verifier::stages::stage8::splice_field_inline_final_opening(
+        jolt_verifier::stages::stage8::field_inline::splice_final_opening(
             &mut entries,
             commitments,
             &opening_point,

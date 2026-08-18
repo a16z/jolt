@@ -64,22 +64,8 @@ where
 
         sumchecks.validate_output_claims(&claims.outer)?;
 
-        // The composed R1CS appends 13 FR-local columns; their openings ride
-        // the same remainder sumcheck and feed the composed expected-output
-        // check. Required fail-closed on FR-on builds.
         #[cfg(feature = "field-inline")]
-        let field_inline_outer =
-            {
-                let field_inline_outer = claims.field_inline_outer.clone().ok_or(
-                    VerifierError::MissingProofPayload {
-                        field: "claims.stage1.field_inline_outer",
-                    },
-                )?;
-                sumchecks.outer_remainder.set_field_inline_outputs(
-                    crate::stages::relations::OutputClaims::opening_values(&field_inline_outer),
-                )?;
-                field_inline_outer
-            };
+        let field_inline_outer = super::field_inline::attach_outer_outputs(&sumchecks, claims)?;
 
         // The remainder consumes the uni-skip's reduced opening as its input claim
         // (the relation's `input_claim` is the bare consumed opening).
@@ -101,12 +87,8 @@ where
         // the prover's commitment order.
         sumchecks.append_output_claims(transcript, &claims.outer);
 
-        // The FR-local openings absorb after the ordinary ones, in
-        // appended-column order — the same append the prover must perform.
         #[cfg(feature = "field-inline")]
-        for value in crate::stages::relations::OutputClaims::opening_values(&field_inline_outer) {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
+        super::field_inline::append_outer_openings(transcript, &field_inline_outer);
 
         return Ok(Stage1Output::Clear(Stage1ClearOutput {
             output_values: claims.outer.clone(),
@@ -142,14 +124,8 @@ where
         // openings.
         let output_claim_count = sumchecks.output_claim_count();
         #[cfg(feature = "field-inline")]
-        let output_claim_count = output_claim_count
-            .checked_add(
-                jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
-            )
-            .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-                stage: format!("{:?}", JoltRelationId::SpartanOuter),
-                reason: "composed stage-1 output-claim count overflows usize".to_string(),
-            })?;
+        let output_claim_count =
+            super::field_inline::composed_output_claim_count(output_claim_count)?;
         let remainder_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage1_sumcheck_proof,

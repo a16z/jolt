@@ -64,11 +64,6 @@ where
     let product_remainder = relations::spartan::ProductRemainder::new(product_dimensions);
     let instruction_reduction =
         relations::claim_reductions::instruction::ClaimReduction::new(trace_dimensions);
-    #[cfg(feature = "field-inline")]
-    let field_registers_reduction =
-        jolt_claims::protocols::field_inline::relations::claim_reductions::registers::ClaimReduction::new(
-            jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
-        );
     let ram_raf = relations::ram::RafEvaluation::new(raf_dimensions);
     let ram_output = relations::ram::OutputCheck::new(read_write_dimensions);
 
@@ -134,46 +129,20 @@ where
         eq_spartan,
     )?;
 
-    // The FR claim reduction is trace-domain like the instruction reduction:
-    // same rounds, same batch suffix, same reversed opening point — so its
-    // `EqSpartan` is the same `Eq(reduced point, tau_low)` derivation (pinned
-    // in stage2's clear tests); its gamma is the drawn batch challenge.
+    // The FR claim reduction member and its baked publics (relation + gamma +
+    // EqSpartan), at the same source-values position as before.
     #[cfg(feature = "field-inline")]
-    {
-        use jolt_claims::protocols::field_inline::{
-            FieldInlineRelationId, FieldRegistersClaimReductionChallenge,
-            FieldRegistersClaimReductionPublic,
-        };
-
-        let reduction_point = input
+    let field_registers_reduction = super::field_inline::stage2_claim_reduction(
+        values,
+        log_t,
+        &input.stage2.batch_consistency,
+        input
             .stage2
-            .batch_consistency
-            .try_instance_point(field_registers_reduction.rounds())
-            .map_err(|error| {
-                field_inline_public_error(
-                    FieldInlineRelationId::FieldRegistersClaimReduction,
-                    error,
-                )
-            })?;
-        let reduction_opening_point = reduction_point.iter().rev().copied().collect::<Vec<_>>();
-        values.public(
-            FieldInlineChallengeId::from(FieldRegistersClaimReductionChallenge::Gamma),
-            input
-                .stage2
-                .challenges
-                .field_registers_claim_reduction
-                .gamma,
-        )?;
-        values.public(
-            FieldInlineDerivedId::from(FieldRegistersClaimReductionPublic::EqSpartan),
-            try_eq_mle(&reduction_opening_point, &product_tau_low).map_err(|error| {
-                field_inline_public_error(
-                    FieldInlineRelationId::FieldRegistersClaimReduction,
-                    error,
-                )
-            })?,
-        )?;
-    }
+            .challenges
+            .field_registers_claim_reduction
+            .gamma,
+        &product_tau_low,
+    )?;
 
     #[expect(
         clippy::arithmetic_side_effects,
@@ -320,11 +289,7 @@ fn stage2_output_ids_and_aliases<F: Field>(
     // after the product-remainder outputs, before the instruction
     // claim-reduction non-aliased outputs.
     #[cfg(feature = "field-inline")]
-    output_ids.extend(
-        jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings()
-            .into_iter()
-            .map(VerifierOpeningId::from),
-    );
+    output_ids.extend(super::field_inline::stage2_product_appendage_ids());
     output_ids.extend(
         instruction_outputs
             .into_iter()
@@ -334,11 +299,7 @@ fn stage2_output_ids_and_aliases<F: Field>(
     // The FR claim-reduction member's rows at its member position (after the
     // instruction reduction, before RAM RAF evaluation).
     #[cfg(feature = "field-inline")]
-    output_ids.extend(
-        jolt_claims::protocols::field_inline::geometry::claim_reductions::registers::claim_reduction_output_openings()
-            .into_iter()
-            .map(VerifierOpeningId::from),
-    );
+    output_ids.extend(super::field_inline::stage2_claim_reduction_output_ids());
     output_ids.extend(composite_ids(
         relations::ram::RamRafEvaluationOutputClaims::<F> { ram_ra: F::zero() }.canonical_order(),
     ));
@@ -359,27 +320,7 @@ fn stage2_output_ids_and_aliases<F: Field>(
 /// binding is an [`OpeningEquality`] (an [`OpeningAlias`] would leave one row
 /// unconstrained).
 #[cfg(feature = "field-inline")]
-fn stage2_opening_equalities() -> Vec<OpeningEquality<VerifierOpeningId>> {
-    use jolt_claims::protocols::field_inline::{FieldInlineOpeningId, FieldInlineRelationId};
-
-    crate::stages::stage2::field_inline_product_alias_polynomials()
-        .into_iter()
-        .map(|polynomial| {
-            OpeningEquality::new(
-                FieldInlineOpeningId::virtual_polynomial(
-                    polynomial,
-                    FieldInlineRelationId::FieldRegistersClaimReduction,
-                )
-                .into(),
-                FieldInlineOpeningId::virtual_polynomial(
-                    polynomial,
-                    FieldInlineRelationId::FieldRegistersProduct,
-                )
-                .into(),
-            )
-        })
-        .collect()
-}
+use super::field_inline::stage2_opening_equalities;
 
 #[cfg(not(feature = "field-inline"))]
 fn stage2_opening_equalities() -> Vec<OpeningEquality<VerifierOpeningId>> {
@@ -427,45 +368,8 @@ fn selected_product_uniskip_input_expr<F: Field>(
     }
     #[cfg(feature = "field-inline")]
     {
-        Ok(expr + field_inline_uniskip_lane_terms(rest)?)
+        Ok(expr + super::field_inline::uniskip_lane_terms(rest)?)
     }
-}
-
-/// The FR lanes' uni-skip input terms: each selected lane's input opening —
-/// read from the stage-1 FR Spartan-outer carrier rows, the same source the
-/// clear composition consumes — at its composed Lagrange weight. The lane
-/// order and input-polynomial mapping are single-sourced from the jolt-claims
-/// lane table (`selected_product_lanes` / `input_opening`).
-#[cfg(feature = "field-inline")]
-fn field_inline_uniskip_lane_terms<F: Field>(
-    field_weights: &[F],
-) -> Result<VerifierExpr<F>, VerifierError> {
-    use jolt_claims::protocols::field_inline::geometry::product::selected_product_lanes;
-    use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
-    use jolt_claims::protocols::field_inline::{FieldInlineOpeningId, FieldInlinePolynomialId};
-
-    let lanes = selected_product_lanes();
-    if field_weights.len() != lanes.len() {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "stage2.product_uniskip: expected {} field lane weights, got {}",
-                lanes.len(),
-                field_weights.len()
-            ),
-        });
-    }
-    let mut expr = VerifierExpr::zero();
-    for (lane, weight) in lanes.into_iter().zip(field_weights) {
-        let FieldInlineOpeningId::Polynomial { polynomial, .. } = lane.input_opening();
-        let FieldInlinePolynomialId::Virtual(polynomial) = polynomial else {
-            return Err(VerifierError::BlindFoldConstructionFailed {
-                reason: "stage2.product_uniskip: FR lane input is not a virtual polynomial"
-                    .to_string(),
-            });
-        };
-        expr = expr + scale_expr(opening(outer_opening(polynomial)), *weight);
-    }
-    Ok(expr)
 }
 
 /// The composed product-remainder output claim over the feature-aware lane
@@ -514,44 +418,12 @@ fn selected_product_remainder_output_expr<F: Field>(
         }
         #[cfg(feature = "field-inline")]
         {
-            let (fr_left, fr_right) = field_inline_remainder_factor_terms(rest)?;
+            let (fr_left, fr_right) = super::field_inline::remainder_factor_terms(rest)?;
             (left_base + fr_left, right_base + fr_right)
         }
     };
 
     Ok(scale_expr(left * right, tau_kernel))
-}
-
-/// The FR lanes' remainder factor terms `(left, right)`: each selected lane's
-/// factor openings — the FR product-appendage rows — at its composed Lagrange
-/// weight. Lane order and factor mapping are single-sourced from the
-/// jolt-claims lane table (`selected_product_lanes` / `factor_openings`), the
-/// same table the clear `composed_remainder_factor_contributions` reads back
-/// as values.
-#[cfg(feature = "field-inline")]
-fn field_inline_remainder_factor_terms<F: Field>(
-    field_weights: &[F],
-) -> Result<(VerifierExpr<F>, VerifierExpr<F>), VerifierError> {
-    use jolt_claims::protocols::field_inline::geometry::product::selected_product_lanes;
-
-    let lanes = selected_product_lanes();
-    if field_weights.len() != lanes.len() {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "stage2.batch: expected {} field lane weights, got {}",
-                lanes.len(),
-                field_weights.len()
-            ),
-        });
-    }
-    let mut left = VerifierExpr::zero();
-    let mut right = VerifierExpr::zero();
-    for (lane, weight) in lanes.into_iter().zip(field_weights) {
-        let [lane_left, lane_right] = lane.factor_openings();
-        left = left + scale_expr(opening(lane_left), *weight);
-        right = right + scale_expr(opening(lane_right), *weight);
-    }
-    Ok((left, right))
 }
 
 #[cfg(test)]
@@ -675,7 +547,7 @@ mod tests {
         use jolt_claims::protocols::field_inline::{FieldInlineOpeningId, FieldInlineRelationId};
 
         let equalities = stage2_opening_equalities();
-        let polynomials = crate::stages::stage2::field_inline_product_alias_polynomials();
+        let polynomials = crate::stages::stage2::field_inline::product_alias_polynomials();
         assert_eq!(equalities.len(), polynomials.len());
 
         let (output_ids, _) = stage2_output_ids_and_aliases::<Fr>();

@@ -1,4 +1,6 @@
 #[cfg(feature = "field-inline")]
+pub mod field_inline;
+#[cfg(feature = "field-inline")]
 pub mod field_registers_val_evaluation;
 pub mod instruction_read_raf;
 pub mod outputs;

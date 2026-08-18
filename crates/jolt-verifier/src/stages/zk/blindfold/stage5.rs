@@ -140,41 +140,22 @@ where
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
 
-    // The FR val-evaluation member (declared last, no instance challenge):
-    // `LtCycle` mirrors the ordinary registers derivation — `Lt(own cycle
-    // sub-point, upstream FR read/write cycle sub-point)` — over the FR
-    // address prefix.
+    // The FR val-evaluation member (declared last, no instance challenge) and
+    // its baked `LtCycle` public, at the same source-values position as
+    // before.
     #[cfg(feature = "field-inline")]
-    let field_registers_claims = {
-        use jolt_claims::protocols::field_inline::{
-            FieldInlineRelationId, FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
-        };
-
-        let claims = jolt_claims::protocols::field_inline::relations::registers::ValEvaluation::new(
-            jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
-        );
-        let own_cycle = field_inline_point_suffix(
-            input
-                .stage5
-                .output_points
-                .field_registers_val_evaluation_point(),
-            FIELD_REGISTERS_LOG_K,
-            FieldInlineRelationId::FieldRegistersValEvaluation,
-        )?;
-        let upstream_cycle = field_inline_point_suffix(
-            input
-                .stage4
-                .output_points
-                .field_registers_read_write_point(),
-            FIELD_REGISTERS_LOG_K,
-            FieldInlineRelationId::FieldRegistersValEvaluation,
-        )?;
-        values.public(
-            FieldInlineDerivedId::from(FieldRegistersValEvaluationPublic::LtCycle),
-            LtPolynomial::evaluate(own_cycle, upstream_cycle),
-        )?;
-        claims
-    };
+    let field_registers_claims = super::field_inline::stage5_val_evaluation(
+        values,
+        log_t,
+        input
+            .stage5
+            .output_points
+            .field_registers_val_evaluation_point(),
+        input
+            .stage4
+            .output_points
+            .field_registers_read_write_point(),
+    )?;
 
     let output_ids = stage5_output_ids::<PCS::Field>(instruction_output_openings);
 
@@ -229,11 +210,7 @@ fn stage5_output_ids<F: Field>(
     // value-evaluation outputs — the clear absorb order (the FR member is
     // declared last, so the generated absorb appends them at the tail).
     #[cfg(feature = "field-inline")]
-    output_ids.extend(
-        jolt_claims::protocols::field_inline::geometry::registers::val_evaluation_output_openings()
-            .into_iter()
-            .map(VerifierOpeningId::from),
-    );
+    output_ids.extend(super::field_inline::stage5_output_ids());
     output_ids
 }
 

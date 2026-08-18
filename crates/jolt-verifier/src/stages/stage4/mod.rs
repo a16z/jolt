@@ -1,6 +1,8 @@
 //! Stage 4 verifier entry point.
 
 #[cfg(feature = "field-inline")]
+pub mod field_inline;
+#[cfg(feature = "field-inline")]
 pub mod field_registers_read_write_checking;
 pub mod outputs;
 pub mod ram_val_check;

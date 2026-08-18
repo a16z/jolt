@@ -126,10 +126,8 @@ where
     // support).
     #[cfg(feature = "field-inline")]
     let field_inline_bytecode =
-        jolt_verifier::stages::field_inline_bytecode::convert_field_inline_bytecode(
-            jolt_verifier::stages::field_inline_bytecode::required_field_inline_bytecode(
-                &preprocessing.verifier.program,
-            )?,
+        jolt_verifier::stages::stage6b::field_inline::preprocessed_bytecode_table(
+            &preprocessing.verifier.program,
         )?;
     let sumchecks = Stage6bSumchecks::build_from_parts(Stage6bBuildParts {
         formula_dimensions: &formula_dimensions,

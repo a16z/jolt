@@ -128,11 +128,7 @@ pub(super) fn stage1_spartan_outer_opening_ids(
         .map(|variable| outer_opening(variable).into())
         .collect();
     #[cfg(feature = "field-inline")]
-    opening_ids.extend(
-        jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings()
-            .into_iter()
-            .map(VerifierOpeningId::from),
-    );
+    opening_ids.extend(super::field_inline::stage1_appended_opening_ids());
     opening_ids
 }
 

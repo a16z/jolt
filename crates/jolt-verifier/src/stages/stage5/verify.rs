@@ -47,10 +47,7 @@ pub fn stage5_input_values_from_upstream<F: Field>(
         ram_ra_claim_reduction: ram_ra_claim_reduction_input_values_from_upstream(stage2, stage4),
         registers_val_evaluation: registers_val_evaluation_input_values_from_upstream(stage4),
         #[cfg(feature = "field-inline")]
-        field_registers_val_evaluation:
-            super::field_registers_val_evaluation::field_registers_val_evaluation_input_values_from_upstream(
-                stage4,
-            ),
+        field_registers_val_evaluation: super::field_inline::val_evaluation_inputs(stage4),
     }
 }
 
@@ -66,10 +63,7 @@ pub fn stage5_input_points_from_upstream<F: Field>(
         ram_ra_claim_reduction: ram_ra_claim_reduction_input_points_from_upstream(stage2, stage4),
         registers_val_evaluation: registers_val_evaluation_input_points_from_upstream(stage4),
         #[cfg(feature = "field-inline")]
-        field_registers_val_evaluation:
-            super::field_registers_val_evaluation::field_registers_val_evaluation_input_points_from_upstream(
-                stage4,
-            ),
+        field_registers_val_evaluation: super::field_inline::val_evaluation_input_points(stage4),
     }
 }
 
@@ -95,12 +89,9 @@ where
         ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, log_k),
         registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
         #[cfg(feature = "field-inline")]
-        field_registers_val_evaluation:
-            super::field_registers_val_evaluation::FieldRegistersValEvaluation::new(
-                jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(
-                    trace_dimensions.log_t(),
-                ),
-            ),
+        field_registers_val_evaluation: super::field_inline::val_evaluation_member(
+            trace_dimensions.log_t(),
+        ),
     };
 
     // Draw each relation's batching gamma in declaration order (instruction, then

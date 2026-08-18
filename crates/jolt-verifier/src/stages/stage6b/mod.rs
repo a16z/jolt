@@ -5,6 +5,8 @@ pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod committed_reduction_cycle_phase;
 #[cfg(feature = "field-inline")]
+pub mod field_inline;
+#[cfg(feature = "field-inline")]
 pub mod field_registers_inc_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_ra_virtualization;

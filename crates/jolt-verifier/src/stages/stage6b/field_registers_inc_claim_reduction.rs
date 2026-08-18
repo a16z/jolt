@@ -22,38 +22,10 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_poly::try_eq_mle;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
-use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
-
-/// Wire the two consumed `FieldRdInc` opening *values* from the stage-4 FR
-/// read/write checking and the stage-5 FR val evaluation. The upstream cells
-/// are plain (non-optional) fields of the FR-on stage-4/5 claims, so presence
-/// is a compile-time fact.
-pub fn field_registers_inc_claim_reduction_input_values_from_upstream<F: Field>(
-    stage4: &Stage4OutputClaims<F>,
-    stage5: &Stage5OutputClaims<F>,
-) -> FieldRegistersIncClaimReductionInputClaims<F> {
-    FieldRegistersIncClaimReductionInputClaims {
-        rd_inc_read_write: stage4.field_registers_read_write.rd_inc,
-        rd_inc_val_evaluation: stage5.field_registers_val_evaluation.rd_inc,
-    }
-}
-
-/// Wire the two consumed `FieldRdInc` opening *points* from the stage-4/5 FR
-/// members' output points. ZK-agnostic.
-pub fn field_registers_inc_claim_reduction_input_points_from_upstream<F: Field>(
-    stage4: &Stage4OutputPoints<F>,
-    stage5: &Stage5OutputPoints<F>,
-) -> FieldRegistersIncClaimReductionInputClaims<Vec<F>> {
-    FieldRegistersIncClaimReductionInputClaims {
-        rd_inc_read_write: stage4.field_registers_read_write.rd_inc().to_vec(),
-        rd_inc_val_evaluation: stage5.field_registers_val_evaluation.rd_inc().to_vec(),
-    }
-}
 
 #[derive(Clone)]
 pub struct FieldRegistersIncClaimReduction<F: Field> {
@@ -106,7 +78,7 @@ impl<F: Field> ConcreteSumcheck<F> for FieldRegistersIncClaimReduction<F> {
     ) -> Result<FieldRegistersIncClaimReductionOutputClaims<Vec<F>>, VerifierError> {
         // The reduced opening point is the reversed sumcheck point — the same
         // derivation as the ordinary increment claim reduction.
-        let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        let opening_point = derivations::reversed(sumcheck_point);
         Ok(FieldRegistersIncClaimReductionOutputClaims {
             rd_inc: opening_point,
         })
@@ -127,7 +99,7 @@ impl<F: Field> ConcreteSumcheck<F> for FieldRegistersIncClaimReduction<F> {
             FieldRegistersIncClaimReductionPublic::EqReadWrite => &self.read_write_cycle,
             FieldRegistersIncClaimReductionPublic::EqValEvaluation => &self.val_evaluation_cycle,
         };
-        try_eq_mle(opening_point, cycle).map_err(public_input_failed)
+        derivations::eq_at_point(opening_point, cycle).map_err(public_input_failed)
     }
 }
 
@@ -142,11 +114,10 @@ mod tests {
     use super::*;
 
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
-    use jolt_claims::protocols::jolt::{IncClaimReductionPublic, JoltDerivedId};
     use jolt_field::{Fr, FromPrimitiveInt};
 
     use crate::stages::stage6b::inc_claim_reduction::{
-        IncClaimReduction, IncClaimReductionChallenges, IncClaimReductionInputClaims,
+        IncClaimReduction, IncClaimReductionInputClaims,
     };
 
     fn fr(value: u64) -> Fr {
@@ -207,74 +178,5 @@ mod tests {
             field_points.rd_inc(),
             point.iter().rev().copied().collect::<Vec<_>>()
         );
-    }
-
-    /// The FR `EqReadWrite`/`EqValEvaluation` publics mirror the ordinary
-    /// increment reduction's `EqRegistersReadWrite`/`EqRegistersValEvaluation`
-    /// exactly: fed the same bound point and the same upstream cycle points,
-    /// the derived values are equal — `Eq(reduced point, upstream cycle)` in
-    /// the same argument orientation.
-    #[test]
-    fn eq_publics_match_the_ordinary_inc_reduction_derivations() {
-        let log_t = 4usize;
-        let (read_write_cycle, val_evaluation_cycle) = cycles(log_t);
-        let field_relation = FieldRegistersIncClaimReduction::<Fr>::new(
-            FieldRegistersTraceDimensions::new(log_t),
-            read_write_cycle.clone(),
-            val_evaluation_cycle.clone(),
-        );
-        // The jolt member's REGISTER cycle legs carry the same two points; its
-        // RAM legs carry unrelated sentinels so a wrong-leg mirror would show.
-        let jolt_relation = IncClaimReduction::<Fr>::new(
-            TraceDimensions::new(log_t),
-            vec![fr(90); log_t],
-            vec![fr(91); log_t],
-            read_write_cycle,
-            val_evaluation_cycle,
-        );
-
-        let point: Vec<Fr> = (0..log_t as u64).map(|i| fr(70 + i)).collect();
-        let field_input_points = FieldRegistersIncClaimReductionInputClaims::default();
-        let jolt_input_points = IncClaimReductionInputClaims::default();
-        let field_points = field_relation
-            .derive_opening_points(&point, &field_input_points)
-            .unwrap();
-        let jolt_points = jolt_relation
-            .derive_opening_points(&point, &jolt_input_points)
-            .unwrap();
-
-        let field_challenges = FieldRegistersIncClaimReductionChallenges { gamma: fr(1) };
-        let jolt_challenges = IncClaimReductionChallenges { gamma: fr(1) };
-        for (field_public, jolt_public) in [
-            (
-                FieldRegistersIncClaimReductionPublic::EqReadWrite,
-                IncClaimReductionPublic::EqRegistersReadWrite,
-            ),
-            (
-                FieldRegistersIncClaimReductionPublic::EqValEvaluation,
-                IncClaimReductionPublic::EqRegistersValEvaluation,
-            ),
-        ] {
-            let field_eq = field_relation
-                .derive_output_term(
-                    &FieldInlineDerivedId::FieldRegistersIncClaimReduction(field_public),
-                    &field_input_points,
-                    &field_points,
-                    &field_challenges,
-                )
-                .unwrap();
-            let jolt_eq = jolt_relation
-                .derive_output_term(
-                    &JoltDerivedId::IncClaimReduction(jolt_public),
-                    &jolt_input_points,
-                    &jolt_points,
-                    &jolt_challenges,
-                )
-                .unwrap();
-            assert_eq!(
-                field_eq, jolt_eq,
-                "{field_public:?} must mirror {jolt_public:?}"
-            );
-        }
     }
 }

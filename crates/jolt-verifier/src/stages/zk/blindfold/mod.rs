@@ -130,6 +130,8 @@ use crate::stages::{
 };
 use crate::VerifierError;
 
+#[cfg(feature = "field-inline")]
+mod field_inline;
 mod stage1;
 mod stage2;
 mod stage3;
@@ -767,12 +769,7 @@ where
             // the stage-6b batch build already rejected this combination, so
             // this arm is FR-off only.
             #[cfg(feature = "field-inline")]
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: "field-inline verification requires the full-program bytecode side \
-                         table; committed-program mode is unsupported"
-                    .to_string(),
-            });
+            return Err(crate::stages::stage6b::field_inline::committed_program_rejection());
             #[cfg(not(feature = "field-inline"))]
             {
                 let v = bytecode::read_raf_committed_public_values::<PCS::Field>(
@@ -842,37 +839,22 @@ where
             // symbolic output expression references carry both families —
             // exactly the clear composed relation's public composition.
             #[cfg(feature = "field-inline")]
-            {
-                let table = crate::stages::field_inline_bytecode::convert_field_inline_bytecode(
-                    crate::stages::field_inline_bytecode::required_field_inline_bytecode(
-                        &input.preprocessing.program,
-                    )?,
-                )?;
-                let field_inline_stage_values = composed_bytecode_stage_values(
-                    &table,
-                    &bytecode_r_address,
-                    &bytecode_r_cycle,
-                    &stage1_cycle,
-                    input
-                        .stage4
-                        .output_points
-                        .field_registers_read_write_point(),
-                    input
-                        .stage5
-                        .output_points
-                        .field_registers_val_evaluation_point(),
-                    bytecode_challenges,
-                )?;
-                #[expect(
-                    clippy::arithmetic_side_effects,
-                    reason = "side-effect-free field addition composing the staged publics"
-                )]
-                for (stage_value, field_inline_value) in
-                    v.stage_values.iter_mut().zip(field_inline_stage_values)
-                {
-                    *stage_value += field_inline_value;
-                }
-            }
+            field_inline::extend_bytecode_stage_values(
+                &mut v.stage_values,
+                &input.preprocessing.program,
+                &bytecode_r_address,
+                &bytecode_r_cycle,
+                &stage1_cycle,
+                input
+                    .stage4
+                    .output_points
+                    .field_registers_read_write_point(),
+                input
+                    .stage5
+                    .output_points
+                    .field_registers_val_evaluation_point(),
+                bytecode_challenges,
+            )?;
             for (index, stage_value) in v.stage_values.iter().enumerate() {
                 values.public(
                     JoltDerivedId::from(BytecodeReadRafPublic::StageValue(index)),
@@ -1035,54 +1017,14 @@ where
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
 
-    // The FR increment reduction's publics and challenge. It is trace-domain
-    // with the same suffix window as the ordinary increment reduction, so its
-    // reduced opening point is the SAME `inc_opening_point`; the Eq publics
-    // mirror the ordinary member's derivations over the stage-4/5 FR cycle
-    // sub-points (past the FR address prefix).
     #[cfg(feature = "field-inline")]
-    {
-        use jolt_claims::protocols::field_inline::{
-            FieldRegistersIncClaimReductionChallenge, FieldRegistersIncClaimReductionPublic,
-            FIELD_REGISTERS_LOG_K,
-        };
-
-        values.public(
-            FieldInlineChallengeId::from(FieldRegistersIncClaimReductionChallenge::Gamma),
-            input.stage6b.challenges.field_registers_inc_gamma,
-        )?;
-        let read_write_cycle = field_inline_point_suffix(
-            input.stage4.output_points.field_registers_read_write_point(),
-            FIELD_REGISTERS_LOG_K,
-            jolt_claims::protocols::field_inline::FieldInlineRelationId::FieldRegistersIncClaimReduction,
-        )?;
-        let val_evaluation_cycle = field_inline_point_suffix(
-            input
-                .stage5
-                .output_points
-                .field_registers_val_evaluation_point(),
-            FIELD_REGISTERS_LOG_K,
-            jolt_claims::protocols::field_inline::FieldInlineRelationId::FieldRegistersIncClaimReduction,
-        )?;
-        values.public(
-            FieldInlineDerivedId::from(FieldRegistersIncClaimReductionPublic::EqReadWrite),
-            try_eq_mle(&inc_opening_point, read_write_cycle).map_err(|error| {
-                field_inline_public_error(
-                    jolt_claims::protocols::field_inline::FieldInlineRelationId::FieldRegistersIncClaimReduction,
-                    error,
-                )
-            })?,
-        )?;
-        values.public(
-            FieldInlineDerivedId::from(FieldRegistersIncClaimReductionPublic::EqValEvaluation),
-            try_eq_mle(&inc_opening_point, val_evaluation_cycle).map_err(|error| {
-                field_inline_public_error(
-                    jolt_claims::protocols::field_inline::FieldInlineRelationId::FieldRegistersIncClaimReduction,
-                    error,
-                )
-            })?,
-        )?;
-    }
+    field_inline::stage6b_inc_publics(
+        values,
+        &inc_opening_point,
+        input.stage6b.challenges.field_registers_inc_gamma,
+        &input.stage4.output_points,
+        &input.stage5.output_points,
+    )?;
 
     Ok(())
 }
@@ -1430,93 +1372,6 @@ fn blindfold_error(error: impl ToString) -> VerifierError {
     VerifierError::BlindFoldConstructionFailed {
         reason: error.to_string(),
     }
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inline_public_error(
-    stage: jolt_claims::protocols::field_inline::FieldInlineRelationId,
-    error: impl ToString,
-) -> VerifierError {
-    VerifierError::StageClaimSumcheckFailed {
-        stage: format!("{stage:?}"),
-        reason: error.to_string(),
-    }
-}
-
-/// The variables past the first `prefix_len` of an FR `address ++ cycle`
-/// opening point (the FR cycle sub-point).
-#[cfg(feature = "field-inline")]
-fn field_inline_point_suffix<F: Field>(
-    point: &[F],
-    prefix_len: usize,
-    stage: jolt_claims::protocols::field_inline::FieldInlineRelationId,
-) -> Result<&[F], VerifierError> {
-    point.get(prefix_len..).ok_or_else(|| {
-        field_inline_public_error(
-            stage,
-            format!(
-                "opening point is too short: expected at least {prefix_len} variables, got {}",
-                point.len()
-            ),
-        )
-    })
-}
-
-/// The FR side-table public stage-value contributions at
-/// `(r_address, r_cycle)`: the converted rows folded under the FR-extended
-/// stage-1/4/5 gamma powers, each stage weighted by its own cycle-eq factor —
-/// the same `read_raf_public_values` evaluation (over the same point splits)
-/// the clear composed relation performs, so the composed `StageValue(i)`
-/// publics cannot drift from the clear check.
-#[cfg(feature = "field-inline")]
-fn composed_bytecode_stage_values<F: Field>(
-    table: &crate::stages::field_inline_bytecode::FieldInlineBytecodeTable,
-    r_address: &[F],
-    r_cycle: &[F],
-    stage1_cycle_point: &[F],
-    field_read_write_point: &[F],
-    field_val_evaluation_point: &[F],
-    challenges: &jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges<F>,
-) -> Result<[F; 5], VerifierError> {
-    use crate::stages::field_inline_bytecode::{
-        field_inline_checked_split, field_inline_stage_gamma_powers,
-    };
-    use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
-    use jolt_claims::protocols::field_inline::{FieldInlineRelationId, FIELD_REGISTERS_LOG_K};
-
-    let (read_write_address, read_write_cycle) = field_inline_checked_split(
-        "BlindFold stage4 field-register read-write opening",
-        field_read_write_point,
-        FIELD_REGISTERS_LOG_K,
-        FieldInlineRelationId::FieldRegistersReadWriteChecking,
-    )?;
-    let (val_evaluation_address, val_evaluation_cycle) = field_inline_checked_split(
-        "BlindFold stage5 field-register val-evaluation opening",
-        field_val_evaluation_point,
-        FIELD_REGISTERS_LOG_K,
-        FieldInlineRelationId::FieldRegistersValEvaluation,
-    )?;
-    let gammas = field_inline_stage_gamma_powers(challenges);
-    let public_values = field_inline_bytecode::read_raf_public_values(
-        field_inline_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
-            bytecode: &table.rows,
-            field_register_log_k: table.field_register_log_k,
-            r_address,
-            r_cycle,
-            stage1_cycle_point,
-            field_register_read_write_point: read_write_address,
-            field_register_read_write_cycle_point: read_write_cycle,
-            field_register_val_evaluation_point: val_evaluation_address,
-            field_register_val_evaluation_cycle_point: val_evaluation_cycle,
-            stage1_gammas: &gammas.stage1,
-            stage4_gammas: &gammas.stage4,
-            stage5_gammas: &gammas.stage5,
-        },
-    )
-    .map_err(|error| {
-        field_inline_public_error(FieldInlineRelationId::FieldRegistersSpartanOuter, error)
-    })?;
-    Ok(public_values.stage_values)
 }
 
 /// Value-parity locks for every FieldInline-family batch member lowered

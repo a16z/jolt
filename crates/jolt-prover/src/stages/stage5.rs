@@ -83,10 +83,8 @@ where
         registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
         #[cfg(feature = "field-inline")]
         field_registers_val_evaluation:
-            jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation::new(
-                jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(
-                    trace_dimensions.log_t(),
-                ),
+            jolt_verifier::stages::stage5::field_inline::val_evaluation_member(
+                trace_dimensions.log_t(),
             ),
     };
     // Draws the instruction gamma, then the RAM gamma (registers draws

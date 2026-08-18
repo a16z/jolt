@@ -29,10 +29,7 @@ where
     );
     let inc_claims = relations::claim_reductions::increments::ClaimReduction::new(trace_dimensions);
     #[cfg(feature = "field-inline")]
-    let field_registers_inc_claims =
-        jolt_claims::protocols::field_inline::relations::claim_reductions::increments::ClaimReduction::new(
-            jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
-        );
+    let field_registers_inc_claims = super::field_inline::stage6b_inc_relation(log_t);
     let trusted_layout = advice_layout(input, JoltAdviceKind::Trusted);
     let trusted_claims = trusted_layout.as_ref().map(|layout| {
         relations::claim_reductions::advice::TrustedCyclePhase::new(layout.dimensions())
@@ -182,11 +179,7 @@ fn stage6b_output_ids_and_aliases<F: Field>(
     // outputs and before the optional advice cycle phases — the clear absorb
     // order (`stage6b_opening_values`).
     #[cfg(feature = "field-inline")]
-    output_ids.extend(
-        jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::claim_reduction_output_openings()
-            .into_iter()
-            .map(VerifierOpeningId::from),
-    );
+    output_ids.extend(super::field_inline::stage6b_inc_output_ids());
     if let Some(layout) = trusted_layout {
         output_ids.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Trusted, layout.dimensions())
@@ -564,7 +557,7 @@ mod field_inline_tests {
             stage5_gammas: &stage_gammas[4],
         })
         .unwrap();
-        let composed = composed_bytecode_stage_values(
+        let composed = super::field_inline::composed_bytecode_stage_values(
             &table,
             &r_address,
             &r_cycle,

@@ -37,9 +37,7 @@ use super::committed_reduction_cycle_phase::{
     TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
 };
 #[cfg(feature = "field-inline")]
-use super::field_registers_inc_claim_reduction::{
-    FieldRegistersIncClaimReduction, FieldRegistersIncClaimReductionChallenges,
-};
+use super::field_registers_inc_claim_reduction::FieldRegistersIncClaimReductionChallenges;
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionChallenges};
 use super::instruction_ra_virtualization::{
@@ -205,17 +203,9 @@ impl<F: Field> Stage6bSumchecks<F> {
                 )
             };
 
-        // The field-inline bytecode side table is a hard preprocessing
-        // requirement of stage 6 (spec: "Stage 6 rejects a field-inline proof
-        // if the table is missing"); committed-program preprocessing carries
-        // no full bytecode, so FR-on rejects it here too.
         #[cfg(feature = "field-inline")]
         let field_inline_bytecode =
-            crate::stages::field_inline_bytecode::convert_field_inline_bytecode(
-                crate::stages::field_inline_bytecode::required_field_inline_bytecode(
-                    &preprocessing.program,
-                )?,
-            )?;
+            super::field_inline::preprocessed_bytecode_table(&preprocessing.program)?;
 
         Self::build_from_parts(Stage6bBuildParts {
             formula_dimensions,
@@ -275,19 +265,10 @@ impl<F: Field> Stage6bSumchecks<F> {
         let program_image_reduction_layout = precommitted.program_image.as_ref();
         let committed_program = bytecode_reduction_layout.is_some();
 
-        // The FR extension anchors the field access selectors through the
-        // public/preprocessed side table, which committed-program mode cannot
-        // supply; reject before any member construction (the verifier's own
-        // `build` already rejected at the metadata requirement).
+        // (The verifier's own `build` already rejected at the metadata
+        // requirement; this guards the shared parts-level entry too.)
         #[cfg(feature = "field-inline")]
-        if committed_program {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: "field-inline verification requires the full-program bytecode side \
-                         table; committed-program mode is unsupported"
-                    .to_string(),
-            });
-        }
+        super::field_inline::require_full_program(committed_program)?;
 
         let booleanity_dimensions =
             BooleanityDimensions::new(formula_dimensions.ra_layout, log_t, committed_chunk_bits);
@@ -355,40 +336,12 @@ impl<F: Field> Stage6bSumchecks<F> {
         // past the FR address prefix. The cycle legs feed both the bytecode
         // FR public fold and the FR increment reduction's Eq publics.
         #[cfg(feature = "field-inline")]
-        let (field_inline_fold, field_read_write_cycle, field_val_evaluation_cycle) = {
-            use crate::stages::field_inline_bytecode::{
-                field_inline_checked_split, field_inline_stage_gamma_powers,
-                FieldInlineBytecodeFold,
-            };
-            use jolt_claims::protocols::field_inline::{
-                FieldInlineRelationId, FIELD_REGISTERS_LOG_K,
-            };
-
-            let (read_write_address, read_write_cycle) = field_inline_checked_split(
-                "Stage 6 stage4 field-register read-write opening",
-                stage4_points.field_registers_read_write_point(),
-                FIELD_REGISTERS_LOG_K,
-                FieldInlineRelationId::FieldRegistersReadWriteChecking,
-            )?;
-            let (val_evaluation_address, val_evaluation_cycle) = field_inline_checked_split(
-                "Stage 6 stage5 field-register val-evaluation opening",
-                stage5_points.field_registers_val_evaluation_point(),
-                FIELD_REGISTERS_LOG_K,
-                FieldInlineRelationId::FieldRegistersValEvaluation,
-            )?;
-            (
-                FieldInlineBytecodeFold {
-                    table: field_inline_bytecode,
-                    read_write_address: read_write_address.to_vec(),
-                    read_write_cycle: read_write_cycle.to_vec(),
-                    val_evaluation_address: val_evaluation_address.to_vec(),
-                    val_evaluation_cycle: val_evaluation_cycle.to_vec(),
-                    gammas: field_inline_stage_gamma_powers(&carried.bytecode_read_raf),
-                },
-                read_write_cycle.to_vec(),
-                val_evaluation_cycle.to_vec(),
-            )
-        };
+        let field_inline_legs = super::field_inline::bytecode_fold_and_cycles(
+            field_inline_bytecode,
+            carried,
+            stage4_points,
+            stage5_points,
+        )?;
         #[cfg(not(feature = "akita"))]
         let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = stage_points.stage_cycle_points;
         // The packed fused-inc consumer points appended to the shared five: the
@@ -467,7 +420,7 @@ impl<F: Field> Stage6bSumchecks<F> {
                 committed_chunk_bits,
                 table_fold: bytecode_table_fold,
                 #[cfg(feature = "field-inline")]
-                field_inline: field_inline_fold,
+                field_inline: field_inline_legs.fold,
             })?
         };
 
@@ -513,10 +466,10 @@ impl<F: Field> Stage6bSumchecks<F> {
             registers_val_evaluation_cycle,
         );
         #[cfg(feature = "field-inline")]
-        let field_registers_inc_claim_reduction = FieldRegistersIncClaimReduction::new(
-            jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions::new(log_t),
-            field_read_write_cycle,
-            field_val_evaluation_cycle,
+        let field_registers_inc_claim_reduction = super::field_inline::inc_claim_reduction_member(
+            log_t,
+            field_inline_legs.read_write_cycle,
+            field_inline_legs.val_evaluation_cycle,
         );
 
         let trusted_advice = trusted_advice_layout

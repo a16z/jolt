@@ -1,6 +1,8 @@
 //! Stage 8: the final PCS opening. [`verify`] is the per-build entry point;
 //! the feature-specific statement assembly lives beside it.
 
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+pub mod field_inline;
 pub mod outputs;
 /// Packed-build statement assembly: per-object packings, leaf-claim
 /// resolution, and the joint opening call.
@@ -22,8 +24,6 @@ pub use outputs::Stage8ClearOutput;
 pub use outputs::{Stage8Output, Stage8ZkOutput};
 #[cfg(not(feature = "akita"))]
 pub use precommitted::precommitted_final_openings;
-#[cfg(all(feature = "field-inline", not(feature = "akita")))]
-pub use verify::splice_field_inline_final_opening;
 pub use verify::verify;
 #[cfg(not(feature = "akita"))]
 pub use verify::{batch_entries, Stage8BatchEntry};

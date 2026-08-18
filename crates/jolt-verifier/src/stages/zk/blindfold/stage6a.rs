@@ -113,7 +113,7 @@ where
         let (rounds, input_expr, output_expr) = bytecode_claim;
         (
             rounds,
-            input_expr + field_inline_bytecode_input_extension_expr::<PCS::Field>(),
+            input_expr + super::field_inline::bytecode_input_extension_expr::<PCS::Field>(),
             output_expr,
         )
     };
@@ -132,95 +132,6 @@ where
     )
 }
 
-/// The FR terms the composed bytecode read-RAF address-phase input claim adds
-/// to the ordinary gamma-folded bind: the eight `FieldOpFlag` openings (the
-/// stage-1 FR carrier rows) at the extended Stage1Gamma powers, the stage-4 FR
-/// member's `FieldRdWa`/`FieldRs1Ra`/`FieldRs2Ra` rows at the extended
-/// Stage4Gamma powers under the outer γ³, and the stage-5 FR member's
-/// `FieldRdWa` row at the extended Stage5Gamma power under the outer γ⁴ — each
-/// stage extension riding the same outer gamma power as its ordinary stage
-/// claim, with no new challenge draws (spec: `field-inline-protocol.md`,
-/// "Stage 6 Composition"). Value-parity with the clear composed `input_claim`
-/// override is pinned by `lowered_bytecode_input_extension_matches_the_clear_composed_claim`.
-#[cfg(feature = "field-inline")]
-fn field_inline_bytecode_input_extension_expr<F: Field>() -> VerifierExpr<F> {
-    use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
-    use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
-    use jolt_claims::protocols::field_inline::{
-        FieldInlineRelationId, FieldInlineVirtualPolynomial,
-    };
-    use jolt_claims::protocols::jolt::BytecodeReadRafChallenge;
-    use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
-    use jolt_riscv::NUM_CIRCUIT_FLAGS;
-
-    let gamma_public = |challenge: BytecodeReadRafChallenge| -> VerifierExpr<F> {
-        derived(VerifierPublicId::Challenge(JoltChallengeId::from(
-            challenge,
-        )))
-    };
-    let gamma = gamma_public(BytecodeReadRafChallenge::Gamma);
-    let stage1_gamma = gamma_public(BytecodeReadRafChallenge::Stage1Gamma);
-    let stage4_gamma = gamma_public(BytecodeReadRafChallenge::Stage4Gamma);
-    let stage5_gamma = gamma_public(BytecodeReadRafChallenge::Stage5Gamma);
-
-    // Stage-1 extension: the eight FieldOpFlag rows at powers
-    // `stage1_gamma^(2 + NUM_CIRCUIT_FLAGS + i)` (the ordinary stage-1 power
-    // count is `2 + NUM_CIRCUIT_FLAGS`), riding the outer γ⁰.
-    let mut extension = VerifierExpr::zero();
-    for (index, flag) in FIELD_INLINE_BYTECODE_STAGE1_FLAGS.into_iter().enumerate() {
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "2 + NUM_CIRCUIT_FLAGS + index is a small constant sum over the eight FR flags"
-        )]
-        let power = 2 + NUM_CIRCUIT_FLAGS + index;
-        extension = extension
-            + stage1_gamma.clone().pow(power)
-                * opening(outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-                    flag,
-                )));
-    }
-
-    // Stage-4 extension: FieldRdWa/FieldRs1Ra/FieldRs2Ra at powers
-    // `stage4_gamma^(3 + j)` (the ordinary stage-4 power count is 3), riding
-    // the outer γ³.
-    let stage4_rows = [
-        FieldInlineVirtualPolynomial::FieldRdWa,
-        FieldInlineVirtualPolynomial::FieldRs1Ra,
-        FieldInlineVirtualPolynomial::FieldRs2Ra,
-    ];
-    let mut stage4_extension = VerifierExpr::zero();
-    for (index, polynomial) in stage4_rows.into_iter().enumerate() {
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "3 + index is a small constant sum over the three FR access rows"
-        )]
-        let power = 3 + index;
-        stage4_extension = stage4_extension
-            + stage4_gamma.clone().pow(power)
-                * opening(
-                    jolt_claims::protocols::field_inline::FieldInlineOpeningId::virtual_polynomial(
-                        polynomial,
-                        FieldInlineRelationId::FieldRegistersReadWriteChecking,
-                    ),
-                );
-    }
-    extension = extension + gamma.clone().pow(3) * stage4_extension;
-
-    // Stage-5 extension: the val-evaluation FieldRdWa at the power following
-    // the ordinary stage-5 count (`2 + lookup-table count`), riding the outer
-    // γ⁴.
-    let stage5_power = 2 + LookupTableKind::<RISCV_XLEN>::COUNT;
-    extension
-        + gamma.pow(4)
-            * stage5_gamma.pow(stage5_power)
-            * opening(
-                jolt_claims::protocols::field_inline::FieldInlineOpeningId::virtual_polynomial(
-                    FieldInlineVirtualPolynomial::FieldRdWa,
-                    FieldInlineRelationId::FieldRegistersValEvaluation,
-                ),
-            )
-}
-
 #[cfg(all(test, feature = "field-inline"))]
 #[expect(clippy::unwrap_used)]
 #[expect(
@@ -232,8 +143,8 @@ mod field_inline_tests {
     use crate::stages::relations::ConcreteSumcheck as _;
     use crate::stages::stage6a::bytecode_read_raf::{
         BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
-        FieldInlineBytecodeReadRafInputs,
     };
+    use crate::stages::stage6a::field_inline::FieldInlineBytecodeReadRafInputs;
     use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
     use jolt_claims::protocols::field_inline::{
         FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
@@ -303,7 +214,7 @@ mod field_inline_tests {
         let clear = relation.input_claim(&inputs, &challenges).unwrap();
 
         let lowered_expr = map_expr(relation.symbolic().input_expression::<Fr>())
-            + field_inline_bytecode_input_extension_expr::<Fr>();
+            + super::super::field_inline::bytecode_input_extension_expr::<Fr>();
         let resolve_field_inline = |id: &FieldInlineOpeningId| -> Fr {
             use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
 

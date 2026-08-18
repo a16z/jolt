@@ -108,18 +108,13 @@ where
     // `BytecodeValClaim` ids exactly when the program is committed).
     address_sumchecks.validate_output_claims(claims)?;
 
-    // The FR appendage of the composed bytecode input claim, from the
-    // stage-1/4/5 clear outputs (fail-closed on a missing stage-1 FR carrier).
     #[cfg(feature = "field-inline")]
-    address_sumchecks
-        .bytecode_read_raf
-        .set_field_inline_inputs(
-            super::bytecode_read_raf::field_inline_bytecode_read_raf_inputs_from_upstream(
-                stage1.clear()?,
-                &stage4.clear()?.output_values,
-                &stage5.clear()?.output_values,
-            )?,
-        )?;
+    super::field_inline::attach_bytecode_inputs(
+        &address_sumchecks.bytecode_read_raf,
+        stage1.clear()?,
+        &stage4.clear()?.output_values,
+        &stage5.clear()?.output_values,
+    )?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening (plus, under akita, the four reduced `Inc`

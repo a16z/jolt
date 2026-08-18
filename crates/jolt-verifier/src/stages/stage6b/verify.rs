@@ -1,4 +1,3 @@
-use crate::stages::relations::OutputAppend;
 use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
     BytecodeClaimReductionLayout, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
@@ -416,11 +415,10 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
             stage5,
         ),
         #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction:
-            super::field_registers_inc_claim_reduction::field_registers_inc_claim_reduction_input_values_from_upstream(
-                &stage4.output_values,
-                stage5,
-            ),
+        field_registers_inc_claim_reduction: super::field_inline::inc_claim_reduction_inputs(
+            &stage4.output_values,
+            stage5,
+        ),
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
@@ -472,10 +470,9 @@ pub fn stage6b_input_points_from_upstream<F: Field>(
         #[cfg(not(feature = "akita"))]
         inc_claim_reduction: inc_claim_reduction_input_points_from_upstream(stage2, stage4, stage5),
         #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction:
-            super::field_registers_inc_claim_reduction::field_registers_inc_claim_reduction_input_points_from_upstream(
-                stage4, stage5,
-            ),
+        field_registers_inc_claim_reduction: super::field_inline::inc_claim_reduction_input_points(
+            stage4, stage5,
+        ),
         ..sumchecks.empty_input_points()
     }
 }
@@ -514,11 +511,8 @@ pub fn stage6b_opening_values<F: Field>(
     values.extend(claims.instruction_ra_virtualization.opening_values());
     #[cfg(not(feature = "akita"))]
     values.extend(claims.inc_claim_reduction.opening_values());
-    // The FR increment reduction absorbs at its member position: after the
-    // ordinary increment reduction, before the optional advice cycle phases
-    // (the spec's committed output row order).
     #[cfg(feature = "field-inline")]
-    values.extend(claims.field_registers_inc_claim_reduction.opening_values());
+    super::field_inline::splice_inc_values(&mut values, claims);
     // Each advice member is a single-slot per-kind claims struct, so it
     // contributes exactly its own kind's opening.
     if let Some(advice) = &claims.trusted_advice {
@@ -576,61 +570,10 @@ fn append_opening_claims<F, T>(
     F: Field,
     T: Transcript<Challenge = F>,
 {
-    // Full relations and the optional members delegate to their derived
-    // `append_openings`, single-sourcing the per-field Fiat-Shamir order from the
-    // `OutputClaims` derive. `booleanity` stays explicit because its `bytecode_ra`
-    // openings are conditionally deduped against the bytecode-read-RAF points.
-    claims.bytecode_read_raf.append_openings(transcript);
-    for opening_claim in &claims.booleanity.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
-        if bytecode_read_raf_points
-            .get(index)
-            .is_some_and(|point| point.as_slice() == booleanity_point)
-        {
-            continue;
-        }
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for opening_claim in &claims.booleanity.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    #[cfg(feature = "akita")]
-    {
-        for opening_claim in &claims.booleanity.balanced_inc_digits {
-            transcript.append_labeled(b"opening_claim", opening_claim);
-        }
-        transcript.append_labeled(b"opening_claim", &claims.booleanity.balanced_inc_carry);
-    }
-    claims.ram_hamming_booleanity.append_openings(transcript);
-    claims.ram_ra_virtualization.append_openings(transcript);
-    claims
-        .instruction_ra_virtualization
-        .append_openings(transcript);
-    #[cfg(not(feature = "akita"))]
-    claims.inc_claim_reduction.append_openings(transcript);
-    // The FR increment reduction absorbs at its member position (after the
-    // ordinary increment reduction, before the optional advice cycle phases).
-    // Hand-looped: the `OutputAppend` blanket is pinned to the jolt id family.
-    #[cfg(feature = "field-inline")]
-    for opening_claim in claims.field_registers_inc_claim_reduction.opening_values() {
-        transcript.append_labeled(b"opening_claim", &opening_claim);
-    }
-    // The optional members single-source their per-field Fiat-Shamir order from the
-    // `OutputClaims` derive too. Each advice member is a single-slot per-kind claims
-    // struct, so it absorbs exactly its own kind's opening.
-    if let Some(advice) = &claims.trusted_advice {
-        advice.append_openings(transcript);
-    }
-    if let Some(advice) = &claims.untrusted_advice {
-        advice.append_openings(transcript);
-    }
-    if let Some(reduction) = &claims.bytecode_reduction {
-        reduction.append_openings(transcript);
-    }
-    if let Some(reduction) = &claims.program_image_reduction {
-        reduction.append_openings(transcript);
+    // Single-sourced with the prover-curation order: both fronts absorb the
+    // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
+    for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
+        transcript.append_labeled(b"opening_claim", &value);
     }
 }
 
@@ -969,18 +912,5 @@ mod tests {
             .expect("sample has a bytecode booleanity claim") = fr(99);
         validate_bytecode_ra_aliases(&claims, &bytecode_points, &[fr(45), fr(46)])
             .expect("different evaluations at different points are not aliases");
-    }
-
-    /// The prover-curation order (`stage6b_opening_values`, consumed by the
-    /// prove driver's curated absorb) and the verifier absorb
-    /// (`append_opening_claims`) must stay value-for-value identical, or the
-    /// two fronts' transcripts diverge.
-    #[test]
-    fn stage6b_opening_values_matches_the_verifier_absorb_order() {
-        let (claims, last) = sample_claims();
-        assert_eq!(
-            stage6b_opening_values(&claims, &[], &[]),
-            (1..=last).map(fr).collect::<Vec<_>>()
-        );
     }
 }

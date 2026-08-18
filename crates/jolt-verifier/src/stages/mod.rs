@@ -18,6 +18,7 @@ use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
+pub(crate) mod derivations;
 #[cfg(feature = "field-inline")]
 pub mod field_inline_bytecode;
 pub mod ids;

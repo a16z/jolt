@@ -84,53 +84,25 @@ where
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
 
-    // The FR read/write member: shape from the compile-time protocol config,
-    // gamma from the drawn batch, `EqCycle` mirroring the ordinary registers
-    // derivation — `Eq(upstream FR reduced cycle point, own cycle sub-point
-    // past the FR address prefix)`.
+    // The FR read/write member and its baked publics (relation + gamma +
+    // EqCycle), at the same source-values position as before. The upstream
+    // reduced point (`r_prod`) — the FR claim reduction's stage-2 opening
+    // point — is the fixed cycle.
     #[cfg(feature = "field-inline")]
-    let field_registers_claims = {
-        use jolt_claims::protocols::field_inline::{
-            FieldInlineRelationId, FieldRegistersReadWriteChallenge, FieldRegistersReadWritePublic,
-        };
-
-        let fr_dimensions = crate::config::JOLT_VERIFIER_CONFIG
-            .field_inline
-            .read_write_dimensions(log_t);
-        let claims =
-            jolt_claims::protocols::field_inline::relations::registers::ReadWriteChecking::new(
-                fr_dimensions,
-            );
-        values.public(
-            FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::Gamma),
-            input.stage4.challenges.field_registers_read_write.gamma,
-        )?;
-        // The upstream reduced point (`r_prod`) is the fixed cycle: the FR
-        // claim reduction's stage-2 opening point.
-        let fixed_cycle = input
+    let field_registers_claims = super::field_inline::stage4_read_write(
+        values,
+        log_t,
+        input.stage4.challenges.field_registers_read_write.gamma,
+        input
             .stage2
             .output_points
             .field_registers_claim_reduction
-            .rd_value();
-        let own_cycle = field_inline_point_suffix(
-            input
-                .stage4
-                .output_points
-                .field_registers_read_write_point(),
-            fr_dimensions.log_k(),
-            FieldInlineRelationId::FieldRegistersReadWriteChecking,
-        )?;
-        values.public(
-            FieldInlineDerivedId::from(FieldRegistersReadWritePublic::EqCycle),
-            try_eq_mle(fixed_cycle, own_cycle).map_err(|error| {
-                field_inline_public_error(
-                    FieldInlineRelationId::FieldRegistersReadWriteChecking,
-                    error,
-                )
-            })?,
-        )?;
-        claims
-    };
+            .rd_value(),
+        input
+            .stage4
+            .output_points
+            .field_registers_read_write_point(),
+    )?;
 
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(RamValCheckChallenge::Gamma)),
@@ -217,11 +189,7 @@ fn stage4_output_ids<F: Field>(
     // The five FR read/write rows, spliced after the register openings and
     // before `ram_ra`/`ram_inc` — the clear absorb order.
     #[cfg(feature = "field-inline")]
-    output_ids.extend(
-        jolt_claims::protocols::field_inline::geometry::registers::read_write_checking_output_openings()
-            .into_iter()
-            .map(VerifierOpeningId::from),
-    );
+    output_ids.extend(super::field_inline::stage4_output_ids());
     // The advice / program-image openings are produced by the RAM value-check
     // instance, but the stage-4 commit (flush) order appends them *first* (above),
     // before the registers; so here, at the tail, only the main `ram_ra`/`ram_inc`

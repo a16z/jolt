@@ -1,6 +1,8 @@
 //! Stage 2 product uni-skip and batch verifier.
 
 #[cfg(feature = "field-inline")]
+pub mod field_inline;
+#[cfg(feature = "field-inline")]
 pub mod field_registers_claim_reduction;
 pub mod instruction_claim_reduction;
 pub mod outputs;
@@ -12,8 +14,6 @@ pub mod ram_read_write_checking;
 mod verify;
 
 pub use outputs::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output, Stage2ZkOutput};
-#[cfg(feature = "field-inline")]
-pub(crate) use verify::field_inline_product_alias_polynomials;
 pub use verify::{product_tau_low, stage2_batch_input_values_from_upstream, verify};
 
 use jolt_claims::protocols::jolt::{geometry::dimensions::ReadWriteDimensions, JoltRelationId};

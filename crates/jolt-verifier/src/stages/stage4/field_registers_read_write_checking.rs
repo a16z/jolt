@@ -25,39 +25,10 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::Field;
-use jolt_poly::try_eq_mle;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::VerifierError;
-
-/// Wire the consumed FR value opening *values* from stage 2's FR claim
-/// reduction. The upstream cells are plain (non-optional) fields of the FR-on
-/// stage-2 batch claims, so presence is a compile-time fact — an FR-on proof
-/// without them fails proof deserialization / shape validation upstream.
-pub fn field_registers_read_write_input_values_from_upstream<F: Field>(
-    stage2: &Stage2BatchOutputClaims<F>,
-) -> FieldRegistersReadWriteInputClaims<F> {
-    let reduction = &stage2.field_registers_claim_reduction;
-    FieldRegistersReadWriteInputClaims {
-        rd_value: reduction.rd_value,
-        rs1_value: reduction.rs1_value,
-        rs2_value: reduction.rs2_value,
-    }
-}
-
-/// Wire the consumed FR opening *points* from stage 2's FR claim reduction,
-/// all sharing that relation's reduced opening point (`r_prod`).
-pub fn field_registers_read_write_input_points_from_upstream<F: Field>(
-    stage2: &Stage2BatchOutputPoints<F>,
-) -> FieldRegistersReadWriteInputClaims<Vec<F>> {
-    let reduction = &stage2.field_registers_claim_reduction;
-    FieldRegistersReadWriteInputClaims {
-        rd_value: reduction.rd_value().to_vec(),
-        rs1_value: reduction.rs1_value().to_vec(),
-        rs2_value: reduction.rs2_value().to_vec(),
-    }
-}
 
 #[derive(Clone)]
 pub struct FieldRegistersReadWriteChecking<F: Field> {
@@ -129,21 +100,15 @@ impl<F: Field> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
         match public_id {
             // The upstream reduced point (`r_prod`) is the fixed cycle; this
             // instance's cycle sub-point is the opening point past the FR
-            // address prefix — the same derivation as the ordinary
-            // `RegistersReadWriteChecking`'s `EqCycle`.
-            FieldRegistersReadWritePublic::EqCycle => {
-                let fixed_cycle = input_points.rd_value();
-                let registers_cycle = output_points
-                    .registers_val()
-                    .get(self.dimensions.log_k()..)
-                    .ok_or_else(|| {
-                        public_input_failed(
-                            "field-register read-write opening point is shorter than the \
-                             field-register address width",
-                        )
-                    })?;
-                try_eq_mle(fixed_cycle, registers_cycle).map_err(public_input_failed)
-            }
+            // address prefix — literally the ordinary
+            // `RegistersReadWriteChecking` derivation at the FR geometry.
+            FieldRegistersReadWritePublic::EqCycle => derivations::eq_at_cycle(
+                input_points.rd_value(),
+                output_points.registers_val(),
+                self.dimensions.log_k(),
+                "field-register",
+            )
+            .map_err(public_input_failed),
         }
     }
 }
@@ -158,15 +123,7 @@ mod tests {
     use super::*;
 
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
-    use jolt_claims::protocols::jolt::geometry::dimensions::{
-        ReadWriteDimensions, REGISTER_ADDRESS_BITS,
-    };
-    use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
     use jolt_field::{Fr, FromPrimitiveInt};
-
-    use crate::stages::stage4::registers_read_write_checking::{
-        RegistersReadWriteChallenges, RegistersReadWriteChecking, RegistersReadWriteInputClaims,
-    };
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -207,68 +164,5 @@ mod tests {
         assert_eq!(output_points.registers_val(), output_points.rs2_ra());
         assert_eq!(output_points.registers_val(), output_points.rd_wa());
         assert_eq!(output_points.registers_val(), output_points.rd_inc());
-    }
-
-    /// The FR `EqCycle` mirrors the ordinary registers read-write derivation
-    /// exactly: `Eq(upstream reduced cycle point, own cycle sub-point)`. Built
-    /// at the jolt register shape (the jolt member's address slice is the
-    /// `REGISTER_ADDRESS_BITS` constant), the two publics are equal at the same
-    /// batch point and input point.
-    #[test]
-    fn field_registers_eq_cycle_matches_registers_read_write_derivation() {
-        let log_t = 4usize;
-        let log_k = REGISTER_ADDRESS_BITS;
-        let jolt_relation = RegistersReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(
-            log_t, log_k, log_t, log_k,
-        ));
-        let field_relation = FieldRegistersReadWriteChecking::<Fr>::new(
-            FieldRegistersReadWriteDimensions::new(log_t, log_k, log_t, log_k),
-        );
-        assert_eq!(jolt_relation.rounds(), field_relation.rounds());
-
-        let point: Vec<Fr> = (0..jolt_relation.rounds() as u64)
-            .map(|i| fr(30 + i))
-            .collect();
-        let fixed_cycle: Vec<Fr> = (0..log_t as u64).map(|i| fr(60 + i)).collect();
-
-        let jolt_input_points = RegistersReadWriteInputClaims::<Vec<Fr>> {
-            rd_write_value: fixed_cycle.clone(),
-            rs1_value: fixed_cycle.clone(),
-            rs2_value: fixed_cycle.clone(),
-        };
-        let field_input_points = FieldRegistersReadWriteInputClaims::<Vec<Fr>> {
-            rd_value: fixed_cycle.clone(),
-            rs1_value: fixed_cycle.clone(),
-            rs2_value: fixed_cycle,
-        };
-
-        let jolt_points = jolt_relation
-            .derive_opening_points(&point, &jolt_input_points)
-            .unwrap();
-        let field_points = field_relation
-            .derive_opening_points(&point, &field_input_points)
-            .unwrap();
-        assert_eq!(jolt_points.registers_val(), field_points.registers_val());
-
-        let jolt_eq = jolt_relation
-            .derive_output_term(
-                &JoltDerivedId::RegistersReadWrite(RegistersReadWritePublic::EqCycle),
-                &jolt_input_points,
-                &jolt_points,
-                &RegistersReadWriteChallenges { gamma: fr(1) },
-            )
-            .unwrap();
-        let field_eq = field_relation
-            .derive_output_term(
-                &FieldInlineDerivedId::FieldRegistersReadWrite(
-                    FieldRegistersReadWritePublic::EqCycle,
-                ),
-                &field_input_points,
-                &field_points,
-                &FieldRegistersReadWriteChallenges { gamma: fr(1) },
-            )
-            .unwrap();
-
-        assert_eq!(field_eq, jolt_eq);
     }
 }
