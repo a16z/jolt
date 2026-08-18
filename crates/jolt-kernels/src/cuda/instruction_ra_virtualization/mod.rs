@@ -19,7 +19,6 @@ use crate::{
 use one_hot::DevicePackedRa;
 
 pub(crate) mod one_hot;
-pub(crate) mod witness;
 
 const COMMITTED_PER_VIRTUAL: usize = 4;
 
@@ -178,7 +177,7 @@ impl<F: Field> PrepareKernel<F, InstructionRaVirtualization<F>> for CudaBackend 
         }
 
         let cycles = 1usize << dimensions.log_t();
-        let packed = device_lookup_limbs::<F, _>(context, session, witness, cycles)?;
+        let packed = device_lookup_limbs::<F>(context, session, witness, cycles)?;
 
         let one_hot = DevicePackedRa::new(
             context,

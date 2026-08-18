@@ -113,6 +113,7 @@ pub struct CudaKernelContext {
     pub(super) sum_reduce: CudaFunction,
     pub(super) u64_to_mont: CudaFunction,
     pub(super) i128_to_mont: CudaFunction,
+    pub(super) twos_i128_to_mont: CudaFunction,
     pub(super) eq_double: CudaFunction,
     pub(super) lt_double: CudaFunction,
     pub(super) scan_u32_block: CudaFunction,
@@ -232,7 +233,9 @@ pub struct CudaKernelContext {
     hf_row_fold: CudaFunction,
     sopg_round: CudaFunction,
     ii_columns: CudaFunction,
+    #[cfg(test)]
     ss_columns: CudaFunction,
+    ss_columns_device: CudaFunction,
     bap_bind_squared: CudaFunction,
     bap_message: CudaFunction,
     brap_one_hot: CudaFunction,
@@ -274,6 +277,7 @@ impl CudaKernelContext {
             sum_reduce: module.load_function("sum_reduce_kernel")?,
             u64_to_mont: module.load_function("u64_to_mont_kernel")?,
             i128_to_mont: module.load_function("i128_to_mont_kernel")?,
+            twos_i128_to_mont: module.load_function("twos_i128_to_mont_kernel")?,
             eq_double: module.load_function("eq_double_kernel")?,
             lt_double: module.load_function("lt_double_kernel")?,
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
@@ -394,7 +398,9 @@ impl CudaKernelContext {
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
             sopg_round: module.load_function("sopg_round_kernel")?,
             ii_columns: module.load_function("ii_columns_kernel")?,
+            #[cfg(test)]
             ss_columns: module.load_function("ss_columns_kernel")?,
+            ss_columns_device: module.load_function("ss_columns_device_kernel")?,
             bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
             bap_message: module.load_function("bap_message_kernel")?,
             brap_one_hot: module.load_function("brap_one_hot_kernel")?,
@@ -640,6 +646,11 @@ impl CudaKernelContext {
         &self.ii_columns
     }
 
+    pub(crate) const fn ss_columns_device(&self) -> &CudaFunction {
+        &self.ss_columns_device
+    }
+
+    #[cfg(test)]
     pub(crate) const fn ss_columns(&self) -> &CudaFunction {
         &self.ss_columns
     }

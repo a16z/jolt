@@ -24,7 +24,15 @@ parallel = [
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
-cuda = ["dep:cudarc", "dep:ark-bn254", "dep:ark-ec", "dep:ark-ff", "dep:jolt-crypto", "dep:jolt-dory"]
+cuda = [
+  "dep:cudarc",
+  "dep:ark-bn254",
+  "dep:ark-ec",
+  "dep:ark-ff",
+  "dep:jolt-crypto",
+  "dep:jolt-dory",
+  "jolt-witness/cuda",
+]
 
 [dependencies]
 allocative = { workspace = true, optional = true }

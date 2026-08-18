@@ -12,7 +12,8 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::SpartanShift;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
+use crate::cuda::common::device_columns::device_pc_words;
+use crate::cuda::witness::session_device_trace;
 
 use super::common::prefix_suffix::{
     eq_plus_one_pairs, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -25,9 +26,8 @@ use crate::{
 };
 
 pub(crate) mod columns;
+#[cfg(test)]
 pub(crate) mod witness;
-
-use witness::SpartanShiftWitness;
 
 const GAMMA_POWERS: usize = 5;
 
@@ -121,9 +121,17 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
             return ReferenceBackend.prepare(session, witness, inputs);
         };
 
-        let rows = cached_bundles::<SpartanShiftWitness, _>(session, witness, 1usize << log_t)?;
-        let packed = witness::pack(&rows);
-        let device_columns = columns::upload(context, &packed)?;
+        let cycles = 1usize << log_t;
+        let trace = session_device_trace(context, session, witness, cycles)?;
+        let atoms = trace.atom_columns()?;
+        let pc_words = device_pc_words::<F>(context, session, witness, cycles)?;
+        let device_columns = columns::upload_from_device::<F>(
+            context,
+            trace.unexpanded_pc(),
+            &pc_words,
+            &atoms.flags,
+            cycles,
+        )?;
 
         let mut powers = [F::one(); GAMMA_POWERS];
         for index in 1..GAMMA_POWERS {

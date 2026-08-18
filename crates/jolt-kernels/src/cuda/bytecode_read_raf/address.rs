@@ -11,15 +11,18 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
     BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims,
     BytecodeReadRafAddressPhaseOutputClaims,
 };
+use jolt_witness::backend::cuda::NarrowColumn;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
+use std::sync::Arc;
+
+use crate::cuda::common::device_columns::DeviceTraceColumns;
+use crate::cuda::witness::session_device_trace;
 
 use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs, STAGES};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::one_hot_fold::DeviceOneHotColumns;
 use crate::cuda::{require_context, CudaBackend};
-use crate::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -114,6 +117,18 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
+fn device_bytecode_pc_words<F: Field>(
+    context: &'static CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    addresses: usize,
+) -> Result<NarrowColumn, KernelError<F>> {
+    let trace = session_device_trace(context, session, witness, cycles)?;
+    let columns = trace.atom_columns()?;
+    Ok(trace.narrow_u64_column(&columns.bytecode_pc, addresses as u64)?)
+}
+
 impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend {
     fn prepare(
         &self,
@@ -166,39 +181,22 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for CudaBackend 
             });
         }
 
-        let rows = cached_bundles::<BytecodeReadRafWitness, _>(session, witness, cycles)?;
-        let mut pcs = Vec::with_capacity(cycles);
-        for row in &rows {
-            let pc = u32::try_from(row.bytecode_pc.0).map_err(|_| KernelError::Unsupported {
-                reason: "the CUDA bytecode read-RAF address phase packs each PC into one 32-bit \
-                         word",
+        let pcs = device_bytecode_pc_words::<F>(context, session, witness, cycles, addresses)?;
+        let entry_trace_index =
+            usize::try_from(pcs.first).map_err(|_| KernelError::InvariantViolation {
+                reason: "the entry bytecode PC exceeds the host word",
             })?;
-            if row.bytecode_pc.0 >= addresses {
-                return Err(KernelError::InvariantViolation {
-                    reason: "a bytecode PC escapes the padded bytecode domain",
-                });
-            }
-            pcs.push(pc);
-        }
-        let entry_trace_index = rows
-            .first()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "the bytecode read-RAF address phase needs at least one cycle",
-            })?
-            .bytecode_pc
-            .0;
-        drop(rows);
 
-        let columns = DeviceOneHotColumns::new(
-            context,
-            &[],
-            &[],
-            &pcs,
+        let columns = DeviceOneHotColumns::from_device(
+            DeviceTraceColumns {
+                lookup: Arc::new(context.alloc_u64(0)?),
+                pc: Arc::new(context.alloc_u32(0)?),
+                ram: Arc::new(pcs.column),
+            },
             [0, 0, 1],
             dimensions.log_k(),
             cycles,
         )?;
-        drop(pcs);
 
         let state = DeviceBytecodePushforward::new(
             context,

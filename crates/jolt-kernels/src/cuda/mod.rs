@@ -30,6 +30,7 @@ mod registers_val_evaluation;
 mod spartan_outer;
 mod spartan_product;
 mod spartan_shift;
+mod witness;
 
 pub use commitment::DeviceTier1Commitment;
 pub use common::context::{shared_context, CudaKernelContext};

@@ -9,7 +9,9 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
+use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::device::DeviceFrVec;
+use crate::cuda::witness::session_device_trace;
 
 use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_floor, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -86,6 +88,20 @@ impl<F: Field> SumcheckKernel<F> for IncClaimReductionKernel<F> {
     }
 }
 
+fn device_increment_columns<F: Field>(
+    context: &'static CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Vec<DeviceFrVec>, KernelError<F>> {
+    let trace = session_device_trace(context, session, witness, cycles)?;
+    let atoms = trace.atom_columns()?;
+    Ok(vec![
+        context.i128_to_montgomery_device(&atoms.ram_inc, cycles)?,
+        context.i128_to_montgomery_device(&atoms.rd_inc, cycles)?,
+    ])
+}
+
 impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
@@ -107,10 +123,7 @@ impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let rows =
-            cached_bundles::<witness::IncClaimReductionWitness, _>(session, witness, cycles)?;
-        let columns = witness::device_columns(context, &rows)?;
-        drop(rows);
+        let columns = device_increment_columns::<F>(context, session, witness, cycles)?;
 
         let gamma = inputs.challenges.gamma;
         let mut power = F::one();

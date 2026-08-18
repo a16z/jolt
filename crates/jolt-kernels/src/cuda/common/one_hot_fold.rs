@@ -45,6 +45,7 @@ pub struct DeviceOneHotColumns {
 }
 
 impl DeviceOneHotColumns {
+    #[cfg(test)]
     pub fn new(
         context: &CudaKernelContext,
         lookup: &[u64],

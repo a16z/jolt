@@ -43,8 +43,7 @@ impl<F: Field> PrepareKernel<F, RamRafEvaluation<F>> for CudaBackend {
         }
 
         let cycles = 1usize << relation.tau_low().len();
-        let words =
-            device_ram_words::<F, _>(context, session, witness, cycles, 1usize << ram_log_k)?;
+        let words = device_ram_words::<F>(context, session, witness, cycles, 1usize << ram_log_k)?;
         let columns = DeviceOneHotColumns::from_device(
             DeviceTraceColumns {
                 lookup: Arc::new(context.alloc_u64(0)?),

@@ -1,5 +1,6 @@
 //! Sample-trace fixtures for the derive-generated bundle consistency tests.
 
+use common::jolt_device::{MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId};
 use jolt_field::Fr;
 use jolt_program::{
@@ -102,6 +103,135 @@ fn with_sample_backend_config<R>(
 
 pub fn with_ram_sized_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
     with_sample_backend_config(RAM_SIZED_K, RAM_SIZED_BASE, f)
+}
+
+pub fn supported_jolt_kinds() -> Vec<JoltInstructionKind> {
+    JoltInstructionKind::ALL
+        .iter()
+        .copied()
+        .filter(|&kind| RV64IMAC_JOLT.jolt_dense_index(kind).is_some())
+        .collect()
+}
+
+fn all_kinds_operands(kind: JoltInstructionKind, slot: usize) -> NormalizedOperands {
+    let magnitude = 13 + 5 * slot as i128;
+    let imm = if slot.is_multiple_of(2) {
+        -magnitude
+    } else {
+        magnitude
+    };
+    let (rd, rs1, rs2) = match kind {
+        JoltInstructionKind::SD
+        | JoltInstructionKind::BEQ
+        | JoltInstructionKind::VirtualAssertEQ => (None, Some(2), Some(3)),
+        JoltInstructionKind::LD
+        | JoltInstructionKind::ADDI
+        | JoltInstructionKind::VirtualMULI
+        | JoltInstructionKind::VirtualMovsign => (Some(1), Some(2), None),
+        JoltInstructionKind::LUI | JoltInstructionKind::JAL => (Some(1), None, None),
+        _ if kind
+            == JoltInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())) =>
+        {
+            (Some(1), None, None)
+        }
+        _ => (Some(1), Some(2), Some(3)),
+    };
+    NormalizedOperands { rd, rs1, rs2, imm }
+}
+
+#[expect(clippy::expect_used, reason = "test fixture construction")]
+pub fn all_kinds_backend(seed: u64) -> (TraceBackend<OwnedTrace>, usize, usize) {
+    let kinds = supported_jolt_kinds();
+    let bytecode: Vec<JoltInstructionRow> = kinds
+        .iter()
+        .enumerate()
+        .map(|(slot, &instruction_kind)| JoltInstructionRow {
+            instruction_kind,
+            address: 0x8000_0000 + 4 * slot,
+            operands: all_kinds_operands(instruction_kind, slot),
+            virtual_sequence_remaining: match slot % 3 {
+                0 => None,
+                1 => Some(0),
+                _ => Some((slot % 5 + 1) as u16),
+            },
+            is_first_in_sequence: slot % 4 == 1,
+            is_compressed: slot % 5 == 4,
+        })
+        .collect();
+
+    let log_t = kinds.len().next_power_of_two().ilog2() as usize;
+    let cycles = 1usize << log_t;
+    let ram_k = 1usize << 6;
+    let entry_address = bytecode[0].address as u64;
+    let memory_layout = MemoryLayout::new(&MemoryConfig {
+        program_size: Some(1 << 12),
+        ..MemoryConfig::default()
+    });
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(bytecode.clone(), entry_address, RV64IMAC_JOLT)
+            .expect("all-kinds bytecode fixture"),
+        ram: RAMPreprocessing::default(),
+        memory_layout: memory_layout.clone(),
+        max_padded_trace_length: cycles,
+    });
+
+    let lowest = memory_layout.get_lowest_address();
+    let rows: Vec<TraceRow> = (0..cycles)
+        .map(|cycle| {
+            let instruction = bytecode[cycle % bytecode.len()];
+            let mix = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(cycle as u64);
+            let ram_access = match cycle % 3 {
+                0 => RamAccess::NoOp,
+                1 => RamAccess::Read(RamRead {
+                    address: lowest + 8 * ((cycle % ram_k) as u64),
+                    value: mix.rotate_left(5),
+                }),
+                _ => RamAccess::Write(RamWrite {
+                    address: lowest + 8 * ((cycle % ram_k) as u64),
+                    pre_value: mix.rotate_left(9),
+                    post_value: mix.rotate_left(13),
+                }),
+            };
+            TraceRow {
+                instruction,
+                registers: RegisterState {
+                    rs1: instruction.operands.rs1.map(|register| RegisterRead {
+                        register,
+                        value: mix | 1,
+                    }),
+                    rs2: instruction.operands.rs2.map(|register| RegisterRead {
+                        register,
+                        value: mix.rotate_left(17) | 1,
+                    }),
+                    rd: instruction.operands.rd.map(|register| RegisterWrite {
+                        register,
+                        pre_value: mix.rotate_left(23),
+                        post_value: mix.rotate_left(29),
+                    }),
+                },
+                #[cfg(feature = "field-inline")]
+                field_inline: None,
+                ram_access,
+            }
+        })
+        .collect();
+
+    let program = Arc::new(JoltProgram::default());
+    let trace = TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None);
+    let backend = TraceBackend::new(
+        JoltVmWitnessConfig::new(
+            log_t,
+            ram_k,
+            JoltOneHotConfig {
+                log_k_chunk: 4,
+                lookups_ra_virtual_log_k_chunk: 16,
+            },
+        ),
+        JoltVmWitnessInputs::new(&program, &preprocessing, trace),
+    );
+    (backend, cycles, kinds.len())
 }
 
 const RAM_SIZED_K: usize = 16;

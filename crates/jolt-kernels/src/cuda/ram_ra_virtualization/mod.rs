@@ -139,7 +139,7 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for CudaBackend {
         } else {
             1usize << address_bits
         };
-        let packed = device_ram_words::<F, _>(context, session, witness, cycles, addresses)?;
+        let packed = device_ram_words::<F>(context, session, witness, cycles, addresses)?;
 
         let one_hot = DevicePackedRamRa::new(context, packed, cycles, chunk_bits, &address_point)
             .map_err(|_| KernelError::Unsupported {

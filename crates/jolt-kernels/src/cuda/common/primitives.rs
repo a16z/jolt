@@ -286,20 +286,66 @@ impl CudaKernelContext {
     }
 
     pub fn u64_to_montgomery(&self, values: &[u64]) -> Result<DeviceFrVec, CudaError> {
-        let mut output = self.alloc(values.len())?;
         if values.is_empty() {
-            return Ok(output);
+            return self.alloc(0);
         }
         let input = self.upload_u64_slice(values)?;
-        let count = Self::count_of(values.len())?;
+        self.u64_to_montgomery_device(&input, values.len())
+    }
+
+    pub fn u64_to_montgomery_device(
+        &self,
+        input: &CudaSlice<u64>,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        if len == 0 {
+            return Ok(output);
+        }
+        if input.len() < len {
+            return Err(CudaError::LengthMismatch {
+                expected: len,
+                got: input.len(),
+            });
+        }
+        let count = Self::count_of(len)?;
         let mut builder = self.stream().launch_builder(&self.u64_to_mont);
-        let _ = builder.arg(&input);
+        let _ = builder.arg(input);
         let _ = builder.arg(output.limbs_mut());
         let _ = builder.arg(&count);
-        // SAFETY: thread `i < count` reads only `input[i]` (one u64 of a
-        // `count`-element buffer) and writes only `out[i*4..i*4+4]` of a
+        // SAFETY: thread `i < count` reads only `input[i]` (checked above to hold
+        // at least `count` elements) and writes only `out[i*4..i*4+4]` of a
         // `count * LIMBS` buffer; the two are distinct allocations. Threads with
         // `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub fn i128_to_montgomery_device(
+        &self,
+        value: &CudaSlice<u64>,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        if len == 0 {
+            return Ok(output);
+        }
+        if value.len() < len * 2 {
+            return Err(CudaError::LengthMismatch {
+                expected: len * 2,
+                got: value.len(),
+            });
+        }
+        let count = Self::count_of(len)?;
+        let mut builder = self.stream().launch_builder(&self.twos_i128_to_mont);
+        let _ = builder.arg(value);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads `value[2i]` and `value[2i + 1]`,
+        // checked above to be inside a `2 * count`-word buffer, and writes only
+        // `out[i*4..i*4+4]` of a `count * LIMBS` buffer; the two are distinct
+        // allocations. Threads with `i >= count` return before any access.
         let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
         self.stream().synchronize()?;
         Ok(output)
@@ -693,6 +739,31 @@ mod tests {
             let got = context
                 .u64_to_montgomery(&values)
                 .expect("device u64_to_montgomery")
+                .to_host()
+                .expect("download");
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn i128_to_montgomery_device_matches_the_host_input_form(
+            values in vec(any::<i128>(), 1..300),
+        ) {
+            let Some(context) = device() else { return Ok(()); };
+            let mut limbs = Vec::with_capacity(values.len() * 2);
+            for &value in &values {
+                let bits = value as u128;
+                limbs.push(bits as u64);
+                limbs.push((bits >> 64) as u64);
+            }
+            let uploaded = context.upload_u64_slice(&limbs).expect("upload limbs");
+            let got = context
+                .i128_to_montgomery_device(&uploaded, values.len())
+                .expect("device two's-complement conversion")
+                .to_host()
+                .expect("download");
+            let expected = context
+                .i128_to_montgomery(&values)
+                .expect("host-input conversion")
                 .to_host()
                 .expect("download");
             prop_assert_eq!(got, expected);

@@ -6,6 +6,8 @@ use jolt_program::preprocess::JoltProgramPreprocessing;
 
 use crate::{RowSource, Shape, WitnessBundle, WitnessError};
 
+#[cfg(feature = "cuda")]
+pub mod cuda;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod fixed;
 pub mod trace;

@@ -7,19 +7,20 @@ use jolt_poly::{BindingOrder, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
+use jolt_witness::backend::cuda::FLAG_BIT_RAM_HAMMING;
 use jolt_witness::JoltWitnessPlane;
-
-use crate::cuda::common::trace_columns::cached_bundles;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::split_eq::DeviceSplitEq;
+use crate::cuda::witness::session_device_trace;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 use hamming_weight::DeviceHammingWeight;
 
 pub(crate) mod hamming_weight;
+#[cfg(test)]
 pub(crate) mod witness;
 
 pub struct RamHammingBooleanityKernel<F: Field> {
@@ -101,6 +102,18 @@ impl<F: Field> SumcheckKernel<F> for RamHammingBooleanityKernel<F> {
     }
 }
 
+fn device_hamming_weights<F: Field>(
+    context: &'static CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<DeviceHammingWeight, KernelError<F>> {
+    let trace = session_device_trace(context, session, witness, cycles)?;
+    let columns = trace.atom_columns()?;
+    let bits = trace.flag_bit_column(&columns.flags, FLAG_BIT_RAM_HAMMING)?;
+    Ok(DeviceHammingWeight::from_device(context, &bits, cycles)?)
+}
+
 impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for CudaBackend {
     fn prepare(
         &self,
@@ -119,12 +132,7 @@ impl<F: Field> PrepareKernel<F, RamHammingBooleanity<F>> for CudaBackend {
         }
 
         let cycles = 1usize << log_t;
-        let rows =
-            cached_bundles::<witness::RamHammingBooleanityWitness, _>(session, witness, cycles)?;
-        let column = witness::packed_weights(&rows);
-        drop(rows);
-        let weights = DeviceHammingWeight::new(context, &column)?;
-        drop(column);
+        let weights = device_hamming_weights::<F>(context, session, witness, cycles)?;
 
         let eq_point: Vec<F> = relation
             .stage1_cycle_binding()
@@ -199,6 +207,44 @@ mod tests {
                 "every fixture cycle touches RAM, so the booleanity summand is identically zero \
                  and a wrong eq point would still pass",
             );
+        });
+    }
+
+    #[test]
+    fn device_hamming_weights_match_the_host_encoder() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let cycles = 1usize << LOG_T;
+        with_ram_witness(LOG_T, RAM_K, one_hot(), 19, |witness| {
+            let rows = crate::optimized::support::collect_rows::<
+                Fr,
+                super::witness::RamHammingBooleanityWitness,
+            >(witness, cycles)
+            .expect("reference rows");
+            let expected = super::witness::packed_weights(&rows);
+            assert!(
+                expected.contains(&0) && expected.contains(&1),
+                "the fixture's Hamming weights are constant, so a kernel ignoring the row would \
+                 pass",
+            );
+
+            let trace = super::session_device_trace(
+                context,
+                &mut ProofSession::default(),
+                witness as &dyn jolt_witness::JoltWitnessPlane<Fr>,
+                cycles,
+            )
+            .expect("device residency");
+            let columns = trace.atom_columns().expect("atom columns");
+            let got = context
+                .download_u64(
+                    &trace
+                        .flag_bit_column(&columns.flags, super::FLAG_BIT_RAM_HAMMING)
+                        .expect("flag bit column"),
+                )
+                .expect("download");
+            assert_eq!(got, expected, "the device flag-bit column diverges");
         });
     }
 

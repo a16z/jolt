@@ -43,6 +43,32 @@ extern "C" __global__ void i128_to_mont_kernel(const u64 *__restrict__ magnitude
     }
 }
 
+extern "C" __global__ void twos_i128_to_mont_kernel(const u64 *__restrict__ value,
+                                                    u64 *__restrict__ out,
+                                                    unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    u64 lo = value[2 * i];
+    u64 hi = value[2 * i + 1];
+    bool negative = (hi >> 63) != 0ull;
+    if (negative) {
+        u64 next = ~lo + 1ull;
+        hi = ~hi + (next == 0ull ? 1ull : 0ull);
+        lo = next;
+    }
+    u64 raw[LIMBS] = {lo, hi, 0, 0};
+    u64 r[LIMBS];
+    fr_to_mont(raw, r);
+    if (negative) {
+        u64 zero[LIMBS] = {0, 0, 0, 0};
+        u64 neg[LIMBS];
+        fr_sub(zero, r, neg);
+        store4(out + i * LIMBS, neg);
+    } else {
+        store4(out + i * LIMBS, r);
+    }
+}
+
 extern "C" __global__ void eq_double_kernel(const u64 *__restrict__ in,
                                             u64 r0, u64 r1, u64 r2, u64 r3,
                                             u64 *__restrict__ out,

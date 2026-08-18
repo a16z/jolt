@@ -23,7 +23,6 @@ pub(crate) mod address;
 pub(crate) mod coefficient;
 pub(crate) mod one_hot;
 pub(crate) mod pushforward;
-pub(crate) mod witness;
 
 pub struct BytecodeReadRafCycleKernel<F: Field> {
     context: &'static CudaKernelContext,
@@ -207,7 +206,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for CudaBackend {
 
         let log_t = dimensions.log_t();
         let cycles = 1usize << log_t;
-        let column = device_pc_words::<F, _>(context, session, witness, cycles)?;
+        let column = device_pc_words::<F>(context, session, witness, cycles)?;
 
         let unsupported = || KernelError::Unsupported {
             reason: "the CUDA bytecode read-RAF kernel supports only the BN254 scalar field",

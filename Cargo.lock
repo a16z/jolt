@@ -4030,6 +4030,7 @@ name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
  "common",
+ "cudarc",
  "jolt-claims",
  "jolt-field",
  "jolt-lookup-tables",
@@ -4037,6 +4038,7 @@ dependencies = [
  "jolt-riscv",
  "jolt-utils",
  "jolt-witness-derive",
+ "proptest",
  "rayon",
  "thiserror 2.0.18",
  "tracing",

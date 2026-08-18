@@ -370,8 +370,8 @@ mod tests {
     use proptest::prelude::*;
 
     use super::{DeviceBytecodeRa, COLLAPSE_AFTER_ROUNDS};
-    use crate::cuda::bytecode_read_raf::witness::COLD;
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::pack::COLD;
     use crate::cuda::common::testing::{arb_point, fr};
 
     fn mix(seed: u64, cycle: usize) -> u64 {

@@ -1,10 +1,6 @@
 use jolt_witness::witnesses::{RamInc, RdInc};
 use jolt_witness::WitnessBundle;
 
-use crate::cuda::common::context::CudaKernelContext;
-use crate::cuda::common::device::DeviceFrVec;
-use crate::cuda::common::error::CudaError;
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -22,17 +18,6 @@ pub struct Packed {
 }
 
 const PACK_CHUNK: usize = 1 << 14;
-
-pub fn device_columns(
-    context: &CudaKernelContext,
-    rows: &[IncClaimReductionWitness],
-) -> Result<Vec<DeviceFrVec>, CudaError> {
-    let packed = packed_columns(rows);
-    Ok(vec![
-        context.i128_to_montgomery(&packed.ram)?,
-        context.i128_to_montgomery(&packed.rd)?,
-    ])
-}
 
 pub fn packed_columns(rows: &[IncClaimReductionWitness]) -> Packed {
     let mut ram = vec![0i128; rows.len()];
@@ -68,7 +53,7 @@ mod tests {
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_witness::witnesses::{RamInc, RdInc};
 
-    use super::{device_columns, IncClaimReductionWitness};
+    use super::IncClaimReductionWitness;
     use crate::cuda::common::context::shared_context;
 
     fn sample_rows() -> Vec<IncClaimReductionWitness> {
@@ -121,11 +106,24 @@ mod tests {
             rows.iter().map(|row| Fr::from_i128(row.ram.0)).collect(),
             rows.iter().map(|row| Fr::from_i128(row.rd.0)).collect(),
         ];
-        let got: Vec<Vec<Fr>> = device_columns(context, &rows)
-            .expect("device columns")
-            .iter()
-            .map(|column| column.to_host().expect("download"))
-            .collect();
-        assert_eq!(got, expected, "packed device columns diverged");
+        let convert = |values: Vec<i128>| {
+            let mut limbs = Vec::with_capacity(values.len() * 2);
+            for value in &values {
+                let bits = *value as u128;
+                limbs.push(bits as u64);
+                limbs.push((bits >> 64) as u64);
+            }
+            let uploaded = context.upload_u64_slice(&limbs).expect("upload limbs");
+            context
+                .i128_to_montgomery_device(&uploaded, values.len())
+                .expect("device conversion")
+                .to_host()
+                .expect("download")
+        };
+        let got: Vec<Vec<Fr>> = vec![
+            convert(rows.iter().map(|row| row.ram.0).collect()),
+            convert(rows.iter().map(|row| row.rd.0).collect()),
+        ];
+        assert_eq!(got, expected, "device increment columns diverged");
     }
 }

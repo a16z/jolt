@@ -8,7 +8,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
+use crate::cuda::witness::collect_rows;
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::{require_context, CudaBackend};
@@ -50,7 +50,7 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
             });
         }
 
-        let rows = cached_bundles::<SpartanOuterWitness, _>(session, witness, 1usize << log_t)?;
+        let rows = collect_rows::<F, SpartanOuterWitness>(witness, 1usize << log_t)?;
         let packed = witness::pack(&rows);
         let inputs = DeviceR1csInputs::new(context, &packed)?;
         let matrices = spartan_outer_constraints::<F>();

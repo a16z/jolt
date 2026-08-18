@@ -15,16 +15,34 @@ pub struct DeviceHammingWeight {
 }
 
 impl DeviceHammingWeight {
+    #[cfg(test)]
     pub fn new(context: &CudaKernelContext, weights: &[u64]) -> Result<Self, CudaError> {
-        if !weights.len().is_power_of_two() {
-            return Err(CudaError::LengthMismatch {
-                expected: weights.len().next_power_of_two(),
-                got: weights.len(),
-            });
-        }
+        Self::require_power_of_two(weights.len())?;
         Ok(Self {
             weights: context.u64_to_montgomery(weights)?,
             one: context.upload(&[Fr::from(1u64)])?,
+        })
+    }
+
+    pub fn from_device(
+        context: &CudaKernelContext,
+        weights: &cudarc::driver::CudaSlice<u64>,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
+        Self::require_power_of_two(cycles)?;
+        Ok(Self {
+            weights: context.u64_to_montgomery_device(weights, cycles)?,
+            one: context.upload(&[Fr::from(1u64)])?,
+        })
+    }
+
+    fn require_power_of_two(len: usize) -> Result<(), CudaError> {
+        if len.is_power_of_two() {
+            return Ok(());
+        }
+        Err(CudaError::LengthMismatch {
+            expected: len.next_power_of_two(),
+            got: len,
         })
     }
 

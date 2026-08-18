@@ -54,7 +54,7 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
         };
         let addresses = 1usize << ram_log_k;
         let cycles = 1usize << log_t;
-        let words = device_ram_words::<F, _>(context, session, witness, cycles, addresses)?;
+        let words = device_ram_words::<F>(context, session, witness, cycles, addresses)?;
         let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
         let state = DeviceRamRaReduction::new(
             context,

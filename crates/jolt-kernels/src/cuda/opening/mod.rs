@@ -13,12 +13,12 @@ use super::common::context::CudaKernelContext;
 use super::common::device::{fr_into, fr_vec_into, require_fr_slice, DeviceFrVec};
 use super::common::device_columns::{device_column, DeviceColumn};
 use super::common::error::CudaError;
-use super::common::trace_columns::{cached_columns, witness_identity, CachedBundle};
 use super::{require_context, CudaBackend};
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
 use crate::cuda::inc_claim_reduction::witness::{
     packed_columns as inc_columns, IncClaimReductionWitness,
 };
+use crate::cuda::witness::collect_rows;
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::reference::commitment::column_kinds;
 use crate::reference::views::dense_view;
@@ -253,7 +253,7 @@ fn is_trace_derived(polynomial: JoltCommittedPolynomial) -> bool {
 pub(crate) fn sparse_hot_columns<F: Field>(
     context: &'static CudaKernelContext,
     session: &mut ProofSession,
-    witness: &dyn JoltWitnessOracle<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     polynomials: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
 ) -> Result<BTreeMap<JoltCommittedPolynomial, Arc<CudaSlice<u32>>>, KernelError<F>> {
@@ -286,36 +286,21 @@ pub(crate) fn sparse_hot_columns<F: Field>(
             DeviceColumn::CommittedHot(id),
             cycles,
             one_hot_k,
-            |session| walk_hot_column::<F>(context, session, witness, kind, cycles, one_hot_k),
-        );
-        match hot {
-            Ok(hot) => {
-                let _ = sparse.insert(id, hot);
-            }
-            Err(HotColumnMiss::NotResident) => return Ok(BTreeMap::new()),
-            Err(HotColumnMiss::Device(error)) => return Err(error.into()),
-        }
+            |_| walk_hot_column::<F>(context, witness, kind, cycles, one_hot_k),
+        )?;
+        let _ = sparse.insert(id, hot);
     }
     Ok(sparse)
 }
 
-enum HotColumnMiss {
-    NotResident,
-    Device(CudaError),
-}
-
 fn walk_hot_column<F: Field>(
     context: &'static CudaKernelContext,
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessOracle<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     kind: crate::reference::commitment::ColumnKind,
     cycles: usize,
     one_hot_k: usize,
-) -> Result<(CudaSlice<u32>, usize), HotColumnMiss> {
-    let identity = witness_identity(witness);
-    let columns = cached_columns(session, identity, cycles).ok_or(HotColumnMiss::NotResident)?;
-    let rows =
-        CommittedColumnsWitness::restore(columns, cycles).ok_or(HotColumnMiss::NotResident)?;
+) -> Result<(CudaSlice<u32>, usize), KernelError<F>> {
+    let rows = collect_rows::<F, CommittedColumnsWitness>(witness, cycles)?;
     let mut hot = Vec::with_capacity(cycles);
     let mut span = 0usize;
     for row in &rows {
@@ -328,15 +313,13 @@ fn walk_hot_column<F: Field>(
         }
     }
     if span > one_hot_k || span > NO_HOT as usize {
-        return Err(HotColumnMiss::Device(CudaError::LengthMismatch {
+        return Err(CudaError::LengthMismatch {
             expected: one_hot_k,
             got: span,
-        }));
+        }
+        .into());
     }
-    let column = context
-        .upload_u32_slice(&hot)
-        .map_err(HotColumnMiss::Device)?;
-    Ok((column, span))
+    Ok((context.upload_u32_slice(&hot)?, span))
 }
 
 fn increment_plan<F: Field>(
@@ -359,8 +342,7 @@ fn increment_plan<F: Field>(
 
 fn increment_columns<F: Field>(
     context: &'static CudaKernelContext,
-    session: &mut ProofSession,
-    witness: &dyn JoltWitnessOracle<F>,
+    witness: &dyn JoltWitnessPlane<F>,
     polynomials: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
 ) -> Result<BTreeMap<JoltCommittedPolynomial, DeviceFrVec>, KernelError<F>> {
@@ -378,13 +360,7 @@ fn increment_columns<F: Field>(
         return Ok(BTreeMap::new());
     }
     let cycles = 1usize << grid.log_t;
-    let identity = witness_identity(witness);
-    let Some(columns) = cached_columns(session, identity, cycles) else {
-        return Ok(BTreeMap::new());
-    };
-    let Some(rows) = IncClaimReductionWitness::restore(columns, cycles) else {
-        return Ok(BTreeMap::new());
-    };
+    let rows = collect_rows::<F, IncClaimReductionWitness>(witness, cycles)?;
     let packed = inc_columns(&rows);
     drop(rows);
     let mut built = BTreeMap::new();
@@ -412,7 +388,7 @@ impl<F: Field> JointOpeningPolynomials<F> for CudaBackend {
         let mut sparse = tracing::info_span!("cuda_opening_sparse_plan")
             .in_scope(|| sparse_hot_columns::<F>(context, session, witness, polynomials, grid))?;
         let mut increments = tracing::info_span!("cuda_opening_increment_plan")
-            .in_scope(|| increment_columns::<F>(context, session, witness, polynomials, grid))?;
+            .in_scope(|| increment_columns::<F>(context, witness, polynomials, grid))?;
         polynomials
             .iter()
             .map(|&polynomial| {
@@ -483,17 +459,16 @@ mod tests {
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, FromPrimitiveInt};
     use jolt_poly::MultilinearPoly;
-    use jolt_program::execution::OwnedTrace;
-    use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane, TraceBackend};
+    use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
     use proptest::prelude::*;
 
     use super::{CudaBackend, NO_HOT};
     use crate::commitment::{CommitWitness, CommitmentGrid, CommittedColumnsWitness};
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::device_columns::{device_columns_for, DeviceColumn};
+    use crate::cuda::common::device_columns::{device_columns_for, witness_identity, DeviceColumn};
     use crate::cuda::common::testing::{advice_plane, fr, with_r1cs_witness};
-    use crate::cuda::common::trace_columns::cached_bundles;
     use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
+    use crate::optimized::support::collect_rows;
     use crate::reference::commitment::column_kinds;
     use crate::reference::ReferenceBackend;
     use crate::ProofSession;
@@ -590,14 +565,6 @@ mod tests {
                 evaluation: polynomial.evaluate(&probe.point),
             })
             .collect()
-    }
-
-    fn warm_session(witness: &TraceBackend<OwnedTrace>, log_t: usize) -> ProofSession {
-        let mut session = ProofSession::default();
-        let _ =
-            cached_bundles::<CommittedColumnsWitness, _>(&mut session, witness, 1usize << log_t)
-                .expect("the fixture serves the committed columns bundle");
-        session
     }
 
     fn one_hot_ids(
@@ -742,21 +709,11 @@ mod tests {
                      sparse plan is untestable",
                 );
 
-                let oracle = witness as &dyn JoltWitnessOracle<Fr>;
-                let mut cold = ProofSession::default();
-                let sparse_cold =
-                    super::sparse_hot_columns::<Fr>(context, &mut cold, oracle, &order_ids, grid)
-                        .expect("cold sparse plan");
-                assert!(
-                    sparse_cold.is_empty(),
-                    "{order:?} log_T {log_t}: a cold session produced a sparse plan, so the plan \
-                     does not depend on residency at all",
-                );
-
-                let mut warm = warm_session(witness, log_t);
+                let plane = witness as &dyn JoltWitnessPlane<Fr>;
+                let mut session = ProofSession::default();
                 let sparse_warm =
-                    super::sparse_hot_columns::<Fr>(context, &mut warm, oracle, &order_ids, grid)
-                        .expect("warm sparse plan");
+                    super::sparse_hot_columns::<Fr>(context, &mut session, plane, &order_ids, grid)
+                        .expect("sparse plan");
                 if order == TracePolynomialOrder::CycleMajor {
                     let mut covered = sparse_warm.keys().copied().collect::<Vec<_>>();
                     let mut wanted = expected_one_hot.clone();
@@ -806,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn warm_joint_opening_matches_the_cold_session() {
+    fn joint_opening_matches_when_the_columns_are_already_resident() {
         let Some(_) = shared_context() else {
             return;
         };
@@ -823,7 +780,8 @@ mod tests {
                 )
             });
             let warm = with_r1cs_witness(log_t, RAM_K, one_hot(), 29, |witness| {
-                let mut session = warm_session(witness, log_t);
+                let mut session = ProofSession::default();
+                let _ = polynomial_facts(&CudaBackend, &mut session, witness, &tables, &probe);
                 polynomial_facts(&CudaBackend, &mut session, witness, &tables, &probe)
             });
             assert_eq!(
@@ -834,8 +792,8 @@ mod tests {
             for (cold, warm) in cold.iter().zip(&warm) {
                 assert_eq!(
                     warm, cold,
-                    "{order:?} log_T {log_t}: {:?} differs between a cold and a warm session, so \
-                     one of the cached routes is not equivalent to the witness-walk route",
+                    "{order:?} log_T {log_t}: {:?} differs once its columns are device-resident, \
+                     so the resident route is not equivalent to the building route",
                     cold.id,
                 );
             }
@@ -898,9 +856,8 @@ mod tests {
                 one_hot.len(),
             );
 
-            let oracle = witness as &dyn JoltWitnessOracle<Fr>;
             let served =
-                super::sparse_hot_columns::<Fr>(context, &mut session, oracle, &order_ids, grid)
+                super::sparse_hot_columns::<Fr>(context, &mut session, witness, &order_ids, grid)
                     .expect("warm sparse plan");
             let mut covered: Vec<JoltCommittedPolynomial> = served.keys().copied().collect();
             let mut wanted = one_hot.clone();
@@ -929,12 +886,8 @@ mod tests {
                 "commit and stage 8 assign different chunk selectors to the same ids, so a \
                  column parked under an id would be read as a different chunk",
             );
-            let rows = cached_bundles::<CommittedColumnsWitness, _>(
-                &mut ProofSession::default(),
-                witness,
-                1usize << log_t,
-            )
-            .expect("oracle rows");
+            let rows = collect_rows::<Fr, CommittedColumnsWitness>(witness, 1usize << log_t)
+                .expect("oracle rows");
             for (&id, &kind) in trace_derived.iter().zip(&kinds) {
                 let Some(device_hot) = served.get(&id) else {
                     assert!(
@@ -957,49 +910,34 @@ mod tests {
     }
 
     #[test]
-    fn stage_eight_serves_the_parked_columns_without_the_trace_columns() {
+    fn stage_eight_reuses_the_resident_hot_columns() {
         let Some(context) = shared_context() else {
             return;
         };
         let log_t = 8;
-        let cycles = 1usize << log_t;
         let grid = grid_at(TracePolynomialOrder::CycleMajor, log_t);
         let tables = precommitted_tables(11);
         with_r1cs_witness(log_t, RAM_K, one_hot(), 11, |witness| {
             let order_ids = batch_order(witness, &tables);
             let one_hot = one_hot_ids(witness, &tables);
-            let oracle = witness as &dyn JoltWitnessOracle<Fr>;
 
-            let mut warm = warm_session(witness, log_t);
+            let mut session = ProofSession::default();
             let first =
-                super::sparse_hot_columns::<Fr>(context, &mut warm, oracle, &order_ids, grid)
+                super::sparse_hot_columns::<Fr>(context, &mut session, witness, &order_ids, grid)
                     .expect("first plan");
             assert_eq!(
                 first.len(),
                 one_hot.len(),
-                "the fallback walk did not produce a column per one-hot polynomial",
-            );
-
-            let identity = super::witness_identity(oracle);
-            assert!(
-                super::cached_columns(&warm, identity, cycles).is_some(),
-                "the fixture never warmed the host trace columns, so evicting them proves \
-                 nothing",
-            );
-            let _: Option<crate::cuda::common::trace_columns::TraceColumns> = warm.take();
-            assert!(
-                super::cached_columns(&warm, identity, cycles).is_none(),
-                "the host trace columns survived the eviction, so the probe does not bite",
+                "the build did not produce a column per one-hot polynomial",
             );
 
             let second =
-                super::sparse_hot_columns::<Fr>(context, &mut warm, oracle, &order_ids, grid)
+                super::sparse_hot_columns::<Fr>(context, &mut session, witness, &order_ids, grid)
                     .expect("second plan");
             assert_eq!(
                 second.len(),
                 one_hot.len(),
-                "with the host trace columns gone the plan collapsed, so stage 8 was rebuilding \
-                 the hot columns from the trace rather than reading the device cache",
+                "the second plan lost a column the first one built",
             );
             for (&id, hot) in &second {
                 assert!(
@@ -1012,11 +950,11 @@ mod tests {
     }
 
     #[test]
-    fn warm_session_identity_matches_across_the_witness_traits() {
+    fn witness_identity_matches_across_the_witness_traits() {
         let log_t = 8;
         with_r1cs_witness(log_t, RAM_K, one_hot(), 5, |witness| {
-            let as_oracle = super::witness_identity(witness as &dyn JoltWitnessOracle<Fr>);
-            let as_source = super::witness_identity(witness);
+            let as_oracle = witness_identity(witness as &dyn JoltWitnessOracle<Fr>);
+            let as_source = witness_identity(witness);
             assert_eq!(
                 as_oracle, as_source,
                 "the oracle and concrete views of one witness have different identities, so \
@@ -1135,7 +1073,7 @@ mod tests {
             for (&(order, log_t), expected) in CONFIGS.iter().zip(&expected) {
                 let probe = probe(order, log_t, seed);
                 let got = with_r1cs_witness(log_t, RAM_K, one_hot(), seed, |witness| {
-                    let mut session = warm_session(witness, log_t);
+                    let mut session = ProofSession::default();
                     polynomial_facts(&CudaBackend, &mut session, witness, &tables, &probe)
                 });
                 prop_assert_eq!(

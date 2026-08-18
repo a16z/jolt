@@ -218,6 +218,10 @@ impl OneHotSource for RowPlane {
 }
 
 impl RowSource for RowPlane {
+    fn rows(&self) -> Option<&[TraceRow]> {
+        Some(&self.rows)
+    }
+
     fn visit_chunks(
         &self,
         range: std::ops::Range<usize>,

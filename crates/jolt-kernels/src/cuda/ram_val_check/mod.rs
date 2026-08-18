@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
+use crate::cuda::witness::collect_rows;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
@@ -25,7 +25,7 @@ pub(crate) mod witness;
 impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamValCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
@@ -43,7 +43,7 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let addresses = 1usize << ram_log_k;
-        let rows = cached_bundles::<witness::RamValCheckWitness, _>(session, witness, cycles)?;
+        let rows = collect_rows::<F, witness::RamValCheckWitness>(witness, cycles)?;
         let (inc, hot) = witness::device_columns(context, &rows, addresses)?;
         drop(rows);
 

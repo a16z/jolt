@@ -11,21 +11,14 @@ use std::sync::Arc;
 use cudarc::driver::CudaSlice;
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::Field;
-use jolt_witness::RowSource;
+use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::context::CudaKernelContext;
 use super::device::{DeviceFrVec, LIMBS};
 use super::pack::COLD;
-use super::ram_address_witness::{packed_ram_words, RamAddressWitness};
-use super::trace_columns::cached_bundles;
-use crate::cuda::bytecode_read_raf::witness::{
-    packed_column as bytecode_pc_words, BytecodeReadRafCycleWitness,
-};
-use crate::cuda::instruction_ra_virtualization::witness::{
-    packed_words as lookup_index_limbs, InstructionRaVirtualizationWitness,
-};
+use crate::cuda::witness::session_device_trace;
 use crate::{KernelError, ProofSession};
 
 pub(crate) const ANY_SPAN: usize = usize::MAX;
@@ -160,11 +153,15 @@ const fn column_key(column: DeviceColumn) -> &'static str {
     }
 }
 
+pub(crate) fn witness_identity<T: ?Sized>(witness: &T) -> usize {
+    std::ptr::from_ref(witness).cast::<()>() as usize
+}
+
 pub(crate) fn device_columns_for<'a, T: ?Sized>(
     session: &'a mut ProofSession,
     source: &T,
 ) -> &'a mut DeviceColumns {
-    let identity = super::trace_columns::witness_identity(source);
+    let identity = witness_identity(source);
     let columns = session.state_or_insert_with(DeviceColumns::default);
     columns.retarget(identity);
     columns
@@ -227,118 +224,96 @@ fn live_span(words: &[u32]) -> usize {
     highest.map_or(NO_SPAN, |highest| highest as usize + 1)
 }
 
-pub(crate) fn device_lookup_limbs<F, S>(
+pub(crate) fn device_lookup_limbs<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
-    source: &S,
+    witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<Arc<CudaSlice<u64>>, KernelError<F>>
 where
     F: Field,
-    S: RowSource + ?Sized,
 {
     device_column(
         session,
-        source,
+        witness,
         DeviceColumn::LookupIndexLimbs,
         cycles,
         ANY_SPAN,
         |session| {
-            let rows =
-                cached_bundles::<InstructionRaVirtualizationWitness, _>(session, source, cycles)?;
-            let limbs = lookup_index_limbs(&rows);
-            Ok((context.upload_u64_slice(&limbs)?, NO_SPAN))
+            let trace = session_device_trace(context, session, witness, cycles)?;
+            Ok((trace.lookup_index_limbs()?, NO_SPAN))
         },
     )
 }
 
-pub(crate) fn device_pc_words<F, S>(
+pub(crate) fn device_pc_words<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
-    source: &S,
+    witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<Arc<CudaSlice<u32>>, KernelError<F>>
 where
     F: Field,
-    S: RowSource + ?Sized,
 {
     device_column(
         session,
-        source,
+        witness,
         DeviceColumn::MappedPcWord,
         cycles,
         ANY_SPAN,
         |session| {
-            let rows = cached_bundles::<BytecodeReadRafCycleWitness, _>(session, source, cycles)?;
-            let words = bytecode_pc_words(&rows).map_err(|slot| KernelError::InvalidGeometry {
-                reason: format!(
-                    "the mapped PC {slot} does not fit the 32-bit word the CUDA kernels pack it \
-                     into, reserving {COLD} for a cold cycle"
-                ),
-            })?;
-            Ok((context.upload_u32_slice(&words)?, NO_SPAN))
+            let trace = session_device_trace(context, session, witness, cycles)?;
+            Ok((trace.mapped_pc_words()?, NO_SPAN))
         },
     )
 }
 
-pub(crate) fn device_ram_words<F, S>(
+pub(crate) fn device_ram_words<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
-    source: &S,
+    witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
     addresses: usize,
 ) -> Result<Arc<CudaSlice<u32>>, KernelError<F>>
 where
     F: Field,
-    S: RowSource + ?Sized,
 {
     device_column(
         session,
-        source,
+        witness,
         DeviceColumn::RemappedRamWord,
         cycles,
         addresses,
         |session| {
-            let rows = cached_bundles::<RamAddressWitness, _>(session, source, cycles)?;
-            let words = packed_ram_words(&rows, addresses).map_err(|address| {
-                KernelError::InvalidGeometry {
-                    reason: format!(
-                        "the remapped RAM address {address} lies outside the \
-                             {addresses}-address space, or collides with the {COLD} word the CUDA \
-                             kernels reserve for a cold cycle"
-                    ),
-                }
-            })?;
-            let span = live_span(&words);
-            Ok((context.upload_u32_slice(&words)?, span))
+            let trace = session_device_trace(context, session, witness, cycles)?;
+            Ok(trace.remapped_ram_words(addresses)?)
         },
     )
 }
 
-pub(crate) fn device_trace_columns<F, S>(
+pub(crate) fn device_trace_columns<F>(
     context: &CudaKernelContext,
     session: &mut ProofSession,
-    source: &S,
+    witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
     families: [usize; 3],
     ram_addresses: usize,
 ) -> Result<DeviceTraceColumns, KernelError<F>>
 where
     F: Field,
-    S: RowSource + ?Sized,
 {
     let lookup = if families[0] > 0 {
-        device_lookup_limbs::<F, S>(context, session, source, cycles)?
+        device_lookup_limbs::<F>(context, session, witness, cycles)?
     } else {
         Arc::new(context.alloc_u64(0)?)
     };
     let pc = if families[1] > 0 {
-        device_pc_words::<F, S>(context, session, source, cycles)?
+        device_pc_words::<F>(context, session, witness, cycles)?
     } else {
         Arc::new(context.alloc_u32(0)?)
     };
     let ram = if families[2] > 0 {
-        device_ram_words::<F, S>(context, session, source, cycles, ram_addresses)?
+        device_ram_words::<F>(context, session, witness, cycles, ram_addresses)?
     } else {
         Arc::new(context.alloc_u32(0)?)
     };
@@ -364,7 +339,7 @@ mod tests {
     use crate::cuda::common::one_hot_witness::{packed_columns, OneHotCycleWitness};
     use crate::cuda::common::pack::COLD;
     use crate::cuda::common::testing::with_r1cs_witness;
-    use crate::cuda::common::trace_columns::cached_bundles;
+    use crate::optimized::support::collect_rows;
     use crate::ProofSession;
 
     const CYCLES: usize = 64;
@@ -599,12 +574,8 @@ mod tests {
         };
         let cycles = 1usize << LOG_T;
         with_r1cs_witness(LOG_T, RAM_K, one_hot_config(), 19, |witness| {
-            let rows = cached_bundles::<OneHotCycleWitness, _>(
-                &mut ProofSession::default(),
-                witness,
-                cycles,
-            )
-            .expect("oracle rows");
+            let rows =
+                collect_rows::<Fr, OneHotCycleWitness>(witness, cycles).expect("oracle rows");
             let expected = packed_columns(&rows).expect("host pack");
             assert!(
                 expected.pc.iter().any(|&word| word != expected.pc[0])
@@ -618,7 +589,7 @@ mod tests {
             );
 
             let mut session = ProofSession::default();
-            let got = device_trace_columns::<Fr, _>(
+            let got = device_trace_columns::<Fr>(
                 context,
                 &mut session,
                 witness,
@@ -661,7 +632,7 @@ mod tests {
         let cycles = 1usize << LOG_T;
         with_r1cs_witness(LOG_T, RAM_K, one_hot_config(), 23, |witness| {
             let mut session = ProofSession::default();
-            let got = device_trace_columns::<Fr, _>(
+            let got = device_trace_columns::<Fr>(
                 context,
                 &mut session,
                 witness,

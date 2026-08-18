@@ -8,7 +8,7 @@ use jolt_field::Field;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
+use crate::cuda::witness::collect_rows;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
@@ -26,7 +26,7 @@ pub(crate) mod witness;
 impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersValEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
@@ -44,8 +44,7 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let registers = 1usize << REGISTER_ADDRESS_BITS;
-        let rows =
-            cached_bundles::<witness::RegistersValEvaluationWitness, _>(session, witness, cycles)?;
+        let rows = collect_rows::<F, witness::RegistersValEvaluationWitness>(witness, cycles)?;
         let (inc, hot) = witness::device_columns(context, &rows, registers)?;
         drop(rows);
 

@@ -42,6 +42,16 @@ impl RaChunkSelector {
         })
     }
 
+    #[cfg(feature = "cuda")]
+    pub(crate) const fn shift(self) -> usize {
+        self.shift
+    }
+
+    #[cfg(feature = "cuda")]
+    pub(crate) const fn mask(self) -> u128 {
+        self.mask
+    }
+
     pub const fn chunk_usize(self, value: usize) -> usize {
         self.chunk_u128(value as u128)
     }

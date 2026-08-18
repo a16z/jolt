@@ -167,7 +167,7 @@ impl<F: Field> PrepareKernel<F, Booleanity<F>> for CudaBackend {
         let families = [layout.instruction(), layout.bytecode(), layout.ram()];
         let cycles = 1usize << dimensions.log_t;
         let columns =
-            device_trace_columns::<F, _>(context, session, witness, cycles, families, ANY_SPAN)?;
+            device_trace_columns::<F>(context, session, witness, cycles, families, ANY_SPAN)?;
 
         let one_hot = DeviceBooleanityRa::from_device(
             context,

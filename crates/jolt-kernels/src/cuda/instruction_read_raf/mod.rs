@@ -24,7 +24,7 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
+use crate::cuda::witness::collect_rows;
 
 use self::address_driver::DeviceAddressPhase;
 use self::address_phase::{flag_claims, DeviceRows, NO_TABLE};
@@ -177,8 +177,8 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             });
         }
         let cycles = 1usize << dimensions.log_t();
-        let bits = device_lookup_limbs::<F, _>(context, session, witness, cycles)?;
-        let rows: Vec<InstructionReadRafWitness> = cached_bundles(session, witness, cycles)?;
+        let bits = device_lookup_limbs::<F>(context, session, witness, cycles)?;
+        let rows = collect_rows::<F, InstructionReadRafWitness>(witness, cycles)?;
 
         let mut table_index = Vec::with_capacity(rows.len());
         let mut raf_flag = Vec::with_capacity(rows.len());

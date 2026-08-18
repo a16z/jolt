@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::common::trace_columns::cached_bundles;
+use crate::cuda::witness::collect_rows;
 
 use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -110,9 +110,7 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let rows = cached_bundles::<witness::InstructionClaimReductionWitness, _>(
-            session, witness, cycles,
-        )?;
+        let rows = collect_rows::<F, witness::InstructionClaimReductionWitness>(witness, cycles)?;
         let columns = witness::device_columns(context, &rows)?;
         drop(rows);
 

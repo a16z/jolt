@@ -174,7 +174,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>> for CudaBackend 
         let cycles = 1usize << relation.r_cycle().len();
         let families = [layout.instruction(), layout.bytecode(), layout.ram()];
         let columns =
-            device_trace_columns::<F, _>(context, session, witness, cycles, families, ANY_SPAN)?;
+            device_trace_columns::<F>(context, session, witness, cycles, families, ANY_SPAN)?;
         let device_columns =
             DeviceOneHotColumns::from_device(columns, families, dimensions.log_k_chunk, cycles)?;
 
