@@ -257,7 +257,7 @@ mod field_inline_round_trip {
     use super::*;
     use crate::stages::field_inline_fixtures::{
         fr_arithmetic_backend, fr_arithmetic_preprocessing, test_checked_inputs,
-        test_prover_config, test_public_io, twins, LOG_T, RAM_LOG_K,
+        test_prover_config, test_public_io, twins, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
     use crate::stages::stage2::prove_stage2;
@@ -320,66 +320,21 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The verifier twin (stage4::verify's clear body), positioned by the
-        // upstream replays.
+        // The verifier twin (stage4::verify's clear body, shared as the
+        // stage-5+ twins' replay), positioned by the upstream replays.
         let mut transcript = Blake2bTranscript::new(b"stage4-fr");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
-
-        let log_t = LOG_T;
-        let log_k = RAM_LOG_K;
-        let trace_dimensions = TraceDimensions::new(log_t);
-        let register_dimensions = config
-            .rw_config
-            .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
-        let ram_read_write_opening_point = stage2.clear_output.output_points.ram_read_write_point();
-        let (r_address, _) = ram_read_write_opening_point.split_at(log_k);
-        let public_eval =
-            public_initial_ram_evaluation(&checked, &preprocessing.verifier, r_address).unwrap();
-        let init_structure =
-            ram_val_check_init_structure(&checked, false, r_address, public_eval).unwrap();
-        let sumchecks = Stage4Sumchecks {
-            registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
-            field_registers_read_write: stage4_field_inline::read_write_member(log_t),
-            ram_val_check: RamValCheck::new(
-                trace_dimensions,
-                log_k,
-                init_structure.decomposition(),
-            ),
-        };
-        let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
-        sumchecks.validate_output_claims(&out.claims).unwrap();
-        // The verifier's `ram_val_check_initial_evaluation` at this fixture's
-        // shape: no advice blocks and no committed program image, so the
-        // attached-claims step degenerates to the public evaluation alone.
-        let ram_val_check_init = RamValCheckInitialEvaluation {
-            public_eval,
-            program_image_contribution: None,
-            advice_contributions: Vec::new(),
-        };
-        let input_values = stage4_input_values_from_upstream(
-            &stage2.clear_output.output_values,
-            &stage3.clear_output.output_values,
-            &ram_val_check_init,
+        twins::replay_stage4(
+            &mut transcript,
+            &config,
+            &checked,
+            &preprocessing,
+            &stage2,
+            &stage3,
+            &out,
         );
-        let input_points = stage4_input_points_from_upstream(
-            &stage2.clear_output.output_points,
-            &stage3.clear_output.output_points,
-            &init_structure,
-        );
-        let _stage4_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &challenges,
-                &out.claims,
-                &out.sumcheck_proof,
-                &mut transcript,
-                4,
-            )
-            .unwrap();
-        out.claims.append_to_transcript(&mut transcript);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }
