@@ -3,19 +3,23 @@
 //! Hand-crafted rows that are semantically consistent instruction executions
 //! (the same discipline as `jolt_witness::testing::with_sample_backend`), so
 //! the composed R1CS eq rows are satisfied and the stage sumchecks' hard
-//! self-checks hold. Two profiles: an ADDI-only trace (an FR-profile guest
-//! executing zero FR instructions — every FR column is zero), and an FR
-//! arithmetic trace (two field loads and a multiply, the stage-0 fixture's
-//! rows) whose decoded FR instruction words populate the FR columns.
+//! self-checks hold — including the stage-4 register-file and RAM value
+//! checks (consistent register reads, and the termination store the witness
+//! plane's device-derived final RAM state demands). Two profiles: an
+//! ADDI-only trace (an FR-profile guest executing zero FR instructions —
+//! every FR column is zero), and an FR arithmetic trace (two field loads and
+//! a multiply, the stage-0 fixture's rows) whose decoded FR instruction
+//! words populate the FR columns.
 
 use std::sync::Arc;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
-#[cfg(not(feature = "zk"))]
-use jolt_program::execution::RegisterRead;
+use jolt_crypto::{Bn254G1, Pedersen};
+use jolt_dory::DoryScheme;
 use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RegisterState, RegisterWrite, TraceOutput, TraceRow,
+    JoltProgram, OwnedTrace, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
+    TraceOutput, TraceRow,
 };
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
@@ -25,13 +29,20 @@ use jolt_riscv::{
     FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
     NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE,
 };
+use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
+use jolt_verifier::stages::PrecommittedSchedule;
+use jolt_verifier::CheckedInputs;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+
+use crate::JoltProverPreprocessing;
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
 // 3, not 2: the last physical cycle must be a noop (constraint 21's
-// ShouldJump convention), so the FR fixture's four real rows need padding
+// ShouldJump convention), so the FR fixture's six real rows need padding
 // room behind them.
 pub(crate) const LOG_T: usize = 3;
+// Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
+pub(crate) const RAM_LOG_K: usize = 6;
 
 fn instruction(
     instruction_kind: JoltInstructionKind,
@@ -51,7 +62,22 @@ fn instruction(
     }
 }
 
+/// The fixture programs' preprocessing, shared verbatim between the witness
+/// backend and the prover-preprocessing carrier so both fronts see the same
+/// bytecode facts (PC mapping, FR side-table metadata).
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
+fn fixture_program_preprocessing(
+    bytecode: Vec<JoltInstructionRow>,
+) -> Arc<JoltProgramPreprocessing> {
+    Arc::new(JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, RV64IMAC_JOLT_FIELD_INLINE)
+            .unwrap(),
+        ram: RAMPreprocessing::default(),
+        memory_layout: test_memory_layout(),
+        max_padded_trace_length: 1 << LOG_T,
+    })
+}
+
 pub(crate) fn fr_backend(
     bytecode: Vec<JoltInstructionRow>,
     rows: Vec<TraceRow>,
@@ -65,12 +91,7 @@ pub(crate) fn fr_backend(
         ENTRY,
         profile,
     ));
-    let preprocessing = Arc::new(JoltProgramPreprocessing {
-        bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, profile).unwrap(),
-        ram: RAMPreprocessing::default(),
-        memory_layout: test_memory_layout(),
-        max_padded_trace_length: 1 << LOG_T,
-    });
+    let preprocessing = fixture_program_preprocessing(bytecode);
     TraceBackend::new(
         JoltVmWitnessConfig::new(
             LOG_T,
@@ -120,41 +141,113 @@ fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
     }
 }
 
-/// An FR-profile guest executing only ordinary instructions (an ADDI with
-/// consistent register semantics, then the terminal JAL): the rv64 eq rows
-/// are satisfied while every FR column is zero.
-// The ZK stage tests exercise only the FR-arithmetic profile.
-#[cfg(not(feature = "zk"))]
-pub(crate) fn addi_only_backend() -> TraceBackend<OwnedTrace> {
-    let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
-    let jal = halt_jal_row(1, 5);
-    let rows = vec![
+/// The guest termination convention, hand-crafted: the witness plane's final
+/// RAM state unconditionally carries `termination = 1` (a real guest writes
+/// it before halting), so any trace that must satisfy the stage-4 RAM value
+/// check needs a matching increment. Two rows: `ADDI x6, x0, 1` (a consistent
+/// register write of the stored value), then `SD x6, termination(x0)` (store
+/// flag on, `RamAddress = rs1 + imm = termination`, `RamWriteValue = rs2`).
+fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
+    let one = instruction(JoltInstructionKind::ADDI, offset, Some(6), Some(0), None, 1);
+    let termination = test_memory_layout().termination;
+    let store = instruction(
+        JoltInstructionKind::SD,
+        offset + 1,
+        None,
+        Some(0),
+        Some(6),
+        termination as i128,
+    );
+    [
         TraceRow {
-            instruction: addi,
+            instruction: one,
             registers: RegisterState {
                 rs1: Some(RegisterRead {
-                    register: 2,
-                    value: 5,
+                    register: 0,
+                    value: 0,
                 }),
                 rd: Some(RegisterWrite {
-                    register: 1,
+                    register: 6,
                     pre_value: 0,
-                    post_value: 8,
+                    post_value: 1,
                 }),
                 ..Default::default()
             },
             ..TraceRow::default()
         },
+        TraceRow {
+            instruction: store,
+            registers: RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 0,
+                    value: 0,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 6,
+                    value: 1,
+                }),
+                ..Default::default()
+            },
+            ram_access: RamAccess::Write(RamWrite {
+                address: termination,
+                pre_value: 0,
+                post_value: 1,
+            }),
+            ..TraceRow::default()
+        },
+    ]
+}
+
+/// An FR-profile guest executing only ordinary instructions (an ADDI with
+/// consistent register semantics, the termination store, then the terminal
+/// JAL): the rv64 eq rows are satisfied while every FR column is zero.
+// The stage-1..5 ZK tests exercise only the FR-arithmetic profile; the
+// stage-6 ones also need this FR-inactive trace.
+#[cfg(not(feature = "zk"))]
+fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
+    let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
+    let [one, store] = termination_store_rows(1);
+    let jal = halt_jal_row(3, 5);
+    let rows = vec![
+        TraceRow {
+            instruction: addi,
+            registers: RegisterState {
+                // Register 2 is never written, so the read must see the
+                // initial value — the stage-4 register file check binds it.
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 0,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 3,
+                }),
+                ..Default::default()
+            },
+            ..TraceRow::default()
+        },
+        one.clone(),
+        store.clone(),
         jal.clone(),
     ];
-    fr_backend(vec![addi, jal.instruction], rows)
+    (
+        vec![addi, one.instruction, store.instruction, jal.instruction],
+        rows,
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+pub(crate) fn addi_only_backend() -> TraceBackend<OwnedTrace> {
+    let (bytecode, rows) = addi_only_program();
+    fr_backend(bytecode, rows)
 }
 
 /// Two field loads and a multiply: `FieldRdInc = [13, 17, 221, 0]`,
 /// `13 · 17 = 221` — every FR eq row and both FR product lanes are satisfied
 /// (the product columns are extractor-derived), and the x-register file is
 /// untouched.
-pub(crate) fn fr_arithmetic_backend() -> TraceBackend<OwnedTrace> {
+fn fr_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let load_a = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
         0,
@@ -179,7 +272,8 @@ pub(crate) fn fr_arithmetic_backend() -> TraceBackend<OwnedTrace> {
         Some(2),
         0,
     );
-    let jal = halt_jal_row(3, 5);
+    let [one, store] = termination_store_rows(3);
+    let jal = halt_jal_row(5, 5);
     let rows = vec![
         field_row(
             load_a,
@@ -226,9 +320,72 @@ pub(crate) fn fr_arithmetic_backend() -> TraceBackend<OwnedTrace> {
                 ..FieldInlineTraceData::default()
             },
         ),
+        one.clone(),
+        store.clone(),
         jal.clone(),
     ];
-    fr_backend(vec![load_a, load_b, mul, jal.instruction], rows)
+    (
+        vec![
+            load_a,
+            load_b,
+            mul,
+            one.instruction,
+            store.instruction,
+            jal.instruction,
+        ],
+        rows,
+    )
+}
+
+pub(crate) fn fr_arithmetic_backend() -> TraceBackend<OwnedTrace> {
+    let (bytecode, rows) = fr_arithmetic_program();
+    fr_backend(bytecode, rows)
+}
+
+/// The prover-preprocessing carrier the stage-4+ recipes take, over the
+/// fixture program: a full-program verifier preprocessing (the same
+/// `JoltProgramPreprocessing` the witness backend holds) and a minimal Dory
+/// setup — the reference-tier stage recipes never commit through it.
+fn prover_preprocessing(
+    bytecode: Vec<JoltInstructionRow>,
+) -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>> {
+    JoltProverPreprocessing {
+        verifier: JoltVerifierPreprocessing::new(
+            ProgramPreprocessing::Full(fixture_program_preprocessing(bytecode)),
+            [0u8; 32],
+            DoryScheme::setup_verifier(2),
+            None,
+        ),
+        pcs_setup: DoryScheme::setup_prover(2),
+        committed_program: None,
+    }
+}
+
+pub(crate) fn fr_arithmetic_preprocessing() -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>
+{
+    prover_preprocessing(fr_arithmetic_program().0)
+}
+
+/// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
+/// mirroring what shape validation derives for an FR-on proof at this scale
+/// (no advice, no precommitted objects, full program).
+pub(crate) fn test_checked_inputs() -> CheckedInputs {
+    CheckedInputs {
+        public_io: test_public_io(),
+        zk: cfg!(feature = "zk"),
+        trace_length: 1 << LOG_T,
+        ram_K: 1 << RAM_LOG_K,
+        entry_address: ENTRY,
+        preprocessing_digest: [0u8; 32],
+        trusted_advice_commitment_present: false,
+        vc_capacity: cfg!(feature = "zk").then_some(common::constants::MAX_BLINDFOLD_GENERATORS),
+        precommitted: PrecommittedSchedule {
+            trusted_advice: None,
+            untrusted_advice: None,
+            bytecode: None,
+            program_image: None,
+        },
+    }
 }
 
 /// The stage recipes' derived-config shape for the fixture traces: the same
@@ -274,5 +431,239 @@ pub(crate) fn test_public_io() -> common::jolt_device::JoltDevice {
     common::jolt_device::JoltDevice {
         memory_layout: test_memory_layout(),
         ..Default::default()
+    }
+}
+
+/// Twin-transcript replays of the already-round-tripped upstream stages, for
+/// the downstream stage twins: each helper advances `transcript` exactly as
+/// `stageN::verify`'s clear body does over the prover's outputs (with
+/// `verify_clear` hard-checking the wire rounds on the way). The full
+/// `verify` entrypoints need an assembled `JoltProof`, so the twins drive the
+/// same public constituents instead — the stage-1/2 bodies are the ones
+/// stage 2's own round-trip test pins.
+#[cfg(not(feature = "zk"))]
+#[expect(clippy::unwrap_used, reason = "test twin helpers")]
+pub(crate) mod twins {
+    use common::jolt_device::JoltDevice;
+    use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
+    use jolt_claims::protocols::jolt::geometry::spartan::{
+        SpartanOuterDimensions, SpartanProductDimensions,
+    };
+    use jolt_claims::protocols::jolt::TraceDimensions;
+    use jolt_claims::NoChallenges;
+    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_program::preprocess::PublicIoMemory;
+    use jolt_transcript::{AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript};
+    use jolt_verifier::stages::relations::ConcreteSumcheck;
+    use jolt_verifier::stages::stage1::outer_remainder::{
+        outer_remainder_input_values_from_uniskip_output, OuterRemainder,
+    };
+    use jolt_verifier::stages::stage1::outputs::{Stage1BatchInputClaims, Stage1BatchSumchecks};
+    use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
+    use jolt_verifier::stages::stage2::outputs::Stage2BatchSumchecks;
+    use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+    use jolt_verifier::stages::stage2::product_uniskip::{
+        product_uniskip_input_values_from_stage1, ProductUniskip,
+    };
+    use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
+    use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
+    use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
+    use jolt_verifier::stages::stage2::{
+        field_inline as stage2_field_inline, product_tau_low,
+        stage2_batch_input_values_from_upstream,
+    };
+    use jolt_verifier::stages::stage3::outputs::{
+        InstructionInput, RegistersClaimReduction, SpartanShift, Stage3Sumchecks,
+    };
+    use jolt_verifier::stages::stage3::stage3_input_values_from_upstream;
+    use jolt_verifier::stages::uniskip::{
+        self, draw_spartan_outer_tau, draw_spartan_product_tau_high,
+    };
+
+    use super::LOG_T;
+    use crate::stages::stage1::Stage1ProverOutput;
+    use crate::stages::stage2::Stage2ProverOutput;
+    use crate::stages::stage3::Stage3ProverOutput;
+    use crate::ProverConfig;
+
+    /// Stage 1's twin (already round-tripped by stage 1's own tests):
+    /// positions the transcript at the stage-2 boundary.
+    pub(crate) fn replay_stage1<C: Clone + AppendToTranscript>(
+        transcript: &mut Blake2bTranscript,
+        stage1: &Stage1ProverOutput<Fr, C>,
+    ) {
+        let tau = draw_spartan_outer_tau(transcript, LOG_T);
+        let uniskip_challenge = uniskip::verify_clear(
+            &stage1.uniskip_proof,
+            &uniskip::UniskipParams::spartan_outer(),
+            Fr::from_u64(0),
+            stage1.claims.uniskip_output_claim,
+            transcript,
+        )
+        .unwrap();
+        let sumchecks = Stage1BatchSumchecks {
+            outer_remainder: OuterRemainder::new(
+                SpartanOuterDimensions::rv64(LOG_T),
+                tau,
+                uniskip_challenge,
+            ),
+        };
+        let batch_challenges = sumchecks.draw_challenges(transcript).unwrap();
+        let input_points = sumchecks.empty_input_points();
+        let attached = jolt_verifier::stages::stage1::field_inline::attach_outer_outputs(
+            &sumchecks,
+            &stage1.claims,
+        )
+        .unwrap();
+        let input_values = Stage1BatchInputClaims {
+            outer_remainder: outer_remainder_input_values_from_uniskip_output(
+                stage1.claims.uniskip_output_claim,
+            ),
+        };
+        let _stage1_points = sumchecks
+            .verify_clear(
+                &input_values,
+                &input_points,
+                &batch_challenges,
+                &stage1.claims.outer,
+                &stage1.sumcheck_proof,
+                transcript,
+                1,
+            )
+            .unwrap();
+        sumchecks.append_output_claims(transcript, &stage1.claims.outer);
+        jolt_verifier::stages::stage1::field_inline::append_outer_openings(transcript, &attached);
+    }
+
+    /// Stage 2's twin (already round-tripped by stage 2's own tests):
+    /// positions the transcript at the stage-3 boundary.
+    pub(crate) fn replay_stage2<C: Clone + AppendToTranscript>(
+        transcript: &mut Blake2bTranscript,
+        config: &ProverConfig,
+        public_io: &JoltDevice,
+        stage1: &Stage1ProverOutput<Fr, C>,
+        stage2: &Stage2ProverOutput<Fr, C>,
+    ) {
+        let log_t = LOG_T;
+        let log_k = config.ram_K.ilog2() as usize;
+        let trace_dimensions = TraceDimensions::new(log_t);
+        let read_write_dimensions = config.rw_config.ram_dimensions(log_t, log_k);
+        let product_dimensions = SpartanProductDimensions::new(log_t);
+        let raf_dimensions = RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap();
+        let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
+
+        let tau_high: Fr = draw_spartan_product_tau_high(transcript);
+        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
+        stage2_field_inline::attach_uniskip_inputs(&uniskip_relation, &stage1.clear_output)
+            .unwrap();
+        let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
+        let uniskip_input_claim = uniskip_relation
+            .input_claim(&uniskip_inputs, &NoChallenges::default())
+            .unwrap();
+        let uniskip_challenge = uniskip::verify_clear(
+            &stage2.uniskip_proof,
+            &uniskip::UniskipParams::spartan_product(),
+            uniskip_input_claim,
+            stage2.claims.product_uniskip_output_claim,
+            transcript,
+        )
+        .unwrap();
+
+        let lowest_address = public_io.memory_layout.get_lowest_address();
+        let public_memory = PublicIoMemory::new(public_io).unwrap();
+        let sumchecks = Stage2BatchSumchecks {
+            ram_read_write: RamReadWriteChecking::new(
+                read_write_dimensions,
+                log_k,
+                tau_low.clone(),
+            ),
+            product_remainder: ProductRemainder::new(
+                product_dimensions,
+                uniskip_challenge,
+                tau_high,
+                tau_low.clone(),
+            ),
+            instruction_claim_reduction: InstructionClaimReduction::new(
+                trace_dimensions,
+                tau_low.clone(),
+            ),
+            field_registers_claim_reduction: stage2_field_inline::claim_reduction_member(
+                log_t,
+                tau_low.clone(),
+            ),
+            ram_raf_evaluation: RamRafEvaluation::new(
+                read_write_dimensions,
+                raf_dimensions,
+                log_k,
+                lowest_address,
+                tau_low.clone(),
+            ),
+            ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
+        };
+        let challenges = sumchecks.draw_challenges(transcript).unwrap();
+        let input_points = sumchecks.empty_input_points();
+        sumchecks
+            .validate_output_claims(&stage2.claims.batch_outputs)
+            .unwrap();
+        let attached_product =
+            stage2_field_inline::attach_product_outputs(&sumchecks, &stage2.claims).unwrap();
+        let input_values = stage2_batch_input_values_from_upstream(
+            &stage1.clear_output,
+            stage2.claims.product_uniskip_output_claim,
+        )
+        .unwrap();
+        let _stage2_points = sumchecks
+            .verify_clear(
+                &input_values,
+                &input_points,
+                &challenges,
+                &stage2.claims.batch_outputs,
+                &stage2.sumcheck_proof,
+                transcript,
+                2,
+            )
+            .unwrap();
+        sumchecks.append_output_claims(transcript, &stage2.claims.batch_outputs, &attached_product);
+    }
+
+    /// Stage 3's twin (`stage3::verify`'s clear body — the stage has no FR
+    /// member): positions the transcript at the stage-4 boundary.
+    pub(crate) fn replay_stage3<C: Clone + AppendToTranscript>(
+        transcript: &mut Blake2bTranscript,
+        stage1: &Stage1ProverOutput<Fr, C>,
+        stage2: &Stage2ProverOutput<Fr, C>,
+        stage3: &Stage3ProverOutput<Fr, C>,
+    ) {
+        let dimensions = TraceDimensions::new(LOG_T);
+        let tau_low = stage2.clear_output.product_tau_low.clone();
+        let product_remainder_point = stage2
+            .clear_output
+            .output_points
+            .product_remainder_point()
+            .to_vec();
+        let sumchecks = Stage3Sumchecks {
+            shift: SpartanShift::new(dimensions, tau_low.clone(), product_remainder_point.clone()),
+            instruction_input: InstructionInput::new(dimensions, product_remainder_point),
+            registers_claim_reduction: RegistersClaimReduction::new(dimensions, tau_low),
+        };
+        let challenges = sumchecks.draw_challenges(transcript).unwrap();
+        sumchecks.validate_output_claims(&stage3.claims).unwrap();
+        let input_values = stage3_input_values_from_upstream(
+            &stage1.clear_output.output_values,
+            &stage2.clear_output.output_values,
+        );
+        let input_points = sumchecks.empty_input_points();
+        let _stage3_points = sumchecks
+            .verify_clear(
+                &input_values,
+                &input_points,
+                &challenges,
+                &stage3.claims,
+                &stage3.sumcheck_proof,
+                transcript,
+                3,
+            )
+            .unwrap();
+        sumchecks.append_output_claims(transcript, &stage3.claims);
     }
 }
