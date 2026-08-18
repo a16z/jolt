@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 
 use ark_bn254::{Fq, G1Affine, G1Projective};
 use ark_ec::CurveGroup;
@@ -279,6 +279,18 @@ fn device_hot_columns<F: Field>(
 
 type RetainedHotColumns = Vec<Option<Arc<CudaSlice<u32>>>>;
 
+fn tier1_order(hot: &RetainedHotColumns) -> impl Iterator<Item = usize> + '_ {
+    let one_hot = hot
+        .iter()
+        .enumerate()
+        .filter_map(|(index, column)| column.is_some().then_some(index));
+    let dense = hot
+        .iter()
+        .enumerate()
+        .filter_map(|(index, column)| column.is_none().then_some(index));
+    one_hot.chain(dense)
+}
+
 struct ResidentBases {
     count: usize,
     bases: DeviceG1Bases,
@@ -365,27 +377,68 @@ where
                 })?;
             let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
                 .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
-            return hot
-                .iter()
-                .zip(ids)
-                .enumerate()
-                .map(|(index, (column, &id))| {
-                    let rows = match column {
+            let parent = tracing::Span::current();
+            let (tx, rx) = mpsc::channel::<(usize, Vec<JacobianLimbs>)>();
+            let mut tier1 = Ok(());
+            let tier2 = std::thread::scope(|scope| {
+                let consumer = scope.spawn(move || {
+                    let mut finished: Vec<Option<WitnessCommitment<PCS>>> =
+                        (0..ids.len()).map(|_| None).collect();
+                    for (index, rows) in rx {
+                        let id = *ids.get(index).ok_or(KernelError::InvariantViolation {
+                            reason: "the commit pipeline produced a column outside the id list",
+                        })?;
+                        let slot =
+                            finished
+                                .get_mut(index)
+                                .ok_or(KernelError::InvariantViolation {
+                                    reason:
+                                        "the commit pipeline produced a column outside the id list",
+                                })?;
+                        *slot = Some(
+                            tracing::info_span!(parent: &parent, "cuda_commit_tier2")
+                                .in_scope(|| finish::<F, PCS>(setup, &rows, id))?,
+                        );
+                    }
+                    finished.into_iter().collect::<Option<Vec<_>>>().ok_or(
+                        KernelError::InvariantViolation {
+                            reason: "the commit pipeline finished fewer columns than it was given",
+                        },
+                    )
+                });
+                for index in tier1_order(&hot) {
+                    let rows = match &hot[index] {
                         Some(column) => {
                             tracing::info_span!("cuda_commit_tier1_one_hot").in_scope(|| {
                                 context.one_hot_rows_device(
                                     bases, column, cycles, one_hot_k, row_width,
                                 )
-                            })?
+                            })
                         }
                         None => tracing::info_span!("cuda_commit_tier1_dense").in_scope(|| {
                             context.msm_rows_i128(bases, &collected.increments[index], row_width)
-                        })?,
+                        }),
                     };
-                    tracing::info_span!("cuda_commit_tier2")
-                        .in_scope(|| finish::<F, PCS>(setup, &rows, id))
-                })
-                .collect();
+                    match rows {
+                        Ok(rows) => {
+                            if tx.send((index, rows)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            tier1 = Err(error);
+                            break;
+                        }
+                    }
+                }
+                drop(tx);
+                consumer.join()
+            });
+            tier1?;
+            return match tier2 {
+                Ok(finished) => finished,
+                Err(payload) => std::panic::resume_unwind(payload),
+            };
         }
 
         let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
