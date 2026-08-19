@@ -18,6 +18,10 @@ impl<F: Field> SparseDensePrefix<F> for AlignAddrPrefix {
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
         let j_start = 2 * XLEN - suffix_len - b.len();
         // Ignore chunks entirely above the low XLEN bits (the carry range).
+        // Zeroing is only sound for whole chunks: a chunk straddling index
+        // bit XLEN would have its below-XLEN contribution dropped, so phase
+        // boundaries must never fall inside the carry/value split.
+        debug_assert!(j_start >= XLEN || suffix_len >= XLEN);
         if j_start < XLEN {
             return F::zero();
         }
