@@ -19,7 +19,7 @@ use jolt_riscv::SourceInstructionKind;
 
 use super::state::{AdviceCompute, AdviceJob, GuestState};
 use emitter::EmitterSet;
-use jolt_riscv::JoltInstructionRow;
+use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 
 /// One compiled code body (fast or record) with its dispatch table.
 struct CompiledBody {
@@ -64,18 +64,23 @@ impl CompiledProgram {
                 "jolt-tracer-x86 requires BMI1 (tzcnt) support",
             ));
         }
+        let rows = &program.expanded_bytecode;
+        if rows.is_empty() {
+            return Err(TraceError::Backend("program has no expanded bytecode"));
+        }
         // VirtualPextSigned uses `pext` and `popcnt`; refuse on CPUs without
-        // them rather than fault at run time.
-        if !std::arch::is_x86_feature_detected!("bmi2")
-            || !std::arch::is_x86_feature_detected!("popcnt")
+        // them rather than fault at run time. Gated per program so pext-free
+        // guests keep compiling on pre-BMI2 hosts.
+        let uses_pext = rows
+            .iter()
+            .any(|row| matches!(row.instruction_kind, JoltInstructionKind::PextSigned(_)));
+        if uses_pext
+            && (!std::arch::is_x86_feature_detected!("bmi2")
+                || !std::arch::is_x86_feature_detected!("popcnt"))
         {
             return Err(TraceError::Backend(
                 "jolt-tracer-x86 requires BMI2 (pext) and POPCNT support",
             ));
-        }
-        let rows = &program.expanded_bytecode;
-        if rows.is_empty() {
-            return Err(TraceError::Backend("program has no expanded bytecode"));
         }
 
         // Source rows keyed by address: the expanded bytecode erases the source
