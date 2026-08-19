@@ -4005,6 +4005,7 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-program",
+ "jolt-prover",
  "jolt-prover-legacy",
  "jolt-r1cs",
  "jolt-riscv",
@@ -4012,6 +4013,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-utils",
  "jolt-verifier-derive",
+ "jolt-witness",
  "num-traits",
  "postcard",
  "quote",
@@ -4019,6 +4021,7 @@ dependencies = [
  "serde_json",
  "syn 2.0.119",
  "thiserror 2.0.18",
+ "tracer",
 ]
 
 [[package]]

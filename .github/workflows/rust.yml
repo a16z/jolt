@@ -107,6 +107,15 @@ jobs:
           --features field-inline
           --
           -D warnings
+      # The field-inline fixture-driven suites: the modular prover proves the
+      # FR guests end-to-end (jolt-prover e2e in both proof modes, and the
+      # jolt-verifier tamper suite over modular-prover fixtures).
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline,zk
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,zk
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline
       - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,field-inline
         run: >
           cargo clippy
@@ -337,6 +346,85 @@ jobs:
   # hosted-runner memory. Hook it up as a dedicated job (guest toolchain +
   # jolt CLI install, mirroring the legacy test jobs above) once an
   # optimized backend fits runner memory.
+
+  test-prover-field-inline:
+    runs-on: ubuntu-latest
+    name: Test jolt-prover (field-inline e2e)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      # The FR e2e acceptance: eq-MLE and degenerate (FR-inactive) muldiv
+      # accepts plus the FR wire tampers, in both proof modes, all proven by
+      # the modular prover and verified through the full verifier entry.
+      - name: Run jolt-prover field-inline e2e (clear)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline
+      - name: Run jolt-prover field-inline e2e (zk)
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,zk
+      # The example smoke run (no generic example lane runs feature-gated
+      # examples; the ci-bench sweep excludes this one).
+      - name: Run the eqpoly-field example
+        run: cargo run --profile ci -p eqpoly-field --features field-inline
+
+  test-verifier-field-inline-fixtures:
+    runs-on: ubuntu-latest
+    name: Test jolt-verifier (field-inline fixtures)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      # The fixture-driven field-inline suites: valid-fixture acceptance
+      # (completeness/field_inline.rs) and the typed FR clear-claim tamper
+      # sweep (tampering/field_inline.rs), backed by fixtures the modular
+      # prover generates at test time.
+      - name: Run jolt-verifier field-inline fixture and tamper suites
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline --test-threads 1
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest

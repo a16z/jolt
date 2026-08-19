@@ -427,9 +427,8 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
         "claims.stage1.field_inline_outer",
         VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "FR-local Spartan outer openings feed the composed expected-output check; \
-         mutation runs once modular field-inline fixtures exist",
+        TamperCoverage::Active,
+        "field-inline fixture test offsets every FR Spartan outer opening claim",
     ),
 ];
 
@@ -536,9 +535,9 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         "claims.stage2.batch_outputs.field_registers_claim_reduction.*",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "the FR claim-reduction outputs feed the stage-2 fold and the explicit FR product-row \
-         alias equality; mutation runs once modular field-inline fixtures exist",
+        TamperCoverage::Active,
+        "field-inline fixture test offsets each FR claim-reduction output (the stage-2 fold \
+         and the explicit FR product-row alias equality consume them)",
     ),
     #[cfg(feature = "field-inline")]
     checked_standard(
@@ -546,9 +545,9 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         "claims.stage2.field_inline_product",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "the FR product-row openings feed the composed remainder's FR lanes and the explicit \
-         alias equality; mutation runs once modular field-inline fixtures exist",
+        TamperCoverage::Active,
+        "field-inline fixture test offsets each FR product-appendage opening (the composed \
+         remainder's FR lanes and the explicit alias equality consume them)",
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
@@ -690,10 +689,9 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         "claims.stage4.field_registers_read_write.*",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "the FR read-write outputs feed the stage-4 fold (EqCycle-weighted Twist formula) and \
-         the stage-5 FR val-evaluation input; mutation runs once modular field-inline fixtures \
-         exist",
+        TamperCoverage::Active,
+        "field-inline fixture test offsets each FR read-write output (the stage-4 fold and \
+         the stage-5 FR val-evaluation input consume them)",
     ),
 ];
 
@@ -768,10 +766,9 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         "claims.stage5.field_registers_val_evaluation.*",
         VerifierPhase::Stage5,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "the FR val-evaluation outputs feed the stage-5 fold (LtCycle-weighted write \
-         activation) and the stage-6 FieldRdInc reduction; mutation runs once modular \
-         field-inline fixtures exist",
+        TamperCoverage::Active,
+        "field-inline fixture test offsets each FR val-evaluation output (the stage-5 fold \
+         and the stage-6 FieldRdInc reduction consume them)",
     ),
 ];
 
@@ -918,10 +915,9 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "claims.stage6b.field_registers_inc_claim_reduction.rd_inc",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "the reduced FieldRdInc claim anchors the stage-8 joint opening (the only FieldRdInc \
-         claim handed to the final opening planner); mutation runs once modular field-inline \
-         fixtures exist",
+        TamperCoverage::Active,
+        "field-inline fixture test offsets the reduced FieldRdInc claim (the anchor of the \
+         stage-8 joint opening's FieldRdInc entry)",
     ),
     checked_standard(
         "stage6.claims.trusted_advice.trusted",

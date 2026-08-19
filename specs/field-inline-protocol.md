@@ -4,8 +4,24 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Codex |
 | Created | 2026-05-21 |
-| Status | draft |
+| Status | implemented (modular stack) |
 | PR | TBD |
+
+## Implementation Status
+
+Implemented end-to-end on the modular stack (`jolt-prover` proves, the
+composed `jolt-verifier` verifies, in both proof modes) behind the
+`field-inline` feature; the legacy prover pins the axis disabled. One
+deviation from this spec's stage-2 alias table: instead of absorbing the
+aliased rows once, the implementation absorbs BOTH the FR claim-reduction
+outputs and the FR product-appendage rows (the curated stage-2 absorb) and
+enforces the table's equalities explicitly — clear mode via the stage-2
+seam's `validate_product_aliases`
+(`jolt-verifier/src/stages/stage2/field_inline.rs`), ZK mode via BlindFold
+`OpeningEquality` rows
+(`jolt-verifier/src/stages/zk/blindfold/field_inline.rs::stage2_opening_equalities`)
+— both single-sourced from the same `product_alias_polynomials` table so the
+two enforcement paths cannot drift.
 
 ## Purpose
 
