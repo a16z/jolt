@@ -41,13 +41,17 @@ impl<const XLEN: usize> JoltLookupTable for WindowMaskWTable<XLEN> {
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskWTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        // The Pow2OffsetW prefix/suffix pair hardcodes the 32-bit lane width.
-        debug_assert_eq!(XLEN, 64);
+        // The Pow2OffsetW prefix/suffix pair hardcodes the 32-bit lane width,
+        // so any other instantiation is a compile error (materialize_entry
+        // and evaluate_mle are genuinely XLEN-generic; the decomposition is
+        // not).
+        const { assert!(XLEN == 64, "Pow2OffsetW hardcodes the 32-bit lane") };
         vec![Suffixes::Pow2OffsetW]
     }
 
+    #[expect(clippy::unwrap_used)]
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
-        debug_assert_eq!(XLEN, 64);
+        const { assert!(XLEN == 64, "Pow2OffsetW hardcodes the 32-bit lane") };
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [pow2_offset_w] = suffixes.try_into().unwrap();
         F::from_u128((1u128 << (XLEN / 2)) - 1) * prefixes[Prefixes::Pow2OffsetW] * pow2_offset_w

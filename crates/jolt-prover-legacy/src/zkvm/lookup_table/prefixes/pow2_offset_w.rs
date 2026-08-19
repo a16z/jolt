@@ -20,6 +20,9 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for Pow2OffsetWPrefix
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
+        // The 32-bit lane width below is what makes this the *word* window
+        // offset; other instantiations are a compile error.
+        const { assert!(XLEN == 64, "Pow2OffsetW hardcodes the 32-bit lane") };
         // Phase-boundary-agnostic split of the index around bit 2: the suffix
         // owns bits [0, suffix_len), the unbound bits `b` own
         // [suffix_len, suffix_len + b.len()), the current variable `c` sits at
