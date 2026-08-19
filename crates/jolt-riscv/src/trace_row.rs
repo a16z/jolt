@@ -449,74 +449,6 @@ impl JoltTraceRow {
     pub fn instruction_kind(&self) -> Option<JoltInstructionKind> {
         JoltInstructionKind::from_tag(JoltInstructionTag(self.jolt_tag))
     }
-
-    /// Reconstructs the proof-facing instruction row represented here.
-    ///
-    /// The exact virtual-sequence countdown is not retained: nonterminal
-    /// virtual rows reconstruct it as `Some(1)` and terminal rows as
-    /// `Some(0)`. Those values preserve the virtual/last flags consumed by
-    /// proof and lookup code.
-    #[inline]
-    pub fn instruction(&self) -> JoltInstructionRow {
-        let circuit_flags = self.circuit_flags();
-        JoltInstructionRow {
-            instruction_kind: self.instruction_kind().unwrap_or_default(),
-            address: self.unexpanded_pc as usize,
-            operands: crate::NormalizedOperands {
-                rs1: self.rs1_index(),
-                rs2: self.rs2_index(),
-                rd: self.rd_index(),
-                imm: self.imm(),
-            },
-            virtual_sequence_remaining: circuit_flags
-                .get(CircuitFlags::VirtualInstruction)
-                .then_some(u16::from(
-                    !circuit_flags.get(CircuitFlags::IsLastInSequence),
-                )),
-            is_first_in_sequence: circuit_flags.get(CircuitFlags::IsFirstInSequence),
-            is_compressed: circuit_flags.get(CircuitFlags::IsCompressed),
-        }
-    }
-}
-
-impl crate::JoltCycle for JoltTraceRow {
-    type Instruction = JoltInstructionRow;
-
-    #[inline(always)]
-    fn instruction(&self) -> Self::Instruction {
-        JoltTraceRow::instruction(self)
-    }
-
-    #[inline(always)]
-    fn rs1_val(&self) -> Option<u64> {
-        self.rs1_index().map(|_| self.rs1_value())
-    }
-
-    #[inline(always)]
-    fn rs2_val(&self) -> Option<u64> {
-        self.rs2_index().map(|_| self.rs2_value())
-    }
-
-    #[inline(always)]
-    fn rd_vals(&self) -> Option<(u64, u64)> {
-        self.rd_index()
-            .map(|_| (self.rd_pre_value(), self.rd_write_value()))
-    }
-
-    #[inline(always)]
-    fn ram_access_address(&self) -> Option<u64> {
-        (self.is_load() || self.is_store()).then(|| self.ram_address())
-    }
-
-    #[inline(always)]
-    fn ram_read_value(&self) -> Option<u64> {
-        (self.is_load() || self.is_store()).then(|| self.ram_read_value())
-    }
-
-    #[inline(always)]
-    fn ram_write_value(&self) -> Option<u64> {
-        self.is_store().then(|| self.ram_write_value())
-    }
 }
 
 /// Circuit + instruction flags for a final instruction row.
@@ -772,33 +704,5 @@ mod tests {
         let r = JoltTraceRow::from_components(state, &instruction, 0).unwrap();
         assert_eq!(r.circuit_flags(), circuit_flags);
         assert_eq!(r.instruction_flags(), instruction_flags);
-    }
-
-    #[test]
-    fn instruction_reconstruction_preserves_proof_semantics() {
-        let mut instruction = row(
-            JoltInstructionKind::ADDI,
-            NormalizedOperands {
-                rs1: Some(3),
-                rs2: None,
-                rd: Some(4),
-                imm: -7,
-            },
-        );
-        instruction.virtual_sequence_remaining = Some(9);
-        instruction.is_first_in_sequence = true;
-        instruction.is_compressed = true;
-        let compact =
-            JoltTraceRow::from_components(CapturedState::default(), &instruction, 5).unwrap();
-        let reconstructed = compact.instruction();
-
-        assert_eq!(reconstructed.instruction_kind, instruction.instruction_kind);
-        assert_eq!(reconstructed.address, instruction.address);
-        assert_eq!(reconstructed.operands, instruction.operands);
-        assert_eq!(reconstructed.virtual_sequence_remaining, Some(1));
-        assert_eq!(
-            row_flags(&reconstructed),
-            (compact.circuit_flags(), compact.instruction_flags())
-        );
     }
 }

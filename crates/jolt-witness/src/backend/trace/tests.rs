@@ -680,7 +680,7 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     let next = JoltTraceRow::default();
     let env = WitnessEnv {
-        preprocessing: &preprocessing,
+        memory_layout: &preprocessing.memory_layout,
     };
 
     assert_eq!(
@@ -739,7 +739,7 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
 fn lookahead_witnesses_pad_the_final_cycle() {
     let preprocessing = preprocessing();
     let env = WitnessEnv {
-        preprocessing: &preprocessing,
+        memory_layout: &preprocessing.memory_layout,
     };
     let row = JoltTraceRow::from_components(
         CapturedState::NonMemory(NonMemoryState {

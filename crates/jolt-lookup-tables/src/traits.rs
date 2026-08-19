@@ -112,16 +112,6 @@ pub trait LookupQuery<const XLEN: usize> {
 
     /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
-
-    /// Returns the instruction inputs, lookup operands, and lookup output.
-    #[inline]
-    fn to_lookup_values(&self) -> ((u64, i128), (u64, u128), u64) {
-        (
-            self.to_instruction_inputs(),
-            self.to_lookup_operands(),
-            self.to_lookup_output(),
-        )
-    }
 }
 
 #[cfg(feature = "field-inline")]
@@ -245,8 +235,15 @@ macro_rules! impl_jolt_lookup_query {
                 }
             }
 
+        }
+
+        impl<C> JoltLookupQuery<C>
+        where
+            C: JoltCycle + Copy,
+        {
+            /// Computes all proof-facing lookup values with one dynamic dispatch.
             #[inline]
-            fn to_lookup_values(&self) -> ((u64, i128), (u64, u128), u64) {
+            pub fn to_lookup_values<const XLEN: usize>(&self) -> ((u64, i128), (u64, u128), u64) {
                 match self.instruction_kind {
                     JoltInstruction::Noop(_) => ((0, 0), (0, 0), 0),
                     $(
@@ -363,7 +360,7 @@ mod tests {
             };
             let query = JoltLookupQuery::new(instruction_kind, cycle);
             assert_eq!(
-                LookupQuery::<64>::to_lookup_values(&query),
+                query.to_lookup_values::<64>(),
                 (
                     LookupQuery::<64>::to_instruction_inputs(&query),
                     LookupQuery::<64>::to_lookup_operands(&query),

@@ -124,11 +124,9 @@ pub type ChunkVisitor<'a> =
     dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
 /// Sequential row access for the pass: trace-backed today, segment-backed
-/// later. Random access is deliberately inexpressible — except through
-/// [`RowSource::random_access`], the measured escape hatch for
-/// order-insensitive whole-range collection: the chunked walk serializes on
-/// per-chunk staging and consume copies, and at 2^25 cycles on a 64-thread
-/// host the collection walks alone were most of the prover's wall time.
+/// later. Slice-backed sources may also expose [`RowSource::random_access`]
+/// for order-insensitive whole-range collection; re-emulating sources need
+/// only implement the sequential path.
 pub trait RowSource {
     /// Visits the half-open cycle `range` in order as buffers of at most
     /// `chunk_size` rows; `[0, T)` today, segments later.
@@ -164,19 +162,19 @@ pub trait RowSource {
 pub struct OwnedRows {
     rows: std::sync::Arc<Vec<TraceRow>>,
     cycles: usize,
-    preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
+    memory_layout: common::jolt_device::MemoryLayout,
 }
 
 impl OwnedRows {
     pub(crate) fn new(
         rows: std::sync::Arc<Vec<TraceRow>>,
         cycles: usize,
-        preprocessing: std::sync::Arc<jolt_program::preprocess::JoltProgramPreprocessing>,
+        memory_layout: common::jolt_device::MemoryLayout,
     ) -> Self {
         Self {
             rows,
             cycles,
-            preprocessing,
+            memory_layout,
         }
     }
 
@@ -191,7 +189,7 @@ impl OwnedRows {
             &self.rows,
             self.cycles,
             WitnessEnv {
-                preprocessing: &self.preprocessing,
+                memory_layout: &self.memory_layout,
             },
         )
     }
@@ -309,13 +307,6 @@ pub fn collect_par_map<B: WitnessBundle, V: Send>(
 
 /// [`collect_par_map`] without the packing step: index-parallel collection
 /// of the bundles themselves.
-pub fn collect_bundles_par<B: WitnessBundle + Send>(
-    access: &RandomAccessRows<'_>,
-    cycles: usize,
-) -> Result<Vec<B>, WitnessError> {
-    collect_par_map(access, cycles, |bundle: B| bundle)
-}
-
 /// Index-parallel collection of one cycle sub-range into a reusable buffer
 /// (cleared first, allocation kept): the pipelining collector's shape — a
 /// caller overlapping extraction with downstream work re-fills two buffers
@@ -415,7 +406,7 @@ pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
     // walk (out-of-range requests fall through to it for its validation).
     if let Some(access) = source.random_access() {
         if cycles <= access.cycles() {
-            return collect_bundles_par(&access, cycles);
+            return collect_par_map(&access, cycles, |bundle: B| bundle);
         }
     }
     let mut consumers = (CollectBundles::<B>::default(),);

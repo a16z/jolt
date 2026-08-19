@@ -44,10 +44,14 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
-use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
-use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
+use jolt_claims::protocols::jolt::geometry::spartan::{
+    outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
+};
+use jolt_claims::protocols::jolt::{
+    JoltDerivedId, JoltOpeningId, JoltPolynomialId, SpartanOuterPublic,
+};
 use jolt_claims::{InputClaims as _, OutputClaims as _};
-use jolt_field::signed::{S192, S256, S64};
+use jolt_field::signed::{S128, S192, S256, S64};
 use jolt_field::{
     Field, SignedProductAccumulator as _, SignedScalarAccumulator as _,
     WithSignedProductAccumulator, WithSmallScalarAccumulator,
@@ -57,6 +61,7 @@ use jolt_poly::lagrange::{
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
+use jolt_riscv::{CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -65,15 +70,13 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_verifier::VerifierError;
-use jolt_witness::witnesses::SpartanOuterRow;
-#[cfg(test)]
 use jolt_witness::witnesses::{
-    Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput, NextIsFirstInSequence,
-    NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product, RamAddress, RamReadValue,
-    RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value,
-    ShouldBranch, ShouldJump, UnexpandedPc,
+    lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
+    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
+    RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
+    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
-use jolt_witness::{JoltWitnessPlane, WitnessError};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -89,6 +92,120 @@ const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
+
+#[derive(Clone, Copy, Debug)]
+struct SpartanOuterRow {
+    left_instruction_input: LeftInstructionInput,
+    right_instruction_input: RightInstructionInput,
+    product: Product,
+    should_branch: ShouldBranch,
+    pc: Pc,
+    unexpanded_pc: UnexpandedPc,
+    imm: Imm,
+    ram_address: RamAddress,
+    rs1_value: Rs1Value,
+    rs2_value: Rs2Value,
+    rd_write_value: RdWriteValue,
+    ram_read_value: RamReadValue,
+    ram_write_value: RamWriteValue,
+    left_lookup_operand: LeftLookupOperand,
+    right_lookup_operand: RightLookupOperand,
+    next_unexpanded_pc: NextUnexpandedPc,
+    next_pc: NextPc,
+    next_is_virtual: NextIsVirtual,
+    next_is_first_in_sequence: NextIsFirstInSequence,
+    lookup_output: LookupOutput,
+    should_jump: ShouldJump,
+    add_operands: OpFlag,
+    subtract_operands: OpFlag,
+    multiply_operands: OpFlag,
+    load: OpFlag,
+    store: OpFlag,
+    jump: OpFlag,
+    write_lookup_output_to_rd: OpFlag,
+    virtual_instruction: OpFlag,
+    assert_flag: OpFlag,
+    do_not_update_unexpanded_pc: OpFlag,
+    advice: OpFlag,
+    is_compressed: OpFlag,
+    is_first_in_sequence: OpFlag,
+    is_last_in_sequence: OpFlag,
+}
+
+impl WitnessBundle for SpartanOuterRow {
+    #[inline]
+    fn from_row(
+        row: &TraceRow,
+        next: Option<&TraceRow>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        let circuit_flags = row.circuit_flags();
+        let instruction_flags = row.instruction_flags();
+        let (
+            (left_instruction_input, right_instruction_input),
+            (left_lookup_operand, right_lookup_operand),
+            lookup_output,
+        ) = lookup_values(row);
+        let next_flags = next.map(TraceRow::circuit_flags);
+        let flag = |flag| OpFlag(circuit_flags[flag]);
+
+        Ok(Self {
+            left_instruction_input: LeftInstructionInput(left_instruction_input),
+            right_instruction_input: RightInstructionInput(right_instruction_input),
+            product: Product(
+                S64::from_u64(left_instruction_input)
+                    .mul_trunc::<2, 2>(&S128::from_i128(right_instruction_input)),
+            ),
+            should_branch: ShouldBranch(
+                instruction_flags[InstructionFlags::Branch] && lookup_output == 1,
+            ),
+            pc: Pc(row.pc()),
+            unexpanded_pc: UnexpandedPc(row.unexpanded_pc()),
+            imm: Imm(row.imm()),
+            ram_address: RamAddress(row.ram_address()),
+            rs1_value: Rs1Value(row.rs1_value()),
+            rs2_value: Rs2Value(row.rs2_value()),
+            rd_write_value: RdWriteValue(row.rd_write_value()),
+            ram_read_value: RamReadValue(row.ram_read_value()),
+            ram_write_value: RamWriteValue(row.ram_write_value()),
+            left_lookup_operand: LeftLookupOperand(left_lookup_operand),
+            right_lookup_operand: RightLookupOperand(right_lookup_operand),
+            next_unexpanded_pc: NextUnexpandedPc(next.map_or(0, TraceRow::unexpanded_pc)),
+            next_pc: NextPc(next.map_or(0, TraceRow::pc)),
+            next_is_virtual: NextIsVirtual(
+                next_flags.is_some_and(|flags| flags[CircuitFlags::VirtualInstruction]),
+            ),
+            next_is_first_in_sequence: NextIsFirstInSequence(
+                next_flags.is_some_and(|flags| flags[CircuitFlags::IsFirstInSequence]),
+            ),
+            lookup_output: LookupOutput(lookup_output),
+            should_jump: ShouldJump(
+                circuit_flags[CircuitFlags::Jump] && !next.is_some_and(|row| row.is_noop()),
+            ),
+            add_operands: flag(CircuitFlags::AddOperands),
+            subtract_operands: flag(CircuitFlags::SubtractOperands),
+            multiply_operands: flag(CircuitFlags::MultiplyOperands),
+            load: flag(CircuitFlags::Load),
+            store: flag(CircuitFlags::Store),
+            jump: flag(CircuitFlags::Jump),
+            write_lookup_output_to_rd: flag(CircuitFlags::WriteLookupOutputToRD),
+            virtual_instruction: flag(CircuitFlags::VirtualInstruction),
+            assert_flag: flag(CircuitFlags::Assert),
+            do_not_update_unexpanded_pc: flag(CircuitFlags::DoNotUpdateUnexpandedPC),
+            advice: flag(CircuitFlags::Advice),
+            is_compressed: flag(CircuitFlags::IsCompressed),
+            is_first_in_sequence: flag(CircuitFlags::IsFirstInSequence),
+            is_last_in_sequence: flag(CircuitFlags::IsLastInSequence),
+        })
+    }
+
+    fn annotated_ids() -> Vec<JoltPolynomialId> {
+        SPARTAN_OUTER_R1CS_INPUTS
+            .into_iter()
+            .map(JoltPolynomialId::Virtual)
+            .collect()
+    }
+}
 
 /// One cycle's integer values of the 19 eq-conditional rows, split into the
 /// two uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as

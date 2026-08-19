@@ -222,7 +222,7 @@ impl<'a> TraceBackedFieldInlineWitness<'a> {
         value: impl Fn(&TraceRow, &WitnessEnv<'_>) -> Result<F, WitnessError> + Sync,
     ) -> Result<Vec<F>, WitnessError> {
         let env = WitnessEnv {
-            preprocessing: self.preprocessing,
+            memory_layout: &self.preprocessing.memory_layout,
         };
         let mut values = vec![F::from_u64(0); self.rows];
         values
@@ -346,7 +346,7 @@ impl<F: Field> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWit
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
         let env = WitnessEnv {
-            preprocessing: self.preprocessing,
+            memory_layout: &self.preprocessing.memory_layout,
         };
         (0..self.rows)
             .map(|index| {

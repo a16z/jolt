@@ -3,7 +3,7 @@
 use jolt_field::{Field, RingAccumulator};
 use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial, UnivariatePoly};
 use jolt_witness::{
-    collect_bundles_par, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
+    collect_par_map, stream_witnesses, RowSource, StreamConsumer, WitnessBundle, WitnessError,
 };
 
 /// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
@@ -26,7 +26,7 @@ pub(crate) fn collect_rows<B: WitnessBundle + Clone + Send + Sync>(
     // walk's validation).
     if let Some(access) = source.random_access() {
         if cycles <= access.cycles() {
-            return collect_bundles_par(&access, cycles);
+            return collect_par_map(&access, cycles, |bundle: B| bundle);
         }
     }
     struct Presized<B> {

@@ -64,7 +64,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
             W::extract_indexed(selector, row, next, env).map(W::into)
         })?;
         // The selector's mask bounds every hot address below `2^chunk_bits`.
-        let mut values = crate::alloc::zero_table(checked_pow2(log_rows)?);
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(checked_pow2(log_rows)?);
         for (cycle, address) in hot_addresses.into_iter().enumerate() {
             if let Some(address) = address {
                 values[address * cycles + cycle] = F::one();
@@ -114,7 +114,7 @@ impl<T: TraceSource + Clone> TraceBackend<'_, T> {
     ) -> Result<Vec<V>, WitnessError> {
         let rows = checked_pow2(self.config.log_t)?;
         let env = WitnessEnv {
-            preprocessing: self.preprocessing,
+            memory_layout: &self.preprocessing.memory_layout,
         };
         let physical = self.trace_rows.as_slice();
         let padding = TraceRow::default();
@@ -137,7 +137,7 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
             &self.trace_rows,
             cycles,
             WitnessEnv {
-                preprocessing: self.preprocessing,
+                memory_layout: &self.preprocessing.memory_layout,
             },
         ))
     }
@@ -147,7 +147,7 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
         Some(crate::OwnedRows::new(
             std::sync::Arc::clone(&self.trace_rows),
             cycles,
-            std::sync::Arc::new(self.preprocessing.clone()),
+            self.preprocessing.memory_layout.clone(),
         ))
     }
 
@@ -168,7 +168,7 @@ impl<T: TraceSource + Clone> RowSource for TraceBackend<'_, T> {
             });
         }
         let env = WitnessEnv {
-            preprocessing: self.preprocessing,
+            memory_layout: &self.preprocessing.memory_layout,
         };
         let physical = self.trace_rows.as_slice();
         let padding = TraceRow::default();

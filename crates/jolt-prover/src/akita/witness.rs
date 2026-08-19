@@ -271,7 +271,7 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
         }
     }
 
-    let mut selected_rows = jolt_utils::unsafe_allocate_zero_vec(num_rows * num_columns);
+    let mut selected_rows = vec![0u8; num_rows * num_columns];
     let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
     #[cfg(feature = "parallel")]
     if let Some(access) = witness.random_access() {

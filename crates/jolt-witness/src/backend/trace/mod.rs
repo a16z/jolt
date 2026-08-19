@@ -115,7 +115,7 @@ pub struct TraceBackend<'a, T: TraceSource> {
     pub(crate) final_memory: Option<MemoryImage>,
     #[cfg(feature = "field-inline")]
     pub(crate) raw_trace: TraceOutput<jolt_program::execution::OwnedTrace>,
-    source: PhantomData<T>,
+    source: PhantomData<fn() -> T>,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness<'a>>,
 }
