@@ -14,15 +14,24 @@ impl<F: Field> SparseDensePrefix<F> for Pow2OffsetWPrefix {
     }
 
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
-        // Bit 2 of the raw index stays in the suffix until the final phase;
-        // this pairing with the suffix's `b.len() < 3` guard assumes phase
-        // boundaries never fall inside the low three index bits.
-        debug_assert!(suffix_len == 0 || suffix_len >= 3);
-        if suffix_len != 0 {
+        // Phase-boundary-agnostic split of the index around bit 2: the suffix
+        // owns bits [0, suffix_len), this phase's bits `b` own
+        // [suffix_len, suffix_len + b.len()), and everything above is bound
+        // into the checkpoint.
+        if suffix_len >= 3 {
+            // Bit 2 is in the suffix; `Pow2OffsetWSuffix` supplies the factor.
             return F::one();
         }
-        let bits: u128 = b.into();
-        let bit2 = ((bits >> 2) & 1) as u32;
-        checkpoints[Prefixes::Pow2OffsetW] * F::from_u64(1u64 << (32 * bit2))
+        let checkpoint = checkpoints[Prefixes::Pow2OffsetW];
+        if suffix_len + b.len() > 2 {
+            // Bit 2 is among this phase's bits.
+            let bits: u128 = b.into();
+            let bit2 = ((bits >> (2 - suffix_len)) & 1) as u32;
+            checkpoint * F::from_u64(1u64 << (32 * bit2))
+        } else {
+            // Bit 2 was bound in an earlier phase; its factor lives in the
+            // checkpoint.
+            checkpoint
+        }
     }
 }
