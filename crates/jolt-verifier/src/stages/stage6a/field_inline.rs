@@ -1,9 +1,11 @@
 //! Stage 6a's field-inline seam: every FR-specific divergence of the stage-6a
 //! verifier in one place — the FR appendage of the composed bytecode read-RAF
 //! input claim (its wiring from the stage-1/4/5 outputs and its gamma-power
-//! extension math). The `BytecodeReadRafAddressPhase` relation keeps only its
-//! appendage carrier (the `OnceLock` + setter) and the composed `input_claim`
-//! shell that adds [`input_claim_extension`] onto the ordinary bind.
+//! extension math) and the preprocessed side-table load the batch build
+//! carries for the prover's kernel. The `BytecodeReadRafAddressPhase`
+//! relation keeps only its appendage carriers (the `OnceLock`s + setters) and
+//! the composed `input_claim` shell that adds [`input_claim_extension`] onto
+//! the ordinary bind.
 
 use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
 use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
@@ -14,12 +16,63 @@ use jolt_claims::OutputClaims as _;
 use jolt_field::Field;
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
 
+use jolt_openings::CommitmentScheme;
+
 use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
-use crate::stages::field_inline_bytecode::field_inline_stage_gamma_powers;
+use crate::preprocessing::ProgramPreprocessing;
+use crate::stages::field_inline_bytecode::{
+    convert_field_inline_bytecode, field_inline_stage_gamma_powers, required_field_inline_bytecode,
+    FieldInlineBytecodeTable,
+};
 use crate::stages::stage1::Stage1ClearOutput;
-use crate::stages::stage4::Stage4OutputClaims;
-use crate::stages::stage5::Stage5OutputClaims;
+use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
+use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
+
+/// The converted field-inline bytecode side table from the verifier
+/// preprocessing — the stage-6a counterpart of the stage-6b seam's helper
+/// (both stages anchor the FR access selectors through the same
+/// public/preprocessed table; committed-program preprocessing cannot supply
+/// it and rejects here too).
+pub fn preprocessed_bytecode_table<PCS: CommitmentScheme>(
+    program: &ProgramPreprocessing<PCS>,
+) -> Result<FieldInlineBytecodeTable, VerifierError> {
+    convert_field_inline_bytecode(required_field_inline_bytecode(program)?)
+}
+
+/// The FR geometry the address-phase KERNEL folds over: the converted side
+/// table plus the stage-4/5 FR opening points (`FIELD_REGISTERS_LOG_K`-var
+/// address prefix ‖ cycle). Construction-time data both fronts hold, carried
+/// on the relation as an appendage (the same OnceLock idiom as the input
+/// values below) via [`attach_bytecode_geometry`]; the verifier itself never
+/// evaluates it in this stage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldInlineBytecodeReadRafGeometry<F> {
+    pub table: FieldInlineBytecodeTable,
+    /// The stage-4 FR read-write opening point.
+    pub read_write_point: Vec<F>,
+    /// The stage-5 FR val-evaluation opening point.
+    pub val_evaluation_point: Vec<F>,
+}
+
+/// Wire the FR kernel geometry from the preprocessed side table and the
+/// stage-4/5 FR opening points, and supply it to the composed bytecode
+/// read-RAF relation. Both fronts attach through this right after the batch
+/// build (fail-closed: a kernel prepared without it rejects).
+pub fn attach_bytecode_geometry<F: Field>(
+    relation: &BytecodeReadRafAddressPhase<F>,
+    table: FieldInlineBytecodeTable,
+    stage4_points: &Stage4OutputPoints<F>,
+    stage5_points: &Stage5OutputPoints<F>,
+) -> Result<(), VerifierError> {
+    relation.set_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
+        table,
+        read_write_point: stage4_points.field_registers_read_write_point().to_vec(),
+        val_evaluation_point: stage5_points
+            .field_registers_val_evaluation_point()
+            .to_vec(),
+    })
+}
 
 /// The field-inline opening values the extended address-phase input claim
 /// folds under the extended stage-1/4/5 gamma powers (spec:

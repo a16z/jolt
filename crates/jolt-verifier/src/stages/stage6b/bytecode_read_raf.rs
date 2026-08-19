@@ -212,8 +212,18 @@ fn fold_stage_values<F: Field>(
         )));
     }
     let address_eq_evals = EqPolynomial::<F>::evals(r_address, None);
+    // FR-on, the jolt fold must see the ordinary x-register slots only (the
+    // FR-operand slots ride the side table): see
+    // `field_inline_bytecode::suppress_field_operand_slots`.
+    #[cfg(feature = "field-inline")]
+    let masked_bytecode =
+        crate::stages::field_inline_bytecode::suppress_field_operand_slots(fold.bytecode);
+    #[cfg(feature = "field-inline")]
+    let bytecode_rows: &[JoltInstructionRow] = &masked_bytecode;
+    #[cfg(not(feature = "field-inline"))]
+    let bytecode_rows = fold.bytecode;
     let row_values = bytecode::read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: fold.bytecode,
+        bytecode: bytecode_rows,
         register_read_write_point: fold.register_read_write_point,
         register_val_evaluation_point: fold.register_val_evaluation_point,
         stage1_gammas: fold.stage_gammas[0],
@@ -992,6 +1002,26 @@ impl<F: Field> BytecodeReadRafCycle<F> {
         match &self.variant {
             BytecodeReadRafCycleVariant::Full(relation) => relation.committed_chunk_bits,
             BytecodeReadRafCycleVariant::Committed(relation) => relation.committed_chunk_bits,
+        }
+    }
+
+    /// The FR side-table fold inputs the cycle kernel's composed summand
+    /// reads (the converted table rows, the FR opening sub-points, the
+    /// extended gamma powers). Full mode only: committed-program mode cannot
+    /// anchor the FR selectors (see
+    /// [`field_inline::committed_program_rejection`](crate::stages::stage6b::field_inline)),
+    /// and the stage-6 batch build already rejects it, so this arm is
+    /// fail-closed rather than reachable.
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_fold(
+        &self,
+    ) -> Result<&crate::stages::field_inline_bytecode::FieldInlineBytecodeFold<F>, VerifierError>
+    {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => Ok(&relation.field_inline),
+            BytecodeReadRafCycleVariant::Committed(_) => {
+                Err(crate::stages::stage6b::field_inline::committed_program_rejection())
+            }
         }
     }
 

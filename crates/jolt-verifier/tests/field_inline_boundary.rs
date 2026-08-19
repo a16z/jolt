@@ -54,7 +54,7 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ("stages/stage2/verify.rs", 7, "flagged seam calls"),
     ("stages/stage4/verify.rs", 3, "flagged seam calls"),
     ("stages/stage5/verify.rs", 3, "flagged seam calls"),
-    ("stages/stage6a/verify.rs", 1, "flagged seam call"),
+    ("stages/stage6a/verify.rs", 2, "flagged seam calls"),
     (
         "stages/stage6b/verify.rs",
         8,
@@ -106,13 +106,14 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ),
     (
         "stages/stage6a/bytecode_read_raf.rs",
-        5,
-        "FR appendage carrier + override shell",
+        9,
+        "FR appendage carriers (input values + kernel geometry) + override shell",
     ),
     (
         "stages/stage6b/bytecode_read_raf.rs",
-        6,
-        "FR fold constructor leg + composed publics",
+        10,
+        "FR fold constructor leg + composed publics + kernel fold accessor + \
+         ordinary-fold operand masking",
     ),
     // The stage-6b batch build: FR draw slot, build-parts leg, and the flagged
     // seam calls assembling the FR members (struct fields cannot move).
@@ -126,8 +127,8 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // FR value-parity test gates.
     (
         "stages/zk/blindfold/mod.rs",
-        13,
-        "FR id arms + flagged seam calls",
+        16,
+        "FR id arms + flagged seam calls + ordinary-fold operand masking",
     ),
     (
         "stages/zk/blindfold/stage1.rs",

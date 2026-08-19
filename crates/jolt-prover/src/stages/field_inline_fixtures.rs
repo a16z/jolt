@@ -856,6 +856,14 @@ pub(crate) mod twins {
             stage5_points: &stage5.clear_output.output_points,
         })
         .unwrap();
+        stage6a_field_inline::attach_bytecode_geometry(
+            &sumchecks.bytecode_read_raf,
+            stage6a_field_inline::preprocessed_bytecode_table(&preprocessing.verifier.program)
+                .unwrap(),
+            &stage4.clear_output.output_points,
+            &stage5.clear_output.output_points,
+        )
+        .unwrap();
         let challenges = sumchecks.draw_challenges(transcript).unwrap();
         sumchecks.validate_output_claims(&stage6a.claims).unwrap();
         stage6a_field_inline::attach_bytecode_inputs(

@@ -187,6 +187,12 @@ pub struct BytecodeReadRafAddressPhase<F: Field> {
     #[cfg(feature = "field-inline")]
     field_inline_inputs:
         std::sync::OnceLock<super::field_inline::FieldInlineBytecodeReadRafInputs<F>>,
+    /// The FR side table and opening points the address-phase kernel folds
+    /// over, set by both fronts right after the batch build. See
+    /// [`field_inline::FieldInlineBytecodeReadRafGeometry`](super::field_inline::FieldInlineBytecodeReadRafGeometry).
+    #[cfg(feature = "field-inline")]
+    field_inline_geometry:
+        std::sync::OnceLock<super::field_inline::FieldInlineBytecodeReadRafGeometry<F>>,
 }
 
 impl<F: Field> BytecodeReadRafAddressPhase<F> {
@@ -204,7 +210,42 @@ impl<F: Field> BytecodeReadRafAddressPhase<F> {
             entry_bytecode_index,
             #[cfg(feature = "field-inline")]
             field_inline_inputs: std::sync::OnceLock::new(),
+            #[cfg(feature = "field-inline")]
+            field_inline_geometry: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Supply the FR kernel geometry (rejects a second set at different
+    /// contents — one proof per relation instance).
+    #[cfg(feature = "field-inline")]
+    pub fn set_field_inline_geometry(
+        &self,
+        geometry: super::field_inline::FieldInlineBytecodeReadRafGeometry<F>,
+    ) -> Result<(), VerifierError> {
+        let stored = self.field_inline_geometry.get_or_init(|| geometry.clone());
+        if *stored != geometry {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "field-inline bytecode read-RAF geometry already set to different \
+                         contents"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// The carried FR kernel geometry, fail-closed when the front never
+    /// attached one.
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_geometry(
+        &self,
+    ) -> Result<&super::field_inline::FieldInlineBytecodeReadRafGeometry<F>, VerifierError> {
+        self.field_inline_geometry
+            .get()
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "field-inline bytecode read-RAF geometry was never attached".to_string(),
+            })
     }
 
     /// Supply the FR opening values the composed input claim folds. Must be

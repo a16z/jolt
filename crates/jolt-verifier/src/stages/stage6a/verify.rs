@@ -75,6 +75,13 @@ where
     // booleanity subprotocol samples them before the 6a batch runs, so the
     // transcript schedule fixes them here and they ride downstream as typed
     // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
+    #[cfg(feature = "field-inline")]
+    super::field_inline::attach_bytecode_geometry(
+        &address_sumchecks.bytecode_read_raf,
+        super::field_inline::preprocessed_bytecode_table(&preprocessing.program)?,
+        stage4.output_points(),
+        stage5.output_points(),
+    )?;
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 

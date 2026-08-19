@@ -784,6 +784,27 @@ mod tests {
                 register_read_write_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 31),
                 register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 37),
             };
+            // An all-inactive, well-formed FR geometry (the sample backend's
+            // program is FR-free): every FR row value is zero, so the
+            // reference kernels' FR legs vanish and byte-parity with the
+            // (FR-less) optimized kernels is exact.
+            #[cfg(feature = "field-inline")]
+            let field_inline_table =
+                jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeTable {
+                    rows: vec![Default::default(); bytecode_len],
+                    field_register_log_k:
+                        jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K,
+                };
+            #[cfg(feature = "field-inline")]
+            let field_read_write_point = synthetic_point(
+                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
+                41,
+            );
+            #[cfg(feature = "field-inline")]
+            let field_val_evaluation_point = synthetic_point(
+                jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K + log_t,
+                43,
+            );
 
             // ---- Stage 6a: address phase.
             let address_relation = BytecodeReadRafAddressPhase::new(
@@ -792,6 +813,16 @@ mod tests {
                 stage_points.clone(),
                 entry_bytecode_index,
             );
+            #[cfg(feature = "field-inline")]
+            address_relation
+                .set_field_inline_geometry(
+                    jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry {
+                        table: field_inline_table.clone(),
+                        read_write_point: field_read_write_point.clone(),
+                        val_evaluation_point: field_val_evaluation_point.clone(),
+                    },
+                )
+                .unwrap();
             let address_challenges = BytecodeReadRafAddressPhaseChallenges {
                 gamma: fr(3),
                 stage1_gamma: fr(5),
@@ -869,21 +900,25 @@ mod tests {
                         [..REGISTER_ADDRESS_BITS],
                     stage_gammas: std::array::from_fn(|s| stage_gammas[s].as_slice()),
                 }),
-                // Inert here: this test drives prepare/output_claims only, never
-                // the composed expected_output that reads the FR fold.
+                // All-inactive and well-formed: the composed reference cycle
+                // kernel folds the FR rows (all zero) at these points, so its
+                // messages stay byte-equal to the FR-less optimized kernel's.
                 #[cfg(feature = "field-inline")]
                 field_inline:
                     jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold {
-                        table:
-                            jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeTable {
-                                rows: Vec::new(),
-                                field_register_log_k:
-                                    jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K,
-                            },
-                        read_write_address: Vec::new(),
-                        read_write_cycle: Vec::new(),
-                        val_evaluation_address: Vec::new(),
-                        val_evaluation_cycle: Vec::new(),
+                        table: field_inline_table.clone(),
+                        read_write_address: field_read_write_point
+                            [..jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K]
+                            .to_vec(),
+                        read_write_cycle: field_read_write_point
+                            [jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K..]
+                            .to_vec(),
+                        val_evaluation_address: field_val_evaluation_point
+                            [..jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K]
+                            .to_vec(),
+                        val_evaluation_cycle: field_val_evaluation_point
+                            [jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K..]
+                            .to_vec(),
                         gammas:
                             jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(
                                 &address_challenges,

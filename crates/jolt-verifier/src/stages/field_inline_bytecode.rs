@@ -19,7 +19,10 @@ use jolt_field::Field;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_program::field_inline::FieldInlineBytecodeMetadata;
-use jolt_riscv::{FieldInlineOp, FieldRegister};
+use jolt_riscv::{
+    field_inline_operand_shape, FieldInlineOp, FieldInlineXRegisterRole, FieldRegister,
+    JoltInstructionRow,
+};
 
 use crate::preprocessing::ProgramPreprocessing;
 use crate::VerifierError;
@@ -124,6 +127,40 @@ fn conversion_failed(reason: impl ToString) -> VerifierError {
             reason.to_string()
         ),
     }
+}
+
+/// The ordinary bytecode rows with each field-op row's FR-operand slots
+/// blanked, as the jolt read-RAF register folds must see them: a field-op
+/// row's rd/rs1/rs2 carry FR register slots for the side table, and the spec
+/// suppresses its ordinary x-register accesses ("Trace Semantics") — only a
+/// bridge x-register role keeps its slot (`LoadFromX` reads x-rs1, `StoreToX`
+/// writes x-rd). Mirrors
+/// `jolt_program::field_inline::FieldInlineBytecodeRow::from_instruction`'s
+/// slot classification, so the ordinary and FR folds partition each row's
+/// operands exactly. The jolt protocol module cannot express this (protocol
+/// modules are import-disjoint), so the composition layer masks the rows
+/// before every jolt-side `read_raf_stage_values` fold.
+pub fn suppress_field_operand_slots(bytecode: &[JoltInstructionRow]) -> Vec<JoltInstructionRow> {
+    bytecode
+        .iter()
+        .map(|row| {
+            let Some(shape) = field_inline_operand_shape(row.instruction_kind) else {
+                return *row;
+            };
+            let mut masked = *row;
+            masked.operands.rd = match shape.bridge_x_register_role {
+                Some(FieldInlineXRegisterRole::WriteRd) => row.operands.rd,
+                _ => None,
+            };
+            masked.operands.rs1 = match shape.bridge_x_register_role {
+                Some(FieldInlineXRegisterRole::ReadRs1) => row.operands.rs1,
+                _ => None,
+            };
+            // No field op reads an ordinary rs2.
+            masked.operands.rs2 = None;
+            masked
+        })
+        .collect()
 }
 
 /// The FR-extended per-stage gamma power vectors for the bytecode read-RAF

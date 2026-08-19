@@ -220,12 +220,12 @@ where
 /// the batch with the FR increment-reduction member built by the promoted
 /// `build_from_parts`, the curated `stage6b_opening_values` absorb with the
 /// spliced reduced `FieldRdInc`) on a twin transcript positioned by the
-/// stage-1..6a replays. The FR-inactive ADDI profile keeps the bytecode
-/// read-RAF members' FR extension at zero (its FR-active leg lands with the
-/// stage-6 bytecode composition); the FR increment member itself runs for
-/// real. A second test drives the FR increment-reduction kernel directly on
-/// the FR-arithmetic replay and ties the extracted opening to a direct MLE
-/// evaluation.
+/// stage-1..6a replays — on both fixture profiles: the FR-inactive ADDI
+/// trace (every FR fold zero) and the FR-ACTIVE arithmetic trace (the
+/// composed bytecode read-RAF kernels' FR stage-value legs carry real
+/// values). A further test drives the FR increment-reduction kernel directly
+/// on the FR-arithmetic replay and ties the extracted opening to a direct
+/// MLE evaluation.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -248,8 +248,9 @@ mod field_inline_round_trip {
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        addi_only_backend, addi_only_preprocessing, fr_arithmetic_backend, test_checked_inputs,
-        test_prover_config, test_public_io, twins, LOG_T, RAM_LOG_K,
+        addi_only_backend, addi_only_preprocessing, fr_arithmetic_backend,
+        fr_arithmetic_preprocessing, test_checked_inputs, test_prover_config, test_public_io,
+        twins, LOG_T, RAM_LOG_K,
     };
     use crate::stages::stage1::prove_stage1;
     use crate::stages::stage2::prove_stage2;
@@ -260,16 +261,36 @@ mod field_inline_round_trip {
 
     #[test]
     fn addi_only_stage6b_round_trips_the_composed_verifier() {
-        let witness = addi_only_backend().with_field_inline().unwrap();
+        stage6b_round_trips(
+            addi_only_backend(),
+            addi_only_preprocessing(),
+            b"stage6b-fr",
+        );
+    }
+
+    #[test]
+    fn fr_arithmetic_stage6b_round_trips_the_composed_verifier() {
+        stage6b_round_trips(
+            fr_arithmetic_backend(),
+            fr_arithmetic_preprocessing(),
+            b"stage6b-fr-active",
+        );
+    }
+
+    fn stage6b_round_trips(
+        trace_backend: jolt_witness::TraceBackend<jolt_program::execution::OwnedTrace>,
+        preprocessing: crate::stages::field_inline_fixtures::twins::FixturePreprocessing,
+        label: &'static [u8],
+    ) {
+        let witness = trace_backend.with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
-        let preprocessing = addi_only_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage6b-fr");
+        let mut prover_transcript = Blake2bTranscript::new(label);
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -365,7 +386,7 @@ mod field_inline_round_trip {
         // the upstream replays. The private wire-shape validator is
         // transcript-free and elided; `verify_clear`'s hard checks and the
         // final state equality pin the protocol content.
-        let mut transcript = Blake2bTranscript::new(b"stage6b-fr");
+        let mut transcript = Blake2bTranscript::new(label);
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);

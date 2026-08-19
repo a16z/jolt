@@ -802,10 +802,22 @@ where
                 }
             })?;
             let stage_gamma_powers = bytecode_challenges.stage_gamma_powers();
+            // FR-on, the jolt fold must see the ordinary x-register slots only
+            // (the FR-operand slots ride the side table): see
+            // `field_inline_bytecode::suppress_field_operand_slots`.
+            #[cfg(feature = "field-inline")]
+            let masked_bytecode =
+                crate::stages::field_inline_bytecode::suppress_field_operand_slots(
+                    &full_program.bytecode.bytecode,
+                );
+            #[cfg(feature = "field-inline")]
+            let bytecode_rows: &[jolt_riscv::JoltInstructionRow] = &masked_bytecode;
+            #[cfg(not(feature = "field-inline"))]
+            let bytecode_rows = &full_program.bytecode.bytecode;
             #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
             let mut v =
                 bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
-                    bytecode: &full_program.bytecode.bytecode,
+                    bytecode: bytecode_rows,
                     r_address: &bytecode_r_address,
                     r_cycle: &bytecode_r_cycle,
                     stage_cycle_points: [
