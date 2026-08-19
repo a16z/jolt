@@ -630,35 +630,17 @@ impl CommitmentScheme for AkitaScheme {
         )
     }
 
-    fn open_batch(
-        polynomials: &[&dyn MultilinearPoly<Self::Field>],
+    /// The retained-state batch opening: the hint is the committed group
+    /// object [`Self::commit_one_hot_group`] produced, owning the backend
+    /// witness forms and the Ajtai commit's opening data.
+    fn open_batch_from_hint(
         point: &[Self::Field],
         evaluations: &[Self::Field],
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
-        if polynomials.len() != evaluations.len() {
-            return Err(invalid_batch(format!(
-                "Akita batch opening has {} polynomials but {} evaluations",
-                polynomials.len(),
-                evaluations.len()
-            )));
-        }
-        let statement = evaluations
-            .iter()
-            .map(|evaluation| VerifierOpeningClaim {
-                commitment: hint.commitment.clone(),
-                evaluation: EvaluationClaim::new(point.to_vec(), *evaluation),
-            })
-            .collect();
-        <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
-            setup,
-            statement,
-            polynomials.to_vec(),
-            hint,
-            transcript,
-        )
+        Self::open_one_hot_group_from_hint(point, evaluations, setup, hint, transcript)
     }
 
     fn verify_batch(

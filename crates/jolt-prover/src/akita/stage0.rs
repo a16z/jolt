@@ -45,8 +45,7 @@ where
 pub fn prove_stage0<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    trusted_advice: Option<&PCS::Output>,
-    program_one_hot: Option<&[PCS::Output]>,
+    trusted_advice: Option<&AdviceOneHot<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
@@ -62,28 +61,39 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
-    // Trusted-advice / committed-program presence rides on the external
-    // commitment arguments; require agreement with the public shape so a
-    // mismatch fails here rather than as an opaque downstream sumcheck error.
+    // Trusted-advice presence rides on the external precommitted object;
+    // committed-program presence on the retained prover data. Require
+    // agreement with the public shape so a mismatch fails here rather than
+    // as an opaque downstream sumcheck error.
     if trusted_advice.is_some() == public_io.trusted_advice.is_empty() {
         return Err(ProverError::Unsupported {
-            reason: "trusted-advice commitment presence disagrees with the trusted advice bytes",
+            reason: "trusted-advice object presence disagrees with the trusted advice bytes",
         });
     }
-    if program_one_hot.is_some() != preprocessing.verifier.program.committed().is_some() {
-        return Err(ProverError::Unsupported {
-            reason: "ProgramOneHot commitment presence disagrees with the preprocessing mode",
-        });
-    }
-    // The verifier absorbs the PREPROCESSING-held ProgramOneHot commitment;
-    // a disagreeing argument would only surface as an opaque Fiat-Shamir
-    // divergence at verification, so reject it by name here.
-    if let (Some(argument), Some(committed)) =
-        (program_one_hot, preprocessing.verifier.program.committed())
+    if preprocessing.committed_program.is_some()
+        != preprocessing.verifier.program.committed().is_some()
     {
-        if argument != committed.program_one_hot_commitments.as_slice() {
+        return Err(ProverError::Unsupported {
+            reason: "retained ProgramOneHot presence disagrees with the preprocessing mode",
+        });
+    }
+    // The verifier absorbs the VERIFIER-preprocessing-held ProgramOneHot
+    // commitments; retained objects committed from different data would only
+    // surface as an opaque Fiat-Shamir divergence at verification, so reject
+    // them by name here.
+    if let (Some(data), Some(committed)) = (
+        preprocessing.committed_program.as_ref(),
+        preprocessing.verifier.program.committed(),
+    ) {
+        let objects = &data.program_one_hot.objects;
+        if objects.len() != committed.program_one_hot_commitments.len()
+            || objects
+                .iter()
+                .zip(&committed.program_one_hot_commitments)
+                .any(|(object, commitment)| object.commitment != *commitment)
+        {
             return Err(ProverError::Unsupported {
-                reason: "the ProgramOneHot commitment argument disagrees with the preprocessing",
+                reason: "the retained ProgramOneHot commitments disagree with the preprocessing",
             });
         }
     }
@@ -194,8 +204,12 @@ where
     absorb_packed_commitments(
         &commitment,
         untrusted_advice.as_ref().map(|object| &object.commitment),
-        trusted_advice,
-        program_one_hot.unwrap_or(&[]),
+        trusted_advice.map(|object| &object.commitment),
+        preprocessing
+            .verifier
+            .program
+            .committed()
+            .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
         &mut transcript,
     );
 

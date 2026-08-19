@@ -79,7 +79,8 @@ jobs:
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
       - name: cargo clippy -p jolt-prover-legacy --features akita
         run: cargo clippy -p jolt-prover-legacy --all-targets --features akita
-      # The modular prover's packed (Akita) path and its fixture suites.
+      # The modular prover's packed (Akita) path: lint alone and with
+      # prover-fixtures so the acceptance suites keep compiling.
       - name: cargo clippy -p jolt-prover --features akita
         run: cargo clippy -p jolt-prover --all-targets --features akita
       - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
@@ -92,6 +93,12 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features profiling
       - name: cargo clippy -p jolt-prover --features profiling,allocative
         run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
+      # The packed profile harness: the same bin/smoke test driving
+      # akita::prove. Lint both flamegraph modes, like the Dory pair above.
+      - name: cargo clippy -p jolt-prover --features akita,profiling
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling
+      - name: cargo clippy -p jolt-prover --features akita,profiling,allocative
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,allocative
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
@@ -181,11 +188,6 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover-legacy tests
         run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy
-      # The MODULAR prover's clear-mode acceptance suites: the byte-diff
-      # ratchets asserting wire-for-wire equality with the legacy prover,
-      # plus the engine/driver twins.
-      - name: Run jolt-prover tests with fixtures
-        run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures
 
   trace-equivalence:
     runs-on: ubuntu-latest
@@ -342,14 +344,6 @@ jobs:
       # wire-for-wire equality with the legacy packed prover.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures --test-threads 1
-
-  # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
-  # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
-  # wired into CI yet. It proves through the reference backend, whose naive
-  # RAM kernels retain ~18 GiB regardless of trace length — past
-  # hosted-runner memory. Hook it up as a dedicated job (guest toolchain +
-  # jolt CLI install, mirroring the legacy test jobs above) once an
-  # optimized backend fits runner memory.
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
@@ -589,8 +583,9 @@ jobs:
   # only discovers the ignored stub), so without this lane optimized
   # proof/transcript divergence could merge green. Runs the whole
   # prover-fixtures surface of jolt-prover: the stage-granular muldiv
-  # ratchet, the mode × trace-order whole-proof arms (both backends), and
-  # the {8, 32} wide one-hot geometry arm.
+  # ratchet, the mode × trace-order whole-proof arms (both backends), the
+  # 2^17 chunk-boundary arm (slice-backed + forced chunk walk), and the
+  # {8, 32} wide one-hot geometry arm.
   test-byte-parity:
     runs-on: ubuntu-latest
     name: Byte parity vs legacy prover

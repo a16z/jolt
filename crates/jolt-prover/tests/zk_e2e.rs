@@ -260,7 +260,7 @@ mod support {
     /// stage-8 opening needs.
     pub fn commit_trusted_advice_zk(
         backend: &JoltBackend<Fr, DoryScheme>,
-        witness: &TraceBackend<'_, OwnedTrace>,
+        witness: &TraceBackend<OwnedTrace>,
         memory_layout: &MemoryLayout,
         setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
     ) -> TrustedAdviceCommitment<DoryScheme> {
@@ -372,25 +372,26 @@ mod zk {
             .expect("full program preprocessing");
         let config = support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
         let padded_output = support::pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        let witness = Arc::new(TraceBackend::new(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-        );
+        ));
 
         let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
             verifier: verifier_preprocessing,
             pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(&memory_layout, &[])),
             committed_program: None,
         };
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("modular ZK prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("modular ZK prove");
         (prover_preprocessing.verifier, public_io, proof)
     }
 
@@ -521,12 +522,12 @@ mod zk {
             let config =
                 support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
             let padded_output = support::pad_trace(trace_output, config.trace_length);
-            let witness = TraceBackend::new(
+            let witness = Arc::new(TraceBackend::new(
                 support::witness_config(&config)
                     .include_trusted_advice(true)
                     .include_untrusted_advice(true),
                 JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
-            );
+            ));
 
             let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
                 verifier: verifier_preprocessing,
@@ -541,16 +542,21 @@ mod zk {
                 &prover_preprocessing.pcs_setup,
             );
 
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    Some(&trusted),
-                    &witness,
-                    &public_io,
-                )
-                .expect("modular ZK advice prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&trusted),
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("modular ZK advice prove");
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             assert!(
                 proof.untrusted_advice_commitment.is_some(),
@@ -614,10 +620,10 @@ mod zk {
                 support::derive_config(&trace_output, &memory_layout, &verifier_preprocessing);
             let padded_output = support::pad_trace(trace_output, config.trace_length);
             let witness_program = Arc::new(full_program.clone());
-            let witness = TraceBackend::new(
+            let witness = Arc::new(TraceBackend::new(
                 support::witness_config(&config),
                 JoltVmWitnessInputs::new(&jolt_program, &witness_program, padded_output),
-            );
+            ));
 
             // ZK committed-program preprocessing: hiding chunk/image commits
             // replace legacy's (randomized blinds make byte reuse impossible);
@@ -659,16 +665,21 @@ mod zk {
                 }),
             };
             let backend = JoltBackend::<Fr, DoryScheme>::reference();
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    None,
-                    &witness,
-                    &public_io,
-                )
-                .expect("modular committed ZK prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("modular committed ZK prove");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None)
                 .expect("modular committed ZK proof must verify");
         });

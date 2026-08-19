@@ -14,7 +14,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::reconstruction::prove_reconstruction;
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
-use super::witness::{commit_advice_one_hot, commit_program_one_hot};
+use super::witness::AdviceOneHot;
 use super::JoltAkitaBackend;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -25,7 +25,6 @@ use crate::stages::stage6a::prove_stage6a;
 use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
-use jolt_claims::protocols::jolt::JoltAdviceKind;
 
 /// See [`super::prove`].
 #[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
@@ -33,8 +32,7 @@ pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    trusted_advice: Option<&PCS::Output>,
-    program_one_hot: Option<&[PCS::Output]>,
+    trusted_advice: Option<&AdviceOneHot<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
@@ -57,7 +55,6 @@ where
         preprocessing,
         config,
         trusted_advice,
-        program_one_hot,
         witness,
         public_io,
     )?;
@@ -170,60 +167,21 @@ where
         &mut transcript,
     )?;
 
-    // The auxiliary objects' opening material, transparently re-derived from
-    // the public shapes and cross-checked against the passed precommitted
-    // commitments (a divergence means the caller's object was built from
-    // different data and its opening could never verify).
-    let trusted_object = trusted_advice
-        .map(|commitment| {
-            let object = commit_advice_one_hot::<PCS>(
-                JoltAdviceKind::Trusted,
-                &public_io.trusted_advice,
-                public_io.memory_layout.max_trusted_advice_size as usize,
-            )?;
-            if object.commitment != *commitment {
-                return Err(ProverError::Unsupported {
-                    reason: "the trusted-advice commitment does not match the public advice bytes",
-                });
-            }
-            Ok(object)
-        })
-        .transpose()?;
-    let program_object = program_one_hot
-        .map(|commitments| {
-            let chunk_count = checked
-                .precommitted
-                .bytecode
-                .as_ref()
-                .map(|layout| layout.chunk_count())
-                .ok_or(ProverError::InvariantViolation {
-                    reason: "committed-program mode without a bytecode schedule",
-                })?;
-            let object =
-                commit_program_one_hot::<PCS>(witness.program_preprocessing(), chunk_count)?;
-            if object.objects.len() != commitments.len()
-                || object
-                    .objects
-                    .iter()
-                    .zip(commitments)
-                    .any(|(object, commitment)| object.commitment != *commitment)
-            {
-                return Err(ProverError::Unsupported {
-                    reason: "the program commitments do not match the retained program",
-                });
-            }
-            Ok(object)
-        })
-        .transpose()?;
-
+    // The precommitted auxiliary objects arrive whole — the trusted-advice
+    // object as an argument, the ProgramOneHot objects retained in the
+    // preprocessing — so stage 8 opens them directly; stage 0 already
+    // cross-checked their commitments against the verifier preprocessing.
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
         preprocessing,
         stage0.hint,
         stage0.untrusted_advice.as_ref(),
-        trusted_object.as_ref(),
-        program_object.as_ref(),
+        trusted_advice,
+        preprocessing
+            .committed_program
+            .as_ref()
+            .map(|data| &data.program_one_hot),
         &stage7.clear_output,
         &reconstruction.clear_output,
         &mut transcript,

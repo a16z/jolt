@@ -672,7 +672,6 @@ mod akita_benchmark {
             &prover_preprocessing,
             &config,
             None,
-            None,
             &witness,
             &public_io,
         )

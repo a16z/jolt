@@ -81,10 +81,11 @@ pub trait CommitmentScheme: Commitment {
     ) -> Result<(), OpeningsError>;
 
     /// Commits a group of polynomials as one commitment object whose members
-    /// are opened together at a shared point ([`open_batch`](Self::open_batch)).
-    /// Only schemes with a native commitment group (e.g. Akita's one-hot
-    /// flavor) support this; `layout_digest` is the protocol-owned digest
-    /// binding the ordered member identities.
+    /// are opened together at a shared point
+    /// ([`open_batch_from_hint`](Self::open_batch_from_hint)). Only schemes
+    /// with a native commitment group (e.g. Akita's one-hot flavor) support
+    /// this; `layout_digest` is the protocol-owned digest binding the ordered
+    /// member identities.
     fn commit_batch(
         _polynomials: &[&dyn MultilinearPoly<Self::Field>],
         _layout_digest: [u8; 32],
@@ -96,11 +97,16 @@ pub trait CommitmentScheme: Commitment {
     }
 
     /// Opens every member of one commitment group at a shared point in a
-    /// single proof. Only schemes with a native same-point batch (e.g. Akita)
-    /// support this; the hint must be the group commit's hint covering all
-    /// members.
-    fn open_batch(
-        _polynomials: &[&dyn MultilinearPoly<Self::Field>],
+    /// single proof, from the scheme's retained commit-time state: `hint` is
+    /// the committed object [`commit_batch`](Self::commit_batch) produced and
+    /// owns everything the opening consumes (witness forms plus any
+    /// commit-time opening data, e.g. Akita's Ajtai digit decompositions).
+    /// There is deliberately no polynomial argument — a scheme whose openings
+    /// cannot run from retained state alone does not implement this.
+    // TODO(#1782): fold the retained-state contract into a first-class
+    // committed-object type on this trait instead of the `OpeningHint`
+    // side-channel.
+    fn open_batch_from_hint(
         _point: &[Self::Field],
         _evaluations: &[Self::Field],
         _setup: &Self::ProverSetup,
@@ -108,7 +114,7 @@ pub trait CommitmentScheme: Commitment {
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native same-point batch opening".to_owned(),
+            "this commitment scheme has no retained-state batch opening".to_owned(),
         ))
     }
 
@@ -129,10 +135,11 @@ pub trait CommitmentScheme: Commitment {
 }
 
 /// Transparent derivation of a singleton commitment-object setup from the
-/// object's public shape alone (one polynomial at `num_vars`, fixed seed):
-/// prover and verifier re-derive byte-identical setups independently, so
-/// auxiliary packed objects (advice byte columns, the precommitted program)
-/// need no setup ceremony or transport.
+/// object's public shape alone (one polynomial at `num_vars`, seeded by the
+/// object plan's layout digest): prover and verifier re-derive
+/// byte-identical setups independently, so auxiliary packed objects (advice
+/// byte columns, the precommitted program) need no setup ceremony or
+/// transport.
 pub trait TransparentObjectSetup: CommitmentScheme {
     fn transparent_object_setup(
         num_vars: usize,

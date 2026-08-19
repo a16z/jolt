@@ -1,7 +1,6 @@
 //! Prover-side packed (Akita) witness assembly: the `OneHotTrace` columns
-//! from the witness plane's typed rows, the sparse unit-valued auxiliary
-//! objects (advice byte columns, the precommitted `ProgramOneHot`), and the
-//! shape-only stand-ins the native openings take.
+//! from the witness plane's typed rows and the sparse unit-valued auxiliary
+//! objects (advice byte columns, the precommitted `ProgramOneHot`).
 
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::geometry::WORD_BYTES;
@@ -120,39 +119,6 @@ impl<F: Field> MultilinearPoly<F> for SparseUnitPolynomial<F> {
         for position in &self.one_positions {
             f(*position);
         }
-    }
-}
-
-/// A shape-only stand-in for a committed one-hot column whose witness the
-/// opening hint already owns: the native batch reads witnesses off the hint,
-/// so only the arity and the one-hot contract are consulted.
-pub struct CommittedOneHotShape {
-    pub num_vars: usize,
-}
-
-impl<F: Field> MultilinearPoly<F> for CommittedOneHotShape {
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    #[expect(
-        clippy::unimplemented,
-        reason = "hint-owned witnesses are never evaluated here"
-    )]
-    fn evaluate(&self, _point: &[F]) -> F {
-        unimplemented!("hint-owned one-hot witness is evaluated by the Akita backend")
-    }
-
-    #[expect(
-        clippy::unimplemented,
-        reason = "hint-owned witnesses are never streamed here"
-    )]
-    fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[F])) {
-        unimplemented!("hint-owned one-hot witness is streamed by the Akita backend")
-    }
-
-    fn is_one_hot(&self) -> bool {
-        true
     }
 }
 
@@ -451,7 +417,10 @@ fn commit_failed<F: Field>(error: impl ToString) -> ProverError<F> {
     )
 }
 
-/// One independently opened committed-program prefix object.
+/// One precommitted `ProgramOneHot` commitment object: the object's packed
+/// sub-column witness, its commitment/hint, the shape-exact transparent
+/// setup, and its canonical plan.
+#[derive(Clone)]
 pub struct ProgramOneHotObject<PCS: CommitmentScheme> {
     pub plan: PrefixPackedObjectPlan,
     pub witness: SparseUnitPolynomial<PCS::Field>,
@@ -460,7 +429,12 @@ pub struct ProgramOneHotObject<PCS: CommitmentScheme> {
     pub setup: PCS::ProverSetup,
 }
 
-/// The committed-program bytecode object followed by its optional image object.
+/// The precommitted `ProgramOneHot` commitment objects (committed-program
+/// mode) in canonical order: the bytecode-lane object, then the program-image
+/// object. Built once at preprocessing time and retained in
+/// [`crate::CommittedProgramProverData`], so proving consumes the objects
+/// directly.
+#[derive(Clone)]
 pub struct ProgramOneHot<PCS: CommitmentScheme> {
     pub shape: PrecommittedPackingShape,
     pub objects: Vec<ProgramOneHotObject<PCS>>,

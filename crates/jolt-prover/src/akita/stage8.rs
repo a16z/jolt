@@ -17,7 +17,7 @@ use jolt_verifier::stages::stage8::packed::leaf_claims;
 use jolt_verifier::stages::stage8::reconstruction::ReconstructionClearOutput;
 use jolt_verifier::{CheckedInputs, VerifierError};
 
-use super::witness::{AdviceOneHot, CommittedOneHotShape, ProgramOneHot};
+use super::witness::{AdviceOneHot, ProgramOneHot};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 fn batch_failed<F: Field>(reason: impl ToString) -> ProverError<F> {
@@ -133,18 +133,19 @@ where
         .packing()
         .reduce_claims(&semantic, transcript)
         .map_err(batch_failed::<F>)?;
-    let shape = CommittedOneHotShape {
-        num_vars: plan.packing().packed_num_vars(),
-    };
-    let polynomials: [&dyn MultilinearPoly<F>; 1] = [&shape];
-    let one_hot_trace = PCS::open_batch(
-        &polynomials,
-        physical.point.as_slice(),
-        std::slice::from_ref(&physical.value),
-        &preprocessing.pcs_setup,
-        one_hot_trace_hint,
-        transcript,
+    let one_hot_trace = tracing::info_span!(
+        "CommitmentScheme::open_batch_from_hint",
+        packed_num_vars = plan.packing().packed_num_vars()
     )
+    .in_scope(|| {
+        PCS::open_batch_from_hint(
+            physical.point.as_slice(),
+            std::slice::from_ref(&physical.value),
+            &preprocessing.pcs_setup,
+            one_hot_trace_hint,
+            transcript,
+        )
+    })
     .map_err(batch_failed::<F>)?;
 
     let mut auxiliary = Vec::new();
