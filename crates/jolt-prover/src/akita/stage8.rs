@@ -8,8 +8,9 @@
 //! over the stage-7 and reconstruction outputs, the packed `OneHotTrace`
 //! statement from the promoted `one_hot_trace_packed_claims` assembly, and
 //! each auxiliary object's claims from the promoted `object_leaf_claims`.
-//! The prover-only work is supplying the packed polynomial's hint (stage 0's
-//! commit) and the auxiliary objects' witnesses.
+//! The prover-only work is supplying the packed polynomial's retained
+//! committed object (stage 0's commit hint) and the auxiliary objects'
+//! witnesses.
 
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 use jolt_claims::protocols::jolt::JoltRelationId;
@@ -26,7 +27,7 @@ use jolt_verifier::stages::stage8::packed::{
 use jolt_verifier::stages::stage8::reconstruction::ReconstructionClearOutput;
 use jolt_verifier::{CheckedInputs, VerifierError};
 
-use super::witness::{AdviceOneHot, CommittedOneHotShape, ProgramOneHot};
+use super::witness::{AdviceOneHot, ProgramOneHot};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 fn batch_failed<F: Field>(reason: impl ToString) -> ProverError<F> {
@@ -83,24 +84,20 @@ where
 
     // OneHotTrace: assemble the shared-point packed statement, reduce it to
     // one physical claim on the transcript, and open it natively from the
-    // stage-0 hint (the hint owns the witness; the polynomial argument is a
-    // shape-only stand-in).
+    // retained stage-0 commit state (the hint is the committed object; it
+    // owns the witness forms and the backend opening data).
     let packed_claims =
         one_hot_trace_packed_claims(&plan, chunk_width, &leaves).map_err(ProverError::Verifier)?;
     let packed_claim = plan
         .packing()
         .reduce_claims(&packed_claims, transcript)
         .map_err(batch_failed::<F>)?;
-    let shape = CommittedOneHotShape {
-        num_vars: plan.packing().packed_num_vars(),
-    };
     let one_hot_trace = tracing::info_span!(
-        "CommitmentScheme::open_batch",
-        packed_num_vars = shape.num_vars
+        "CommitmentScheme::open_batch_from_hint",
+        packed_num_vars = plan.packing().packed_num_vars()
     )
     .in_scope(|| {
-        PCS::open_batch(
-            &[&shape as &dyn MultilinearPoly<F>],
+        PCS::open_batch_from_hint(
             packed_claim.point.as_slice(),
             std::slice::from_ref(&packed_claim.value),
             &preprocessing.pcs_setup,

@@ -8,10 +8,11 @@
 //! and its consumed claims come from the verifier's promoted
 //! [`build_reconstruction_parts`], the challenges from the generated batch
 //! draw, and the members prove through the shared generated stage driver.
-//! The member kernels live here (naive tier over the relations' own
-//! expressions): the reconstruction relations exist only on the packed
-//! build, so their `PrepareKernel` impls hang off [`JoltAkitaBackend`]
-//! directly rather than a `jolt-kernels` slot.
+//! The reference member kernels live here (naive tier over the relations'
+//! own expressions) on [`ReferenceReconstruction`], filling
+//! [`JoltAkitaBackend`]'s reconstruction slots — the reconstruction
+//! relations exist only on the packed build, so the slots live on the akita
+//! backend rather than `jolt-kernels`' shared registry.
 
 use std::collections::BTreeMap;
 
@@ -170,10 +171,13 @@ fn byte_decode_table<F: Field>(place_bits: usize) -> Vec<F> {
     table
 }
 
-impl<F, PCS> PrepareKernel<F, UntrustedAdviceReconstructionInstance<F>> for JoltAkitaBackend<F, PCS>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F>,
+/// The reference reconstruction kernels' marker type: fills every
+/// reconstruction slot of [`JoltAkitaBackend::reference`], the packed analog
+/// of `jolt_kernels::ReferenceBackend`.
+pub(super) struct ReferenceReconstruction;
+
+impl<F: Field> PrepareKernel<F, UntrustedAdviceReconstructionInstance<F>>
+    for ReferenceReconstruction
 {
     fn prepare(
         &self,
@@ -255,10 +259,8 @@ where
     }
 }
 
-impl<F, PCS> PrepareKernel<F, TrustedAdviceReconstructionInstance<F>> for JoltAkitaBackend<F, PCS>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F>,
+impl<F: Field> PrepareKernel<F, TrustedAdviceReconstructionInstance<F>>
+    for ReferenceReconstruction
 {
     fn prepare(
         &self,
@@ -290,11 +292,7 @@ where
     }
 }
 
-impl<F, PCS> PrepareKernel<F, ProgramImageReconstructionInstance<F>> for JoltAkitaBackend<F, PCS>
-where
-    F: Field,
-    PCS: CommitmentScheme<Field = F>,
-{
+impl<F: Field> PrepareKernel<F, ProgramImageReconstructionInstance<F>> for ReferenceReconstruction {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -361,10 +359,8 @@ fn fold_word_dimension<F: Field>(cells: &[F], r_word: &[F]) -> Result<Vec<F>, Ke
         .collect())
 }
 
-impl<F, PCS> PrepareKernel<F, BytecodeChunkReconstructionInstance<F>> for JoltAkitaBackend<F, PCS>
-where
-    F: Field + CanonicalBytes,
-    PCS: CommitmentScheme<Field = F>,
+impl<F: Field + CanonicalBytes> PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>
+    for ReferenceReconstruction
 {
     fn prepare(
         &self,

@@ -15,17 +15,21 @@
 //!
 //! Everything here stays generic over the scheme through the `jolt-openings`
 //! seams ([`commit_batch`](CommitmentScheme::commit_batch)/
-//! [`open_batch`](CommitmentScheme::open_batch) for the packed polynomial,
+//! [`open_batch_from_hint`](CommitmentScheme::open_batch_from_hint) for the packed polynomial,
 //! [`TransparentObjectSetup`] for the auxiliary objects); the concrete Akita
 //! types bind at the call site.
 
 use common::jolt_device::JoltDevice;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, Field};
-use jolt_kernels::{JoltBackend, ProofSession, ReferenceBackend};
+use jolt_kernels::{JoltBackend, KernelSlots, PrepareKernel, ProofSession, ReferenceBackend};
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltProof;
+use jolt_verifier::stages::stage8::reconstruction::{
+    BytecodeChunkReconstructionInstance, ProgramImageReconstructionInstance,
+    TrustedAdviceReconstructionInstance, UntrustedAdviceReconstructionInstance,
+};
 use jolt_witness::JoltWitnessPlane;
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
@@ -49,8 +53,10 @@ pub mod witness;
 /// they resolve through the embedded [`JoltBackend`] registry (whose commit
 /// slot is an unreachable stub: the packed path commits one native
 /// `OneHotTrace` group in its own stage 0, never through the streaming
-/// commit seam). The reconstruction-phase members' kernels are implemented
-/// directly on this type (`reconstruction.rs`).
+/// commit seam). The reconstruction-phase members resolve through their own
+/// replaceable slots, exactly like the shared registry's — an optimized
+/// packed backend swaps the boxes, never the type.
+#[derive(KernelSlots)]
 pub struct JoltAkitaBackend<F, PCS>
 where
     F: Field,
@@ -58,6 +64,13 @@ where
 {
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
+    pub untrusted_advice_reconstruction:
+        Box<dyn PrepareKernel<F, UntrustedAdviceReconstructionInstance<F>>>,
+    pub trusted_advice_reconstruction:
+        Box<dyn PrepareKernel<F, TrustedAdviceReconstructionInstance<F>>>,
+    pub bytecode_reconstruction: Box<dyn PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>>,
+    pub program_image_reconstruction:
+        Box<dyn PrepareKernel<F, ProgramImageReconstructionInstance<F>>>,
 }
 
 /// The packed path's stand-in for the streaming witness-commit slot: stage 0
@@ -107,10 +120,16 @@ where
     /// The always-present packed reference registry: every shared stage 1–7
     /// slot naive-served (the reference kernels adapt to the packed
     /// jolt-claims shape at runtime), the commit slot stubbed out (the packed
-    /// commit lives in stage 0), and the reconstruction members implemented
-    /// on this type directly.
+    /// commit lives in stage 0), and every reconstruction slot served by the
+    /// reference reconstruction kernels.
     pub fn reference() -> Self {
         Self {
+            untrusted_advice_reconstruction: Box::new(
+                reconstruction::ReferenceReconstruction,
+            ),
+            trusted_advice_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
+            bytecode_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
+            program_image_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
                 round_scheduler: Box::new(ReferenceBackend),
@@ -181,21 +200,19 @@ where
 /// `OneHotTrace` commitment, reconstruction claims, native same-point joint
 /// opening).
 ///
-/// `trusted_advice` and `program_one_hot` are the precommitted auxiliary
-/// objects' commitments (the latter in canonical object order: bytecode,
-/// then program image), passed exactly when the guest consumes trusted
-/// advice / the preprocessing is committed-program. The objects' opening
-/// material is transparently re-derived at prove time (the byte columns from
-/// the public advice bytes / the retained full program, the setups from the
-/// public shapes seeded by the plan digests) and cross-checked against the
-/// passed commitments. Untrusted advice needs no input — its one-hot column
-/// is committed at prove time from the public advice bytes.
+/// `trusted_advice` is the precommitted trusted-advice object
+/// ([`witness::commit_advice_one_hot`], built out of band like legacy's
+/// `commit_trusted_advice_one_hot`), passed exactly when the guest consumes
+/// trusted advice. The precommitted `ProgramOneHot` objects ride the
+/// preprocessing ([`crate::CommittedProgramProverData::program_one_hot`]);
+/// stage 0 cross-checks their commitments against the verifier
+/// preprocessing fail-closed. Untrusted advice needs no input — its one-hot
+/// column is committed at prove time from the public advice bytes.
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
-    trusted_advice: Option<&PCS::Output>,
-    program_one_hot: Option<&[PCS::Output]>,
+    trusted_advice: Option<&witness::AdviceOneHot<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
@@ -214,7 +231,6 @@ where
         preprocessing,
         config,
         trusted_advice,
-        program_one_hot,
         witness,
         public_io,
     )

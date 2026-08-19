@@ -851,7 +851,6 @@ fn prove_workload(
         &prover_preprocessing,
         &config,
         None,
-        None,
         &witness,
         &public_io,
     )

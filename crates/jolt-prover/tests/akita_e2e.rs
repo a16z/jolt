@@ -248,7 +248,6 @@ mod muldiv {
             &prover_preprocessing,
             &config,
             None,
-            None,
             &witness,
             &public_io,
         )
@@ -381,7 +380,6 @@ mod muldiv {
             &prover_preprocessing,
             &config,
             None,
-            None,
             &witness,
             &public_io,
         )
@@ -448,6 +446,13 @@ mod advice {
         )
         .expect("trusted advice object must commit");
         let trusted_commitment = trusted_object.commitment.clone();
+        let modular_trusted = jolt_prover::akita::witness::commit_advice_one_hot::<AkitaScheme>(
+            jolt_claims::protocols::jolt::JoltAdviceKind::Trusted,
+            &trusted_advice,
+            guest.io_device.memory_layout.max_trusted_advice_size as usize,
+        )
+        .expect("modular trusted advice object must commit");
+        assert_eq!(modular_trusted.commitment, trusted_commitment);
 
         let legacy_prover: AkitaPackedProver<'_> = JoltCpuProver::gen_from_elf(
             &legacy_preprocessing,
@@ -502,8 +507,7 @@ mod advice {
             &backend,
             &prover_preprocessing,
             &config,
-            Some(&trusted_commitment),
-            None,
+            Some(&modular_trusted),
             &witness,
             &public_io,
         )
@@ -587,6 +591,13 @@ mod advice {
         )
         .expect("trusted advice object must commit");
         let trusted_commitment = trusted_object.commitment.clone();
+        let modular_trusted = jolt_prover::akita::witness::commit_advice_one_hot::<AkitaScheme>(
+            jolt_claims::protocols::jolt::JoltAdviceKind::Trusted,
+            &trusted_advice,
+            guest.io_device.memory_layout.max_trusted_advice_size as usize,
+        )
+        .expect("modular trusted advice object must commit");
+        assert_eq!(modular_trusted.commitment, trusted_commitment);
 
         let legacy_prover: AkitaPackedProver<'_> = JoltCpuProver::gen_from_elf(
             &legacy_preprocessing,
@@ -638,8 +649,7 @@ mod advice {
             &backend,
             &prover_preprocessing,
             &config,
-            Some(&trusted_commitment),
-            None,
+            Some(&modular_trusted),
             &witness,
             &public_io,
         )
@@ -711,11 +721,6 @@ mod committed {
             legacy_prover.one_hot_trace_setup_params(),
         )
         .expect("the transparent packed setup must derive");
-        let program_one_hot_commitments: Vec<_> = program_one_hot
-            .objects
-            .iter()
-            .map(|object| object.commitment.clone())
-            .collect();
         let verifier_preprocessing = akita_verifier_preprocessing(
             &legacy_preprocessing,
             verifier_setup,
@@ -723,12 +728,9 @@ mod committed {
         );
 
         // --- Modular side. The full program is rebuilt from the legacy
-        // prover data's retained copy for witness generation. NOTE(port): the
-        // `ProgramOneHot` opening material does not fit the modular
-        // `CommittedProgramProverData` chunk/image shape, so the commitment
-        // rides the `prove_packed` argument until the port defines the packed
-        // committed-program prover-data shape (`committed_program` stays
-        // `None` here).
+        // prover data's retained copy, and the precommitted `ProgramOneHot`
+        // objects are independently re-committed at preprocessing time and
+        // retained in the packed prover data.
         let memory_layout = &public_io.memory_layout;
         let full_program = support::rebuild_full_program(
             legacy_preprocessing
@@ -745,10 +747,17 @@ mod committed {
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &full_program, padded_output),
         );
+        let modular_program_one_hot = jolt_prover::akita::witness::commit_program_one_hot::<
+            AkitaScheme,
+        >(&full_program, bytecode_chunk_count)
+        .expect("modular ProgramOneHot objects must commit");
         let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
             verifier: verifier_preprocessing,
             pcs_setup: object_setup,
-            committed_program: None,
+            committed_program: Some(jolt_prover::CommittedProgramProverData {
+                full: (*full_program).clone(),
+                program_one_hot: modular_program_one_hot,
+            }),
         };
 
         let backend = akita::JoltAkitaBackend::reference();
@@ -757,7 +766,6 @@ mod committed {
             &prover_preprocessing,
             &config,
             None,
-            Some(&program_one_hot_commitments),
             &witness,
             &public_io,
         )
