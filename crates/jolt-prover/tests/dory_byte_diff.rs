@@ -1010,7 +1010,7 @@ mod muldiv {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove");
@@ -1024,7 +1024,7 @@ mod muldiv {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove under chaos traversal");
@@ -1221,7 +1221,7 @@ mod advice_consumer {
                 &prover_preprocessing,
                 &config,
                 Some(&trusted_advice_commitment),
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove");
@@ -1277,7 +1277,7 @@ mod advice_consumer {
                 &prover_preprocessing,
                 &config,
                 Some(&trusted_advice_commitment),
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("optimized-backend prove");
@@ -1450,7 +1450,7 @@ mod committed_muldiv {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove");
@@ -1595,7 +1595,7 @@ mod address_major {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove");
@@ -1796,7 +1796,7 @@ mod advice_committed {
                 &prover_preprocessing,
                 &config,
                 Some(&trusted_advice_commitment),
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove");
@@ -1944,7 +1944,7 @@ mod inline_sha3 {
                 &prover_preprocessing,
                 &config,
                 None,
-                witness,
+                witness.as_ref(),
                 &public_io,
             )
             .expect("modular prove");
@@ -2095,7 +2095,7 @@ mod chunk_boundary {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove");
@@ -2153,7 +2153,7 @@ mod chunk_boundary {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&hidden_witness),
+                hidden_witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove over the re-emulating source");
@@ -2309,7 +2309,7 @@ mod wide_one_hot {
                 &prover_preprocessing,
                 &config,
                 None,
-                Arc::clone(&witness),
+                witness.as_ref(),
                 &public_io,
             )
             .expect("top-level prove");
