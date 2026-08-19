@@ -16,8 +16,10 @@ use tracer::{
         divu::DIVU,
         divuw::DIVUW,
         divw::DIVW,
-        format::{format_i::FormatI, format_r::FormatR, normalize_imm},
+        format::{format_i::FormatI, format_load::FormatLoad, format_r::FormatR, normalize_imm},
+        ld::LD,
         lui::LUI,
+        lw::LW,
         mul::MUL,
         mulh::MULH,
         mulhsu::MULHSU,
@@ -73,8 +75,8 @@ use tracer::{
     utils::virtual_registers::VirtualRegisterAllocator,
 };
 use z3::{
-    ast::{Bool, BV},
-    Params, SatResult, Solver,
+    ast::{Array, Bool, BV},
+    Params, SatResult, Solver, Sort,
 };
 
 use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
@@ -127,6 +129,11 @@ fn scale_imm_u64(imm: u64, cpu: &SymbolicCpu) -> u64 {
 struct SymbolicCpu {
     var_prefix: String,
     x: [BV; REGISTER_COUNT as usize],
+    /// Byte-addressed RAM, one doubleword per address. The load sequences
+    /// only ever read at 8-byte-aligned addresses, so no cell overlap is
+    /// modeled. Clones share the same array constant, so an expected-model
+    /// read at the same address yields the same value as the sequence's.
+    ram: Array,
     advice_vars: Vec<BV>,
     asserts: Vec<Bool>,
     bv_bits: u32,
@@ -144,14 +151,25 @@ impl SymbolicCpu {
             .try_into()
             .unwrap();
         let asserts = vec![regs[0].eq(BV::from_u64(0, bv_bits))];
+        let ram = Array::new_const(
+            format!("{var_prefix}_ram"),
+            &Sort::bitvector(bv_bits),
+            &Sort::bitvector(bv_bits),
+        );
         SymbolicCpu {
             var_prefix: var_prefix.to_string(),
             x: regs,
+            ram,
             advice_vars: Vec::new(),
             asserts, // x0 is always 0
             bv_bits,
             word_bits,
         }
+    }
+
+    fn load_doubleword(&self, addr: &BV) -> BV {
+        // The array's range sort is BV, so the downcast cannot fail.
+        self.ram.select(addr).as_bv().unwrap()
     }
 
     fn bv_u64(&self, v: u64) -> BV {
@@ -260,6 +278,10 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu.sign_extend(&(rs1 & rs2.bvnot()));
+        }
+        Instruction::LD(LD { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.load_doubleword(&(rs1 + operands.imm));
         }
         Instruction::LUI(LUI { operands, .. }) => {
             let imm = normalize_imm(operands.imm);
@@ -611,6 +633,7 @@ fn test_consistency(instr: &Instruction) {
     for (x1, x2) in cpu1.x.iter().zip(cpu2.x.iter()) {
         solver += &x1.eq(x2);
     }
+    solver += &cpu1.ram.eq(&cpu2.ram);
 
     let seq = instr.inline_sequence(&allocator);
     for instr in &seq {
@@ -805,13 +828,26 @@ test_sequence!(
         cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
     }
 );
-// Memory operations are not tested at the moment
+// Memory operations below are not modeled yet (each needs an expected-model
+// closure over `SymbolicCpu::load_doubleword`, like LW's):
 // test_sequence!(LB, FormatLoad);
 // test_sequence!(LBU, FormatLoad);
 // test_sequence!(LH, FormatLoad);
 // test_sequence!(LHU, FormatLoad);
-// test_sequence!(LW, FormatLoad);
 // test_sequence!(LWU, FormatLoad);
+test_sequence!(LW, FormatLoad, |instr: &LW, cpu| {
+    // rd = sign-extended word lane of the containing aligned doubleword. The
+    // lane arithmetic mirrors the byte-addressed RV64 layout at any model
+    // width: the aligned base is `ea & !7`, bit 2 of `ea` selects the lane,
+    // and the sequence's word-alignment assert covers bits 0-1.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let hi = dword.extract(cpu.bv_bits - 1, cpu.word_bits);
+    let lo = dword.extract(cpu.word_bits - 1, 0);
+    let lane = ea.extract(2, 2).eq(1).ite(&hi, &lo);
+    cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&lane);
+});
 test_sequence!(
     #[ignore = "solver-heavy under the default 64-bit Z3 model"]
     MULH,
