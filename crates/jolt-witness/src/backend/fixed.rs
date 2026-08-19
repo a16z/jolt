@@ -16,6 +16,83 @@ pub(crate) const FIXED_LABEL: &str = "fixed";
 pub struct FixedBackend<F> {
     columns: HashMap<JoltPolynomialId, (Shape, Vec<F>)>,
     committed_order: Vec<JoltCommittedPolynomial>,
+    #[cfg(feature = "field-inline")]
+    field_inline: Option<FixedFieldInline<F>>,
+}
+
+/// Stored field-inline columns behind the [`FixedBackend`]: the composed
+/// spartan kernels' synthetic parity tests load arbitrary FR column values
+/// here. Serves the oracle's table surface plus the DEFAULT sparse
+/// spartan-row derivation; the register replay rows are not modeled (this is
+/// a spartan-only fixture — the register kernels' fixtures are trace-backed).
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, Default)]
+pub struct FixedFieldInline<F> {
+    columns:
+        HashMap<jolt_claims::protocols::field_inline::FieldInlinePolynomialId, (Shape, Vec<F>)>,
+}
+
+#[cfg(feature = "field-inline")]
+impl<F> FixedFieldInline<F> {
+    pub fn insert(
+        &mut self,
+        id: jolt_claims::protocols::field_inline::FieldInlinePolynomialId,
+        shape: Shape,
+        values: Vec<F>,
+    ) -> Result<(), WitnessError> {
+        if values.len() != shape.rows() {
+            return Err(WitnessError::InvalidDimensions {
+                label: FIXED_LABEL,
+                reason: format!(
+                    "field-inline column {id:?} has {} values, shape declares {}",
+                    values.len(),
+                    shape.rows()
+                ),
+            });
+        }
+        let _ = self.columns.insert(id, (shape, values));
+        Ok(())
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl<F: Field> crate::field_inline::FieldInlineRegisterReadWriteRows<F> for FixedFieldInline<F> {
+    fn field_inline_register_read_write_rows(
+        &self,
+    ) -> Result<Vec<crate::field_inline::FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
+        Err(WitnessError::UnavailableView {
+            label: "fixed field-inline register replay rows",
+        })
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl<F: Field> crate::field_inline::FieldInlineWitnessOracle<F> for FixedFieldInline<F> {
+    fn shape(
+        &self,
+        id: jolt_claims::protocols::field_inline::FieldInlinePolynomialId,
+    ) -> Result<Shape, WitnessError> {
+        self.columns
+            .get(&id)
+            .map(|(shape, _)| *shape)
+            .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
+    }
+
+    fn oracle_table(
+        &self,
+        id: jolt_claims::protocols::field_inline::FieldInlinePolynomialId,
+    ) -> Result<Vec<F>, WitnessError> {
+        self.columns
+            .get(&id)
+            .map(|(_, values)| values.clone())
+            .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
+    }
+
+    fn committed_order(
+        &self,
+    ) -> Vec<jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial> {
+        Vec::new()
+    }
 }
 
 impl<F> FixedBackend<F> {
@@ -23,6 +100,8 @@ impl<F> FixedBackend<F> {
         Self {
             columns: HashMap::new(),
             committed_order: Vec::new(),
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
         }
     }
 
@@ -56,6 +135,12 @@ impl<F> FixedBackend<F> {
             .get(&id)
             .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
     }
+
+    /// Attach a field-inline view (see [`FixedFieldInline`]).
+    #[cfg(feature = "field-inline")]
+    pub fn set_field_inline(&mut self, field_inline: FixedFieldInline<F>) {
+        self.field_inline = Some(field_inline);
+    }
 }
 
 impl<F: Field> JoltWitnessOracle<F> for FixedBackend<F> {
@@ -69,6 +154,13 @@ impl<F: Field> JoltWitnessOracle<F> for FixedBackend<F> {
 
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
         Ok(self.committed_order.clone())
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn field_inline(&self) -> Option<&dyn crate::field_inline::FieldInlineWitnessOracle<F>> {
+        self.field_inline
+            .as_ref()
+            .map(|view| view as &dyn crate::field_inline::FieldInlineWitnessOracle<F>)
     }
 }
 

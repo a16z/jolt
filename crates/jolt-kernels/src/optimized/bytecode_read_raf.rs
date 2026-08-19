@@ -150,14 +150,16 @@ impl PcRow {
     }
 }
 
-/// The five per-stage cycle-eq pushforwards onto the bytecode address domain,
-/// all stages in one trace walk over the split-eq two-table decomposition.
+/// The per-point cycle-eq pushforwards onto the bytecode address domain —
+/// the five ordinary stages (plus, FR-on, the two FR cycle sub-points), all
+/// in one trace walk over the split-eq two-table decomposition.
 fn stage_pushforwards<F: Field>(
-    stage_cycle_points: &[Vec<F>; 5],
+    cycle_points: &[&[F]],
     rows: &[PcRow],
     addresses: usize,
-) -> [Vec<F>; 5] {
-    let log_t = stage_cycle_points[0].len();
+) -> Vec<Vec<F>> {
+    let count = cycle_points.len();
+    let log_t = cycle_points.first().map_or(0, |point| point.len());
     let lo_bits = log_t / 2;
     let hi_bits = log_t - lo_bits;
     let in_len = 1usize << lo_bits;
@@ -165,12 +167,18 @@ fn stage_pushforwards<F: Field>(
 
     // Big-endian points split as eq(r, j) = eq(r[..hi], j_hi) · eq(r[hi..], j_lo)
     // with j = (j_hi << lo_bits) | j_lo.
-    let e_hi: [Vec<F>; 5] = std::array::from_fn(|s| eq_table(&stage_cycle_points[s][..hi_bits]));
-    let e_lo: [Vec<F>; 5] = std::array::from_fn(|s| eq_table(&stage_cycle_points[s][hi_bits..]));
+    let e_hi: Vec<Vec<F>> = cycle_points
+        .iter()
+        .map(|point| eq_table(&point[..hi_bits]))
+        .collect();
+    let e_lo: Vec<Vec<F>> = cycle_points
+        .iter()
+        .map(|point| eq_table(&point[hi_bits..]))
+        .collect();
 
-    let block = |range: Range<usize>| -> [Vec<F>; 5] {
-        let mut partial: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
-        let mut inner: [Vec<F>; 5] = std::array::from_fn(|_| vec![F::zero(); addresses]);
+    let block = |range: Range<usize>| -> Vec<Vec<F>> {
+        let mut partial: Vec<Vec<F>> = (0..count).map(|_| vec![F::zero(); addresses]).collect();
+        let mut inner: Vec<Vec<F>> = (0..count).map(|_| vec![F::zero(); addresses]).collect();
         let mut touched: Vec<usize> = Vec::with_capacity(in_len);
         // Exact membership marker for `touched`: a field-value test
         // (`inner[0][pc].is_zero()`) is not one — zero eq weights or
@@ -218,7 +226,7 @@ fn stage_pushforwards<F: Field>(
             .step_by(chunk)
             .map(|start| block(start..(start + chunk).min(out_len)))
             .reduce(
-                || std::array::from_fn(|_| vec![F::zero(); addresses]),
+                || (0..count).map(|_| vec![F::zero(); addresses]).collect(),
                 |mut left, right| {
                     for (left, right) in left.iter_mut().zip(right) {
                         for (left, right) in left.iter_mut().zip(right) {
@@ -262,8 +270,20 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             });
         }
         let stage_gammas = inputs.challenges.stage_gamma_powers();
+        // FR-on, the jolt fold sees the ordinary x-register slots only (the
+        // FR-operand slots ride the side table) — the same mask the
+        // reference kernel and the verifier's own fold apply.
+        #[cfg(feature = "field-inline")]
+        let masked_bytecode =
+            jolt_verifier::stages::field_inline_bytecode::suppress_field_operand_slots(
+                &program.bytecode.bytecode,
+            );
+        #[cfg(feature = "field-inline")]
+        let bytecode_rows: &[jolt_riscv::JoltInstructionRow] = &masked_bytecode;
+        #[cfg(not(feature = "field-inline"))]
+        let bytecode_rows = &program.bytecode.bytecode;
         let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
-            bytecode: &program.bytecode.bytecode,
+            bytecode: bytecode_rows,
             register_read_write_point: &relation.register_read_write_point()
                 [..REGISTER_ADDRESS_BITS],
             register_val_evaluation_point: &relation.register_val_evaluation_point()
@@ -295,8 +315,91 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
 
         let gamma_powers: [F; 8] = gamma_powers_array(inputs.challenges.gamma);
 
-        let pushforwards =
-            stage_pushforwards(stage_cycle_points, &rows, addresses).map(Polynomial::new);
+        // The FR extension's fold geometry: the side-table row values under
+        // the extended per-stage gamma powers, each leg over its own cycle
+        // binding (see the reference kernel's `FieldInlineAddressLegs`).
+        #[cfg(feature = "field-inline")]
+        let (fr_values, fr_read_write_cycle, fr_val_evaluation_cycle) = {
+            use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
+            use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
+
+            let geometry = relation.field_inline_geometry()?;
+            let table = &geometry.table;
+            if table.rows.len() != addresses {
+                return Err(KernelError::TableSizeMismatch {
+                    table: "field-inline bytecode side table".to_owned(),
+                    expected: addresses,
+                    got: table.rows.len(),
+                });
+            }
+            if geometry.read_write_point.len() != FIELD_REGISTERS_LOG_K + dimensions.log_t()
+                || geometry.val_evaluation_point.len() != FIELD_REGISTERS_LOG_K + dimensions.log_t()
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason: "FR opening point has the wrong variable count",
+                });
+            }
+            let (read_write_address, read_write_cycle) =
+                geometry.read_write_point.split_at(FIELD_REGISTERS_LOG_K);
+            let (val_evaluation_address, val_evaluation_cycle) = geometry
+                .val_evaluation_point
+                .split_at(FIELD_REGISTERS_LOG_K);
+            let gammas =
+                jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(
+                    inputs.challenges,
+                );
+            let fr_rows = field_inline_bytecode::read_raf_stage_values(
+                field_inline_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
+                    bytecode: &table.rows,
+                    field_register_read_write_point: read_write_address,
+                    field_register_val_evaluation_point: val_evaluation_address,
+                    stage1_gammas: &gammas.stage1,
+                    stage4_gammas: &gammas.stage4,
+                    stage5_gammas: &gammas.stage5,
+                },
+            );
+            let column =
+                |s: usize| Polynomial::new(fr_rows.iter().map(|row| row[s]).collect::<Vec<F>>());
+            (
+                [column(0), column(3), column(4)],
+                read_write_cycle.to_vec(),
+                val_evaluation_cycle.to_vec(),
+            )
+        };
+
+        // One walk computes every pushforward: the five ordinary stages plus
+        // (FR-on) the two FR cycle sub-points; the FR stage-1 leg shares the
+        // ordinary stage-1 pushforward (identical cycle binding).
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+        let mut points: Vec<&[F]> = stage_cycle_points
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        #[cfg(feature = "field-inline")]
+        points.extend([
+            fr_read_write_cycle.as_slice(),
+            fr_val_evaluation_cycle.as_slice(),
+        ]);
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+        let mut pushforwards = stage_pushforwards(&points, &rows, addresses);
+        #[cfg(feature = "field-inline")]
+        let fr_pushforwards: [Polynomial<F>; 3] = {
+            let missing = || KernelError::InvariantViolation {
+                reason: "FR pushforwards missing from the shared walk",
+            };
+            let val_evaluation = Polynomial::new(pushforwards.pop().ok_or_else(missing)?);
+            let read_write = Polynomial::new(pushforwards.pop().ok_or_else(missing)?);
+            let stage1 = Polynomial::new(pushforwards.first().cloned().ok_or_else(missing)?);
+            [stage1, read_write, val_evaluation]
+        };
+        let pushforwards: [Polynomial<F>; 5] = pushforwards
+            .into_iter()
+            .map(Polynomial::new)
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "pushforward count drifted from the stage point list",
+            })?;
         let values: [Polynomial<F>; 5] = std::array::from_fn(|s| {
             Polynomial::new(stage_values.iter().map(|row| row[s]).collect())
         });
@@ -324,7 +427,64 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             int_table,
             entry_trace: one_hot(rows[0].push_pc as usize),
             entry_expected: one_hot(entry_bytecode_index),
+            #[cfg(feature = "field-inline")]
+            field_inline: FieldInlineAddressLegs {
+                weights: [gamma_powers[0], gamma_powers[3], gamma_powers[4]],
+                pushforwards: fr_pushforwards,
+                values: fr_values,
+            },
         }))
+    }
+}
+
+/// The address phase's FR extension: three additional
+/// `weight · pushforward · row-table` products over the bytecode address
+/// domain, mirroring the reference kernel's legs — the stage-1 op-flag leg
+/// (over the ordinary stage-1 cycle binding), the stage-4 leg (over the FR
+/// read-write cycle sub-point), the stage-5 leg (over the FR val-evaluation
+/// cycle sub-point), at the ordinary γ⁰/γ³/γ⁴ stage weights.
+#[cfg(feature = "field-inline")]
+struct FieldInlineAddressLegs<F: Field> {
+    weights: [F; 3],
+    pushforwards: [Polynomial<F>; 3],
+    values: [Polynomial<F>; 3],
+}
+
+#[cfg(feature = "field-inline")]
+impl<F: Field> FieldInlineAddressLegs<F> {
+    fn bind(&mut self, challenge: F) {
+        bind_all(
+            self.pushforwards.iter_mut().chain(self.values.iter_mut()),
+            challenge,
+        );
+    }
+
+    /// The legs' `[t = 0, t = 2]` contributions summed over group `y`.
+    #[inline]
+    fn group_evals(&self, y: usize) -> [F; 2] {
+        let mut out = [F::zero(); 2];
+        for (weight, (pushforward, value)) in self
+            .weights
+            .iter()
+            .zip(self.pushforwards.iter().zip(&self.values))
+        {
+            let (f_lo, f_hi) = pair(pushforward, y);
+            let (v_lo, v_hi) = pair(value, y);
+            out[0] += *weight * f_lo * v_lo;
+            out[1] += *weight * (f_hi + f_hi - f_lo) * (v_hi + v_hi - v_lo);
+        }
+        out
+    }
+
+    /// The legs' contribution to the fully bound intermediate.
+    fn bound_term(&self) -> F {
+        self.weights
+            .iter()
+            .zip(self.pushforwards.iter().zip(&self.values))
+            .map(|(weight, (pushforward, value))| {
+                *weight * pushforward.evals()[0] * value.evals()[0]
+            })
+            .sum()
     }
 }
 
@@ -343,11 +503,23 @@ struct AddressKernel<F: Field> {
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
+    #[cfg(feature = "field-inline")]
+    field_inline: FieldInlineAddressLegs<F>,
 }
 
 #[cfg(feature = "allocative")]
 crate::optimized::impl_field_allocative!(AddressKernel, |kernel| {
     use crate::backend::poly_heap_bytes;
+    #[cfg(feature = "field-inline")]
+    let field_inline = kernel
+        .field_inline
+        .pushforwards
+        .iter()
+        .chain(&kernel.field_inline.values)
+        .map(poly_heap_bytes)
+        .sum::<usize>();
+    #[cfg(not(feature = "field-inline"))]
+    let field_inline = 0;
     kernel
         .pushforwards
         .iter()
@@ -357,6 +529,7 @@ crate::optimized::impl_field_allocative!(AddressKernel, |kernel| {
         + poly_heap_bytes(&kernel.int_table)
         + poly_heap_bytes(&kernel.entry_trace)
         + poly_heap_bytes(&kernel.entry_expected)
+        + field_inline
 });
 
 impl<F: Field> AddressKernel<F> {
@@ -372,6 +545,8 @@ impl<F: Field> AddressKernel<F> {
                 ]),
             challenge,
         );
+        #[cfg(feature = "field-inline")]
+        self.field_inline.bind(challenge);
         self.progress.advance();
     }
 
@@ -395,6 +570,12 @@ impl<F: Field> AddressKernel<F> {
         let (e_lo, e_hi) = pair(&self.entry_expected, y);
         out[0] += self.entry_weight * t_lo * e_lo;
         out[1] += self.entry_weight * (t_hi + t_hi - t_lo) * (e_hi + e_hi - e_lo);
+        #[cfg(feature = "field-inline")]
+        {
+            let legs = self.field_inline.group_evals(y);
+            out[0] += legs[0];
+            out[1] += legs[1];
+        }
         out
     }
 }
@@ -445,6 +626,10 @@ impl<F: Field> SumcheckKernel<F> for AddressKernel<F> {
             intermediate += self.stage_weights[s]
                 * self.pushforwards[s].evals()[0]
                 * (self.values[s].evals()[0] + self.raf_weights[s] * bound_int);
+        }
+        #[cfg(feature = "field-inline")]
+        {
+            intermediate += self.field_inline.bound_term();
         }
         let val_stages = if self.committed_program {
             self.values.iter().map(|table| table.evals()[0]).collect()
@@ -504,7 +689,12 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
         // is linear in one cycle table, so
         //   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) + γ⁷·entry·[j = 0]
         // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
-        // stage-1 cycle point, SpartanShiftRaf the stage-3 one).
+        // stage-1 cycle point, SpartanShiftRaf the stage-3 one). FR-on the
+        // composed FR terms pre-fold in too: the FR stage-1 leg shares the
+        // ordinary stage-1 cycle binding (its fold merges into the stage-0
+        // weight), and the stage-4/5 legs ride the FR read-write /
+        // val-evaluation cycle sub-points at γ³/γ⁴ (the reference kernel's
+        // composed pre-fold, term for term).
         let stage_values = relation.stage_values_at_r_address()?;
         let gamma_powers: [F; 8] = gamma_powers_array(inputs.challenges.gamma);
         let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
@@ -512,8 +702,76 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
         stage_weights[0] += gamma_powers[5] * int_at_r_address;
         stage_weights[2] += gamma_powers[6] * int_at_r_address;
 
+        let eq_address: Vec<F> = eq_table(r_address);
+        #[cfg(feature = "field-inline")]
+        let (fr_folds, fr_read_write_cycle, fr_val_evaluation_cycle) = {
+            use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
+            use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
+
+            let fold = relation.field_inline_fold()?;
+            let addresses = 1usize << dimensions.log_k();
+            if fold.table.rows.len() != addresses {
+                return Err(KernelError::TableSizeMismatch {
+                    table: "field-inline bytecode side table".to_owned(),
+                    expected: addresses,
+                    got: fold.table.rows.len(),
+                });
+            }
+            if fold.read_write_address.len() != FIELD_REGISTERS_LOG_K
+                || fold.val_evaluation_address.len() != FIELD_REGISTERS_LOG_K
+                || fold.read_write_cycle.len() != dimensions.log_t()
+                || fold.val_evaluation_cycle.len() != dimensions.log_t()
+            {
+                return Err(KernelError::InvariantViolation {
+                    reason: "FR bytecode fold points have the wrong variable counts",
+                });
+            }
+            let fr_rows = field_inline_bytecode::read_raf_stage_values(
+                field_inline_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
+                    bytecode: &fold.table.rows,
+                    field_register_read_write_point: &fold.read_write_address,
+                    field_register_val_evaluation_point: &fold.val_evaluation_address,
+                    stage1_gammas: &fold.gammas.stage1,
+                    stage4_gammas: &fold.gammas.stage4,
+                    stage5_gammas: &fold.gammas.stage5,
+                },
+            );
+            let mut fr_folds = [F::zero(); 5];
+            for (row, eq) in fr_rows.iter().zip(&eq_address) {
+                for (fr_fold, value) in fr_folds.iter_mut().zip(row) {
+                    *fr_fold += *value * *eq;
+                }
+            }
+            (
+                fr_folds,
+                fold.read_write_cycle.clone(),
+                fold.val_evaluation_cycle.clone(),
+            )
+        };
+        #[cfg(feature = "field-inline")]
+        {
+            stage_weights[0] += fr_folds[0];
+        }
+
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+        let mut terms: Vec<(&[F], F)> = stage_cycle_points
+            .iter()
+            .map(Vec::as_slice)
+            .zip(stage_weights)
+            .collect();
+        #[cfg(feature = "field-inline")]
+        terms.extend([
+            (
+                fr_read_write_cycle.as_slice(),
+                gamma_powers[3] * fr_folds[3],
+            ),
+            (
+                fr_val_evaluation_cycle.as_slice(),
+                gamma_powers[4] * fr_folds[4],
+            ),
+        ]);
         let mut combined = vec![F::zero(); cycles];
-        for (point, weight) in stage_cycle_points.iter().zip(stage_weights) {
+        for (point, weight) in terms {
             if point.len() != dimensions.log_t() {
                 return Err(KernelError::InvariantViolation {
                     reason: "bytecode stage cycle point has the wrong variable count",
@@ -531,7 +789,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeRe
                 .zip(scaled.iter())
                 .for_each(|(acc, term)| *acc += *term);
         }
-        let entry_scalar = eq_table(r_address)[relation.entry_bytecode_index()];
+        let entry_scalar = eq_address[relation.entry_bytecode_index()];
         combined[0] += gamma_powers[7] * entry_scalar;
 
         let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
@@ -754,8 +1012,9 @@ mod tests {
             }
             out
         });
-        let got = stage_pushforwards(&stage_cycle_points, &rows, addresses);
-        assert_eq!(got, expected);
+        let points: Vec<&[Fr]> = stage_cycle_points.iter().map(Vec::as_slice).collect();
+        let got = stage_pushforwards(&points, &rows, addresses);
+        assert_eq!(got, expected.to_vec());
     }
 
     fn run_pair(committed_program: bool) {

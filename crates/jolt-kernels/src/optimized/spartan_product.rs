@@ -13,7 +13,10 @@
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::product::{
+    composed_remainder_factor_contributions, FieldProductLaneFactors,
+};
 use jolt_claims::protocols::jolt::geometry::spartan::{
     branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
@@ -25,13 +28,19 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::signed::{S128, S192, S256};
 use jolt_field::{
-    Field, SignedProductAccumulator as _, SignedScalarAccumulator as _,
-    WithSignedProductAccumulator, WithSmallScalarAccumulator,
+    AdditiveAccumulator as _, Field, RingAccumulator as _, SignedProductAccumulator as _,
+    SignedScalarAccumulator as _, WithSignedProductAccumulator, WithSmallScalarAccumulator,
 };
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+// The COMPOSED jolt-r1cs lane domain (feature-aware): 3 rv64 lanes FR-off,
+// the FR-extended 5-lane domain under `field-inline` — the same source the
+// reference kernel folds with.
+#[cfg(feature = "field-inline")]
+use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
+use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -40,6 +49,8 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+#[cfg(feature = "field-inline")]
+use jolt_witness::field_inline::FieldInlineSpartanRow;
 use jolt_witness::witnesses::{
     InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, RightInstructionInput,
 };
@@ -56,7 +67,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-const DOMAIN: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
+const DOMAIN: usize = SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
@@ -109,8 +120,12 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
 
 impl SpartanProductRow {
     /// `left(node) · right(node)` for one cycle at every extended node, as exact
-    /// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
-    /// (the i128 lane), product `< 2^196` — inside `S256`.
+    /// integers: `|left| < 2^74` (two u64 lanes and a flag, times composed
+    /// coefficients ≤ 2^7), `|right| < 2^137` (the i128 lane), product
+    /// `< 2^211` — inside `S256`. FR-INACTIVE cycles only: the FR lanes'
+    /// factors are all zero there, so the three rv64 coefficient slots below
+    /// are the whole composed sum; FR-active cycles route through
+    /// [`Self::field_extended_products`].
     /// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
     /// loop (its integer Lagrange build is not free at `2^23` calls).
     fn extended_products(
@@ -140,6 +155,60 @@ impl SpartanProductRow {
         }
         out
     }
+
+    /// The field twin of [`Self::extended_products`] for FR-ACTIVE cycles:
+    /// the composed left/right factor forms with the FR lane contributions
+    /// from the pinned jolt-claims composed-lane helper (the same fold the
+    /// verifier's composed checks perform).
+    #[cfg(feature = "field-inline")]
+    fn field_extended_products<F: Field>(
+        &self,
+        fr: &FieldInlineSpartanRow<F>,
+        coefficients: &[[F; DOMAIN]; EXTENDED_SIZE],
+    ) -> [F; EXTENDED_SIZE] {
+        let factors = FieldProductLaneFactors {
+            rs1_value: fr.rs1_value,
+            rs2_value: fr.rs2_value,
+            rd_value: fr.rd_value,
+        };
+        let left_lanes = [
+            F::from_u64(self.left_instruction_input.0),
+            F::from_u64(self.lookup_output.0),
+            F::from_bool(self.jump_flag.0),
+        ];
+        let right_lanes = [
+            F::from_i128(self.right_instruction_input.0),
+            F::from_bool(self.branch_flag.0),
+            F::one() - F::from_bool(self.next_is_noop.0),
+        ];
+        let mut out = [F::zero(); EXTENDED_SIZE];
+        for (slot, weights) in out.iter_mut().zip(coefficients) {
+            let mut left = F::zero();
+            let mut right = F::zero();
+            for ((&weight, &left_lane), &right_lane) in
+                weights.iter().zip(&left_lanes).zip(&right_lanes)
+            {
+                left += weight * left_lane;
+                right += weight * right_lane;
+            }
+            #[expect(clippy::expect_used, reason = "the composed weights span DOMAIN nodes")]
+            let (fr_left, fr_right) = composed_remainder_factor_contributions(
+                weights,
+                SPARTAN_PRODUCT_BASE_LANES,
+                &factors,
+            )
+            .expect("composed product weights cover the FR lanes");
+            *slot = (left + fr_left) * (right + fr_right);
+        }
+        out
+    }
+}
+
+/// The field images of [`extension_coefficients`], for the FR-active cycles'
+/// field path.
+#[cfg(feature = "field-inline")]
+fn extension_coefficient_fields<F: Field>() -> [[F; DOMAIN]; EXTENDED_SIZE] {
+    extension_coefficients().map(|coefficients| coefficients.map(F::from_i64))
 }
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
@@ -148,13 +217,24 @@ struct SpartanProductCarry<F: Field> {
     log_t: usize,
     tau_low: Vec<F>,
     rows: BundleStore<F, SpartanProductRow>,
+    /// The FR-active cycles' composed column values, sparse and sorted by
+    /// cycle (only the three value columns feed the product lanes).
+    #[cfg(feature = "field-inline")]
+    fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     t1_values: Vec<F>,
 }
 
 #[cfg(feature = "allocative")]
 crate::optimized::impl_field_allocative!(SpartanProductCarry, |carry| {
     use crate::backend::vec_heap_bytes;
-    vec_heap_bytes(&carry.tau_low) + carry.rows.heap_bytes() + vec_heap_bytes(&carry.t1_values)
+    #[cfg(feature = "field-inline")]
+    let fr_rows = vec_heap_bytes(&carry.fr_rows);
+    #[cfg(not(feature = "field-inline"))]
+    let fr_rows = 0;
+    vec_heap_bytes(&carry.tau_low)
+        + carry.rows.heap_bytes()
+        + vec_heap_bytes(&carry.t1_values)
+        + fr_rows
 });
 
 /// The stage-2 product uni-skip front. `prepare` runs on `τ_low` only;
@@ -163,21 +243,29 @@ pub struct OptimizedProductUniskip;
 
 impl OptimizedProductUniskip {
     /// The post-collection half of [`UniskipKernel::prepare`], shared with
-    /// the in-module parity tests (FR-off with them — the optimized tier is
-    /// rv64-only).
-    #[cfg(all(test, not(feature = "field-inline")))]
+    /// the in-module parity tests (which construct rows — and FR-on, the
+    /// sparse FR rows — directly).
+    #[cfg(test)]
     fn prepare_from_rows<F: Field>(
         session: &mut ProofSession,
         log_t: usize,
         tau_low: &[F],
         rows: Vec<SpartanProductRow>,
+        #[cfg(feature = "field-inline")] fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     ) -> Result<(), KernelError<F>> {
         if rows.len() != 1usize << log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "Spartan product row count disagrees with log_t",
             });
         }
-        Self::prepare_from_store(session, log_t, tau_low, BundleStore::Retained(rows))
+        Self::prepare_from_store(
+            session,
+            log_t,
+            tau_low,
+            BundleStore::Retained(rows),
+            #[cfg(feature = "field-inline")]
+            fr_rows,
+        )
     }
 
     /// The store-generic half of `prepare`.
@@ -186,17 +274,25 @@ impl OptimizedProductUniskip {
         log_t: usize,
         tau_low: &[F],
         rows: BundleStore<F, SpartanProductRow>,
+        #[cfg(feature = "field-inline")] fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     ) -> Result<(), KernelError<F>> {
         if tau_low.len() != log_t {
             return Err(KernelError::InvariantViolation {
                 reason: "Spartan product tau_low must carry log_t challenges",
             });
         }
-        let t1_values = Self::extended_t1_values(&rows.access()?, tau_low)?;
+        let t1_values = Self::extended_t1_values(
+            &rows.access()?,
+            tau_low,
+            #[cfg(feature = "field-inline")]
+            &fr_rows,
+        )?;
         session.park(SpartanProductCarry {
             log_t,
             tau_low: tau_low.to_vec(),
             rows,
+            #[cfg(feature = "field-inline")]
+            fr_rows,
             t1_values,
         });
         Ok(())
@@ -207,6 +303,7 @@ impl OptimizedProductUniskip {
     fn extended_t1_values<F: Field>(
         rows: &BundleAccess<'_, SpartanProductRow>,
         tau_low: &[F],
+        #[cfg(feature = "field-inline")] fr_rows: &[(usize, FieldInlineSpartanRow<F>)],
     ) -> Result<Vec<F>, WitnessError> {
         let split = tau_low.len() / 2;
         let (out_point, in_point) = tau_low.split_at(split);
@@ -214,18 +311,40 @@ impl OptimizedProductUniskip {
         let e_in = EqPolynomial::<F>::evals(in_point, None);
         let in_len = e_in.len();
         let coefficients = extension_coefficients();
+        #[cfg(feature = "field-inline")]
+        let field_coefficients = extension_coefficient_fields::<F>();
 
         try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, |x_out| {
             let mut accumulators: Vec<
                 <F as WithSignedProductAccumulator>::SignedProductAccumulator,
             > = vec![Default::default(); EXTENDED_SIZE];
+            #[cfg(feature = "field-inline")]
+            let mut field_sums = vec![F::zero(); EXTENDED_SIZE];
+            #[cfg(feature = "field-inline")]
+            let mut fr_cursor = super::spartan_outer::FrRowCursor::seek(fr_rows, x_out * in_len);
             for (x_in, &e) in e_in.iter().enumerate() {
-                let row = rows.row(x_out * in_len + x_in)?;
+                let t = x_out * in_len + x_in;
+                let row = rows.row(t)?;
+                #[cfg(feature = "field-inline")]
+                if let Some(fr) = fr_cursor.advance(t) {
+                    let products = row.field_extended_products(fr, &field_coefficients);
+                    for (sum, product) in field_sums.iter_mut().zip(&products) {
+                        *sum += e * *product;
+                    }
+                    continue;
+                }
                 let products = row.extended_products(&coefficients);
                 for (accumulator, product) in accumulators.iter_mut().zip(&products) {
                     accumulator.fmadd_s256(e, product);
                 }
             }
+            #[cfg(feature = "field-inline")]
+            return Ok(accumulators
+                .into_iter()
+                .zip(field_sums)
+                .map(|(accumulator, field_sum)| e_out[x_out] * (accumulator.reduce() + field_sum))
+                .collect());
+            #[cfg(not(feature = "field-inline"))]
             Ok(accumulators
                 .into_iter()
                 .map(|accumulator| e_out[x_out] * accumulator.reduce())
@@ -244,7 +363,21 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
         let rows = BundleStore::resolve(session, witness, 1usize << log_t)?;
-        Self::prepare_from_store(session, log_t, tau_low, rows)
+        #[cfg(feature = "field-inline")]
+        let fr_rows = witness
+            .field_inline()
+            .ok_or(KernelError::Witness(WitnessError::UnavailableView {
+                label: "composed Spartan product field-inline oracle",
+            }))?
+            .field_inline_spartan_rows()?;
+        Self::prepare_from_store(
+            session,
+            log_t,
+            tau_low,
+            rows,
+            #[cfg(feature = "field-inline")]
+            fr_rows,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "SpartanProductUniskip::first_round_poly")]
@@ -307,6 +440,12 @@ struct ProductRemainderKernel<F: Field> {
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<F, SpartanProductRow>,
+    /// The Arc-shared relation cell: the FR product appendage publishes on
+    /// it at extraction.
+    #[cfg(feature = "field-inline")]
+    relation: ProductRemainder<F>,
+    #[cfg(feature = "field-inline")]
+    fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
 }
@@ -314,12 +453,17 @@ struct ProductRemainderKernel<F: Field> {
 #[cfg(feature = "allocative")]
 crate::optimized::impl_field_allocative!(ProductRemainderKernel, |kernel| {
     use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    #[cfg(feature = "field-inline")]
+    let fr_rows = vec_heap_bytes(&kernel.fr_rows);
+    #[cfg(not(feature = "field-inline"))]
+    let fr_rows = 0;
     poly_heap_bytes(&kernel.left)
         + poly_heap_bytes(&kernel.right)
         + vec_heap_bytes(&kernel.scratch)
         + kernel.split_eq.heap_bytes()
         + kernel.challenges.heap_bytes()
         + kernel.rows.heap_bytes()
+        + fr_rows
         + vec_heap_bytes(&kernel.lagrange_weights)
 });
 
@@ -332,6 +476,8 @@ impl<F: Field> ProductRemainderKernel<F> {
             log_t,
             tau_low,
             rows,
+            #[cfg(feature = "field-inline")]
+            fr_rows,
             ..
         } = carry;
         let rounds = inputs.relation.rounds();
@@ -352,10 +498,12 @@ impl<F: Field> ProductRemainderKernel<F> {
 
         // Fused round-0 materialization: one pass over the typed rows writes
         // the weighted left/right tables and accumulates the first round's
-        // Gruen endpoints. Left folds through the small-scalar accumulator —
-        // its 5-limb window holds exactly this shape (two full-u64 lanes and
-        // a flag stay under 2^319); right's i128 lane goes through the
-        // signed-product path.
+        // Gruen endpoints. Left folds through the WIDE accumulator: two
+        // full-u64 lanes exceed the small-scalar accumulator's Barrett
+        // window (`reduce_nplus1` needs the magnitude under 2^318; two
+        // full-range terms reach ~2^318.6, a latent wrong-answer for unlucky
+        // weight draws that the composed 5-node Lagrange weights actually
+        // hit). Right's i128 lane goes through the signed-product path.
         let cycles = 1usize << log_t;
         let mut left: Vec<F> = unsafe_allocate_zero_vec(cycles);
         let mut right: Vec<F> = unsafe_allocate_zero_vec(cycles);
@@ -366,7 +514,7 @@ impl<F: Field> ProductRemainderKernel<F> {
         let access = rows.access()?;
         let weights_ref = &weights;
         let cell = |row: &SpartanProductRow| -> (F, F) {
-            let mut left_acc = <F as WithSmallScalarAccumulator>::SmallScalarAccumulator::default();
+            let mut left_acc = F::Accumulator::default();
             left_acc.fmadd_u64(weights_ref[0], row.left_instruction_input.0);
             left_acc.fmadd_u64(weights_ref[1], row.lookup_output.0);
             left_acc.fmadd_u64(weights_ref[2], u64::from(row.jump_flag.0));
@@ -386,15 +534,53 @@ impl<F: Field> ProductRemainderKernel<F> {
             );
             (left_acc.reduce(), right_acc.reduce())
         };
+        #[cfg(feature = "field-inline")]
+        let fr_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &fr_rows;
+        #[cfg(feature = "field-inline")]
+        let fr_factors = |fr: &FieldInlineSpartanRow<F>| -> (F, F) {
+            #[expect(clippy::expect_used, reason = "the composed weights span DOMAIN nodes")]
+            composed_remainder_factor_contributions(
+                weights_ref,
+                SPARTAN_PRODUCT_BASE_LANES,
+                &FieldProductLaneFactors {
+                    rs1_value: fr.rs1_value,
+                    rs2_value: fr.rs2_value,
+                    rd_value: fr.rd_value,
+                },
+            )
+            .expect("composed product weights cover the FR lanes")
+        };
         let block = |x_out: usize,
                      left_chunk: &mut [F],
                      right_chunk: &mut [F]|
          -> Result<(F, F), WitnessError> {
             let mut inner_zero = F::zero();
             let mut inner_infinity = F::zero();
+            #[cfg(feature = "field-inline")]
+            let mut fr_cursor =
+                super::spartan_outer::FrRowCursor::seek(fr_rows_ref, 2 * x_out * in_len);
+            #[cfg(feature = "field-inline")]
+            let cell = |t: usize,
+                        fr_cursor: &mut super::spartan_outer::FrRowCursor<'_, F>|
+             -> Result<(F, F), WitnessError> {
+                let (left, right) = cell(&access.row(t)?);
+                Ok(match fr_cursor.advance(t) {
+                    Some(fr) => {
+                        let (fr_left, fr_right) = fr_factors(fr);
+                        (left + fr_left, right + fr_right)
+                    }
+                    None => (left, right),
+                })
+            };
             for (x_in, &e) in e_in.iter().enumerate() {
                 let pair = x_out * in_len + x_in;
+                #[cfg(feature = "field-inline")]
+                let (left_low, right_low) = cell(2 * pair, &mut fr_cursor)?;
+                #[cfg(feature = "field-inline")]
+                let (left_high, right_high) = cell(2 * pair + 1, &mut fr_cursor)?;
+                #[cfg(not(feature = "field-inline"))]
                 let (left_low, right_low) = cell(&access.row(2 * pair)?);
+                #[cfg(not(feature = "field-inline"))]
                 let (left_high, right_high) = cell(&access.row(2 * pair + 1)?);
                 left_chunk[2 * x_in] = left_low;
                 left_chunk[2 * x_in + 1] = left_high;
@@ -438,6 +624,10 @@ impl<F: Field> ProductRemainderKernel<F> {
             pending_endpoints: Some(endpoints),
             challenges: RoundChallenges::new(rounds),
             rows,
+            #[cfg(feature = "field-inline")]
+            relation: inputs.relation.clone(),
+            #[cfg(feature = "field-inline")]
+            fr_rows,
             lagrange_weights: weights,
         })
     }
@@ -496,6 +686,23 @@ impl<F: Field> ProductRemainderKernel<F> {
         };
         try_par_sum_vecs(blocks, 8, block)
     }
+
+    /// The three FR factor opening values at the bound cycle point
+    /// (`selected_product_remainder_output_openings` order: rs1, rs2, rd) —
+    /// one eq-weighted walk over the sparse FR rows.
+    #[cfg(feature = "field-inline")]
+    fn fr_claimed_inputs(&self) -> [F; 3] {
+        let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
+        let weights = EqPolynomial::<F>::evals(&reversed, None);
+        let mut values = [F::zero(); 3];
+        for (cycle, row) in &self.fr_rows {
+            let weight = weights[*cycle];
+            values[0] += weight * row.rs1_value;
+            values[1] += weight * row.rs2_value;
+            values[2] += weight * row.rd_value;
+        }
+        values
+    }
 }
 
 impl<F: Field> ProveRounds<F> for ProductRemainderKernel<F> {
@@ -537,6 +744,22 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
+        // Publish the FR product appendage on the Arc-shared relation cell:
+        // the driver's curated absorb, its composed expected-output fold, and
+        // the stage-2 recipe's claim assembly all read it from there.
+        #[cfg(feature = "field-inline")]
+        {
+            use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
+
+            let [rs1_value, rs2_value, rd_value] = self.fr_claimed_inputs();
+            self.relation
+                .set_field_inline_outputs(FieldRegistersProductOutputClaims {
+                    rs1_value,
+                    rs2_value,
+                    rd_value,
+                })
+                .map_err(SumcheckKernelError::Verifier)?;
+        }
         let ids = [
             left_instruction_input_product(),
             right_instruction_input_product(),
@@ -598,28 +821,24 @@ impl<F: Field> SumcheckKernel<F> for ProductRemainderKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
-    #[cfg(not(feature = "field-inline"))]
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::{
+        FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
+    };
     use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    // Parity-test-only imports, FR-off with the tests they serve (the
-    // optimized tier is rv64-only; see the parity tests' WHY).
-    #[cfg(not(feature = "field-inline"))]
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, FromPrimitiveInt};
-    #[cfg(not(feature = "field-inline"))]
     use jolt_verifier::stages::stage2::product_remainder::{
         product_remainder_input_values_from_uniskip_output, ProductRemainderInputClaims,
     };
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
     use jolt_witness::{BundleSource, JoltWitnessOracle};
-    #[cfg(not(feature = "field-inline"))]
     use jolt_witness::{FixedBackend, PolynomialEncoding, Shape};
 
     use super::*;
-    #[cfg(not(feature = "field-inline"))]
     use crate::reference::spartan_product::{ReferenceProductRemainder, SpartanProductKernel};
-    #[cfg(not(feature = "field-inline"))]
     use crate::ReferenceBackend;
 
     /// The eight product columns in the output claims' canonical order.
@@ -648,7 +867,6 @@ mod tests {
         }
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
     fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanProductRow> {
         let mut state = seed | 1;
         let mut next = move || {
@@ -683,8 +901,40 @@ mod tests {
             .collect()
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
-    fn fixed_backend_from_rows(log_t: usize, rows: &[SpartanProductRow]) -> FixedBackend<Fr> {
+    /// Sparse synthetic FR rows with pseudo-random full-field values in the
+    /// three lane factor columns (the composed product lanes read nothing
+    /// else off the FR rows).
+    #[cfg(feature = "field-inline")]
+    fn synthetic_fr_rows(log_t: usize, seed: u64) -> Vec<(usize, FieldInlineSpartanRow<Fr>)> {
+        let mut state = seed | 1;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let base = Fr::from_u64(state);
+            base * base + base
+        };
+        (0..1usize << log_t)
+            .filter(|cycle| cycle % 3 == 1 || log_t == 1)
+            .map(|cycle| {
+                (
+                    cycle,
+                    FieldInlineSpartanRow {
+                        rs1_value: next(),
+                        rs2_value: next(),
+                        rd_value: next(),
+                        ..FieldInlineSpartanRow::default()
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn fixed_backend_from_rows(
+        log_t: usize,
+        rows: &[SpartanProductRow],
+        #[cfg(feature = "field-inline")] fr_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
+    ) -> FixedBackend<Fr> {
         let mut backend = FixedBackend::new();
         for (index, variable) in COLUMNS.iter().enumerate() {
             let values: Vec<Fr> = rows
@@ -699,38 +949,91 @@ mod tests {
                 )
                 .unwrap();
         }
+        #[cfg(feature = "field-inline")]
+        {
+            let mut field_inline = jolt_witness::FixedFieldInline::default();
+            for (id, value) in [
+                (FieldInlineVirtualPolynomial::FieldRs1Value, 0usize),
+                (FieldInlineVirtualPolynomial::FieldRs2Value, 1),
+                (FieldInlineVirtualPolynomial::FieldRdValue, 2),
+            ] {
+                let mut table = vec![Fr::from_u64(0); 1 << log_t];
+                for (cycle, row) in fr_rows {
+                    table[*cycle] = [row.rs1_value, row.rs2_value, row.rd_value][value];
+                }
+                field_inline
+                    .insert(
+                        FieldInlinePolynomialId::Virtual(id),
+                        Shape::new(log_t, PolynomialEncoding::Dense),
+                        table,
+                    )
+                    .unwrap();
+            }
+            backend.set_field_inline(field_inline);
+        }
         backend
     }
 
     /// The remainder's true input claim
-    /// `scale · Σ_j eq(τ_low, j) · left(j) · right(j)`, straight field math.
-    #[cfg(not(feature = "field-inline"))]
-    fn true_input_claim(rows: &[SpartanProductRow], tau_low: &[Fr], tau_high: Fr, r0: Fr) -> Fr {
+    /// `scale · Σ_j eq(τ_low, j) · left(j) · right(j)` over the composed lane
+    /// selection, straight field math.
+    fn true_input_claim(
+        rows: &[SpartanProductRow],
+        #[cfg(feature = "field-inline")] fr_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
+        tau_low: &[Fr],
+        tau_high: Fr,
+        r0: Fr,
+    ) -> Fr {
         let eq = EqPolynomial::new(tau_low.to_vec()).evaluations();
         let weights = centered_lagrange_evals::<Fr>(DOMAIN, r0).unwrap();
         let scale = centered_lagrange_kernel::<Fr>(DOMAIN, tau_high, r0).unwrap();
         let one = Fr::from_u64(1);
         let mut total = Fr::from_u64(0);
-        for (row, &eq_value) in rows.iter().zip(&eq) {
-            let left = weights[0] * column_field_value(row, 0)
+        for (j, (row, &eq_value)) in rows.iter().zip(&eq).enumerate() {
+            #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+            let mut left = weights[0] * column_field_value(row, 0)
                 + weights[1] * column_field_value(row, 4)
                 + weights[2] * column_field_value(row, 2);
-            let right = weights[0] * column_field_value(row, 1)
+            #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+            let mut right = weights[0] * column_field_value(row, 1)
                 + weights[1] * column_field_value(row, 5)
                 + weights[2] * (one - column_field_value(row, 6));
+            #[cfg(feature = "field-inline")]
+            if let Some((_, fr)) = fr_rows.iter().find(|(cycle, _)| *cycle == j) {
+                let (fr_left, fr_right) = composed_remainder_factor_contributions(
+                    &weights,
+                    SPARTAN_PRODUCT_BASE_LANES,
+                    &FieldProductLaneFactors {
+                        rs1_value: fr.rs1_value,
+                        rs2_value: fr.rs2_value,
+                        rd_value: fr.rd_value,
+                    },
+                )
+                .unwrap();
+                left += fr_left;
+                right += fr_right;
+            }
+            #[cfg(not(feature = "field-inline"))]
+            let _ = j;
             total += eq_value * left * right;
         }
         scale * total
     }
 
-    #[cfg(all(test, not(feature = "field-inline")))]
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
         let rows = synthetic_rows(log_t, seed);
+        #[cfg(feature = "field-inline")]
+        let fr_rows = synthetic_fr_rows(log_t, seed ^ 0xF1E1D);
         let tau_low: Vec<Fr> = (0..log_t)
             .map(|i| Fr::from_u64(5 + seed + 11 * i as u64))
             .collect();
         let tau_high = Fr::from_u64(6007 + seed);
-        let backend = fixed_backend_from_rows(log_t, &rows);
+        let backend = fixed_backend_from_rows(
+            log_t,
+            &rows,
+            #[cfg(feature = "field-inline")]
+            &fr_rows,
+        );
 
         let mut reference_session = ProofSession::default();
         reference_session
@@ -749,6 +1052,8 @@ mod tests {
             log_t,
             &tau_low,
             rows.clone(),
+            #[cfg(feature = "field-inline")]
+            fr_rows.clone(),
         )
         .unwrap();
         let optimized_uniskip =
@@ -764,7 +1069,14 @@ mod tests {
         );
 
         let r0 = Fr::from_u64(31337 + seed);
-        let input_claim = true_input_claim(&rows, &tau_low, tau_high, r0);
+        let input_claim = true_input_claim(
+            &rows,
+            #[cfg(feature = "field-inline")]
+            &fr_rows,
+            &tau_low,
+            tau_high,
+            r0,
+        );
         let relation = ProductRemainder::new(
             SpartanProductDimensions::new(log_t),
             r0,
@@ -837,12 +1149,6 @@ mod tests {
             .unwrap();
     }
 
-    // The optimized spartan tier is rv64-only: under `field-inline` the
-    // reference kernels serve the COMPOSED R1CS (48 columns / FR lanes),
-    // which this tier does not implement yet, so reference/optimized parity
-    // is not a meaningful FR-on statement until the optimized composition
-    // lands (post-milestone-11).
-    #[cfg(not(feature = "field-inline"))]
     #[test]
     fn synthetic_parity_with_reference_kernels() {
         with_sample_backend(|dummy| {
@@ -852,18 +1158,14 @@ mod tests {
         });
     }
 
-    /// Full trait-path parity on the real sample trace, with the remainder
-    /// driven by the true joint-domain sum (the sample fixture is not a
-    /// constraint-satisfying trace; see the outer module's twin test).
-    // The optimized spartan tier is rv64-only: under `field-inline` the
-    // reference kernels serve the COMPOSED lanes, which this tier does not
-    // implement yet, so reference/optimized parity is not a meaningful FR-on
-    // statement until the optimized composition lands (post-milestone-11).
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn sample_trace_parity_through_the_trait_path() {
-        with_sample_backend(|backend| {
-            let log_t = 2usize;
+    /// The trait-path parity body over a real trace backend, with the
+    /// remainder driven by the true joint-domain sum (the trace fixtures are
+    /// not constraint-satisfying; see the outer module's twin test).
+    fn sample_case(
+        backend: &jolt_witness::TraceBackend<jolt_program::execution::OwnedTrace>,
+        log_t: usize,
+    ) {
+        {
             let tau_low: Vec<Fr> = (0..log_t)
                 .map(|i| Fr::from_u64(41 + 19 * i as u64))
                 .collect();
@@ -908,7 +1210,19 @@ mod tests {
 
             let r0 = Fr::from_u64(15013);
             let rows: Vec<SpartanProductRow> = backend.bundles().unwrap();
-            let input_claim = true_input_claim(&rows, &tau_low, tau_high, r0);
+            #[cfg(feature = "field-inline")]
+            let fr_rows = JoltWitnessOracle::<Fr>::field_inline(backend)
+                .unwrap()
+                .field_inline_spartan_rows()
+                .unwrap();
+            let input_claim = true_input_claim(
+                &rows,
+                #[cfg(feature = "field-inline")]
+                &fr_rows,
+                &tau_low,
+                tau_high,
+                r0,
+            );
 
             let relation = ProductRemainder::new(
                 SpartanProductDimensions::new(log_t),
@@ -963,7 +1277,19 @@ mod tests {
                 optimized_kernel.output_claims(&claims).unwrap(),
                 reference_kernel.output_claims(&claims).unwrap()
             );
-        });
+        }
+    }
+
+    /// Full trait-path parity: FR-off on the canned sample trace; FR-on over
+    /// an FR-profile fixture trace (the sample backend carries no
+    /// field-inline view), exercising the trace-backed sparse FR row seam.
+    #[test]
+    fn sample_trace_parity_through_the_trait_path() {
+        #[cfg(not(feature = "field-inline"))]
+        with_sample_backend(|backend| sample_case(backend, 2));
+        #[cfg(feature = "field-inline")]
+        crate::optimized::field_registers_testing::structured_fr_fixture(12)
+            .with_plane(4, |backend| sample_case(backend, 4));
     }
 
     /// The integer extension coefficients equal the field Lagrange basis
