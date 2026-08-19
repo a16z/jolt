@@ -1,11 +1,18 @@
+#[cfg(test)]
 use jolt_witness::witnesses::{RamInc, RemappedRamAddress};
+#[cfg(test)]
 use jolt_witness::WitnessBundle;
 
+#[cfg(test)]
 use crate::cuda::common::context::CudaKernelContext;
+#[cfg(test)]
 use crate::cuda::common::device::DeviceFrVec;
+#[cfg(test)]
 use crate::cuda::common::error::CudaError;
+#[cfg(test)]
 use crate::cuda::common::pack::device_inc_and_address;
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
 pub struct RamValCheckWitness {
     #[opening(committed = RamInc)]
@@ -13,6 +20,7 @@ pub struct RamValCheckWitness {
     pub address: RemappedRamAddress,
 }
 
+#[cfg(test)]
 pub fn device_columns(
     context: &CudaKernelContext,
     rows: &[RamValCheckWitness],

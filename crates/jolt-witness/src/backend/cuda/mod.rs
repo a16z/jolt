@@ -6,7 +6,10 @@ mod tables;
 mod tests;
 
 pub use device::{DeviceTrace, COLD};
-pub use packed::{PackedTrace, NO_SEQUENCE, RAM_NO_ACCESS};
+pub use packed::{
+    PackedTrace, EXTRA_IMM_HI, EXTRA_IMM_LO, EXTRA_RAM_READ, EXTRA_RAM_WRITE, EXTRA_RD_POST,
+    EXTRA_RS1, EXTRA_RS2, EXTRA_WORDS, NO_SEQUENCE, RAM_NO_ACCESS,
+};
 
 pub struct DeviceAtomColumns {
     pub flags: cudarc::driver::CudaSlice<u32>,
@@ -24,6 +27,27 @@ pub struct DeviceAtomColumns {
     pub right_lookup_operand: cudarc::driver::CudaSlice<u64>,
     pub lookup_output: cudarc::driver::CudaSlice<u64>,
     pub product_magnitude: cudarc::driver::CudaSlice<u64>,
+}
+
+impl DeviceAtomColumns {
+    pub fn device_bytes(&self) -> usize {
+        let words = self.flags.len()
+            + self.table_index.len()
+            + self.rs1_address.len()
+            + self.rs2_address.len()
+            + self.rd_address.len();
+        let wide = self.bytecode_pc.len()
+            + self.rd_pre_value.len()
+            + self.rd_inc.len()
+            + self.ram_inc.len()
+            + self.left_instruction_input.len()
+            + self.right_instruction_input.len()
+            + self.left_lookup_operand.len()
+            + self.right_lookup_operand.len()
+            + self.lookup_output.len()
+            + self.product_magnitude.len();
+        words * size_of::<u32>() + wide * size_of::<u64>()
+    }
 }
 
 pub const FLAG_BIT_CIRCUIT_BASE: u32 = 0;

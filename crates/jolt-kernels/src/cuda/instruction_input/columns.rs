@@ -1,7 +1,11 @@
-use cudarc::driver::PushKernelArg;
+use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::Field;
+use jolt_riscv::InstructionFlags as InstructionFlagKind;
+use jolt_witness::backend::cuda::{instruction_flag_bit, DeviceAtomColumns, DeviceTrace};
 
-use super::witness::{Packed, COLUMNS, LAYOUT, NARROW, SIGN_BIT_BASE, WIDE};
+#[cfg(test)]
+use super::witness::Packed;
+use super::witness::{self, COLUMNS, LAYOUT, NARROW, SIGN_BIT_BASE, WIDE};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec};
 use crate::cuda::common::error::CudaError;
@@ -11,6 +15,58 @@ pub struct DeviceInstructionColumns {
 }
 
 impl DeviceInstructionColumns {
+    pub fn from_device(
+        context: &CudaKernelContext,
+        trace: &DeviceTrace,
+        atoms: &DeviceAtomColumns,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
+        if cycles < 2 || !cycles.is_power_of_two() || trace.cycles() < cycles {
+            return Err(CudaError::InvariantViolation {
+                reason: "the device instruction-input sources need a power-of-two cycle count",
+            });
+        }
+        let mut narrow = context.alloc_u64(cycles * NARROW)?;
+        let mut wide = context.alloc_u64(cycles * WIDE * 2)?;
+        let mut flags = context.alloc_u32(cycles)?;
+        let sources = context.upload_u32_slice(&Self::gather_bit_sources()?)?;
+        let sign_base = witness::SIGN_BIT_BASE;
+
+        let count = CudaKernelContext::count_of(cycles)?;
+        let mut builder = context.stream().launch_builder(context.ii_gather());
+        let _ = builder.arg(trace.extras());
+        let _ = builder.arg(trace.unexpanded_pc());
+        let _ = builder.arg(&atoms.flags);
+        let _ = builder.arg(&sources);
+        let _ = builder.arg(&sign_base);
+        let _ = builder.arg(&mut narrow);
+        let _ = builder.arg(&mut wide);
+        let _ = builder.arg(&mut flags);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `t < cycles` writes the `NARROW` u64s at `t * NARROW`,
+        // the `WIDE * 2` u64s at `t * WIDE * 2` and `flags[t]`, all inside
+        // allocations sized for `cycles` rows, and reads `address[t]`,
+        // `canonical[t]`, the `EXTRA_WORDS` words at `t * EXTRA_WORDS` and the
+        // four in-range entries of `sources`. Every buffer is distinct.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+
+        Self::split(context, narrow, wide, flags, cycles)
+    }
+
+    fn gather_bit_sources() -> Result<Vec<u32>, CudaError> {
+        let missing = || CudaError::InvariantViolation {
+            reason: "an instruction-input flag has no canonical device bit",
+        };
+        Ok(vec![
+            instruction_flag_bit(InstructionFlagKind::LeftOperandIsRs1Value).ok_or_else(missing)?,
+            instruction_flag_bit(InstructionFlagKind::LeftOperandIsPC).ok_or_else(missing)?,
+            instruction_flag_bit(InstructionFlagKind::RightOperandIsRs2Value)
+                .ok_or_else(missing)?,
+            instruction_flag_bit(InstructionFlagKind::RightOperandIsImm).ok_or_else(missing)?,
+        ])
+    }
+
+    #[cfg(test)]
     pub fn new(context: &CudaKernelContext, packed: &Packed) -> Result<Self, CudaError> {
         let cycles = packed.flags.len();
         if cycles < 2
@@ -27,7 +83,16 @@ impl DeviceInstructionColumns {
         let narrow = context.upload_u64_slice(&packed.narrow)?;
         let wide = context.upload_u64_slice(&packed.wide)?;
         let flags = context.upload_u32_slice(&packed.flags)?;
+        Self::split(context, narrow, wide, flags, cycles)
+    }
 
+    fn split(
+        context: &CudaKernelContext,
+        narrow: CudaSlice<u64>,
+        wide: CudaSlice<u64>,
+        flags: CudaSlice<u32>,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
         let count = CudaKernelContext::count_of(cycles)?;
         let narrow_width = CudaKernelContext::count_of(NARROW)?;
         let wide_width = CudaKernelContext::count_of(WIDE)?;

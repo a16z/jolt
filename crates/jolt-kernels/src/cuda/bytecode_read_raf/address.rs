@@ -17,7 +17,7 @@ use jolt_witness::JoltWitnessPlane;
 use std::sync::Arc;
 
 use crate::cuda::common::device_columns::DeviceTraceColumns;
-use crate::cuda::witness::session_device_trace;
+use crate::cuda::witness::{session_atom_columns, session_device_trace};
 
 use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs, STAGES};
 use crate::cuda::common::context::CudaKernelContext;
@@ -35,6 +35,18 @@ pub struct BytecodeReadRafAddressKernel<F: Field> {
     intermediate: Option<F>,
     val_stages: Vec<F>,
     rounds_bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for BytecodeReadRafAddressKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("val_stages"),
+            self.val_stages.len() * size_of::<F>(),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> BytecodeReadRafAddressKernel<F> {
@@ -125,7 +137,7 @@ fn device_bytecode_pc_words<F: Field>(
     addresses: usize,
 ) -> Result<NarrowColumn, KernelError<F>> {
     let trace = session_device_trace(context, session, witness, cycles)?;
-    let columns = trace.atom_columns()?;
+    let columns = session_atom_columns(context, session, witness, cycles)?;
     Ok(trace.narrow_u64_column(&columns.bytecode_pc, addresses as u64)?)
 }
 

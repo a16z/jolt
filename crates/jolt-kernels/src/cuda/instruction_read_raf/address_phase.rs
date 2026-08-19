@@ -73,6 +73,27 @@ impl DeviceRows {
         )
     }
 
+    pub fn from_device_columns(
+        lookup_index: Arc<CudaSlice<u64>>,
+        table_index: CudaSlice<u32>,
+        raf_flag: CudaSlice<u8>,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
+        if lookup_index.len() < cycles * 2 || table_index.len() < cycles || raf_flag.len() < cycles
+        {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: table_index.len().min(raf_flag.len()),
+            });
+        }
+        Ok(Self {
+            lookup_index,
+            table_index,
+            raf_flag,
+            cycles,
+        })
+    }
+
     pub fn from_device(
         context: &CudaKernelContext,
         lookup_index: Arc<CudaSlice<u64>>,

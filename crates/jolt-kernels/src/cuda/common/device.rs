@@ -54,6 +54,11 @@ impl DeviceFrVec {
         self.len == 0
     }
 
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        self.buffer.len() * size_of::<u64>()
+    }
+
     pub(crate) const fn limbs(&self) -> &CudaSlice<u64> {
         &self.buffer
     }

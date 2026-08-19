@@ -33,6 +33,15 @@ pub fn split_eq_tables<F: Field>(
 }
 
 impl<F: Field> DeviceSplitEq<F> {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        self.e_in
+            .iter()
+            .chain(self.e_out.iter())
+            .map(DeviceFrVec::device_bytes)
+            .sum()
+    }
+
     pub fn new(
         context: &CudaKernelContext,
         point: &[F],

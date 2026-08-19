@@ -28,6 +28,8 @@ struct ExtractFunctions {
     lookup_index: CudaFunction,
     atom_columns: CudaFunction,
     flag_bit: CudaFunction,
+    extra_word: CudaFunction,
+    flag_bit_bytes: CudaFunction,
     narrow_u64: CudaFunction,
     hot_chunk_limbs: CudaFunction,
     hot_chunk_words: CudaFunction,
@@ -59,6 +61,8 @@ fn extract_functions(stream: &CudaStream) -> Result<&'static ExtractFunctions, W
                 lookup_index: function("lookup_index_limbs_kernel")?,
                 atom_columns: function("atom_columns_kernel")?,
                 flag_bit: function("flag_bit_column_kernel")?,
+                extra_word: function("extra_word_column_kernel")?,
+                flag_bit_bytes: function("flag_bit_bytes_kernel")?,
                 narrow_u64: function("narrow_u64_kernel")?,
                 hot_chunk_limbs: function("hot_chunk_limbs_kernel")?,
                 hot_chunk_words: function("hot_chunk_words_kernel")?,
@@ -275,6 +279,14 @@ impl DeviceTrace {
         &self.rows.address
     }
 
+    pub fn extras(&self) -> &CudaSlice<u64> {
+        &self.rows.extras
+    }
+
+    pub fn ram_address(&self) -> &CudaSlice<u64> {
+        &self.rows.ram_address
+    }
+
     pub fn device_bytes(&self) -> usize {
         let rows = self.rows.is_noop.len()
             + self.rows.address.len() * size_of::<u64>()
@@ -452,6 +464,69 @@ impl DeviceTrace {
 
         self.check_mapped(&unmapped, "atom columns")?;
         Ok(columns)
+    }
+
+    pub fn flag_bit_bytes(
+        &self,
+        flags: &CudaSlice<u32>,
+        bit: u32,
+    ) -> Result<CudaSlice<u8>, WitnessError> {
+        if bit >= u32::BITS {
+            return Err(device_error(format!(
+                "flag bit {bit} is outside the {}-bit mask",
+                u32::BITS
+            )));
+        }
+        if flags.len() < self.cycles {
+            return Err(device_error(format!(
+                "the flag column holds {} entries for {} cycles",
+                flags.len(),
+                self.cycles
+            )));
+        }
+        let count = self.count()?;
+        let mut out = self
+            .stream
+            .alloc_zeros::<u8>(self.cycles)
+            .map_err(device_error)?;
+        let mut builder = self.stream.launch_builder(&self.functions.flag_bit_bytes);
+        let _ = builder.arg(flags);
+        let _ = builder.arg(&bit);
+        let _ = builder.arg(&mut out);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads `flags[i]` (checked above to cover
+        // `cycles`) and writes only `out[i]` of a fresh `cycles`-byte
+        // allocation, a distinct buffer. Threads with `i >= count` return first.
+        let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
+        Ok(out)
+    }
+
+    pub fn extra_word_column(&self, word: usize) -> Result<CudaSlice<u64>, WitnessError> {
+        if word >= PACKED_EXTRA_WORDS {
+            return Err(device_error(format!(
+                "packed word {word} is outside the {PACKED_EXTRA_WORDS}-word row stride"
+            )));
+        }
+        let count = self.count()?;
+        let word = u32::try_from(word).map_err(|_| {
+            device_error("the packed row stride does not fit a 32-bit word index".to_owned())
+        })?;
+        let mut out = self
+            .stream
+            .alloc_zeros::<u64>(self.cycles)
+            .map_err(device_error)?;
+        let mut builder = self.stream.launch_builder(&self.functions.extra_word);
+        let _ = builder.arg(&self.rows.extras);
+        let _ = builder.arg(&word);
+        let _ = builder.arg(&mut out);
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads the single word at
+        // `i * EXTRA_WORDS + word` — inside the `cycles * EXTRA_WORDS` extras
+        // buffer because `word < EXTRA_WORDS` is checked above — and writes only
+        // `out[i]` of a fresh `cycles`-element allocation. The two are distinct
+        // allocations. Threads with `i >= count` return before any access.
+        let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
+        Ok(out)
     }
 
     pub fn flag_bit_column(

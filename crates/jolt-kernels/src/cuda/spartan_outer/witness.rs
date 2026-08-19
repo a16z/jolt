@@ -1,12 +1,15 @@
+#[cfg(test)]
 use jolt_riscv::CircuitFlags;
+#[cfg(test)]
 use jolt_witness::witnesses::{
     Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput, OpFlag, Pc, Product, RamAddress,
     RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value,
     Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc,
 };
+#[cfg(test)]
 use jolt_witness::WitnessBundle;
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
 pub const VARIABLES: usize = 35;
@@ -74,6 +77,7 @@ pub const LAYOUT: [u32; VARIABLES] = [
     code(KIND_FLAG, 15),
 ];
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct SpartanOuterWitness {
     pub left_instruction_input: LeftInstructionInput,
@@ -123,14 +127,17 @@ pub struct SpartanOuterWitness {
     pub is_last_in_sequence: OpFlag,
 }
 
+#[cfg(test)]
 pub struct Packed {
     pub narrow: Vec<u64>,
     pub wide: Vec<u64>,
     pub flags: Vec<u32>,
 }
 
+#[cfg(test)]
 const PACK_CHUNK: usize = 1 << 13;
 
+#[cfg(test)]
 pub fn pack(rows: &[SpartanOuterWitness]) -> Packed {
     let cycles = rows.len();
     let mut narrow = vec![0u64; cycles * NARROW];
@@ -159,6 +166,7 @@ pub fn pack(rows: &[SpartanOuterWitness]) -> Packed {
     }
 }
 
+#[cfg(test)]
 fn fill(narrow: &mut [u64], wide: &mut [u64], flags: &mut [u32], rows: &[SpartanOuterWitness]) {
     for (index, row) in rows.iter().enumerate() {
         let slots = &mut narrow[index * NARROW..(index + 1) * NARROW];
@@ -217,6 +225,7 @@ fn fill(narrow: &mut [u64], wide: &mut [u64], flags: &mut [u32], rows: &[Spartan
     }
 }
 
+#[cfg(test)]
 const fn signed_i128(value: i128) -> (bool, u128) {
     if value < 0 {
         (true, value.unsigned_abs())
@@ -225,6 +234,7 @@ const fn signed_i128(value: i128) -> (bool, u128) {
     }
 }
 
+#[cfg(test)]
 fn product_magnitude(product: Product) -> (bool, u128) {
     let magnitude = product.0.magnitude_as_u128();
     (!product.0.is_positive && magnitude != 0, magnitude)

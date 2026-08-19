@@ -1,10 +1,14 @@
 use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::Fr;
 
+use jolt_witness::backend::cuda::{DeviceTrace, EXTRA_RAM_READ, EXTRA_RAM_WRITE};
+
+#[cfg(test)]
 use super::witness::RamReadWriteWitness;
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::DeviceFrVec;
 use crate::cuda::common::error::CudaError;
+#[cfg(test)]
 use crate::cuda::common::ra_poly::COLD;
 use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
 
@@ -16,6 +20,42 @@ pub struct DeviceRamRows {
 }
 
 impl DeviceRamRows {
+    pub fn from_device(
+        trace: &DeviceTrace,
+        addresses: usize,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
+        if cycles == 0 || trace.cycles() < cycles {
+            return Err(CudaError::InvariantViolation {
+                reason: "the device RAM sources do not cover the requested cycles",
+            });
+        }
+        let (address, _) =
+            trace
+                .remapped_ram_words(addresses)
+                .map_err(|_| CudaError::InvariantViolation {
+                    reason: "the device residency could not remap the RAM addresses",
+                })?;
+        let read_value =
+            trace
+                .extra_word_column(EXTRA_RAM_READ)
+                .map_err(|_| CudaError::InvariantViolation {
+                    reason: "the device residency could not serve the RAM read values",
+                })?;
+        let write_value = trace.extra_word_column(EXTRA_RAM_WRITE).map_err(|_| {
+            CudaError::InvariantViolation {
+                reason: "the device residency could not serve the RAM write values",
+            }
+        })?;
+        Ok(Self {
+            address,
+            read_value,
+            write_value,
+            cycles,
+        })
+    }
+
+    #[cfg(test)]
     pub fn upload(
         context: &CudaKernelContext,
         rows: &[RamReadWriteWitness],
@@ -45,6 +85,21 @@ impl DeviceRamRows {
             write_value: context.upload_u64_slice(&write_value)?,
             cycles: rows.len(),
         })
+    }
+
+    #[cfg(test)]
+    pub fn address(&self) -> &CudaSlice<u32> {
+        &self.address
+    }
+
+    #[cfg(test)]
+    pub fn read_value(&self) -> &CudaSlice<u64> {
+        &self.read_value
+    }
+
+    #[cfg(test)]
+    pub fn write_value(&self) -> &CudaSlice<u64> {
+        &self.write_value
     }
 
     pub fn matrix(

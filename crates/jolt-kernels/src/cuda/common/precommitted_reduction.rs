@@ -283,7 +283,7 @@ pub struct DevicePrecommittedReductionCarry<F: Field, R> {
 #[cfg(feature = "allocative")]
 impl<F: Field, R> allocative::Allocative for DevicePrecommittedReductionCarry<F, R> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
+        let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
@@ -297,7 +297,7 @@ pub struct DeviceCycleReductionKernel<F: Field, R> {
 #[cfg(feature = "allocative")]
 impl<F: Field, R> allocative::Allocative for DeviceCycleReductionKernel<F, R> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
+        let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }
@@ -385,7 +385,7 @@ pub struct DeviceAddressReductionKernel<F: Field, R> {
 #[cfg(feature = "allocative")]
 impl<F: Field, R> allocative::Allocative for DeviceAddressReductionKernel<F, R> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
+        let visitor = visitor.enter_self_sized::<Self>();
         visitor.exit();
     }
 }

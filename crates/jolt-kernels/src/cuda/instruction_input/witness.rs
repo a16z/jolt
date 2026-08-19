@@ -1,8 +1,11 @@
+#[cfg(test)]
 use jolt_riscv::InstructionFlags as InstructionFlagKind;
+#[cfg(test)]
 use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, UnexpandedPc};
+#[cfg(test)]
 use jolt_witness::WitnessBundle;
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
 pub const NARROW: usize = 3;
@@ -48,6 +51,7 @@ pub const RS2_VALUE_COLUMN: usize = 5;
 pub const RIGHT_IS_IMM_COLUMN: usize = 6;
 pub const IMM_COLUMN: usize = 7;
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
 pub struct InstructionInputWitness {
     #[opening(InstructionFlags(InstructionFlagKind::LeftOperandIsRs1Value))]
@@ -68,14 +72,17 @@ pub struct InstructionInputWitness {
     pub imm: Imm,
 }
 
+#[cfg(test)]
 pub struct Packed {
     pub narrow: Vec<u64>,
     pub wide: Vec<u64>,
     pub flags: Vec<u32>,
 }
 
+#[cfg(test)]
 const PACK_CHUNK: usize = 1 << 13;
 
+#[cfg(test)]
 pub fn pack(rows: &[InstructionInputWitness]) -> Packed {
     let cycles = rows.len();
     let mut narrow = vec![0u64; cycles * NARROW];
@@ -104,6 +111,7 @@ pub fn pack(rows: &[InstructionInputWitness]) -> Packed {
     }
 }
 
+#[cfg(test)]
 fn fill(narrow: &mut [u64], wide: &mut [u64], flags: &mut [u32], rows: &[InstructionInputWitness]) {
     for (index, row) in rows.iter().enumerate() {
         let slots = &mut narrow[index * NARROW..(index + 1) * NARROW];
@@ -134,6 +142,7 @@ fn fill(narrow: &mut [u64], wide: &mut [u64], flags: &mut [u32], rows: &[Instruc
     }
 }
 
+#[cfg(test)]
 const fn signed_i128(value: i128) -> (bool, u128) {
     if value < 0 {
         (true, value.unsigned_abs())

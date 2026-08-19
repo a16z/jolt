@@ -113,6 +113,7 @@ pub struct CudaKernelContext {
     pub(super) sum_reduce: CudaFunction,
     pub(super) u64_to_mont: CudaFunction,
     pub(super) i128_to_mont: CudaFunction,
+    pub(super) u128_to_mont: CudaFunction,
     pub(super) twos_i128_to_mont: CudaFunction,
     pub(super) eq_double: CudaFunction,
     pub(super) lt_double: CudaFunction,
@@ -192,6 +193,7 @@ pub struct CudaKernelContext {
     brr_gather: CudaFunction,
     brr_message_sparse: CudaFunction,
     brr_message_dense: CudaFunction,
+    so_gather: CudaFunction,
     so_shift: CudaFunction,
     so_uniskip: CudaFunction,
     so_factors: CudaFunction,
@@ -232,6 +234,7 @@ pub struct CudaKernelContext {
     hf_half_fold: CudaFunction,
     hf_row_fold: CudaFunction,
     sopg_round: CudaFunction,
+    ii_gather: CudaFunction,
     ii_columns: CudaFunction,
     #[cfg(test)]
     ss_columns: CudaFunction,
@@ -241,6 +244,7 @@ pub struct CudaKernelContext {
     brap_one_hot: CudaFunction,
     brap_term: CudaFunction,
     brap_message: CudaFunction,
+    sp_gather: CudaFunction,
     sp_matrix: CudaFunction,
     sp_factors: CudaFunction,
     sp_claims: CudaFunction,
@@ -277,6 +281,7 @@ impl CudaKernelContext {
             sum_reduce: module.load_function("sum_reduce_kernel")?,
             u64_to_mont: module.load_function("u64_to_mont_kernel")?,
             i128_to_mont: module.load_function("i128_to_mont_kernel")?,
+            u128_to_mont: module.load_function("u128_to_mont_kernel")?,
             twos_i128_to_mont: module.load_function("twos_i128_to_mont_kernel")?,
             eq_double: module.load_function("eq_double_kernel")?,
             lt_double: module.load_function("lt_double_kernel")?,
@@ -356,6 +361,7 @@ impl CudaKernelContext {
             brr_gather: module.load_function("brr_gather_kernel")?,
             brr_message_sparse: module.load_function("brr_message_sparse_kernel")?,
             brr_message_dense: module.load_function("brr_message_dense_kernel")?,
+            so_gather: module.load_function("so_gather_kernel")?,
             so_shift: module.load_function("so_shift_kernel")?,
             so_uniskip: module.load_function("so_uniskip_kernel")?,
             so_factors: module.load_function("so_factors_kernel")?,
@@ -397,6 +403,7 @@ impl CudaKernelContext {
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
             sopg_round: module.load_function("sopg_round_kernel")?,
+            ii_gather: module.load_function("ii_gather_kernel")?,
             ii_columns: module.load_function("ii_columns_kernel")?,
             #[cfg(test)]
             ss_columns: module.load_function("ss_columns_kernel")?,
@@ -406,6 +413,7 @@ impl CudaKernelContext {
             brap_one_hot: module.load_function("brap_one_hot_kernel")?,
             brap_term: module.load_function("brap_term_kernel")?,
             brap_message: module.load_function("brap_message_kernel")?,
+            sp_gather: module.load_function("sp_gather_kernel")?,
             sp_matrix: module.load_function("sp_matrix_kernel")?,
             sp_factors: module.load_function("sp_factors_kernel")?,
             sp_claims: module.load_function("sp_claims_kernel")?,
@@ -512,6 +520,12 @@ impl CudaKernelContext {
         })
     }
 
+    pub(crate) fn clone_u64(&self, buffer: &CudaSlice<u64>) -> Result<CudaSlice<u64>, CudaError> {
+        xfer_stats::timed(Phase::D2d, buffer.len() * size_of::<u64>(), || {
+            Ok(self.stream.clone_dtod(buffer)?)
+        })
+    }
+
     pub(crate) fn download_u32(&self, buffer: &CudaSlice<u32>) -> Result<Vec<u32>, CudaError> {
         xfer_stats::timed(Phase::D2h, buffer.len() * size_of::<u32>(), || {
             Ok(self.stream.clone_dtoh(buffer)?)
@@ -594,6 +608,10 @@ impl CudaKernelContext {
         &self.brr_message_dense
     }
 
+    pub(crate) const fn so_gather(&self) -> &CudaFunction {
+        &self.so_gather
+    }
+
     pub(crate) const fn so_shift(&self) -> &CudaFunction {
         &self.so_shift
     }
@@ -640,6 +658,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn sopg_round(&self) -> &CudaFunction {
         &self.sopg_round
+    }
+
+    pub(crate) const fn ii_gather(&self) -> &CudaFunction {
+        &self.ii_gather
     }
 
     pub(crate) const fn ii_columns(&self) -> &CudaFunction {
@@ -809,6 +831,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn hf_row_fold(&self) -> &CudaFunction {
         &self.hf_row_fold
+    }
+
+    pub(crate) const fn sp_gather(&self) -> &CudaFunction {
+        &self.sp_gather
     }
 
     pub(crate) const fn sp_matrix(&self) -> &CudaFunction {

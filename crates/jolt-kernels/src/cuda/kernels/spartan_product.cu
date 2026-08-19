@@ -8,6 +8,38 @@
 #define SP_KIND_WIDE 1u
 #define SP_KIND_FLAG 2u
 
+#define SP_GATHER_BITS 5
+
+extern "C" __global__ void sp_gather_kernel(
+    const unsigned int *__restrict__ canonical, const unsigned int *__restrict__ bit_sources,
+    unsigned int sign_base, const u64 *__restrict__ left_input,
+    const u64 *__restrict__ right_input, const u64 *__restrict__ lookup_output,
+    u64 *__restrict__ narrow, u64 *__restrict__ wide, unsigned int *__restrict__ flags,
+    unsigned int cycles) {
+    unsigned int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= cycles) return;
+
+    u64 *row = narrow + (size_t)t * SP_NARROW;
+    row[SP_LEFT_SLOT] = left_input[t];
+    row[SP_LOOKUP_SLOT] = lookup_output[t];
+
+    unsigned int mask = 0u;
+    u128 right = ((u128)right_input[2 * (size_t)t + 1] << 64) | (u128)right_input[2 * (size_t)t];
+    bool negative = ((__int128)right) < 0;
+    u128 magnitude = negative ? (~right + (u128)1) : right;
+    u64 *limbs = wide + (size_t)t * (SP_WIDE * 2);
+    limbs[0] = (u64)magnitude;
+    limbs[1] = (u64)(magnitude >> 64);
+    if (negative) mask |= 1u << sign_base;
+
+    unsigned int source = canonical[t];
+    for (unsigned int bit = 0u; bit < SP_GATHER_BITS; ++bit) {
+        mask |= ((source >> bit_sources[bit]) & 1u) << bit;
+    }
+    flags[t] = mask;
+}
+
+
 __device__ __forceinline__ void sp_accumulate_word(u64 *folded, const u64 *coefficient,
                                                    unsigned long long word) {
     if (word == 0ULL) return;

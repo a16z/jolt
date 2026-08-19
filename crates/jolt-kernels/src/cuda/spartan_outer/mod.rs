@@ -8,7 +8,8 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::common::device_columns::device_pc_words;
+use crate::cuda::witness::{session_atom_columns, session_device_trace};
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::{require_context, CudaBackend};
@@ -24,7 +25,6 @@ pub(crate) mod witness;
 
 use columns::DeviceR1csInputs;
 use remainder::{DeviceRemainder, SpartanOuterRemainderKernel};
-use witness::SpartanOuterWitness;
 
 pub struct SpartanOuterState<F: Field> {
     context: &'static CudaKernelContext,
@@ -33,6 +33,20 @@ pub struct SpartanOuterState<F: Field> {
     tau: Vec<F>,
     log_t: usize,
     extended: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanOuterState<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("inputs"), self.inputs.device_bytes());
+        visitor.visit_simple(allocative::Key::new("tau"), self.tau.len() * size_of::<F>());
+        visitor.visit_simple(
+            allocative::Key::new("extended"),
+            self.extended.len() * size_of::<F>(),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
@@ -50,9 +64,11 @@ impl<F: Field> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
             });
         }
 
-        let rows = collect_rows::<F, SpartanOuterWitness>(witness, 1usize << log_t)?;
-        let packed = witness::pack(&rows);
-        let inputs = DeviceR1csInputs::new(context, &packed)?;
+        let cycles = 1usize << log_t;
+        let trace = session_device_trace(context, session, witness, cycles)?;
+        let atoms = session_atom_columns(context, session, witness, cycles)?;
+        let pc_words = device_pc_words::<F>(context, session, witness, cycles)?;
+        let inputs = DeviceR1csInputs::from_device(context, &trace, &atoms, &pc_words, cycles)?;
         let matrices = spartan_outer_constraints::<F>();
         if matrices.num_constraints != SPARTAN_OUTER_ROWS || matrices.num_vars <= witness::VARIABLES
         {
@@ -174,8 +190,8 @@ mod tests {
     use jolt_witness::{collect_bundles, JoltWitnessPlane};
     use proptest::prelude::*;
 
+    use super::witness::{self, SpartanOuterWitness};
     use super::CudaBackend;
-    use super::{witness, SpartanOuterWitness};
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::{
         arb_point, drive, fr, probe_input_claim, with_r1cs_witness,

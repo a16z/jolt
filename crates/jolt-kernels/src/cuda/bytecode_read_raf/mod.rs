@@ -33,6 +33,18 @@ pub struct BytecodeReadRafCycleKernel<F: Field> {
     finals: Option<Vec<F>>,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for BytecodeReadRafCycleKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("finals"),
+            self.finals.as_ref().map_or(0, |v| v.len() * size_of::<F>()),
+        );
+        visitor.exit();
+    }
+}
+
 impl<F: Field> BytecodeReadRafCycleKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         let failed = || SumcheckError::MissingEvaluationSource {

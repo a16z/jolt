@@ -11,7 +11,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::DeviceFrVec;
-use crate::cuda::witness::session_device_trace;
+use crate::cuda::witness::session_atom_columns;
 
 use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_floor, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -34,6 +34,15 @@ pub struct IncClaimReductionKernel<F: Field> {
     rounds: PrefixSuffixRounds<F>,
     total: usize,
     bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for IncClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("rounds"), self.rounds.device_bytes());
+        visitor.exit();
+    }
 }
 
 impl<F: Field> ProveRounds<F> for IncClaimReductionKernel<F> {
@@ -94,8 +103,7 @@ fn device_increment_columns<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
 ) -> Result<Vec<DeviceFrVec>, KernelError<F>> {
-    let trace = session_device_trace(context, session, witness, cycles)?;
-    let atoms = trace.atom_columns()?;
+    let atoms = session_atom_columns(context, session, witness, cycles)?;
     Ok(vec![
         context.i128_to_montgomery_device(&atoms.ram_inc, cycles)?,
         context.i128_to_montgomery_device(&atoms.rd_inc, cycles)?,

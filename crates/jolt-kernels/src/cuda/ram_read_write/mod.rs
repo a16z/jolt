@@ -10,7 +10,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::session_device_trace;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
@@ -39,6 +39,24 @@ pub struct RamReadWriteKernel<F: Field> {
     val_init: Vec<Fr>,
     finals: Option<[F; 2]>,
     rounds_bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for RamReadWriteKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("inc"), self.inc.device_bytes());
+        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("merged_eq"),
+            self.merged_eq.as_ref().map_or(0, DeviceFrVec::device_bytes),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("val_init"),
+            self.val_init.len() * size_of::<Fr>(),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> RamReadWriteKernel<F> {
@@ -167,7 +185,7 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
 impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamReadWriteChecking<F>>>, KernelError<F>>
@@ -193,8 +211,9 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
         let gamma = require_fr(inputs.challenges.gamma).map_err(|_| KernelError::Unsupported {
             reason: "CUDA kernels support only the BN254 scalar field",
         })?;
-        let rows = collect_rows::<F, witness::RamReadWriteWitness>(witness, 1usize << log_t)?;
-        let rows = device_rows::DeviceRamRows::upload(context, &rows)?;
+        let cycles = 1usize << log_t;
+        let trace = session_device_trace(context, session, witness, cycles)?;
+        let rows = device_rows::DeviceRamRows::from_device(&trace, 1usize << log_k, cycles)?;
         let cycle = rows.matrix(context, gamma)?;
         let inc = rows.inc(context)?;
         let val_init = require_fr_slice(
@@ -322,6 +341,50 @@ mod tests {
             ra,
             inc,
             val_init,
+        }
+    }
+
+    #[test]
+    fn device_ram_rows_match_the_host_encoder() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let plane = witness(7);
+        let cycles = 1usize << LOG_T;
+        let rows: Vec<super::witness::RamReadWriteWitness> =
+            jolt_witness::collect_bundles(&plane, cycles).expect("reference RAM rows");
+        let expected = super::device_rows::DeviceRamRows::upload(context, &rows)
+            .expect("host-encoded RAM rows");
+
+        let mut session = ProofSession::default();
+        let trace =
+            crate::cuda::witness::session_device_trace::<Fr>(context, &mut session, &plane, cycles)
+                .expect("device residency");
+        let got =
+            super::device_rows::DeviceRamRows::from_device(&trace, 1usize << RAM_LOG_K, cycles)
+                .expect("device-gathered RAM rows");
+
+        let expected_address = context.download_u32(expected.address()).expect("download");
+        assert!(
+            expected_address
+                .iter()
+                .any(|&word| word != expected_address[0]),
+            "every remapped RAM address is identical, so a kernel ignoring the row would pass",
+        );
+        assert_eq!(
+            context.download_u32(got.address()).expect("download"),
+            expected_address,
+            "the remapped RAM address column diverges",
+        );
+        for (name, got, expected) in [
+            ("read value", got.read_value(), expected.read_value()),
+            ("write value", got.write_value(), expected.write_value()),
+        ] {
+            assert_eq!(
+                context.download_u64(got).expect("download"),
+                context.download_u64(expected).expect("download"),
+                "the RAM {name} column diverges",
+            );
         }
     }
 

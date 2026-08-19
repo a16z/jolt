@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use jolt_field::Field;
-use jolt_witness::backend::cuda::DeviceTrace;
+use jolt_witness::backend::cuda::{DeviceAtomColumns, DeviceTrace};
 use jolt_witness::JoltWitnessPlane;
 
 use super::common::context::CudaKernelContext;
@@ -28,6 +28,7 @@ pub(crate) struct ResidentTrace {
     source: usize,
     cycles: usize,
     trace: Arc<DeviceTrace>,
+    atoms: OnceLock<Arc<DeviceAtomColumns>>,
 }
 
 #[cfg(feature = "allocative")]
@@ -37,6 +38,10 @@ impl allocative::Allocative for ResidentTrace {
         visitor.visit_simple(
             allocative::Key::new("device_trace"),
             self.trace.device_bytes(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("device_atom_columns"),
+            self.atoms.get().map_or(0, |atoms| atoms.device_bytes()),
         );
         visitor.exit();
     }
@@ -70,6 +75,27 @@ pub(crate) fn session_device_trace<F: Field>(
         source: identity,
         cycles,
         trace: Arc::clone(&trace),
+        atoms: OnceLock::new(),
     });
     Ok(trace)
+}
+
+pub(crate) fn session_atom_columns<F: Field>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+) -> Result<Arc<DeviceAtomColumns>, KernelError<F>> {
+    let trace = session_device_trace(context, session, witness, cycles)?;
+    let resident = session
+        .state::<ResidentTrace>()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "the device residency was parked without an atom-column cache",
+        })?;
+    if let Some(columns) = resident.atoms.get() {
+        return Ok(Arc::clone(columns));
+    }
+    let columns = Arc::new(trace.atom_columns()?);
+    let _ = resident.atoms.set(Arc::clone(&columns));
+    Ok(columns)
 }

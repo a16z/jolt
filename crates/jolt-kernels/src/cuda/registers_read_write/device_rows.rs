@@ -1,14 +1,26 @@
 use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::{Fr, FromPrimitiveInt};
 
+use jolt_witness::backend::cuda::{
+    DeviceAtomColumns, DeviceTrace, EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2,
+};
+
+#[cfg(test)]
 use super::witness::RegistersReadWriteWitness;
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::DeviceFrVec;
 use crate::cuda::common::error::CudaError;
+#[cfg(test)]
 use crate::cuda::common::ra_poly::COLD;
 use crate::cuda::common::read_write_matrix::DeviceReadWriteMatrix;
 
 const COEFF_WIDTH: usize = 2;
+
+fn witness_error(_error: jolt_witness::WitnessError) -> CudaError {
+    CudaError::InvariantViolation {
+        reason: "the device residency could not serve a packed register column",
+    }
+}
 
 pub struct DeviceRegisterRows {
     rs1_address: CudaSlice<u32>,
@@ -22,6 +34,32 @@ pub struct DeviceRegisterRows {
 }
 
 impl DeviceRegisterRows {
+    pub fn from_device(
+        context: &CudaKernelContext,
+        trace: &DeviceTrace,
+        atoms: &DeviceAtomColumns,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
+        if cycles == 0 || trace.cycles() < cycles {
+            return Err(CudaError::InvariantViolation {
+                reason: "the device register sources do not cover the requested cycles",
+            });
+        }
+        Ok(Self {
+            rs1_address: context.clone_u32(&atoms.rs1_address)?,
+            rs1_value: trace.extra_word_column(EXTRA_RS1).map_err(witness_error)?,
+            rs2_address: context.clone_u32(&atoms.rs2_address)?,
+            rs2_value: trace.extra_word_column(EXTRA_RS2).map_err(witness_error)?,
+            rd_address: context.clone_u32(&atoms.rd_address)?,
+            rd_pre_value: context.clone_u64(&atoms.rd_pre_value)?,
+            rd_post_value: trace
+                .extra_word_column(EXTRA_RD_POST)
+                .map_err(witness_error)?,
+            cycles,
+        })
+    }
+
+    #[cfg(test)]
     pub fn upload(
         context: &CudaKernelContext,
         rows: &[RegistersReadWriteWitness],
@@ -53,6 +91,41 @@ impl DeviceRegisterRows {
             rd_post_value: context.upload_u64_slice(&rd_post_value)?,
             cycles: rows.len(),
         })
+    }
+
+    #[cfg(test)]
+    pub fn rs1_address(&self) -> &CudaSlice<u32> {
+        &self.rs1_address
+    }
+
+    #[cfg(test)]
+    pub fn rs2_address(&self) -> &CudaSlice<u32> {
+        &self.rs2_address
+    }
+
+    #[cfg(test)]
+    pub fn rd_address(&self) -> &CudaSlice<u32> {
+        &self.rd_address
+    }
+
+    #[cfg(test)]
+    pub fn rs1_value(&self) -> &CudaSlice<u64> {
+        &self.rs1_value
+    }
+
+    #[cfg(test)]
+    pub fn rs2_value(&self) -> &CudaSlice<u64> {
+        &self.rs2_value
+    }
+
+    #[cfg(test)]
+    pub fn rd_pre_value(&self) -> &CudaSlice<u64> {
+        &self.rd_pre_value
+    }
+
+    #[cfg(test)]
+    pub fn rd_post_value(&self) -> &CudaSlice<u64> {
+        &self.rd_post_value
     }
 
     pub fn cycles(&self) -> usize {

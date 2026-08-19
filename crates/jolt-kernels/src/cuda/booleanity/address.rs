@@ -28,6 +28,15 @@ pub struct BooleanityAddressKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for BooleanityAddressKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.exit();
+    }
+}
+
 impl<F: Field> BooleanityAddressKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.masses.bind(self.context, challenge).map_err(|_| {

@@ -8,7 +8,8 @@ use jolt_field::Field;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::common::ra_poly::COLD;
+use crate::cuda::witness::session_atom_columns;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
@@ -26,7 +27,7 @@ pub(crate) mod witness;
 impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersValEvaluation<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersValEvaluation<F>>>, KernelError<F>>
@@ -44,15 +45,24 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let registers = 1usize << REGISTER_ADDRESS_BITS;
-        let rows = collect_rows::<F, witness::RegistersValEvaluationWitness>(witness, cycles)?;
-        let (inc, hot) = witness::device_columns(context, &rows, registers)?;
-        drop(rows);
+        let atoms = session_atom_columns(context, session, witness, cycles)?;
+        let inc = context.i128_to_montgomery_device(&atoms.rd_inc, cycles)?;
+        let slots = context.download_u32(&atoms.rd_address)?;
+        if slots
+            .iter()
+            .take(cycles)
+            .any(|&slot| slot != COLD && slot as usize >= registers)
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "a register write address is outside the register file",
+            });
+        }
 
         let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
-        let wa = DeviceRaPolynomial::from_device_tables(
-            context,
-            &hot,
+        let wa = DeviceRaPolynomial::from_device_columns(
+            context.clone_u32(&atoms.rd_address)?,
             eq_address,
+            cycles,
             BindingOrder::LowToHigh,
         )?;
         let lt = DeviceLtPolynomial::new(context, r_cycle, BindingOrder::LowToHigh)?;

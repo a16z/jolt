@@ -1,16 +1,22 @@
+#[cfg(test)]
 use jolt_witness::witnesses::{
     LeftInstructionInput, LeftLookupOperand, LookupOutput, RightInstructionInput,
     RightLookupOperand,
 };
+#[cfg(test)]
 use jolt_witness::WitnessBundle;
 
+#[cfg(test)]
 use crate::cuda::common::context::CudaKernelContext;
+#[cfg(test)]
 use crate::cuda::common::device::DeviceFrVec;
+#[cfg(test)]
 use crate::cuda::common::error::CudaError;
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
 pub struct InstructionClaimReductionWitness {
     #[opening(LookupOutput)]
@@ -25,6 +31,7 @@ pub struct InstructionClaimReductionWitness {
     pub right_input: RightInstructionInput,
 }
 
+#[cfg(test)]
 pub struct Packed {
     pub output: Vec<u64>,
     pub left_lookup: Vec<u64>,
@@ -33,8 +40,10 @@ pub struct Packed {
     pub right_input: Vec<i128>,
 }
 
+#[cfg(test)]
 const PACK_CHUNK: usize = 1 << 14;
 
+#[cfg(test)]
 pub fn device_columns(
     context: &CudaKernelContext,
     rows: &[InstructionClaimReductionWitness],
@@ -49,6 +58,7 @@ pub fn device_columns(
     ])
 }
 
+#[cfg(test)]
 pub fn packed_columns(rows: &[InstructionClaimReductionWitness]) -> Packed {
     let mut output = vec![0u64; rows.len()];
     let mut left_lookup = vec![0u64; rows.len()];
@@ -84,6 +94,7 @@ pub fn packed_columns(rows: &[InstructionClaimReductionWitness]) -> Packed {
     }
 }
 
+#[cfg(test)]
 fn fill(
     out: &mut [u64],
     left_lookup: &mut [u64],

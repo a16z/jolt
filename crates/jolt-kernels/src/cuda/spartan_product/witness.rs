@@ -1,10 +1,13 @@
+#[cfg(test)]
 use jolt_riscv::{CircuitFlags, InstructionFlags as InstructionFlagKind};
+#[cfg(test)]
 use jolt_witness::witnesses::{
     InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, RightInstructionInput,
 };
+#[cfg(test)]
 use jolt_witness::WitnessBundle;
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
 pub const NARROW: usize = 2;
@@ -42,6 +45,7 @@ pub const CLAIM_LAYOUT: [u32; CLAIM_COLUMNS] = [
     code(KIND_FLAG, VIRTUAL_INSTRUCTION_BIT),
 ];
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct SpartanProductWitness {
     pub left_instruction_input: LeftInstructionInput,
@@ -58,14 +62,17 @@ pub struct SpartanProductWitness {
     pub next_is_noop: NextIsNoop,
 }
 
+#[cfg(test)]
 pub struct Packed {
     pub narrow: Vec<u64>,
     pub wide: Vec<u64>,
     pub flags: Vec<u32>,
 }
 
+#[cfg(test)]
 const PACK_CHUNK: usize = 1 << 13;
 
+#[cfg(test)]
 pub fn pack(rows: &[SpartanProductWitness]) -> Packed {
     let cycles = rows.len();
     let mut narrow = vec![0u64; cycles * NARROW];
@@ -94,6 +101,7 @@ pub fn pack(rows: &[SpartanProductWitness]) -> Packed {
     }
 }
 
+#[cfg(test)]
 fn fill(narrow: &mut [u64], wide: &mut [u64], flags: &mut [u32], rows: &[SpartanProductWitness]) {
     for (index, row) in rows.iter().enumerate() {
         let slots = &mut narrow[index * NARROW..(index + 1) * NARROW];
@@ -127,6 +135,7 @@ fn fill(narrow: &mut [u64], wide: &mut [u64], flags: &mut [u32], rows: &[Spartan
     }
 }
 
+#[cfg(test)]
 const fn signed_i128(value: i128) -> (bool, u128) {
     if value < 0 {
         (true, value.unsigned_abs())

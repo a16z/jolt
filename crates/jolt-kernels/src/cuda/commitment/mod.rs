@@ -296,6 +296,15 @@ struct ResidentBases {
     bases: DeviceG1Bases,
 }
 
+#[cfg(feature = "allocative")]
+impl allocative::Allocative for ResidentBases {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("bases"), self.bases.device_bytes());
+        visitor.exit();
+    }
+}
+
 fn device_bases<'a, F, PCS>(
     session: &'a mut ProofSession,
     context: &'static CudaKernelContext,

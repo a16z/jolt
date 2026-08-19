@@ -9,6 +9,7 @@ use cudarc::driver::{CudaContext, CudaSlice, CudaStream};
 use jolt_program::execution::{OwnedTrace, RegisterState, TraceRow};
 use jolt_riscv::{CircuitFlags, InstructionFlags, JoltInstructionKind};
 
+use super::packed::{EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2, EXTRA_WORDS};
 use super::*;
 use crate::backend::trace::TraceBackend;
 use crate::backend::ProgramSource;
@@ -450,6 +451,52 @@ fn device_columns_match_the_reference_extractors() {
             "remapped ram at {index}",
         );
     }
+}
+
+#[test]
+fn device_extra_word_columns_match_the_trace_rows() {
+    let Some(fixture) = fixture(13) else {
+        return;
+    };
+    for (word, name, pick) in [
+        (
+            EXTRA_RS1,
+            "rs1 value",
+            (|row: &TraceRow| row.registers.rs1.map_or(0, |read| read.value))
+                as fn(&TraceRow) -> u64,
+        ),
+        (EXTRA_RS2, "rs2 value", |row| {
+            row.registers.rs2.map_or(0, |read| read.value)
+        }),
+        (EXTRA_RD_POST, "rd post value", |row| {
+            row.registers.rd.map_or(0, |write| write.post_value)
+        }),
+    ] {
+        let column = fixture.u64s(
+            &fixture
+                .trace
+                .extra_word_column(word)
+                .expect("extra word column"),
+        );
+        assert!(
+            column.iter().any(|&value| value != column[0]),
+            "every {name} is identical, so a kernel ignoring the row would pass",
+        );
+        for (index, &value) in column.iter().enumerate().take(fixture.cycles) {
+            assert_eq!(value, pick(&fixture.row(index)), "{name} at cycle {index}");
+        }
+    }
+}
+
+#[test]
+fn extra_word_column_rejects_a_word_outside_the_row_stride() {
+    let Some(fixture) = fixture(5) else {
+        return;
+    };
+    assert!(
+        fixture.trace.extra_word_column(EXTRA_WORDS).is_err(),
+        "a word index at the row stride must be rejected, not read out of bounds",
+    );
 }
 
 #[test]

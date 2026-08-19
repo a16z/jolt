@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::{session_atom_columns, session_device_trace};
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
@@ -22,7 +22,6 @@ pub(crate) mod witness;
 
 use columns::DeviceInstructionColumns;
 use rounds::{Basis, RoundBasis};
-use witness::InstructionInputWitness;
 
 pub struct InstructionInputKernel<F: Field> {
     context: &'static CudaKernelContext,
@@ -31,6 +30,18 @@ pub struct InstructionInputKernel<F: Field> {
     basis: Basis<F>,
     rounds_bound: usize,
     finals: Option<Vec<F>>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for InstructionInputKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("finals"),
+            self.finals.as_ref().map_or(0, |v| v.len() * size_of::<F>()),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> InstructionInputKernel<F> {
@@ -123,7 +134,7 @@ impl<F: Field> SumcheckKernel<F> for InstructionInputKernel<F> {
 }
 
 pub(crate) fn prepare_with_basis<F: Field>(
-    _session: &mut ProofSession,
+    session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     inputs: &ProverInputs<'_, F, InstructionInput<F>>,
     basis: RoundBasis,
@@ -137,11 +148,10 @@ pub(crate) fn prepare_with_basis<F: Field>(
         });
     }
 
-    let rows = collect_rows::<F, InstructionInputWitness>(witness, 1usize << log_t)?;
-    let packed = witness::pack(&rows);
-    drop(rows);
-    let columns = DeviceInstructionColumns::new(context, &packed)?;
-    drop(packed);
+    let cycles = 1usize << log_t;
+    let trace = session_device_trace(context, session, witness, cycles)?;
+    let atoms = session_atom_columns(context, session, witness, cycles)?;
+    let columns = DeviceInstructionColumns::from_device(context, &trace, &atoms, cycles)?;
     let basis = Basis::new(
         context,
         basis,
@@ -254,6 +264,60 @@ mod tests {
                     "{id:?} is constant across the fixture, so a mis-indexed read would pass",
                 );
             }
+        });
+    }
+
+    #[test]
+    fn device_instruction_columns_match_the_host_encoder() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        with_r1cs_witness(LOG_T, RAM_K, one_hot(), 7, |witness| {
+            let cycles = 1usize << LOG_T;
+            let rows: Vec<super::witness::InstructionInputWitness> =
+                jolt_witness::collect_bundles(witness, cycles).expect("reference rows");
+            let expected: Vec<Vec<Fr>> = super::columns::DeviceInstructionColumns::new(
+                context,
+                &super::witness::pack(&rows),
+            )
+            .expect("host-encoded columns")
+            .handles()
+            .iter()
+            .map(|column| column.to_host().expect("download"))
+            .collect();
+
+            let mut session = ProofSession::default();
+            let trace = crate::cuda::witness::session_device_trace::<Fr>(
+                context,
+                &mut session,
+                witness,
+                cycles,
+            )
+            .expect("device residency");
+            let atoms = crate::cuda::witness::session_atom_columns::<Fr>(
+                context,
+                &mut session,
+                witness,
+                cycles,
+            )
+            .expect("atom columns");
+            let got: Vec<Vec<Fr>> = super::columns::DeviceInstructionColumns::from_device(
+                context, &trace, &atoms, cycles,
+            )
+            .expect("device-gathered columns")
+            .handles()
+            .iter()
+            .map(|column| column.to_host().expect("download"))
+            .collect();
+
+            assert!(
+                expected[1].iter().any(|value| *value != expected[1][0]),
+                "every rs1 value is identical, so a kernel ignoring the row would pass",
+            );
+            assert_eq!(
+                got, expected,
+                "the device instruction columns diverge from the host encoder",
+            );
         });
     }
 

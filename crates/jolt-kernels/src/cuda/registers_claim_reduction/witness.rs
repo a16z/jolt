@@ -1,14 +1,20 @@
+#[cfg(test)]
 use jolt_witness::witnesses::{RdWriteValue, Rs1Value, Rs2Value};
+#[cfg(test)]
 use jolt_witness::WitnessBundle;
 
+#[cfg(test)]
 use crate::cuda::common::context::CudaKernelContext;
+#[cfg(test)]
 use crate::cuda::common::device::DeviceFrVec;
+#[cfg(test)]
 use crate::cuda::common::error::CudaError;
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
+#[cfg(test)]
 pub struct RegistersClaimReductionWitness {
     #[opening(RdWriteValue)]
     pub rd_write: RdWriteValue,
@@ -18,14 +24,17 @@ pub struct RegistersClaimReductionWitness {
     pub rs2: Rs2Value,
 }
 
+#[cfg(test)]
 pub struct Packed {
     pub rd_write: Vec<u64>,
     pub rs1: Vec<u64>,
     pub rs2: Vec<u64>,
 }
 
+#[cfg(test)]
 const PACK_CHUNK: usize = 1 << 14;
 
+#[cfg(test)]
 pub fn device_columns(
     context: &CudaKernelContext,
     rows: &[RegistersClaimReductionWitness],
@@ -38,6 +47,7 @@ pub fn device_columns(
     ])
 }
 
+#[cfg(test)]
 pub fn packed_columns(rows: &[RegistersClaimReductionWitness]) -> Packed {
     let mut rd_write = vec![0u64; rows.len()];
     let mut rs1 = vec![0u64; rows.len()];
@@ -61,6 +71,7 @@ pub fn packed_columns(rows: &[RegistersClaimReductionWitness]) -> Packed {
     Packed { rd_write, rs1, rs2 }
 }
 
+#[cfg(test)]
 fn fill(rd: &mut [u64], one: &mut [u64], two: &mut [u64], rows: &[RegistersClaimReductionWitness]) {
     for (index, row) in rows.iter().enumerate() {
         rd[index] = row.rd_write.0;

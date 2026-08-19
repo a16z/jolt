@@ -43,6 +43,17 @@ extern "C" __global__ void i128_to_mont_kernel(const u64 *__restrict__ magnitude
     }
 }
 
+extern "C" __global__ void u128_to_mont_kernel(const u64 *__restrict__ value,
+                                              u64 *__restrict__ out,
+                                              unsigned int n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    u64 raw[LIMBS] = {value[2 * i], value[2 * i + 1], 0, 0};
+    u64 r[LIMBS];
+    fr_to_mont(raw, r);
+    store4(out + i * LIMBS, r);
+}
+
 extern "C" __global__ void twos_i128_to_mont_kernel(const u64 *__restrict__ value,
                                                     u64 *__restrict__ out,
                                                     unsigned int n) {

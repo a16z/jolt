@@ -15,10 +15,7 @@ use super::common::device_columns::{device_column, DeviceColumn};
 use super::common::error::CudaError;
 use super::{require_context, CudaBackend};
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
-use crate::cuda::inc_claim_reduction::witness::{
-    packed_columns as inc_columns, IncClaimReductionWitness,
-};
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::{collect_rows, session_atom_columns};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::reference::commitment::column_kinds;
 use crate::reference::views::dense_view;
@@ -342,6 +339,7 @@ fn increment_plan<F: Field>(
 
 fn increment_columns<F: Field>(
     context: &'static CudaKernelContext,
+    session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     polynomials: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
@@ -360,16 +358,14 @@ fn increment_columns<F: Field>(
         return Ok(BTreeMap::new());
     }
     let cycles = 1usize << grid.log_t;
-    let rows = collect_rows::<F, IncClaimReductionWitness>(witness, cycles)?;
-    let packed = inc_columns(&rows);
-    drop(rows);
+    let atoms = session_atom_columns(context, session, witness, cycles)?;
     let mut built = BTreeMap::new();
     for id in wanted {
-        let host = match id {
-            JoltCommittedPolynomial::RdInc => &packed.rd,
-            _ => &packed.ram,
+        let source = match id {
+            JoltCommittedPolynomial::RdInc => &atoms.rd_inc,
+            _ => &atoms.ram_inc,
         };
-        let _ = built.insert(id, context.i128_to_montgomery(host)?);
+        let _ = built.insert(id, context.i128_to_montgomery_device(source, cycles)?);
     }
     Ok(built)
 }
@@ -388,7 +384,7 @@ impl<F: Field> JointOpeningPolynomials<F> for CudaBackend {
         let mut sparse = tracing::info_span!("cuda_opening_sparse_plan")
             .in_scope(|| sparse_hot_columns::<F>(context, session, witness, polynomials, grid))?;
         let mut increments = tracing::info_span!("cuda_opening_increment_plan")
-            .in_scope(|| increment_columns::<F>(context, witness, polynomials, grid))?;
+            .in_scope(|| increment_columns::<F>(context, session, witness, polynomials, grid))?;
         polynomials
             .iter()
             .map(|&polynomial| {

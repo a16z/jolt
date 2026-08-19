@@ -1,15 +1,20 @@
+#[cfg(test)]
 use crate::cuda::common::context::CudaKernelContext;
+#[cfg(test)]
 use crate::cuda::common::device::DeviceFrVec;
+#[cfg(test)]
 use crate::cuda::common::error::CudaError;
 
-#[cfg(feature = "parallel")]
+#[cfg(all(test, feature = "parallel"))]
 use rayon::prelude::*;
 
 pub const COLD: u32 = u32::MAX;
 
+#[cfg(test)]
 pub const PACK_CHUNK: usize = 1 << 14;
 
 #[inline]
+#[cfg(test)]
 pub fn encode_address(address: Option<u64>, addresses: usize) -> Result<u32, u64> {
     match address {
         None => Ok(COLD),
@@ -21,11 +26,13 @@ pub fn encode_address(address: Option<u64>, addresses: usize) -> Result<u32, u64
 }
 
 #[derive(Debug)]
+#[cfg(test)]
 pub struct IncAndAddress {
     pub inc: Vec<i128>,
     pub address: Vec<u32>,
 }
 
+#[cfg(test)]
 pub fn pack_inc_and_address<R: Sync>(
     rows: &[R],
     addresses: usize,
@@ -55,6 +62,7 @@ pub fn pack_inc_and_address<R: Sync>(
     }
 }
 
+#[cfg(test)]
 fn fill<R>(
     inc: &mut [i128],
     address: &mut [u32],
@@ -76,6 +84,7 @@ fn fill<R>(
     rejected
 }
 
+#[cfg(test)]
 pub fn device_inc_and_address<R: Sync>(
     context: &CudaKernelContext,
     rows: &[R],

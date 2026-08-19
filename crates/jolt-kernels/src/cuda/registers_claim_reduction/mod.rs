@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::RegistersClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::session_device_trace;
 
 use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -28,6 +28,15 @@ pub struct RegistersClaimReductionKernel<F: Field> {
     rounds: PrefixSuffixRounds<F>,
     total: usize,
     bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for RegistersClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("rounds"), self.rounds.device_bytes());
+        visitor.exit();
+    }
 }
 
 impl<F: Field> ProveRounds<F> for RegistersClaimReductionKernel<F> {
@@ -83,6 +92,23 @@ impl<F: Field> SumcheckKernel<F> for RegistersClaimReductionKernel<F> {
     }
 }
 
+fn device_columns_from_trace<F: Field>(
+    context: &crate::cuda::common::context::CudaKernelContext,
+    trace: &jolt_witness::backend::cuda::DeviceTrace,
+    cycles: usize,
+) -> Result<Vec<crate::cuda::common::device::DeviceFrVec>, KernelError<F>> {
+    let mut columns = Vec::with_capacity(3);
+    for word in [
+        jolt_witness::backend::cuda::EXTRA_RD_POST,
+        jolt_witness::backend::cuda::EXTRA_RS1,
+        jolt_witness::backend::cuda::EXTRA_RS2,
+    ] {
+        let raw = trace.extra_word_column(word)?;
+        columns.push(context.u64_to_montgomery_device(&raw, cycles)?);
+    }
+    Ok(columns)
+}
+
 impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,
@@ -105,9 +131,8 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let rows = collect_rows::<F, witness::RegistersClaimReductionWitness>(witness, cycles)?;
-        let columns = witness::device_columns(context, &rows)?;
-        drop(rows);
+        let trace = session_device_trace(context, session, witness, cycles)?;
+        let columns = device_columns_from_trace::<F>(context, &trace, cycles)?;
 
         let gamma = inputs.challenges.gamma;
         let mut powers = Vec::with_capacity(COLUMNS);
@@ -238,6 +263,46 @@ mod tests {
                     .expect("reference claims")
                     .opening_values(),
                 "output claims diverged at log_T = 1",
+            );
+        });
+    }
+
+    #[test]
+    fn device_columns_match_the_host_encoder() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        with_r1cs_witness(LOG_T, RAM_K, one_hot(), 7, |witness| {
+            let cycles = 1usize << LOG_T;
+            let rows: Vec<super::witness::RegistersClaimReductionWitness> =
+                jolt_witness::collect_bundles(witness, cycles).expect("reference rows");
+            let expected: Vec<Vec<Fr>> = super::witness::device_columns(context, &rows)
+                .expect("host-encoded columns")
+                .iter()
+                .map(|column| column.to_host().expect("download"))
+                .collect();
+
+            let mut session = ProofSession::default();
+            let trace = crate::cuda::witness::session_device_trace::<Fr>(
+                context,
+                &mut session,
+                witness,
+                cycles,
+            )
+            .expect("device residency");
+            let got: Vec<Vec<Fr>> = super::device_columns_from_trace::<Fr>(context, &trace, cycles)
+                .expect("device columns")
+                .iter()
+                .map(|column| column.to_host().expect("download"))
+                .collect();
+
+            assert!(
+                expected[0].iter().any(|value| *value != expected[0][0]),
+                "every rd write value is identical, so a kernel ignoring the row would pass",
+            );
+            assert_eq!(
+                got, expected,
+                "the device columns diverge from the host encoder",
             );
         });
     }

@@ -111,6 +111,11 @@ pub struct PrefixSuffixRounds<F: Field> {
 }
 
 impl<F: Field> PrefixSuffixRounds<F> {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        self.columns.iter().map(DeviceFrVec::device_bytes).sum()
+    }
+
     pub fn new(
         context: &'static CudaKernelContext,
         columns: Vec<DeviceFrVec>,

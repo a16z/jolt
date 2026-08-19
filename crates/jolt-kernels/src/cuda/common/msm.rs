@@ -56,6 +56,11 @@ pub struct DeviceG1Bases {
 }
 
 impl DeviceG1Bases {
+    #[cfg(feature = "allocative")]
+    pub fn device_bytes(&self) -> usize {
+        self.limbs.len() * size_of::<u64>()
+    }
+
     pub const fn count(&self) -> usize {
         self.count
     }

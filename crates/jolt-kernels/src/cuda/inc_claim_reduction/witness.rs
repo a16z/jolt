@@ -1,47 +1,12 @@
 use jolt_witness::witnesses::{RamInc, RdInc};
 use jolt_witness::WitnessBundle;
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
 pub struct IncClaimReductionWitness {
     #[opening(committed = RamInc)]
     pub ram: RamInc,
     #[opening(committed = RdInc)]
     pub rd: RdInc,
-}
-
-pub struct Packed {
-    pub ram: Vec<i128>,
-    pub rd: Vec<i128>,
-}
-
-const PACK_CHUNK: usize = 1 << 14;
-
-pub fn packed_columns(rows: &[IncClaimReductionWitness]) -> Packed {
-    let mut ram = vec![0i128; rows.len()];
-    let mut rd = vec![0i128; rows.len()];
-
-    #[cfg(feature = "parallel")]
-    ram.par_chunks_mut(PACK_CHUNK)
-        .zip(rd.par_chunks_mut(PACK_CHUNK))
-        .zip(rows.par_chunks(PACK_CHUNK))
-        .for_each(|((ram, rd), rows)| fill(ram, rd, rows));
-    #[cfg(not(feature = "parallel"))]
-    ram.chunks_mut(PACK_CHUNK)
-        .zip(rd.chunks_mut(PACK_CHUNK))
-        .zip(rows.chunks(PACK_CHUNK))
-        .for_each(|((ram, rd), rows)| fill(ram, rd, rows));
-
-    Packed { ram, rd }
-}
-
-fn fill(ram: &mut [i128], rd: &mut [i128], rows: &[IncClaimReductionWitness]) {
-    for (index, row) in rows.iter().enumerate() {
-        ram[index] = row.ram.0;
-        rd[index] = row.rd.0;
-    }
 }
 
 #[cfg(test)]

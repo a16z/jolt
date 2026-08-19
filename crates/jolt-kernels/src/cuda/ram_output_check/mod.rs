@@ -28,6 +28,14 @@ pub struct RamOutputCheckKernel<F: Field> {
     rounds_bound: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for RamOutputCheckKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let visitor = visitor.enter_self_sized::<Self>();
+        visitor.exit();
+    }
+}
+
 impl<F: Field> RamOutputCheckKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.state.bind(self.context, challenge).map_err(|_| {

@@ -293,6 +293,14 @@ pub struct DenseProductKernel<F: Field, R> {
     pub(crate) field: core::marker::PhantomData<F>,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field, R> allocative::Allocative for DenseProductKernel<F, R> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let visitor = visitor.enter_self_sized::<Self>();
+        visitor.exit();
+    }
+}
+
 impl<F: Field, R> DenseProductKernel<F, R> {
     pub(crate) fn finals(&self) -> Result<Vec<F>, CudaError> {
         self.state.factor_finals(self.context)

@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::session_atom_columns;
 
 use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -28,6 +28,15 @@ pub struct InstructionClaimReductionKernel<F: Field> {
     rounds: PrefixSuffixRounds<F>,
     total: usize,
     bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for InstructionClaimReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("rounds"), self.rounds.device_bytes());
+        visitor.exit();
+    }
 }
 
 impl<F: Field> ProveRounds<F> for InstructionClaimReductionKernel<F> {
@@ -110,9 +119,14 @@ impl<F: Field> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBackend {
         };
 
         let cycles = 1usize << log_t;
-        let rows = collect_rows::<F, witness::InstructionClaimReductionWitness>(witness, cycles)?;
-        let columns = witness::device_columns(context, &rows)?;
-        drop(rows);
+        let atoms = session_atom_columns(context, session, witness, cycles)?;
+        let columns = vec![
+            context.u64_to_montgomery_device(&atoms.lookup_output, cycles)?,
+            context.u64_to_montgomery_device(&atoms.left_lookup_operand, cycles)?,
+            context.u128_to_montgomery_device(&atoms.right_lookup_operand, cycles)?,
+            context.u64_to_montgomery_device(&atoms.left_instruction_input, cycles)?,
+            context.i128_to_montgomery_device(&atoms.right_instruction_input, cycles)?,
+        ];
 
         let gamma = inputs.challenges.gamma;
         let mut powers = Vec::with_capacity(COLUMNS);
@@ -246,6 +260,65 @@ mod tests {
                     .expect("reference claims")
                     .opening_values(),
                 "output claims diverged at log_T = 1",
+            );
+        });
+    }
+
+    #[test]
+    fn device_columns_match_the_host_encoder() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        with_r1cs_witness(LOG_T, RAM_K, one_hot(), 7, |witness| {
+            let cycles = 1usize << LOG_T;
+            let rows: Vec<super::witness::InstructionClaimReductionWitness> =
+                jolt_witness::collect_bundles(witness, cycles).expect("reference rows");
+            let expected: Vec<Vec<Fr>> = super::witness::device_columns(context, &rows)
+                .expect("host-encoded columns")
+                .iter()
+                .map(|column| column.to_host().expect("download"))
+                .collect();
+
+            let mut session = ProofSession::default();
+            let atoms = crate::cuda::witness::session_atom_columns::<Fr>(
+                context,
+                &mut session,
+                witness,
+                cycles,
+            )
+            .expect("atom columns");
+            let got: Vec<Vec<Fr>> = [
+                context
+                    .u64_to_montgomery_device(&atoms.lookup_output, cycles)
+                    .expect("lookup output"),
+                context
+                    .u64_to_montgomery_device(&atoms.left_lookup_operand, cycles)
+                    .expect("left lookup operand"),
+                context
+                    .u128_to_montgomery_device(&atoms.right_lookup_operand, cycles)
+                    .expect("right lookup operand"),
+                context
+                    .u64_to_montgomery_device(&atoms.left_instruction_input, cycles)
+                    .expect("left instruction input"),
+                context
+                    .i128_to_montgomery_device(&atoms.right_instruction_input, cycles)
+                    .expect("right instruction input"),
+            ]
+            .iter()
+            .map(|column| column.to_host().expect("download"))
+            .collect();
+
+            assert!(
+                expected.iter().all(|column| column.len() == cycles),
+                "the host encoder produced a short column",
+            );
+            assert!(
+                expected[2].iter().any(|value| *value != expected[2][0]),
+                "every right lookup operand is identical, so a kernel ignoring the row would pass",
+            );
+            assert_eq!(
+                got, expected,
+                "the device columns diverge from the host encoder",
             );
         });
     }

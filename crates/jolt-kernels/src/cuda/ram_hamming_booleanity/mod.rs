@@ -13,7 +13,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::split_eq::DeviceSplitEq;
-use crate::cuda::witness::session_device_trace;
+use crate::cuda::witness::{session_atom_columns, session_device_trace};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -30,6 +30,15 @@ pub struct RamHammingBooleanityKernel<F: Field> {
     eq: DeviceSplitEq<F>,
     rounds_bound: usize,
     final_claim: Option<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for RamHammingBooleanityKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.exit();
+    }
 }
 
 impl<F: Field> RamHammingBooleanityKernel<F> {
@@ -109,7 +118,7 @@ fn device_hamming_weights<F: Field>(
     cycles: usize,
 ) -> Result<DeviceHammingWeight, KernelError<F>> {
     let trace = session_device_trace(context, session, witness, cycles)?;
-    let columns = trace.atom_columns()?;
+    let columns = session_atom_columns(context, session, witness, cycles)?;
     let bits = trace.flag_bit_column(&columns.flags, FLAG_BIT_RAM_HAMMING)?;
     Ok(DeviceHammingWeight::from_device(context, &bits, cycles)?)
 }

@@ -13,7 +13,7 @@ use jolt_verifier::stages::stage3::outputs::SpartanShift;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::cuda::common::device_columns::device_pc_words;
-use crate::cuda::witness::session_device_trace;
+use crate::cuda::witness::{session_atom_columns, session_device_trace};
 
 use super::common::prefix_suffix::{
     eq_plus_one_pairs, prefix_rounds_ceil, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -35,6 +35,15 @@ pub struct SpartanShiftKernel<F: Field> {
     rounds: PrefixSuffixRounds<F>,
     log_t: usize,
     bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanShiftKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("rounds"), self.rounds.device_bytes());
+        visitor.exit();
+    }
 }
 
 impl<F: Field> ProveRounds<F> for SpartanShiftKernel<F> {
@@ -123,7 +132,7 @@ impl<F: Field> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let trace = session_device_trace(context, session, witness, cycles)?;
-        let atoms = trace.atom_columns()?;
+        let atoms = session_atom_columns(context, session, witness, cycles)?;
         let pc_words = device_pc_words::<F>(context, session, witness, cycles)?;
         let device_columns = columns::upload_from_device::<F>(
             context,

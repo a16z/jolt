@@ -22,19 +22,19 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
+use jolt_witness::backend::cuda::FLAG_BIT_RAF;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::{session_atom_columns, session_device_trace};
 
 use self::address_driver::DeviceAddressPhase;
-use self::address_phase::{flag_claims, DeviceRows, NO_TABLE};
+use self::address_phase::{flag_claims, DeviceRows};
 use self::cycle_handoff::{build_cycle_tables, HandoffInputs};
 use self::cycle_rounds::DeviceCycleRounds;
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice};
 use crate::cuda::common::device_columns::device_lookup_limbs;
-use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -65,6 +65,26 @@ pub struct DeviceInstructionReadRaf<F: Field> {
     gamma: F,
     context: &'static CudaKernelContext,
     rounds_bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for DeviceInstructionReadRaf<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("r_reduction"),
+            self.r_reduction.len() * size_of::<Fr>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("cycle_challenges"),
+            self.cycle_challenges.len() * size_of::<Fr>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("prefix_checkpoints"),
+            self.prefix_checkpoints.len() * size_of::<PrefixEval<F>>(),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> DeviceInstructionReadRaf<F> {
@@ -178,22 +198,23 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
         }
         let cycles = 1usize << dimensions.log_t();
         let bits = device_lookup_limbs::<F>(context, session, witness, cycles)?;
-        let rows = collect_rows::<F, InstructionReadRafWitness>(witness, cycles)?;
-
-        let mut table_index = Vec::with_capacity(rows.len());
-        let mut raf_flag = Vec::with_capacity(rows.len());
-        for row in &rows {
-            table_index.push(row.table_index.0.map_or(NO_TABLE, |index| index as u32));
-            raf_flag.push(u8::from(row.raf_flag.0));
-        }
-        drop(rows);
-
         let unsupported = || KernelError::Unsupported {
             reason: "the CUDA instruction read-RAF kernel supports only the BN254 scalar field",
         };
+        let trace = session_device_trace(context, session, witness, cycles)?;
+        let atoms = session_atom_columns(context, session, witness, cycles)?;
+        let raf_flags = trace
+            .flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)
+            .map_err(|_| unsupported())?;
+        let table_index = context.download_u32(&atoms.table_index)?;
         let device_rows = Arc::new(
-            DeviceRows::from_device(context, bits, &table_index, &raf_flag)
-                .map_err(|_| unsupported())?,
+            DeviceRows::from_device_columns(
+                bits,
+                context.clone_u32(&atoms.table_index)?,
+                raf_flags,
+                cycles,
+            )
+            .map_err(|_| unsupported())?,
         );
 
         let device = DeviceAddressPhase::with_rows(

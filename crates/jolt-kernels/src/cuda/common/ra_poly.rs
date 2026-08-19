@@ -77,6 +77,35 @@ impl DeviceRaPolynomial {
         Self::from_device_tables(context, words, tables, order)
     }
 
+    pub fn from_device_columns(
+        indices: CudaSlice<u32>,
+        tables: DeviceFrVec,
+        cycles: usize,
+        order: BindingOrder,
+    ) -> Result<Self, CudaError> {
+        let addresses = tables.len();
+        if !cycles.is_power_of_two() || !addresses.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a one-hot polynomial needs power-of-two cycle and address counts",
+            });
+        }
+        if indices.len() < cycles {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: indices.len(),
+            });
+        }
+        Ok(Self {
+            indices,
+            tables,
+            addresses,
+            cycles,
+            order,
+            rounds_bound: 0,
+            dense: None,
+        })
+    }
+
     pub fn from_device_tables(
         context: &CudaKernelContext,
         words: &[u32],

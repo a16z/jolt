@@ -371,6 +371,30 @@ extern "C" __global__ void atom_columns_kernel(
   out_flags[index] = mask;
 }
 
+extern "C" __global__ void flag_bit_bytes_kernel(
+    const u32 *flags,
+    u32 bit,
+    u8 *out,
+    u32 cycles) {
+  u32 index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= cycles) {
+    return;
+  }
+  out[index] = (u8)((flags[index] >> bit) & 1u);
+}
+
+extern "C" __global__ void extra_word_column_kernel(
+    const u64 *extras,
+    u32 word,
+    u64 *out,
+    u32 cycles) {
+  u32 index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= cycles) {
+    return;
+  }
+  out[index] = extras[(size_t)index * EXTRA_WORDS + (size_t)word];
+}
+
 extern "C" __global__ void flag_bit_column_kernel(
     const u32 *flags,
     u32 bit,

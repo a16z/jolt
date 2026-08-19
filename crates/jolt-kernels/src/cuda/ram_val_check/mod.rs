@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::{session_atom_columns, session_device_trace};
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::dense_product::{DenseProductKernel, DeviceDenseProduct};
@@ -25,7 +25,7 @@ pub(crate) mod witness;
 impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamValCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
@@ -43,15 +43,16 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
 
         let cycles = 1usize << log_t;
         let addresses = 1usize << ram_log_k;
-        let rows = collect_rows::<F, witness::RamValCheckWitness>(witness, cycles)?;
-        let (inc, hot) = witness::device_columns(context, &rows, addresses)?;
-        drop(rows);
+        let trace = session_device_trace(context, session, witness, cycles)?;
+        let atoms = session_atom_columns(context, session, witness, cycles)?;
+        let inc = context.i128_to_montgomery_device(&atoms.ram_inc, cycles)?;
+        let (hot, _) = trace.remapped_ram_words(addresses)?;
 
         let eq_address = context.eq_evals(require_fr_slice(r_address)?)?;
-        let ra = DeviceRaPolynomial::from_device_tables(
-            context,
-            &hot,
+        let ra = DeviceRaPolynomial::from_device_columns(
+            hot,
             eq_address,
+            cycles,
             BindingOrder::LowToHigh,
         )?;
         let lt = DeviceLtPolynomial::shifted(

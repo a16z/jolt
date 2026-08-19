@@ -257,6 +257,14 @@ pub struct SpartanOuterRemainderKernel<F: Field> {
     log_t: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanOuterRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let visitor = visitor.enter_self_sized::<Self>();
+        visitor.exit();
+    }
+}
+
 impl<F: Field> SpartanOuterRemainderKernel<F> {
     pub const fn new(
         context: &'static CudaKernelContext,

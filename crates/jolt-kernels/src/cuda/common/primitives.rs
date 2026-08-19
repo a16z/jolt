@@ -322,6 +322,35 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    pub fn u128_to_montgomery_device(
+        &self,
+        value: &CudaSlice<u64>,
+        len: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = self.alloc(len)?;
+        if len == 0 {
+            return Ok(output);
+        }
+        if value.len() < len * 2 {
+            return Err(CudaError::LengthMismatch {
+                expected: len * 2,
+                got: value.len(),
+            });
+        }
+        let count = Self::count_of(len)?;
+        let mut builder = self.stream().launch_builder(&self.u128_to_mont);
+        let _ = builder.arg(value);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < count` reads `value[2i]` and `value[2i + 1]`,
+        // checked above to be inside a `2 * count`-word buffer, and writes only
+        // `out[i*4..i*4+4]` of a `count * LIMBS` buffer; the two are distinct
+        // allocations. Threads with `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
+        self.stream().synchronize()?;
+        Ok(output)
+    }
+
     pub fn i128_to_montgomery_device(
         &self,
         value: &CudaSlice<u64>,

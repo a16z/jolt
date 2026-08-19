@@ -26,6 +26,14 @@ pub struct RamRaReductionKernel<F: Field> {
     context: &'static CudaKernelContext,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for RamRaReductionKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let visitor = visitor.enter_self_sized::<Self>();
+        visitor.exit();
+    }
+}
+
 impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for CudaBackend {
     fn prepare(
         &self,

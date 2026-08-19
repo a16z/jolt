@@ -5,7 +5,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::session_atom_columns;
 
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::{require_context, CudaBackend};
@@ -21,7 +21,6 @@ pub(crate) mod witness;
 
 use columns::DeviceProductColumns;
 use remainder::{DeviceProductRemainder, SpartanProductRemainderKernel};
-use witness::SpartanProductWitness;
 
 pub struct SpartanProductState<F: Field> {
     context: &'static CudaKernelContext,
@@ -29,6 +28,22 @@ pub struct SpartanProductState<F: Field> {
     tau_low: Vec<F>,
     log_t: usize,
     matrix: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanProductState<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(
+            allocative::Key::new("tau_low"),
+            self.tau_low.len() * size_of::<F>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("matrix"),
+            self.matrix.len() * size_of::<F>(),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
@@ -46,9 +61,9 @@ impl<F: Field> UniskipKernel<F, ProductRemainder<F>> for CudaBackend {
             });
         }
 
-        let rows = collect_rows::<F, SpartanProductWitness>(witness, 1usize << log_t)?;
-        let packed = witness::pack(&rows);
-        let columns = DeviceProductColumns::new(context, &packed)?;
+        let cycles = 1usize << log_t;
+        let atoms = session_atom_columns(context, session, witness, cycles)?;
+        let columns = DeviceProductColumns::from_device(context, &atoms, cycles)?;
         let matrix = uniskip::product_matrix(context, &columns, tau_low)?;
 
         session.park(SpartanProductState {

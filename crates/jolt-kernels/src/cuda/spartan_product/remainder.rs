@@ -269,6 +269,14 @@ pub struct SpartanProductRemainderKernel<F: Field> {
     degree: usize,
 }
 
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for SpartanProductRemainderKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let visitor = visitor.enter_self_sized::<Self>();
+        visitor.exit();
+    }
+}
+
 impl<F: Field> SpartanProductRemainderKernel<F> {
     pub const fn new(
         context: &'static CudaKernelContext,

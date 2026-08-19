@@ -5,6 +5,83 @@
 #define SO_KIND_NARROW 0u
 #define SO_KIND_WIDE 1u
 #define SO_KIND_FLAG 2u
+#define SO_EXTRA_WORDS 10
+#define SO_EXTRA_RS1 0
+#define SO_EXTRA_RS2 1
+#define SO_EXTRA_RD_POST 2
+#define SO_EXTRA_RAM_READ 3
+#define SO_EXTRA_RAM_WRITE 4
+#define SO_EXTRA_IMM_LO 5
+#define SO_EXTRA_IMM_HI 6
+#define SO_GATHER_BITS 16
+
+extern "C" __global__ void so_gather_kernel(
+    const u64 *__restrict__ extras, const u64 *__restrict__ address,
+    const u64 *__restrict__ ram_address, const unsigned int *__restrict__ pc_words,
+    const unsigned int *__restrict__ canonical, const unsigned int *__restrict__ bit_sources,
+    unsigned int product_sign_source, const u64 *__restrict__ left_input,
+    const u64 *__restrict__ right_input, const u64 *__restrict__ left_operand,
+    const u64 *__restrict__ right_operand, const u64 *__restrict__ lookup_output,
+    const u64 *__restrict__ product, unsigned int sign_base, u64 *__restrict__ narrow,
+    u64 *__restrict__ wide,
+    unsigned int *__restrict__ raw, unsigned long long *__restrict__ unmapped,
+    unsigned int cycles) {
+    unsigned int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= cycles) return;
+
+    unsigned int word = pc_words[t];
+    if (word == 0xFFFFFFFFu) {
+        atomicMin(unmapped, (unsigned long long)t);
+        return;
+    }
+
+    const u64 *words = extras + (size_t)t * SO_EXTRA_WORDS;
+    u64 *row = narrow + (size_t)t * SO_NARROW;
+    u64 ram = ram_address[t];
+    row[0] = left_input[t];
+    row[1] = (u64)word;
+    row[2] = address[t];
+    row[3] = (ram == 0xFFFFFFFFFFFFFFFFull) ? 0ull : ram;
+    row[4] = words[SO_EXTRA_RS1];
+    row[5] = words[SO_EXTRA_RS2];
+    row[6] = words[SO_EXTRA_RD_POST];
+    row[7] = words[SO_EXTRA_RAM_READ];
+    row[8] = words[SO_EXTRA_RAM_WRITE];
+    row[9] = left_operand[t];
+    row[10] = lookup_output[t];
+    row[11] = 0ull;
+    row[12] = 0ull;
+
+    unsigned int mask = 0u;
+    u64 *limbs = wide + (size_t)t * (SO_WIDE * 2);
+
+    u128 right = ((u128)right_input[2 * (size_t)t + 1] << 64) | (u128)right_input[2 * (size_t)t];
+    bool right_negative = ((__int128)right) < 0;
+    u128 magnitude = right_negative ? (~right + (u128)1) : right;
+    limbs[0] = (u64)magnitude;
+    limbs[1] = (u64)(magnitude >> 64);
+    if (right_negative) mask |= 1u << (sign_base + 0u);
+
+    limbs[2] = product[2 * (size_t)t];
+    limbs[3] = product[2 * (size_t)t + 1];
+    if (((canonical[t] >> product_sign_source) & 1u) != 0u) mask |= 1u << (sign_base + 1u);
+
+    u128 imm = ((u128)words[SO_EXTRA_IMM_HI] << 64) | (u128)words[SO_EXTRA_IMM_LO];
+    bool imm_negative = ((__int128)imm) < 0;
+    u128 imm_magnitude = imm_negative ? (~imm + (u128)1) : imm;
+    limbs[4] = (u64)imm_magnitude;
+    limbs[5] = (u64)(imm_magnitude >> 64);
+    if (imm_negative) mask |= 1u << (sign_base + 2u);
+
+    limbs[6] = right_operand[2 * (size_t)t];
+    limbs[7] = right_operand[2 * (size_t)t + 1];
+
+    unsigned int source = canonical[t];
+    for (unsigned int bit = 0u; bit < SO_GATHER_BITS; ++bit) {
+        mask |= ((source >> bit_sources[bit]) & 1u) << bit;
+    }
+    raw[t] = mask;
+}
 
 extern "C" __global__ void so_shift_kernel(const unsigned int *__restrict__ raw,
                                           u64 *__restrict__ narrow,

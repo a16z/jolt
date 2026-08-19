@@ -9,7 +9,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::collect_rows;
+use crate::cuda::witness::{session_atom_columns, session_device_trace};
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
@@ -42,6 +42,28 @@ pub struct RegistersReadWriteKernel<F: Field> {
     challenges: Vec<F>,
     finals: Option<[F; 3]>,
     rounds_bound: usize,
+}
+
+#[cfg(feature = "allocative")]
+impl<F: Field> allocative::Allocative for RegistersReadWriteKernel<F> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        visitor.visit_simple(allocative::Key::new("inc"), self.inc.device_bytes());
+        visitor.visit_simple(allocative::Key::new("eq"), self.eq.device_bytes());
+        visitor.visit_simple(
+            allocative::Key::new("merged_eq"),
+            self.merged_eq.as_ref().map_or(0, DeviceFrVec::device_bytes),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("val_init"),
+            self.val_init.len() * size_of::<Fr>(),
+        );
+        visitor.visit_simple(
+            allocative::Key::new("challenges"),
+            self.challenges.len() * size_of::<F>(),
+        );
+        visitor.exit();
+    }
 }
 
 impl<F: Field> RegistersReadWriteKernel<F> {
@@ -208,7 +230,7 @@ impl<F: Field> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
 impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
@@ -233,8 +255,10 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBackend {
         }
 
         let gamma = inputs.challenges.gamma;
-        let rows = collect_rows::<F, witness::RegistersReadWriteWitness>(witness, 1usize << log_t)?;
-        let rows = device_rows::DeviceRegisterRows::upload(context, &rows)?;
+        let cycles = 1usize << log_t;
+        let trace = session_device_trace(context, session, witness, cycles)?;
+        let atoms = session_atom_columns(context, session, witness, cycles)?;
+        let rows = device_rows::DeviceRegisterRows::from_device(context, &trace, &atoms, cycles)?;
         let cycle = rows.matrix(
             context,
             require_fr(gamma).map_err(|_| KernelError::Unsupported {
@@ -296,6 +320,63 @@ mod tests {
 
     const LOG_T: usize = 6;
     const LOG_K: usize = 7;
+
+    #[test]
+    fn device_register_rows_match_the_host_encoder() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let plane = witness(7);
+        let cycles = 1usize << LOG_T;
+        let rows: Vec<super::witness::RegistersReadWriteWitness> =
+            jolt_witness::collect_bundles(&plane, cycles).expect("reference register rows");
+        let expected = super::device_rows::DeviceRegisterRows::upload(context, &rows)
+            .expect("host-encoded register rows");
+
+        let mut session = ProofSession::default();
+        let trace =
+            crate::cuda::witness::session_device_trace::<Fr>(context, &mut session, &plane, cycles)
+                .expect("device residency");
+        let atoms =
+            crate::cuda::witness::session_atom_columns::<Fr>(context, &mut session, &plane, cycles)
+                .expect("atom columns");
+        let got =
+            super::device_rows::DeviceRegisterRows::from_device(context, &trace, &atoms, cycles)
+                .expect("device-gathered register rows");
+
+        for (name, got, expected) in [
+            ("rs1 address", got.rs1_address(), expected.rs1_address()),
+            ("rs2 address", got.rs2_address(), expected.rs2_address()),
+            ("rd address", got.rd_address(), expected.rd_address()),
+        ] {
+            let expected = context.download_u32(expected).expect("download");
+            assert!(
+                expected.iter().any(|&slot| slot != expected[0]),
+                "every {name} is identical, so a kernel ignoring the row would pass",
+            );
+            assert_eq!(
+                context.download_u32(got).expect("download"),
+                expected,
+                "the {name} column diverges",
+            );
+        }
+        for (name, got, expected) in [
+            ("rs1 value", got.rs1_value(), expected.rs1_value()),
+            ("rs2 value", got.rs2_value(), expected.rs2_value()),
+            ("rd pre value", got.rd_pre_value(), expected.rd_pre_value()),
+            (
+                "rd post value",
+                got.rd_post_value(),
+                expected.rd_post_value(),
+            ),
+        ] {
+            assert_eq!(
+                context.download_u64(got).expect("download"),
+                context.download_u64(expected).expect("download"),
+                "the {name} column diverges",
+            );
+        }
+    }
 
     fn rows(seed: u64) -> (Vec<TraceRow>, Vec<Vec<Fr>>, Vec<Fr>) {
         let fixture = register_rows(LOG_T, LOG_K, seed);
