@@ -1,0 +1,119 @@
+# Spec: Field-Inline Portability — Packed Commitments and Base-Field Instantiation
+
+| Field | Value |
+|-------|-------|
+| Author(s) | Markos Georghiades, Claude |
+| Created | 2026-08-19 |
+| Status | draft |
+| PR | TBD |
+
+## Purpose
+
+Field-inline v1 is implemented end-to-end on the modular stack for the
+homomorphic (Dory) commitment axis over BN254 Fr (see the status note in
+[field-inline-protocol.md](field-inline-protocol.md)). Two upgrades are
+anticipated by pending work: the Akita packed commitment mode moving to the
+modular prover (#1718, #1732), and Jolt moving to a 128-bit base field. This
+spec settles both upgrade designs now so the later PRs land against a decided
+plan instead of re-deriving it.
+
+## Scope
+
+```text
+in scope:
+  packed (Akita) treatment of the field-inline committed surface
+  instantiating field-inline over a smaller base field (e.g. fp128)
+out of scope:
+  extension-field sumcheck soundness (base fields ONLY: FR registers hold
+    elements of the sumcheck field F itself; any base/extension split is a
+    separate spec)
+  any change to the Twist identities or the virtual/committed split
+  zk over the packed axis (akita x zk stays mutually exclusive)
+```
+
+## Invariants that carry unchanged
+
+- Native-field invariant: q = modulus(F). Field-inline accelerates whatever
+  field the proof runs over; FMUL stays one guarded row plus one product lane,
+  no quotient witnesses, under every instantiation in scope.
+- The Twist memory-checking identities (`crates/jolt-claims/src/twist/`) are
+  representation-agnostic; both upgrades reuse them verbatim.
+- FR RA/WA/Val remain virtual and bytecode-anchored — no packed one-hot
+  obligations arise from field-inline on any axis.
+- The composition seams (per-stage `field_inline` modules, boundary whitelist
+  tests, `suppress_field_operand_slots`) are commitment- and field-agnostic.
+
+## Axis 1: packed (Akita) FieldRdInc
+
+`FieldRdInc` is the extension's only committed polynomial. The packed mode's
+inc machinery (balanced digits + carry + booleanity-style digit checks, per
+the digit-zero work in #1731) requires small values; a field delta
+(post − pre mod p) has no small representation. Design:
+
+```text
+commit:   the limb columns of FieldRdInc's canonical representative —
+          limb_i in u64, i in 0..L (L = 4 for a 254-bit F, L = 2 for fp128)
+each limb column is RdInc-shaped and rides the existing balanced-digit
+          machinery verbatim; digit smallness enforcement doubles as the
+          limb range check (limb_i < 2^64)
+recompose: FieldRdInc = sum_i limb_i * 2^(64 i)   — one linear identity over F
+          (exact: the canonical representative is < p, so no carries and no
+          modular wraparound in the recomposition)
+virtual:  full-width FieldRdInc becomes a virtual polynomial; every Twist
+          relation consumes it unchanged
+openings: the final opening opens the limb columns; the FieldRdInc claim is
+          reconstructed linearly via the existing stage-8 reconstruction
+          machinery (the pattern akita already uses for fused-inc cells)
+reduction: FieldRegistersIncClaimReduction consumes the recomposed virtual
+          instead of a committed opening (wiring change only)
+```
+
+Implementation-time checks (not design questions): lattice norm-budget
+headroom for L limb columns; the reconstruction ordering in stage 8's packed
+path. The `field-inline x akita` compile error in
+`crates/jolt-verifier/src/config.rs` is removed only in the PR that lands
+this design with accept/tamper fixtures — same discipline as the verifier
+gate's removal.
+
+## Axis 2: 128-bit base-field instantiation
+
+Everything above the tracer is generic over `F`. The concrete work:
+
+- Tracer genericization: `decode_field`/`encode_field` in
+  `tracer/src/instruction/field_inline.rs` are pinned to BN254 `Fr`;
+  parameterize over the active `F` (~150 LOC, per the v2-port estimate).
+- Encoding version: `FieldValueEncoding` gains a two-limb 16-byte variant
+  beside `BN254_SCALAR_CANONICAL`; `FieldInlineBytecodeMetadata.value_encoding`
+  and the profile fingerprint already version this — a proof/preprocessing
+  built under one encoding rejects under another fail-closed.
+- Bridge economics improve: `FIELD_LOAD_FROM_X` covers half the field; a
+  full-width load is one radix multiplication (single 2^64 constant) plus one
+  add; `FIELD_STORE_TO_X`'s range-restricted semantics (< 2^64, trap
+  otherwise) and `FIELD_LOAD_IMM` are unchanged.
+- Generator budget: `MAX_BLINDFOLD_GENERATORS` is cfg-keyed today (32 FR-off /
+  64 FR-on); the composed uniskip degrees do not change with the field, so no
+  further action.
+- Expectation reset (documentation, not protocol): software two-limb field
+  multiplication costs tens of cycles, so the per-op native speedup drops from
+  ~190x (BN254) to ~20-40x; the pinned-slot SDK matters relatively more.
+
+## Ordering against pending PRs
+
+#1718/#1732 (akita -> modular prover) touch the same seams as the landed
+field-inline work (kernel backend slots, stage-0 commit path, stage-6b/8
+per-mode test fixtures). The axes are compile-disjoint, so all conflicts are
+textual adjacency, arbitrated by the boundary tests and both ratchets.
+Recommended order: merge the field-inline branch first; the packed-FieldRdInc
+slice (Axis 1) lands after #1718, as one slice-sized unit; the base-field
+slice (Axis 2) lands with or after the field switch itself.
+
+## Implementation steps
+
+1. Axis 1 after #1718 merges: limb-column commit + digit rides + recomposition
+   identity + stage-8 reconstruction + inc-reduction rewiring; accept/tamper
+   fixtures on the packed path; remove the compile error last.
+   Review gate: FR-off akita byte-identity; packed FR fixtures accept/tamper.
+2. Axis 2 with the field switch: tracer parameterization + encoding variant +
+   bridge fixture updates; the eq-MLE guest re-fixtured under the new
+   encoding.
+   Review gate: encoding-mismatch proofs reject fail-closed; e2e both modes.
