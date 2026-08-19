@@ -511,7 +511,7 @@ fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
         .collect()
 }
 
-fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
+pub fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     setup: &DoryProverSetup,
 ) -> Result<Vec<ArkG1>, OpeningsError> {
@@ -562,12 +562,12 @@ impl DoryHint {
 
 /// Bridges [`MultilinearPoly<Fr>`] to dory-pcs's polynomial traits
 /// without materializing the full evaluation table.
-struct DorySourceAdapter<'a, S: MultilinearPoly<Fr> + ?Sized> {
+pub struct DorySourceAdapter<'a, S: MultilinearPoly<Fr> + ?Sized> {
     source: &'a S,
 }
 
 impl<'a, S: MultilinearPoly<Fr> + ?Sized> DorySourceAdapter<'a, S> {
-    fn new(source: &'a S) -> Self {
+    pub fn new(source: &'a S) -> Self {
         Self { source }
     }
 }

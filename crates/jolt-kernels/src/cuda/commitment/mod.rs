@@ -513,20 +513,28 @@ fn device_rows<F: Field>(
     reason = "test module: device operations and fixture errors fail loudly"
 )]
 mod tests {
+    #[cfg(not(feature = "zk"))]
+    use jolt_claims::protocols::jolt::JoltAdviceKind;
     use jolt_claims::protocols::jolt::{
-        JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, TracePolynomialOrder,
+        JoltCommittedPolynomial, JoltOneHotConfig, TracePolynomialOrder,
     };
+    #[cfg(not(feature = "zk"))]
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
+    #[cfg(not(feature = "zk"))]
     use jolt_openings::CommitmentScheme;
     use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 
+    #[cfg(not(feature = "zk"))]
     use super::CudaBackend;
-    use crate::commitment::{
-        CommitWitness, CommitmentGrid, CommittedColumnsWitness, WitnessCommitment,
-    };
+    #[cfg(not(feature = "zk"))]
+    use crate::commitment::{CommitWitness, WitnessCommitment};
+    use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
     use crate::cuda::common::context::shared_context;
-    use crate::cuda::common::testing::{advice_plane, with_r1cs_witness};
+    #[cfg(not(feature = "zk"))]
+    use crate::cuda::common::testing::advice_plane;
+    use crate::cuda::common::testing::with_r1cs_witness;
+    #[cfg(not(feature = "zk"))]
     use crate::reference::ReferenceBackend;
     use crate::ProofSession;
 
@@ -536,6 +544,7 @@ mod tests {
 
     const TOTAL_VARS: usize = 16;
 
+    #[cfg(not(feature = "zk"))]
     const ADVICE_BYTES: usize = 4096;
 
     const fn one_hot() -> JoltOneHotConfig {
@@ -560,6 +569,7 @@ mod tests {
         (TracePolynomialOrder::AddressMajor, 6),
     ];
 
+    #[cfg(not(feature = "zk"))]
     const ADVICE_KINDS: [(JoltAdviceKind, JoltCommittedPolynomial); 2] = [
         (
             JoltAdviceKind::Trusted,
@@ -571,6 +581,7 @@ mod tests {
         ),
     ];
 
+    #[cfg(not(feature = "zk"))]
     fn commit_columns(
         backend: &dyn CommitWitness<Fr, DoryScheme>,
         witness: &impl JoltWitnessPlane<Fr>,
@@ -583,6 +594,7 @@ mod tests {
             .expect("commit_witness")
     }
 
+    #[cfg(not(feature = "zk"))]
     fn commit_advice_column(
         backend: &dyn CommitWitness<Fr, DoryScheme>,
         witness: &dyn JoltWitnessOracle<Fr>,
@@ -595,6 +607,7 @@ mod tests {
             .expect("commit_advice")
     }
 
+    #[cfg(not(feature = "zk"))]
     fn advice_grid(words: usize) -> CommitmentGrid {
         CommitmentGrid {
             total_vars: words.ilog2() as usize,
@@ -619,6 +632,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(not(feature = "zk"))]
     fn assert_commitments_match(
         expected: &[WitnessCommitment<DoryScheme>],
         got: &[WitnessCommitment<DoryScheme>],

@@ -29,6 +29,8 @@ const KERNEL_SRC: &str = concat!(
     "\n",
     include_str!("../kernels/msm.cu"),
     "\n",
+    include_str!("../kernels/pairing.cu"),
+    "\n",
     include_str!("../kernels/opening.cu"),
     "\n",
     include_str!("../kernels/scan.cu"),
@@ -218,6 +220,12 @@ pub struct CudaKernelContext {
     msm_segment_sum: CudaFunction,
     msm_segment_sum_small: CudaFunction,
     msm_bucket_reduce_parallel: CudaFunction,
+    msm_shared_scalar_rows: CudaFunction,
+    msm_g1_axpy: CudaFunction,
+    msm_g2_axpy: CudaFunction,
+    msm_g2_fixed_base: CudaFunction,
+    pairing_miller: CudaFunction,
+    pairing_fq12_product: CudaFunction,
     msm_window_accumulate: CudaFunction,
     msm_block_embed: CudaFunction,
     msm_scatter_strided: CudaFunction,
@@ -387,6 +395,12 @@ impl CudaKernelContext {
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
             msm_bucket_reduce_parallel: module
                 .load_function("msm_bucket_reduce_parallel_kernel")?,
+            msm_shared_scalar_rows: module.load_function("msm_shared_scalar_rows_kernel")?,
+            msm_g1_axpy: module.load_function("msm_g1_axpy_kernel")?,
+            msm_g2_axpy: module.load_function("msm_g2_axpy_kernel")?,
+            msm_g2_fixed_base: module.load_function("msm_g2_fixed_base_kernel")?,
+            pairing_miller: module.load_function("pairing_miller_kernel")?,
+            pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
             msm_window_accumulate: module.load_function("msm_window_accumulate_kernel")?,
             msm_block_embed: module.load_function("msm_block_embed_kernel")?,
             msm_scatter_strided: module.load_function("msm_scatter_strided_kernel")?,
@@ -771,6 +785,30 @@ impl CudaKernelContext {
 
     pub(crate) const fn msm_bucket_reduce_parallel(&self) -> &CudaFunction {
         &self.msm_bucket_reduce_parallel
+    }
+
+    pub(crate) const fn msm_g1_axpy(&self) -> &CudaFunction {
+        &self.msm_g1_axpy
+    }
+
+    pub(crate) const fn msm_g2_axpy(&self) -> &CudaFunction {
+        &self.msm_g2_axpy
+    }
+
+    pub(crate) const fn msm_g2_fixed_base(&self) -> &CudaFunction {
+        &self.msm_g2_fixed_base
+    }
+
+    pub(crate) const fn pairing_miller(&self) -> &CudaFunction {
+        &self.pairing_miller
+    }
+
+    pub(crate) const fn pairing_fq12_product(&self) -> &CudaFunction {
+        &self.pairing_fq12_product
+    }
+
+    pub(crate) const fn msm_shared_scalar_rows(&self) -> &CudaFunction {
+        &self.msm_shared_scalar_rows
     }
 
     pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {

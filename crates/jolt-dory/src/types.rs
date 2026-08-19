@@ -128,12 +128,12 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DoryHint {
-    pub(crate) row_commitments: Vec<Bn254G1>,
-    pub(crate) commit_blind: Fr,
+    pub row_commitments: Vec<Bn254G1>,
+    pub commit_blind: Fr,
 }
 
 impl DoryHint {
-    pub(crate) fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
+    pub fn new(row_commitments: Vec<Bn254G1>, commit_blind: Fr) -> Self {
         Self {
             row_commitments,
             commit_blind,

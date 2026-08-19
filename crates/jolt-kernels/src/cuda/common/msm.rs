@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use cudarc::driver::{CudaSlice, CudaStream, PushKernelArg};
+use cudarc::driver::{CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
 
-use super::context::CudaKernelContext;
+use super::context::{CudaKernelContext, BLOCK};
 use jolt_field::Fr;
 
 use super::device::DeviceFrVec;
@@ -47,6 +47,14 @@ impl JacobianLimbs {
     pub const fn is_identity(&self) -> bool {
         self.z[0] == 0 && self.z[1] == 0 && self.z[2] == 0 && self.z[3] == 0
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ResidentAxpy {
+    pub a_offset: usize,
+    pub b_offset: usize,
+    pub out_offset: usize,
+    pub count: usize,
 }
 
 pub struct DeviceG1Bases {
@@ -450,6 +458,260 @@ impl CudaKernelContext {
             row_len,
             FR_SCALAR_BITS,
         )
+    }
+
+    pub fn upload_raw_u64(&self, values: &[u64]) -> Result<CudaSlice<u64>, CudaError> {
+        self.upload_u64_slice(values)
+    }
+
+    pub fn write_u64_range(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        start: usize,
+        values: &[u64],
+    ) -> Result<(), CudaError> {
+        if start + values.len() > buffer.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: buffer.len(),
+                got: start + values.len(),
+            });
+        }
+        if values.is_empty() {
+            return Ok(());
+        }
+        let mut target = buffer.slice_mut(start..start + values.len());
+        xfer_stats::timed(Phase::H2d, size_of_val(values), || {
+            Ok::<_, CudaError>(self.stream().memcpy_htod(values, &mut target)?)
+        })
+    }
+
+    pub fn read_u64_range(
+        &self,
+        buffer: &CudaSlice<u64>,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<u64>, CudaError> {
+        if end > buffer.len() || start > end {
+            return Err(CudaError::LengthMismatch {
+                expected: buffer.len(),
+                got: end,
+            });
+        }
+        if start == end {
+            return Ok(Vec::new());
+        }
+        let source = buffer.slice(start..end);
+        xfer_stats::timed(Phase::D2h, (end - start) * size_of::<u64>(), || {
+            Ok::<_, CudaError>(self.stream().clone_dtoh(&source)?)
+        })
+    }
+
+    fn resident_span_end(
+        offset: usize,
+        count: usize,
+        words: usize,
+        buffer: &CudaSlice<u64>,
+    ) -> Result<(), CudaError> {
+        let end = offset
+            .checked_add(count)
+            .and_then(|last| last.checked_mul(words))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a resident point span overflowed",
+            })?;
+        if end > buffer.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: buffer.len(),
+                got: end,
+            });
+        }
+        Ok(())
+    }
+
+    fn axpy_in_place(
+        &self,
+        kernel: &cudarc::driver::CudaFunction,
+        words: usize,
+        buffer: &mut CudaSlice<u64>,
+        span: ResidentAxpy,
+        scalar: Fr,
+    ) -> Result<(), CudaError> {
+        let ResidentAxpy {
+            a_offset,
+            b_offset,
+            out_offset,
+            count,
+        } = span;
+        if count == 0 {
+            return Ok(());
+        }
+        for offset in [a_offset, b_offset, out_offset] {
+            Self::resident_span_end(offset, count, words, buffer)?;
+        }
+        let coincides_or_avoids = |left: usize, right: usize| {
+            left == right || left + count <= right || right + count <= left
+        };
+        if !coincides_or_avoids(out_offset, a_offset) || !coincides_or_avoids(out_offset, b_offset)
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident axpy output must coincide with an operand or avoid both",
+            });
+        }
+
+        let device_scalar = self.canonical_scalars(&self.upload(&[scalar])?)?;
+        let a = Self::count_of(a_offset)?;
+        let b = Self::count_of(b_offset)?;
+        let out = Self::count_of(out_offset)?;
+        let points = Self::count_of(count)?;
+        let bits = Self::count_of(FR_SCALAR_BITS)?;
+
+        let mut builder = self.stream().launch_builder(kernel);
+        let _ = builder.arg(buffer);
+        let _ = builder.arg(&device_scalar);
+        let _ = builder.arg(&a);
+        let _ = builder.arg(&b);
+        let _ = builder.arg(&out);
+        let _ = builder.arg(&points);
+        let _ = builder.arg(&bits);
+        // SAFETY: thread `i < points` reads the `words` limbs at points
+        // `a_offset + i` and `b_offset + i` of `buffer` and writes the same span
+        // at point `out_offset + i`; all three spans are checked above to end
+        // inside `buffer`. The three views alias one allocation, so `buf` is
+        // passed once and un-`__restrict__`ed: the write span either coincides
+        // exactly with an operand — in which case thread `i` has already loaded
+        // both operand points into registers before it stores — or is disjoint
+        // from both, which the alias check enforces. Either way no thread reads
+        // a point another thread writes. The scalar is the single canonical
+        // value and bit indices stay below `FR_SCALAR_BITS = 254`, so
+        // `bit >> 6 <= 3` is inside its `FQ_LIMBS` limbs. Threads with
+        // `i >= points` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(points)) }?;
+        Ok(())
+    }
+
+    pub fn g1_axpy_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        span: ResidentAxpy,
+        scalar: Fr,
+    ) -> Result<(), CudaError> {
+        self.axpy_in_place(self.msm_g1_axpy(), 3 * FQ_LIMBS, buffer, span, scalar)
+    }
+
+    pub fn g2_axpy_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        span: ResidentAxpy,
+        scalar: Fr,
+    ) -> Result<(), CudaError> {
+        self.axpy_in_place(self.msm_g2_axpy(), 6 * FQ_LIMBS, buffer, span, scalar)
+    }
+
+    pub fn g2_fixed_base_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        base_offset: usize,
+        out_offset: usize,
+        scalars: &[Fr],
+    ) -> Result<(), CudaError> {
+        let count = scalars.len();
+        if count == 0 {
+            return Ok(());
+        }
+        let words = 6 * FQ_LIMBS;
+        Self::resident_span_end(base_offset, 1, words, buffer)?;
+        Self::resident_span_end(out_offset, count, words, buffer)?;
+        if base_offset >= out_offset && base_offset < out_offset + count {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident fixed-base scaling must not write over its base",
+            });
+        }
+
+        let device_scalars = self.canonical_scalars(&self.upload(scalars)?)?;
+        let base = Self::count_of(base_offset)?;
+        let out = Self::count_of(out_offset)?;
+        let points = Self::count_of(count)?;
+        let bits = Self::count_of(FR_SCALAR_BITS)?;
+
+        let mut builder = self.stream().launch_builder(self.msm_g2_fixed_base());
+        let _ = builder.arg(buffer);
+        let _ = builder.arg(&device_scalars);
+        let _ = builder.arg(&base);
+        let _ = builder.arg(&out);
+        let _ = builder.arg(&points);
+        let _ = builder.arg(&bits);
+        // SAFETY: thread `i < points` reads the `6 * FQ_LIMBS` limbs of the
+        // single base point at `base_offset` and the `FQ_LIMBS` limbs of
+        // `scalars[i]`, both checked above to lie inside their buffers, and
+        // writes only point `out_offset + i`, whose span is checked and proven
+        // disjoint from the base. `buf` is passed once, un-`__restrict__`ed,
+        // because base and output live in one allocation. Bit indices stay
+        // below `FR_SCALAR_BITS = 254`, so `bit >> 6 <= 3` is inside a scalar.
+        // Threads with `i >= points` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(points)) }?;
+        Ok(())
+    }
+
+    pub fn msm_rows_shared_scalars(
+        &self,
+        bases: &[JacobianLimbs],
+        scalars: &[Fr],
+        rows: usize,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        if rows == 0 || scalars.is_empty() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a shared-scalar row MSM needs at least one row and one term",
+            });
+        }
+        if bases.len() != rows * scalars.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: rows * scalars.len(),
+                got: bases.len(),
+            });
+        }
+
+        let terms = scalars.len();
+        let flat = flatten_jacobian(bases);
+        let device_bases = self.upload_u64_slice(&flat)?;
+        let device_scalars = self.canonical_scalars(&self.upload(scalars)?)?;
+        let mut output = self.alloc_u64(rows * 3 * FQ_LIMBS)?;
+
+        let rows_arg = Self::count_of(rows)?;
+        let terms_arg = Self::count_of(terms)?;
+        let bits_arg = Self::count_of(FR_SCALAR_BITS)?;
+        let block = terms.next_power_of_two().min(BLOCK as usize) as u32;
+        let shared = block * 3 * FQ_LIMBS as u32 * size_of::<u64>() as u32;
+
+        let mut builder = self.stream().launch_builder(self.msm_shared_scalar_rows());
+        let _ = builder.arg(&device_bases);
+        let _ = builder.arg(&device_scalars);
+        let _ = builder.arg(&rows_arg);
+        let _ = builder.arg(&terms_arg);
+        let _ = builder.arg(&bits_arg);
+        let _ = builder.arg(&mut output);
+        // SAFETY: block `row = blockIdx.x < rows` (a block-uniform guard, so a
+        // skipped block never reaches a `__syncthreads()`) reads, for each
+        // `term` striding from `threadIdx.x` by `blockDim.x` below `terms`, the
+        // `3 * FQ_LIMBS` limbs at `(term * rows + row) * 3 * FQ_LIMBS` inside
+        // `bases`'s checked `rows * terms` points, and the `FQ_LIMBS` limbs at
+        // `term * FQ_LIMBS` inside `scalars`'s `terms` canonical scalars. Bit
+        // indices run below `FR_SCALAR_BITS = 254`, so `bit >> 6 <= 3` stays
+        // inside a scalar. Shared memory is `blockDim.x * 3 * FQ_LIMBS` u64s,
+        // matching `shared_mem_bytes`, and `blockDim.x` is a power of two so the
+        // reduction tree covers the block; every thread reaches each
+        // `__syncthreads()` because the strided loop and the tree sit outside
+        // any early return. Only thread 0 writes, to the `3 * FQ_LIMBS` limbs at
+        // `row * 3 * FQ_LIMBS` of the freshly allocated output — one slot per
+        // block, distinct from both inputs.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (rows_arg, 1, 1),
+                block_dim: (block, 1, 1),
+                shared_mem_bytes: shared,
+            })
+        }?;
+        self.stream().synchronize()?;
+
+        Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
     pub fn msm_rows_i128(

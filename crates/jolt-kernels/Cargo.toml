@@ -31,6 +31,9 @@ cuda = [
   "dep:ark-ff",
   "dep:jolt-crypto",
   "dep:jolt-dory",
+  "dep:jolt-transcript",
+  "dep:dory",
+  "dep:ark-serialize",
   "jolt-witness/cuda",
 ]
 
@@ -40,8 +43,11 @@ ark-bn254 = { workspace = true, optional = true }
 ark-ec = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 cudarc = { workspace = true, optional = true }
+ark-serialize = { workspace = true, optional = true }
+dory = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true, features = ["bn254"] }
 jolt-dory = { workspace = true, optional = true }
+jolt-transcript = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-field.workspace = true
 jolt-kernels-derive.workspace = true
@@ -81,6 +87,10 @@ tracer = { workspace = true, features = ["test-utils"] }
 
 [[example]]
 name = "cuda_primitive_bench"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda_combine_hints_bench"
 required-features = ["cuda"]
 
 [[example]]

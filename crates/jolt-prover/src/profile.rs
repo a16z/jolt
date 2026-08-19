@@ -33,13 +33,15 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
-use common::jolt_device::MemoryConfig;
+use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
+#[cfg(feature = "cuda")]
+use jolt_kernels::cuda::CudaDoryScheme;
 // Keep the inline libraries linked so their host-side registrations reach the
 // tracer, exactly as the legacy harness does.
 use jolt_inlines_keccak256 as _;
@@ -513,6 +515,50 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     failed.is_empty()
 }
 
+fn measure_prove<PCS, W>(
+    backend: &JoltBackend<Fr, PCS>,
+    preprocessing: &JoltProverPreprocessing<PCS, Pedersen<Bn254G1>>,
+    config: &ProverConfig,
+    witness: Arc<W>,
+    public_io: &JoltDevice,
+) -> (Duration, usize)
+where
+    PCS: jolt_openings::CommitmentScheme<Field = Fr>
+        + jolt_openings::AdditivelyHomomorphic
+        + jolt_openings::ZkOpeningScheme<HidingCommitment = Bn254G1, Blind = Fr>,
+    PCS::Output: jolt_transcript::AppendToTranscript + jolt_crypto::HomomorphicCommitment<Fr>,
+    W: jolt_witness::JoltWitnessPlane<Fr> + 'static,
+{
+    #[cfg(feature = "cuda")]
+    jolt_kernels::cuda::xfer_stats::reset();
+    let now = Instant::now();
+    let proof = crate::prove::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript, W>(
+        backend,
+        preprocessing,
+        config,
+        None,
+        witness,
+        public_io,
+    )
+    .expect("modular prove");
+    let duration = now.elapsed();
+
+    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+        .expect("serialize proof")
+        .len();
+
+    // --- Correctness gate (unmeasured): the proof must verify.
+    jolt_verifier::verify::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript>(
+        &preprocessing.verifier,
+        public_io,
+        &proof,
+        None,
+    )
+    .expect("modular proof verifies");
+
+    (duration, proof_size)
+}
+
 fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
     let bench_name = workload.as_str();
     let max_trace_length = 1usize << scale;
@@ -584,51 +630,52 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         + config.trace_length.ilog2() as usize)
         .max(advice_vars(memory_layout.max_trusted_advice_size))
         .max(advice_vars(memory_layout.max_untrusted_advice_size));
-    let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
-        verifier: verifier_preprocessing,
-        pcs_setup: DoryScheme::setup_prover(total_vars),
-        committed_program: None,
-    };
     let backend_label = backend.as_str();
-    let backend = match backend {
-        BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
-        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
-        #[cfg(feature = "cuda")]
-        BackendKind::Cuda => JoltBackend::<Fr, DoryScheme>::cuda(),
-    };
 
     // --- The measured window: the full modular prove (witness
     // materialization, commitment, all sumcheck stages, joint opening). The
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
-    #[cfg(feature = "cuda")]
-    jolt_kernels::cuda::xfer_stats::reset();
-    let now = Instant::now();
-    let proof = crate::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-        &backend,
-        &prover_preprocessing,
-        &config,
-        None,
-        Arc::clone(&witness),
-        &public_io,
-    )
-    .expect("modular prove");
-    let duration = now.elapsed();
+    let (duration, proof_size) = match backend {
+        BackendKind::Reference | BackendKind::Optimized => {
+            let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+                verifier: verifier_preprocessing,
+                pcs_setup: DoryScheme::setup_prover(total_vars),
+                committed_program: None,
+            };
+            let backend = if matches!(backend, BackendKind::Reference) {
+                JoltBackend::<Fr, DoryScheme>::reference()
+            } else {
+                JoltBackend::<Fr, DoryScheme>::optimized()
+            };
+            measure_prove(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Arc::clone(&witness),
+                &public_io,
+            )
+        }
+        #[cfg(feature = "cuda")]
+        BackendKind::Cuda => {
+            let prover_preprocessing = JoltProverPreprocessing::<CudaDoryScheme, Pedersen<Bn254G1>> {
+                verifier: CudaDoryScheme::adopt_verifier_preprocessing(verifier_preprocessing)
+                    .expect("the CUDA scheme adopts the verifier preprocessing"),
+                pcs_setup: CudaDoryScheme::setup_prover(total_vars),
+                committed_program: None,
+            };
+            let backend = JoltBackend::<Fr, CudaDoryScheme>::cuda();
+            measure_prove(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Arc::clone(&witness),
+                &public_io,
+            )
+        }
+    };
     #[cfg(feature = "cuda")]
     let transfers = jolt_kernels::cuda::xfer_stats::snapshot();
-
-    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
-        .expect("serialize proof")
-        .len();
-
-    // --- Correctness gate (unmeasured): the proof must verify.
-    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-        &prover_preprocessing.verifier,
-        &public_io,
-        &proof,
-        None,
-    )
-    .expect("modular proof verifies");
 
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
     let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
