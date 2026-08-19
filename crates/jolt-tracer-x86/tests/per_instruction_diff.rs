@@ -745,5 +745,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 73);
+    assert_eq!(SUPPORTED.len(), 77);
 }
