@@ -17,9 +17,14 @@ use tracer::{
         divuw::DIVUW,
         divw::DIVW,
         format::{format_i::FormatI, format_load::FormatLoad, format_r::FormatR, normalize_imm},
+        lb::LB,
+        lbu::LBU,
         ld::LD,
+        lh::LH,
+        lhu::LHU,
         lui::LUI,
         lw::LW,
+        lwu::LWU,
         mul::MUL,
         mulh::MULH,
         mulhsu::MULHSU,
@@ -880,13 +885,61 @@ test_sequence!(
         cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
     }
 );
-// Memory operations below are not modeled yet (each needs an expected-model
-// closure over `SymbolicCpu::load_doubleword`, like LW's):
-// test_sequence!(LB, FormatLoad);
-// test_sequence!(LBU, FormatLoad);
-// test_sequence!(LH, FormatLoad);
-// test_sequence!(LHU, FormatLoad);
-// test_sequence!(LWU, FormatLoad);
+test_sequence!(LB, FormatLoad, |instr: &LB, cpu| {
+    // rd = sign-extended byte lane of the containing aligned doubleword:
+    // bits 2-0 of `ea` select one of 8 lanes of bv_bits/8 bits (the model
+    // width's byte).
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let byte_bits = cpu.bv_bits / 8;
+    let shift = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3) * cpu.bv_u64(byte_bits as u64);
+    let byte = dword.bvlshr(&shift).extract(byte_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = byte.sign_ext(cpu.bv_bits - byte_bits);
+});
+test_sequence!(LBU, FormatLoad, |instr: &LBU, cpu| {
+    // rd = zero-extended byte lane; same layout as LB.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let byte_bits = cpu.bv_bits / 8;
+    let shift = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3) * cpu.bv_u64(byte_bits as u64);
+    let byte = dword.bvlshr(&shift).extract(byte_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = byte.zero_ext(cpu.bv_bits - byte_bits);
+});
+test_sequence!(LH, FormatLoad, |instr: &LH, cpu| {
+    // rd = sign-extended halfword lane of the containing aligned doubleword:
+    // bits 2-1 of `ea` select one of 4 lanes of bv_bits/4 bits; the
+    // sequence's halfword-alignment assert covers bit 0.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let half_bits = cpu.bv_bits / 4;
+    let shift = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2) * cpu.bv_u64(half_bits as u64);
+    let half = dword.bvlshr(&shift).extract(half_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = half.sign_ext(cpu.bv_bits - half_bits);
+});
+test_sequence!(LHU, FormatLoad, |instr: &LHU, cpu| {
+    // rd = zero-extended halfword lane; same layout as LH.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let half_bits = cpu.bv_bits / 4;
+    let shift = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2) * cpu.bv_u64(half_bits as u64);
+    let half = dword.bvlshr(&shift).extract(half_bits - 1, 0);
+    cpu.x[instr.operands.rd as usize] = half.zero_ext(cpu.bv_bits - half_bits);
+});
+test_sequence!(LWU, FormatLoad, |instr: &LWU, cpu| {
+    // rd = zero-extended word lane; same layout as LW, with the sequence's
+    // word-alignment assert covering bits 0-1.
+    let rs1 = cpu.x[instr.operands.rs1 as usize].clone();
+    let ea = rs1 + instr.operands.imm;
+    let dword = cpu.load_doubleword(&(ea.clone() & cpu.bv_u64(7).bvnot()));
+    let hi = dword.extract(cpu.bv_bits - 1, cpu.word_bits);
+    let lo = dword.extract(cpu.word_bits - 1, 0);
+    let lane = ea.extract(2, 2).eq(1).ite(&hi, &lo);
+    cpu.x[instr.operands.rd as usize] = lane.zero_ext(cpu.bv_bits - cpu.word_bits);
+});
 test_sequence!(LW, FormatLoad, |instr: &LW, cpu| {
     // rd = sign-extended word lane of the containing aligned doubleword. The
     // lane arithmetic mirrors the byte-addressed RV64 layout at any model
