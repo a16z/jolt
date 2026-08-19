@@ -411,8 +411,8 @@ where
                     polynomial,
                     id,
                 )?,
-                JoltCommittedPolynomial::UnsignedIncChunk(_)
-                | JoltCommittedPolynomial::UnsignedIncMsb
+                JoltCommittedPolynomial::BalancedIncDigit(_)
+                | JoltCommittedPolynomial::BalancedIncCarry
                 | JoltCommittedPolynomial::TrustedAdviceBytes
                 | JoltCommittedPolynomial::UntrustedAdviceBytes
                 | JoltCommittedPolynomial::BytecodeRegisterSelector { .. }
@@ -423,9 +423,8 @@ where
                 | JoltCommittedPolynomial::BytecodeUnexpandedPcBytes { .. }
                 | JoltCommittedPolynomial::BytecodeImmBytes { .. }
                 | JoltCommittedPolynomial::ProgramImageBytes => {
-                    // Lattice-mode polynomials open through the packed opening
-                    // (`stage8::packed` / `verify_packed_openings`), never the
-                    // homomorphic stage 8 RLC batch.
+                    // Lattice-mode polynomials open through the fixed-prefix
+                    // path in `stage8::packed`, never the homomorphic RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
                         reason: format!(
                             "polynomial {polynomial:?} is not part of the stage 8 prover order"

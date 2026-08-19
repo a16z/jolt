@@ -104,7 +104,7 @@ impl<F: Field> Stage6bOutputPoints<F> {
         #[cfg(not(feature = "akita"))]
         let chunk_fallback = None;
         #[cfg(feature = "akita")]
-        let chunk_fallback = self.booleanity.unsigned_inc_chunks.first();
+        let chunk_fallback = self.booleanity.balanced_inc_digits.first();
         self.booleanity
             .instruction_ra
             .first()
