@@ -150,6 +150,11 @@ struct SymbolicCpu {
     /// RAM at doubleword granularity: an array from (aligned) addresses to
     /// bv_bits-wide values. The memory sequences only access the containing
     /// aligned doubleword, so keys never partially alias.
+    ///
+    /// WARNING: the LD/SD arms key by the raw `rs1 + imm`; the
+    /// no-partial-alias invariant is guaranteed by the expansions, not the
+    /// arms. `expand_amo_d` loads from a raw `rs1`, so a future AMO.D entry
+    /// must revisit this model.
     mem: Array,
     advice_vars: Vec<BV>,
     asserts: Vec<Bool>,
@@ -434,7 +439,8 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                 .extract(cpu.bv_bits - 1, 0)
         }
         Instruction::LD(LD { operands, .. }) => {
-            let addr = cpu.x[operands.rs1 as usize].clone() + operands.imm;
+            // Tracer LD truncates the immediate through i32 (see ld.rs).
+            let addr = cpu.x[operands.rs1 as usize].clone() + (operands.imm as i32) as i64;
             cpu.x[operands.rd as usize] = cpu.mem.select(&addr).as_bv().unwrap();
         }
         Instruction::SD(SD { operands, .. }) => {
@@ -643,6 +649,12 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
     for assert in cpu.asserts {
         solver += assert;
     }
+    // Guard against vacuous proofs: the assert assumptions alone must be
+    // satisfiable, or the disequality below would be refuted trivially.
+    assert!(
+        matches!(solver.check(), SatResult::Sat),
+        "assert assumptions are unsatisfiable; the correctness proof would be vacuous"
+    );
 
     // We don't care if virtual registers differ; memory must match.
     let registers_differ = cpu.x[..RISCV_REGISTER_COUNT as usize]
@@ -714,6 +726,11 @@ fn test_consistency(instr: &Instruction) {
     for assert in cpu1.asserts.iter().chain(cpu2.asserts.iter()) {
         solver += assert;
     }
+    // Guard against vacuous proofs (see test_correctness).
+    assert!(
+        matches!(solver.check(), SatResult::Sat),
+        "assert assumptions are unsatisfiable; the consistency proof would be vacuous"
+    );
 
     // We don't care if virtual registers differ; memory must match.
     let registers_differ = cpu1.x[..RISCV_REGISTER_COUNT as usize]
@@ -1082,6 +1099,61 @@ test_sequence!(SW, FormatS, |instr: &SW, cpu| {
         4,
     );
 });
+
+// Negative immediates exercise the sign-extension path through the
+// expansions' immediate plumbing, which the templates' imm = 1234 cannot;
+// one load and one store cover the shared mechanism (the store also lands
+// in a different alignment residue class).
+#[test]
+#[allow(nonstandard_style)]
+fn test_LB_negative_imm_correctness() {
+    let instr = LB {
+        operands: FormatLoad {
+            rd: 1,
+            rs1: 2,
+            imm: -8,
+        },
+        address: 8,
+        is_compressed: false,
+        is_first_in_sequence: false,
+        virtual_sequence_remaining: None,
+    };
+    test_correctness(
+        |instr: &LB, cpu| {
+            let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 1, true);
+            cpu.x[instr.operands.rd as usize] = v;
+        },
+        &instr,
+    );
+}
+
+#[test]
+#[allow(nonstandard_style)]
+fn test_SH_negative_imm_correctness() {
+    let instr = SH {
+        operands: FormatS {
+            rs1: 2,
+            rs2: 3,
+            imm: -6,
+        },
+        address: 8,
+        is_compressed: false,
+        is_first_in_sequence: false,
+        virtual_sequence_remaining: None,
+    };
+    test_correctness(
+        |instr: &SH, cpu| {
+            lane_store(
+                cpu,
+                instr.operands.rs1,
+                instr.operands.rs2,
+                instr.operands.imm,
+                2,
+            );
+        },
+        &instr,
+    );
+}
 test_sequence!(SLL, FormatR, |instr: &SLL, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];

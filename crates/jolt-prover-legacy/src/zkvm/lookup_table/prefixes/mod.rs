@@ -830,7 +830,9 @@ mod tests {
 
         let mut checkpoints: Vec<PrefixCheckpoint<Fr>> = vec![None.into(); Prefixes::COUNT];
         for j in (1..LOG_K).step_by(2) {
-            // Same schedule as read_raf_checking's update site.
+            // WARNING: keep in sync with the production schedule at
+            // read_raf_checking's update site; if that formula changes, this
+            // test silently keeps validating the old schedule.
             let suffix_len = LOG_K - (j / log_m + 1) * log_m;
             Prefixes::update_checkpoints::<XLEN, Fr, Fr>(
                 &mut checkpoints,
@@ -897,6 +899,7 @@ mod tests {
         assert_eq!(value(Prefixes::WindowSignPow2), sig2pc);
     }
 
+    // Seeds are mnemonics for the byte-addressable stack PRs (#1761, #1768).
     #[test]
     fn final_checkpoints_log_m_16() {
         final_checkpoints_match_closed_forms(16, 0x1761);
