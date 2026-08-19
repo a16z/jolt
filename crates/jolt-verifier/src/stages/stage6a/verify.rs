@@ -193,6 +193,7 @@ mod tests {
                     stage_cycle_points: Default::default(),
                     register_read_write_point: Vec::new(),
                     register_val_evaluation_point: Vec::new(),
+                    fused_inc_cycle_points: Vec::new(),
                 },
                 0,
             ),

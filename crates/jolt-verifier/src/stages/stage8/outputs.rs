@@ -29,8 +29,8 @@ pub enum Stage8Output<F: Field, C, H> {
     #[cfg(not(feature = "akita"))]
     Clear(Stage8ClearOutput<F, C>),
     /// The akita build's clear stage 8 verifies to completion inside
-    /// [`super::verify`] (native OneHotTrace batch + auxiliary packed openings),
-    /// so no per-opening payload survives it.
+    /// [`super::verify`] (one packed OneHotTrace opening plus auxiliary packed
+    /// openings), so no per-opening payload survives it.
     #[cfg(feature = "akita")]
     Clear,
     Zk(Stage8ZkOutput<F, C, H>),

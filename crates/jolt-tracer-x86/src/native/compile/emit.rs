@@ -15,8 +15,7 @@
 //!   target equals its own source address executes once, then execution
 //!   stops.
 
-use dynasm::dynasm;
-use dynasmrt::{AssemblyOffset, DynasmApi, DynasmLabelApi};
+use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynasmApi, DynasmLabelApi};
 use jolt_program::execution::TraceError;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 
@@ -48,21 +47,21 @@ impl RowEmitter for DynasmEmitter {
     }
 }
 
-const RAX: u8 = 0;
-const RCX: u8 = 1;
-const RDX: u8 = 2;
+const RAX: Rq = Rq::RAX;
+const RCX: Rq = Rq::RCX;
+const RDX: Rq = Rq::RDX;
 
 const RAM_START: u64 = common::constants::RAM_START_ADDRESS;
 
 impl Emitter {
-    fn load_reg(&mut self, gpr: u8, reg: Option<u8>) {
+    fn load_reg(&mut self, gpr: Rq, reg: Option<u8>) {
         match reg {
             None | Some(0) => dynasm!(self.ops ; .arch x64 ; xor Rq(gpr), Rq(gpr)),
             Some(r) => dynasm!(self.ops ; .arch x64 ; mov Rq(gpr), QWORD [r12 + reg_offset(r)]),
         }
     }
 
-    fn store_rd(&mut self, gpr: u8, rd: Option<u8>) {
+    fn store_rd(&mut self, gpr: Rq, rd: Option<u8>) {
         if let Some(r) = rd {
             if r != 0 {
                 dynasm!(self.ops ; .arch x64 ; mov QWORD [r12 + reg_offset(r)], Rq(gpr));
@@ -74,7 +73,7 @@ impl Emitter {
     /// reading it straight from the state plane (`op rax, [state+off]`) instead
     /// of loading it into a scratch register first. Saves one instruction and one
     /// register per ALU row, the most frequent shape in the bytecode.
-    fn alu_reg_operand(&mut self, op: AluRR, dst: u8, reg: Option<u8>) {
+    fn alu_reg_operand(&mut self, op: AluRR, dst: Rq, reg: Option<u8>) {
         let Some(r) = reg.filter(|r| *r != 0) else {
             // x0: fold the identity/annihilator rather than touching memory.
             match op {
@@ -97,7 +96,7 @@ impl Emitter {
     }
 
     /// Compare against a guest register straight from the state plane.
-    fn cmp_reg_operand(&mut self, dst: u8, reg: Option<u8>) {
+    fn cmp_reg_operand(&mut self, dst: Rq, reg: Option<u8>) {
         if let Some(r) = reg.filter(|r| *r != 0) {
             dynasm!(self.ops ; .arch x64 ; cmp Rq(dst), QWORD [r12 + reg_offset(r)]);
         } else {
@@ -105,7 +104,7 @@ impl Emitter {
         }
     }
 
-    fn load_imm(&mut self, gpr: u8, value: i64) {
+    fn load_imm(&mut self, gpr: Rq, value: i64) {
         if let Ok(v) = i32::try_from(value) {
             dynasm!(self.ops ; .arch x64 ; mov Rq(gpr), v);
         } else {
@@ -449,7 +448,7 @@ impl DynasmEmitter {
 
 impl Emitter {
     /// Load the low 32 bits of a guest register, zero-extended (32-bit mov).
-    fn load_reg32(&mut self, gpr: u8, reg: Option<u8>) {
+    fn load_reg32(&mut self, gpr: Rq, reg: Option<u8>) {
         match reg {
             None | Some(0) => dynasm!(self.ops ; .arch x64 ; xor Rd(gpr), Rd(gpr)),
             Some(r) => dynasm!(self.ops ; .arch x64 ; mov Rd(gpr), DWORD [r12 + reg_offset(r)]),
@@ -457,7 +456,7 @@ impl Emitter {
     }
 
     /// Load the low 32 bits of a guest register, sign-extended to 64.
-    fn load_reg32_sext(&mut self, gpr: u8, reg: Option<u8>) {
+    fn load_reg32_sext(&mut self, gpr: Rq, reg: Option<u8>) {
         match reg {
             None | Some(0) => dynasm!(self.ops ; .arch x64 ; xor Rq(gpr), Rq(gpr)),
             Some(r) => {

@@ -15,6 +15,9 @@
 use jolt_field::Field;
 use jolt_openings::CommitmentScheme;
 
+use jolt_sumcheck::{RoundScheduler, SequentialRounds};
+
+use crate::backend::{BuildRoundScheduler, ProofSession};
 use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
@@ -56,6 +59,24 @@ pub(crate) mod views;
 /// (each module here hosts its impl next to the kernel it wraps).
 pub struct ReferenceBackend;
 
+/// Whether the active jolt-claims protocol shape is the packed (lattice)
+/// one: the lattice build folds the store val stage into
+/// `NUM_BYTECODE_VAL_STAGES`, so equality with `LATTICE_BYTECODE_VAL_STAGES`
+/// discriminates the shape at runtime. jolt-kernels deliberately has no
+/// feature of its own — a local cfg would silently read false under feature
+/// unification and desynchronize the kernels from the jolt-claims shape —
+/// so mode-agnostic relations (the booleanity address phase) branch on this.
+pub(crate) fn lattice_shape() -> bool {
+    jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
+        == jolt_claims::protocols::jolt::lattice::LATTICE_BYTECODE_VAL_STAGES
+}
+
+impl<F: Field> BuildRoundScheduler<F> for ReferenceBackend {
+    fn build(&self, _session: &mut ProofSession) -> Box<dyn RoundScheduler<F>> {
+        Box::new(SequentialRounds)
+    }
+}
+
 impl<F, PCS> JoltBackend<F, PCS>
 where
     F: Field,
@@ -72,6 +93,7 @@ where
     {
         Self {
             commit: Box::new(ReferenceBackend),
+            round_scheduler: Box::new(ReferenceBackend),
             spartan_outer_uniskip: Box::new(ReferenceBackend),
             spartan_outer_remainder: Box::new(ReferenceOuterRemainder),
             spartan_product_uniskip: Box::new(ReferenceBackend),

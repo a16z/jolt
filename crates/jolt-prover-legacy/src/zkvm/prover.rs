@@ -3457,7 +3457,7 @@ mod tests {
     fn sha2_chain_dory_perf() {
         use std::time::Instant;
 
-        const CYCLES_PER_SHA256: f64 = 3396.0;
+        const CYCLES_PER_SHA256: f64 = 2968.0;
         let log_t: usize = std::env::var("PERF_LOG_T")
             .ok()
             .and_then(|value| value.parse().ok())

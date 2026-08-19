@@ -144,6 +144,26 @@ pub enum SumcheckError<F: FieldCore> {
         max_num_vars: usize,
     },
 
+    /// The batch's round scheduler returned no round message for an active
+    /// member. Reported rather than folded as that member's `claim / 2`
+    /// padding (which would surface only as a round-sum mismatch).
+    #[error("batch member {member}: round scheduler produced no round message")]
+    MissingRoundMessage {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+    },
+
+    /// A round handle came back carrying a member index the batch does not
+    /// have. The engine assigns those indices, so this means the scheduler
+    /// rewrote one; attributing the message by it would misfold the round.
+    #[error("round scheduler returned member index {member}, but the batch has {members} members")]
+    RoundMemberIndexOutOfRange {
+        /// The out-of-range index carried by the returned handle.
+        member: usize,
+        /// Number of members in the batch.
+        members: usize,
+    },
+
     /// The caller selected a verifier path that is incompatible with the proof
     /// wire encoding.
     #[error("wrong sumcheck proof encoding: expected {expected}, got {got}")]

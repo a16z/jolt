@@ -3,6 +3,8 @@
 //! GENERATED `verify_clear` / `verify_zk` drivers and the shared uni-skip
 //! `verify_clear` core, asserting byte-identical transcript states. This pins
 //! the prove-side engine to the verifier independently of any real stage.
+//! Protocol-agnostic: the locks exercise the shared engine/driver seam and
+//! run under both the Dory and Akita builds.
 
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
@@ -15,8 +17,8 @@ use jolt_field::{Field, Fr, FromPrimitiveInt};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound, ClearSumcheckRecorder,
-    CommittedSumcheckRecorder, ProveRounds, SumcheckDomain, SumcheckError, SumcheckRecorder,
-    OPENING_CLAIM_TRANSCRIPT_LABEL,
+    CommittedSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckDomain, SumcheckError,
+    SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
@@ -164,7 +166,14 @@ fn clear_engine_twin_matches_generated_verify_clear() {
         .unwrap();
     let mut members: Vec<&mut dyn ProveRounds<Fr>> =
         vec![&mut instruction_member, &mut registers_member];
-    let proved = prove_batch(&batch, &mut members, &mut recorder, &mut prover_transcript).unwrap();
+    let proved = prove_batch(
+        &batch,
+        &mut members,
+        &mut SequentialRounds,
+        &mut recorder,
+        &mut prover_transcript,
+    )
+    .unwrap();
     let output_values = synthetic_output_values();
     let recorded = recorder
         .finish(&output_values, &mut prover_transcript)
@@ -248,7 +257,14 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         .unwrap();
     let mut members: Vec<&mut dyn ProveRounds<Fr>> =
         vec![&mut instruction_member, &mut registers_member];
-    let proved = prove_batch(&batch, &mut members, &mut recorder, &mut prover_transcript).unwrap();
+    let proved = prove_batch(
+        &batch,
+        &mut members,
+        &mut SequentialRounds,
+        &mut recorder,
+        &mut prover_transcript,
+    )
+    .unwrap();
     let recorded = recorder
         .finish(&synthetic_output_values(), &mut prover_transcript)
         .unwrap();

@@ -94,6 +94,9 @@ mod stage6b {
         BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
         UntrustedAdviceCyclePhase,
     };
+    // The packed batch has no inc member — the fused-inc read-raf stages
+    // discharge the reduced inc claims instead.
+    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
     use jolt_verifier::stages::stage6b::outputs::{
@@ -174,7 +177,8 @@ mod twin_tests {
     };
     use jolt_poly::UnivariatePoly;
     use jolt_sumcheck::{
-        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, SumcheckError,
+        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, RoundScheduler,
+        SequentialRounds, SumcheckError,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
@@ -757,6 +761,7 @@ mod twin_tests {
             .prove(
                 &kernels,
                 &mut session,
+                &mut SequentialRounds,
                 &NoWitness,
                 &inputs,
                 &input_points,
@@ -861,6 +866,7 @@ mod twin_tests {
             .prove(
                 &kernels,
                 &mut session,
+                &mut SequentialRounds,
                 &NoWitness,
                 &inputs,
                 &input_points,
@@ -923,6 +929,7 @@ mod twin_tests {
         let result = sumchecks.prove(
             &kernels,
             &mut session,
+            &mut SequentialRounds,
             &NoWitness,
             &inputs,
             &input_points,
@@ -976,6 +983,7 @@ mod twin_tests {
         sumchecks: &ToyDriverSumchecks<Fr>,
         kernels: &ToyKernels,
         session: &mut ProofSession,
+        scheduler: &mut dyn RoundScheduler<Fr>,
         inputs: &ToyDriverInputClaims<Fr>,
         input_points: &ToyDriverInputPoints<Fr>,
         challenges: &ToyDriverChallenges<Fr>,
@@ -990,6 +998,7 @@ mod twin_tests {
         sumchecks.prove(
             kernels,
             session,
+            scheduler,
             &NoWitness,
             inputs,
             input_points,

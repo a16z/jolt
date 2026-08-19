@@ -35,8 +35,9 @@ use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_witness::JoltWitnessPlane;
 
+use crate::dory::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
+use crate::dory::stages::stage8::prove_stage8;
 use crate::recorder::ProofMode;
-use crate::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
 use crate::stages::stage3::prove_stage3;
@@ -45,7 +46,6 @@ use crate::stages::stage5::prove_stage5;
 use crate::stages::stage6a::prove_stage6a;
 use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
-use crate::stages::stage8::prove_stage8;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Per-stage heap snapshots for the profile harness: inert unless the

@@ -1,7 +1,8 @@
 use crate::stages::relations::OutputAppend;
 use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
-    BytecodeClaimReductionLayout, JoltRelationId, PrecommittedReductionLayout,
+    BytecodeClaimReductionLayout, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
+    PrecommittedReductionLayout,
 };
 use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
@@ -15,6 +16,7 @@ use super::inc_claim_reduction::{
 };
 #[cfg(not(feature = "akita"))]
 use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
+use super::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
 use super::{
     batch::Stage6bDraws,
     booleanity::BooleanityInputClaims,
@@ -33,7 +35,6 @@ use super::{
         Stage6bClearOutput, Stage6bInputClaims, Stage6bInputPoints, Stage6bOutput,
         Stage6bOutputClaims, Stage6bSumchecks,
     },
-    ram_hamming_booleanity::RamHammingBooleanityInputClaims,
     ram_ra_virtualization::{
         ram_ra_virtualization_input_points_from_upstream,
         ram_ra_virtualization_input_values_from_upstream,
@@ -227,6 +228,11 @@ where
             reason: "Stage 6 booleanity produced no opening point".to_string(),
         })?
         .to_vec();
+    validate_bytecode_ra_aliases(
+        claims,
+        &cycle_points.bytecode_read_raf.bytecode_ra,
+        &booleanity_opening_point,
+    )?;
     append_opening_claims(
         transcript,
         claims,
@@ -290,12 +296,12 @@ fn validate_cycle_phase_claim_shape<F: Field>(
         claims.booleanity.ram_ra.len(),
     )?;
 
-    // The packed unsigned-inc chunk claims: one per chunk of the shared
+    // The packed increment digit claims: one per chunk of the shared
     // one-hot chunking.
     #[cfg(feature = "akita")]
     {
         let expected_chunks =
-            jolt_claims::protocols::jolt::lattice::geometry::UnsignedIncChunking::new(
+            jolt_claims::protocols::jolt::lattice::geometry::BalancedIncChunking::new(
                 committed_chunk_bits,
             )
             .map_err(|error| VerifierError::StageClaimPublicInputFailed {
@@ -305,9 +311,9 @@ fn validate_cycle_phase_claim_shape<F: Field>(
             .chunk_count();
         require_claim_count(
             JoltRelationId::Booleanity,
-            "unsigned-inc chunk",
+            "balanced increment digit",
             expected_chunks,
-            claims.booleanity.unsigned_inc_chunks.len(),
+            claims.booleanity.balanced_inc_digits.len(),
         )?;
     }
 
@@ -487,8 +493,8 @@ pub fn stage6b_opening_values<F: Field>(
     values.extend(&claims.booleanity.ram_ra);
     #[cfg(feature = "akita")]
     {
-        values.extend(&claims.booleanity.unsigned_inc_chunks);
-        values.push(claims.booleanity.unsigned_inc_msb);
+        values.extend(&claims.booleanity.balanced_inc_digits);
+        values.push(claims.booleanity.balanced_inc_carry);
     }
     values.extend(claims.ram_hamming_booleanity.opening_values());
     values.extend(claims.ram_ra_virtualization.opening_values());
@@ -510,6 +516,37 @@ pub fn stage6b_opening_values<F: Field>(
         values.extend(reduction.opening_values());
     }
     values
+}
+
+fn validate_bytecode_ra_aliases<F: Field>(
+    claims: &Stage6bOutputClaims<F>,
+    bytecode_read_raf_points: &[Vec<F>],
+    booleanity_point: &[F],
+) -> Result<(), VerifierError> {
+    for (index, booleanity_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
+        if !bytecode_read_raf_points
+            .get(index)
+            .is_some_and(|point| point.as_slice() == booleanity_point)
+        {
+            continue;
+        }
+
+        let polynomial = JoltCommittedPolynomial::BytecodeRa(index);
+        let source_id = JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf);
+        let source_claim = claims
+            .bytecode_read_raf
+            .bytecode_ra
+            .get(index)
+            .ok_or(VerifierError::MissingOpeningClaim { id: source_id })?;
+        if booleanity_claim != source_claim {
+            return Err(VerifierError::StageClaimOpeningMismatch {
+                stage: format!("{:?}", JoltRelationId::Booleanity),
+                left: JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity),
+                right: source_id,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn append_opening_claims<F, T>(
@@ -543,10 +580,10 @@ fn append_opening_claims<F, T>(
     }
     #[cfg(feature = "akita")]
     {
-        for opening_claim in &claims.booleanity.unsigned_inc_chunks {
+        for opening_claim in &claims.booleanity.balanced_inc_digits {
             transcript.append_labeled(b"opening_claim", opening_claim);
         }
-        transcript.append_labeled(b"opening_claim", &claims.booleanity.unsigned_inc_msb);
+        transcript.append_labeled(b"opening_claim", &claims.booleanity.balanced_inc_carry);
     }
     claims.ram_hamming_booleanity.append_openings(transcript);
     claims.ram_ra_virtualization.append_openings(transcript);
@@ -597,7 +634,7 @@ mod tests {
     /// Per-mode sample claims with sentinel values in the canonical append
     /// order: base interleaves the inc member after the RA virtualizations;
     /// Akita carries the read-raf `FusedInc` cell and the lattice booleanity
-    /// chunk/MSB cells instead.
+    /// digit/carry cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(not(feature = "akita"))]
         let (bytecode_read_raf, booleanity, last) = (
@@ -621,8 +658,8 @@ mod tests {
                 instruction_ra: vec![fr(4)],
                 bytecode_ra: vec![fr(5)],
                 ram_ra: vec![fr(6)],
-                unsigned_inc_chunks: vec![fr(7)],
-                unsigned_inc_msb: fr(8),
+                balanced_inc_digits: vec![fr(7)],
+                balanced_inc_carry: fr(8),
             },
             11,
         );
@@ -701,15 +738,15 @@ mod tests {
                 instruction_ra: vec![fr(3); ra_layout.instruction()],
                 bytecode_ra: vec![fr(4); ra_layout.bytecode()],
                 ram_ra: vec![fr(5); ra_layout.ram()],
-                unsigned_inc_chunks: vec![
+                balanced_inc_digits: vec![
                     fr(6);
-                    jolt_claims::protocols::jolt::lattice::geometry::UnsignedIncChunking::new(
+                    jolt_claims::protocols::jolt::lattice::geometry::BalancedIncChunking::new(
                         TEST_COMMITTED_CHUNK_BITS
                     )
                     .unwrap()
                     .chunk_count()
                 ],
-                unsigned_inc_msb: fr(7),
+                balanced_inc_carry: fr(7),
             };
         Stage6bOutputClaims {
             bytecode_read_raf,
@@ -808,8 +845,8 @@ mod tests {
             ),
         ];
         #[cfg(feature = "akita")]
-        tampers.push(("booleanity.unsigned_inc_chunks", |c, pad| {
-            tamper_vec(&mut c.booleanity.unsigned_inc_chunks, pad);
+        tampers.push(("booleanity.balanced_inc_digits", |c, pad| {
+            tamper_vec(&mut c.booleanity.balanced_inc_digits, pad);
         }));
 
         for (label, tamper) in tampers {
@@ -843,5 +880,53 @@ mod tests {
         }
 
         assert_eq!(got.chunks, want.chunks);
+    }
+
+    #[test]
+    fn bytecode_runtime_alias_requires_equal_claims() {
+        let (mut claims, _) = sample_claims();
+        let alias_point = vec![fr(41), fr(42)];
+        let other_point = vec![fr(43), fr(44)];
+        let bytecode_points = vec![alias_point.clone(), other_point];
+        let source_claim = claims
+            .bytecode_read_raf
+            .bytecode_ra
+            .first()
+            .copied()
+            .expect("sample has a bytecode read-RAF claim");
+        *claims
+            .booleanity
+            .bytecode_ra
+            .first_mut()
+            .expect("sample has a bytecode booleanity claim") = fr(1) - source_claim;
+
+        let error = validate_bytecode_ra_aliases(&claims, &bytecode_points, &alias_point)
+            .expect_err("mismatched evaluations at an aliased point must be rejected");
+        let polynomial = JoltCommittedPolynomial::BytecodeRa(0);
+        assert!(matches!(
+            error,
+            VerifierError::StageClaimOpeningMismatch { stage, left, right }
+                if stage == "Booleanity"
+                    && left
+                        == JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity)
+                    && right
+                        == JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf)
+        ));
+
+        *claims
+            .booleanity
+            .bytecode_ra
+            .first_mut()
+            .expect("sample has a bytecode booleanity claim") = source_claim;
+        validate_bytecode_ra_aliases(&claims, &bytecode_points, &alias_point)
+            .expect("equal evaluations at an aliased point must validate");
+
+        *claims
+            .booleanity
+            .bytecode_ra
+            .first_mut()
+            .expect("sample has a bytecode booleanity claim") = fr(99);
+        validate_bytecode_ra_aliases(&claims, &bytecode_points, &[fr(45), fr(46)])
+            .expect("different evaluations at different points are not aliases");
     }
 }
