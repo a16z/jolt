@@ -107,7 +107,10 @@ where
     prefix_suffix_materialization_test::<XLEN, F, T>(8, 6);
 }
 
-fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
+/// Same check with a caller-chosen phase size. Tables whose prefixes read
+/// specific low index bits use this to pin phase-boundary-agnostic behavior,
+/// placing boundaries inside those bits (e.g. `rounds_per_phase = 2`).
+pub fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
     rounds_per_phase: usize,
     num_runs: usize,
 ) where

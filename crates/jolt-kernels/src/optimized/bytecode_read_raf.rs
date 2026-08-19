@@ -783,6 +783,9 @@ mod tests {
                 stage_cycle_points: stage_cycle_points.clone(),
                 register_read_write_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 31),
                 register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 37),
+                // Empty marks the base protocol's five-stage claim set; the
+                // fused-inc points exist only on the packed (akita) wire.
+                fused_inc_cycle_points: Vec::new(),
             };
 
             // ---- Stage 6a: address phase.

@@ -214,6 +214,14 @@ fn modular_lookup_table_indices_match_prover_abi() {
             )),
         ),
         (
+            LookupTableKind::<XLEN>::WindowMaskW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::WindowMaskW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::PextSigned(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::PextSigned(Default::default())),
+        ),
+        (
             LookupTableKind::<XLEN>::ShiftRightBitmaskW(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::ShiftRightBitmaskW(
                 Default::default(),

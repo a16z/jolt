@@ -418,6 +418,12 @@ macro_rules! source_extension_for_marker {
     (VirtualSrli) => {
         Some(SourceExtension::JoltCustom)
     };
+    (WindowMaskW) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (PextSigned) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (VirtualXorRot32) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -865,6 +871,12 @@ macro_rules! source_side_effects_for_marker {
     (VirtualSrli) => {
         false
     };
+    (WindowMaskW) => {
+        false
+    };
+    (PextSigned) => {
+        false
+    };
     (VirtualXorRot32) => {
         false
     };
@@ -1115,6 +1127,12 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::VirtualShifts)
     };
     (VirtualSrli) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (WindowMaskW) => {
+        Some(JoltTargetExtension::VirtualShifts)
+    };
+    (PextSigned) => {
         Some(JoltTargetExtension::VirtualShifts)
     };
     (Andn) => {
@@ -1403,6 +1421,12 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualSrli) => {
+        false
+    };
+    (WindowMaskW) => {
+        false
+    };
+    (PextSigned) => {
         false
     };
     (VirtualXorRot32) => {

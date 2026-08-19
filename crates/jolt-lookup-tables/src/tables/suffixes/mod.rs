@@ -28,7 +28,10 @@ mod lt;
 mod one;
 mod or;
 mod overflow_bits_zero;
+mod pext;
+mod pext_helper;
 mod pow2;
+mod pow2_offset_w;
 mod pow2_w;
 mod rev8w;
 mod right_is_zero;
@@ -45,6 +48,8 @@ mod sign_extension_upper_half;
 mod sign_extension_w;
 mod two_lsb;
 mod upper_word;
+mod window_sign;
+mod window_sign_pow2;
 mod x31_y0;
 mod xor;
 mod xor_rot;
@@ -68,7 +73,13 @@ use lt::LessThanSuffix;
 use one::OneSuffix;
 use or::OrSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
+use pext::PextSuffix;
+use pext_helper::PextHelperSuffix;
+// Shared bit-manipulation helpers: single source for the pext packing and
+// the window-sign convention, reused by the corresponding tables/prefixes.
+pub(crate) use pext::pext;
 use pow2::Pow2Suffix;
+use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8WSuffix;
 use right_is_zero::RightOperandIsZeroSuffix;
@@ -85,6 +96,9 @@ use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use sign_extension_w::SignExtensionWSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+pub(crate) use window_sign::window_sign_bit;
+use window_sign::WindowSignSuffix;
+use window_sign_pow2::WindowSignPow2Suffix;
 use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
@@ -152,6 +166,11 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    Pow2OffsetW,
+    Pext,
+    PextHelper,
+    WindowSign,
+    WindowSignPow2,
     /// SRAW sign-fill terms whose variables remain in the suffix.
     SignExtensionW,
     /// The suffix-owned product `x_{XLEN/2-1} * y_0` used by SRLW.
@@ -182,6 +201,7 @@ impl Suffixes {
                 | Suffixes::OverflowBitsZero
                 | Suffixes::ChangeDivisor
                 | Suffixes::ChangeDivisorW
+                | Suffixes::WindowSign
         )
     }
 
@@ -231,6 +251,11 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::Pow2OffsetW => Pow2OffsetWSuffix::suffix_mle(b),
+            Suffixes::Pext => PextSuffix::suffix_mle(b),
+            Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
+            Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
+            Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
             Suffixes::SignExtensionW => SignExtensionWSuffix::suffix_mle(b),
             Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
         }

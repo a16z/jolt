@@ -170,9 +170,10 @@ where
 }
 
 /// The Akita verification path: the same stage spine, with the reconstruction
-/// phase producing auxiliary leaves, a native same-point OneHotTrace opening,
-/// and separate packed openings for auxiliary objects in place of the
-/// homomorphic RLC batch. No homomorphism bounds and no ZK tail.
+/// phase producing auxiliary leaves, a random-selector opening of the
+/// prefix-packed OneHotTrace polynomial, and separate packed openings for
+/// auxiliary objects in place of the homomorphic RLC batch. No homomorphism
+/// bounds and no ZK tail.
 #[cfg(feature = "akita")]
 pub fn verify<F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -360,6 +361,7 @@ where
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
     }
+    validate_ram_remap_base(memory_layout)?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -687,18 +689,51 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         }
     }
     #[cfg(feature = "akita")]
-    {
-        append_length_prefixed(transcript, b"commitment", &proof.commitments);
-        if let Some(commitment) = proof.untrusted_advice_commitment.as_ref() {
-            append_length_prefixed(transcript, b"untrusted_advice", commitment);
-        }
-        if let Some(commitment) = trusted_advice_commitment {
-            append_length_prefixed(transcript, b"trusted_advice", commitment);
-        }
-        if let Some(committed) = preprocessing.program.committed() {
-            let commitment = &committed.program_one_hot_commitment;
-            append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
-        }
+    absorb_packed_commitments(
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
+        trusted_advice_commitment,
+        preprocessing
+            .program
+            .committed()
+            .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
+        transcript,
+    );
+}
+
+/// Absorbs the packed commitment objects in canonical object order:
+/// `OneHotTrace`, untrusted advice, trusted advice, the `ProgramOneHot`
+/// objects (bytecode, then program image). Shared verbatim by the packed
+/// prover's stage 0.
+#[cfg(feature = "akita")]
+pub fn absorb_packed_commitments<C, T>(
+    one_hot_trace: &C,
+    untrusted_advice_commitment: Option<&C>,
+    trusted_advice_commitment: Option<&C>,
+    program_one_hot_commitments: &[C],
+    transcript: &mut T,
+) where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    append_length_prefixed(transcript, b"commitment", one_hot_trace);
+    if let Some(commitment) = untrusted_advice_commitment {
+        append_length_prefixed(transcript, b"untrusted_advice", commitment);
+    }
+    if let Some(commitment) = trusted_advice_commitment {
+        append_length_prefixed(transcript, b"trusted_advice", commitment);
+    }
+    absorb_packed_program_commitments(program_one_hot_commitments, transcript);
+}
+
+#[cfg(feature = "akita")]
+pub fn absorb_packed_program_commitments<C, T>(commitments: &[C], transcript: &mut T)
+where
+    C: AppendToTranscript,
+    T: Transcript,
+{
+    for commitment in commitments {
+        append_length_prefixed(transcript, b"program_one_hot_commitment", commitment);
     }
 }
 
@@ -874,6 +909,27 @@ pub fn absorb_transcript_preamble<T>(
     );
 }
 
+/// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
+/// `8k + lowest_address`, and the lattice digit-zero reconstruction relies on
+/// `unmap(0) = lowest_address ≠ 0` to distinguish "no RAM access" from an
+/// access at remapped word zero (see "Where the RAM activation is pinned" in
+/// `specs/lattice-claims.md`). Mirrors the prover-side
+/// `UnmapRamAddressPolynomial::new` assertion (`start_address > 8`).
+fn validate_ram_remap_base(
+    memory_layout: &common::jolt_device::MemoryLayout,
+) -> Result<(), VerifierError> {
+    let lowest_address = memory_layout.get_lowest_address();
+    if lowest_address <= 8 {
+        return Err(VerifierError::InvalidMemoryLayout {
+            reason: format!(
+                "lowest remapped RAM address {lowest_address:#x} must exceed 8 so the RAF \
+                 unmap constant stays clear of the null-address range"
+            ),
+        });
+    }
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Mirrors the proof-derived inputs validate_inputs threads through; bundling them would obscure the FS-critical parameter set."
@@ -897,6 +953,7 @@ where
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
     }
+    validate_ram_remap_base(memory_layout)?;
 
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
@@ -1274,6 +1331,27 @@ mod tests {
     }
 
     #[test]
+    fn validate_inputs_rejects_zero_based_ram_remap() {
+        let mut memory_layout = test_memory_layout();
+        // A layout whose remap is zero-based: `unmap(0) = lowest_address = 0`
+        // would make the RAF identity blind to digit zero.
+        memory_layout.trusted_advice_start = 0;
+        memory_layout.untrusted_advice_start = 0;
+        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidMemoryLayout { reason })
+                if reason.contains("lowest remapped RAM address")
+        ));
+    }
+
+    #[test]
     fn validate_inputs_rejects_ram_domain_below_layout_minimum() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -1357,10 +1435,7 @@ mod tests {
             #[cfg(not(feature = "akita"))]
             joint_opening_proof: (),
             #[cfg(feature = "akita")]
-            joint_opening_proof: crate::proof::AkitaJointOpeningProof {
-                one_hot_trace: (),
-                auxiliary: None,
-            },
+            joint_opening_proof: crate::proof::AkitaJointOpeningProof::new((), Vec::new()),
             untrusted_advice_commitment: None,
             claims,
             trace_length: 1,
@@ -1523,8 +1598,8 @@ mod tests {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
-                        unsigned_inc_chunks: Vec::new(),
-                        unsigned_inc_msb: zero,
+                        balanced_inc_digits: Vec::new(),
+                        balanced_inc_carry: zero,
                     },
                 ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
@@ -1553,9 +1628,9 @@ mod tests {
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
                         #[cfg(feature = "akita")]
-                        unsigned_inc_chunks: Vec::new(),
+                        balanced_inc_digits: Vec::new(),
                         #[cfg(feature = "akita")]
-                        unsigned_inc_msb: zero,
+                        balanced_inc_carry: zero,
                     },
                 trusted_advice: None,
                 untrusted_advice: None,
@@ -1678,8 +1753,8 @@ mod tests {
         }
     }
 
-    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        let memory_layout = common::jolt_device::MemoryLayout::new(&MemoryConfig {
+    fn test_memory_layout() -> common::jolt_device::MemoryLayout {
+        common::jolt_device::MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: 0,
             max_untrusted_advice_size: 0,
@@ -1687,7 +1762,16 @@ mod tests {
             max_output_size: 8,
             stack_size: 8,
             heap_size: 8,
-        });
+        })
+    }
+
+    fn test_preprocessing() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        test_preprocessing_with_layout(test_memory_layout())
+    }
+
+    fn test_preprocessing_with_layout(
+        memory_layout: common::jolt_device::MemoryLayout,
+    ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
         #[cfg(feature = "zk")]
         let vc_setup = Some(PedersenSetup::new(
             vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],

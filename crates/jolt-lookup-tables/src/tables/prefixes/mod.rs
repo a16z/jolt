@@ -31,6 +31,7 @@ pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
+pub mod pow2_offset_w;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -46,6 +47,8 @@ pub mod sign_extension_w;
 pub mod srlw_sext;
 pub mod two_lsb;
 pub mod upper_word;
+pub mod window_sign;
+pub mod window_sign_pow2;
 pub mod word_msb;
 pub mod xor;
 pub mod xor_rot;
@@ -162,6 +165,9 @@ pub enum Prefixes {
     XorRotW8,
     XorRotW12,
     XorRotW16,
+    Pow2OffsetW,
+    WindowSign,
+    WindowSignPow2,
     /// The low word's most-significant source bit, `x_{XLEN/2-1}`.
     WordMsb,
     /// SRAW sign-fill terms whose variables have entered the prefix.
@@ -229,6 +235,9 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
             Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
+            Prefixes::Pow2OffsetW => pow2_offset_w::Pow2OffsetWPrefix::$method($($args),*),
+            Prefixes::WindowSign => window_sign::WindowSignPrefix::$method($($args),*),
+            Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
             Prefixes::WordMsb => word_msb::WordMsbPrefix::$method($($args),*),
             Prefixes::SignExtensionW => sign_extension_w::SignExtensionWPrefix::$method($($args),*),
             Prefixes::SrlwSext => srlw_sext::SrlwSextPrefix::$method($($args),*),
