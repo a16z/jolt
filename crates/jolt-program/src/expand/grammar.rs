@@ -260,26 +260,6 @@ impl ExpansionBuilder {
         self.emit(RowTemplate::u(instruction_kind, rd, imm));
     }
 
-    pub(super) fn emit_b(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
-        imm: i128,
-    ) {
-        self.emit(RowTemplate::b(instruction_kind, rs1, rs2, imm));
-    }
-
-    pub(super) fn emit_s(
-        &mut self,
-        instruction_kind: JoltInstructionKind,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
-        imm: i128,
-    ) {
-        self.emit(RowTemplate::s(instruction_kind, rs1, rs2, imm));
-    }
-
     /// Record a source-only helper row that the provider-free materializer must
     /// expand before appending its finalized rows to this source-row sequence.
     ///
@@ -410,11 +390,11 @@ impl ExpansionBuilder {
         })
     }
 
-    fn emit(&mut self, row: RowTemplate) {
+    pub(super) fn emit(&mut self, row: RowTemplate) {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    fn expand(&mut self, row: SourceInstructionRowTemplate) {
+    pub(super) fn expand(&mut self, row: SourceInstructionRowTemplate) {
         self.ops.push(ExpansionOp::Expand(row));
     }
 }

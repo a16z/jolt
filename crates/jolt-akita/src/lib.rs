@@ -27,6 +27,8 @@ pub mod schedules;
 mod scheme;
 mod shape_guard;
 
+pub(crate) use akita_schedules::RecursiveSplitSearchPolicy;
+
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
     AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16,

@@ -49,11 +49,6 @@ impl Sha256 {
     }
 
     #[inline(always)]
-    unsafe fn buffer_as_u32_mut(&mut self) -> &mut [u32] {
-        core::slice::from_raw_parts_mut(self.buffer.as_mut_ptr() as *mut u32, 16)
-    }
-
-    #[inline(always)]
     unsafe fn state_as_u32(&self) -> &[u32] {
         core::slice::from_raw_parts(self.state.as_ptr() as *const u32, 8)
     }
@@ -93,12 +88,6 @@ impl Sha256 {
             offset = to_copy;
 
             if self.buffer_len == 64 {
-                #[cfg(target_endian = "little")]
-                {
-                    let buf = unsafe { self.buffer_as_u32_mut() };
-                    Sha256::swap_bytes(buf);
-                }
-
                 unsafe {
                     self.sha256_compress();
                 }
@@ -121,12 +110,6 @@ impl Sha256 {
                     self.buffer.as_mut_ptr() as *mut u8,
                     64,
                 );
-            }
-
-            #[cfg(target_endian = "little")]
-            {
-                let buf = unsafe { self.buffer_as_u32_mut() };
-                Sha256::swap_bytes(buf);
             }
 
             unsafe {
@@ -182,12 +165,6 @@ impl Sha256 {
                 (buffer_ptr.add(56) as *mut u64).write(bit_len.to_be());
             }
 
-            #[cfg(target_endian = "little")]
-            {
-                let buf = unsafe { self.buffer_as_u32_mut() };
-                Sha256::swap_bytes(buf);
-            }
-
             unsafe {
                 self.sha256_compress();
             }
@@ -201,12 +178,6 @@ impl Sha256 {
                     0,
                     64 - padding_start,
                 );
-            }
-
-            #[cfg(target_endian = "little")]
-            {
-                let buf = unsafe { self.buffer_as_u32_mut() };
-                Sha256::swap_bytes(buf);
             }
 
             unsafe {
@@ -230,11 +201,9 @@ impl Sha256 {
             self.buffer[12].write(0);
             self.buffer[13].write(0);
 
-            // Write length in last 8 bytes (big-endian u32 values)
-            // Note: No swap needed here because the second block buffer
-            // is NOT passed through swap_bytes before compression
-            self.buffer[14].write((bit_len >> 32) as u32);
-            self.buffer[15].write(bit_len as u32);
+            // Store the length with the same big-endian byte layout as message blocks.
+            self.buffer[14].write(((bit_len >> 32) as u32).to_be());
+            self.buffer[15].write((bit_len as u32).to_be());
 
             unsafe {
                 sha256_compression(
@@ -293,28 +262,6 @@ impl Sha256 {
             );
         }
     }
-
-    #[cfg(target_endian = "little")]
-    #[inline(always)]
-    fn swap_bytes(buf: &mut [u32]) {
-        // Unroll the loop for cycle optimization
-        buf[0] = swap_bytes(buf[0]);
-        buf[1] = swap_bytes(buf[1]);
-        buf[2] = swap_bytes(buf[2]);
-        buf[3] = swap_bytes(buf[3]);
-        buf[4] = swap_bytes(buf[4]);
-        buf[5] = swap_bytes(buf[5]);
-        buf[6] = swap_bytes(buf[6]);
-        buf[7] = swap_bytes(buf[7]);
-        buf[8] = swap_bytes(buf[8]);
-        buf[9] = swap_bytes(buf[9]);
-        buf[10] = swap_bytes(buf[10]);
-        buf[11] = swap_bytes(buf[11]);
-        buf[12] = swap_bytes(buf[12]);
-        buf[13] = swap_bytes(buf[13]);
-        buf[14] = swap_bytes(buf[14]);
-        buf[15] = swap_bytes(buf[15]);
-    }
 }
 
 impl Default for Sha256 {
@@ -327,7 +274,7 @@ impl Default for Sha256 {
 /// Calls the SHA256 compression custom instruction
 ///
 /// # Arguments
-/// * `input` - Pointer to 16 u32 words (64 bytes) of input data
+/// * `input` - Pointer to a 64-byte block in big-endian byte order
 /// * `state` - Pointer to 8 u32 words (32 bytes) of initial state - will be overwritten by result
 ///
 /// # Safety
@@ -354,7 +301,7 @@ pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 /// Calls the SHA256 compression custom instruction
 ///
 /// # Arguments
-/// * `input` - Pointer to 16 u32 words (64 bytes) of input data
+/// * `input` - Pointer to a 64-byte block in big-endian byte order
 /// * `state` - Pointer to 8 u32 words (32 bytes) of initial state - will be overwritten by result
 ///
 /// # Safety
@@ -366,7 +313,7 @@ pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
 pub(crate) unsafe fn sha256_compression(input: *const u32, state: *mut u32) {
     use crate::exec;
 
-    let input_array = *(input as *const [u32; 16]);
+    let input_array = (*(input as *const [u32; 16])).map(u32::from_be);
     let state_array = *(state as *const [u32; 8]);
     let result = exec::execute_sha256_compression(state_array, input_array);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
@@ -383,7 +330,7 @@ pub(crate) unsafe fn sha256_compression(_input: *const u32, _state: *mut u32) {
 /// Calls the SHA256 compression custom instruction with initial block
 ///
 /// # Arguments
-/// * `input` - Pointer to 16 u32 words (64 bytes) of input data
+/// * `input` - Pointer to a 64-byte block in big-endian byte order
 /// * `state` - Pointer to 8 u32 words (32 bytes) - result will be written here
 ///
 /// Uses the SHA256 initial state constants internally
@@ -413,7 +360,7 @@ pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u
 /// Calls the SHA256 compression custom instruction with initial block
 ///
 /// # Arguments
-/// * `input` - Pointer to 16 u32 words (64 bytes) of input data
+/// * `input` - Pointer to a 64-byte block in big-endian byte order
 /// * `state` - Pointer to 8 u32 words (32 bytes) - result will be written here
 ///
 /// Uses the SHA256 initial state constants internally
@@ -427,7 +374,7 @@ pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u
 pub(crate) unsafe fn sha256_compression_initial(input: *const u32, state: *mut u32) {
     use crate::exec;
 
-    let input = *(input as *const [u32; 16]);
+    let input = (*(input as *const [u32; 16])).map(u32::from_be);
     let result = exec::execute_sha256_compression_initial(input);
     std::ptr::copy_nonoverlapping(result.as_ptr(), state, 8)
 }
