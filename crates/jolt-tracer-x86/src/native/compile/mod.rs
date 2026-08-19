@@ -64,6 +64,15 @@ impl CompiledProgram {
                 "jolt-tracer-x86 requires BMI1 (tzcnt) support",
             ));
         }
+        // VirtualPextSigned uses `pext` and `popcnt`; refuse on CPUs without
+        // them rather than fault at run time.
+        if !std::arch::is_x86_feature_detected!("bmi2")
+            || !std::arch::is_x86_feature_detected!("popcnt")
+        {
+            return Err(TraceError::Backend(
+                "jolt-tracer-x86 requires BMI2 (pext) and POPCNT support",
+            ));
+        }
         let rows = &program.expanded_bytecode;
         if rows.is_empty() {
             return Err(TraceError::Backend("program has no expanded bytecode"));
