@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787168557630,
+  "lastUpdate": 1787177794491,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -139990,6 +139990,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861284,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "andrew@tretyakov.xyz",
+            "name": "Alberto Centelles",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f823a9f854f017d87d5ba0233b9729e36896c9fb",
+          "message": "feat: fused sub-word extraction for LW (byte-addressable memory, Tier 0 slice 1) (#1761)\n\n* add byte-addressable memory spec\n\n* docs(specs): fold verification corrections into byte-addressable-memory spec\n\n- Three (not two) latent MMU trace-recording bugs; note the trace_store\n  8-byte-write-of-4-byte-store inconsistency alongside\n- Reword the misaligned-ldst-01 acceptance criterion: the README line is\n  sample output, not a known-failure registry\n- Name the common/ remapper correctly (remap_word_address) and note the\n  divergent below-lowest-address handling across the three copies\n- Tier 1 RAF input claim: record the mul_pow_2 renormalization and the\n  non-zk input_output_claims() path as sync obligations\n- Fix expand_byte_load line range\n\n* feat: fused sub-word extraction for LW via WindowMaskW + PextSigned (Tier 0 slice)\n\nByte-addressable-memory Tier 0 vertical slice: rewrite the LW expansion\nfrom 8 traced cycles to 6 by replacing the SLLI + SRL(2 rows) +\nVirtualSignExtendWord tail with two fused lookups.\n\nNew lookup tables (modular + legacy mirrors, appended enum variants):\n- WindowMaskW: (2^32-1) << 32*ea_2, the byte mask of the addressed word\n  lane. Reads only bit 2 of the effective address (bits 0-1 are zeroed\n  by the word-alignment assert), which keeps it rank 1 via a single new\n  Pow2OffsetW prefix/suffix pair with no u64 clipping cases.\n- PextSigned: pext(x, y) + sign * (2^XLEN - 2^popcount(y)), a\n  width-independent sign-extending parallel bit extract. With y a\n  contiguous window mask this is the sign-extended lane at the mask's\n  offset. The popcount-based extension keeps every value in u64 range,\n  so materialize/MLE/decomposition agree on the FULL index domain (no\n  bitmask-restricted random_lookup_index needed, unlike VirtualSRL).\n\nDecomposition (answers spec open question 3): the spec's fused\nper-offset extract tables have intrinsic prefix rank >= 8 per width, so\nthis follows the SRL/SRA binary-to-positional pattern instead. Cost:\n2 new prefixes (WindowSign, WindowSignPow2) + 4 new suffixes (Pext,\nPextHelper, WindowSign, WindowSignPow2) shared across all widths and\nsignedness, reusing RightShift and RightOperandIsZero. The sigma *\n2^popcount term is multilinearized term-wise (the naive product is\ndegree 2 in shared variables).\n\nSupporting changes:\n- New virtual instructions VirtualWindowMaskW (0x0089) and\n  VirtualPextSigned (0x008a) across jolt-riscv, tracer, bindings,\n  legacy instruction mirror, and z3-verifier symbolic_exec.\n- Legacy RightShiftPrefix generalized from the leading_ones/\n  trailing_zeros tail-mask shortcut to the faithful recursion, matching\n  the modular implementation (identical on all tail bitmasks).\n- Legacy read_raf MAX_SUFFIXES 4 -> 5 (PextSigned is the first 5-suffix\n  table; caught by muldiv e2e).\n- 18 golden expansion fixture hashes re-baselined (LW plus LRW/SCW,\n  which embed the word-load expansion).\n\nValidation: jolt-lookup-tables 320/320 (PextSigned mle_full_hypercube\nis exhaustive at XLEN=8), tracer 127/127, jolt-program 38/38, ABI test\n(prover-abi-tests), muldiv e2e in host and host,zk, fmt + clippy clean\nin both modes.\n\n* test(inlines): regenerate expansion parity fixture for the 6-cycle LW\n\nThe BLAKE3 inline emits four LW instructions; each now expands to 6\ntraced cycles instead of 8, so its four parity cases drop from 713 to\n705 rows. No other inline's expansion changes.\n\n* fix(expand): restore golden-fixture entries dropped by the re-baseline\n\nThe jq rewrite that re-baselined the 18 LW/LRW/SCW hashes filtered the\nfixture down to only those 18 entries, silently dropping the other 342\ncases (an empty select stream inside an `as` binding eliminates the\nelement in jq). Restores the full 360-case fixture with the same 18\nupdated hashes and adds a size guard to the golden test so a truncated\nfixture can no longer pass.\n\n* fix(lookup): pin the Pow2OffsetW width and phase-boundary assumptions\n\nWindowMaskW's decomposition hardcodes the 32-bit lane width in the\nPow2OffsetW prefix/suffix pair while the table is XLEN-generic: guard\nsuffixes()/combine() with debug_assert_eq!(XLEN, 64) in both stacks\n(the VirtualXORROTWTable precedent). The prefix's suffix_len gate also\nsilently assumed phase boundaries never fall inside the low three index\nbits; pin that with a debug_assert in both stacks. Drop the now-stale\nprefix-count literals from the kernel docs.\n\n* fix(z3): contiguity-guard the PextSigned model, scale the window mask\n\nThe shl/ashr PextSigned model is only faithful for contiguous masks;\ngate it on a symbolic contiguity check and havoc rd with a fresh\nunconstrained BV otherwise, so a future sequence relying on\nnon-contiguous behavior fails verification instead of being certified\nagainst wrong semantics (an assert would be wrong: cpu.asserts are\nsolver assumptions and would vacuously exclude the misuse cases).\nDerive the WindowMaskW mask from word_bits instead of a hardcoded\n0xFFFF_FFFF so reduced-width solver models stay faithful.\n\n* fix(tracer-x86): implement WindowMaskW and PextSigned in the AOT backend\n\nThe Tier 0 LW expansion introduced two final instruction kinds the x86\nemitter's exhaustive match did not cover, breaking compilation of\njolt-tracer-x86 (clippy, modular shard 2, and the x86 AOT job).\n\nWindowMaskW: rd = 0xFFFFFFFF << (32 * bit2(x[rs1])), four ALU ops.\nPextSigned: BMI2 pext + popcnt, then a shl/sar pair by 64-pc (mod 64)\nsign-extends the extracted window's top bit; the mod-64 masking makes\nthe pc = 0 and pc = 64 edges fall out correctly. Compilation now\nrefuses pre-BMI2/POPCNT CPUs, alongside the existing BMI1 check.\n\nBoth kinds join SUPPORTED and get per-instruction differential tests\nagainst the reference interpreter (1000 random instances each).\n\n* fix(tracer-x86): gate the BMI2/POPCNT refusal per program\n\nOnly programs whose expanded bytecode contains VirtualPextSigned rows\nneed pext; pext-free guests keep compiling on pre-BMI2 hosts.\n\n* fix(tracer-x86): resolve difftest kinds by instruction name, not marker\n\nfrom_name matches stringify!($instr) (VirtualPextSigned), not the\nmarker (PextSigned); the new difftests panicked with 'unknown kind\nname' before running a single instance.\n\n* fix(lookup-tables): make the Pow2OffsetW prefix phase-boundary-agnostic\n\nThe prefix returned 1 whenever any suffix remained, pairing with the\nsuffix's b.len() < 3 guard under a debug_assert that phase boundaries\nnever fall inside the low three index bits. A future phase config with\na 1-2 bit suffix window would silently drop the 2^(32*bit2) factor in\nrelease builds. Both stacks now locate bit 2 relative to the suffix /\nwindow / checkpoint split, the same way the WindowSign prefixes already\ndo, and the checkpoint update keys on the bound bit's position instead\nof the final-phase round number.\n\nBoth harnesses gain a phase-size parameter, and WindowMaskW pins the\nboundary behavior with two-round phases (suffix_len hits 2); the new\ntests fail against the old prefix in both stacks.\n\n* test(z3): enable the LW obligation with a symbolic RAM model\n\nSymbolicCpu gains a doubleword-granular RAM array (shared between the\nsequence and expected models via the cloned constant, equated between\nthe consistency pair), an LD arm, and the LW expected model: the\nsign-extended word lane of the containing aligned doubleword. Both LW\nobligations discharge in under a second at the 64-bit model width, so\nthey run un-ignored. The remaining loads stay commented until their\nsequences land.\n\n* test(prover-legacy): pin MAX_SUFFIXES to the lookup-table maximum\n\nHoisted from init_suffix_polys and asserted equal to the max suffix\ncount over all tables, so a table exceeding it fails a unit test\ninstead of a release-mode bounds check mid-proof.\n\n* refactor(lookup-tables): single-source the pext packing and window-sign convention\n\nEach stack gains two shared helpers: pext(x, y) (contiguous masks take an\nO(1) shift-and-truncate fast path; general masks iterate set bits only)\nand window_sign_bit(x, y). The eight verbatim sigma copies collapse onto\nwindow_sign_bit; the legacy RightShiftPrefix evaluates through the Pext\nsuffix pair instead of hand-inlining it (the pairing must stay\nbit-identical for PextSignedTable::combine to be sound, so there is one\nimplementation, not two copies).\n\nThe five pext_signed copies reduce to one helper per crate, all in the\n2^XLEN - 2^popcount formulation with the sign read as the window's top\nbit; the tracer interpreter copy drops its unconditional 64-iteration\nbranchy loop for the same shape (equivalence checked exhaustively at\nXLEN=8 and on 250k random 64-bit inputs against the old code).\n\n* fix(lookup-tables): compile-time XLEN=64 pin on the Pow2OffsetW decomposition\n\nWindowMaskW's materialize_entry and evaluate_mle are genuinely\nXLEN-generic (the XLEN=8 hypercube tests use that), but its decomposition\nhardcodes the 32-bit lane in the Pow2OffsetW prefix/suffix pair. The\ndebug_assert guard let an XLEN=32 instantiation compile and silently\nproduce an unsound decomposition in release; inline const asserts in\nsuffixes(), combine(), and the legacy prefix make any non-64\ninstantiation a compile error instead. Also annotates the legacy combine\nunwraps like their modular twins.\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: acentelles <acentelles@a16z.com>",
+          "timestamp": "2026-08-19T17:06:56-04:00",
+          "tree_id": "52266e771e3b0c88d0af13ed35fb79186dffec3f",
+          "url": "https://github.com/a16z/jolt/commit/f823a9f854f017d87d5ba0233b9729e36896c9fb"
+        },
+        "date": 1787177789563,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7158,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 872264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.333,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 501980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 497176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 506972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7378,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5931,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 497520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0536,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.3599,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 217096,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4369,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5623,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4644,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 504744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.2759,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 504508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.7878,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 503220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.3407,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1096664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.5054,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 630688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 90.1351,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2111540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4056,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 509040,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.535,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 499324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.5898,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866252,
             "unit": "KB",
             "extra": ""
           }
