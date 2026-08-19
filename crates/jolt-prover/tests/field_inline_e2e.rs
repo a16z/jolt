@@ -11,6 +11,12 @@
 //! commitment, a stage-2 FR product appendage value, and the stage-2 batch
 //! round polynomial at the FR claim-reduction's gamma position — and every
 //! mutation must reject.
+//!
+//! Every suite runs over BOTH kernel backends: `JoltBackend::reference` (the
+//! byte-parity oracle) and `JoltBackend::optimized` (the sparse/composed
+//! tier) — one prover, two backends, the same verifier entry, so an
+//! optimized/reference wire divergence fails here as a verification error
+//! even before the kernel-level parity tests localize it.
 
 #[cfg(all(feature = "prover-fixtures", feature = "field-inline"))]
 #[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
@@ -247,6 +253,18 @@ mod support {
         )
     }
 
+    /// A labeled kernel-backend constructor.
+    pub type BackendCase = (&'static str, fn() -> JoltBackend<Fr, DoryScheme>);
+
+    /// The two kernel backends every FR e2e case runs over, labeled for
+    /// assertion messages.
+    pub fn backends() -> [BackendCase; 2] {
+        [
+            ("reference", JoltBackend::reference),
+            ("optimized", JoltBackend::optimized),
+        ]
+    }
+
     /// BlindFold verification (and the prover's replay of it) recurses over a
     /// large folded R1CS — run on a dedicated wide stack like the
     /// jolt-verifier ZK suites.
@@ -287,7 +305,9 @@ mod clear {
     /// ram_output_check], and gamma powers are assigned in that order.
     const FR_CR_GAMMA_POSITION: usize = 3;
 
-    fn prove_eqpoly() -> (
+    fn prove_eqpoly(
+        backend: JoltBackend<jolt_field::Fr, jolt_dory::DoryScheme>,
+    ) -> (
         support::VerifierPreprocessing,
         common::jolt_device::JoltDevice,
         support::Proof,
@@ -297,19 +317,31 @@ mod clear {
             support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
             "the eq-MLE guest must trace FR-active",
         );
-        support::prove_fr(guest, JoltBackend::reference())
+        support::prove_fr(guest, backend)
     }
 
+    /// Both backends' proofs must verify AND be equal wire objects — clear
+    /// mode draws nothing outside Fiat-Shamir, so reference/optimized
+    /// divergence anywhere in the composed pipeline shows up here as a proof
+    /// inequality even when both sides individually verify.
     #[test]
     fn field_inline_eqpoly_proof_is_accepted() {
-        let (preprocessing, public_io, proof) = prove_eqpoly();
+        let mut proofs = Vec::new();
+        for (label, backend) in support::backends() {
+            let (preprocessing, public_io, proof) = prove_eqpoly(backend());
+            assert!(
+                proof.commitments.field_inline.is_some(),
+                "FR-on proofs must carry the field-inline commitment payload ({label})",
+            );
+            assert!(matches!(proof.claims, JoltProofClaims::Clear(_)));
+            support::verify_full(&preprocessing, &public_io, &proof)
+                .unwrap_or_else(|error| panic!("modular FR proof must verify ({label}): {error}"));
+            proofs.push(proof);
+        }
         assert!(
-            proof.commitments.field_inline.is_some(),
-            "FR-on proofs must carry the field-inline commitment payload",
+            proofs[0] == proofs[1],
+            "reference and optimized FR proofs must be identical wire objects",
         );
-        assert!(matches!(proof.claims, JoltProofClaims::Clear(_)));
-        support::verify_full(&preprocessing, &public_io, &proof)
-            .expect("modular FR proof must verify");
     }
 
     /// The uniform-shape degenerate case: an FR-profile guest executing zero
@@ -317,24 +349,35 @@ mod clear {
     /// all-zero `FieldRdInc` commitment and zero FR openings.
     #[test]
     fn field_inline_inactive_muldiv_proof_is_accepted() {
-        let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-        let guest = support::fr_guest("muldiv-guest", &inputs);
-        assert_eq!(
-            support::field_inline_rows(guest.trace_output.trace.rows()),
-            0,
-            "the FR-profile muldiv trace must contain no FR instructions",
+        let mut proofs = Vec::new();
+        for (label, backend) in support::backends() {
+            let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
+            let guest = support::fr_guest("muldiv-guest", &inputs);
+            assert_eq!(
+                support::field_inline_rows(guest.trace_output.trace.rows()),
+                0,
+                "the FR-profile muldiv trace must contain no FR instructions",
+            );
+            let (preprocessing, public_io, proof) = support::prove_fr(guest, backend());
+            assert!(proof.commitments.field_inline.is_some());
+            support::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
+                panic!("FR-inactive modular proof must verify ({label}): {error}")
+            });
+            proofs.push(proof);
+        }
+        assert!(
+            proofs[0] == proofs[1],
+            "reference and optimized FR-inactive proofs must be identical wire objects",
         );
-        let (preprocessing, public_io, proof) = support::prove_fr(guest, JoltBackend::reference());
-        assert!(proof.commitments.field_inline.is_some());
-        support::verify_full(&preprocessing, &public_io, &proof)
-            .expect("FR-inactive modular proof must verify");
     }
 
     /// Every FR-specific single-field tamper must reject: one proof, four
-    /// mutations on fresh clones.
+    /// mutations on fresh clones. The optimized backend proves here — its
+    /// wire bytes equal the reference's (the accept tests pin both), so one
+    /// backend's tamper matrix covers both.
     #[test]
     fn field_inline_tampered_proofs_are_rejected() {
-        let (preprocessing, public_io, proof) = prove_eqpoly();
+        let (preprocessing, public_io, proof) = prove_eqpoly(JoltBackend::optimized());
         support::verify_full(&preprocessing, &public_io, &proof)
             .expect("base proof must verify before tampering");
         let one = Fr::from_u64(1);
@@ -431,13 +474,17 @@ mod zk {
     #[test]
     fn zk_field_inline_eqpoly_accepts_and_tampers_reject() {
         support::with_zk_stack(|| {
+            // The optimized backend proves the tampered matrix; the
+            // reference ZK path is pinned by the muldiv accept below (ZK
+            // blindings randomize the wire, so proofs are verify-only here —
+            // clear mode owns the byte-equality statement).
             let guest = support::fr_guest("eqpoly-field-guest", &support::eqpoly_inputs());
             assert!(
                 support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
                 "the eq-MLE guest must trace FR-active",
             );
             let (preprocessing, public_io, proof) =
-                support::prove_fr(guest, JoltBackend::reference());
+                support::prove_fr(guest, JoltBackend::optimized());
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             assert!(proof.commitments.field_inline.is_some());
             support::verify_full(&preprocessing, &public_io, &proof)
@@ -472,17 +519,19 @@ mod zk {
     #[test]
     fn zk_field_inline_inactive_muldiv_proof_is_accepted() {
         support::with_zk_stack(|| {
-            let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-            let guest = support::fr_guest("muldiv-guest", &inputs);
-            assert_eq!(
-                support::field_inline_rows(guest.trace_output.trace.rows()),
-                0,
-                "the FR-profile muldiv trace must contain no FR instructions",
-            );
-            let (preprocessing, public_io, proof) =
-                support::prove_fr(guest, JoltBackend::reference());
-            support::verify_full(&preprocessing, &public_io, &proof)
-                .expect("FR-inactive modular ZK proof must verify");
+            for (label, backend) in support::backends() {
+                let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
+                let guest = support::fr_guest("muldiv-guest", &inputs);
+                assert_eq!(
+                    support::field_inline_rows(guest.trace_output.trace.rows()),
+                    0,
+                    "the FR-profile muldiv trace must contain no FR instructions",
+                );
+                let (preprocessing, public_io, proof) = support::prove_fr(guest, backend());
+                support::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
+                    panic!("FR-inactive modular ZK proof must verify ({label}): {error}")
+                });
+            }
         });
     }
 }
