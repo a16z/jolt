@@ -3,6 +3,8 @@
 //! GENERATED `verify_clear` / `verify_zk` drivers and the shared uni-skip
 //! `verify_clear` core, asserting byte-identical transcript states. This pins
 //! the prove-side engine to the verifier independently of any real stage.
+//! Protocol-agnostic: the locks exercise the shared engine/driver seam and
+//! run under both the Dory and Akita builds.
 
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
