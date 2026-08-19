@@ -213,6 +213,14 @@ fn modular_lookup_table_indices_match_prover_abi() {
                 Default::default(),
             )),
         ),
+        (
+            LookupTableKind::<XLEN>::WindowMaskW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::WindowMaskW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::PextSigned(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::PextSigned(Default::default())),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());
