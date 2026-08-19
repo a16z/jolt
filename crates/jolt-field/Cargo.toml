@@ -38,8 +38,3 @@ criterion = { workspace = true }
 name = "field_arith"
 harness = false
 required-features = ["bn254"]
-
-[[bench]]
-name = "akita_accumulators"
-harness = false
-required-features = ["akita", "bn254"]
