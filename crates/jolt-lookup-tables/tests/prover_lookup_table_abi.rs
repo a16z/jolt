@@ -236,6 +236,8 @@ fn modular_lookup_table_indices_match_prover_abi() {
         (
             LookupTableKind::<XLEN>::AlignAddr(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::AlignAddr(Default::default())),
+        ),
+        (
             LookupTableKind::<XLEN>::ShiftDataB(Default::default()).index(),
             prover_index(ProverLookupTables::<XLEN>::ShiftDataB(Default::default())),
         ),
