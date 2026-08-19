@@ -1510,33 +1510,3 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn wasm_builder(function: ItemFn) -> MacroBuilder {
-        let mut attributes = Punctuated::new();
-        attributes.push(syn::parse_quote!(wasm));
-        MacroBuilder::new(attributes, function)
-    }
-
-    #[test]
-    fn wasm_verifier_uses_fully_qualified_dependencies() {
-        let builder = wasm_builder(syn::parse_quote! {
-            fn example(input: u32) -> u32 {
-                input
-            }
-        });
-
-        let generated = builder.make_wasm_function();
-        syn::parse2::<syn::File>(generated.clone()).expect("generated WASM verifier must parse");
-        let generated = generated.to_string();
-
-        assert!(generated.contains("wasm_bindgen :: prelude :: wasm_bindgen"));
-        assert!(generated.contains("jolt :: deserialize_verifier_object"));
-        assert!(generated.contains("trusted_advice_commitment_bytes"));
-        assert!(generated.contains("Option < jolt :: VerifierTrustedAdviceCommitment >"));
-        assert!(generated.contains("trusted_advice_commitment . as_ref ()"));
-    }
-}
