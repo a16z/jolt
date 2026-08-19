@@ -3230,9 +3230,7 @@ name = "jolt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "clap",
- "common",
  "env_logger",
  "eyre",
  "jolt-prover-legacy",
