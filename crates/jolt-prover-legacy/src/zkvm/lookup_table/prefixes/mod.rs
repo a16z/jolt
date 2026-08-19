@@ -385,9 +385,7 @@ impl Prefixes {
             Prefixes::OffsetScaleW => {
                 OffsetScalePrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j)
             }
-            Prefixes::AlignAddr => {
-                AlignAddrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
-            }
+            Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }

@@ -484,4 +484,3 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
 
     Ok(())
 }
-
