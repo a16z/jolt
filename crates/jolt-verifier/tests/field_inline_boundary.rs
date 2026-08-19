@@ -29,14 +29,11 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     // The FR commitment payload is proof shape: carrier struct/field,
     // constructor default, and the attach builder.
     ("proof.rs", 5, "FR commitment payload carrier"),
-    // The require_field_inline_slices gate pair (fail-closed until FR prover
-    // fixtures exist), the payload presence check, the FR commitment absorb
-    // seam, and the mode-specific test fixtures.
-    (
-        "verifier.rs",
-        11,
-        "gate + commitment absorb seam + budget test",
-    ),
+    // The payload presence check, the FR commitment absorb seam, and the
+    // mode-specific test fixtures. (The fail-closed
+    // require_field_inline_slices gate lived here until the FR prover
+    // fixtures landed.)
+    ("verifier.rs", 9, "commitment absorb seam + budget test"),
     // Module registration of the shared FR bytecode side-table seam.
     ("stages/mod.rs", 1, "seam module registration"),
     // Per-stage seam-module and FR-twin module registrations.

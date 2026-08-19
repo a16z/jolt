@@ -96,7 +96,10 @@ mod pipeline {
                 &legacy_preprocessing,
             );
 
-        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes_with_profile(
+            elf_contents,
+            program.instruction_profile(),
+        ));
         let memory_layout = &io_device.memory_layout;
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
@@ -176,8 +179,13 @@ mod pipeline {
         .expect("field-inline witness view");
         let witness = Arc::new(witness);
 
-        let total_vars =
-            config.one_hot_config.committed_chunk_bits() + config.trace_length.ilog2() as usize;
+        // Sized off MAX_PADDED_TRACE_LENGTH like the legacy preprocessing's
+        // generators: the verifier setup derives from those, and Dory URS
+        // generators are seeded per exact size — a prover setup sized off the
+        // derived config would commit under a different generator set than
+        // the verifier checks against.
+        let max_log_k_chunk = 4usize; // MAX log_t = 16 < the 25-bit threshold
+        let total_vars = max_log_k_chunk + MAX_PADDED_TRACE_LENGTH.ilog2() as usize;
         let prover_preprocessing =
             jolt_prover::JoltProverPreprocessing::<jolt::VerifierPCS, jolt::VerifierVC> {
                 verifier: verifier_preprocessing,

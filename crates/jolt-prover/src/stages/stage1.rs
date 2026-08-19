@@ -368,7 +368,17 @@ mod field_inline_zk {
             .iter()
             .map(Vec::len)
             .collect();
-        assert_eq!(row_lens, vec![CAPACITY, 48 - CAPACITY]);
+        let expected_row_lens: Vec<usize> = {
+            let mut remaining = 48usize;
+            let mut lens = Vec::new();
+            while remaining > 0 {
+                let take = remaining.min(CAPACITY);
+                lens.push(take);
+                remaining -= take;
+            }
+            lens
+        };
+        assert_eq!(row_lens, expected_row_lens);
         let committed = out.sumcheck_proof.as_committed().unwrap();
         assert_eq!(
             committed.output_claims.commitments.len(),

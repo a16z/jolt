@@ -26,14 +26,20 @@
 //!
 //! Clear-mode only: under the `zk` feature both provers emit randomized
 //! committed proofs (fresh Pedersen blinds), so byte equality is undefined —
-//! the ZK correctness gate is `zk_e2e.rs` instead.
+//! the ZK correctness gate is `zk_e2e.rs` instead. FR-off only: the FR-on
+//! prover proves only FR-profile guests under the composed protocol, which
+//! legacy cannot produce — the field-inline gate is `field_inline_e2e.rs`.
 
 /// Shared scaffolding for the byte-diff modules: every test runs the same
 /// legacy-side guest pipeline (decode + trace + preprocess + prove + replay)
 /// and the same modular-side pipeline (trace + config + witness + prove +
 /// verify); the per-mode differences — advice, committed program, trace
 /// order — stay in the test bodies.
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -464,7 +470,11 @@ mod support {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
     use std::sync::Arc;
@@ -1071,7 +1081,11 @@ mod muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
     use std::sync::Arc;
@@ -1265,7 +1279,11 @@ mod advice_consumer {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod committed_muldiv {
     use std::sync::Arc;
@@ -1450,7 +1468,11 @@ mod committed_muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod address_major {
     use std::sync::Arc;
@@ -1589,7 +1611,11 @@ mod address_major {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod advice_committed {
     use std::sync::Arc;
@@ -1787,7 +1813,11 @@ mod advice_committed {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod inline_sha3 {
     // Anchor the Keccak inline registration into this test binary.
@@ -1906,7 +1936,11 @@ mod inline_sha3 {
 /// pipelined commit), and once behind [`support::HiddenRows`], which forces
 /// the sequential chunked walk so the boundary carry and the streamed
 /// fallback consumers actually produce the pinned bytes.
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod chunk_boundary {
     // Anchor the sha2 inline's inventory registration into this test binary;
@@ -2118,7 +2152,11 @@ mod chunk_boundary {
 /// at log_T ≥ 24 vs the modular tiers' fixed 16 × 8-bit) derives from the
 /// ACTUAL trace length inside the sumcheck, not from any injectable config
 /// — that argument rests on the reference kernel's exactness note alone.
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod wide_one_hot {
     use std::sync::Arc;
@@ -2275,7 +2313,11 @@ mod wide_one_hot {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", not(feature = "zk"))))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+)))]
 #[test]
 #[ignore = "enable --features prover-fixtures (without zk — the harness byte-compares clear proofs) to run the legacy byte-diff harness"]
 fn prover_matches_legacy_on_muldiv() {}

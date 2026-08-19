@@ -314,11 +314,11 @@ fn stage2_output_ids_and_aliases<F: Field>(
 
 /// The spec's stage-2 alias table over hidden rows: each FR claim-reduction
 /// output row must equal the FR product-appendage row of the same polynomial —
-/// the same equality the clear path enforces via
-/// `stage2::verify::validate_field_inline_product_aliases`, single-sourced
-/// from the promoted polynomial table. Both sides are committed rows, so the
-/// binding is an [`OpeningEquality`] (an [`OpeningAlias`] would leave one row
-/// unconstrained).
+/// the same equality the clear path enforces via the stage-2 seam's
+/// `validate_product_aliases` (`stages/stage2/field_inline.rs`),
+/// single-sourced from the promoted polynomial table. Both sides are
+/// committed rows, so the binding is an [`OpeningEquality`] (an
+/// [`OpeningAlias`] would leave one row unconstrained).
 #[cfg(feature = "field-inline")]
 use super::field_inline::stage2_opening_equalities;
 

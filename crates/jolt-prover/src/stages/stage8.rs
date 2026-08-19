@@ -16,6 +16,10 @@
 //! final-opening order, and the ragged advice hints pad with identity rows in
 //! `combine_hints`).
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{
+    FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
+};
 use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
 };
@@ -74,6 +78,10 @@ pub fn prove_stage8<F, PCS, VC, T>(
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     hints: &[(JoltCommittedPolynomial, PCS::OpeningHint)],
+    #[cfg(feature = "field-inline")] field_inline_hints: &[(
+        FieldInlineCommittedPolynomial,
+        PCS::OpeningHint,
+    )],
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
@@ -255,6 +263,74 @@ where
                 })
         })
         .collect::<Result<_, _>>()?;
+
+    // The witness-side twin of the composed plan splice above: the statement
+    // gained a `FieldRdInc` claim after `RdInc@IncClaimReduction`, and
+    // `batch_entries` emits entries 1:1 with `order`, so the polynomial and
+    // hint join at `order`'s RdInc position + 1. The table embeds exactly as
+    // its stage-0 commitment fed it (the dense trace-domain column, strided
+    // per cycle block in address-major order) — materialized here off the FR
+    // oracle rather than through the backend's joint-opening slot, which is
+    // typed over the base polynomial family.
+    #[cfg(feature = "field-inline")]
+    let (polynomials, ordered_hints) = {
+        let mut polynomials = polynomials;
+        let mut ordered_hints = ordered_hints;
+        let position = order
+            .iter()
+            .position(|polynomial| *polynomial == JoltCommittedPolynomial::RdInc)
+            .and_then(|position| position.checked_add(1))
+            .ok_or(ProverError::InvariantViolation {
+                reason: "the final opening order has no RdInc to anchor the FieldRdInc splice",
+            })?;
+        let oracle = witness
+            .field_inline()
+            .ok_or(ProverError::Unsupported {
+                reason: "the stage-8 FieldRdInc opening requires a witness plane serving the                          field-inline oracle",
+            })?;
+        let table = oracle.oracle_table(FieldInlinePolynomialId::Committed(
+            FieldInlineCommittedPolynomial::FieldRdInc,
+        ))?;
+        let embedded = match config.trace_polynomial_order {
+            jolt_claims::protocols::jolt::TracePolynomialOrder::CycleMajor => {
+                let mut embedded: Vec<F> = vec![F::default(); 1usize << grid.total_vars];
+                let prefix =
+                    embedded
+                        .get_mut(..table.len())
+                        .ok_or(ProverError::InvariantViolation {
+                            reason: "FieldRdInc table exceeds the commitment grid",
+                        })?;
+                prefix.copy_from_slice(&table);
+                embedded
+            }
+            jolt_claims::protocols::jolt::TracePolynomialOrder::AddressMajor => {
+                let mut embedded: Vec<F> = vec![F::default(); 1usize << grid.total_vars];
+                let stride = grid.cycle_stride();
+                for (cycle, value) in table.into_iter().enumerate() {
+                    let slot = embedded.get_mut(cycle * stride).ok_or(
+                        ProverError::InvariantViolation {
+                            reason: "FieldRdInc table exceeds the commitment grid",
+                        },
+                    )?;
+                    *slot = value;
+                }
+                embedded
+            }
+        };
+        polynomials.insert(
+            position,
+            Box::new(embedded) as Box<dyn jolt_poly::MultilinearPoly<F>>,
+        );
+        let hint = field_inline_hints
+            .iter()
+            .find(|(id, _)| *id == FieldInlineCommittedPolynomial::FieldRdInc)
+            .map(|(_, hint)| hint.clone())
+            .ok_or(ProverError::InvariantViolation {
+                reason: "missing stage-0 opening hint for FieldRdInc",
+            })?;
+        ordered_hints.insert(position, hint);
+        (polynomials, ordered_hints)
+    };
 
     // The transcript tails are twins of the verifier's two stage-8 arms:
     // clear absorbs the scaled claims and opens transparently

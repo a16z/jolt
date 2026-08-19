@@ -15,10 +15,10 @@ workspace = true
 default = ["parallel"]
 parallel = ["jolt-kernels/parallel"]
 prover-fixtures = ["jolt-prover-legacy/host"]
-# Field-inline (FR) protocol composition: compiles the prover against the
-# FR-extended verifier stage shapes. NO FR proving yet — the reference
-# backend's FR kernel slot and the stage-2 input wiring fail closed until the
-# FR witness wiring lands (milestone 11).
+# Field-inline (FR) protocol composition: the FR-on prover — every stage
+# proves the composed protocol, and only FR-profile guests are accepted (the
+# witness plane refuses classic-profile traces). The e2e acceptance lives in
+# tests/field_inline_e2e.rs under prover-fixtures,field-inline[,zk].
 field-inline = [
   "jolt-claims/field-inline",
   "jolt-kernels/field-inline",

@@ -277,27 +277,6 @@ where
     Ok(())
 }
 
-/// Fail-closed gate for the field-inline axis: every verifier slice has
-/// landed — the clear path (config, commitment payload, composed stage 1, FR
-/// Twist batching in stages 2/4/5/6, the `FieldRdInc` joint opening) and the
-/// composed ZK/BlindFold lowering — but no prover can produce an FR proof yet
-/// (kernels and the FR appendage curations fail closed pending witness
-/// wiring, milestone 11), so no fixture has ever exercised the composed
-/// verifier end to end. Reject before any transcript work rather than run an
-/// unexercised verifier; delete this gate when FR prover fixtures exist.
-#[cfg(feature = "field-inline")]
-fn require_field_inline_slices() -> Result<(), VerifierError> {
-    Err(VerifierError::ProtocolAxisUnimplemented {
-        axis: "field-inline",
-        pending: "field-inline prover fixtures (milestone 11)",
-    })
-}
-
-#[cfg(not(feature = "field-inline"))]
-fn require_field_inline_slices() -> Result<(), VerifierError> {
-    Ok(())
-}
-
 /// Validates the inputs and proof shape, then seeds the Fiat-Shamir transcript
 /// with the preamble and commitment absorptions. Every consumer of the staged
 /// verification — [`verify`] on both builds, and the zk audit harness — starts
@@ -323,7 +302,6 @@ where
     )?;
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JOLT_VERIFIER_CONFIG, proof.protocol)?;
-    require_field_inline_slices()?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -1126,7 +1104,6 @@ where
     )?;
     validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof.protocol)?;
-    require_field_inline_slices()?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);

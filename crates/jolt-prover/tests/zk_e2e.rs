@@ -8,8 +8,15 @@
 //! commits the chunk/image tables through the modular hiding streaming path
 //! and carries those commitments in the verifier preprocessing, as a real
 //! ZK deployment's preprocessing would.
+//!
+//! FR-off only: these guests are classic-profile, which the FR-on prover
+//! refuses — the field-inline ZK e2e is `field_inline_e2e.rs`.
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -301,7 +308,11 @@ mod support {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
 #[expect(
     clippy::expect_used,
     clippy::panic,
@@ -675,7 +686,11 @@ mod zk {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", feature = "zk")))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+)))]
 #[test]
 #[ignore = "enable --features prover-fixtures,zk to run the modular ZK e2e"]
 fn zk_muldiv_modular_proof_is_accepted() {}

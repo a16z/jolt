@@ -634,8 +634,8 @@ impl<
         {
             return Err(jolt_verifier::VerifierError::ProtocolAxisUnimplemented {
                 axis: "field-inline",
-                pending: "the legacy prover has no field-inline semantics; use the modular \
-                          jolt-prover once its field-inline slices land",
+                pending: "the legacy prover has no field-inline semantics; the modular \
+                          jolt-prover owns FR proving",
             });
         }
 
