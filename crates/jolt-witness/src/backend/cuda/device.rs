@@ -96,6 +96,7 @@ struct DevicePcMap {
 struct DeviceKindTables {
     input: CudaSlice<u8>,
     operand: CudaSlice<u8>,
+    output: CudaSlice<u8>,
     index: CudaSlice<u8>,
     flags: CudaSlice<u32>,
     table_index: CudaSlice<u32>,
@@ -242,6 +243,7 @@ impl DeviceTrace {
         let kinds = DeviceKindTables {
             input: stream.clone_htod(&tables.input).map_err(device_error)?,
             operand: stream.clone_htod(&tables.operand).map_err(device_error)?,
+            output: stream.clone_htod(&tables.output).map_err(device_error)?,
             index: stream.clone_htod(&tables.index).map_err(device_error)?,
             flags: stream.clone_htod(&tables.flags).map_err(device_error)?,
             table_index: stream
@@ -284,6 +286,7 @@ impl DeviceTrace {
             + self.pc_map.values.len() * size_of::<u64>();
         let kinds = self.kinds.input.len()
             + self.kinds.operand.len()
+            + self.kinds.output.len()
             + self.kinds.index.len()
             + self.kinds.flags.len() * size_of::<u32>()
             + self.kinds.table_index.len() * size_of::<u32>();
@@ -389,6 +392,12 @@ impl DeviceTrace {
             rd_address: alloc32(self.cycles)?,
             rd_inc: alloc64(self.cycles * 2)?,
             ram_inc: alloc64(self.cycles * 2)?,
+            left_instruction_input: alloc64(self.cycles)?,
+            right_instruction_input: alloc64(self.cycles * 2)?,
+            left_lookup_operand: alloc64(self.cycles)?,
+            right_lookup_operand: alloc64(self.cycles * 2)?,
+            lookup_output: alloc64(self.cycles)?,
+            product_magnitude: alloc64(self.cycles * 2)?,
         };
         let mut unmapped = self.unmapped_flag()?;
 
@@ -406,6 +415,10 @@ impl DeviceTrace {
         let _ = builder.arg(&alignment);
         let _ = builder.arg(&self.kinds.flags);
         let _ = builder.arg(&self.kinds.table_index);
+        let _ = builder.arg(&self.kinds.input);
+        let _ = builder.arg(&self.kinds.operand);
+        let _ = builder.arg(&self.kinds.output);
+        let _ = builder.arg(&self.kinds.index);
         let _ = builder.arg(&self.kinds.count);
         let _ = builder.arg(&mut columns.flags);
         let _ = builder.arg(&mut columns.table_index);
@@ -416,17 +429,24 @@ impl DeviceTrace {
         let _ = builder.arg(&mut columns.rd_address);
         let _ = builder.arg(&mut columns.rd_inc);
         let _ = builder.arg(&mut columns.ram_inc);
+        let _ = builder.arg(&mut columns.left_instruction_input);
+        let _ = builder.arg(&mut columns.right_instruction_input);
+        let _ = builder.arg(&mut columns.left_lookup_operand);
+        let _ = builder.arg(&mut columns.right_lookup_operand);
+        let _ = builder.arg(&mut columns.lookup_output);
+        let _ = builder.arg(&mut columns.product_magnitude);
         let _ = builder.arg(&mut unmapped);
         let _ = builder.arg(&count);
         // SAFETY: thread `i < count` writes exactly index `i` of each
         // single-word output (all allocated at `cycles`) and `2*i`, `2*i + 1`
-        // of the two increment outputs (allocated at `cycles * 2`). It reads
+        // of the four two-limb outputs (allocated at `cycles * 2`). It reads
         // index `i` of the row arrays and the `EXTRA_WORDS` consecutive words
         // at `i * EXTRA_WORDS`, plus `is_noop[i + 1]` guarded by
         // `i + 1 < cycles`. Bucket reads are bounds-checked against
         // `pc_buckets`, and `bucket_offsets` holds `pc_buckets + 1` entries so
-        // `bucket + 1` is in range. The kind tables are bounds-checked against
-        // `count`. `unmapped` is written only by `atomicExch`. Every buffer is
+        // `bucket + 1` is in range. The kind tables, including the four mode
+        // tables, are bounds-checked against `count` and each holds `count`
+        // entries. `unmapped` is written only by `atomicExch`. Every buffer is
         // a distinct allocation.
         let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
 

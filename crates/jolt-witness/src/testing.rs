@@ -10,7 +10,10 @@ use jolt_program::{
     },
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+use jolt_riscv::{
+    CircuitFlags, Flags, JoltInstruction, JoltInstructionKind, JoltInstructionRow,
+    NormalizedOperands, RV64IMAC_JOLT,
+};
 use std::sync::Arc;
 
 use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -176,9 +179,17 @@ pub fn all_kinds_backend(seed: u64) -> (TraceBackend<OwnedTrace>, usize, usize) 
     });
 
     let lowest = memory_layout.get_lowest_address();
+    let jumping_slot = bytecode.iter().position(|&row| {
+        JoltInstruction::try_from(row)
+            .is_ok_and(|decoded| decoded.circuit_flags()[CircuitFlags::Jump])
+    });
     let rows: Vec<TraceRow> = (0..cycles)
         .map(|cycle| {
-            let instruction = bytecode[cycle % bytecode.len()];
+            let slot = match jumping_slot {
+                Some(slot) if cycle + 1 == cycles => slot,
+                _ => cycle % bytecode.len(),
+            };
+            let instruction = bytecode[slot];
             let mix = seed
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(cycle as u64);

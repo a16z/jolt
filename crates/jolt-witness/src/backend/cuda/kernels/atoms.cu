@@ -19,9 +19,14 @@ typedef __int128_t i128;
 #define X_REGISTERS 8
 #define X_RD_PRE 9
 #define VARIANTS 12
+#define FLAG_BIT_JUMP 5
+#define FLAG_BIT_BRANCH 18
 #define FLAG_BIT_NOOP_ROW 21
 #define FLAG_BIT_NEXT_IS_NOOP 22
 #define FLAG_BIT_RAM_HAMMING 23
+#define FLAG_BIT_SHOULD_BRANCH 24
+#define FLAG_BIT_SHOULD_JUMP 25
+#define FLAG_BIT_PRODUCT_NEGATIVE 26
 
 __device__ __forceinline__ u64 rev8w(u64 v) {
   u32 lo = __byte_perm((u32)v, 0, 0x0123);
@@ -226,6 +231,10 @@ extern "C" __global__ void atom_columns_kernel(
     u64 bytecode_alignment,
     const u32 *kind_flags,
     const u32 *kind_table_index,
+    const u8 *kind_input,
+    const u8 *kind_operand,
+    const u8 *kind_output,
+    const u8 *kind_index,
     u32 kind_count,
     u32 *out_flags,
     u32 *out_table_index,
@@ -236,6 +245,12 @@ extern "C" __global__ void atom_columns_kernel(
     u32 *out_rd_address,
     u64 *out_rd_inc,
     u64 *out_ram_inc,
+    u64 *out_left_input,
+    u64 *out_right_input,
+    u64 *out_left_operand,
+    u64 *out_right_operand,
+    u64 *out_lookup_output,
+    u64 *out_product,
     u32 *unmapped,
     u32 cycles) {
   u32 index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -269,7 +284,6 @@ extern "C" __global__ void atom_columns_kernel(
   if (raw_ram != 0xFFFFFFFFFFFFFFFFull && raw_ram != 0ull) {
     mask |= 1u << FLAG_BIT_RAM_HAMMING;
   }
-  out_flags[index] = mask;
   out_table_index[index] = kind_table_index[kind];
 
   u64 row_address = address[index];
@@ -310,6 +324,51 @@ extern "C" __global__ void atom_columns_kernel(
   i128 ram_inc = (i128)(u128)words[X_RAM_WRITE] - (i128)(u128)words[X_RAM_READ];
   out_ram_inc[(size_t)index * 2] = (u64)(u128)ram_inc;
   out_ram_inc[(size_t)index * 2 + 1] = (u64)((u128)ram_inc >> 64);
+
+  u64 rs1 = words[X_RS1];
+  u64 rd_post = words[X_RD_POST];
+  i128 imm = (i128)(((u128)words[X_IMM_HI] << 64) | (u128)words[X_IMM_LO]);
+
+  u64 x;
+  i128 y;
+  inputs_of(kind_input[kind], rs1, words[X_RS2], imm, row_address, &x, &y);
+  u64 left;
+  u128 right;
+  operands_of(kind_operand[kind], x, y, rs1, rd_post, &left, &right);
+
+  u128 lookup_index;
+  switch (kind_index[kind]) {
+    case 1: lookup_index = right; break;
+    case 2: lookup_index = (u128)rs1; break;
+    default: lookup_index = (spread_bits(left) << 1) | spread_bits((u64)right); break;
+  }
+  u64 lookup_output =
+      output_of(kind_output[kind], x, y, lookup_index, right, rs1, rd_post, imm);
+
+  out_left_input[index] = x;
+  out_right_input[(size_t)index * 2] = (u64)(u128)y;
+  out_right_input[(size_t)index * 2 + 1] = (u64)((u128)y >> 64);
+  out_left_operand[index] = left;
+  out_right_operand[(size_t)index * 2] = (u64)right;
+  out_right_operand[(size_t)index * 2 + 1] = (u64)(right >> 64);
+  out_lookup_output[index] = lookup_output;
+
+  bool right_is_negative = y < 0;
+  u128 magnitude = right_is_negative ? (~(u128)y + (u128)1) : (u128)y;
+  u128 product = (u128)x * magnitude;
+  out_product[(size_t)index * 2] = (u64)product;
+  out_product[(size_t)index * 2 + 1] = (u64)(product >> 64);
+  if (right_is_negative && product != (u128)0) {
+    mask |= 1u << FLAG_BIT_PRODUCT_NEGATIVE;
+  }
+  if (((mask >> FLAG_BIT_BRANCH) & 1u) != 0u && lookup_output == 1ull) {
+    mask |= 1u << FLAG_BIT_SHOULD_BRANCH;
+  }
+  bool successor_is_noop = (index + 1u < cycles) && (is_noop[index + 1u] != 0);
+  if (((mask >> FLAG_BIT_JUMP) & 1u) != 0u && !successor_is_noop) {
+    mask |= 1u << FLAG_BIT_SHOULD_JUMP;
+  }
+  out_flags[index] = mask;
 }
 
 extern "C" __global__ void flag_bit_column_kernel(

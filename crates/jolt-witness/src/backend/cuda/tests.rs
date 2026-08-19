@@ -14,8 +14,10 @@ use crate::backend::trace::TraceBackend;
 use crate::backend::ProgramSource;
 use crate::testing::{all_kinds_backend, supported_jolt_kinds};
 use crate::witnesses::{
-    BytecodePc, InstructionFlag, InstructionRafFlag, LookupIndex, MappedPc, NextIsNoop, OpFlag,
-    RamHammingWeight, RamInc, RdAddress, RdInc, RemappedRamAddress, TableIndex,
+    BytecodePc, InstructionFlag, InstructionRafFlag, LeftInstructionInput, LeftLookupOperand,
+    LookupIndex, LookupOutput, MappedPc, NextIsNoop, OpFlag, Product, RamHammingWeight, RamInc,
+    RdAddress, RdInc, RemappedRamAddress, RightInstructionInput, RightLookupOperand, ShouldBranch,
+    ShouldJump, TableIndex,
 };
 use crate::{collect_bundles, RowSource, WitnessBundle};
 
@@ -70,6 +72,14 @@ struct AtomProbe {
     rd_address: RdAddress,
     rd_inc: RdInc,
     ram_inc: RamInc,
+    left_instruction_input: LeftInstructionInput,
+    right_instruction_input: RightInstructionInput,
+    left_lookup_operand: LeftLookupOperand,
+    right_lookup_operand: RightLookupOperand,
+    lookup_output: LookupOutput,
+    product: Product,
+    should_branch: ShouldBranch,
+    should_jump: ShouldJump,
 }
 
 impl AtomProbe {
@@ -186,7 +196,11 @@ impl Fixture {
     }
 
     fn wide(limbs: &[u64], index: usize) -> i128 {
-        (u128::from(limbs[2 * index]) | (u128::from(limbs[2 * index + 1]) << 64)) as i128
+        Self::unsigned_wide(limbs, index) as i128
+    }
+
+    fn unsigned_wide(limbs: &[u64], index: usize) -> u128 {
+        u128::from(limbs[2 * index]) | (u128::from(limbs[2 * index + 1]) << 64)
     }
 }
 
@@ -205,6 +219,12 @@ fn device_atom_columns_match_the_reference_extractors() {
     let rd_address = fixture.u32s(&columns.rd_address);
     let rd_inc = fixture.u64s(&columns.rd_inc);
     let ram_inc = fixture.u64s(&columns.ram_inc);
+    let left_input = fixture.u64s(&columns.left_instruction_input);
+    let right_input = fixture.u64s(&columns.right_instruction_input);
+    let left_operand = fixture.u64s(&columns.left_lookup_operand);
+    let right_operand = fixture.u64s(&columns.right_lookup_operand);
+    let lookup_output = fixture.u64s(&columns.lookup_output);
+    let product = fixture.u64s(&columns.product_magnitude);
     let rows: Vec<AtomProbe> = fixture.probes();
 
     assert!(
@@ -222,6 +242,43 @@ fn device_atom_columns_match_the_reference_extractors() {
     assert!(
         (0..fixture.cycles).any(|index| Fixture::wide(&ram_inc, index) != 0),
         "every RAM increment is zero, so the increment path is untested",
+    );
+    assert!(
+        rows.iter().any(|row| row.right_instruction_input.0 < 0),
+        "no cycle has a negative right instruction input, so the two's-complement limb pair is \
+         untested",
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.product.0.magnitude_as_u128() != 0),
+        "every product is zero, so the product path is untested",
+    );
+    assert!(
+        rows.iter()
+            .any(|row| !row.product.0.is_positive && row.product.0.magnitude_as_u128() != 0),
+        "no cycle has a negative product, so the product sign bit is untested",
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.right_lookup_operand.0 > u128::from(u64::MAX)),
+        "every right lookup operand fits in 64 bits, so the wide operand limb is untested",
+    );
+    assert!(
+        rows.iter().any(|row| row.lookup_output.0 != 0),
+        "every lookup output is zero, so output_of is untested",
+    );
+    assert!(
+        rows.iter().any(|row| row.should_branch.0),
+        "no cycle branches, so the should-branch bit is untested",
+    );
+    assert!(
+        rows.iter().any(|row| row.should_jump.0),
+        "no cycle jumps, so the should-jump bit is untested",
+    );
+    assert!(
+        rows.last().is_some_and(|row| row.jump.0),
+        "the fixture's last cycle does not jump, so ShouldJump's `is_some_and` lookahead is \
+         indistinguishable from NextIsNoop's `is_none_or` at the one index where they differ",
     );
 
     for (index, row) in rows.iter().enumerate() {
@@ -302,6 +359,48 @@ fn device_atom_columns_match_the_reference_extractors() {
             row.ram_inc.0,
             "ram increment at {index}",
         );
+        assert_eq!(
+            left_input[index], row.left_instruction_input.0,
+            "left instruction input at {index}",
+        );
+        assert_eq!(
+            Fixture::wide(&right_input, index),
+            row.right_instruction_input.0,
+            "right instruction input at {index}",
+        );
+        assert_eq!(
+            left_operand[index], row.left_lookup_operand.0,
+            "left lookup operand at {index}",
+        );
+        assert_eq!(
+            Fixture::unsigned_wide(&right_operand, index),
+            row.right_lookup_operand.0,
+            "right lookup operand at {index}",
+        );
+        assert_eq!(
+            lookup_output[index], row.lookup_output.0,
+            "lookup output at {index}",
+        );
+        assert_eq!(
+            Fixture::unsigned_wide(&product, index),
+            row.product.0.magnitude_as_u128(),
+            "product magnitude at {index}",
+        );
+        assert_eq!(
+            bit(FLAG_BIT_PRODUCT_NEGATIVE),
+            !row.product.0.is_positive && row.product.0.magnitude_as_u128() != 0,
+            "product sign at {index}",
+        );
+        assert_eq!(
+            bit(FLAG_BIT_SHOULD_BRANCH),
+            row.should_branch.0,
+            "should branch at {index}",
+        );
+        assert_eq!(
+            bit(FLAG_BIT_SHOULD_JUMP),
+            row.should_jump.0,
+            "should jump at {index}",
+        );
     }
 }
 
@@ -356,10 +455,18 @@ fn device_columns_match_the_reference_extractors() {
 #[test]
 fn the_kernel_source_agrees_on_the_flag_bits() {
     let source = include_str!("kernels/atoms.cu");
+    let jump = circuit_flag_bit(CircuitFlags::Jump).expect("Jump has a canonical bit");
+    let branch =
+        instruction_flag_bit(InstructionFlags::Branch).expect("Branch has a canonical bit");
     for (name, bit) in [
+        ("FLAG_BIT_JUMP", jump),
+        ("FLAG_BIT_BRANCH", branch),
         ("FLAG_BIT_NOOP_ROW", FLAG_BIT_NOOP_ROW),
         ("FLAG_BIT_NEXT_IS_NOOP", FLAG_BIT_NEXT_IS_NOOP),
         ("FLAG_BIT_RAM_HAMMING", FLAG_BIT_RAM_HAMMING),
+        ("FLAG_BIT_SHOULD_BRANCH", FLAG_BIT_SHOULD_BRANCH),
+        ("FLAG_BIT_SHOULD_JUMP", FLAG_BIT_SHOULD_JUMP),
+        ("FLAG_BIT_PRODUCT_NEGATIVE", FLAG_BIT_PRODUCT_NEGATIVE),
     ] {
         let expected = format!("#define {name} {bit}");
         assert!(
