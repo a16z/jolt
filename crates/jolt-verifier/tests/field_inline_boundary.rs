@@ -71,20 +71,20 @@ const WHITELIST: &[(&str, usize, &str)] = &[
     ("stages/stage1/outputs.rs", 4, "FR carrier fields"),
     (
         "stages/stage2/outputs.rs",
-        17,
+        18,
         "FR carrier fields + test fixtures",
     ),
     (
         "stages/stage4/outputs.rs",
-        14,
+        15,
         "FR carrier fields + test fixtures",
     ),
     (
         "stages/stage5/outputs.rs",
-        8,
+        9,
         "FR carrier fields + test fixtures",
     ),
-    ("stages/stage6b/outputs.rs", 5, "FR carrier fields"),
+    ("stages/stage6b/outputs.rs", 6, "FR carrier fields"),
     // Relation files that carry an FR appendage: the OnceLock carrier field,
     // its setter, and the composed input/expected-output override shells
     // (trait items cannot move out of the impl; their FR math lives in the

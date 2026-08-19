@@ -51,6 +51,26 @@ pub struct Stage4Sumchecks<F: Field> {
     pub ram_val_check: RamValCheck<F>,
 }
 
+impl<F: Field> Stage4OutputClaims<F> {
+    /// Construct the ordinary stage-4 claims. Producers without field-inline
+    /// semantics use this regardless of the build's feature set — the FR
+    /// read-write slot defaults to all-zero claims, inert because such
+    /// producers' proofs never declare the FR axis.
+    pub fn new(
+        registers_read_write: super::registers_read_write_checking::RegistersReadWriteOutputClaims<
+            F,
+        >,
+        ram_val_check: super::ram_val_check::RamValCheckOutputClaims<F>,
+    ) -> Self {
+        Self {
+            registers_read_write,
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write: Default::default(),
+            ram_val_check,
+        }
+    }
+}
+
 impl<F: Field> Stage4Sumchecks<F> {
     /// The hand-written replacement for the absorb method the
     /// `no_opening_values` opt-out suppresses: stage 4's canonical order

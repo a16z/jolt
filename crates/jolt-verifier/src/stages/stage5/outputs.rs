@@ -38,6 +38,27 @@ pub struct Stage5Sumchecks<F: Field> {
     pub field_registers_val_evaluation: FieldRegistersValEvaluation<F>,
 }
 
+impl<F: Field> Stage5OutputClaims<F> {
+    /// Construct the ordinary stage-5 claims. Producers without field-inline
+    /// semantics use this regardless of the build's feature set — the FR
+    /// val-evaluation slot defaults to all-zero claims, inert because such
+    /// producers' proofs never declare the FR axis.
+    pub fn new(
+        instruction_read_raf: super::instruction_read_raf::InstructionReadRafOutputClaims<F>,
+        ram_ra_claim_reduction: super::ram_ra_claim_reduction::RamRaClaimReductionOutputClaims<F>,
+        registers_val_evaluation:
+            super::registers_val_evaluation::RegistersValEvaluationOutputClaims<F>,
+    ) -> Self {
+        Self {
+            instruction_read_raf,
+            ram_ra_claim_reduction,
+            registers_val_evaluation,
+            #[cfg(feature = "field-inline")]
+            field_registers_val_evaluation: Default::default(),
+        }
+    }
+}
+
 /// The shared opening-point accessors over the point-only stage-5 aggregate.
 impl<F: Field> Stage5OutputPoints<F> {
     /// The instruction read-RAF cycle point (shared by the lookup-table-flag

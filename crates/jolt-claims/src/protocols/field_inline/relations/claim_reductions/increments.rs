@@ -16,7 +16,7 @@ use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 /// The single reduced `FieldRdInc` opening handed to the final opening planner.
 /// Mirrors `geometry::claim_reductions::increments::claim_reduction_output_openings()`.
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"

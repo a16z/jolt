@@ -64,6 +64,14 @@ impl Program {
         self.instruction_profile = profile;
     }
 
+    /// The instruction profile this program decodes and traces under.
+    /// Preprocessing must be built with the same profile (see
+    /// `ProgramPreprocessing::preprocess_with_profile`), or FR-profile
+    /// bytecode is rejected as illegal target instructions.
+    pub fn instruction_profile(&self) -> JoltInstructionProfile {
+        self.instruction_profile
+    }
+
     pub fn add_guest_feature(&mut self, feature: &str) {
         if self.guest_features.iter().all(|known| known != feature) {
             self.guest_features.push(feature.to_string());

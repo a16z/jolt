@@ -52,6 +52,30 @@ impl<F: Field> Stage2OutputClaims<F> {
     }
 }
 
+impl<F: Field> Stage2BatchOutputClaims<F> {
+    /// Construct the ordinary stage-2 batch claims. Producers without
+    /// field-inline semantics use this regardless of the build's feature set —
+    /// the FR claim-reduction slot defaults to all-zero claims, inert because
+    /// such producers' proofs never declare the FR axis.
+    pub fn new(
+        ram_read_write: RamReadWriteOutputClaims<F>,
+        product_remainder: ProductRemainderOutputClaims<F>,
+        instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
+        ram_raf_evaluation: RamRafEvaluationOutputClaims<F>,
+        ram_output_check: RamOutputCheckOutputClaims<F>,
+    ) -> Self {
+        Self {
+            ram_read_write,
+            product_remainder,
+            instruction_claim_reduction,
+            #[cfg(feature = "field-inline")]
+            field_registers_claim_reduction: Default::default(),
+            ram_raf_evaluation,
+            ram_output_check,
+        }
+    }
+}
+
 /// Source-of-truth for stage 2's sumcheck batch, in Fiat-Shamir batch order
 /// (RAM read-write, product remainder, instruction claim-reduction, the
 /// field-inline FR claim-reduction when composed, RAM RAF evaluation, RAM

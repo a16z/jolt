@@ -22,7 +22,7 @@ use crate::{InputClaims, NoChallenges, OutputClaims, SumcheckChallenges};
 /// declaration order is the canonical Fiat-Shamir order and mirrors
 /// `geometry::registers::read_write_checking_output_openings()`.
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"
@@ -97,7 +97,7 @@ twist::instantiate_read_write_checking! {
 /// the canonical Fiat-Shamir order and mirrors
 /// `geometry::registers::val_evaluation_output_openings()`.
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"

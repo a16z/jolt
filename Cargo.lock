@@ -2477,6 +2477,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "eqpoly-field"
+version = "0.1.0"
+dependencies = [
+ "eqpoly-field-guest",
+ "jolt-field",
+ "jolt-program",
+ "jolt-prover",
+ "jolt-sdk",
+ "jolt-witness",
+]
+
+[[package]]
+name = "eqpoly-field-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

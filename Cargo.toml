@@ -93,6 +93,8 @@ members = [
   "examples/stdlib/guest",
   "examples/muldiv",
   "examples/muldiv/guest",
+  "examples/eqpoly-field",
+  "examples/eqpoly-field/guest",
   "examples/overflow",
   "examples/overflow/guest",
   "examples/memory-ops",

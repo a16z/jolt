@@ -236,6 +236,44 @@ impl<F: Field> Stage6bOutputPoints<F> {
 }
 
 impl<F: Field> Stage6bOutputClaims<F> {
+    /// Construct the ordinary stage-6b claims. Producers without field-inline
+    /// semantics use this regardless of the build's feature set — the FR
+    /// increment-reduction slot defaults to an all-zero claim, inert because
+    /// such producers' proofs never declare the FR axis. Base wire shape only
+    /// (the akita converter assembles its lattice-shaped claims itself).
+    #[cfg(not(feature = "akita"))]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per batch member, mirroring the generated aggregate's shape"
+    )]
+    pub fn new(
+        bytecode_read_raf: BytecodeReadRafOutputClaims<F>,
+        booleanity: BooleanityOutputClaims<F>,
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,
+        inc_claim_reduction: IncClaimReductionOutputClaims<F>,
+        trusted_advice: Option<TrustedAdviceCyclePhaseOutputClaims<F>>,
+        untrusted_advice: Option<UntrustedAdviceCyclePhaseOutputClaims<F>>,
+        bytecode_reduction: Option<BytecodeReductionCyclePhaseOutputClaims<F>>,
+        program_image_reduction: Option<ProgramImageReductionCyclePhaseOutputClaims<F>>,
+    ) -> Self {
+        Self {
+            bytecode_read_raf,
+            booleanity,
+            ram_hamming_booleanity,
+            ram_ra_virtualization,
+            instruction_ra_virtualization,
+            inc_claim_reduction,
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: Default::default(),
+            trusted_advice,
+            untrusted_advice,
+            bytecode_reduction,
+            program_image_reduction,
+        }
+    }
+
     /// The consumed cycle-phase advice opening *value* for `kind` (the trusted /
     /// untrusted slot of that advice member), present only when the advice
     /// reduction ran a cycle phase. Read by stage 7's advice input wiring and stage
