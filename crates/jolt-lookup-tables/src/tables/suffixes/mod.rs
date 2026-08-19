@@ -73,6 +73,9 @@ use or::OrSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
 use pext::PextSuffix;
 use pext_helper::PextHelperSuffix;
+// Shared bit-manipulation helpers: single source for the pext packing and
+// the window-sign convention, reused by the corresponding tables/prefixes.
+pub(crate) use pext::pext;
 use pow2::Pow2Suffix;
 use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
@@ -90,6 +93,7 @@ use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+pub(crate) use window_sign::window_sign_bit;
 use window_sign::WindowSignSuffix;
 use window_sign_pow2::WindowSignPow2Suffix;
 use xor::XorSuffix;

@@ -1,6 +1,7 @@
 use crate::{
     field::{ChallengeFieldOps, FieldChallengeOps, JoltField},
     utils::lookup_bits::LookupBits,
+    zkvm::lookup_table::suffixes::window_sign::window_sign_bit,
 };
 
 use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
@@ -42,12 +43,7 @@ impl<F: JoltField> SparseDensePrefix<F> for WindowSignPow2Prefix {
 
         let (x, y) = b.uninterleave();
         let (x_val, y_val) = (u64::from(x), u64::from(y));
-        let sigma_b = if y_val == 0 {
-            0
-        } else {
-            let i = y_val.ilog2();
-            (x_val >> i) & 1
-        };
+        let sigma_b = window_sign_bit(x_val, y_val);
         (result + none * F::from_u64(sigma_b)) * F::from_u128(1u128 << y_val.count_ones())
     }
 

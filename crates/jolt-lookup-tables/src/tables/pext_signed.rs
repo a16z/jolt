@@ -23,33 +23,31 @@ use crate::uninterleave_bits;
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct PextSignedTable<const XLEN: usize>;
 
+/// The table's semantics on already-masked `XLEN`-bit operands:
+/// `pext(x, y) + σ·(2^XLEN − 2^popcount(y))` where `σ` is the window sign.
+/// Shared by `materialize_entry` and the instruction's `to_lookup_output`.
+pub(crate) fn pext_signed<const XLEN: usize>(x: u64, y: u64) -> u64 {
+    let pc = y.count_ones();
+    if pc == 0 {
+        return 0;
+    }
+    let pext = crate::tables::suffixes::pext(x, y);
+    let sign = crate::tables::suffixes::window_sign_bit(x, y);
+    // pext < 2^pc, so the sum never overflows XLEN bits.
+    let ext = if sign == 1 {
+        ((1u128 << XLEN) - (1u128 << pc)) as u64
+    } else {
+        0
+    };
+    pext + ext
+}
+
 impl<const XLEN: usize> LookupTable for PextSignedTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
         let x = LookupBits::new(x as u128, XLEN);
         let y = LookupBits::new(y as u128, XLEN);
-        let (x_val, y_val) = (u64::from(x), u64::from(y));
-
-        let mut pext = 0u64;
-        let mut sign = 0u64;
-        let mut pc = 0u32;
-        for i in (0..XLEN).rev() {
-            if (y_val >> i) & 1 == 1 {
-                let x_i = (x_val >> i) & 1;
-                if pc == 0 {
-                    sign = x_i;
-                }
-                pext = (pext << 1) | x_i;
-                pc += 1;
-            }
-        }
-        // pext < 2^pc, so the sum never overflows XLEN bits.
-        let ext = if sign == 1 {
-            ((1u128 << XLEN) - (1u128 << pc)) as u64
-        } else {
-            0
-        };
-        pext + ext
+        pext_signed::<XLEN>(u64::from(x), u64::from(y))
     }
 
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
