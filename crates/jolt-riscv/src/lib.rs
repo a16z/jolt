@@ -173,6 +173,8 @@ macro_rules! for_each_instruction_kind {
                 VirtualXORROTW12 => VirtualXorRotW12 => "jolt.virtual.xorrotw12",
                 VirtualXORROTW8 => VirtualXorRotW8 => "jolt.virtual.xorrotw8",
                 VirtualXORROTW7 => VirtualXorRotW7 => "jolt.virtual.xorrotw7",
+                VirtualWindowMaskW => WindowMaskW => "jolt.virtual.windowmaskw",
+                VirtualPextSigned => PextSigned => "jolt.virtual.pextsigned",
                 VirtualXORROTL1 => VirtualXorRotL1 => "jolt.virtual.xorrotl1",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
@@ -272,7 +274,9 @@ macro_rules! for_each_jolt_instruction_kind {
                 SUBW => SubW => (0x008b, "rv64.subw"),
                 MULW => MulW => (0x008c, "rv64.mulw"),
                 VirtualMULIW => MulIW => (0x008e, "jolt.virtual.muliw"),
-                VirtualXORROTL1 => VirtualXorRotL1 => (0x008f, "jolt.virtual.xorrotl1"),
+                VirtualWindowMaskW => WindowMaskW => (0x008f, "jolt.virtual.windowmaskw"),
+                VirtualPextSigned => PextSigned => (0x0090, "jolt.virtual.pextsigned"),
+                VirtualXORROTL1 => VirtualXorRotL1 => (0x0091, "jolt.virtual.xorrotl1"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

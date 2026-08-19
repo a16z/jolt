@@ -726,6 +726,38 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr rax, cl);
                 e.store_rd(RAX, row.operands.rd);
             }
+            K::WindowMaskW(_) => {
+                // rd = 0xFFFFFFFF << (32 * bit2(x[rs1])): byte mask of the
+                // addressed word's lane within its containing doubleword.
+                e.load_reg(RCX, row.operands.rs1);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; and ecx, 4
+                    ; shl ecx, 3
+                    ; mov eax, -1
+                    ; shl rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
+            K::PextSigned(_) => {
+                // rd = pext(x[rs1], x[rs2]) sign-extended by the extracted
+                // window's top bit: shift the pc packed bits to the top, then
+                // arithmetic-shift back down. cl = -pc ≡ 64-pc (mod 64), so
+                // pc = 0 shifts the zero pext by 0 and pc = 64 is the
+                // identity, both matching the reference. Requires
+                // BMI2/POPCNT (checked once).
+                e.load_reg(RAX, row.operands.rs1);
+                e.load_reg(RCX, row.operands.rs2);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; pext rax, rax, rcx
+                    ; popcnt rcx, rcx
+                    ; neg ecx
+                    ; shl rax, cl
+                    ; sar rax, cl
+                );
+                e.store_rd(RAX, row.operands.rd);
+            }
 
             K::Beq(_) => Self::emit_branch(e, row, Cc::Eq),
             K::Bne(_) => Self::emit_branch(e, row, Cc::Ne),

@@ -47,21 +47,28 @@ pub fn gen_bitmask_lookup_index(rng: &mut StdRng) -> u128 {
 }
 
 pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomposition<XLEN>>() {
-    prefix_suffix_test_with_phase::<XLEN, F, T>(16);
+    prefix_suffix_test_with_phase_size::<XLEN, F, T>(16, 300);
 }
 
-pub fn prefix_suffix_test_with_phase<
+/// Same check with a caller-chosen phase size. Tables whose prefixes read
+/// specific low index bits use this to pin phase-boundary-agnostic behavior,
+/// placing boundaries inside those bits (e.g. `rounds_per_phase = 2`).
+pub fn prefix_suffix_test_with_phase_size<
     const XLEN: usize,
     F: JoltField,
     T: PrefixSuffixDecomposition<XLEN>,
 >(
     rounds_per_phase: usize,
+    num_runs: usize,
 ) {
-    assert_eq!((XLEN * 2) % rounds_per_phase, 0);
+    // Odd sizes would split an (r_x, r_y) pair across phases, which the
+    // prefix machinery does not support.
+    assert!(rounds_per_phase.is_multiple_of(2));
+    assert!((XLEN * 2).is_multiple_of(rounds_per_phase));
     let total_phases: usize = XLEN * 2 / rounds_per_phase;
     let mut rng = StdRng::seed_from_u64(12345);
 
-    for _ in 0..300 {
+    for _ in 0..num_runs {
         let mut prefix_checkpoints: Vec<PrefixCheckpoint<F>> = vec![None.into(); Prefixes::COUNT];
         let lookup_index = T::random_lookup_index(&mut rng);
         let mut j = 0;

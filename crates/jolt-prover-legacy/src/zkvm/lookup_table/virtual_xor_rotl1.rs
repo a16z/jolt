@@ -64,7 +64,7 @@ mod tests {
     use super::VirtualXORROTL1Table;
     use crate::zkvm::lookup_table::test::{
         lookup_table_mle_full_hypercube_test, lookup_table_mle_random_test, prefix_suffix_test,
-        prefix_suffix_test_with_phase,
+        prefix_suffix_test_with_phase_size,
     };
 
     #[test]
@@ -80,6 +80,6 @@ mod tests {
     #[test]
     fn prefix_suffix() {
         prefix_suffix_test::<XLEN, Fr, VirtualXORROTL1Table<XLEN>>();
-        prefix_suffix_test_with_phase::<XLEN, Fr, VirtualXORROTL1Table<XLEN>>(8);
+        prefix_suffix_test_with_phase_size::<XLEN, Fr, VirtualXORROTL1Table<XLEN>>(8, 300);
     }
 }

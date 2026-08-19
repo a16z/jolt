@@ -15,7 +15,10 @@ use lsb::LsbSuffix;
 use lt::LessThanSuffix;
 use num_derive::FromPrimitive;
 use or::OrSuffix;
+use pext::PextSuffix;
+use pext_helper::PextHelperSuffix;
 use pow2::Pow2Suffix;
+use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8W;
 use right_is_zero::RightOperandIsZeroSuffix;
@@ -36,6 +39,8 @@ use one::OneSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+use window_sign::WindowSignSuffix;
+use window_sign_pow2::WindowSignPow2Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
@@ -59,7 +64,10 @@ pub mod notand;
 pub mod one;
 pub mod or;
 pub mod overflow_bits_zero;
+pub mod pext;
+pub mod pext_helper;
 pub mod pow2;
+pub mod pow2_offset_w;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -75,6 +83,8 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
+pub mod window_sign;
+pub mod window_sign_pow2;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotl1;
@@ -133,6 +143,11 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    Pow2OffsetW,
+    Pext,
+    PextHelper,
+    WindowSign,
+    WindowSignPow2,
     XorRotL1Pairs,
     TopYBit,
     BottomXBit,
@@ -161,6 +176,7 @@ impl Suffixes {
                 | Suffixes::OverflowBitsZero
                 | Suffixes::ChangeDivisor
                 | Suffixes::ChangeDivisorW
+                | Suffixes::WindowSign
                 | Suffixes::TopYBit
                 | Suffixes::BottomXBit
         )
@@ -215,6 +231,11 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::Pow2OffsetW => Pow2OffsetWSuffix::suffix_mle(b),
+            Suffixes::Pext => PextSuffix::suffix_mle(b),
+            Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
+            Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
+            Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
             Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
             Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
             Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
