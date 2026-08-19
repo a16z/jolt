@@ -38,6 +38,14 @@ use crate::commitment::ModeStreamingCommitment;
 use crate::JoltBackend;
 
 use self::booleanity::{OptimizedBooleanityAddress, OptimizedBooleanityCycle};
+#[cfg(feature = "field-inline")]
+use self::field_registers_claim_reduction::OptimizedFieldRegistersClaimReduction;
+#[cfg(feature = "field-inline")]
+use self::field_registers_inc_claim_reduction::OptimizedFieldRegistersIncClaimReduction;
+#[cfg(feature = "field-inline")]
+use self::field_registers_read_write::OptimizedFieldRegistersReadWrite;
+#[cfg(feature = "field-inline")]
+use self::field_registers_val_evaluation::OptimizedFieldRegistersValEvaluation;
 use self::instruction_claim_reduction::OptimizedInstructionClaimReduction;
 use self::instruction_input::OptimizedInstructionInput;
 use self::instruction_ra_virtualization::OptimizedInstructionRaVirtualization;
@@ -89,6 +97,14 @@ pub(crate) use impl_allocative;
 pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod commitment;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_claim_reduction;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_inc_claim_reduction;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_read_write;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_val_evaluation;
 pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
@@ -163,6 +179,16 @@ where
         backend.registers_val_evaluation = Box::new(OptimizedRegistersValEvaluation);
         backend.registers_claim_reduction = Box::new(OptimizedRegistersClaimReduction);
 
+        #[cfg(feature = "field-inline")]
+        {
+            backend.field_registers_claim_reduction =
+                Box::new(OptimizedFieldRegistersClaimReduction);
+            backend.field_registers_read_write = Box::new(OptimizedFieldRegistersReadWrite);
+            backend.field_registers_val_evaluation = Box::new(OptimizedFieldRegistersValEvaluation);
+            backend.field_registers_inc_claim_reduction =
+                Box::new(OptimizedFieldRegistersIncClaimReduction);
+        }
+
         backend.booleanity_address = Box::new(OptimizedBooleanityAddress);
         backend.booleanity_cycle = Box::new(OptimizedBooleanityCycle);
         backend.ram_hamming_booleanity = Box::new(OptimizedRamHammingBooleanity);
@@ -196,6 +222,8 @@ where
     }
 }
 
+#[cfg(all(test, feature = "field-inline"))]
+pub(crate) mod field_registers_testing;
 #[cfg(test)]
 pub(crate) mod parity;
 pub(crate) mod rows;

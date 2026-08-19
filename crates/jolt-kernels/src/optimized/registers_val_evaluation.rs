@@ -53,7 +53,9 @@ use crate::{
 
 /// The write-address column: hot indices plus the address eq table until the
 /// first bind, a dense bound vector afterwards. The `K × T` grid never exists.
-enum WaState<F> {
+/// Shared with the FR val-evaluation kernel, whose write column has the same
+/// lazy-fold shape at the FR address width.
+pub(crate) enum WaState<F> {
     Indices {
         rd: Vec<Option<u8>>,
         eq_address: Vec<F>,
@@ -63,7 +65,7 @@ enum WaState<F> {
 
 impl<F: Field> WaState<F> {
     #[inline]
-    fn pair(&self, y: usize) -> (F, F) {
+    pub(crate) fn pair(&self, y: usize) -> (F, F) {
         match self {
             Self::Indices { rd, eq_address } => {
                 let value = |j: usize| rd[j].map_or(F::zero(), |k| eq_address[k as usize]);
@@ -73,7 +75,7 @@ impl<F: Field> WaState<F> {
         }
     }
 
-    fn bind(&mut self, r: F) {
+    pub(crate) fn bind(&mut self, r: F) {
         match self {
             Self::Indices { rd, eq_address } => {
                 let value = |j: usize| rd[j].map_or(F::zero(), |k| eq_address[k as usize]);
@@ -92,7 +94,7 @@ impl<F: Field> WaState<F> {
         }
     }
 
-    fn final_value(&self) -> F {
+    pub(crate) fn final_value(&self) -> F {
         match self {
             Self::Dense(table) => {
                 debug_assert_eq!(table.len(), 1);
