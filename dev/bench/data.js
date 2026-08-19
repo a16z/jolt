@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787103974875,
+  "lastUpdate": 1787167557286,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -139486,6 +139486,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864432,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bd84560ead0f325a01b9152c7810976cd3684074",
+          "message": "feat(jolt-prover): port the Akita integration to the modular prover (#1718)\n\n* test(jolt-prover): Akita port scaffolding — two-path layout, packed prove seam, byte-diff + e2e harnesses\n\nReorganize the crate as two parallel prover paths sharing the root\norchestration (config/preprocessing/driver/error): src/dory (the\nhomomorphic elliptic-curve pipeline, was src/prover.rs + src/stages)\nand src/akita (the packed lattice pipeline, port in progress). Like\njolt-verifier, one compiled prover proves exactly one protocol: the\nakita feature swaps the wire types to the packed envelope, so exactly\none path module compiles per build.\n\n- akita::prove stub (returns ProverError::Unsupported) pins the packed\n  seam: backend-first signature over a JoltAkitaBackend registry-to-be,\n  generic over the scheme — concrete Akita types bind at call sites.\n  JoltAkitaBackend is a parallel struct rather than cfg-gated\n  JoltBackend fields: jolt-kernels deliberately has no akita feature\n  (see jolt-claims' CANONICAL_INSTRUCTION_ADDRESS).\n- tests/akita_byte_diff.rs: legacy-vs-new whole-proof ratchets\n  (muldiv, advice consumer, committed muldiv x {1,2} chunks), all\n  #[ignore]d until the port lands; component-wise asserts give\n  per-stage granularity on the packed wire fields.\n- tests/akita_e2e.rs: analogs of the legacy packed e2e suite (muldiv,\n  forced-K256, advice, full-advice, committed program), #[ignore]d;\n  un-ignoring them is the port's acceptance gate.\n- tests/dory_byte_diff.rs (was byte_diff.rs): modules re-gated\n  all(prover-fixtures, not(akita)) — the two harnesses are mutually\n  exclusive by feature.\n- jolt-kernels: the bytecode read-raf reference kernel takes the\n  jolt-claims NUM_BYTECODE_VAL_STAGES seam (5 base / 6 akita) and\n  guards its base-five fold at runtime; byte-neutral in base mode\n  (the dory_byte_diff muldiv ratchet passes).\n- Cargo: akita = [jolt-verifier/akita, jolt-claims/akita,\n  jolt-field/akita, jolt-prover-legacy/akita] — legacy must flip\n  together with the verifier; the verifier's own akita edge to it is a\n  dev-dep edge that does not propagate.\n- CI: clippy lanes for -p jolt-prover --features\n  akita[,prover-fixtures] so the ignored suites keep compiling.\n\nVerified: clippy -D warnings on {default, prover-fixtures, akita,\nakita+prover-fixtures}; workspace clippy under host and host,zk;\nnextest default and akita lanes; dory_byte_diff muldiv end-to-end.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-prover): hoist protocol-agnostic stage recipes to shared src/stages\n\nStages 1-7 and the generated stage-driver expansions are protocol-agnostic:\nthe protocol differences are carried by jolt-verifier's feature-swapped\nbatch internals, plus two small cfg blocks here that mirror the verifier's\nown (the stage-6a lattice input wrapper folding the four reduced Inc claims,\nthe stage-7 lattice hamming dimensions). The dory module keeps its\nprotocol-specific pipeline ends (stage 0 witness commitment, stage 8 RLC\njoint opening, prover.rs); the akita port adds its own.\n\nVerified: clippy -D warnings on jolt-prover x {default, akita}.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-witness): serve the lattice packed-witness columns from TraceBackend\n\nFusedInc (the per-cycle fused increment: RAM delta on store cycles, rd delta\notherwise), the UnsignedIncChunk/UnsignedIncMsb one-hot K x T grids of its\nshifted encoding, and the TrustedAdviceBytes/UntrustedAdviceBytes dense byte\none-hot cell tables over the (byte || place || word) domain. The bytecode\nsub-columns and program-image bytes stay unserved: they are preprocessing\ndata, not trace derivations.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-openings): native group-commit and transparent object-setup seams\n\ncommit_batch is the commit-side sibling of open_batch/verify_batch (the\nnative same-point commitment-group seam only schemes like Akita implement);\nTransparentObjectSetup derives a singleton commitment-object setup from the\nobject's public shape alone (fixed seed), so the packed prover and verifier\nre-derive byte-identical auxiliary setups independently. AkitaScheme\nimplements both; the legacy packed path's transparent_object_setup now\ndelegates to the trait so the convention stays single-sourced.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-verifier): promote packed stage-8 assembly for prover reuse\n\nbuild_reconstruction_parts factors the reconstruction batch construction\n(instances from the public shape + completed upstream claims, input cells)\nout of reconstruction::verify so the packed prover's recipe runs the same\nconstruction; stage8::packed and its leaf_claims/object_statement assembly\ngo public; absorb_packed_commitments promotes the akita commitment-absorb\narm as the shared stage-0 helper.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-kernels): lattice arms for the read-raf, booleanity, and hamming kernels\n\nThe reference kernels adapt to the packed (lattice) jolt-claims shape at\nruntime — jolt-kernels stays feature-free:\n\n- bytecode read-raf address kernel: the nine-stage fold. The four fused-inc\n  consumer stages (gamma^5..8) discharge the reduced Inc claims — fused-delta-\n  weighted PC pushforwards against the staged store column and its\n  complement — with the RAF/entry weights shifted to gamma^9..11. The\n  consumer cycle points ride the relation (BytecodeStagePoints grows a\n  fused_inc_cycle_points leg, populated by bytecode_stage_points on akita).\n- bytecode read-raf cycle kernel: serves the dense FusedInc trace column\n  when the relation's expression references it; the staged-val and\n  StageCycleEq loops already scale with the shape.\n- booleanity address kernel: the checked-column masses extend over the\n  fused-inc one-hot columns (lattice_booleanity_output_openings order,\n  continuing the gamma^{2i} weights) exactly on the lattice shape.\n- booleanity cycle / hamming-weight kernels: extra opening tables (address/\n  cycle folds of the UnsignedIncChunk/Msb grids) and the IdentityAtAddress\n  chunk-domain identity, served per the relations' own expression leaves.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-prover): the packed (Akita) prove path\n\nThe full pipeline behind akita::prove: stage 0 assembles the OneHotTrace\ncolumns from the witness plane's typed rows and commits them as one native\ngroup (commit_batch), commits the per-proof untrusted-advice byte object,\nand absorbs the packed commitment objects through the verifier's own\nabsorb helper; stages 1-7 run the shared recipes against the embedded\nJoltBackend registry (naive-served; the reference kernels adapt to the\npacked shape); the reconstruction phase proves through the verifier's\npromoted batch construction with naive kernels for the four reconstruction\nrelations (implemented on JoltAkitaBackend — the relations exist only on\nthe packed build); stage 8 opens OneHotTrace as one native same-point\nbatch from the stage-0 hint and discharges the auxiliary objects\n(advice byte columns, ProgramOneHot) through prove_packed_openings.\n\nThe precommitted auxiliary objects' opening material is transparently\nre-derived at prove time from the public advice bytes / retained program\nand cross-checked against the passed commitments.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(jolt-prover): packed trace floor, witness-plane program reads, fused cycle suffixes\n\n- ProverConfig::derive pads to the compiled protocol's PCS floor (2^12 on\n  the packed build — Akita cannot schedule the OneHotTrace group below 16\n  variables; 256 on Dory), matching legacy's PCS::MIN_PADDED_TRACE_LENGTH.\n- The stage-4 program-image contribution and stage-6b full-mode table fold\n  read the full program off the witness plane (witness generation requires\n  it in every mode) instead of the prover preprocessing, whose committed\n  arm retains only commitments on the packed path.\n- The fused-inc consumer cycle points carried on BytecodeStagePoints are\n  the log_t cycle SUFFIXES of the recorded inc openings (the aggregates\n  carry full (address || cycle) points), mirroring the stage-6b batch's\n  splits.\n\nmuldiv_e2e_akita (prove + verify + fused-inc claim-wire tampers) passes.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-akita): GroupSetupMetadata for the prover setup\n\nThe packed prover's generic stage 0 reads the group shape (layout digest,\narity, column count) off PCS::ProverSetup through the same jolt-openings\nmetadata trait the verifier setup already implements; plus the jolt-prover\njolt-riscv dependency edge in the lockfile.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(jolt-prover): reconstruction leg conventions; un-ignore the packed acceptance suites\n\nTwo packed-kernel fixes the byte-diff ratchets caught:\n- the lookup-selector block pads the (non-power-of-two) table count up\n  (ceil, matching jolt-poly's log_2), not down;\n- the bytecode reconstruction COLUMN tables replicate across the missing\n  high variables instead of zero-extending: the verifier folds the\n  zero-pin into the DERIVED weight, so a zero-extended column squares the\n  pin — internally consistent through every driver self-check and caught\n  only by the committed ProgramOneHot packed opening.\n\nWith those, all nine packed acceptance tests pass and their #[ignore]s\ncome off: five e2es (muldiv, forced-K256, advice, full-advice,\ncommitted-program x {1,2} chunks, with live tampers) and four byte-diff\nratchets (wire-for-wire equality with jolt-prover-legacy's prove_packed).\ntests/dory_byte_diff.rs follows the shared stage recipes' new paths.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(jolt-prover): fail-closed hardening from the port review\n\n- Stage 0 rejects a ProgramOneHot commitment argument that disagrees with\n  the preprocessing-held one the verifier absorbs (was an opaque\n  Fiat-Shamir divergence at verification) and a packed setup whose\n  declared dimensions disagree with the canonical OneHotTrace shape (was a\n  late backend failure).\n- commit_advice_one_hot rejects advice exceeding the configured maximum\n  instead of silently truncating.\n- FusedInc::extract regains legacy's store/rd disjointness debug-assert;\n  the shifted-encoding roundtrip and padding-convention unit tests port\n  to jolt-witness (deltas at the +-(2^64 - 1) extremes included).\n- INSTRUCTION_FLAG_ORDER is pinned to the enum's discriminant order at\n  compile time; the reconstruction replicate helper asserts divisibility\n  and truncates.\n\nAll 17 akita-lane tests still pass.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* ci: run the modular jolt-prover akita acceptance suites\n\nThe clippy lanes existed since the scaffolding commit; with the port\nlanded, the nine un-ignored tests (five e2es with live tampers, four\nlegacy byte-diff ratchets) now run in the test-prover-akita job alongside\nthe legacy packed suite.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* docs(jolt-prover): dory module doc reflects the shared stage recipes\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fmt\n\n* refactor(jolt-prover-legacy): drop the transparent_object_setup wrapper\n\nThe private fn became a pure delegation once the convention moved onto\nAkitaScheme's TransparentObjectSetup impl; call the trait method directly\nat the four call sites.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* feat(jolt-prover): profiling support for the packed (Akita) prover\n\nThe profile harness gains a packed arm — the akita x profiling exclusion\nis gone. Compiled with --features akita,profiling the same bin/smoke test\ndrives akita::prove end to end:\n\n- taxonomy: ProverMode::Akita with AKITA_MODE_SPANS — the packed prover\n  swaps the homomorphic commitment seams (commit_witness,\n  stream_witnesses, JointOpeningPolynomials::prepare, HomomorphicBatch)\n  for the OneHotTrace assembly + native group commit, the reconstruction\n  phase, and the native same-point opening, keeping prove_uniskip_clear\n  (akita and zk are mutually exclusive). Additive labels, no version bump.\n- instrumentation: the root jolt_prover::prove span and prove_stage0 /\n  prove_reconstruction / prove_stage8 recipe spans on the akita path, with\n  CommitmentScheme::{commit_batch,open_batch} / prove_packed_openings /\n  assemble_one_hot_trace / commit_{advice,program}_one_hot seam spans —\n  the 10-stage summary rollup works unchanged; reconstruction lands in\n  the non-stage bucket.\n- akita::one_hot_trace_setup_shape derives the OneHotTrace setup\n  dimensions + canonical digest + K from ProverConfig and the program\n  shape — the harness builds the transparent packed setup without a\n  legacy prover instance (resolving that tracked follow-up).\n- artifacts: packed runs suffix _akita into the trace-name stem (run\n  dirs, latest_ links, the sweep's resume check) and the CSV benchmark\n  name, so the two protocols' runs never collide. Proof size reports as\n  unavailable (CSV 0 placeholder): the upstream akita field has no serde\n  support at the pinned revision, so no packed-proof byte encoding\n  exists to measure.\n- jolt-claims: Allocative derives (feature-gated) on the lattice claim\n  structs, for the akita,profiling,allocative lane.\n- CI: clippy lanes for akita,profiling and akita,profiling,allocative.\n\nVerified: the profiling smoke test passes under BOTH protocol builds\n(akita: fibonacci 2^13, 14s, all Akita-mode labels present; dory:\nunchanged, 49s); all jolt-prover clippy lanes and nextest lanes green\n(the one zk_e2e SIGSEGV during the batch reruns clean in isolation —\nmemory contention with the concurrent 18 GiB dory smoke).\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fmt\n\n* test(jolt-verifier): re-bless the FS absorb-site inventory for the shared packed absorb\n\nThe merge re-extracted the akita commitment absorbs out of\nabsorb_commitments into the shared pub absorb_packed_commitments (so the\npacked prover's stage 0 reuses it verbatim), which relocates the four\nabsorb sites' enclosing-function identities and adds the call sites. Same\nlabels, same payloads, same order — the akita byte-diff ratchets pin the\ntranscript wire to the legacy prover unchanged.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* refactor(jolt-prover): address the packed-port review follow-ups\n\nThree resolutions from Markos' PR #1718 review:\n\n1. Precommitted objects are retained, not re-derived per prove\n   (prover.rs:202): CommittedProgramProverData carries the ProgramOneHot\n   objects on the akita build (witnesses, plans, digest-seeded setups,\n   hints — built once at preprocessing via commit_program_one_hot), and\n   akita::prove takes the precommitted trusted-advice object\n   (Option<&AdviceOneHot>) instead of its bare commitment, mirroring\n   legacy's prove_packed. Stage 0 cross-checks the retained commitments\n   against the verifier preprocessing fail-closed.\n\n2. Reconstruction kernels are replaceable slots (reconstruction.rs:173):\n   JoltAkitaBackend derives KernelSlots over four reconstruction slot\n   fields; the reference kernels move to the ReferenceReconstruction\n   marker, so an optimized packed backend swaps boxes like the shared\n   registry's.\n\n3. The open seam expresses retained-state opening (witness.rs:139):\n   open_batch (polynomial args, hint-by-value) becomes\n   open_batch_from_hint — no polynomial argument; the hint is the\n   committed object the group commit produced, which is what the lattice\n   opening actually consumes (the Ajtai digit decompositions cannot be\n   recreated without re-committing). The panicking CommittedOneHotShape\n   stand-in is deleted; jolt-akita's impl delegates to\n   open_one_hot_group_from_hint. Making the committed object first-class\n   in CommitmentScheme is #1782.\n\nAll byte-diff ratchets still match the legacy packed prover wire-for-wire,\nso each change is byte-neutral.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-08-19T11:19:02-07:00",
+          "tree_id": "973cd3c2eb02641d8947c77ff1352f41c8b43857",
+          "url": "https://github.com/a16z/jolt/commit/bd84560ead0f325a01b9152c7810976cd3684074"
+        },
+        "date": 1787167552168,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.4589,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 867656,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4255,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 511376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 497972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 506992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7609,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507096,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6193,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 511080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.4409,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 506856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.0048,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 201140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5328,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6085,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 497504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4866,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 506868,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.5607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.5054,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 508940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 32.1082,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1101236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.3031,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 648260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 97.3325,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2121592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4851,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6263,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.3845,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 860948,
             "unit": "KB",
             "extra": ""
           }
