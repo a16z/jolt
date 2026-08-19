@@ -16,8 +16,18 @@ use tracer::{
         divu::DIVU,
         divuw::DIVUW,
         divw::DIVW,
-        format::{format_i::FormatI, format_r::FormatR, normalize_imm},
+        format::{
+            format_i::FormatI, format_load::FormatLoad, format_r::FormatR, format_s::FormatS,
+            normalize_imm,
+        },
+        lb::LB,
+        lbu::LBU,
+        ld::LD,
+        lh::LH,
+        lhu::LHU,
         lui::LUI,
+        lw::LW,
+        lwu::LWU,
         mul::MUL,
         mulh::MULH,
         mulhsu::MULHSU,
@@ -28,6 +38,9 @@ use tracer::{
         remu::REMU,
         remuw::REMUW,
         remw::REMW,
+        sb::SB,
+        sd::SD,
+        sh::SH,
         sll::SLL,
         slli::SLLI,
         slliw::SLLIW,
@@ -43,6 +56,7 @@ use tracer::{
         srlw::SRLW,
         sub::SUB,
         subw::SUBW,
+        sw::SW,
         virtual_advice::VirtualAdvice,
         virtual_align_addr::VirtualAlignAddr,
         virtual_assert_eq::VirtualAssertEQ,
@@ -79,8 +93,8 @@ use tracer::{
     utils::virtual_registers::VirtualRegisterAllocator,
 };
 use z3::{
-    ast::{Bool, BV},
-    Params, SatResult, Solver,
+    ast::{Array, Bool, BV},
+    Params, SatResult, Solver, Sort,
 };
 
 const _Z3_TIMEOUT_MS: u32 = 30_000;
@@ -133,6 +147,10 @@ fn scale_imm_u64(imm: u64, cpu: &SymbolicCpu) -> u64 {
 struct SymbolicCpu {
     var_prefix: String,
     x: [BV; REGISTER_COUNT as usize],
+    /// RAM at doubleword granularity: an array from (aligned) addresses to
+    /// bv_bits-wide values. The memory sequences only access the containing
+    /// aligned doubleword, so keys never partially alias.
+    mem: Array,
     advice_vars: Vec<BV>,
     asserts: Vec<Bool>,
     bv_bits: u32,
@@ -150,9 +168,15 @@ impl SymbolicCpu {
             .try_into()
             .unwrap();
         let asserts = vec![regs[0].eq(BV::from_u64(0, bv_bits))];
+        let mem = Array::new_const(
+            format!("{var_prefix}_mem"),
+            &Sort::bitvector(bv_bits),
+            &Sort::bitvector(bv_bits),
+        );
         SymbolicCpu {
             var_prefix: var_prefix.to_string(),
             x: regs,
+            mem,
             advice_vars: Vec::new(),
             asserts, // x0 is always 0
             bv_bits,
@@ -409,6 +433,15 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
                 .bvshl(shift.zero_ext(cpu.bv_bits))
                 .extract(cpu.bv_bits - 1, 0)
         }
+        Instruction::LD(LD { operands, .. }) => {
+            let addr = cpu.x[operands.rs1 as usize].clone() + operands.imm;
+            cpu.x[operands.rd as usize] = cpu.mem.select(&addr).as_bv().unwrap();
+        }
+        Instruction::SD(SD { operands, .. }) => {
+            let addr = cpu.x[operands.rs1 as usize].clone() + operands.imm;
+            let value = cpu.x[operands.rs2 as usize].clone();
+            cpu.mem = cpu.mem.store(&addr, &value);
+        }
         Instruction::VirtualAlignAddr(VirtualAlignAddr { operands, .. }) => {
             // (rs1 + imm) & !7: the containing doubleword address. The mask
             // constant truncates to bv_bits, so reduced widths stay faithful.
@@ -611,13 +644,14 @@ fn test_correctness<I: RISCVInstruction + RISCVTrace>(
         solver += assert;
     }
 
-    // We don't care if virtual registers differ
-    solver += cpu.x[..RISCV_REGISTER_COUNT as usize]
+    // We don't care if virtual registers differ; memory must match.
+    let registers_differ = cpu.x[..RISCV_REGISTER_COUNT as usize]
         .iter()
         .zip(cpu_expected.x[..RISCV_REGISTER_COUNT as usize].iter())
         .map(|(x1, x2)| x1.ne(x2))
         .reduce(|acc, t| acc | t)
         .unwrap();
+    solver += registers_differ | cpu.mem.ne(&cpu_expected.mem);
 
     match solver.check() {
         SatResult::Unsat => {}
@@ -669,6 +703,7 @@ fn test_consistency(instr: &Instruction) {
     for (x1, x2) in cpu1.x.iter().zip(cpu2.x.iter()) {
         solver += &x1.eq(x2);
     }
+    solver += &cpu1.mem.eq(&cpu2.mem);
 
     let seq = instr.inline_sequence(&allocator);
     for instr in &seq {
@@ -680,13 +715,14 @@ fn test_consistency(instr: &Instruction) {
         solver += assert;
     }
 
-    // We don't care if virtual registers differ
-    solver += cpu1.x[..RISCV_REGISTER_COUNT as usize]
+    // We don't care if virtual registers differ; memory must match.
+    let registers_differ = cpu1.x[..RISCV_REGISTER_COUNT as usize]
         .iter()
         .zip(cpu2.x[..RISCV_REGISTER_COUNT as usize].iter())
         .map(|(x1, x2)| x1.ne(x2))
         .reduce(|acc, t| acc | t)
         .unwrap();
+    solver += registers_differ | cpu1.mem.ne(&cpu2.mem);
 
     match solver.check() {
         SatResult::Unsat => {}
@@ -747,6 +783,42 @@ fn test_consistency(instr: &Instruction) {
         }
         SatResult::Unknown => panic!("Solver failed/timed out, result inconclusive"),
     }
+}
+
+/// The scaled sub-word load semantics: the `eighths`-byte lane of the
+/// containing doubleword at `rs1 + imm` (lanes are `bv_bits/8` wide so
+/// reduced solver widths stay faithful), sign- or zero-extended.
+fn lane_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, eighths: u32, signed: bool) -> BV {
+    let ea = cpu.x[rs1 as usize].clone() + imm;
+    let aligned = ea.clone() & cpu.bv_u64(-8i64 as u64);
+    let dword = cpu.mem.select(&aligned).as_bv().unwrap();
+    let byte_bits = cpu.bv_bits / 8;
+    let lane_bits = byte_bits * eighths;
+    let offset = ea & cpu.bv_u64(8 - eighths as u64);
+    let shift = offset * cpu.bv_u64(byte_bits as u64);
+    let lane = dword.bvlshr(&shift).extract(lane_bits - 1, 0);
+    if signed {
+        lane.sign_ext(cpu.bv_bits - lane_bits)
+    } else {
+        lane.zero_ext(cpu.bv_bits - lane_bits)
+    }
+}
+
+/// The scaled sub-word store semantics: replace the `eighths`-byte lane of
+/// the containing doubleword at `rs1 + imm` with the low lane of `rs2`.
+fn lane_store(cpu: &mut SymbolicCpu, rs1: u8, rs2: u8, imm: i64, eighths: u32) {
+    let ea = cpu.x[rs1 as usize].clone() + imm;
+    let aligned = ea.clone() & cpu.bv_u64(-8i64 as u64);
+    let old = cpu.mem.select(&aligned).as_bv().unwrap();
+    let byte_bits = cpu.bv_bits / 8;
+    let lane_bits = byte_bits * eighths;
+    let lane_ones = cpu.bv_u64(u64::MAX >> (64 - lane_bits));
+    let offset = ea & cpu.bv_u64(8 - eighths as u64);
+    let shift = offset * cpu.bv_u64(byte_bits as u64);
+    let mask = lane_ones.clone().bvshl(&shift);
+    let data = (cpu.x[rs2 as usize].clone() & lane_ones).bvshl(&shift);
+    let updated = (old & mask.bvnot()) | data;
+    cpu.mem = cpu.mem.store(&aligned, &updated);
 }
 
 macro_rules! test_sequence {
@@ -863,13 +935,30 @@ test_sequence!(
         cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&q);
     }
 );
-// Memory operations are not tested at the moment
-// test_sequence!(LB, FormatLoad);
-// test_sequence!(LBU, FormatLoad);
-// test_sequence!(LH, FormatLoad);
-// test_sequence!(LHU, FormatLoad);
-// test_sequence!(LW, FormatLoad);
-// test_sequence!(LWU, FormatLoad);
+test_sequence!(LB, FormatLoad, |instr: &LB, cpu| {
+    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 1, true);
+    cpu.x[instr.operands.rd as usize] = v;
+});
+test_sequence!(LBU, FormatLoad, |instr: &LBU, cpu| {
+    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 1, false);
+    cpu.x[instr.operands.rd as usize] = v;
+});
+test_sequence!(LH, FormatLoad, |instr: &LH, cpu| {
+    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 2, true);
+    cpu.x[instr.operands.rd as usize] = v;
+});
+test_sequence!(LHU, FormatLoad, |instr: &LHU, cpu| {
+    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 2, false);
+    cpu.x[instr.operands.rd as usize] = v;
+});
+test_sequence!(LW, FormatLoad, |instr: &LW, cpu| {
+    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 4, true);
+    cpu.x[instr.operands.rd as usize] = v;
+});
+test_sequence!(LWU, FormatLoad, |instr: &LWU, cpu| {
+    let v = lane_load(cpu, instr.operands.rs1, instr.operands.imm, 4, false);
+    cpu.x[instr.operands.rd as usize] = v;
+});
 test_sequence!(
     #[ignore = "solver-heavy under the default 64-bit Z3 model"]
     MULH,
@@ -966,8 +1055,33 @@ test_sequence!(
         cpu.x[instr.operands.rd as usize] = cpu.sign_ext_word(&r);
     }
 );
-// test_sequence!(SB, FormatS);
-// test_sequence!(SH, FormatS);
+test_sequence!(SB, FormatS, |instr: &SB, cpu| {
+    lane_store(
+        cpu,
+        instr.operands.rs1,
+        instr.operands.rs2,
+        instr.operands.imm,
+        1,
+    );
+});
+test_sequence!(SH, FormatS, |instr: &SH, cpu| {
+    lane_store(
+        cpu,
+        instr.operands.rs1,
+        instr.operands.rs2,
+        instr.operands.imm,
+        2,
+    );
+});
+test_sequence!(SW, FormatS, |instr: &SW, cpu| {
+    lane_store(
+        cpu,
+        instr.operands.rs1,
+        instr.operands.rs2,
+        instr.operands.imm,
+        4,
+    );
+});
 test_sequence!(SLL, FormatR, |instr: &SLL, cpu| {
     let rs1 = &cpu.x[instr.operands.rs1 as usize];
     let rs2 = &cpu.x[instr.operands.rs2 as usize];
