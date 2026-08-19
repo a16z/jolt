@@ -222,6 +222,7 @@ fn fill_trace_row(
 
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
 /// plan's canonical semantic-column order.
+#[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
 pub fn assemble_one_hot_trace_rows<F: Field>(
     witness: &dyn JoltWitnessPlane<F>,
     plan: &OneHotTraceLayoutPlan,

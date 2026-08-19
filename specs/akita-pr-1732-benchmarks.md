@@ -75,7 +75,8 @@ also changed and each point has only one recorded sample.
   (the then-current Akita `origin/main`).
 - Host: Apple M4 Max (`Mac16,6`), 16 logical CPUs, 128 GiB RAM.
 - Toolchain: `rustc 1.95.0 (59807616e 2026-04-14)`.
-- Harness: `crates/jolt-prover/examples/modular_benchmark.rs`.
+- Harness at the measured commit: `crates/jolt-prover/examples/modular_benchmark.rs`.
+  It was later promoted to the `jolt-prover profile` entry point and retired.
 - Workload: `sha2-chain`, targeting 90% of each maximum trace length. The
   resulting trace padded to the stated power of two at every scale.
 - Backend: `optimized` for both Dory and Akita.

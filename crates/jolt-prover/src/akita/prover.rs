@@ -49,7 +49,10 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
-    let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
+    // The packed path is transparent-only (`akita` and `zk` are mutually
+    // exclusive), so the mode context carries nothing; the shared stage
+    // recipes still thread it to mint their clear recorders.
+    let mode = ProofMode::<VC>::new(None)?;
     let mut session = backend.begin_proof();
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
         preprocessing,

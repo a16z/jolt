@@ -689,22 +689,22 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         }
     }
     #[cfg(feature = "akita")]
-    {
-        absorb_packed_commitments(
-            &proof.commitments,
-            proof.untrusted_advice_commitment.as_ref(),
-            trusted_advice_commitment,
-            preprocessing.program.committed().map_or(&[], |committed| {
-                committed.program_one_hot_commitments.as_slice()
-            }),
-            transcript,
-        );
-    }
+    absorb_packed_commitments(
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
+        trusted_advice_commitment,
+        preprocessing
+            .program
+            .committed()
+            .map_or(&[][..], |committed| &committed.program_one_hot_commitments),
+        transcript,
+    );
 }
 
 /// Absorbs the packed commitment objects in canonical object order:
-/// `OneHotTrace`, untrusted advice, trusted advice, then the program objects.
-/// Shared verbatim by the packed prover's stage 0.
+/// `OneHotTrace`, untrusted advice, trusted advice, the `ProgramOneHot`
+/// objects (bytecode, then program image). Shared verbatim by the packed
+/// prover's stage 0.
 #[cfg(feature = "akita")]
 pub fn absorb_packed_commitments<C, T>(
     one_hot_trace: &C,

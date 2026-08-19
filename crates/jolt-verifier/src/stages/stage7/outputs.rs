@@ -153,19 +153,13 @@ impl<F: Field, C> Stage7Output<F, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(not(feature = "akita"))]
-    use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
-    #[cfg(feature = "akita")]
-    use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
-        LatticeDigitZeroClaimReductionDimensions as HammingWeightClaimReductionDimensions,
-        LatticeDigitZeroClaimReductionOutputClaims as HammingWeightClaimReductionOutputClaims,
+    use crate::stages::stage7::hamming_weight_claim_reduction::{
+        hamming_weight_claim_reduction_dimensions, HammingWeightClaimReductionOutputClaims,
     };
     use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
     };
     use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionAddressPhaseOutputClaims;
-    #[cfg(not(feature = "akita"))]
-    use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::ProgramImageReductionAddressPhaseOutputClaims;
     use jolt_field::{Fr, FromPrimitiveInt};
 
@@ -203,13 +197,7 @@ mod tests {
         )
         .unwrap();
         let hamming_instance = || {
-            #[cfg(not(feature = "akita"))]
-            let dimensions = HammingWeightClaimReductionDimensions::new(
-                JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
-                4,
-            );
-            #[cfg(feature = "akita")]
-            let dimensions = HammingWeightClaimReductionDimensions::new(
+            let dimensions = hamming_weight_claim_reduction_dimensions(
                 JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
                 4,
             )

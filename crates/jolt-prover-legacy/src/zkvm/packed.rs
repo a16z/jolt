@@ -32,11 +32,13 @@ use jolt_claims::protocols::jolt::lattice::{
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, PrefixPackedClaims,
+    TransparentObjectSetup,
 };
-use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{CommitmentConfig, JoltProtocolConfig, ZkConfig};
 use jolt_verifier::preprocessing::{
+    CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
     JoltVerifierPreprocessing, ProgramPreprocessing as VerifierProgramPreprocessing,
 };
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs, TracePolynomialOrder};
@@ -382,9 +384,10 @@ impl crate::zkvm::proof::ProofCurve<AkitaFp128> for AkitaNoCurve {
 }
 
 /// The transparent setup of a singleton commitment object (advice byte
-/// columns, `ProgramOneHot`): one polynomial at `num_vars`, fixed zero seed — the
-/// convention `akita_verifier_preprocessing` re-derives on the verifier
-/// side, so the two must stay a single definition.
+/// columns, `ProgramOneHot`): one polynomial at `num_vars`, seeded by the
+/// object plan's layout digest — the shared [`TransparentObjectSetup`]
+/// convention `akita_verifier_preprocessing` and the modular packed prover
+/// re-derive independently, so all sides stay on a single definition.
 fn transparent_object_setup(
     num_vars: usize,
     layout_digest: [u8; 32],
@@ -395,12 +398,7 @@ fn transparent_object_setup(
     ),
     jolt_openings::OpeningsError,
 > {
-    // The convention is single-sourced on the scheme's `TransparentObjectSetup`
-    // impl (jolt-akita), shared with the modular prover's packed path.
-    <AkitaScheme as jolt_openings::TransparentObjectSetup>::transparent_object_setup(
-        num_vars,
-        layout_digest,
-    )
+    <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(num_vars, layout_digest)
 }
 
 fn open_prefix_object<P>(
@@ -1695,25 +1693,23 @@ pub fn akita_verifier_preprocessing(
         crate::zkvm::program::ProgramPreprocessing::Committed(committed) => {
             let program_one_hot = program_one_hot
                 .expect("committed-program mode requires ProgramOneHot preprocessing");
-            jolt_verifier::preprocessing::ProgramPreprocessing::Committed(
-                jolt_verifier::preprocessing::CommittedProgramPreprocessing {
-                    meta: jolt_program::preprocess::ProgramMetadata {
-                        entry_address: committed.meta.entry_address,
-                        min_bytecode_address: committed.meta.min_bytecode_address,
-                        entry_bytecode_index: committed.meta.entry_bytecode_index,
-                        program_image_len_words: committed.meta.program_image_len_words,
-                        bytecode_len: committed.meta.bytecode_len,
-                    },
-                    memory_layout: preprocessing.shared.memory_layout.clone(),
-                    max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
-                    program_one_hot_commitments: program_one_hot
-                        .objects
-                        .iter()
-                        .map(|object| object.commitment.clone())
-                        .collect(),
-                    bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
+            VerifierProgramPreprocessing::Committed(VerifierCommittedProgramPreprocessing {
+                meta: ProgramMetadata {
+                    entry_address: committed.meta.entry_address,
+                    min_bytecode_address: committed.meta.min_bytecode_address,
+                    entry_bytecode_index: committed.meta.entry_bytecode_index,
+                    program_image_len_words: committed.meta.program_image_len_words,
+                    bytecode_len: committed.meta.bytecode_len,
                 },
-            )
+                memory_layout: preprocessing.shared.memory_layout.clone(),
+                max_padded_trace_length: preprocessing.shared.max_padded_trace_length,
+                program_one_hot_commitments: program_one_hot
+                    .objects
+                    .iter()
+                    .map(|object| object.commitment.clone())
+                    .collect(),
+                bytecode_chunk_count: preprocessing.shared.bytecode_chunk_count,
+            })
         }
     };
     let committed_mode = preprocessing.shared.program.is_committed();

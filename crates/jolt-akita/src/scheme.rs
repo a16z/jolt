@@ -666,7 +666,8 @@ impl CommitmentScheme for AkitaScheme {
 
 impl TransparentObjectSetup for AkitaScheme {
     /// The singleton commitment-object setup convention (advice byte columns,
-    /// `ProgramOneHot`): one polynomial at `num_vars`, fixed zero seed. Every
+    /// `ProgramOneHot`): one polynomial at `num_vars`, seeded by the object
+    /// plan's layout digest. Every
     /// auxiliary packed object commits through the sparse-unit/dense flavor,
     /// so the one-hot backend setup — which dominates the setup cost at these
     /// shapes — is never built.

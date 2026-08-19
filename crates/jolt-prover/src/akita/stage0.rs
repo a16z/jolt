@@ -1,5 +1,6 @@
-//! Packed stage 0: input validation, the Fiat-Shamir preamble, the native
-//! `OneHotTrace` group commitment, and the packed commitment-object absorbs.
+//! Packed stage 0: input validation, the Fiat-Shamir preamble, the
+//! prefix-packed `OneHotTrace` commitment, and the packed commitment-object
+//! absorbs.
 //!
 //! The transcript work is the verifier's own exported code
 //! ([`validate_inputs_from_parts`], [`absorb_transcript_preamble`],
@@ -24,9 +25,9 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 0's outputs: the validated inputs, the seeded transcript (positioned
 /// exactly where the packed verifier's own stage boundary leaves its own),
-/// the native `OneHotTrace` group commitment with its opening hint (consumed
-/// by stage 8's same-point batch), and the per-proof untrusted-advice
-/// commitment object.
+/// the prefix-packed `OneHotTrace` commitment with its opening hint
+/// (consumed by stage 8's native opening), and the per-proof
+/// untrusted-advice commitment object.
 pub struct Stage0Output<PCS, T>
 where
     PCS: CommitmentScheme,
@@ -38,10 +39,11 @@ where
     pub untrusted_advice: Option<AdviceOneHot<PCS>>,
 }
 
-/// Validate inputs, seed the transcript, assemble and commit the native
-/// `OneHotTrace` group, commit the untrusted-advice byte object when advice
-/// bytes are present, and absorb the packed commitment objects in canonical
-/// object order (the verifier's own absorb helper).
+/// Validate inputs, seed the transcript, assemble and commit the
+/// prefix-packed `OneHotTrace` polynomial, commit the untrusted-advice byte
+/// object when advice bytes are present, and absorb the packed commitment
+/// objects in canonical object order (the verifier's own absorb helper).
+#[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
@@ -174,12 +176,18 @@ where
         log_k_chunk,
         log_t,
     )?;
-    let (commitment, hint) = PCS::commit_trace_one_hot(
-        &preprocessing.pcs_setup,
-        preprocessing.pcs_setup.default_layout_digest(),
-        plan.packing().slot_capacity(),
-        packed_trace_rows,
+    let (commitment, hint) = tracing::info_span!(
+        "CommitmentScheme::commit_batch",
+        packed_num_vars = plan.packing().packed_num_vars()
     )
+    .in_scope(|| {
+        PCS::commit_trace_one_hot(
+            &preprocessing.pcs_setup,
+            preprocessing.pcs_setup.default_layout_digest(),
+            plan.packing().slot_capacity(),
+            packed_trace_rows,
+        )
+    })
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;

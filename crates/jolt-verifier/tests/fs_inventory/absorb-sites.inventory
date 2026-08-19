@@ -122,7 +122,7 @@ jolt-verifier::stages/stage8/verify.rs::verify::append_to_transcript#1::ZkEvalua
 jolt-verifier::stages/stage8/verify.rs::verify::append_to_transcript#3::claim.evaluation.value.append_to_transcript(transcript)
 jolt-verifier::stages/stage8/verify.rs::verify::append_to_transcript#5::EvaluationClaim::new(pcs_opening_point.clone(),joint_claim).append_to_transcript(transcript)
 jolt-verifier::verifier.rs::absorb_commitments::absorb_committed_program_commitments#1::absorb_committed_program_commitments(&committed.bytecode_chunk_commitments,&committed.program_image_commitment,transcript,)
-jolt-verifier::verifier.rs::absorb_commitments::absorb_packed_commitments#2::absorb_packed_commitments(&proof.commitments,proof.untrusted_advice_commitment.as_ref(),trusted_advice_commitment,preprocessing.program.committed().map_or(&[],|committed|{committed.program_one_hot_commitments.as_slice()}),transcript,)
+jolt-verifier::verifier.rs::absorb_commitments::absorb_packed_commitments#2::#[cfg(feature="akita")]absorb_packed_commitments(&proof.commitments,proof.untrusted_advice_commitment.as_ref(),trusted_advice_commitment,preprocessing.program.committed().map_or(&[][..],|committed|&committed.program_one_hot_commitments),transcript,)
 jolt-verifier::verifier.rs::absorb_commitments::absorb_transcript_commitments#0::absorb_transcript_commitments(&proof.commitments,proof.untrusted_advice_commitment.as_ref(),trusted_advice_commitment,transcript,)
 jolt-verifier::verifier.rs::absorb_committed_program_commitments::append#1::transcript.append(commitment)
 jolt-verifier::verifier.rs::absorb_committed_program_commitments::append#3::transcript.append(program_image_commitment)

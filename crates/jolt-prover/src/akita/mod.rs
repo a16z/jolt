@@ -2,15 +2,16 @@
 //! sibling.
 //!
 //! The pipeline mirrors `jolt-prover-legacy`'s `zkvm::packed` with the
-//! lattice stage swaps: one native Akita commitment group `OneHotTrace`
-//! replaces the per-polynomial streaming Dory commits at stage 0, the
-//! nine-stage bytecode read-raf discharges the reduced inc claims through its
-//! fused-inc val stages, the lattice booleanity carries the fused-inc
-//! columns, stage 7 folds the increment one-hot claims into the
-//! hamming-weight claim reduction, the reconstruction phase settles the
-//! auxiliary advice/bytecode/image columns at the head of the stage-8 region,
-//! and stage 8 uses one native same-point Akita opening for `OneHotTrace`
-//! plus packed openings for auxiliaries.
+//! lattice stage swaps: one prefix-packed `OneHotTrace` polynomial (with the
+//! virtualized families' digit-zero rows omitted) replaces the
+//! per-polynomial streaming Dory commits at stage 0, the nine-stage bytecode
+//! read-raf discharges the reduced inc claims through its fused-inc val
+//! stages, the lattice booleanity carries the balanced-inc columns, stage 7
+//! runs the digit-zero claim reduction (recentered legs plus the balanced
+//! decode), the reconstruction phase settles the auxiliary
+//! advice/bytecode/image columns at the head of the stage-8 region, and
+//! stage 8 reduces the `OneHotTrace` columns to one native Akita opening
+//! plus one packed opening per auxiliary object.
 //!
 //! Everything here stays generic over the scheme through the `jolt-openings`
 //! seams ([`commit_batch`](CommitmentScheme::commit_batch)/
@@ -34,6 +35,8 @@ use jolt_witness::JoltWitnessPlane;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 mod prover;
+mod setup;
+pub use setup::one_hot_trace_setup_shape;
 mod reconstruction;
 mod stage0;
 mod stage8;

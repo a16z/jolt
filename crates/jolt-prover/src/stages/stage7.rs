@@ -11,7 +11,6 @@
 //! proof session (`park_residue`) — each `prepare` reclaims its carry by
 //! move and mounts a fresh address-phase kernel over it.
 
-use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
@@ -23,6 +22,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
+use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weight_claim_reduction_dimensions;
 use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
 use jolt_verifier::CheckedInputs;
@@ -69,23 +69,10 @@ where
         preprocessing.verifier.program.bytecode_len(),
         JoltRelationId::HammingWeightClaimReduction,
     )?;
-    let hamming_dimensions = HammingWeightClaimReductionDimensions::new(
+    let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
         config.one_hot_config.committed_chunk_bits(),
-    );
-    // The packed build extends the hamming reduction with the fused-inc
-    // one-hot columns — the same dimension lift the verifier's
-    // `stage7::verify` applies.
-    #[cfg(feature = "akita")]
-    let hamming_dimensions =
-        jolt_claims::protocols::jolt::lattice::relations::digit_zero::LatticeDigitZeroClaimReductionDimensions::new(
-            hamming_dimensions.layout,
-            hamming_dimensions.log_k_chunk,
-        )
-        .map_err(|error| jolt_verifier::VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: error.to_string(),
-        })?;
+    )?;
 
     let sumchecks = build_stage7_sumchecks(
         hamming_dimensions,
