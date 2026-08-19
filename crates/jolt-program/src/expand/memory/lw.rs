@@ -2,8 +2,9 @@ use super::*;
 
 /// Lowers signed word load `LW` by reading the containing aligned doubleword.
 ///
-/// The sequence proves word alignment, loads the aligned 8-byte word, shifts
-/// the requested 32-bit lane down, and sign-extends that low word into `rd`.
+/// The sequence proves word alignment, loads the aligned 8-byte word, builds
+/// the byte mask of the requested word lane from the effective address, and
+/// extracts + sign-extends that lane into `rd` with a single fused lookup.
 pub(in crate::expand) fn expand_lw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -12,7 +13,9 @@ pub(in crate::expand) fn expand_lw(
     let v1 = asm.allocate()?;
 
     // RAM is accessed at doubleword granularity here. The word alignment
-    // assertion is still required by the source `LW` semantics.
+    // assertion is still required by the source `LW` semantics; it also
+    // guarantees the effective address's bits 0-1 are zero, which
+    // `VirtualWindowMaskW` relies on (it reads only bit 2).
     asm.emit_address(
         SourceInstructionKind::VirtualAssertWordAlignment,
         reg(rs1(instruction)?),
@@ -24,7 +27,7 @@ pub(in crate::expand) fn expand_lw(
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    // v1 = containing doubleword address, v0 = byte offset within it.
+    // v1 = containing doubleword address, v0 = effective (byte) address.
     asm.emit_i(
         SourceInstructionKind::ANDI,
         v1.operand(),
@@ -32,20 +35,19 @@ pub(in crate::expand) fn expand_lw(
         format_i_imm(-8),
     );
     asm.emit_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    asm.emit_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
-    asm.emit_r(
-        SourceInstructionKind::SRL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
+    // v0 = byte mask of the word lane at offset `ea mod 8`.
     asm.emit_i(
-        SourceInstructionKind::VirtualSignExtendWord(
-            jolt_riscv::instructions::VirtualSignExtendWord(()),
-        ),
+        SourceInstructionKind::VirtualWindowMaskW,
+        v0.operand(),
+        v0.operand(),
+        0,
+    );
+    // rd = sign-extended word lane of the loaded doubleword.
+    asm.emit_r(
+        SourceInstructionKind::VirtualPextSigned,
         reg(rd(instruction)?),
         v1.operand(),
-        0,
+        v0.operand(),
     );
     asm.release(v0);
     asm.release(v1);

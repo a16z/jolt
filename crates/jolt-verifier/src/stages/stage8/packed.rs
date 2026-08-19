@@ -12,7 +12,9 @@ use jolt_claims::protocols::jolt::lattice::packing::{
     advice_bytes_packing_plan, precommitted_packing_plan, OneHotTraceShape,
     PrecommittedPackingShape, PrefixPackedObjectPlan,
 };
-use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
+use jolt_claims::protocols::jolt::lattice::strategy::{
+    OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
+};
 use jolt_claims::protocols::jolt::{
     JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, JoltOpeningId, JoltPolynomialId,
 };
@@ -218,30 +220,7 @@ where
         1 << chunk_width,
     )?;
     let leaves = leaf_claims(stage7, reconstruction);
-    let mut common_point: Option<Vec<PCS::Field>> = None;
-    let mut evaluations = Vec::with_capacity(plan.packing().ids().len());
-    for polynomial in plan.packing().ids() {
-        let claim = leaves.get(polynomial).ok_or_else(|| {
-            batch_failed(format!(
-                "missing final OneHotTrace claim for {polynomial:?}"
-            ))
-        })?;
-        let point = ONE_HOT_TRACE_LAYOUT
-            .column_point(*polynomial, chunk_width, claim.point.as_slice())
-            .map_err(batch_failed)?;
-        if let Some(expected) = &common_point {
-            if expected != &point {
-                return Err(batch_failed(format!(
-                    "OneHotTrace column {polynomial:?} does not share the canonical opening point"
-                )));
-            }
-        } else {
-            common_point = Some(point);
-        }
-        evaluations.push(claim.value);
-    }
-    let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
-    let packed_claims = plan.packed_claims(common_point, evaluations);
+    let packed_claims = one_hot_trace_packed_claims(&plan, chunk_width, &leaves)?;
     let packed_claim = plan
         .packing()
         .reduce_claims(&packed_claims, transcript)
@@ -353,23 +332,7 @@ where
 
     for (object, auxiliary_proof) in objects.into_iter().zip(&proof.auxiliary) {
         validate_auxiliary_metadata(object.commitment, object.setup, &object.plan)?;
-        let claims = object
-            .plan
-            .packing()
-            .ids()
-            .iter()
-            .map(|id| {
-                leaves
-                    .get(id)
-                    .cloned()
-                    .map(|claim| (*id, claim))
-                    .ok_or_else(|| {
-                        batch_failed(format!(
-                            "missing final auxiliary claim for packed leaf {id:?}"
-                        ))
-                    })
-            })
-            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let claims = object_leaf_claims(&object.plan, &leaves)?;
         let semantic_claims = object.plan.packed_claims(&claims).map_err(batch_failed)?;
         let physical_claim = object
             .plan
@@ -389,10 +352,70 @@ where
     Ok(())
 }
 
+/// Assembles the `OneHotTrace` prefix-packed claims: every canonical
+/// column's leaf claim, its point mapped to the committed row-major order,
+/// all required to share one canonical opening point. Shared verbatim by the
+/// packed prover's stage 8, so both sides derive the same packed statement.
+pub fn one_hot_trace_packed_claims<F: Field>(
+    plan: &OneHotTraceLayoutPlan,
+    chunk_width: usize,
+    leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+) -> Result<jolt_openings::PrefixPackedClaims<F>, VerifierError> {
+    let mut common_point: Option<Vec<F>> = None;
+    let mut evaluations = Vec::with_capacity(plan.packing().ids().len());
+    for polynomial in plan.packing().ids() {
+        let claim = leaves.get(polynomial).ok_or_else(|| {
+            batch_failed(format!(
+                "missing final OneHotTrace claim for {polynomial:?}"
+            ))
+        })?;
+        let point = ONE_HOT_TRACE_LAYOUT
+            .column_point(*polynomial, chunk_width, claim.point.as_slice())
+            .map_err(batch_failed)?;
+        if let Some(expected) = &common_point {
+            if expected != &point {
+                return Err(batch_failed(format!(
+                    "OneHotTrace column {polynomial:?} does not share the canonical opening point"
+                )));
+            }
+        } else {
+            common_point = Some(point);
+        }
+        evaluations.push(claim.value);
+    }
+    let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
+    Ok(plan.packed_claims(common_point, evaluations))
+}
+
+/// One auxiliary object's leaf claims: each of the plan's canonical columns
+/// paired with its resolved leaf claim. Shared verbatim by the packed
+/// prover's stage 8, so both sides fail on the same missing leaf.
+pub fn object_leaf_claims<F: Field>(
+    plan: &PrefixPackedObjectPlan,
+    leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+) -> Result<BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>, VerifierError> {
+    plan.packing()
+        .ids()
+        .iter()
+        .map(|id| {
+            leaves
+                .get(id)
+                .cloned()
+                .map(|claim| (*id, claim))
+                .ok_or_else(|| {
+                    batch_failed(format!(
+                        "missing final auxiliary claim for packed leaf {id:?}"
+                    ))
+                })
+        })
+        .collect()
+}
+
 /// Every packed column's single leaf claim, resolved from the stage-7 and
 /// reconstruction outputs and keyed by committed polynomial. The canonical
 /// object plans check coverage, point arity, and suffix compatibility.
-fn leaf_claims<F: Field>(
+/// Shared verbatim by the packed prover's stage 8.
+pub fn leaf_claims<F: Field>(
     stage7: &Stage7ClearOutput<F>,
     reconstruction: &ReconstructionClearOutput<F>,
 ) -> BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>> {

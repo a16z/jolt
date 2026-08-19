@@ -104,16 +104,12 @@ where
 
     // The batch, through the verifier's own promoted constructor over the
     // clear carriers. The full-program rows feed only the full-mode table
-    // fold, so the retained-program unwrap stays under the committed gate.
+    // fold; they ride the witness plane (witness generation requires the
+    // full program in every mode).
     let bytecode_table_rows = if committed_program {
         None
     } else {
-        let program = preprocessing
-            .program()
-            .ok_or(ProverError::InvariantViolation {
-                reason: "full bytecode preprocessing is unavailable",
-            })?;
-        Some(program.bytecode.bytecode.as_slice())
+        Some(witness.program_preprocessing().bytecode.bytecode.as_slice())
     };
     let entry_bytecode_index = preprocessing
         .verifier

@@ -1,4 +1,5 @@
-//! The stage-granular byte-diff harness against `jolt-prover-legacy`.
+//! The Dory (elliptic-curve) stage-granular byte-diff harness against
+//! `jolt-prover-legacy`.
 //!
 //! Both provers run from the same guest program and inputs. Legacy's
 //! per-stage-boundary transcript states are recovered WITHOUT instrumenting
@@ -24,16 +25,23 @@
 //! `wide_one_hot` is the geometry arm: the `{8, 32}` one-hot config the
 //! provers derive at log_T ≥ 25, injected at small T under a 2^25-cap SRS.
 //!
-//! Clear-mode only: under the `zk` feature both provers emit randomized
-//! committed proofs (fresh Pedersen blinds), so byte equality is undefined —
-//! the ZK correctness gate is `zk_e2e.rs` instead.
+//! This harness covers the homomorphic (Dory) protocol in clear mode only:
+//! under the `akita` feature the wire types swap to the packed envelope and
+//! legacy's Dory prove path is compiled out (the packed harness lives in
+//! `akita_byte_diff.rs`), and under the `zk` feature both provers emit
+//! randomized committed proofs (fresh Pedersen blinds), so byte equality is
+//! undefined — the ZK correctness gate is `zk_e2e.rs` instead.
 
 /// Shared scaffolding for the byte-diff modules: every test runs the same
 /// legacy-side guest pipeline (decode + trace + preprocess + prove + replay)
 /// and the same modular-side pipeline (trace + config + witness + prove +
 /// verify); the per-mode differences — advice, committed program, trace
 /// order — stay in the test bodies.
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -54,7 +62,7 @@ mod support {
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_prover::stages::stage0::TrustedAdviceCommitment;
+    use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_prover_legacy::curve::Bn254Curve;
     use jolt_prover_legacy::host;
@@ -464,7 +472,11 @@ mod support {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
     use std::sync::Arc;
@@ -474,7 +486,8 @@ mod muldiv {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_program::execution::JoltProgram;
-    use jolt_prover::stages::stage0::prove_stage0;
+    use jolt_prover::dory::stages::stage0::prove_stage0;
+    use jolt_prover::dory::stages::stage8::prove_stage8;
     use jolt_prover::stages::stage1::prove_stage1;
     use jolt_prover::stages::stage2::prove_stage2;
     use jolt_prover::stages::stage3::prove_stage3;
@@ -483,7 +496,6 @@ mod muldiv {
     use jolt_prover::stages::stage6a::prove_stage6a;
     use jolt_prover::stages::stage6b::prove_stage6b;
     use jolt_prover::stages::stage7::prove_stage7;
-    use jolt_prover::stages::stage8::prove_stage8;
     use jolt_prover::{JoltBackend, JoltProverPreprocessing};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -987,22 +999,27 @@ mod muldiv {
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.
         for backend in [JoltBackend::reference(), JoltBackend::optimized()] {
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    None,
-                    Arc::clone(&witness),
-                    &public_io,
-                )
-                .expect("top-level prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove");
             assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
         }
 
         let chaos_proof =
-            jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                 &chaos_backend,
                 &prover_preprocessing,
                 &config,
@@ -1071,7 +1088,11 @@ mod muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
     use std::sync::Arc;
@@ -1194,15 +1215,16 @@ mod advice_consumer {
             &trusted.converted,
         );
 
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            Some(&trusted_advice_commitment),
-            Arc::clone(&witness),
-            &public_io,
-        )
-        .expect("top-level prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&trusted_advice_commitment),
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove");
 
         // Component-wise asserts give per-stage granularity when bytes
         // diverge; the final whole-struct assert is the ratchet.
@@ -1249,15 +1271,16 @@ mod advice_consumer {
         // exercises the RAM val-check advice cells and the optimized
         // val_init reconstruction against advice-populated initial memory.
         let backend = JoltBackend::<Fr, DoryScheme>::optimized();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            Some(&trusted_advice_commitment),
-            Arc::clone(&witness),
-            &public_io,
-        )
-        .expect("optimized-backend prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&trusted_advice_commitment),
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("optimized-backend prove");
         assert_eq!(
             proof, legacy_proof,
             "optimized-backend proof diverged from legacy"
@@ -1265,7 +1288,11 @@ mod advice_consumer {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod committed_muldiv {
     use std::sync::Arc;
@@ -1412,16 +1439,21 @@ mod committed_muldiv {
             JoltBackend::<Fr, DoryScheme>::reference(),
             JoltBackend::<Fr, DoryScheme>::optimized(),
         ] {
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    None,
-                    Arc::clone(&witness),
-                    &public_io,
-                )
-                .expect("top-level prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove");
 
             // Component-wise asserts give per-stage granularity when bytes
             // diverge; the final whole-struct assert is the ratchet.
@@ -1450,7 +1482,11 @@ mod committed_muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod address_major {
     use std::sync::Arc;
@@ -1548,16 +1584,21 @@ mod address_major {
             JoltBackend::<Fr, DoryScheme>::reference(),
             JoltBackend::<Fr, DoryScheme>::optimized(),
         ] {
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    None,
-                    Arc::clone(&witness),
-                    &public_io,
-                )
-                .expect("top-level prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove");
 
             // Component-wise asserts give per-stage granularity when bytes
             // diverge; the final whole-struct assert is the ratchet.
@@ -1589,7 +1630,11 @@ mod address_major {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod advice_committed {
     use std::sync::Arc;
@@ -1740,16 +1785,21 @@ mod advice_committed {
             JoltBackend::<Fr, DoryScheme>::reference(),
             JoltBackend::<Fr, DoryScheme>::optimized(),
         ] {
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    Some(&trusted_advice_commitment),
-                    Arc::clone(&witness),
-                    &public_io,
-                )
-                .expect("top-level prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                Some(&trusted_advice_commitment),
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove");
 
             // Component-wise asserts give per-stage granularity when bytes
             // diverge; the final whole-struct assert is the ratchet.
@@ -1787,7 +1837,11 @@ mod advice_committed {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod inline_sha3 {
     // Anchor the Keccak inline registration into this test binary.
@@ -1884,15 +1938,16 @@ mod inline_sha3 {
         };
 
         let backend = JoltBackend::<Fr, DoryScheme>::optimized();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            witness,
-            &public_io,
-        )
-        .expect("modular prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                witness,
+                &public_io,
+            )
+            .expect("modular prove");
         assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
         support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
     }
@@ -1906,7 +1961,11 @@ mod inline_sha3 {
 /// pipelined commit), and once behind [`support::HiddenRows`], which forces
 /// the sequential chunked walk so the boundary carry and the streamed
 /// fallback consumers actually produce the pinned bytes.
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod chunk_boundary {
     // Anchor the sha2 inline's inventory registration into this test binary;
@@ -2030,15 +2089,16 @@ mod chunk_boundary {
         // and the reference tier has no streaming chunk to gate. The chunked
         // walks under test are the optimized tier's.
         let backend = JoltBackend::<Fr, DoryScheme>::optimized();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            Arc::clone(&witness),
-            &public_io,
-        )
-        .expect("top-level prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove");
 
         // Component-wise asserts give per-stage granularity when bytes
         // diverge; the final whole-struct assert is the ratchet.
@@ -2088,7 +2148,7 @@ mod chunk_boundary {
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, hidden_output),
         ));
         let hidden_proof =
-            jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                 &backend,
                 &prover_preprocessing,
                 &config,
@@ -2118,7 +2178,11 @@ mod chunk_boundary {
 /// at log_T ≥ 24 vs the modular tiers' fixed 16 × 8-bit) derives from the
 /// ACTUAL trace length inside the sumcheck, not from any injectable config
 /// — that argument rests on the reference kernel's exactness note alone.
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
 #[expect(clippy::expect_used)]
 mod wide_one_hot {
     use std::sync::Arc;
@@ -2234,16 +2298,21 @@ mod wide_one_hot {
             JoltBackend::<Fr, DoryScheme>::reference(),
             JoltBackend::<Fr, DoryScheme>::optimized(),
         ] {
-            let proof =
-                jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &backend,
-                    &prover_preprocessing,
-                    &config,
-                    None,
-                    Arc::clone(&witness),
-                    &public_io,
-                )
-                .expect("top-level prove");
+            let proof = jolt_prover::dory::prove::<
+                Fr,
+                DoryScheme,
+                Pedersen<Bn254G1>,
+                Blake2bTranscript,
+                _,
+            >(
+                &backend,
+                &prover_preprocessing,
+                &config,
+                None,
+                Arc::clone(&witness),
+                &public_io,
+            )
+            .expect("top-level prove");
 
             // Component-wise asserts give per-stage granularity when bytes
             // diverge; the final whole-struct assert is the ratchet.
@@ -2275,7 +2344,13 @@ mod wide_one_hot {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", not(feature = "zk"))))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+)))]
 #[test]
-#[ignore = "enable --features prover-fixtures (without zk — the harness byte-compares clear proofs) to run the legacy byte-diff harness"]
+#[ignore = "enable --features prover-fixtures (without akita or zk — the harness byte-compares \
+            clear Dory proofs; one compiled prover proves one protocol) to run the legacy \
+            byte-diff harness"]
 fn prover_matches_legacy_on_muldiv() {}

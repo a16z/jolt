@@ -2,8 +2,8 @@ use akita_pcs::{ComputeBackendSetup, CpuBackend};
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, VerifierOpeningClaim,
-    ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, TransparentObjectSetup,
+    VerifierOpeningClaim, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
@@ -499,35 +499,60 @@ impl CommitmentScheme for AkitaScheme {
         )
     }
 
-    fn open_batch(
+    /// Commits a group of row-major one-hot polynomials through the backend's
+    /// one-hot flavor — [`AkitaScheme::commit_one_hot_group`] behind the
+    /// scheme-generic seam (the trait object's `one_hot_indices` accessor
+    /// feeds the same backend representation, so the commitment is
+    /// byte-identical to the inherent paths).
+    fn commit_batch(
         polynomials: &[&dyn MultilinearPoly<Self::Field>],
+        layout_digest: [u8; 32],
+        setup: &Self::ProverSetup,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        let first = polynomials
+            .first()
+            .ok_or_else(|| invalid_batch("Akita commitment group must contain a polynomial"))?;
+        let num_vars = first.num_vars();
+        Self::validate_commit_shape(setup, num_vars, polynomials.len())?;
+        let backend_polynomials = polynomials
+            .iter()
+            .map(|polynomial| {
+                if polynomial.num_vars() != num_vars {
+                    return Err(invalid_batch(format!(
+                        "Akita commitment group mixes {}-variable and {num_vars}-variable polynomials",
+                        polynomial.num_vars()
+                    )));
+                }
+                one_hot_polynomial(*polynomial, setup.one_hot_k())?.ok_or_else(|| {
+                    invalid_batch(format!(
+                        "Akita one-hot commitment group requires row-major K={} one-hot polynomials",
+                        setup.one_hot_k()
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (backend_commitment, backend_hint) =
+            Self::commit_one_hot_backend(setup, &backend_polynomials)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::OneHot(backend_polynomials.into()),
+        )
+    }
+
+    /// The retained-state batch opening: the hint is the committed group
+    /// object [`Self::commit_one_hot_group`] produced, owning the backend
+    /// witness forms and the Ajtai commit's opening data.
+    fn open_batch_from_hint(
         point: &[Self::Field],
         evaluations: &[Self::Field],
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
-        if polynomials.len() != evaluations.len() {
-            return Err(invalid_batch(format!(
-                "Akita batch opening has {} polynomials but {} evaluations",
-                polynomials.len(),
-                evaluations.len()
-            )));
-        }
-        let statement = evaluations
-            .iter()
-            .map(|evaluation| VerifierOpeningClaim {
-                commitment: hint.commitment.clone(),
-                evaluation: EvaluationClaim::new(point.to_vec(), *evaluation),
-            })
-            .collect();
-        <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
-            setup,
-            statement,
-            polynomials.to_vec(),
-            hint,
-            transcript,
-        )
+        Self::open_one_hot_group_from_hint(point, evaluations, setup, hint, transcript)
     }
 
     fn verify_batch(
@@ -548,6 +573,20 @@ impl CommitmentScheme for AkitaScheme {
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             setup, &statement, proof, transcript,
         )
+    }
+}
+
+impl TransparentObjectSetup for AkitaScheme {
+    /// The singleton commitment-object setup convention (advice byte columns,
+    /// `ProgramOneHot`): one polynomial at `num_vars`, seeded by the object
+    /// plan's layout digest. Every auxiliary packed object commits through
+    /// the sparse-unit/dense flavor, so the one-hot backend setup — which
+    /// dominates the setup cost at these shapes — is never built.
+    fn transparent_object_setup(
+        num_vars: usize,
+        layout_digest: [u8; 32],
+    ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
+        Self::setup(AkitaSetupParams::dense_only(num_vars, 1, layout_digest))
     }
 }
 

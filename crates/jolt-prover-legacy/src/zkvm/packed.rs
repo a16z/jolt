@@ -32,6 +32,7 @@ use jolt_claims::protocols::jolt::lattice::{
 use jolt_claims::protocols::jolt::{BytecodeRegisterLane, JoltAdviceKind, JoltCommittedPolynomial};
 use jolt_openings::{
     CommitmentScheme as VerifierCommitmentScheme, EvaluationClaim, PrefixPackedClaims,
+    TransparentObjectSetup,
 };
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
@@ -383,9 +384,10 @@ impl crate::zkvm::proof::ProofCurve<AkitaFp128> for AkitaNoCurve {
 }
 
 /// The transparent setup of a singleton commitment object (advice byte
-/// columns, `ProgramOneHot`): one polynomial at `num_vars`, fixed zero seed — the
-/// convention `akita_verifier_preprocessing` re-derives on the verifier
-/// side, so the two must stay a single definition.
+/// columns, `ProgramOneHot`): one polynomial at `num_vars`, seeded by the
+/// object plan's layout digest — the shared [`TransparentObjectSetup`]
+/// convention `akita_verifier_preprocessing` and the modular packed prover
+/// re-derive independently, so all sides stay on a single definition.
 fn transparent_object_setup(
     num_vars: usize,
     layout_digest: [u8; 32],
@@ -396,15 +398,7 @@ fn transparent_object_setup(
     ),
     jolt_openings::OpeningsError,
 > {
-    // Every auxiliary packed object (advice byte columns, the precommitted
-    // program) commits through the sparse-unit/dense flavor, so the one-hot
-    // backend setup — which dominates the setup cost at these shapes — is
-    // never built.
-    <AkitaScheme as VerifierCommitmentScheme>::setup(jolt_akita::AkitaSetupParams::dense_only(
-        num_vars,
-        1,
-        layout_digest,
-    ))
+    <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(num_vars, layout_digest)
 }
 
 fn open_prefix_object<P>(

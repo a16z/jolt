@@ -112,14 +112,28 @@ where
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
     let input_points = sumchecks.empty_input_points();
+    let bytecode_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
+        &stage1.output_values,
+        &stage2.output_values,
+        &stage3.output_values,
+        &stage4.output_values,
+        &stage5.output_values,
+    );
+    // The packed build folds the four reduced `Inc` claims into the bytecode
+    // address-phase input at the fused-inc consumer stage slots — the same
+    // wrapper the verifier's `stage6a::verify` applies.
+    #[cfg(feature = "akita")]
+    let bytecode_input_values =
+        jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
+            base: bytecode_input_values,
+            inc: jolt_verifier::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
+                &stage2.output_values,
+                &stage4.output_values,
+                &stage5.output_values,
+            ),
+        };
     let inputs = Stage6aInputClaims {
-        bytecode_read_raf: bytecode_read_raf_address_phase_input_values_from_upstream(
-            &stage1.output_values,
-            &stage2.output_values,
-            &stage3.output_values,
-            &stage4.output_values,
-            &stage5.output_values,
-        ),
+        bytecode_read_raf: bytecode_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 

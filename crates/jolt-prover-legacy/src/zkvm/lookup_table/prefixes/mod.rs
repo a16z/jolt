@@ -6,6 +6,7 @@ use allocative::Allocative;
 use lsb::LsbPrefix;
 use num_derive::FromPrimitive;
 use pow2::Pow2Prefix;
+use pow2_offset_w::Pow2OffsetWPrefix;
 use pow2_w::Pow2WPrefix;
 use rayon::prelude::*;
 use rev8w::Rev8WPrefix;
@@ -42,6 +43,8 @@ use right_operand::RightOperandPrefix;
 use right_operand_w::RightOperandWPrefix;
 use two_lsb::TwoLsbPrefix;
 use upper_word::UpperWordPrefix;
+use window_sign::WindowSignPrefix;
+use window_sign_pow2::WindowSignPow2Prefix;
 use xor::XorPrefix;
 use xor_rot::XorRotPrefix;
 use xor_rotw::XorRotWPrefix;
@@ -65,6 +68,7 @@ pub mod lt;
 pub mod or;
 pub mod overflow_bits_zero;
 pub mod pow2;
+pub mod pow2_offset_w;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -78,6 +82,8 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod two_lsb;
 pub mod upper_word;
+pub mod window_sign;
+pub mod window_sign_pow2;
 pub mod xor;
 pub mod xor_rot;
 pub mod xor_rotw;
@@ -170,6 +176,9 @@ pub enum Prefixes {
     XorRotW8,
     XorRotW12,
     XorRotW16,
+    Pow2OffsetW,
+    WindowSign,
+    WindowSignPow2,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -302,6 +311,11 @@ impl Prefixes {
             Prefixes::OverflowBitsZero => {
                 OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
+            Prefixes::Pow2OffsetW => {
+                Pow2OffsetWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::WindowSign => WindowSignPrefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::WindowSignPow2 => WindowSignPow2Prefix::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -592,6 +606,19 @@ impl Prefixes {
                 j,
                 suffix_len,
             ),
+            Prefixes::Pow2OffsetW => Pow2OffsetWPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::WindowSign => {
+                WindowSignPrefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
+            }
+            Prefixes::WindowSignPow2 => {
+                WindowSignPow2Prefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
+            }
         }
     }
 }

@@ -64,6 +64,13 @@ use crate::subprotocols::blindfold::{
 
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 
+/// Maximum number of suffixes any lookup table can have (currently
+/// PextSigned, with 5). Sized against the fixed-size partition arrays in
+/// `init_suffix_polys`; `max_suffixes_matches_lookup_tables` pins it to the
+/// actual table implementations, so a new table with more suffixes fails
+/// that test instead of a release-mode bounds check mid-proof.
+const MAX_SUFFIXES: usize = 5;
+
 // Instruction lookups: Read + RAF batched sumcheck
 //
 // Notation:
@@ -592,10 +599,6 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     /// - **General suffixes**: Multiply `u_evals[j]` by `suffix_mle` value.
     #[tracing::instrument(skip_all, name = "InstructionReadRafProver::init_suffix_polys")]
     fn init_suffix_polys(&mut self, phase: usize) {
-        /// Maximum number of suffixes any lookup table can have.
-        /// Keep this in sync with the lookup-table implementations.
-        const MAX_SUFFIXES: usize = 4;
-
         let log_m = LOG_K / self.params.phases;
         let m = 1 << log_m;
         let m_mask = m - 1;
@@ -1504,6 +1507,21 @@ mod tests {
 
     const LOG_T: usize = 8;
     const T: usize = 1 << LOG_T;
+
+    /// `MAX_SUFFIXES` sizes fixed arrays in `init_suffix_polys`; a table with
+    /// more suffixes would hit a release-mode bounds check mid-proof, so pin
+    /// the constant to the actual maximum over the table implementations.
+    #[test]
+    fn max_suffixes_matches_lookup_tables() {
+        let max = LookupTables::<XLEN>::iter()
+            .map(|table| table.suffixes().len())
+            .max()
+            .unwrap();
+        assert_eq!(
+            MAX_SUFFIXES, max,
+            "MAX_SUFFIXES must equal the maximum suffix count over all lookup tables"
+        );
+    }
 
     fn random_instruction(rng: &mut StdRng, instruction: &Option<Cycle>) -> Cycle {
         let instruction = instruction.unwrap_or_else(|| {
