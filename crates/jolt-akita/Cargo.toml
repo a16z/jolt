@@ -8,6 +8,11 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 [lints]
 workspace = true
 
+[features]
+default = []
+metal = ["dep:akita-metal"]
+schedule-gen = []
+
 [dependencies]
 akita-algebra.workspace = true
 akita-config.workspace = true
@@ -17,7 +22,7 @@ akita-prover = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
-akita-transcript.workspace = true
+akita-transcript = { workspace = true, features = ["transcript-blake2b"] }
 akita-types.workspace = true
 jolt-crypto.workspace = true
 jolt-field = { workspace = true, features = ["akita"] }
@@ -27,6 +32,9 @@ jolt-transcript.workspace = true
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+akita-metal = { workspace = true, optional = true, features = ["parallel"] }
 
 [dev-dependencies]
 criterion = { workspace = true }

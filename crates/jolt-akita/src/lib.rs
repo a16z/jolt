@@ -28,6 +28,9 @@ mod scheme;
 mod shape_guard;
 mod trace_onehot;
 
+#[cfg(not(feature = "schedule-gen"))]
+pub(crate) use akita_schedules::RecursiveSplitSearchPolicy;
+
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
     AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16,
@@ -36,8 +39,13 @@ pub use adapters::{
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
-pub use scheme::{AkitaScheme, PostCommitmentCleanup, TraceOneHotCommitment};
-pub use trace_onehot::{no_hot_lane, TraceOneHotRows, TracePackedOneHot};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub use scheme::TraceCommitmentMetalError;
+pub use scheme::{
+    AkitaScheme, PostCommitmentCleanup, TraceCommitmentBackend, TraceMetalCommitMetrics,
+    TraceOneHotCommitment, TraceOneHotStreamShape,
+};
+pub use trace_onehot::{no_selected_row, OwnedTraceOneHotRows, TraceOneHotRows, TracePackedOneHot};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.

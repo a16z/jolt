@@ -663,6 +663,9 @@ mod akita_benchmark {
         let setup_shape = ONE_HOT_TRACE_LAYOUT
             .setup_shape(&one_hot_shape)
             .expect("derive canonical packed setup shape");
+        let trace_plan = ONE_HOT_TRACE_LAYOUT
+            .plan(&one_hot_shape)
+            .expect("derive canonical packed trace plan");
         let layout_digest = ONE_HOT_TRACE_LAYOUT
             .layout_digest(&one_hot_shape)
             .expect("derive canonical packed layout digest");
@@ -710,6 +713,20 @@ mod akita_benchmark {
                 ));
         }
 
+        let prepare_start = Instant::now();
+        backend
+            .prepare_trace_commitment(
+                &prover_preprocessing.pcs_setup,
+                trace_plan.packing().slot_capacity(),
+                trace_plan.packing().ids().len(),
+                1usize << log_t,
+            )
+            .expect("trace commitment backend should prepare");
+        println!(
+            "AKITA_TRACE_COMMIT_PREPARE_MS value={:.6}",
+            prepare_start.elapsed().as_secs_f64() * 1_000.0
+        );
+
         let now = Instant::now();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
             &backend,
@@ -723,6 +740,81 @@ mod akita_benchmark {
         .expect("modular Akita prove");
         let duration = now.elapsed();
         drop(span);
+
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if backend_choice == Backend::Metal {
+            let qualified = jolt_akita::TraceCommitmentBackend::shape_is_metal_qualified(
+                prover_preprocessing.pcs_setup.one_hot_k(),
+                prover_preprocessing.pcs_setup.max_num_vars(),
+            );
+            let metrics = backend
+                .last_trace_commitment_metrics()
+                .expect("Metal trace commitment metrics should be readable");
+            if qualified {
+                let metrics = metrics.expect("qualified trace commitment should dispatch Metal");
+                assert!(metrics.input_zero_copy, "trace input must remain zero-copy");
+                assert!(
+                    metrics.matrix_cache_hit,
+                    "explicit preparation must make the commit matrix-resident"
+                );
+                assert!(
+                    metrics.metal_work_units > 0,
+                    "qualified trace commitment must schedule Metal work"
+                );
+                println!(
+                    "AKITA_TRACE_COMMIT_METRICS qualified=true used_metal=true \
+                     input_zero_copy={} matrix_cache_hit={} cpu_work_units={} \
+                     metal_work_units={} cpu_blocks={} columns={} metal_blocks={} hot_entries={} \
+                     index_bytes={} matrix_bytes={} \
+                     matrix_read_bytes={} lane_read_bytes={} scratch_bytes={} \
+                     buffer_setup_ms={:.6} command_wall_ms={:.6} gpu_ms={} \
+                     cpu_ms={:.6} readback_ms={:.6} reconstruction_ms={:.6} \
+                     merge_ms={:.6} inner_total_ms={:.6} \
+                     digit_rows_ms={:.6} digit_rows_gpu_ms={:.6} \
+                     digit_rows_calls={} digit_rows_metal_calls={} \
+                     digit_rows_max_rows={} digit_rows_max_columns={} \
+                     digit_rows_max_batch={} compression_ms={:.6}",
+                    metrics.input_zero_copy,
+                    metrics.matrix_cache_hit,
+                    metrics.cpu_work_units,
+                    metrics.metal_work_units,
+                    metrics.cpu_blocks,
+                    metrics.metal_columns,
+                    metrics.metal_blocks,
+                    metrics.hot_entries,
+                    metrics.index_bytes,
+                    metrics.matrix_bytes,
+                    metrics.modeled_matrix_read_bytes,
+                    metrics.modeled_lane_read_bytes,
+                    metrics.scratch_bytes,
+                    metrics.buffer_setup_time.as_secs_f64() * 1_000.0,
+                    metrics.command_wall_time.as_secs_f64() * 1_000.0,
+                    metrics.gpu_time.map_or_else(
+                        || "unavailable".to_string(),
+                        |time| format!("{:.6}", time.as_secs_f64() * 1_000.0),
+                    ),
+                    metrics.cpu_time.as_secs_f64() * 1_000.0,
+                    metrics.readback_copy_time.as_secs_f64() * 1_000.0,
+                    metrics.output_reconstruction_time.as_secs_f64() * 1_000.0,
+                    metrics.merge_time.as_secs_f64() * 1_000.0,
+                    metrics.total_time.as_secs_f64() * 1_000.0,
+                    metrics.digit_rows_time.as_secs_f64() * 1_000.0,
+                    metrics.digit_rows_gpu_time.as_secs_f64() * 1_000.0,
+                    metrics.digit_rows_calls,
+                    metrics.digit_rows_metal_calls,
+                    metrics.digit_rows_max_rows,
+                    metrics.digit_rows_max_columns,
+                    metrics.digit_rows_max_batch,
+                    metrics.compression_time.as_secs_f64() * 1_000.0,
+                );
+            } else {
+                assert!(
+                    metrics.is_none(),
+                    "unqualified trace commitment should remain on CPU"
+                );
+                println!("AKITA_TRACE_COMMIT_METRICS qualified=false used_metal=false route=cpu");
+            }
+        }
 
         // The Akita field uses its own canonical serializer, while the Jolt
         // proof envelope currently only exposes serde. Keep the legacy CSV

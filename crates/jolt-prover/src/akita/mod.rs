@@ -53,6 +53,7 @@ where
 {
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
+    trace_commitment: jolt_akita::TraceCommitmentBackend,
 }
 
 /// The packed path's stand-in for the streaming witness-commit slot: stage 0
@@ -161,6 +162,7 @@ where
                 ),
                 joint_opening: Box::new(ReferenceBackend),
             },
+            trace_commitment: jolt_akita::TraceCommitmentBackend::cpu(),
         }
     }
 
@@ -177,6 +179,44 @@ where
     pub fn begin_proof(&self) -> ProofSession {
         ProofSession::default()
     }
+
+    pub(crate) fn trace_commitment_backend(&self) -> &jolt_akita::TraceCommitmentBackend {
+        &self.trace_commitment
+    }
+
+    pub fn prepare_trace_commitment(
+        &self,
+        setup: &PCS::ProverSetup,
+        column_capacity: usize,
+        num_columns: usize,
+        num_rows: usize,
+    ) -> Result<(), jolt_openings::OpeningsError>
+    where
+        PCS: jolt_akita::TraceOneHotCommitment,
+    {
+        PCS::prepare_trace_one_hot_backend(
+            &self.trace_commitment,
+            setup,
+            column_capacity,
+            num_columns,
+            num_rows,
+        )
+    }
+
+    pub fn last_trace_commitment_metrics(
+        &self,
+    ) -> Result<Option<jolt_akita::TraceMetalCommitMetrics>, jolt_openings::OpeningsError> {
+        self.trace_commitment.last_metal_commit_metrics()
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Debug, thiserror::Error)]
+pub enum JoltAkitaMetalError {
+    #[error("Jolt PIOP Metal backend initialization failed: {0}")]
+    Piop(#[from] jolt_kernels::metal::solinas::MetalError),
+    #[error("Akita commitment Metal backend initialization failed: {0}")]
+    Commitment(#[from] jolt_akita::TraceCommitmentMetalError),
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -184,13 +224,22 @@ impl<PCS> JoltAkitaBackend<jolt_field::AkitaField, PCS>
 where
     PCS: CommitmentScheme<Field = jolt_field::AkitaField>,
 {
+    /// Installs a caller-configured PIOP Metal backend together with the
+    /// required Metal trace-commitment route.
+    pub fn with_metal_compute(
+        mut self,
+        metal: &jolt_kernels::metal::MetalBackend,
+    ) -> Result<Self, jolt_akita::TraceCommitmentMetalError> {
+        self.base = self.base.with_metal_compute(metal);
+        self.trace_commitment = jolt_akita::TraceCommitmentBackend::metal_required()?;
+        Ok(self)
+    }
+
     /// Builds the optimized Akita backend and replaces available slots with
     /// their hybrid Metal implementations.
-    pub fn metal() -> Result<Self, jolt_kernels::metal::solinas::MetalError> {
+    pub fn metal() -> Result<Self, JoltAkitaMetalError> {
         let metal = jolt_kernels::metal::MetalBackend::production()?;
-        let mut backend = Self::optimized();
-        backend.base = backend.base.with_metal_compute(&metal);
-        Ok(backend)
+        Ok(Self::optimized().with_metal_compute(&metal)?)
     }
 }
 

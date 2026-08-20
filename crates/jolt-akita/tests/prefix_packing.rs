@@ -23,7 +23,7 @@ fn polynomial(num_vars: usize, offset: u64) -> Polynomial<AkitaField> {
 #[test]
 fn fixed_prefix_claim_opens_the_materialized_akita_polynomial() {
     let digest = [0x51; 32];
-    let logical_num_vars = 11;
+    let logical_num_vars = 12;
     let layout = PrefixPackedLayout::new(logical_num_vars, 4, [2_u8, 0, 1]).unwrap();
     let logical = [
         polynomial(logical_num_vars, 1),
@@ -85,7 +85,7 @@ fn fixed_prefix_claim_opens_the_materialized_akita_polynomial() {
 #[test]
 fn changed_fixed_prefix_statement_rejects_the_original_proof() {
     let digest = [0x52; 32];
-    let logical_num_vars = 12;
+    let logical_num_vars = 13;
     let layout = PrefixPackedLayout::new(logical_num_vars, 2, [0_u8, 1]).unwrap();
     let logical = [
         polynomial(logical_num_vars, 1),

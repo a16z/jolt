@@ -1,4 +1,8 @@
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use akita_config::CommitmentConfig;
 use akita_pcs::{ComputeBackendSetup, CpuBackend};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use akita_prover::{PackedOneHotStreamBuffer, StreamingPackedOneHotPoly};
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
@@ -9,44 +13,385 @@ use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use std::{collections::HashMap, sync::Mutex};
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
     domain_size, invalid_batch, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    sparse_unit_polynomial, transparent_zk_error, validate_one_hot_k,
-    validate_one_hot_ring_dimension, with_backend_pool, AkitaBackendCommitment,
-    AkitaBackendDensePoly, AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBackendScheme,
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
-    AkitaLayoutDigest, AkitaOneHotK16BackendScheme, AkitaOneHotK256BackendScheme,
-    AkitaOneHotK256D128BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
-    AkitaVerifierSetup, AKITA_D, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    sparse_unit_polynomial, transparent_zk_error, validate_one_hot_k, with_backend_pool,
+    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendHint, AkitaBackendOneHotPoly,
+    AkitaBackendScheme, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
+    AkitaHintPolynomials, AkitaLayoutDigest, AkitaOneHotK16BackendScheme,
+    AkitaOneHotK256BackendScheme, AkitaProverHint, AkitaProverSetup, AkitaSetupParams,
+    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::trace_onehot::{MetalTracePackedOneHot, OwnedTraceOneHotRows};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub type TraceCommitmentMetalError = akita_metal::MetalCommitError;
+
+/// Structural and timing evidence from the most recent qualified Metal trace
+/// commitment.
+#[derive(Clone, Copy, Debug)]
+pub struct TraceMetalCommitMetrics {
+    pub input_zero_copy: bool,
+    pub matrix_cache_hit: bool,
+    pub cpu_blocks: usize,
+    pub cpu_work_units: usize,
+    pub metal_work_units: usize,
+    pub metal_columns: usize,
+    pub metal_blocks: usize,
+    pub hot_entries: usize,
+    pub index_bytes: usize,
+    pub matrix_bytes: usize,
+    pub modeled_matrix_read_bytes: u64,
+    pub modeled_lane_read_bytes: u64,
+    pub scratch_bytes: usize,
+    pub buffer_setup_time: Duration,
+    pub command_wall_time: Duration,
+    pub gpu_time: Option<Duration>,
+    pub cpu_time: Duration,
+    pub readback_copy_time: Duration,
+    pub output_reconstruction_time: Duration,
+    pub merge_time: Duration,
+    pub total_time: Duration,
+    pub digit_rows_time: Duration,
+    pub digit_rows_gpu_time: Duration,
+    pub digit_rows_calls: usize,
+    pub digit_rows_metal_calls: usize,
+    pub digit_rows_max_rows: usize,
+    pub digit_rows_max_columns: usize,
+    pub digit_rows_max_batch: usize,
+    pub compression_time: Duration,
+}
+
+/// Runtime routing for the native packed trace commitment.
+#[derive(Clone, Default)]
+pub struct TraceCommitmentBackend {
+    kind: TraceCommitmentBackendKind,
+}
+
+#[derive(Clone, Default)]
+enum TraceCommitmentBackendKind {
+    #[default]
+    Cpu,
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    MetalRequired(RequiredMetalTraceCommitment),
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone)]
+struct RequiredMetalTraceCommitment {
+    backend: akita_metal::MetalCommitBackend<AkitaField>,
+    prepared: Arc<Mutex<HashMap<usize, Arc<akita_metal::MetalPreparedSetup<AkitaField>>>>>,
+    stream_buffers: Arc<Mutex<HashMap<usize, PackedOneHotStreamBuffer>>>,
+}
+
+impl std::fmt::Debug for TraceCommitmentBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TraceCommitmentBackend")
+            .field("mode", &self.mode_name())
+            .finish()
+    }
+}
+
+impl TraceCommitmentBackend {
+    #[must_use]
+    pub fn cpu() -> Self {
+        Self::default()
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub fn metal_required() -> Result<Self, akita_metal::MetalCommitError> {
+        Ok(Self {
+            kind: TraceCommitmentBackendKind::MetalRequired(RequiredMetalTraceCommitment {
+                backend: akita_metal::MetalCommitBackend::new(
+                    akita_metal::MetalExecutionPolicy::RequireMetal,
+                )?,
+                prepared: Arc::new(Mutex::new(HashMap::new())),
+                stream_buffers: Arc::new(Mutex::new(HashMap::new())),
+            }),
+        })
+    }
+
+    #[must_use]
+    pub fn mode_name(&self) -> &'static str {
+        match self.kind {
+            TraceCommitmentBackendKind::Cpu => "cpu",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            TraceCommitmentBackendKind::MetalRequired(_) => "metal-required-for-qualified-shapes",
+        }
+    }
+
+    #[must_use]
+    pub const fn shape_is_metal_qualified(one_hot_k: usize, num_vars: usize) -> bool {
+        one_hot_k == AKITA_ONE_HOT_K256 && matches!(num_vars, 38..=41)
+    }
+
+    #[must_use]
+    pub fn streams_qualified_shape(&self, one_hot_k: usize, num_vars: usize) -> bool {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            matches!(self.kind, TraceCommitmentBackendKind::MetalRequired(_))
+                && Self::shape_is_metal_qualified(one_hot_k, num_vars)
+        }
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        {
+            let _ = (one_hot_k, num_vars);
+            false
+        }
+    }
+
+    /// Whether callers should defer bandwidth-intensive host work until the
+    /// stream prefix is generated. At the largest qualified grid, witness
+    /// preparation overlaps the remaining device commit instead.
+    #[must_use]
+    pub fn prioritizes_stream_generation(&self, one_hot_k: usize, num_vars: usize) -> bool {
+        self.streams_qualified_shape(one_hot_k, num_vars)
+            && Self::shape_prefers_stream_generation_priority(one_hot_k, num_vars)
+    }
+
+    const fn shape_prefers_stream_generation_priority(one_hot_k: usize, num_vars: usize) -> bool {
+        one_hot_k == AKITA_ONE_HOT_K256 && num_vars >= 41
+    }
+
+    pub fn last_metal_commit_metrics(
+        &self,
+    ) -> Result<Option<TraceMetalCommitMetrics>, OpeningsError> {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if let TraceCommitmentBackendKind::MetalRequired(metal) = &self.kind {
+            return metal
+                .backend
+                .last_commit_metrics()
+                .map_err(commit_failed)
+                .map(|metrics| {
+                    metrics.map(|metrics| TraceMetalCommitMetrics {
+                        input_zero_copy: metrics.input_zero_copy,
+                        matrix_cache_hit: metrics.matrix_cache_hit,
+                        cpu_blocks: metrics.cpu_blocks,
+                        cpu_work_units: metrics.cpu_work_units,
+                        metal_work_units: metrics.metal_work_units,
+                        metal_columns: metrics.metal_columns,
+                        metal_blocks: metrics.metal_blocks,
+                        hot_entries: metrics.hot_entries,
+                        index_bytes: metrics.index_bytes,
+                        matrix_bytes: metrics.matrix_bytes,
+                        modeled_matrix_read_bytes: metrics.modeled_matrix_read_bytes,
+                        modeled_lane_read_bytes: metrics.modeled_lane_read_bytes,
+                        scratch_bytes: metrics.scratch_bytes,
+                        buffer_setup_time: metrics.buffer_setup_time,
+                        command_wall_time: metrics.command_wall_time,
+                        gpu_time: metrics.gpu_time,
+                        cpu_time: metrics.cpu_time,
+                        readback_copy_time: metrics.readback_copy_time,
+                        output_reconstruction_time: metrics.output_reconstruction_time,
+                        merge_time: metrics.merge_time,
+                        total_time: metrics.total_time,
+                        digit_rows_time: metrics.digit_rows_time,
+                        digit_rows_gpu_time: metrics.digit_rows_gpu_time,
+                        digit_rows_calls: metrics.digit_rows_calls,
+                        digit_rows_metal_calls: metrics.digit_rows_metal_calls,
+                        digit_rows_max_rows: metrics.digit_rows_max_rows,
+                        digit_rows_max_columns: metrics.digit_rows_max_columns,
+                        digit_rows_max_batch: metrics.digit_rows_max_batch,
+                        compression_time: metrics.compression_time,
+                    })
+                });
+        }
+        Ok(None)
+    }
+
+    fn prepare(
+        &self,
+        _setup: &AkitaProverSetup,
+        _column_capacity: usize,
+        _num_columns: usize,
+        _num_rows: usize,
+    ) -> Result<(), OpeningsError> {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if let TraceCommitmentBackendKind::MetalRequired(metal) = &self.kind {
+            if !Self::shape_is_metal_qualified(_setup.one_hot_k(), _setup.max_num_vars()) {
+                return Ok(());
+            }
+            let layout = akita_types::OpeningClaimsLayout::new(_setup.max_num_vars(), 1)
+                .and_then(|layout| layout.root_final_group_layout())
+                .map_err(akita_error)?;
+            let row = crate::configs::JoltOneHotK256::resolve_catalog_row_for_key(
+                &akita_types::AkitaScheduleLookupKey::single(layout),
+            )
+            .map_err(akita_error)?;
+            let commitment = &row.schedule().root.params.final_group.commitment;
+            if commitment.role_dims()
+                != (akita_types::CommitmentRingDims {
+                    inner: 512,
+                    outer: 64,
+                    opening: 128,
+                })
+                || commitment.inner_commit_matrix.output_rank() != 1
+            {
+                return Err(OpeningsError::InvalidSetup(
+                    "qualified Metal trace row does not have the D512/rank-one root".to_string(),
+                ));
+            }
+            let backend_setup = _setup
+                .one_hot_backend_prover_setup
+                .as_ref()
+                .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
+            let prepared = metal.prepared_setup(backend_setup)?;
+            let _span = tracing::info_span!(
+                "jolt_akita::metal_trace_commit_prepare",
+                num_vars = _setup.max_num_vars(),
+                positions_per_block = commitment.num_positions_per_block,
+            )
+            .entered();
+            let _metrics = metal
+                .backend
+                .prewarm_packed_fp128_d512_matrix(
+                    prepared.as_ref(),
+                    commitment.num_positions_per_block,
+                )
+                .map_err(akita_error)?;
+            let stream_buffer = PackedOneHotStreamBuffer::zeroed(
+                _setup.one_hot_k(),
+                _column_capacity,
+                _num_columns,
+                _num_rows,
+            )
+            .map_err(commit_failed)?;
+            if stream_buffer.num_vars() != _setup.max_num_vars() {
+                return Err(invalid_batch(format!(
+                    "prepared packed stream nv={} does not match setup nv={}",
+                    stream_buffer.num_vars(),
+                    _setup.max_num_vars()
+                )));
+            }
+            metal.store_stream_buffer(backend_setup, stream_buffer)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl RequiredMetalTraceCommitment {
+    fn setup_key(setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>) -> usize {
+        Arc::as_ptr(&setup.expanded) as usize
+    }
+
+    fn prepared_setup(
+        &self,
+        setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>,
+    ) -> Result<Arc<akita_metal::MetalPreparedSetup<AkitaField>>, OpeningsError> {
+        let key = Self::setup_key(setup);
+        let mut prepared = self.prepared.lock().map_err(|_| {
+            OpeningsError::InvalidSetup("Akita Metal prepared-setup cache is poisoned".to_string())
+        })?;
+        if let Some(cached) = prepared.get(&key) {
+            return Ok(cached.clone());
+        }
+        let value = Arc::new(
+            self.backend
+                .prepare_setup(setup)
+                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?,
+        );
+        drop(prepared.insert(key, value.clone()));
+        Ok(value)
+    }
+
+    fn store_stream_buffer(
+        &self,
+        setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>,
+        buffer: PackedOneHotStreamBuffer,
+    ) -> Result<(), OpeningsError> {
+        let mut buffers = self.stream_buffers.lock().map_err(|_| {
+            OpeningsError::InvalidSetup("Akita packed-stream cache is poisoned".to_string())
+        })?;
+        drop(buffers.insert(Self::setup_key(setup), buffer));
+        Ok(())
+    }
+
+    fn take_stream_buffer(
+        &self,
+        setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>,
+    ) -> Result<Option<PackedOneHotStreamBuffer>, OpeningsError> {
+        self.stream_buffers
+            .lock()
+            .map_err(|_| {
+                OpeningsError::InvalidSetup("Akita packed-stream cache is poisoned".to_string())
+            })
+            .map(|mut buffers| buffers.remove(&Self::setup_key(setup)))
+    }
+}
+
+fn split_commit_output(
+    output: akita_prover::CommitOutput<AkitaField>,
+) -> (AkitaBackendCommitment, AkitaBackendHint) {
+    (output.committed_group, output.hint)
+}
+
 /// Prover-only cleanup after a commitment has produced its opening hint.
 pub trait PostCommitmentCleanup: CommitmentScheme {
     /// Releases backend state that can be reconstructed from the setup or
     /// opening hint before the opening proof needs it again.
-    fn release_post_commit_residency(setup: &Self::ProverSetup, hint: &Self::OpeningHint);
+    fn release_post_commit_residency(
+        setup: &Self::ProverSetup,
+        hint: &Self::OpeningHint,
+    ) -> Result<(), OpeningsError>;
 }
 
-/// Prover seam for committing the packed trace directly from row-major hot lanes.
+/// Full packed-stream geometry plus the prefix that may contain nonzero rows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TraceOneHotStreamShape {
+    pub column_capacity: usize,
+    pub num_rows: usize,
+    pub populated_rows: usize,
+    pub num_columns: usize,
+}
+
+/// Prover seam for committing the packed trace directly from selected one-hot rows.
 pub trait TraceOneHotCommitment: CommitmentScheme {
+    fn prepare_trace_one_hot_backend(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+        column_capacity: usize,
+        num_columns: usize,
+        num_rows: usize,
+    ) -> Result<(), OpeningsError>;
+
     fn commit_trace_one_hot(
+        backend: &TraceCommitmentBackend,
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
+
+    fn commit_streaming_trace_one_hot<G>(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        shape: TraceOneHotStreamShape,
+        fill_row: G,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>
+    where
+        G: Fn(usize, &mut [u8]) -> Result<(), String> + Sync;
 }
 
 impl PostCommitmentCleanup for AkitaScheme {
-    fn release_post_commit_residency(setup: &Self::ProverSetup, _hint: &Self::OpeningHint) {
-        setup.release_post_commit_ntt_residency();
+    fn release_post_commit_residency(
+        setup: &Self::ProverSetup,
+        _hint: &Self::OpeningHint,
+    ) -> Result<(), OpeningsError> {
+        setup.release_post_commit_ntt_residency()
     }
 }
 
@@ -54,7 +399,7 @@ impl AkitaScheme {
     /// Returns true when the Akita backend sparse-ring path can represent a
     /// unit-valued sparse polynomial with this multilinear dimension.
     pub fn supports_unit_sparse_dimension(num_vars: usize) -> bool {
-        domain_size(num_vars).is_some_and(|size| size >= AKITA_D)
+        domain_size(num_vars).is_some_and(|size| size >= AKITA_SOURCE_RING_DIMENSION)
     }
 
     pub fn commit_group(
@@ -103,11 +448,7 @@ impl AkitaScheme {
                         polynomial.num_vars()
                     )));
                 }
-                one_hot_polynomial(
-                    polynomial,
-                    setup.one_hot_k(),
-                    setup.one_hot_ring_dimension(),
-                )?
+                one_hot_polynomial(polynomial, setup.one_hot_k())?
                 .ok_or_else(|| {
                     invalid_batch(format!(
                         "Akita one-hot commitment group requires row-major K={} one-hot polynomials",
@@ -124,7 +465,6 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::OneHot(backend_polynomials.into()),
-            setup.one_hot_ring_dimension(),
         )
     }
 
@@ -150,11 +490,7 @@ impl AkitaScheme {
                         polynomial.num_vars()
                     )));
                 }
-                owned_one_hot_polynomial(
-                    polynomial,
-                    setup.one_hot_k(),
-                    setup.one_hot_ring_dimension(),
-                )
+                owned_one_hot_polynomial(polynomial, setup.one_hot_k())
             })
             .collect::<Result<Vec<_>, _>>()?;
         let (backend_commitment, backend_hint) =
@@ -165,50 +501,168 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::OneHot(backend_polynomials.into()),
-            setup.one_hot_ring_dimension(),
         )
     }
 
     /// Commits the prefix-packed trace without constructing padded per-column
     /// index vectors or Akita's generic one-hot block representation.
     pub fn commit_trace_one_hot(
+        backend: &TraceCommitmentBackend,
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        let source = TracePackedOneHot::new(
-            setup.one_hot_k(),
-            setup.one_hot_ring_dimension(),
-            column_capacity,
-            rows,
-        )
-        .map_err(commit_failed)?;
+        let source = TracePackedOneHot::new(setup.one_hot_k(), column_capacity, rows)
+            .map_err(commit_failed)?;
         let num_vars = akita_prover::RootPolyMeta::num_vars(&source);
         Self::validate_commit_shape(setup, num_vars, 1)?;
-        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
-        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let (backend_commitment, backend_hint) =
-            with_backend_pool(
-                || match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
-                    (AKITA_ONE_HOT_K16, 64) => AkitaOneHotK16BackendScheme::commit(
+            Self::commit_trace_one_hot_backend(backend, setup, &source, num_vars)
+                .map(split_commit_output)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::TraceOneHot(vec![source].into()),
+        )
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub fn commit_streaming_trace_one_hot<G>(
+        backend: &TraceCommitmentBackend,
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        shape: TraceOneHotStreamShape,
+        fill_row: G,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
+    where
+        G: Fn(usize, &mut [u8]) -> Result<(), String> + Sync,
+    {
+        let TraceOneHotStreamShape {
+            column_capacity,
+            num_rows,
+            populated_rows,
+            num_columns,
+        } = shape;
+        let TraceCommitmentBackendKind::MetalRequired(metal) = &backend.kind else {
+            return Err(invalid_batch(
+                "streaming trace commitment requires the Metal backend",
+            ));
+        };
+        let (backend_prover_setup, _) = setup.one_hot_backend()?;
+        let backend_setup_owner = setup
+            .one_hot_backend_prover_setup
+            .as_ref()
+            .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
+        let prepared_buffer = metal.take_stream_buffer(backend_setup_owner)?;
+        let (stream, mut writer) = if let Some(buffer) = prepared_buffer {
+            if buffer.onehot_k() != setup.one_hot_k()
+                || buffer.column_capacity() != column_capacity
+                || buffer.num_columns() != num_columns
+                || buffer.num_rows() != num_rows
+            {
+                return Err(invalid_batch(
+                    "prepared packed-stream geometry does not match the trace",
+                ));
+            }
+            StreamingPackedOneHotPoly::from_buffer_with_zero_suffix(buffer, populated_rows)
+                .map_err(commit_failed)?
+        } else {
+            let buffer = PackedOneHotStreamBuffer::zeroed(
+                setup.one_hot_k(),
+                column_capacity,
+                num_columns,
+                num_rows,
+            )
+            .map_err(commit_failed)?;
+            StreamingPackedOneHotPoly::from_buffer_with_zero_suffix(buffer, populated_rows)
+                .map_err(commit_failed)?
+        };
+        let num_vars = akita_prover::RootPolyMeta::num_vars(&stream);
+        if !TraceCommitmentBackend::shape_is_metal_qualified(setup.one_hot_k(), num_vars) {
+            return Err(invalid_batch(format!(
+                "streaming Metal trace shape K={}/nv={num_vars} is not qualified",
+                setup.one_hot_k()
+            )));
+        }
+        Self::validate_commit_shape(setup, num_vars, 1)?;
+
+        let layout = akita_types::OpeningClaimsLayout::new(num_vars, 1)
+            .and_then(|layout| layout.root_final_group_layout())
+            .map_err(akita_error)?;
+        let row = crate::configs::JoltOneHotK256::resolve_catalog_row_for_key(
+            &akita_types::AkitaScheduleLookupKey::single(layout),
+        )
+        .map_err(akita_error)?;
+        let commitment = &row.schedule().root.params.final_group.commitment;
+        if commitment.role_dims()
+            != (akita_types::CommitmentRingDims {
+                inner: 512,
+                outer: 64,
+                opening: 128,
+            })
+            || commitment.inner_commit_matrix.output_rank() != 1
+        {
+            return Err(invalid_batch(
+                "streaming Metal trace row does not have the D512/rank-one root",
+            ));
+        }
+        let batch_rows = commitment
+            .num_positions_per_block
+            .checked_mul(2)
+            .ok_or_else(|| invalid_batch("streaming Metal row batch overflow"))?;
+        if !num_rows.is_multiple_of(batch_rows) {
+            return Err(invalid_batch(format!(
+                "streaming trace has {num_rows} rows, not a multiple of batch size {batch_rows}"
+            )));
+        }
+
+        let prepared = metal.prepared_setup(backend_setup_owner)?;
+        let stack = akita_prover::UniformProverStack::uniform(
+            &metal.backend,
+            prepared.as_ref(),
+            backend_prover_setup.expanded.as_ref(),
+        )
+        .map_err(akita_error)?;
+        let metal_source = MetalTracePackedOneHot::new(&stream);
+        let (producer_result, commit_result) = with_backend_pool(|| {
+            let fill_row = &fill_row;
+            rayon::join(
+                move || {
+                    let _span = tracing::info_span!(
+                        "jolt_akita::streaming_trace_row_generation",
+                        num_rows,
+                        populated_rows,
+                        num_columns,
+                        batch_rows,
+                    )
+                    .entered();
+                    for first_row in (0..populated_rows).step_by(batch_rows) {
+                        writer.fill_next_rows_in_place(
+                            (populated_rows - first_row).min(batch_rows),
+                            fill_row,
+                        )?;
+                    }
+                    writer.finish()
+                },
+                || {
+                    AkitaOneHotK256BackendScheme::commit(
                         backend_prover_setup,
-                        std::slice::from_ref(&source),
+                        std::slice::from_ref(&metal_source),
                         &stack,
-                    ),
-                    (AKITA_ONE_HOT_K256, 64) => AkitaOneHotK256BackendScheme::commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                    ),
-                    (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        &stack,
-                    ),
-                    _ => unreachable!("the one-hot setup geometry was validated during setup"),
+                        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                    )
                 },
             )
+        });
+        producer_result.map_err(commit_failed)?;
+        let (backend_commitment, backend_hint) =
+            split_commit_output(commit_result.map_err(commit_failed)?);
+        let packed = stream.finalize().map_err(commit_failed)?;
+        let rows: Arc<dyn TraceOneHotRows> = Arc::new(OwnedTraceOneHotRows::from_packed(packed));
+        let source = TracePackedOneHot::new(setup.one_hot_k(), column_capacity, rows)
             .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
@@ -216,8 +670,79 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::TraceOneHot(vec![source].into()),
-            setup.one_hot_ring_dimension(),
         )
+    }
+
+    fn commit_trace_one_hot_backend(
+        backend: &TraceCommitmentBackend,
+        setup: &AkitaProverSetup,
+        source: &TracePackedOneHot,
+        _num_vars: usize,
+    ) -> Result<akita_prover::CommitOutput<AkitaField>, OpeningsError> {
+        match &backend.kind {
+            TraceCommitmentBackendKind::Cpu => Self::commit_trace_one_hot_cpu(setup, source),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            TraceCommitmentBackendKind::MetalRequired(metal)
+                if TraceCommitmentBackend::shape_is_metal_qualified(
+                    setup.one_hot_k(),
+                    _num_vars,
+                ) =>
+            {
+                let (backend_prover_setup, _) = setup.one_hot_backend()?;
+                let prepared = metal.prepared_setup(
+                    setup
+                        .one_hot_backend_prover_setup
+                        .as_ref()
+                        .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?,
+                )?;
+                let stack = akita_prover::UniformProverStack::uniform(
+                    &metal.backend,
+                    prepared.as_ref(),
+                    backend_prover_setup.expanded.as_ref(),
+                )
+                .map_err(akita_error)?;
+                with_backend_pool(|| {
+                    source.try_with_packed_one_hot(|packed| {
+                        let metal_source = MetalTracePackedOneHot::new(packed);
+                        AkitaOneHotK256BackendScheme::commit(
+                            backend_prover_setup,
+                            std::slice::from_ref(&metal_source),
+                            &stack,
+                            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+                        )
+                    })
+                })
+                .map_err(commit_failed)
+            }
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            TraceCommitmentBackendKind::MetalRequired(_) => {
+                Self::commit_trace_one_hot_cpu(setup, source)
+            }
+        }
+    }
+
+    fn commit_trace_one_hot_cpu(
+        setup: &AkitaProverSetup,
+        source: &TracePackedOneHot,
+    ) -> Result<akita_prover::CommitOutput<AkitaField>, OpeningsError> {
+        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        with_backend_pool(|| match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(source),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                std::slice::from_ref(source),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        })
+        .map_err(commit_failed)
     }
 
     /// Opens committed one-hot columns directly from their hint. The hint
@@ -261,22 +786,22 @@ impl AkitaScheme {
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        with_backend_pool(
-            || match (setup.one_hot_k(), setup.one_hot_ring_dimension()) {
-                (AKITA_ONE_HOT_K16, 64) => {
-                    AkitaOneHotK16BackendScheme::commit(backend_prover_setup, polynomials, &stack)
-                }
-                (AKITA_ONE_HOT_K256, 64) => {
-                    AkitaOneHotK256BackendScheme::commit(backend_prover_setup, polynomials, &stack)
-                }
-                (AKITA_ONE_HOT_K256, 128) => AkitaOneHotK256D128BackendScheme::commit(
-                    backend_prover_setup,
-                    polynomials,
-                    &stack,
-                ),
-                _ => unreachable!("the one-hot setup geometry was validated during setup"),
-            },
-        )
+        with_backend_pool(|| match setup.one_hot_k() {
+            AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::commit(
+                backend_prover_setup,
+                polynomials,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            AKITA_ONE_HOT_K256 => AkitaOneHotK256BackendScheme::commit(
+                backend_prover_setup,
+                polynomials,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            ),
+            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        })
+        .map(split_commit_output)
         .map_err(commit_failed)
     }
 
@@ -310,7 +835,6 @@ impl AkitaScheme {
         backend_commitment: AkitaBackendCommitment,
         backend_hint: AkitaBackendHint,
         polynomials: AkitaHintPolynomials,
-        ring_dimension: usize,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let backend_flavor = polynomials.backend_flavor();
         let one_hot_k = match backend_flavor {
@@ -325,9 +849,8 @@ impl AkitaScheme {
             num_vars,
             poly_count: polynomials.len(),
             one_hot_k,
-            ring_dimension,
-            backend_coeff_len: backend_commitment.0.coeff_len(),
-            serialized_backend_bytes: serialize_akita(&backend_commitment)?,
+            backend_coeff_len: backend_commitment.rows().coeff_len(),
+            serialized_backend_bytes: serialize_akita(backend_commitment.commitment())?,
         };
         Ok((
             commitment.clone(),
@@ -348,8 +871,14 @@ impl AkitaScheme {
         let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            AkitaBackendScheme::commit(backend_prover_setup, dense.as_slice(), &stack)
+            AkitaBackendScheme::commit(
+                backend_prover_setup,
+                dense.as_slice(),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
         })
+        .map(split_commit_output)
         .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
@@ -357,19 +886,52 @@ impl AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::Dense(dense.into()),
-            AKITA_D,
         )
     }
 }
 
 impl TraceOneHotCommitment for AkitaScheme {
+    fn prepare_trace_one_hot_backend(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+        column_capacity: usize,
+        num_columns: usize,
+        num_rows: usize,
+    ) -> Result<(), OpeningsError> {
+        backend.prepare(setup, column_capacity, num_columns, num_rows)
+    }
+
     fn commit_trace_one_hot(
+        backend: &TraceCommitmentBackend,
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Self::commit_trace_one_hot(setup, layout_digest, column_capacity, rows)
+        Self::commit_trace_one_hot(backend, setup, layout_digest, column_capacity, rows)
+    }
+
+    fn commit_streaming_trace_one_hot<G>(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        shape: TraceOneHotStreamShape,
+        fill_row: G,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>
+    where
+        G: Fn(usize, &mut [u8]) -> Result<(), String> + Sync,
+    {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            Self::commit_streaming_trace_one_hot(backend, setup, layout_digest, shape, fill_row)
+        }
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        {
+            let _ = (backend, setup, layout_digest, shape, fill_row);
+            Err(invalid_batch(
+                "streaming trace commitment requires the macOS Metal feature",
+            ))
+        }
     }
 }
 
@@ -418,8 +980,6 @@ impl CommitmentScheme for AkitaScheme {
         );
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
             .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
-        validate_one_hot_ring_dimension(params.one_hot_k, params.one_hot_ring_dimension)
-            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
         let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) =
             if params.one_hot_only {
                 (None, None, None)
@@ -432,7 +992,7 @@ impl CommitmentScheme for AkitaScheme {
                 })
                 .map_err(|err| invalid_setup(&err))?;
                 let prepared_backend_setup =
-                    with_backend_pool(|| CpuBackend.prepare_setup(&backend_prover_setup))
+                    with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
                         .map_err(|err| invalid_setup(&err))?;
                 let backend_verifier_setup =
                     with_backend_pool(|| AkitaBackendScheme::setup_verifier(&backend_prover_setup))
@@ -450,19 +1010,15 @@ impl CommitmentScheme for AkitaScheme {
         ) = if params.max_num_vars >= one_hot_log_k && !params.dense_only {
             let backend_prover_setup = crate::adapters::one_hot_setup_prover(
                 params.one_hot_k,
-                params.one_hot_ring_dimension,
                 params.max_num_vars,
                 params.max_num_polys_per_commitment_group,
             )
             .map_err(|err| invalid_setup(&err))?;
             let prepared_backend_setup =
-                with_backend_pool(|| CpuBackend.prepare_setup(&backend_prover_setup))
+                with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
                     .map_err(|err| invalid_setup(&err))?;
-            let backend_verifier_setup = crate::adapters::one_hot_setup_verifier(
-                params.one_hot_k,
-                params.one_hot_ring_dimension,
-                &backend_prover_setup,
-            )?;
+            let backend_verifier_setup =
+                crate::adapters::one_hot_setup_verifier(params.one_hot_k, &backend_prover_setup)?;
             (
                 Some(std::sync::Arc::new(backend_prover_setup)),
                 Some(std::sync::Arc::new(prepared_backend_setup)),
@@ -476,7 +1032,6 @@ impl CommitmentScheme for AkitaScheme {
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
-            one_hot_ring_dimension: params.one_hot_ring_dimension,
             backend_cache: Default::default(),
         };
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
@@ -498,9 +1053,7 @@ impl CommitmentScheme for AkitaScheme {
         poly: &P,
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        if let Some(one_hot) =
-            one_hot_polynomial(poly, setup.one_hot_k(), setup.one_hot_ring_dimension())?
-        {
+        if let Some(one_hot) = one_hot_polynomial(poly, setup.one_hot_k())? {
             let num_vars = akita_prover::RootPolyMeta::num_vars(&one_hot);
             Self::validate_commit_shape(setup, num_vars, 1)?;
             let (backend_commitment, backend_hint) =
@@ -511,7 +1064,6 @@ impl CommitmentScheme for AkitaScheme {
                 backend_commitment,
                 backend_hint,
                 AkitaHintPolynomials::OneHot(vec![one_hot].into()),
-                setup.one_hot_ring_dimension(),
             );
         }
 
@@ -519,7 +1071,7 @@ impl CommitmentScheme for AkitaScheme {
             let mut indices = Vec::new();
             poly.for_each_one(&mut |index| indices.push(index));
             let sparse = sparse_unit_polynomial(poly.num_vars(), indices)?;
-            let num_vars = sparse.num_vars();
+            let num_vars = akita_prover::RootPolyMeta::num_vars(&sparse);
             Self::validate_commit_shape(setup, num_vars, 1)?;
             let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
             let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
@@ -528,8 +1080,10 @@ impl CommitmentScheme for AkitaScheme {
                     backend_prover_setup,
                     std::slice::from_ref(&sparse),
                     &stack,
+                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
                 )
             })
+            .map(split_commit_output)
             .map_err(commit_failed)?;
             return Self::package_commitment(
                 setup.default_layout_digest(),
@@ -537,17 +1091,14 @@ impl CommitmentScheme for AkitaScheme {
                 backend_commitment,
                 backend_hint,
                 AkitaHintPolynomials::SparseUnit(vec![sparse].into()),
-                AKITA_D,
             );
         }
 
         let num_vars = poly.num_vars();
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let evals = akita_ordered_evaluations(poly)?;
-        let dense = vec![
-            AkitaBackendDensePoly::from_field_evals(num_vars, AKITA_D, &evals)
-                .map_err(akita_error)?,
-        ];
+        let dense =
+            vec![AkitaBackendDensePoly::from_field_evals(num_vars, &evals).map_err(akita_error)?];
         Self::commit_dense_backend(setup, setup.default_layout_digest(), num_vars, dense)
     }
 
@@ -619,11 +1170,7 @@ impl CommitmentScheme for AkitaScheme {
                         polynomial.num_vars()
                     )));
                 }
-                one_hot_polynomial(
-                    *polynomial,
-                    setup.one_hot_k(),
-                    setup.one_hot_ring_dimension(),
-                )?
+                one_hot_polynomial(*polynomial, setup.one_hot_k())?
                 .ok_or_else(|| {
                     invalid_batch(format!(
                         "Akita one-hot commitment group requires row-major K={} one-hot polynomials",
@@ -640,39 +1187,21 @@ impl CommitmentScheme for AkitaScheme {
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::OneHot(backend_polynomials.into()),
-            setup.one_hot_ring_dimension(),
         )
     }
 
+    /// The retained-state batch opening: the hint is the committed group
+    /// object [`Self::commit_one_hot_group`] produced, owning the backend
+    /// witness forms and the Ajtai commit's opening data.
     fn open_batch(
-        polynomials: &[&dyn MultilinearPoly<Self::Field>],
+        _polynomials: &[&dyn MultilinearPoly<Self::Field>],
         point: &[Self::Field],
         evaluations: &[Self::Field],
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
-        if polynomials.len() != evaluations.len() {
-            return Err(invalid_batch(format!(
-                "Akita batch opening has {} polynomials but {} evaluations",
-                polynomials.len(),
-                evaluations.len()
-            )));
-        }
-        let statement = evaluations
-            .iter()
-            .map(|evaluation| VerifierOpeningClaim {
-                commitment: hint.commitment.clone(),
-                evaluation: EvaluationClaim::new(point.to_vec(), *evaluation),
-            })
-            .collect();
-        <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
-            setup,
-            statement,
-            polynomials.to_vec(),
-            hint,
-            transcript,
-        )
+        Self::open_one_hot_group_from_hint(point, evaluations, setup, hint, transcript)
     }
 
     fn verify_batch(
@@ -790,6 +1319,53 @@ mod tests {
     #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
     use super::*;
+
+    #[test]
+    fn metal_trace_route_is_exactly_the_qualified_large_grid() {
+        for num_vars in 38..=41 {
+            assert!(TraceCommitmentBackend::shape_is_metal_qualified(
+                AKITA_ONE_HOT_K256,
+                num_vars
+            ));
+        }
+        assert!(!TraceCommitmentBackend::shape_is_metal_qualified(
+            AKITA_ONE_HOT_K16,
+            38
+        ));
+        assert!(!TraceCommitmentBackend::shape_is_metal_qualified(
+            AKITA_ONE_HOT_K256,
+            37
+        ));
+        assert!(!TraceCommitmentBackend::shape_is_metal_qualified(
+            AKITA_ONE_HOT_K256,
+            42
+        ));
+    }
+
+    #[test]
+    fn only_the_largest_metal_grid_prioritizes_stream_generation() {
+        assert!(
+            !TraceCommitmentBackend::shape_prefers_stream_generation_priority(
+                AKITA_ONE_HOT_K256,
+                40
+            )
+        );
+        assert!(
+            TraceCommitmentBackend::shape_prefers_stream_generation_priority(
+                AKITA_ONE_HOT_K256,
+                41
+            )
+        );
+        assert!(
+            !TraceCommitmentBackend::shape_prefers_stream_generation_priority(
+                AKITA_ONE_HOT_K16,
+                41
+            )
+        );
+        assert!(
+            !TraceCommitmentBackend::cpu().prioritizes_stream_generation(AKITA_ONE_HOT_K256, 41)
+        );
+    }
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
     use jolt_transcript::Blake2bTranscript;
 
@@ -800,7 +1376,6 @@ mod tests {
             max_num_polys_per_commitment_group: 1,
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_ring_dimension: 64,
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -816,17 +1391,6 @@ mod tests {
         let mut flavor_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
         append_verifier_setup(&mut flavor_transcript, &setup, AkitaBackendFlavor::OneHot);
         assert_ne!(baseline.state(), flavor_transcript.state());
-
-        let mut changed_dimension = setup.clone();
-        changed_dimension.one_hot_ring_dimension = 128;
-        let mut dimension_transcript =
-            Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
-        append_verifier_setup(
-            &mut dimension_transcript,
-            &changed_dimension,
-            AkitaBackendFlavor::OneHot,
-        );
-        assert_ne!(flavor_transcript.state(), dimension_transcript.state());
 
         let mut changed_shape = setup.clone();
         changed_shape.max_num_vars = 5;
@@ -855,12 +1419,9 @@ mod tests {
         assert_ne!(digest_transcript.state(), k_transcript.state());
     }
 
-    fn one_hot_roundtrip(one_hot_k: usize, ring_dimension: Option<usize>) {
+    fn one_hot_roundtrip(one_hot_k: usize) {
         let num_vars = one_hot_k.ilog2() as usize + 8;
-        let mut setup_params = AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k);
-        if let Some(ring_dimension) = ring_dimension {
-            setup_params.one_hot_ring_dimension = ring_dimension;
-        }
+        let setup_params = AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let indices = (0..256usize)
             .map(|row| {
@@ -879,10 +1440,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(commitment.one_hot_k(), one_hot_k);
-        assert_eq!(
-            commitment.ring_dimension(),
-            verifier_setup.one_hot_ring_dimension()
-        );
 
         let point = vec![AkitaField::from_u64(3); num_vars];
         let value = polynomial.evaluate(&point);
@@ -909,22 +1466,6 @@ mod tests {
         .unwrap();
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
-        let mut wrong_d_statement = statement.clone();
-        wrong_d_statement[0].commitment.ring_dimension =
-            if verifier_setup.one_hot_ring_dimension() == 64 {
-                128
-            } else {
-                64
-            };
-        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
-        let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-            &verifier_setup,
-            &wrong_d_statement,
-            &proof,
-            &mut verifier_transcript,
-        )
-        .expect_err("commitment ring dimension must match verifier setup");
-
         let mut wrong_k_statement = statement;
         wrong_k_statement[0].commitment.one_hot_k = if one_hot_k == AKITA_ONE_HOT_K16 {
             AKITA_ONE_HOT_K256
@@ -943,31 +1484,12 @@ mod tests {
 
     #[test]
     fn one_hot_k16_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K16, None);
+        one_hot_roundtrip(AKITA_ONE_HOT_K16);
     }
 
     #[test]
     fn one_hot_k256_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K256, None);
-    }
-
-    #[test]
-    fn one_hot_k256_d128_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K256, Some(128));
-    }
-
-    #[test]
-    fn large_k256_setup_selects_d128() {
-        assert_eq!(
-            AkitaSetupParams::one_hot_only(40, 1, [0; 32], AKITA_ONE_HOT_K256)
-                .one_hot_ring_dimension(),
-            64
-        );
-        assert_eq!(
-            AkitaSetupParams::one_hot_only(41, 1, [0; 32], AKITA_ONE_HOT_K256)
-                .one_hot_ring_dimension(),
-            128
-        );
+        one_hot_roundtrip(AKITA_ONE_HOT_K256);
     }
 
     /// A serde roundtrip drops the primed key cache; the transported setup
@@ -975,7 +1497,7 @@ mod tests {
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
         let (_, verifier_setup) =
-            AkitaScheme::setup(AkitaSetupParams::new(13, 1, [3; 32])).unwrap();
+            AkitaScheme::setup(AkitaSetupParams::new(14, 1, [3; 32])).unwrap();
         let json = serde_json::to_string(&verifier_setup).unwrap();
         let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
         assert_eq!(transported, verifier_setup);
@@ -994,10 +1516,10 @@ mod tests {
 
     #[test]
     fn direct_opening_requires_statement_commitment_layout_digest() {
-        let setup_params = AkitaSetupParams::new(13, 1, [7; 32]);
+        let setup_params = AkitaSetupParams::new(14, 1, [7; 32]);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let polynomial = Polynomial::new(
-            (0..(1u64 << 13))
+            (0..(1u64 << 14))
                 .map(|i| AkitaField::from_u64(2 + 5 * i))
                 .collect(),
         );
@@ -1010,7 +1532,7 @@ mod tests {
         .expect("direct commitment may use its own layout digest");
         assert_eq!(commitment.layout_digest, commitment_digest);
 
-        let point = (3..16).map(AkitaField::from_u64).collect::<Vec<_>>();
+        let point = (3..17).map(AkitaField::from_u64).collect::<Vec<_>>();
         let claim = polynomial.evaluate(&point);
         let statement = vec![VerifierOpeningClaim {
             commitment: commitment.clone(),
@@ -1232,7 +1754,7 @@ mod flavor_bench {
         let union_vars = cell_vars + slots.next_power_of_two().ilog2() as usize;
         let mut state = 0x1234_5678;
 
-        // Per-slot hot lanes; the last slot mimics the msb column (lanes {0, 1}).
+        // Selected rows for each slot; the last slot uses only two rows.
         let slot_indices: Vec<Vec<Option<u8>>> = (0..slots)
             .map(|slot| {
                 (0..t)
@@ -1318,9 +1840,9 @@ mod flavor_bench {
         eprintln!("union setup ({union_vars} vars): {:.2?}", start.elapsed());
         let mut ones = Vec::with_capacity(slots * t);
         for (slot, indices) in slot_indices.iter().enumerate() {
-            for (cycle, &lane) in indices.iter().enumerate() {
-                let lane = lane.unwrap() as usize;
-                ones.push((slot << cell_vars) | (lane << log_t) | cycle);
+            for (cycle, &row) in indices.iter().enumerate() {
+                let row = row.unwrap() as usize;
+                ones.push((slot << cell_vars) | (row << log_t) | cycle);
             }
         }
         ones.sort_unstable();

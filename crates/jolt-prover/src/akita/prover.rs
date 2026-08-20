@@ -54,36 +54,58 @@ where
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let mut session = backend.begin_proof();
     let log_t = config.trace_length.ilog2() as usize;
+    let prioritize_stream_generation = backend
+        .trace_commitment_backend()
+        .prioritizes_stream_generation(
+            preprocessing.pcs_setup.one_hot_k(),
+            preprocessing.pcs_setup.max_num_vars(),
+        );
+    let (rows_ready_sender, rows_ready_receiver) = if prioritize_stream_generation {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        (Some(sender), Some(receiver))
+    } else {
+        (None, None)
+    };
     let (stage0, witness_prepare) = std::thread::scope(|scope| {
-        let prepare = scope.spawn(|| {
+        let prepare_kernel = backend.base.spartan_outer_uniskip.as_ref();
+        let prepare_session = &mut session;
+        let prepare = scope.spawn(move || -> Result<(), ProverError<F>> {
+            if let Some(receiver) = rows_ready_receiver {
+                receiver
+                    .recv()
+                    .map_err(|_| ProverError::InvariantViolation {
+                        reason:
+                            "trace row generation ended before witness preparation was released",
+                    })?;
+            }
             let span = tracing::info_span!(
                 "jolt_prover::backend_witness_prepare_async",
                 log_t,
                 cycles = 1usize << log_t,
+                prioritize_stream_generation,
                 complete = tracing::field::Empty,
             );
             let _entered = span.enter();
-            let result =
-                backend
-                    .base
-                    .spartan_outer_uniskip
-                    .prepare_witness(&mut session, log_t, witness);
+            let result = prepare_kernel.prepare_witness(prepare_session, log_t, witness);
             let _ = span.record("complete", result.is_ok());
-            result
+            result.map_err(ProverError::from)
         });
         let stage0 = {
             let _span =
                 tracing::info_span!("jolt_prover::stage0", log_t, cycles = 1usize << log_t,)
                     .entered();
             prove_stage0::<F, PCS, VC, T, W>(
+                backend,
                 preprocessing,
                 config,
                 trusted_advice,
                 program_one_hot,
                 witness,
                 public_io,
+                rows_ready_sender.as_ref(),
             )
         };
+        drop(rows_ready_sender);
         let completed_before_join = prepare.is_finished();
         let _span = tracing::info_span!(
             "jolt_prover::backend_witness_prepare",
@@ -95,7 +117,7 @@ where
             .map_err(|_| ProverError::InvariantViolation {
                 reason: "asynchronous backend witness preparation panicked",
             })
-            .and_then(|result| result.map_err(ProverError::from));
+            .and_then(|result| result);
         (stage0, witness_prepare)
     });
     let stage0 = stage0?;

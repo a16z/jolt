@@ -25,9 +25,6 @@ use jolt_witness::witnesses::{
 };
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
 use crate::ProverError;
 
 /// Sparse unit-valued multilinear polynomial: value `1` at each listed
@@ -175,30 +172,50 @@ enum OneHotTraceColumn {
     Increment(UnsignedIncLane),
 }
 
-struct PackedTraceRows {
-    num_rows: usize,
-    num_columns: usize,
-    lanes: Vec<u8>,
+enum OneHotTraceRows<'a> {
+    Random(jolt_witness::RandomAccessRows<'a>),
+    Collected(Vec<OneHotTraceSourceRow>),
 }
 
-impl jolt_akita::TraceOneHotRows for PackedTraceRows {
-    fn num_rows(&self) -> usize {
+/// Read-only row generator borrowed by the streaming Akita commitment path.
+pub struct OneHotTraceRowGenerator<'a> {
+    rows: OneHotTraceRows<'a>,
+    columns: Vec<OneHotTraceColumn>,
+    num_rows: usize,
+    populated_rows: usize,
+}
+
+impl OneHotTraceRowGenerator<'_> {
+    #[must_use]
+    pub fn num_rows(&self) -> usize {
         self.num_rows
     }
 
-    fn num_columns(&self) -> usize {
-        self.num_columns
+    #[must_use]
+    pub fn populated_rows(&self) -> usize {
+        self.populated_rows
     }
 
-    fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
-        let start = row * self.num_columns;
-        hot_lanes.copy_from_slice(&self.lanes[start..start + self.num_columns]);
+    #[must_use]
+    pub fn num_columns(&self) -> usize {
+        self.columns.len()
     }
 
-    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u8]) {
-        debug_assert_eq!(hot_lanes.len() % self.num_columns, 0);
-        let start = row_start * self.num_columns;
-        hot_lanes.copy_from_slice(&self.lanes[start..start + hot_lanes.len()]);
+    pub fn fill_row(&self, row_index: usize, lanes: &mut [u8]) -> Result<(), String> {
+        let row = match &self.rows {
+            OneHotTraceRows::Random(access) => access
+                .window::<OneHotTraceSourceRow>(row_index)
+                .map_err(|error| error.to_string())?,
+            OneHotTraceRows::Collected(rows) => rows
+                .get(row_index)
+                .copied()
+                .ok_or_else(|| format!("OneHotTrace row {row_index} is out of range"))?,
+        };
+        if fill_trace_lanes(row, &self.columns, lanes) {
+            Ok(())
+        } else {
+            Err("OneHotTrace bytecode column requires a mapped PC on every cycle".into())
+        }
     }
 }
 
@@ -232,18 +249,12 @@ fn fill_trace_lanes(
     valid
 }
 
-/// Builds the row-major source for the native `OneHotTrace` commitment in the
-/// plan's canonical semantic-column order.
-pub fn assemble_one_hot_trace_rows<F: Field>(
-    witness: &dyn JoltWitnessPlane<F>,
+fn one_hot_trace_columns<F: Field>(
     plan: &OneHotTraceLayoutPlan,
     ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
-    log_t: usize,
-) -> Result<std::sync::Arc<dyn jolt_akita::TraceOneHotRows>, ProverError<F>> {
-    let num_rows = 1usize << log_t;
-    let num_columns = plan.packing().ids().len();
-    let mut columns = Vec::with_capacity(num_columns);
+) -> Result<Vec<OneHotTraceColumn>, ProverError<F>> {
+    let mut columns = Vec::with_capacity(plan.packing().ids().len());
     for polynomial in plan.packing().ids() {
         match polynomial {
             JoltCommittedPolynomial::InstructionRa(index) => {
@@ -276,31 +287,81 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
             }
         }
     }
+    Ok(columns)
+}
 
-    let mut lanes = jolt_utils::unsafe_allocate_zero_vec(num_rows * num_columns);
+pub fn prepare_one_hot_trace_row_generator<'a, F: Field>(
+    witness: &'a dyn JoltWitnessPlane<F>,
+    plan: &OneHotTraceLayoutPlan,
+    ra_layout: JoltRaPolynomialLayout,
+    log_k_chunk: usize,
+    log_t: usize,
+) -> Result<OneHotTraceRowGenerator<'a>, ProverError<F>> {
+    let num_rows = 1usize << log_t;
+    let columns = one_hot_trace_columns(plan, ra_layout, log_k_chunk)?;
+    let (rows, populated_rows) = if let Some(access) = witness.random_access() {
+        if num_rows <= access.cycles() {
+            let populated_rows = access.physical_rows();
+            (OneHotTraceRows::Random(access), populated_rows)
+        } else {
+            (
+                OneHotTraceRows::Collected(collect_bundles(witness, num_rows)?),
+                num_rows,
+            )
+        }
+    } else {
+        (
+            OneHotTraceRows::Collected(collect_bundles(witness, num_rows)?),
+            num_rows,
+        )
+    };
+    Ok(OneHotTraceRowGenerator {
+        rows,
+        columns,
+        num_rows,
+        populated_rows,
+    })
+}
+
+/// Builds the row-major source for the native `OneHotTrace` commitment in the
+/// plan's canonical semantic-column order.
+pub fn assemble_one_hot_trace_rows<F: Field>(
+    witness: &dyn JoltWitnessPlane<F>,
+    plan: &OneHotTraceLayoutPlan,
+    ra_layout: JoltRaPolynomialLayout,
+    log_k_chunk: usize,
+    log_t: usize,
+) -> Result<std::sync::Arc<dyn jolt_akita::TraceOneHotRows>, ProverError<F>> {
+    let num_rows = 1usize << log_t;
+    let columns = one_hot_trace_columns(plan, ra_layout, log_k_chunk)?;
+    let num_columns = columns.len();
+
+    let one_hot_k = 1usize << log_k_chunk;
+    let column_capacity = plan.packing().slot_capacity();
     #[cfg(feature = "parallel")]
     if let Some(access) = witness.random_access() {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
             let bytecode_rows_valid = std::sync::atomic::AtomicBool::new(true);
-            lanes
-                .par_chunks_exact_mut(num_columns)
-                .enumerate()
-                .for_each(|(row_index, row_lanes)| {
-                    match access.window::<OneHotTraceSourceRow>(row_index) {
-                        Ok(row) => {
-                            if !fill_trace_lanes(row, &columns, row_lanes) {
-                                bytecode_rows_valid
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                        Err(error) => {
-                            if let Ok(mut guard) = extraction_error.try_lock() {
-                                let _ = guard.get_or_insert(error);
-                            }
+            let packed = jolt_akita::OwnedTraceOneHotRows::from_row_fn(
+                one_hot_k,
+                column_capacity,
+                num_columns,
+                num_rows,
+                |row_index, row_lanes| match access.window::<OneHotTraceSourceRow>(row_index) {
+                    Ok(row) => {
+                        if !fill_trace_lanes(row, &columns, row_lanes) {
+                            bytecode_rows_valid.store(false, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
-                });
+                    Err(error) => {
+                        if let Ok(mut guard) = extraction_error.try_lock() {
+                            let _ = guard.get_or_insert(error);
+                        }
+                    }
+                },
+            )
+            .map_err(commit_failed)?;
             #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
             if let Some(error) = extraction_error.into_inner().unwrap() {
                 return Err(error.into());
@@ -310,27 +371,28 @@ pub fn assemble_one_hot_trace_rows<F: Field>(
                     reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
                 });
             }
-            return Ok(std::sync::Arc::new(PackedTraceRows {
-                num_rows,
-                num_columns,
-                lanes,
-            }));
+            return Ok(std::sync::Arc::new(packed));
         }
     }
 
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
-    for (row, row_lanes) in rows.into_iter().zip(lanes.chunks_exact_mut(num_columns)) {
-        if !fill_trace_lanes(row, &columns, row_lanes) {
-            return Err(ProverError::InvariantViolation {
-                reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
-            });
-        }
+    if rows.iter().any(|row| row.mapped_pc.0.is_none()) {
+        return Err(ProverError::InvariantViolation {
+            reason: "OneHotTrace bytecode column requires a mapped PC on every cycle",
+        });
     }
-    Ok(std::sync::Arc::new(PackedTraceRows {
-        num_rows,
+    let packed = jolt_akita::OwnedTraceOneHotRows::from_row_fn(
+        one_hot_k,
+        column_capacity,
         num_columns,
-        lanes,
-    }))
+        num_rows,
+        |row_index, row_lanes| {
+            let valid = fill_trace_lanes(rows[row_index], &columns, row_lanes);
+            debug_assert!(valid);
+        },
+    )
+    .map_err(commit_failed)?;
+    Ok(std::sync::Arc::new(packed))
 }
 
 /// A packed advice commitment object (`UntrustedAdviceOneHot` per proof,

@@ -281,9 +281,6 @@ mod muldiv {
                         trace_cutoff_elements: 4,
                         ..Default::default()
                     },
-                registers_read_write: jolt_kernels::metal::RegistersReadWriteMetalConfig {
-                    precompute_cutoff_elements: 2,
-                },
                 instruction_read_raf: jolt_kernels::metal::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 8,
                     cutoff_elements: 8,
@@ -297,7 +294,6 @@ mod muldiv {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
-                    ..Default::default()
                 },
                 booleanity_cycle: jolt_kernels::metal::BooleanityMetalConfig {
                     trace_cutoff_elements: 2,
@@ -323,13 +319,13 @@ mod muldiv {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
-                    ..Default::default()
                 },
                 ..Default::default()
             })
             .expect("Metal backend should initialize");
-            let mut backend = akita::JoltAkitaBackend::optimized();
-            backend.base = backend.base.with_metal_compute(&metal);
+            let backend = akita::JoltAkitaBackend::optimized()
+                .with_metal_compute(&metal)
+                .expect("Akita Metal commitment backend should initialize");
             (backend, metal)
         };
         #[cfg(not(all(feature = "metal", target_os = "macos")))]
@@ -486,13 +482,13 @@ mod muldiv {
                         tile_threads_per_threadgroup: Some(256),
                         finalize_threads_per_threadgroup: Some(256),
                     },
-                    ..Default::default()
                 },
                 ..Default::default()
             })
             .expect("Metal backend should initialize");
-            let mut backend = akita::JoltAkitaBackend::optimized();
-            backend.base = backend.base.with_metal_compute(&metal);
+            let backend = akita::JoltAkitaBackend::optimized()
+                .with_metal_compute(&metal)
+                .expect("Akita Metal commitment backend should initialize");
             (backend, metal)
         };
         #[cfg(not(all(feature = "metal", target_os = "macos")))]

@@ -27,7 +27,7 @@ akita = [
 ]
 # Apple GPU compute slots for the Akita field. Fiat-Shamir and proof
 # orchestration remain on the host.
-metal = ["akita", "jolt-kernels/metal"]
+metal = ["akita", "jolt-akita/metal", "jolt-kernels/metal"]
 # Compile-time ZK mode: committed sumcheck recorders, hiding witness
 # commitments and stage-8 opening, and the BlindFold tail.
 zk = [

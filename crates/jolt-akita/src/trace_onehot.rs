@@ -1,17 +1,19 @@
-#![expect(
-    clippy::indexing_slicing,
-    reason = "fixed-shape hot loops validate their dimensions before entering the indexed kernels"
-)]
-
 //! Streaming kernels for Jolt's prefix-packed trace one-hot polynomial.
 //!
-//! A trace row produces each committed nonzero hot lane. Logical lane zero is
-//! virtualized, so byte zero denotes a row with no stored coefficient. Jolt's
-//! kernels consume that row-major source directly and lay the columns out as
-//! consecutive `K * T` segments inside one physical polynomial. Padding
-//! selector slots are zero.
+//! A trace row gives the selected one-hot row for each column. Byte zero normally
+//! denotes no stored coefficient; a per-row column mask distinguishes selected row
+//! zero for families such as RAM. Jolt's kernels consume that row-major source
+//! directly and lay the columns out as consecutive `K * T` segments inside one
+//! physical polynomial. Padding selector slots are zero.
+
+#![expect(
+    clippy::indexing_slicing,
+    reason = "hot kernels index geometry validated by TracePackedOneHot and their plans"
+)]
 
 use std::fmt;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
@@ -19,34 +21,38 @@ use akita_algebra::ring::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::unreduced::HasWide;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FromPrimitiveInt, MulBaseUnreduced, PseudoMersenneField,
-};
+use akita_field::{AkitaError, CanonicalField, ExtField, MulBaseUnreduced, PseudoMersenneField};
 use akita_prover::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use akita_prover::compute::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
+    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use akita_prover::{
     BatchDecomposeFoldOutcome, CommitInnerWitness, ComputeBackendSetup, CpuBackend,
-    RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorProjectionPoly,
+    PackedOneHotPoly, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
     RootTensorSource,
 };
-use akita_types::FpExtEncoding;
+use akita_types::{FpExtEncoding, PreparedSubringCoefficientPackingPoint};
 use rayon::prelude::*;
 
 use crate::AkitaField;
 
-const NO_HOT_LANE: u8 = 0;
+const NO_SELECTED_ROW: u8 = 0;
 const MAX_WIDE_ACCUMULATIONS: usize = 1 << 15;
 const TASKS_PER_RAYON_WORKER: usize = 4;
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
 const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
-const D64_K16_SHIFT_KEY_SPACE: usize = 1 << 16;
 const SHARED_SHIFT_MIN_COLUMNS: u8 = 3;
 const K256_ROW_BATCH: usize = 1 << 13;
 const _: () = assert!(K256_ROW_BATCH <= i16::MAX as usize);
+
+#[inline(always)]
+fn row_is_committed(selected_row: u8, committed_zero_mask: u64, column: usize) -> bool {
+    selected_row != NO_SELECTED_ROW || committed_zero_mask & (1u64 << column) != 0
+}
 
 type AkitaWideRing<const D: usize> = WideCyclotomicRing<<AkitaField as HasWide>::Wide, D>;
 
@@ -121,69 +127,87 @@ impl<const D: usize> DeferredFp128Ring<D> {
     }
 }
 
-struct D64K16ShiftGroups {
-    group_by_key: Vec<u8>,
+/// Groups columns that share four consecutive K=16 row shifts. Adaptive
+/// dimensions use one, two, or four of these groups per ring, preserving the
+/// useful four-row reuse pattern without dimension-specific implementations.
+struct K16FourRowShiftGroups {
+    group_by_key: Vec<(u64, u8)>,
     group_columns: Vec<u8>,
     group_counts: Vec<u8>,
     group_shifts: Vec<[usize; 4]>,
-    touched_keys: Vec<u16>,
     partial_columns: Vec<u8>,
+    row_start: usize,
     num_groups: u8,
 }
 
-impl D64K16ShiftGroups {
-    fn new(num_columns: usize) -> Option<Self> {
+impl K16FourRowShiftGroups {
+    fn new(num_columns: usize, row_start: usize) -> Option<Self> {
         if num_columns >= usize::from(u8::MAX) {
             return None;
         }
+        let key_slots = (2 * num_columns).next_power_of_two();
         Some(Self {
-            group_by_key: vec![u8::MAX; D64_K16_SHIFT_KEY_SPACE],
+            group_by_key: vec![(0, u8::MAX); key_slots],
             group_columns: vec![u8::MAX; num_columns * num_columns],
             group_counts: vec![0; num_columns],
             group_shifts: vec![[0; 4]; num_columns],
-            touched_keys: Vec::with_capacity(num_columns),
             partial_columns: Vec::with_capacity(num_columns),
+            row_start,
             num_groups: 0,
         })
     }
 
-    fn build(&mut self, lanes: &[u8], num_columns: usize) -> bool {
-        for key in self.touched_keys.drain(..) {
-            self.group_by_key[usize::from(key)] = u8::MAX;
-        }
+    fn build(
+        &mut self,
+        selected_rows: &[u8],
+        committed_zero_masks: &[u64],
+        num_columns: usize,
+    ) -> bool {
+        self.group_by_key.fill((0, u8::MAX));
         self.partial_columns.clear();
         self.num_groups = 0;
-        if lanes.len() != 4 * num_columns {
+        if selected_rows.len() != 4 * num_columns || committed_zero_masks.len() != 4 {
             return false;
         }
 
         for column in 0..num_columns {
-            let hot0 = lanes[column];
-            let hot1 = lanes[num_columns + column];
-            let hot2 = lanes[2 * num_columns + column];
-            let hot3 = lanes[3 * num_columns + column];
-            if [hot0, hot1, hot2, hot3].contains(&NO_HOT_LANE) {
+            let mut key = 0u64;
+            let mut shifts = [0usize; 4];
+            let mut complete = true;
+            for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
+                .chunks_exact(num_columns)
+                .zip(committed_zero_masks)
+                .enumerate()
+            {
+                let hot = row_indices[column];
+                if !row_is_committed(hot, committed_zero_mask, column) {
+                    complete = false;
+                    break;
+                }
+                key |= u64::from(hot) << (4 * row_offset);
+                shifts[row_offset] = 16 * (self.row_start + row_offset) + usize::from(hot);
+            }
+            if !complete {
                 self.partial_columns.push(column as u8);
                 continue;
             }
-            let key = u16::from(hot0)
-                | (u16::from(hot1) << 4)
-                | (u16::from(hot2) << 8)
-                | (u16::from(hot3) << 12);
-            let mut group = self.group_by_key[usize::from(key)];
-            if group == u8::MAX {
-                group = self.num_groups;
-                self.num_groups += 1;
-                self.group_by_key[usize::from(key)] = group;
-                self.touched_keys.push(key);
-                self.group_counts[usize::from(group)] = 0;
-                self.group_shifts[usize::from(group)] = [
-                    usize::from(hot0),
-                    16 + usize::from(hot1),
-                    32 + usize::from(hot2),
-                    48 + usize::from(hot3),
-                ];
-            }
+            let slot_mask = self.group_by_key.len() - 1;
+            let mut slot = key.wrapping_mul(0x9e37_79b9_7f4a_7c15) as usize & slot_mask;
+            let group = loop {
+                let (stored_key, stored_group) = self.group_by_key[slot];
+                if stored_group != u8::MAX && stored_key == key {
+                    break stored_group;
+                }
+                if stored_group == u8::MAX {
+                    let group = self.num_groups;
+                    self.num_groups += 1;
+                    self.group_by_key[slot] = (key, group);
+                    self.group_counts[usize::from(group)] = 0;
+                    self.group_shifts[usize::from(group)] = shifts;
+                    break group;
+                }
+                slot = (slot + 1) & slot_mask;
+            };
             let group = usize::from(group);
             let count = usize::from(self.group_counts[group]);
             self.group_columns[group * num_columns + count] = column as u8;
@@ -192,13 +216,18 @@ impl D64K16ShiftGroups {
         true
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the fused shift kernel keeps its source, destination, rank, and row views explicit"
+    )]
     fn accumulate<const D: usize>(
         &self,
         src: &AkitaWideRing<D>,
         dst: &mut [AkitaWideRing<D>],
         a: usize,
         n_a: usize,
-        lanes: &[u8],
+        selected_rows: &[u8],
+        committed_zero_masks: &[u64],
         num_columns: usize,
     ) {
         for group in 0..self.num_groups {
@@ -206,43 +235,34 @@ impl D64K16ShiftGroups {
             let count = usize::from(self.group_counts[group]);
             let columns = &self.group_columns[group * num_columns..group * num_columns + count];
             if self.group_counts[group] >= SHARED_SHIFT_MIN_COLUMNS {
-                let shifts = &self.group_shifts[group];
-                let src = src.coeffs();
-                for coefficient in 0..D {
-                    let shift = shifts[0];
-                    let mut sum = if coefficient >= shift {
-                        src[coefficient - shift]
-                    } else {
-                        -src[D + coefficient - shift]
-                    };
-                    for &shift in &shifts[1..] {
-                        if coefficient >= shift {
-                            sum += src[coefficient - shift];
-                        } else {
-                            sum -= src[D + coefficient - shift];
-                        }
-                    }
-                    for &column in columns {
-                        dst[usize::from(column) * n_a + a].coeffs_mut()[coefficient] += sum;
-                    }
+                let mut shifted_sum = AkitaWideRing::zero();
+                for &shift in &self.group_shifts[group] {
+                    src.shift_accumulate_into(&mut shifted_sum, shift);
+                }
+                for &column in columns {
+                    dst[usize::from(column) * n_a + a] += shifted_sum;
                 }
             } else {
                 for &column in columns {
-                    src.shift_accumulate_array_into(
-                        &mut dst[usize::from(column) * n_a + a],
-                        &self.group_shifts[group],
-                    );
+                    let dst = &mut dst[usize::from(column) * n_a + a];
+                    for &shift in &self.group_shifts[group] {
+                        src.shift_accumulate_into(dst, shift);
+                    }
                 }
             }
         }
         for &column in &self.partial_columns {
             let column = usize::from(column);
-            for (row_offset, row_lanes) in lanes.chunks_exact(num_columns).enumerate() {
-                let hot = row_lanes[column];
-                if hot != NO_HOT_LANE {
+            for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
+                .chunks_exact(num_columns)
+                .zip(committed_zero_masks)
+                .enumerate()
+            {
+                let hot = row_indices[column];
+                if row_is_committed(hot, committed_zero_mask, column) {
                     src.shift_accumulate_into(
                         &mut dst[column * n_a + a],
-                        row_offset * 16 + usize::from(hot),
+                        (self.row_start + row_offset) * 16 + usize::from(hot),
                     );
                 }
             }
@@ -252,27 +272,103 @@ impl D64K16ShiftGroups {
 
 /// Row-major source for the semantic columns packed into `OneHotTrace`.
 ///
-/// `fill_row` must overwrite all of `hot_lanes`. Byte zero means that the
-/// semantic column has no committed nonzero entry in that row.
+/// `fill_row` must overwrite all of `selected_rows`. Byte zero means no committed
+/// entry unless [`TraceOneHotRows::committed_digit_zero_mask`] marks the column.
 pub trait TraceOneHotRows: Send + Sync + 'static {
     fn num_rows(&self) -> usize;
     fn num_columns(&self) -> usize;
-    fn fill_row(&self, row: usize, hot_lanes: &mut [u8]);
+    fn fill_row(&self, row: usize, selected_rows: &mut [u8]);
+
+    /// Bit `i` is set when column `i` commits row zero in this trace row.
+    fn committed_digit_zero_mask(&self, _row: usize) -> u64 {
+        0
+    }
 
     /// Fills consecutive rows in row-major order, overwriting the entire buffer.
-    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u8]) {
+    fn fill_rows(&self, row_start: usize, selected_rows: &mut [u8]) {
         let num_columns = self.num_columns();
-        debug_assert_eq!(hot_lanes.len() % num_columns, 0);
-        for (row_offset, row_lanes) in hot_lanes.chunks_exact_mut(num_columns).enumerate() {
-            self.fill_row(row_start + row_offset, row_lanes);
+        debug_assert_eq!(selected_rows.len() % num_columns, 0);
+        for (row_offset, row_indices) in selected_rows.chunks_exact_mut(num_columns).enumerate() {
+            self.fill_row(row_start + row_offset, row_indices);
         }
+    }
+
+    /// Fills the masks for consecutive rows, overwriting the entire buffer.
+    fn fill_committed_digit_zero_masks(&self, row_start: usize, masks: &mut [u64]) {
+        for (row_offset, mask) in masks.iter_mut().enumerate() {
+            *mask = self.committed_digit_zero_mask(row_start + row_offset);
+        }
+    }
+
+    /// Returns the shared aligned owner when rows use Akita's packed storage.
+    fn packed_one_hot(&self) -> Option<&PackedOneHotPoly<AkitaField>> {
+        None
     }
 }
 
-/// Value written by [`TraceOneHotRows::fill_row`] for an empty one-hot row.
+/// Aligned row-major storage shared by trace assembly, commitment, and opening.
+pub struct OwnedTraceOneHotRows {
+    packed: PackedOneHotPoly<AkitaField>,
+}
+
+impl OwnedTraceOneHotRows {
+    #[must_use]
+    pub fn from_packed(packed: PackedOneHotPoly<AkitaField>) -> Self {
+        Self { packed }
+    }
+
+    pub fn from_row_fn(
+        one_hot_k: usize,
+        column_capacity: usize,
+        num_columns: usize,
+        num_rows: usize,
+        fill_row: impl Fn(usize, &mut [u8]) + Sync,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            packed: PackedOneHotPoly::from_row_fn(
+                one_hot_k,
+                column_capacity,
+                num_columns,
+                num_rows,
+                fill_row,
+            )?,
+        })
+    }
+
+    #[must_use]
+    pub fn lanes(&self) -> &[u8] {
+        self.packed.lanes()
+    }
+}
+
+impl TraceOneHotRows for OwnedTraceOneHotRows {
+    fn num_rows(&self) -> usize {
+        self.packed.num_rows()
+    }
+
+    fn num_columns(&self) -> usize {
+        self.packed.num_columns()
+    }
+
+    fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
+        let start = row * self.packed.num_columns();
+        hot_lanes.copy_from_slice(&self.packed.lanes()[start..start + hot_lanes.len()]);
+    }
+
+    fn fill_rows(&self, row_start: usize, hot_lanes: &mut [u8]) {
+        let start = row_start * self.packed.num_columns();
+        hot_lanes.copy_from_slice(&self.packed.lanes()[start..start + hot_lanes.len()]);
+    }
+
+    fn packed_one_hot(&self) -> Option<&PackedOneHotPoly<AkitaField>> {
+        Some(&self.packed)
+    }
+}
+
+/// Default value written by [`TraceOneHotRows::fill_row`] for an empty row.
 #[must_use]
-pub const fn no_hot_lane() -> u8 {
-    NO_HOT_LANE
+pub const fn no_selected_row() -> u8 {
+    NO_SELECTED_ROW
 }
 
 /// One physical one-hot polynomial containing all trace-derived semantic
@@ -284,7 +380,6 @@ pub struct TracePackedOneHot {
     one_hot_k: usize,
     column_capacity: usize,
     num_vars: usize,
-    construction_ring_elems: usize,
 }
 
 impl Clone for TracePackedOneHot {
@@ -301,7 +396,6 @@ impl Clone for TracePackedOneHot {
             one_hot_k: self.one_hot_k,
             column_capacity: self.column_capacity,
             num_vars: self.num_vars,
-            construction_ring_elems: self.construction_ring_elems,
         }
     }
 }
@@ -320,22 +414,14 @@ impl fmt::Debug for TracePackedOneHot {
 impl TracePackedOneHot {
     /// Constructs one prefix-packed source.
     ///
-    /// `construction_ring_d` is metadata matching the configured Akita
-    /// commitment dimension. Kernel views remain const-generic over `D`.
     pub fn new(
         one_hot_k: usize,
-        construction_ring_d: usize,
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
     ) -> Result<Self, AkitaError> {
         if !one_hot_k.is_power_of_two() || one_hot_k > 256 {
             return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot K={one_hot_k} must be a power of two fitting byte lanes"
-            )));
-        }
-        if construction_ring_d == 0 || !construction_ring_d.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot construction D={construction_ring_d} must be a power of two"
+                "trace one-hot K={one_hot_k} must be a power of two fitting u8 row indices"
             )));
         }
         if !column_capacity.is_power_of_two() {
@@ -344,23 +430,37 @@ impl TracePackedOneHot {
             )));
         }
         let num_columns = rows.num_columns();
+        if num_columns > u64::BITS as usize {
+            return Err(AkitaError::InvalidInput(format!(
+                "trace one-hot has {num_columns} semantic columns, above the 64-column mask limit"
+            )));
+        }
         if num_columns == 0 || num_columns > column_capacity {
             return Err(AkitaError::InvalidInput(format!(
                 "trace one-hot has {num_columns} semantic columns for capacity {column_capacity}"
             )));
         }
         let num_rows = rows.num_rows();
+        if let Some(packed) = rows.packed_one_hot() {
+            if packed.onehot_k() != one_hot_k
+                || packed.column_capacity() != column_capacity
+                || packed.num_columns() != num_columns
+                || packed.num_rows() != num_rows
+            {
+                return Err(AkitaError::InvalidInput(
+                    "trace one-hot packed owner disagrees with the requested geometry".into(),
+                ));
+            }
+        }
         let total_field_elems = num_rows
             .checked_mul(one_hot_k)
             .and_then(|segment| segment.checked_mul(column_capacity))
             .ok_or_else(|| {
                 AkitaError::InvalidInput("trace one-hot packed domain overflow".to_string())
             })?;
-        if !total_field_elems.is_power_of_two()
-            || !total_field_elems.is_multiple_of(construction_ring_d)
-        {
+        if !total_field_elems.is_power_of_two() {
             return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot packed domain {total_field_elems} must be a power of two divisible by construction D={construction_ring_d}"
+                "trace one-hot packed domain {total_field_elems} must be a power of two"
             )));
         }
         Ok(Self {
@@ -370,7 +470,6 @@ impl TracePackedOneHot {
             one_hot_k,
             column_capacity,
             num_vars: total_field_elems.trailing_zeros() as usize,
-            construction_ring_elems: total_field_elems / construction_ring_d,
         })
     }
 
@@ -405,6 +504,23 @@ impl TracePackedOneHot {
         }
         Ok(rows)
     }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn try_with_packed_one_hot<R>(
+        &self,
+        f: impl FnOnce(&PackedOneHotPoly<AkitaField>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
+        let rows = self.lock_rows()?;
+        let packed = rows
+            .as_deref()
+            .and_then(TraceOneHotRows::packed_one_hot)
+            .ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "Metal trace commitment requires aligned packed row storage".to_string(),
+                )
+            })?;
+        f(packed)
+    }
 }
 
 pub struct TracePackedOneHotView<'a, const D: usize> {
@@ -415,6 +531,31 @@ pub struct TracePackedOneHotView<'a, const D: usize> {
 pub struct TracePackedOneHotBatchView<'a, const D: usize> {
     sources: &'a [&'a TracePackedOneHot],
     rows: RwLockReadGuard<'a, Option<Arc<dyn TraceOneHotRows>>>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone)]
+pub(crate) struct MetalTracePackedOneHot<P> {
+    packed: P,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) struct MetalTracePackedOneHotTensorView<'a, const D: usize> {
+    marker: PhantomData<&'a ()>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) struct MetalTracePackedOneHotTensorBatchView<'a, const D: usize> {
+    marker: PhantomData<&'a ()>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<P: Clone> MetalTracePackedOneHot<P> {
+    pub(crate) fn new(packed: &P) -> Self {
+        Self {
+            packed: packed.clone(),
+        }
+    }
 }
 
 struct TracePackedOneHotKernelSource<'a> {
@@ -455,32 +596,12 @@ impl<const D: usize> TracePackedOneHotBatchView<'_, D> {
 }
 
 impl RootPolyMeta<AkitaField> for TracePackedOneHot {
-    fn num_ring_elems(&self) -> usize {
-        self.construction_ring_elems
-    }
-
     fn num_vars(&self) -> usize {
         self.num_vars
     }
 
     fn onehot_chunk_size(&self) -> Option<usize> {
         Some(self.one_hot_k)
-    }
-
-    fn release_root_opening_storage(&self) {
-        let rows = {
-            let mut rows = self
-                .rows
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            rows.take()
-        };
-        let _span = tracing::info_span!(
-            "TracePackedOneHot::release_opening_rows",
-            retained_bytes = self.num_rows * self.num_columns,
-        )
-        .entered();
-        drop(rows);
     }
 }
 
@@ -510,6 +631,14 @@ impl<const D: usize> RootCommitSource<AkitaField, D> for TracePackedOneHot {
             source: self,
             rows: self.lock_rows()?,
         })
+    }
+
+    fn committed_centered_reach(
+        &self,
+        _modulus: u128,
+        _centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError> {
+        Ok((0, 1))
     }
 }
 
@@ -569,6 +698,104 @@ impl<const D: usize> RootTensorSource<AkitaField, D> for TracePackedOneHot {
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<P> RootPolyMeta<AkitaField> for MetalTracePackedOneHot<P>
+where
+    P: RootPolyMeta<AkitaField>,
+{
+    fn num_vars(&self) -> usize {
+        RootPolyMeta::<AkitaField>::num_vars(&self.packed)
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        RootPolyMeta::<AkitaField>::onehot_chunk_size(&self.packed)
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<P, const D: usize> RootPolyShape<AkitaField, D> for MetalTracePackedOneHot<P>
+where
+    P: RootPolyShape<AkitaField, D>,
+{
+    fn num_ring_elems(&self) -> usize {
+        RootPolyShape::<AkitaField, D>::num_ring_elems(&self.packed)
+    }
+
+    fn num_vars(&self) -> usize {
+        RootPolyShape::<AkitaField, D>::num_vars(&self.packed)
+    }
+
+    fn onehot_chunk_size(&self) -> Option<usize> {
+        RootPolyShape::<AkitaField, D>::onehot_chunk_size(&self.packed)
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<P, const D: usize> RootCommitSource<AkitaField, D> for MetalTracePackedOneHot<P>
+where
+    P: RootCommitSource<AkitaField, D>,
+{
+    type CommitView<'a>
+        = P::CommitView<'a>
+    where
+        Self: 'a;
+
+    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
+        RootCommitSource::<AkitaField, D>::commit_view(&self.packed)
+    }
+
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError> {
+        RootCommitSource::<AkitaField, D>::committed_centered_reach(
+            &self.packed,
+            modulus,
+            centering_threshold,
+        )
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<P, const D: usize> RootTensorSource<AkitaField, D> for MetalTracePackedOneHot<P>
+where
+    P: RootPolyShape<AkitaField, D>,
+{
+    type TensorView<'a>
+        = MetalTracePackedOneHotTensorView<'a, D>
+    where
+        Self: 'a;
+    type TensorBatchView<'a>
+        = MetalTracePackedOneHotTensorBatchView<'a, D>
+    where
+        Self: 'a;
+
+    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
+        let one_hot_k = RootPolyShape::<AkitaField, D>::onehot_chunk_size(&self.packed)
+            .ok_or_else(|| AkitaError::InvalidInput("Metal trace source is not one-hot".into()))?;
+        validate_dimension::<D>(one_hot_k)?;
+        Ok(MetalTracePackedOneHotTensorView {
+            marker: PhantomData,
+        })
+    }
+
+    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
+        if polys.len() != 1 {
+            return Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: polys.len(),
+            });
+        }
+        let one_hot_k = RootPolyShape::<AkitaField, D>::onehot_chunk_size(&polys[0].packed)
+            .ok_or_else(|| AkitaError::InvalidInput("Metal trace source is not one-hot".into()))?;
+        validate_dimension::<D>(one_hot_k)?;
+        Ok(MetalTracePackedOneHotTensorBatchView {
+            marker: PhantomData,
+        })
+    }
+}
+
 fn validate_singleton_batch(polys: &[&TracePackedOneHot]) -> Result<(), AkitaError> {
     if polys.len() != 1 {
         return Err(AkitaError::InvalidSize {
@@ -609,25 +836,26 @@ fn visit_segment_ring_range<const D: usize>(
     }
     let k = source.one_hot_k;
     let num_columns = source.rows.num_columns();
-    let mut lanes = vec![NO_HOT_LANE; num_columns];
+    let mut selected_rows = vec![NO_SELECTED_ROW; num_columns];
     if k >= D {
         let rings_per_row = k / D;
         let row_start = ring_start / rings_per_row;
         let row_end = ring_end.div_ceil(rings_per_row);
         let mut buckets = vec![Vec::new(); rings_per_row];
         for row in row_start..row_end.min(source.rows.num_rows()) {
-            source.rows.fill_row(row, &mut lanes);
+            source.rows.fill_row(row, &mut selected_rows);
+            let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
             for bucket in &mut buckets {
                 bucket.clear();
             }
-            for (column, &hot) in lanes.iter().enumerate() {
-                if hot == NO_HOT_LANE {
+            for (column, &hot) in selected_rows.iter().enumerate() {
+                if !row_is_committed(hot, committed_zero_mask, column) {
                     continue;
                 }
                 let hot = usize::from(hot);
                 if hot >= k {
                     return Err(AkitaError::InvalidInput(format!(
-                        "trace one-hot lane {hot} is outside K={k}"
+                        "trace one-hot row {hot} is outside K={k}"
                     )));
                 }
                 buckets[hot / D].push((column, hot % D));
@@ -649,15 +877,16 @@ fn visit_segment_ring_range<const D: usize>(
                 if row >= source.rows.num_rows() {
                     break;
                 }
-                source.rows.fill_row(row, &mut lanes);
-                for (column, &hot) in lanes.iter().enumerate() {
-                    if hot == NO_HOT_LANE {
+                source.rows.fill_row(row, &mut selected_rows);
+                let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
+                for (column, &hot) in selected_rows.iter().enumerate() {
+                    if !row_is_committed(hot, committed_zero_mask, column) {
                         continue;
                     }
                     let hot = usize::from(hot);
                     if hot >= k {
                         return Err(AkitaError::InvalidInput(format!(
-                            "trace one-hot lane {hot} is outside K={k}"
+                            "trace one-hot row {hot} is outside K={k}"
                         )));
                     }
                     contributions.push((column, row_offset * k + hot));
@@ -669,19 +898,19 @@ fn visit_segment_ring_range<const D: usize>(
     Ok(())
 }
 
-/// Visits K<D ring elements as the raw lanes for the D/K trace rows packed
+/// Visits K<D ring elements as row indices for the D/K trace rows packed
 /// into each ring. This avoids expanding the row buffer into contribution
-/// tuples when a kernel can consume lanes directly.
-fn visit_segment_ring_lane_range<const D: usize>(
+/// tuples when a kernel can consume the indices directly.
+fn visit_segment_ring_row_range<const D: usize>(
     source: &TracePackedOneHotKernelSource<'_>,
     ring_start: usize,
     ring_end: usize,
-    mut visit: impl FnMut(usize, &[u8]),
+    mut visit: impl FnMut(usize, &[u8], &[u64]),
 ) -> Result<(), AkitaError> {
     validate_dimension::<D>(source.one_hot_k)?;
     if source.one_hot_k >= D {
         return Err(AkitaError::InvalidInput(format!(
-            "trace one-hot raw-lane traversal requires K={} < D={D}",
+            "trace one-hot row traversal requires K={} < D={D}",
             source.one_hot_k
         )));
     }
@@ -699,10 +928,11 @@ fn visit_segment_ring_lane_range<const D: usize>(
             source.rows.num_rows()
         )));
     }
-    let lane_count = num_columns.checked_mul(rows_per_ring).ok_or_else(|| {
-        AkitaError::InvalidInput("trace one-hot raw-lane buffer size overflow".to_string())
+    let row_index_count = num_columns.checked_mul(rows_per_ring).ok_or_else(|| {
+        AkitaError::InvalidInput("trace one-hot row-index buffer size overflow".to_string())
     })?;
-    let mut lanes = vec![NO_HOT_LANE; lane_count];
+    let mut selected_rows = vec![NO_SELECTED_ROW; row_index_count];
+    let mut committed_zero_masks = vec![0u64; rows_per_ring];
     for ring in ring_start..ring_end {
         let row_start = ring * rows_per_ring;
         let populated_rows = source
@@ -710,17 +940,21 @@ fn visit_segment_ring_lane_range<const D: usize>(
             .num_rows()
             .saturating_sub(row_start)
             .min(rows_per_ring);
-        let populated_lanes = &mut lanes[..populated_rows * num_columns];
-        source.rows.fill_rows(row_start, populated_lanes);
-        for &hot in populated_lanes.iter() {
-            if hot != NO_HOT_LANE && usize::from(hot) >= source.one_hot_k {
+        let populated_indices = &mut selected_rows[..populated_rows * num_columns];
+        let populated_masks = &mut committed_zero_masks[..populated_rows];
+        source.rows.fill_rows(row_start, populated_indices);
+        source
+            .rows
+            .fill_committed_digit_zero_masks(row_start, populated_masks);
+        for &hot in populated_indices.iter() {
+            if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
                 return Err(AkitaError::InvalidInput(format!(
-                    "trace one-hot lane {hot} is outside K={}",
+                    "trace one-hot row {hot} is outside K={}",
                     source.one_hot_k
                 )));
             }
         }
-        visit(ring, populated_lanes);
+        visit(ring, populated_indices, populated_masks);
     }
     Ok(())
 }
@@ -748,21 +982,26 @@ fn flush_deferred_rank<const D: usize>(
 
 #[inline(always)]
 fn full_row_coefficients<const N: usize>(
-    lanes: &[u8],
+    selected_rows: &[u8],
+    committed_zero_masks: &[u64],
     num_columns: usize,
     column: usize,
     one_hot_k: usize,
 ) -> Option<[usize; N]> {
-    if lanes.len() != N * num_columns {
+    if selected_rows.len() != N * num_columns || committed_zero_masks.len() != N {
         return None;
     }
-    let coefficients =
-        std::array::from_fn(|row| row * one_hot_k + usize::from(lanes[row * num_columns + column]));
-    lanes
-        .iter()
-        .skip(column)
-        .step_by(num_columns)
-        .all(|&hot| hot != NO_HOT_LANE)
+    let coefficients = std::array::from_fn(|row| {
+        row * one_hot_k + usize::from(selected_rows[row * num_columns + column])
+    });
+    (0..N)
+        .all(|row| {
+            row_is_committed(
+                selected_rows[row * num_columns + column],
+                committed_zero_masks[row],
+                column,
+            )
+        })
         .then_some(coefficients)
 }
 
@@ -770,35 +1009,88 @@ fn full_row_coefficients<const N: usize>(
 fn shift_accumulate_full_rows<const D: usize, const N: usize>(
     src: &AkitaWideRing<D>,
     dst: &mut AkitaWideRing<D>,
-    lanes: &[u8],
+    selected_rows: &[u8],
+    committed_zero_masks: &[u64],
     num_columns: usize,
     column: usize,
     one_hot_k: usize,
 ) -> bool {
-    let Some(coefficients) = full_row_coefficients::<N>(lanes, num_columns, column, one_hot_k)
-    else {
+    let Some(coefficients) = full_row_coefficients::<N>(
+        selected_rows,
+        committed_zero_masks,
+        num_columns,
+        column,
+        one_hot_k,
+    ) else {
         return false;
     };
-    src.shift_accumulate_array_into(dst, &coefficients);
+    for coefficient in coefficients {
+        src.shift_accumulate_into(dst, coefficient);
+    }
     true
 }
 
 #[inline(always)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fixed-row fast path keeps its source, destination, row views, and geometry explicit"
+)]
 fn try_shift_accumulate_full_rows<const D: usize>(
     src: &AkitaWideRing<D>,
     dst: &mut AkitaWideRing<D>,
-    lanes: &[u8],
+    selected_rows: &[u8],
+    committed_zero_masks: &[u64],
     num_columns: usize,
     column: usize,
     one_hot_k: usize,
     rows_per_ring: usize,
 ) -> bool {
     match rows_per_ring {
-        2 => shift_accumulate_full_rows::<D, 2>(src, dst, lanes, num_columns, column, one_hot_k),
-        4 => shift_accumulate_full_rows::<D, 4>(src, dst, lanes, num_columns, column, one_hot_k),
-        8 => shift_accumulate_full_rows::<D, 8>(src, dst, lanes, num_columns, column, one_hot_k),
-        16 => shift_accumulate_full_rows::<D, 16>(src, dst, lanes, num_columns, column, one_hot_k),
-        32 => shift_accumulate_full_rows::<D, 32>(src, dst, lanes, num_columns, column, one_hot_k),
+        2 => shift_accumulate_full_rows::<D, 2>(
+            src,
+            dst,
+            selected_rows,
+            committed_zero_masks,
+            num_columns,
+            column,
+            one_hot_k,
+        ),
+        4 => shift_accumulate_full_rows::<D, 4>(
+            src,
+            dst,
+            selected_rows,
+            committed_zero_masks,
+            num_columns,
+            column,
+            one_hot_k,
+        ),
+        8 => shift_accumulate_full_rows::<D, 8>(
+            src,
+            dst,
+            selected_rows,
+            committed_zero_masks,
+            num_columns,
+            column,
+            one_hot_k,
+        ),
+        16 => shift_accumulate_full_rows::<D, 16>(
+            src,
+            dst,
+            selected_rows,
+            committed_zero_masks,
+            num_columns,
+            column,
+            one_hot_k,
+        ),
+        32 => shift_accumulate_full_rows::<D, 32>(
+            src,
+            dst,
+            selected_rows,
+            committed_zero_masks,
+            num_columns,
+            column,
+            one_hot_k,
+        ),
         _ => false,
     }
 }
@@ -877,13 +1169,9 @@ fn commit_packed<const D: usize>(
         .checked_mul(plan.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
     let expanded = backend.prepared_expanded_setup(prepared);
-    let a_matrix = expanded.shared_matrix().covering_at_dyn(
-        plan.n_a
-            .checked_mul(active_cols)
-            .ok_or_else(|| AkitaError::InvalidSetup("active A extent overflow".to_string()))?,
-        D,
-    )?;
-    let a_view = a_matrix.ring_view::<D>(plan.n_a, active_cols)?;
+    let a_view = expanded
+        .shared_matrix()
+        .ring_view::<D>(plan.n_a, active_cols)?;
     let a_rows = a_view.rows().collect::<Vec<_>>();
     let max_per_ring = (D / source.one_hot_k).max(1);
     drop(_prepare_span);
@@ -909,10 +1197,8 @@ fn commit_packed<const D: usize>(
             tasks = blocks_per_column * parts,
             active_columns = num_columns,
             rows_per_ring = D / source.one_hot_k,
-            fused_four_shifts = D == 64 && source.one_hot_k == 16,
-            shared_shift_groups = D == 64 && source.one_hot_k == 16,
-            generic_fused_row_shifts =
-                D != 64 && matches!(D / source.one_hot_k, 2 | 4 | 8 | 16 | 32),
+            shared_shift_groups = source.one_hot_k == 16 && matches!(D, 64 | 128 | 256),
+            generic_fused_row_shifts = matches!(D / source.one_hot_k, 2 | 4 | 8 | 16 | 32),
         )
         .entered();
         let partials = (0..blocks_per_column * parts)
@@ -930,7 +1216,7 @@ fn commit_packed<const D: usize>(
                 );
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
-                let rank_tiled_k256 = matches!(D, 64 | 128)
+                let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
                     && source.one_hot_k == 256
                     && num_columns <= u32::BITS as usize;
                 let mut wide = if rank_tiled_k256 {
@@ -941,96 +1227,78 @@ fn commit_packed<const D: usize>(
                 let mut budget = 0usize;
                 if source.one_hot_k < D {
                     let rows_per_ring = D / source.one_hot_k;
-                    let fuse_four_shifts = D == 64 && source.one_hot_k == 16;
-                    let mut shift_groups = fuse_four_shifts
-                        .then(|| D64K16ShiftGroups::new(num_columns))
-                        .flatten();
-                    visit_segment_ring_lane_range::<D>(
+                    let mut shift_groups = (source.one_hot_k == 16
+                        && rows_per_ring.is_multiple_of(4))
+                    .then(|| {
+                        (0..rows_per_ring / 4)
+                            .map(|chunk| K16FourRowShiftGroups::new(num_columns, 4 * chunk))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .flatten();
+                    visit_segment_ring_row_range::<D>(
                         source,
                         ring_start,
                         ring_end,
-                        |ring, lanes| {
+                        |ring, selected_rows, committed_zero_masks| {
                             let position = ring - block_ring_start;
                             let a_col = position * plan.num_digits_inner;
-                            let grouped = shift_groups
-                                .as_mut()
-                                .is_some_and(|groups| groups.build(lanes, num_columns));
+                            let grouped = shift_groups.as_mut().is_some_and(|groups| {
+                                groups
+                                    .iter_mut()
+                                    .zip(selected_rows.chunks_exact(4 * num_columns))
+                                    .zip(committed_zero_masks.chunks_exact(4))
+                                    .all(|((groups, selected_rows), masks)| {
+                                        groups.build(selected_rows, masks, num_columns)
+                                    })
+                            });
                             for (a, a_row) in a_rows.iter().enumerate() {
                                 let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
                                 if grouped {
                                     if let Some(groups) = &shift_groups {
-                                        groups.accumulate(
-                                            &a_wide,
-                                            &mut wide,
-                                            a,
-                                            plan.n_a,
-                                            lanes,
-                                            num_columns,
-                                        );
+                                        for ((groups, selected_rows), masks) in groups
+                                            .iter()
+                                            .zip(selected_rows.chunks_exact(4 * num_columns))
+                                            .zip(committed_zero_masks.chunks_exact(4))
+                                        {
+                                            groups.accumulate(
+                                                &a_wide,
+                                                &mut wide,
+                                                a,
+                                                plan.n_a,
+                                                selected_rows,
+                                                masks,
+                                                num_columns,
+                                            );
+                                        }
                                         continue;
                                     }
                                 }
-                                if fuse_four_shifts {
-                                    debug_assert_eq!(rows_per_ring, 4);
-                                    for column in 0..num_columns {
-                                        let hot0 = lanes[column];
-                                        let hot1 = lanes[num_columns + column];
-                                        let hot2 = lanes[2 * num_columns + column];
-                                        let hot3 = lanes[3 * num_columns + column];
-                                        if hot0 != NO_HOT_LANE
-                                            && hot1 != NO_HOT_LANE
-                                            && hot2 != NO_HOT_LANE
-                                            && hot3 != NO_HOT_LANE
-                                        {
-                                            let shifts = [
-                                                usize::from(hot0),
-                                                16 + usize::from(hot1),
-                                                32 + usize::from(hot2),
-                                                48 + usize::from(hot3),
-                                            ];
-                                            a_wide.shift_accumulate_array_into(
-                                                &mut wide[column * plan.n_a + a],
-                                                &shifts,
-                                            );
-                                        } else {
-                                            for (row_offset, hot) in
-                                                [hot0, hot1, hot2, hot3].into_iter().enumerate()
-                                            {
-                                                if hot == NO_HOT_LANE {
-                                                    continue;
-                                                }
-                                                a_wide.shift_accumulate_into(
-                                                    &mut wide[column * plan.n_a + a],
-                                                    row_offset * 16 + usize::from(hot),
-                                                );
-                                            }
-                                        }
+                                for column in 0..num_columns {
+                                    let dst = &mut wide[column * plan.n_a + a];
+                                    if try_shift_accumulate_full_rows(
+                                        &a_wide,
+                                        dst,
+                                        selected_rows,
+                                        committed_zero_masks,
+                                        num_columns,
+                                        column,
+                                        source.one_hot_k,
+                                        rows_per_ring,
+                                    ) {
+                                        continue;
                                     }
-                                } else {
-                                    for column in 0..num_columns {
-                                        let dst = &mut wide[column * plan.n_a + a];
-                                        if try_shift_accumulate_full_rows(
-                                            &a_wide,
-                                            dst,
-                                            lanes,
-                                            num_columns,
-                                            column,
-                                            source.one_hot_k,
-                                            rows_per_ring,
-                                        ) {
-                                            continue;
-                                        }
-                                        for (row_offset, row_lanes) in
-                                            lanes.chunks_exact(num_columns).enumerate()
-                                        {
-                                            let hot = row_lanes[column];
-                                            if hot != NO_HOT_LANE {
-                                                a_wide.shift_accumulate_into(
-                                                    dst,
-                                                    row_offset * source.one_hot_k
-                                                        + usize::from(hot),
-                                                );
-                                            }
+                                    for (row_offset, (row_indices, &committed_zero_mask)) in
+                                        selected_rows
+                                            .chunks_exact(num_columns)
+                                            .zip(committed_zero_masks)
+                                            .enumerate()
+                                    {
+                                        let hot = row_indices[column];
+                                        if row_is_committed(hot, committed_zero_mask, column) {
+                                            a_wide.shift_accumulate_into(
+                                                dst,
+                                                row_offset * source.one_hot_k + usize::from(hot),
+                                            );
                                         }
                                     }
                                 }
@@ -1045,28 +1313,30 @@ fn commit_packed<const D: usize>(
                 } else if rank_tiled_k256 {
                     // Stream one A rank at a time so its destination accumulators fit in cache.
                     let rings_per_row = source.one_hot_k / D;
-                    debug_assert!(matches!(rings_per_row, 2 | 4));
+                    debug_assert!(matches!(rings_per_row, 1 | 2 | 4));
                     debug_assert_eq!(ring_start % rings_per_row, 0);
                     debug_assert_eq!(ring_end % rings_per_row, 0);
                     let row_start = ring_start / rings_per_row;
                     let row_end = ring_end / rings_per_row;
-                    let mut lanes = vec![NO_HOT_LANE; num_columns];
+                    let mut selected_rows = vec![NO_SELECTED_ROW; num_columns];
                     let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
                     let mut ring_masks = vec![[0u32; 4]; K256_ROW_BATCH];
                     let mut rank_deferred = vec![DeferredFp128Ring::zero(); num_columns];
                     for tile_start in (row_start..row_end).step_by(K256_ROW_BATCH) {
                         let tile_len = (row_end - tile_start).min(K256_ROW_BATCH);
                         for row_offset in 0..tile_len {
-                            source.rows.fill_row(tile_start + row_offset, &mut lanes);
+                            let row = tile_start + row_offset;
+                            source.rows.fill_row(row, &mut selected_rows);
+                            let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
                             let masks = &mut ring_masks[row_offset];
                             *masks = [0; 4];
-                            for (column, &hot) in lanes.iter().enumerate() {
-                                if hot == NO_HOT_LANE {
+                            for (column, &hot) in selected_rows.iter().enumerate() {
+                                if !row_is_committed(hot, committed_zero_mask, column) {
                                     continue;
                                 }
                                 if usize::from(hot) >= source.one_hot_k {
                                     return Err(AkitaError::InvalidInput(format!(
-                                        "trace one-hot lane {hot} is outside K={}",
+                                        "trace one-hot row {hot} is outside K={}",
                                         source.one_hot_k
                                     )));
                                 }
@@ -1201,23 +1471,47 @@ fn commit_packed<const D: usize>(
     Ok(CommitInnerWitness::from_rows(rows))
 }
 
+enum PackedOpeningWeights<'a, const D: usize> {
+    Base {
+        live_block_weights: &'a [AkitaField],
+        position_weights: &'a [AkitaField],
+    },
+    Subfield {
+        live_block_weights: Vec<CyclotomicRing<AkitaField, D>>,
+        position_weights: Vec<CyclotomicRing<AkitaField, D>>,
+    },
+}
+
 fn opening_fold_packed<const D: usize>(
     source: &TracePackedOneHotKernelSource<'_>,
-    plan: OpeningFoldPlan<'_, AkitaField, D>,
+    plan: OpeningFoldPlan<'_, AkitaField>,
 ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
-    let num_positions = match plan {
+    let (num_positions, weights) = match plan {
         OpeningFoldPlan::Base {
+            live_block_weights,
+            position_weights,
             num_positions_per_block,
-            ..
-        }
-        | OpeningFoldPlan::Ring {
+        } => (
             num_positions_per_block,
-            ..
-        } => num_positions_per_block,
+            PackedOpeningWeights::Base {
+                live_block_weights,
+                position_weights,
+            },
+        ),
+        OpeningFoldPlan::Subfield {
+            multipliers,
+            num_positions_per_block,
+        } => (
+            num_positions_per_block,
+            PackedOpeningWeights::Subfield {
+                live_block_weights: multipliers.materialize_fold_rings::<D>()?,
+                position_weights: multipliers.materialize_position_rings::<D>()?,
+            },
+        ),
     };
-    let weight_kind = match plan {
-        OpeningFoldPlan::Base { .. } => "base",
-        OpeningFoldPlan::Ring { .. } => "ring",
+    let weight_kind = match &weights {
+        PackedOpeningWeights::Base { .. } => "base",
+        PackedOpeningWeights::Subfield { .. } => "subfield",
     };
     let _span = tracing::info_span!(
         "TracePackedOneHot::evaluate_and_fold",
@@ -1233,16 +1527,14 @@ fn opening_fold_packed<const D: usize>(
     let segment_rings = source.segment_ring_elems::<D>()?;
     let (_, num_blocks) =
         validate_block_geometry(segment_rings, source.column_capacity, num_positions)?;
-    let (live_weights, position_weights) = match plan {
-        OpeningFoldPlan::Base {
+    let (live_weights, position_weights) = match &weights {
+        PackedOpeningWeights::Base {
             live_block_weights,
             position_weights,
-            ..
         } => (live_block_weights.len(), position_weights.len()),
-        OpeningFoldPlan::Ring {
+        PackedOpeningWeights::Subfield {
             live_block_weights,
             position_weights,
-            ..
         } => (live_block_weights.len(), position_weights.len()),
     };
     if live_weights != num_blocks || position_weights != num_positions {
@@ -1278,39 +1570,45 @@ fn opening_fold_packed<const D: usize>(
                 let ring_end = block_ring_start + part_end;
                 let mut folded = vec![CyclotomicRing::zero(); num_columns];
                 if source.one_hot_k < D {
-                    visit_segment_ring_lane_range::<D>(
+                    visit_segment_ring_row_range::<D>(
                         source,
                         ring_start,
                         ring_end,
-                        |ring, lanes| {
+                        |ring, selected_rows, committed_zero_masks| {
                             let position = ring - block_ring_start;
-                            match plan {
-                                OpeningFoldPlan::Base {
+                            match &weights {
+                                PackedOpeningWeights::Base {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
-                                    for (row_offset, row_lanes) in
-                                        lanes.chunks_exact(num_columns).enumerate()
+                                    for (row_offset, (row_indices, &committed_zero_mask)) in
+                                        selected_rows
+                                            .chunks_exact(num_columns)
+                                            .zip(committed_zero_masks)
+                                            .enumerate()
                                     {
                                         let coefficient_base = row_offset * source.one_hot_k;
-                                        for (column, &hot) in row_lanes.iter().enumerate() {
-                                            if hot != NO_HOT_LANE {
+                                        for (column, &hot) in row_indices.iter().enumerate() {
+                                            if row_is_committed(hot, committed_zero_mask, column) {
                                                 folded[column].coeffs
                                                     [coefficient_base + usize::from(hot)] += weight;
                                             }
                                         }
                                     }
                                 }
-                                OpeningFoldPlan::Ring {
+                                PackedOpeningWeights::Subfield {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
-                                    for (row_offset, row_lanes) in
-                                        lanes.chunks_exact(num_columns).enumerate()
+                                    for (row_offset, (row_indices, &committed_zero_mask)) in
+                                        selected_rows
+                                            .chunks_exact(num_columns)
+                                            .zip(committed_zero_masks)
+                                            .enumerate()
                                     {
                                         let coefficient_base = row_offset * source.one_hot_k;
-                                        for (column, &hot) in row_lanes.iter().enumerate() {
-                                            if hot != NO_HOT_LANE {
+                                        for (column, &hot) in row_indices.iter().enumerate() {
+                                            if row_is_committed(hot, committed_zero_mask, column) {
                                                 weight.shift_accumulate_into(
                                                     &mut folded[column],
                                                     coefficient_base + usize::from(hot),
@@ -1329,8 +1627,8 @@ fn opening_fold_packed<const D: usize>(
                         ring_end,
                         |ring, contributions| {
                             let position = ring - block_ring_start;
-                            match plan {
-                                OpeningFoldPlan::Base {
+                            match &weights {
+                                PackedOpeningWeights::Base {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
@@ -1338,7 +1636,7 @@ fn opening_fold_packed<const D: usize>(
                                         folded[column].coeffs[coefficient] += weight;
                                     }
                                 }
-                                OpeningFoldPlan::Ring {
+                                PackedOpeningWeights::Subfield {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
@@ -1393,13 +1691,13 @@ fn opening_fold_packed<const D: usize>(
                 let global_ring = column * segment_rings + ring;
                 let block = global_ring / num_positions;
                 let position = global_ring % num_positions;
-                match plan {
-                    OpeningFoldPlan::Base {
+                match &weights {
+                    PackedOpeningWeights::Base {
                         position_weights, ..
                     } => {
                         folded[block].coeffs[coefficient] += position_weights[position];
                     }
-                    OpeningFoldPlan::Ring {
+                    PackedOpeningWeights::Subfield {
                         position_weights, ..
                     } => {
                         position_weights[position]
@@ -1416,16 +1714,16 @@ fn opening_fold_packed<const D: usize>(
         weight_kind,
     )
     .entered();
-    let eval = match plan {
-        OpeningFoldPlan::Base {
+    let eval = match &weights {
+        PackedOpeningWeights::Base {
             live_block_weights, ..
         } => folded
             .iter()
-            .zip(live_block_weights)
+            .zip(live_block_weights.iter().copied())
             .fold(CyclotomicRing::zero(), |acc, (value, weight)| {
-                acc + value.scale(weight)
+                acc + value.scale(&weight)
             }),
-        OpeningFoldPlan::Ring {
+        PackedOpeningWeights::Subfield {
             live_block_weights, ..
         } => folded
             .iter()
@@ -1441,25 +1739,22 @@ fn opening_fold_packed<const D: usize>(
 enum DecomposeRotationMode {
     Auto,
     Compact,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "forced rotation modes are test-only equivalence checks"
+        )
+    )]
     Dense,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "forced rotation modes are test-only equivalence checks"
+        )
+    )]
     Sparse,
-}
-
-impl DecomposeRotationMode {
-    fn from_env() -> Result<Self, AkitaError> {
-        match std::env::var("JOLT_AKITA_DECOMPOSE_MODE").as_deref() {
-            Ok("compact") => Ok(Self::Compact),
-            Ok("dense") => Ok(Self::Dense),
-            Ok("sparse") => Ok(Self::Sparse),
-            Ok("auto") | Err(std::env::VarError::NotPresent) => Ok(Self::Auto),
-            Ok(value) => Err(AkitaError::InvalidInput(format!(
-                "JOLT_AKITA_DECOMPOSE_MODE must be auto, compact, dense, or sparse; got {value:?}"
-            ))),
-            Err(error) => Err(AkitaError::InvalidInput(format!(
-                "failed to read JOLT_AKITA_DECOMPOSE_MODE: {error}"
-            ))),
-        }
-    }
 }
 
 struct PreparedSparseClass {
@@ -2033,22 +2328,25 @@ fn decompose_fold_packed_with_mode<const D: usize>(
                         let num_columns = source.rows.num_columns();
                         let rows_per_ring = D / source.one_hot_k;
                         let mut coefficients = Vec::with_capacity(rows_per_ring);
-                        visit_segment_ring_lane_range::<D>(
+                        visit_segment_ring_row_range::<D>(
                             source,
                             ring_start,
                             ring_end,
-                            |ring, lanes| {
+                            |ring, selected_rows, committed_zero_masks| {
                                 let position = ring - trace_block * num_positions;
                                 let dst = &mut compressed[position - position_start];
                                 if rows_per_ring <= 4 {
                                     for column in 0..num_columns {
                                         let mut fixed_coefficients = [0usize; 4];
                                         let mut count = 0;
-                                        for (row_offset, row_lanes) in
-                                            lanes.chunks_exact(num_columns).enumerate()
+                                        for (row_offset, (row_indices, &committed_zero_mask)) in
+                                            selected_rows
+                                                .chunks_exact(num_columns)
+                                                .zip(committed_zero_masks)
+                                                .enumerate()
                                         {
-                                            let hot = row_lanes[column];
-                                            if hot != NO_HOT_LANE {
+                                            let hot = row_indices[column];
+                                            if row_is_committed(hot, committed_zero_mask, column) {
                                                 fixed_coefficients[count] = row_offset
                                                     * source.one_hot_k
                                                     + usize::from(hot);
@@ -2066,11 +2364,14 @@ fn decompose_fold_packed_with_mode<const D: usize>(
                                 } else {
                                     for column in 0..num_columns {
                                         coefficients.clear();
-                                        for (row_offset, row_lanes) in
-                                            lanes.chunks_exact(num_columns).enumerate()
+                                        for (row_offset, (row_indices, &committed_zero_mask)) in
+                                            selected_rows
+                                                .chunks_exact(num_columns)
+                                                .zip(committed_zero_masks)
+                                                .enumerate()
                                         {
-                                            let hot = row_lanes[column];
-                                            if hot != NO_HOT_LANE {
+                                            let hot = row_indices[column];
+                                            if row_is_committed(hot, committed_zero_mask, column) {
                                                 coefficients.push(
                                                     row_offset * source.one_hot_k
                                                         + usize::from(hot),
@@ -2188,18 +2489,21 @@ fn decompose_fold_packed<const D: usize>(
         challenges,
         num_positions,
         num_digits,
-        DecomposeRotationMode::from_env()?,
+        DecomposeRotationMode::Auto,
     )
 }
 
 impl<const D: usize> RootCommitKernel<TracePackedOneHotView<'_, D>, AkitaField, D> for CpuBackend {
-    fn commit_inner(
+    fn commit_inner_group(
         &self,
         prepared: &Self::PreparedSetup,
-        source: TracePackedOneHotView<'_, D>,
+        sources: Vec<TracePackedOneHotView<'_, D>>,
         plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<AkitaField>, AkitaError> {
-        commit_packed::<D>(self, prepared, &source.kernel_source(), plan)
+    ) -> Result<Vec<CommitInnerWitness<AkitaField>>, AkitaError> {
+        sources
+            .into_par_iter()
+            .map(|source| commit_packed::<D>(self, prepared, &source.kernel_source(), plan))
+            .collect()
     }
 }
 
@@ -2208,7 +2512,7 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: TracePackedOneHotView<'_, D>,
-        plan: OpeningFoldPlan<'_, AkitaField, D>,
+        plan: OpeningFoldPlan<'_, AkitaField>,
     ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
         opening_fold_packed(&source.kernel_source(), plan)
     }
@@ -2252,8 +2556,353 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
                     num_digits,
                 )?,
             )),
-            DecomposeFoldBatchPlan::Tensor { .. } => Ok(BatchDecomposeFoldOutcome::Unsupported),
         }
+    }
+}
+
+struct TraceCoefficientPackingScatter<'a, E: akita_field::FieldCore> {
+    point: &'a PreparedSubringCoefficientPackingPoint<E>,
+    stride: usize,
+    subring_dimension: usize,
+}
+
+impl<'a, E> TraceCoefficientPackingScatter<'a, E>
+where
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+{
+    fn new(point: &'a PreparedSubringCoefficientPackingPoint<E>) -> Result<Self, AkitaError> {
+        let geometry = point.geometry();
+        if E::EXT_DEGREE != geometry.extension_degree() {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing field extension degree mismatch".into(),
+            ));
+        }
+        Ok(Self {
+            point,
+            stride: geometry.subring_embedding_stride(),
+            subring_dimension: geometry.challenge_subring_dimension(),
+        })
+    }
+
+    #[inline(always)]
+    fn add<const D: usize>(
+        &self,
+        field_index_in_block: usize,
+        coordinates: &mut [AkitaField],
+    ) -> Result<(), AkitaError> {
+        let position = field_index_in_block / D;
+        let coefficient = field_index_in_block % D;
+        let low_index = coefficient % self.stride;
+        let subring_index = coefficient / self.stride;
+        let position_weight = self
+            .point
+            .position_weights()
+            .get(position)
+            .ok_or(AkitaError::InvalidProof)?;
+        let packing_weight = self
+            .point
+            .packing_weights()
+            .get(low_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let value = *position_weight * *packing_weight;
+        let extension_coordinates = value.ext_coords();
+        if extension_coordinates.len() != E::EXT_DEGREE {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing extension encoding width mismatch".into(),
+            ));
+        }
+        for (extension_coordinate, coordinate) in extension_coordinates.iter().copied().enumerate()
+        {
+            let output_index = extension_coordinate
+                .checked_mul(self.subring_dimension)
+                .and_then(|base| base.checked_add(subring_index))
+                .ok_or(AkitaError::InvalidProof)?;
+            *coordinates
+                .get_mut(output_index)
+                .ok_or(AkitaError::InvalidProof)? += coordinate;
+        }
+        Ok(())
+    }
+}
+
+fn coefficient_packing_row_blocks<E, const D: usize>(
+    source: &TracePackedOneHotKernelSource<'_>,
+    scatter: &TraceCoefficientPackingScatter<'_, E>,
+    blocks_per_column: usize,
+    rows_per_block: usize,
+    partial_width: usize,
+) -> Result<Vec<Vec<AkitaField>>, AkitaError>
+where
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+{
+    let num_columns = source.num_columns;
+    let packed_lanes = source.rows.packed_one_hot().map(PackedOneHotPoly::lanes);
+    let row_blocks = (0..blocks_per_column)
+        .into_par_iter()
+        .map(|block_in_column| {
+            let row_start = block_in_column.checked_mul(rows_per_block).ok_or_else(|| {
+                AkitaError::InvalidInput("coefficient-packing row offset overflow".into())
+            })?;
+            let row_end = row_start
+                .checked_add(rows_per_block)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("coefficient-packing row end overflow".into())
+                })?
+                .min(source.num_rows);
+            let mut blocks = (0..num_columns)
+                .map(|_| vec![AkitaField::zero(); partial_width])
+                .collect::<Vec<_>>();
+
+            if let Some(lanes) = packed_lanes {
+                for row in row_start..row_end {
+                    let row_lanes = &lanes[row * num_columns..(row + 1) * num_columns];
+                    for (column, &hot) in row_lanes.iter().enumerate() {
+                        if hot == NO_SELECTED_ROW {
+                            continue;
+                        }
+                        scatter.add::<D>(
+                            (row - row_start) * source.one_hot_k + usize::from(hot),
+                            &mut blocks[column],
+                        )?;
+                    }
+                }
+            } else {
+                let batch_capacity = (row_end - row_start).min(K256_ROW_BATCH);
+                let mut selected_rows = vec![NO_SELECTED_ROW; batch_capacity * num_columns];
+                let mut committed_zero_masks = vec![0u64; batch_capacity];
+                for batch_start in (row_start..row_end).step_by(K256_ROW_BATCH) {
+                    let batch_rows = (row_end - batch_start).min(K256_ROW_BATCH);
+                    let selected_rows = &mut selected_rows[..batch_rows * num_columns];
+                    let committed_zero_masks = &mut committed_zero_masks[..batch_rows];
+                    source.rows.fill_rows(batch_start, selected_rows);
+                    source
+                        .rows
+                        .fill_committed_digit_zero_masks(batch_start, committed_zero_masks);
+                    for (row_offset, (row_lanes, &committed_zero_mask)) in selected_rows
+                        .chunks_exact(num_columns)
+                        .zip(committed_zero_masks.iter())
+                        .enumerate()
+                    {
+                        for (column, &hot) in row_lanes.iter().enumerate() {
+                            if !row_is_committed(hot, committed_zero_mask, column) {
+                                continue;
+                            }
+                            if usize::from(hot) >= source.one_hot_k {
+                                return Err(AkitaError::InvalidInput(format!(
+                                    "trace one-hot row {hot} is outside K={}",
+                                    source.one_hot_k
+                                )));
+                            }
+                            scatter.add::<D>(
+                                (batch_start + row_offset - row_start) * source.one_hot_k
+                                    + usize::from(hot),
+                                &mut blocks[column],
+                            )?;
+                        }
+                    }
+                }
+            }
+            Ok(blocks)
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+
+    let num_blocks = source
+        .column_capacity
+        .checked_mul(blocks_per_column)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("coefficient-packing block count overflow".into())
+        })?;
+    let mut blocks = vec![Vec::new(); num_blocks];
+    for (block_in_column, column_blocks) in row_blocks.into_iter().enumerate() {
+        for (column, block) in column_blocks.into_iter().enumerate() {
+            blocks[column * blocks_per_column + block_in_column] = block;
+        }
+    }
+    Ok(blocks)
+}
+
+fn coefficient_packing_column_blocks<E, const D: usize>(
+    source: &TracePackedOneHotKernelSource<'_>,
+    scatter: &TraceCoefficientPackingScatter<'_, E>,
+    columns_per_block: usize,
+    partial_width: usize,
+) -> Result<Vec<Vec<AkitaField>>, AkitaError>
+where
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+{
+    let num_columns = source.num_columns;
+    let packed_lanes = source.rows.packed_one_hot().map(PackedOneHotPoly::lanes);
+    let segment_field_elements = source
+        .num_rows
+        .checked_mul(source.one_hot_k)
+        .ok_or_else(|| AkitaError::InvalidInput("trace one-hot segment overflow".into()))?;
+    let num_blocks = source.column_capacity.div_ceil(columns_per_block);
+    (0..num_blocks)
+        .into_par_iter()
+        .map(|block_index| {
+            let first_column = block_index * columns_per_block;
+            let last_column = (first_column + columns_per_block).min(num_columns);
+            let mut block = vec![AkitaField::zero(); partial_width];
+            if first_column >= last_column {
+                return Ok(block);
+            }
+
+            if let Some(lanes) = packed_lanes {
+                for row in 0..source.num_rows {
+                    let row_lanes = &lanes[row * num_columns..(row + 1) * num_columns];
+                    for (column, &hot) in row_lanes
+                        .iter()
+                        .enumerate()
+                        .take(last_column)
+                        .skip(first_column)
+                    {
+                        if hot == NO_SELECTED_ROW {
+                            continue;
+                        }
+                        scatter.add::<D>(
+                            (column - first_column) * segment_field_elements
+                                + row * source.one_hot_k
+                                + usize::from(hot),
+                            &mut block,
+                        )?;
+                    }
+                }
+            } else {
+                let batch_capacity = source.num_rows.min(K256_ROW_BATCH);
+                let mut selected_rows = vec![NO_SELECTED_ROW; batch_capacity * num_columns];
+                let mut committed_zero_masks = vec![0u64; batch_capacity];
+                for batch_start in (0..source.num_rows).step_by(K256_ROW_BATCH) {
+                    let batch_rows = (source.num_rows - batch_start).min(K256_ROW_BATCH);
+                    let selected_rows = &mut selected_rows[..batch_rows * num_columns];
+                    let committed_zero_masks = &mut committed_zero_masks[..batch_rows];
+                    source.rows.fill_rows(batch_start, selected_rows);
+                    source
+                        .rows
+                        .fill_committed_digit_zero_masks(batch_start, committed_zero_masks);
+                    for (row_offset, (row_lanes, &committed_zero_mask)) in selected_rows
+                        .chunks_exact(num_columns)
+                        .zip(committed_zero_masks.iter())
+                        .enumerate()
+                    {
+                        for (column, &hot) in row_lanes
+                            .iter()
+                            .enumerate()
+                            .take(last_column)
+                            .skip(first_column)
+                        {
+                            if !row_is_committed(hot, committed_zero_mask, column) {
+                                continue;
+                            }
+                            if usize::from(hot) >= source.one_hot_k {
+                                return Err(AkitaError::InvalidInput(format!(
+                                    "trace one-hot row {hot} is outside K={}",
+                                    source.one_hot_k
+                                )));
+                            }
+                            scatter.add::<D>(
+                                (column - first_column) * segment_field_elements
+                                    + (batch_start + row_offset) * source.one_hot_k
+                                    + usize::from(hot),
+                                &mut block,
+                            )?;
+                        }
+                    }
+                }
+            }
+            Ok(block)
+        })
+        .collect()
+}
+
+impl<E, const D: usize>
+    SubringCoefficientPackingBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, E, D>
+    for CpuBackend
+where
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+{
+    #[tracing::instrument(skip_all, name = "coefficient_packing_trace_onehot_partials")]
+    fn coefficient_packing_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotBatchView<'_, D>,
+        plan: SubringCoefficientPackingPlan<'_, E>,
+    ) -> Result<Vec<SubringCoefficientPackingPartials<AkitaField>>, AkitaError> {
+        let source = source.kernel_source();
+        plan.validate::<D>(source.num_vars)?;
+        let point = plan.point;
+        let expected_field_elements =
+            point.num_live_positions().checked_mul(D).ok_or_else(|| {
+                AkitaError::InvalidInput("coefficient-packing trace length overflow".into())
+            })?;
+        if source.total_field_elems() != expected_field_elements {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_field_elements,
+                actual: source.total_field_elems(),
+            });
+        }
+        let partial_width = point.geometry().partial_base_field_width();
+        let scatter = TraceCoefficientPackingScatter::new(point)?;
+        let segment_field_elements = source
+            .num_rows
+            .checked_mul(source.one_hot_k)
+            .ok_or_else(|| AkitaError::InvalidInput("trace one-hot segment overflow".into()))?;
+        let block_field_elements =
+            point
+                .num_positions_per_block()
+                .checked_mul(D)
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("coefficient-packing block width overflow".into())
+                })?;
+
+        let mut blocks = if segment_field_elements.is_multiple_of(block_field_elements) {
+            if !block_field_elements.is_multiple_of(source.one_hot_k) {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient-packing block splits a trace one-hot chunk".into(),
+                ));
+            }
+            coefficient_packing_row_blocks::<E, D>(
+                &source,
+                &scatter,
+                segment_field_elements / block_field_elements,
+                block_field_elements / source.one_hot_k,
+                partial_width,
+            )?
+        } else if block_field_elements.is_multiple_of(segment_field_elements) {
+            coefficient_packing_column_blocks::<E, D>(
+                &source,
+                &scatter,
+                block_field_elements / segment_field_elements,
+                partial_width,
+            )?
+        } else {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing block and trace segment are not aligned".into(),
+            ));
+        };
+        if blocks.len() != point.num_live_blocks() {
+            return Err(AkitaError::InvalidSize {
+                expected: point.num_live_blocks(),
+                actual: blocks.len(),
+            });
+        }
+        let output_len = blocks.len().checked_mul(partial_width).ok_or_else(|| {
+            AkitaError::InvalidInput("coefficient-packing output length overflow".into())
+        })?;
+        let mut coordinates = Vec::new();
+        coordinates.try_reserve_exact(output_len).map_err(|_| {
+            AkitaError::InvalidInput("coefficient-packing output allocation failed".into())
+        })?;
+        for block in &mut blocks {
+            if block.is_empty() {
+                block.resize(partial_width, AkitaField::zero());
+            }
+            coordinates.append(block);
+        }
+        Ok(vec![SubringCoefficientPackingPartials::new(
+            point.geometry(),
+            point.num_live_blocks(),
+            coordinates,
+        )?])
     }
 }
 
@@ -2281,20 +2930,6 @@ where
         _prepared: Option<&Self::PreparedSetup>,
         _source: TracePackedOneHotView<'_, D>,
     ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        Err(AkitaError::UnsupportedSchedule(
-            "Jolt trace one-hot sources require flat root challenges".to_string(),
-        ))
-    }
-
-    fn root_projection(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        _source: TracePackedOneHotView<'_, D>,
-    ) -> Result<RootTensorProjectionPoly<AkitaField>, AkitaError>
-    where
-        AkitaField: FromPrimitiveInt,
-        E: FpExtEncoding<AkitaField>,
-    {
         Err(AkitaError::UnsupportedSchedule(
             "Jolt trace one-hot sources require flat root challenges".to_string(),
         ))
@@ -2337,18 +2972,111 @@ where
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<E, const D: usize>
+    TensorProjectionKernel<MetalTracePackedOneHotTensorView<'_, D>, AkitaField, E, D> for CpuBackend
+where
+    E: ExtField<AkitaField>,
+{
+    fn column_partials(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        _source: MetalTracePackedOneHotTensorView<'_, D>,
+        _logical_point: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: MulBaseUnreduced<AkitaField>,
+    {
+        Err(AkitaError::UnsupportedSchedule(
+            "Jolt trace one-hot sources require flat root challenges".to_string(),
+        ))
+    }
+
+    fn packed_witness(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        _source: MetalTracePackedOneHotTensorView<'_, D>,
+    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+        Err(AkitaError::UnsupportedSchedule(
+            "Jolt trace one-hot sources require flat root challenges".to_string(),
+        ))
+    }
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl<E, const D: usize>
+    TensorProjectionBatchKernel<MetalTracePackedOneHotTensorBatchView<'_, D>, AkitaField, E, D>
+    for CpuBackend
+where
+    E: ExtField<AkitaField>,
+{
+    fn column_partials_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        _source: MetalTracePackedOneHotTensorBatchView<'_, D>,
+        _logical_point: &[E],
+    ) -> Result<Vec<Vec<E>>, AkitaError>
+    where
+        E: MulBaseUnreduced<AkitaField>,
+    {
+        Err(AkitaError::UnsupportedSchedule(
+            "Jolt trace one-hot sources require flat root challenges".to_string(),
+        ))
+    }
+
+    fn sparse_linear_combination(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        _source: MetalTracePackedOneHotTensorBatchView<'_, D>,
+        _coeffs: &[E],
+    ) -> Result<
+        Option<
+            akita_prover::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>,
+        >,
+        AkitaError,
+    > {
+        Err(AkitaError::UnsupportedSchedule(
+            "Jolt trace one-hot sources require flat root challenges".to_string(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests assert valid kernel geometry")]
 
     use super::*;
     use akita_prover::OneHotPoly;
+    use akita_types::{BasisMode, SubringCoefficientPackingGeometry};
+
+    #[test]
+    fn owned_trace_rows_share_the_aligned_packed_owner() {
+        let rows = OwnedTraceOneHotRows::from_row_fn(256, 32, 25, 8, |row, lanes| {
+            for (column, lane) in lanes.iter_mut().enumerate() {
+                *lane = ((row + column) % 255 + 1) as u8;
+            }
+        })
+        .unwrap();
+        let packed = rows.packed_one_hot().unwrap();
+        assert_eq!(rows.lanes().as_ptr(), packed.lanes().as_ptr());
+        assert_eq!(
+            rows.lanes().as_ptr().addr() % akita_prover::PACKED_ONEHOT_BUFFER_ALIGNMENT,
+            0
+        );
+    }
 
     #[derive(Debug)]
     struct TestRows {
         rows: usize,
         columns: usize,
         k: usize,
+        committed_zero_column: Option<usize>,
+    }
+
+    impl TestRows {
+        fn selected_row(&self, row: usize, column: usize) -> u8 {
+            ((row * (2 * column + 1) + column) % self.k) as u8
+        }
     }
 
     impl TraceOneHotRows for TestRows {
@@ -2360,22 +3088,32 @@ mod tests {
             self.columns
         }
 
-        fn fill_row(&self, row: usize, hot_lanes: &mut [u8]) {
-            for (column, hot) in hot_lanes.iter_mut().enumerate() {
-                *hot = ((row * (2 * column + 1) + column) % self.k) as u8;
+        fn fill_row(&self, row: usize, selected_rows: &mut [u8]) {
+            for (column, selected) in selected_rows.iter_mut().enumerate() {
+                *selected = self.selected_row(row, column);
             }
+        }
+
+        fn committed_digit_zero_mask(&self, row: usize) -> u64 {
+            self.committed_zero_column
+                .filter(|&column| self.selected_row(row, column) == 0)
+                .map_or(0, |column| 1u64 << column)
         }
     }
 
-    fn assert_ring_mapping<const D: usize>(k: usize, rows: usize) {
+    fn assert_ring_mapping<const D: usize>(
+        k: usize,
+        rows: usize,
+        committed_zero_column: Option<usize>,
+    ) {
         let source = TracePackedOneHot::new(
             k,
-            64,
             8,
             Arc::new(TestRows {
                 rows,
                 columns: 3,
                 k,
+                committed_zero_column,
             }),
         )
         .unwrap();
@@ -2399,8 +3137,9 @@ mod tests {
         let expected = (0..rows)
             .flat_map(|row| {
                 (0..3).filter_map(move |column| {
-                    let lane = (row * (2 * column + 1) + column) % k;
-                    (lane != 0).then_some((column, row * k + lane))
+                    let selected_row = (row * (2 * column + 1) + column) % k;
+                    (selected_row != 0 || committed_zero_column == Some(column))
+                        .then_some((column, row * k + selected_row))
                 })
             })
             .collect::<Vec<_>>();
@@ -2413,15 +3152,79 @@ mod tests {
     #[test]
     fn row_major_mapping_is_dimension_generic() {
         for rows in [32, 64] {
-            assert_ring_mapping::<64>(16, rows);
-            assert_ring_mapping::<128>(16, rows);
-            assert_ring_mapping::<256>(16, rows);
-            assert_ring_mapping::<512>(16, rows);
-            assert_ring_mapping::<64>(256, rows);
-            assert_ring_mapping::<128>(256, rows);
-            assert_ring_mapping::<256>(256, rows);
-            assert_ring_mapping::<512>(256, rows);
+            assert_ring_mapping::<64>(16, rows, None);
+            assert_ring_mapping::<128>(16, rows, None);
+            assert_ring_mapping::<256>(16, rows, None);
+            assert_ring_mapping::<512>(16, rows, None);
+            assert_ring_mapping::<64>(256, rows, None);
+            assert_ring_mapping::<128>(256, rows, None);
+            assert_ring_mapping::<256>(256, rows, None);
+            assert_ring_mapping::<512>(256, rows, None);
         }
+    }
+
+    #[test]
+    fn committed_digit_zero_mapping_is_dimension_generic() {
+        assert_ring_mapping::<64>(16, 32, Some(1));
+        assert_ring_mapping::<64>(256, 32, Some(1));
+    }
+
+    fn assert_k16_shift_groups<const D: usize>() {
+        const COLUMNS: usize = 5;
+        let rows_per_ring = D / 16;
+        let mut selected_rows = vec![NO_SELECTED_ROW; rows_per_ring * COLUMNS];
+        let committed_zero_masks = vec![0u64; rows_per_ring];
+        for row in 0..rows_per_ring {
+            let shared_hot = ((row + 1) % 15 + 1) as u8;
+            selected_rows[row * COLUMNS] = shared_hot;
+            selected_rows[row * COLUMNS + 1] = shared_hot;
+            selected_rows[row * COLUMNS + 2] = shared_hot;
+            selected_rows[row * COLUMNS + 3] = ((2 * row + 3) % 15 + 1) as u8;
+            selected_rows[row * COLUMNS + 4] = if row == 1 {
+                NO_SELECTED_ROW
+            } else {
+                ((3 * row + 5) % 15 + 1) as u8
+            };
+        }
+
+        let source: CyclotomicRing<AkitaField, D> =
+            CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+                AkitaField::from_u64((index + 1) as u64)
+            }));
+        let source: AkitaWideRing<D> = AkitaWideRing::from_ring(&source);
+        let mut actual = vec![AkitaWideRing::zero(); COLUMNS];
+        for (chunk, chunk_rows) in selected_rows.chunks_exact(4 * COLUMNS).enumerate() {
+            let masks = &committed_zero_masks[4 * chunk..4 * chunk + 4];
+            let mut groups = K16FourRowShiftGroups::new(COLUMNS, 4 * chunk).unwrap();
+            assert!(groups.build(chunk_rows, masks, COLUMNS));
+            groups.accumulate(&source, &mut actual, 0, 1, chunk_rows, masks, COLUMNS);
+        }
+
+        let mut expected = vec![AkitaWideRing::zero(); COLUMNS];
+        for (row, row_indices) in selected_rows.chunks_exact(COLUMNS).enumerate() {
+            for (column, &hot) in row_indices.iter().enumerate() {
+                if hot != NO_SELECTED_ROW {
+                    source
+                        .shift_accumulate_into(&mut expected[column], 16 * row + usize::from(hot));
+                }
+            }
+        }
+        let actual = actual
+            .into_iter()
+            .map(|value| value.reduce::<AkitaField>())
+            .collect::<Vec<_>>();
+        let expected = expected
+            .into_iter()
+            .map(|value| value.reduce::<AkitaField>())
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn k16_shared_shift_groups_cover_adaptive_dimensions() {
+        assert_k16_shift_groups::<64>();
+        assert_k16_shift_groups::<128>();
+        assert_k16_shift_groups::<256>();
     }
 
     #[test]
@@ -2430,8 +3233,9 @@ mod tests {
             rows: 32,
             columns: 9,
             k: 16,
+            committed_zero_column: None,
         });
-        assert!(TracePackedOneHot::new(16, 64, 8, rows).is_err());
+        assert!(TracePackedOneHot::new(16, 8, rows).is_err());
     }
 
     fn assert_deferred_fp128_shift_accumulator<const D: usize>() {
@@ -2465,35 +3269,39 @@ mod tests {
     fn deferred_fp128_shift_accumulator_matches_canonical_at_batch_bound() {
         assert_deferred_fp128_shift_accumulator::<64>();
         assert_deferred_fp128_shift_accumulator::<128>();
+        assert_deferred_fp128_shift_accumulator::<256>();
     }
 
     fn assert_opening_kernels_match_materialized<const D: usize>(
         k: usize,
         rows: usize,
         num_positions: usize,
+        committed_zero_column: Option<usize>,
     ) {
         const COLUMNS: usize = 3;
         const CAPACITY: usize = 8;
         let source = TracePackedOneHot::new(
             k,
-            64,
             CAPACITY,
             Arc::new(TestRows {
                 rows,
                 columns: COLUMNS,
                 k,
+                committed_zero_column,
             }),
         )
         .unwrap();
         let packed_indices = (0..CAPACITY)
             .flat_map(|column| {
                 (0..rows).map(move |row| {
-                    let lane = ((row * (2 * column + 1) + column) % k) as u8;
-                    (column < COLUMNS && lane != 0).then_some(lane)
+                    let selected_row = ((row * (2 * column + 1) + column) % k) as u8;
+                    (column < COLUMNS
+                        && (selected_row != 0 || committed_zero_column == Some(column)))
+                    .then_some(selected_row)
                 })
             })
             .collect();
-        let materialized_source = OneHotPoly::<AkitaField, u8>::new(k, 64, packed_indices).unwrap();
+        let materialized_source = OneHotPoly::<AkitaField, u8>::new(k, packed_indices).unwrap();
         let num_blocks =
             <TracePackedOneHot as RootPolyShape<AkitaField, D>>::num_ring_elems(&source)
                 / num_positions;
@@ -2508,7 +3316,7 @@ mod tests {
             position_weights: &position_weights,
             num_positions_per_block: num_positions,
         };
-        let backend = CpuBackend;
+        let backend = CpuBackend::DEFAULT;
         let streamed = <CpuBackend as OpeningFoldKernel<
             TracePackedOneHotView<'_, D>,
             AkitaField,
@@ -2534,8 +3342,8 @@ mod tests {
 
         let challenges = (0..num_blocks)
             .map(|block| SparseChallenge {
-                positions: vec![0, (block % (D - 1) + 1) as u32],
-                coeffs: vec![1, -1],
+                positions: vec![0, (block % (D - 1) + 1) as u32].into(),
+                coeffs: vec![1, -1].into(),
             })
             .collect::<Vec<_>>();
         let decompose_plan = DecomposeFoldPlan {
@@ -2596,6 +3404,51 @@ mod tests {
         assert_eq!(dense, materialized);
         assert_eq!(sparse, materialized);
         assert_eq!(compact, materialized);
+
+        let geometry = SubringCoefficientPackingGeometry::try_new(1, D, D).unwrap();
+        let point_values = (0..source.num_vars)
+            .map(|index| AkitaField::from_u64((index + 3) as u64))
+            .collect::<Vec<_>>();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            <TracePackedOneHot as RootPolyShape<AkitaField, D>>::num_ring_elems(source.source),
+            num_positions,
+            source.num_vars,
+            &point_values,
+        )
+        .unwrap();
+        let trace_refs = [source.source];
+        let materialized_refs = [&materialized_source];
+        let streamed = <CpuBackend as SubringCoefficientPackingBatchKernel<
+            TracePackedOneHotBatchView<'_, D>,
+            AkitaField,
+            AkitaField,
+            D,
+        >>::coefficient_packing_partials_batch(
+            &backend,
+            None,
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&trace_refs)
+                .unwrap(),
+            SubringCoefficientPackingPlan { point: &point },
+        )
+        .unwrap();
+        let materialized = <CpuBackend as SubringCoefficientPackingBatchKernel<
+            _,
+            AkitaField,
+            AkitaField,
+            D,
+        >>::coefficient_packing_partials_batch(
+            &backend,
+            None,
+            <OneHotPoly<AkitaField, u8> as RootOpeningSource<AkitaField, D>>::opening_batch(
+                &materialized_refs,
+            )
+            .unwrap(),
+            SubringCoefficientPackingPlan { point: &point },
+        )
+        .unwrap();
+        assert_eq!(streamed, materialized);
     }
 
     #[test]
@@ -2608,8 +3461,8 @@ mod tests {
     #[test]
     fn d128_auto_uses_compact_rotations() {
         let challenges = [SparseChallenge {
-            positions: vec![0, 127],
-            coeffs: vec![1, -1],
+            positions: vec![0, 127].into(),
+            coeffs: vec![1, -1].into(),
         }];
         let rotations =
             prepare_rotations::<128>(&challenges, None, 1, DecomposeRotationMode::Auto).unwrap();
@@ -2617,78 +3470,20 @@ mod tests {
     }
 
     #[test]
-    fn root_opening_storage_release_is_scoped_to_each_clone() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        struct DropRows(Arc<AtomicBool>);
-
-        impl Drop for DropRows {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::Relaxed);
-            }
-        }
-
-        impl TraceOneHotRows for DropRows {
-            fn num_rows(&self) -> usize {
-                32
-            }
-
-            fn num_columns(&self) -> usize {
-                3
-            }
-
-            fn fill_row(&self, _row: usize, hot_lanes: &mut [u8]) {
-                hot_lanes.fill(1);
-            }
-        }
-
-        let dropped = Arc::new(AtomicBool::new(false));
-        let source =
-            TracePackedOneHot::new(16, 64, 8, Arc::new(DropRows(Arc::clone(&dropped)))).unwrap();
-        let source_clone = {
-            let _view =
-                <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source)
-                    .unwrap();
-            assert!(!dropped.load(Ordering::Relaxed));
-            source.clone()
-        };
-
-        <TracePackedOneHot as RootPolyMeta<AkitaField>>::release_root_opening_storage(&source);
-
-        assert!(!dropped.load(Ordering::Relaxed));
-        assert!(
-            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source)
-                .is_err()
-        );
-        assert!(
-            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source_clone)
-                .is_ok()
-        );
-
-        <TracePackedOneHot as RootPolyMeta<AkitaField>>::release_root_opening_storage(
-            &source_clone,
-        );
-
-        assert!(dropped.load(Ordering::Relaxed));
-        assert!(
-            <TracePackedOneHot as RootOpeningSource<AkitaField, 64>>::opening_view(&source_clone)
-                .is_err()
-        );
-    }
-
-    #[test]
     fn blockwise_opening_kernels_match_materialized_onehot() {
-        assert_opening_kernels_match_materialized::<64>(256, 32, 16);
-        assert_opening_kernels_match_materialized::<128>(256, 32, 16);
-        assert_opening_kernels_match_materialized::<256>(256, 32, 16);
-        assert_opening_kernels_match_materialized::<512>(256, 32, 8);
-        assert_opening_kernels_match_materialized::<64>(16, 32, 4);
-        assert_opening_kernels_match_materialized::<128>(16, 32, 2);
-        assert_opening_kernels_match_materialized::<256>(16, 32, 2);
-        assert_opening_kernels_match_materialized::<512>(16, 32, 1);
-        assert_opening_kernels_match_materialized::<64>(16, 32, 16);
-        assert_opening_kernels_match_materialized::<128>(16, 32, 8);
-        assert_opening_kernels_match_materialized::<256>(16, 32, 4);
-        assert_opening_kernels_match_materialized::<512>(16, 32, 2);
+        assert_opening_kernels_match_materialized::<64>(256, 32, 16, None);
+        assert_opening_kernels_match_materialized::<128>(256, 32, 16, None);
+        assert_opening_kernels_match_materialized::<256>(256, 32, 16, None);
+        assert_opening_kernels_match_materialized::<512>(256, 32, 8, None);
+        assert_opening_kernels_match_materialized::<64>(16, 32, 4, None);
+        assert_opening_kernels_match_materialized::<128>(16, 32, 2, None);
+        assert_opening_kernels_match_materialized::<256>(16, 32, 2, None);
+        assert_opening_kernels_match_materialized::<512>(16, 32, 1, None);
+        assert_opening_kernels_match_materialized::<64>(16, 32, 16, None);
+        assert_opening_kernels_match_materialized::<128>(16, 32, 8, None);
+        assert_opening_kernels_match_materialized::<256>(16, 32, 4, None);
+        assert_opening_kernels_match_materialized::<512>(16, 32, 2, None);
+        assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1));
+        assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1));
     }
 }

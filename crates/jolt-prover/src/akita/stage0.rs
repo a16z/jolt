@@ -19,7 +19,11 @@ use jolt_verifier::{
 };
 use jolt_witness::JoltWitnessPlane;
 
-use super::witness::{assemble_one_hot_trace_rows, commit_advice_one_hot, AdviceOneHot};
+use super::witness::{
+    assemble_one_hot_trace_rows, commit_advice_one_hot, prepare_one_hot_trace_row_generator,
+    AdviceOneHot,
+};
+use super::JoltAkitaBackend;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Stage 0's outputs: the validated inputs, the seeded transcript (positioned
@@ -42,13 +46,19 @@ where
 /// `OneHotTrace` group, commit the untrusted-advice byte object when advice
 /// bytes are present, and absorb the packed commitment objects in canonical
 /// object order (the verifier's own absorb helper).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "stage zero receives the proof inputs plus one internal scheduling signal"
+)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
+    backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&PCS::Output>,
     program_one_hot: Option<&[PCS::Output]>,
     witness: &W,
     public_io: &JoltDevice,
+    witness_prepare_start: Option<&std::sync::mpsc::Sender<()>>,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: Field,
@@ -157,23 +167,104 @@ where
         });
     }
 
-    let packed_trace_rows = assemble_one_hot_trace_rows(
-        witness,
-        &plan,
-        formula_dimensions.ra_layout,
-        log_k_chunk,
-        log_t,
-    )?;
-    let (commitment, hint) = PCS::commit_trace_one_hot(
-        &preprocessing.pcs_setup,
-        preprocessing.pcs_setup.default_layout_digest(),
-        plan.packing().slot_capacity(),
-        packed_trace_rows,
-    )
-    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
+    let (commitment, hint) = {
+        let trace_backend = backend.trace_commitment_backend();
+        let metal_qualified = jolt_akita::TraceCommitmentBackend::shape_is_metal_qualified(
+            preprocessing.pcs_setup.one_hot_k(),
+            plan.packing().packed_num_vars(),
+        );
+        let streaming = trace_backend.streams_qualified_shape(
+            preprocessing.pcs_setup.one_hot_k(),
+            plan.packing().packed_num_vars(),
+        );
+        let _phase_span = tracing::info_span!(
+            "jolt_prover::one_hot_trace_assembly_commit",
+            backend = trace_backend.mode_name(),
+            metal_qualified,
+            streaming,
+            log_t,
+            columns = plan.packing().ids().len(),
+        )
+        .entered();
+        if streaming {
+            let generator = prepare_one_hot_trace_row_generator(
+                witness,
+                &plan,
+                formula_dimensions.ra_layout,
+                log_k_chunk,
+                log_t,
+            )?;
+            let _commit_span = tracing::info_span!(
+                "jolt_prover::one_hot_trace_commit",
+                backend = trace_backend.mode_name(),
+                metal_qualified,
+                streaming,
+            )
+            .entered();
+            let last_populated_row = generator.populated_rows().checked_sub(1);
+            PCS::commit_streaming_trace_one_hot(
+                trace_backend,
+                &preprocessing.pcs_setup,
+                preprocessing.pcs_setup.default_layout_digest(),
+                jolt_akita::TraceOneHotStreamShape {
+                    column_capacity: plan.packing().slot_capacity(),
+                    num_rows: generator.num_rows(),
+                    populated_rows: generator.populated_rows(),
+                    num_columns: generator.num_columns(),
+                },
+                |row, lanes| {
+                    let result = generator.fill_row(row, lanes);
+                    if result.is_ok() && Some(row) == last_populated_row {
+                        if let Some(start) = witness_prepare_start {
+                            let _ = start.send(());
+                        }
+                    }
+                    result
+                },
+            )
+            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })?
+        } else {
+            let packed_trace_rows = {
+                let _assembly_span = tracing::info_span!(
+                    "jolt_prover::one_hot_trace_assembly",
+                    log_t,
+                    columns = plan.packing().ids().len(),
+                )
+                .entered();
+                assemble_one_hot_trace_rows(
+                    witness,
+                    &plan,
+                    formula_dimensions.ra_layout,
+                    log_k_chunk,
+                    log_t,
+                )?
+            };
+            let _commit_span = tracing::info_span!(
+                "jolt_prover::one_hot_trace_commit",
+                backend = trace_backend.mode_name(),
+                metal_qualified,
+                streaming,
+            )
+            .entered();
+            PCS::commit_trace_one_hot(
+                trace_backend,
+                &preprocessing.pcs_setup,
+                preprocessing.pcs_setup.default_layout_digest(),
+                plan.packing().slot_capacity(),
+                packed_trace_rows,
+            )
+            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })?
+        }
+    };
+    PCS::release_post_commit_residency(&preprocessing.pcs_setup, &hint).map_err(|error| {
+        VerifierError::FinalOpeningVerificationFailed {
+            reason: error.to_string(),
+        }
     })?;
-    PCS::release_post_commit_residency(&preprocessing.pcs_setup, &hint);
 
     // The per-proof untrusted-advice byte object; the trusted object is
     // precommitted (its commitment arrives as an argument).

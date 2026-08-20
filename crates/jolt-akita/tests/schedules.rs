@@ -8,7 +8,7 @@
 use jolt_akita::schedules::emit::{
     family_specs, keys, K16_NUM_VARS, K256_NUM_VARS, ONE_HOT_TRACE_NUM_POLYS,
 };
-use jolt_akita::schedules::{jolt_fp128_d64_onehot_k16_table, jolt_fp128_d64_onehot_k256_table};
+use jolt_akita::schedules::{jolt_fp128_onehot_k16_table, jolt_fp128_onehot_k256_table};
 
 /// Every key of a family grid resolves from its checked-in table (binary
 /// lookup over sorted entries) — no planner-DP fallback for reachable
@@ -18,12 +18,12 @@ use jolt_akita::schedules::{jolt_fp128_d64_onehot_k16_table, jolt_fp128_d64_oneh
 fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     for (table, num_polys, num_vars) in [
         (
-            jolt_fp128_d64_onehot_k16_table().expect("K16 catalog is checked in"),
+            jolt_fp128_onehot_k16_table().expect("K16 catalog is checked in"),
             ONE_HOT_TRACE_NUM_POLYS,
             K16_NUM_VARS,
         ),
         (
-            jolt_fp128_d64_onehot_k256_table().expect("K256 catalog is checked in"),
+            jolt_fp128_onehot_k256_table().expect("K256 catalog is checked in"),
             ONE_HOT_TRACE_NUM_POLYS,
             K256_NUM_VARS,
         ),
@@ -47,14 +47,27 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     }
 }
 
+// rustfmt may reorder generated imports, so catalog comparison starts at the
+// first declaration after the emitter's fixed import block.
+fn strip_import_header(source: &str) -> &str {
+    source
+        .find("use super::{")
+        .and_then(|start| {
+            let rest = &source[start..];
+            rest.find("};").map(|end| &rest[end + 2..])
+        })
+        .unwrap_or(source)
+}
+
 /// Splits Rust source into a whitespace-insensitive token stream:
 /// identifier/number runs stay whole, every other non-whitespace character is
 /// its own token. The planner emits unformatted source while the checked-in
 /// modules are rustfmt-formatted (outside the `#[rustfmt::skip]` tables), so a
-/// byte-for-byte oracle reports pure formatting as drift; token equality
-/// detects every semantic change while ignoring layout. The checked-in file's
+/// byte comparison reports formatting changes; token equality detects every
+/// semantic change while ignoring layout. The checked-in file's
 /// formatting itself is enforced by the workspace `cargo fmt` lane.
 fn source_tokens(source: &str) -> Vec<String> {
+    let source = strip_import_header(source);
     let mut tokens = Vec::new();
     let mut current = String::new();
     for ch in source.chars() {
@@ -82,7 +95,7 @@ fn source_tokens(source: &str) -> Vec<String> {
 #[test]
 #[ignore = "regenerates every schedule through the planner DP (minutes)"]
 fn catalogs_match_planner_regeneration() {
-    for spec in family_specs(std::path::PathBuf::new()) {
+    for spec in family_specs(std::path::PathBuf::new()).expect("schedule family specs are valid") {
         let regenerated =
             akita_planner::emit::emit_family_module(&spec).expect("regeneration must succeed");
         let checked_in = std::fs::read_to_string(

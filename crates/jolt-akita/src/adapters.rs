@@ -2,12 +2,13 @@ use std::{collections::BTreeSet, fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
-use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly, SparseRingPoly};
+use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
 use akita_transcript::Transcript as AkitaBackendTranscript;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
+    CommittedGroup as AkitaBackendCommittedGroup,
 };
 use jolt_field::CanonicalBytes;
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
@@ -19,29 +20,35 @@ use tracing::info_span;
 use crate::trace_onehot::TracePackedOneHot;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
-pub(crate) type AkitaConfig = crate::configs::JoltD64Dense;
-pub(crate) type AkitaOneHotK16Config = crate::configs::JoltD64OneHotK16;
-pub(crate) type AkitaOneHotK256Config = crate::configs::JoltD64OneHotK256;
-pub(crate) type AkitaOneHotK256D128Config = crate::configs::JoltD128OneHotK256;
-pub(crate) const AKITA_D: usize = AkitaConfig::D;
+pub(crate) type AkitaConfig = crate::configs::JoltDense;
+pub(crate) type AkitaOneHotK16Config = crate::configs::JoltOneHotK16;
+pub(crate) type AkitaOneHotK256Config = crate::configs::JoltOneHotK256;
+/// Smallest A dimension accepted by the delegated adaptive policy. Source
+/// objects use this only for dimension-independent flat storage metadata;
+/// each generated schedule still selects its exact per-role dimensions.
+pub(crate) const AKITA_SOURCE_RING_DIMENSION: usize =
+    akita_config::proof_optimized::fp128::Dense::A_RING_DIMENSIONS[0];
+const _: () = assert!(
+    AKITA_SOURCE_RING_DIMENSION
+        == akita_config::proof_optimized::fp128::OneHot::A_RING_DIMENSIONS[0]
+);
 pub const AKITA_ONE_HOT_K16: usize = 16;
 pub const AKITA_ONE_HOT_K256: usize = 256;
-const AKITA_D128_MIN_NUM_VARS: usize = 41;
 
 pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtField;
 
 pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 pub(crate) type AkitaOneHotK16BackendScheme = AkitaCommitmentScheme<AkitaOneHotK16Config>;
 pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256Config>;
-pub(crate) type AkitaOneHotK256D128BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256D128Config>;
-pub(crate) type AkitaBackendCommitment = AkitaBackendRingCommitment<AkitaField>;
+pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
+pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
 pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
 pub(crate) type AkitaBackendProof = AkitaBackendBatchProof<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
 pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
-pub(crate) type AkitaBackendSparsePoly = SparseRingPoly<AkitaField>;
+pub(crate) type AkitaBackendSparsePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField>;
 pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaField>;
 pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
@@ -84,7 +91,6 @@ pub struct AkitaSetupParams {
     pub(crate) max_num_polys_per_commitment_group: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    pub(crate) one_hot_ring_dimension: usize,
     /// When set, only the one-hot flavor's backend setup is built — the
     /// dense-flavor setup for the same shape is large and slow, and a packed
     /// one-hot commitment object never touches it.
@@ -106,10 +112,6 @@ impl AkitaSetupParams {
             max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_ring_dimension: selected_one_hot_ring_dimension(
-                AKITA_ONE_HOT_K256,
-                max_num_vars,
-            ),
             one_hot_only: false,
             dense_only: false,
         }
@@ -129,7 +131,6 @@ impl AkitaSetupParams {
             max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k,
-            one_hot_ring_dimension: selected_one_hot_ring_dimension(one_hot_k, max_num_vars),
             one_hot_only: true,
             dense_only: false,
         }
@@ -149,10 +150,6 @@ impl AkitaSetupParams {
             max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_ring_dimension: selected_one_hot_ring_dimension(
-                AKITA_ONE_HOT_K256,
-                max_num_vars,
-            ),
             one_hot_only: false,
             dense_only: true,
         }
@@ -160,10 +157,6 @@ impl AkitaSetupParams {
 
     pub fn one_hot_k(&self) -> usize {
         self.one_hot_k
-    }
-
-    pub fn one_hot_ring_dimension(&self) -> usize {
-        self.one_hot_ring_dimension
     }
 }
 
@@ -195,7 +188,7 @@ impl AkitaProverSetup {
 
     /// Releases transformed setup slots after the trace commitment. Later
     /// opening work rebuilds the slots on first use.
-    pub fn release_post_commit_ntt_residency(&self) {
+    pub fn release_post_commit_ntt_residency(&self) -> Result<(), OpeningsError> {
         for prepared in [
             self.prepared_backend_setup.as_deref(),
             self.prepared_one_hot_backend_setup.as_deref(),
@@ -203,12 +196,11 @@ impl AkitaProverSetup {
         .into_iter()
         .flatten()
         {
-            let _freed = prepared.drop_built_ntt_slots();
+            let _ = prepared
+                .drop_built_ntt_slots()
+                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
         }
-    }
-
-    pub fn one_hot_ring_dimension(&self) -> usize {
-        self.verifier.one_hot_ring_dimension
+        Ok(())
     }
 
     pub(crate) fn dense_backend(
@@ -240,8 +232,7 @@ impl AkitaProverSetup {
 }
 
 /// The verifier setup is pure shape: the backend keys are a deterministic
-/// function of `(max_num_vars, max_num_polys_per_commitment_group, one_hot_k,
-/// one_hot_ring_dimension)`
+/// function of `(max_num_vars, max_num_polys_per_commitment_group, one_hot_k)`
 /// over a fixed internal seed, so they are never serialized or
 /// transcript-absorbed — [`append_verifier_setup`] binds these parameters and
 /// both sides derive the same keys from them.
@@ -252,7 +243,6 @@ pub struct AkitaVerifierSetup {
     pub(crate) max_num_polys_per_commitment_group: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    pub(crate) one_hot_ring_dimension: usize,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
 }
@@ -272,10 +262,6 @@ impl AkitaVerifierSetup {
 
     pub fn one_hot_k(&self) -> usize {
         self.one_hot_k
-    }
-
-    pub fn one_hot_ring_dimension(&self) -> usize {
-        self.one_hot_ring_dimension
     }
 
     /// Primes the lazy key cache with freshly built backend keys, so
@@ -337,12 +323,11 @@ impl AkitaVerifierSetup {
                 }
                 let prover_setup = one_hot_setup_prover(
                     self.one_hot_k,
-                    self.one_hot_ring_dimension,
                     self.max_num_vars,
                     self.max_num_polys_per_commitment_group,
                 )
                 .map_err(|err| invalid_setup(&err))?;
-                one_hot_setup_verifier(self.one_hot_k, self.one_hot_ring_dimension, &prover_setup)
+                one_hot_setup_verifier(self.one_hot_k, &prover_setup)
             }
         }
     }
@@ -379,14 +364,9 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     setup: &AkitaVerifierSetup,
     flavor: AkitaBackendFlavor,
 ) {
-    let ring_dimension = match flavor {
-        AkitaBackendFlavor::Dense => AKITA_D,
-        AkitaBackendFlavor::OneHot => setup.one_hot_ring_dimension,
-    };
     transcript.append(&Label(b"akita_setup_key"));
     transcript.append_bytes(b"akita/fp128");
     transcript.append_bytes(flavor.transcript_label());
-    transcript.append(&U64Word(ring_dimension as u64));
     transcript.append(&U64Word(setup.max_num_vars as u64));
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
     transcript.append(&U64Word(setup.one_hot_k as u64));
@@ -436,7 +416,6 @@ pub struct AkitaCommitment {
     pub(crate) num_vars: usize,
     pub(crate) poly_count: usize,
     pub(crate) one_hot_k: usize,
-    pub(crate) ring_dimension: usize,
     /// Field-coefficient count of the serialized backend commitment — the
     /// deserialization context [`akita_types::Commitment`] requires.
     pub(crate) backend_coeff_len: usize,
@@ -521,10 +500,6 @@ impl AkitaCommitment {
     pub fn one_hot_k(&self) -> usize {
         self.one_hot_k
     }
-
-    pub fn ring_dimension(&self) -> usize {
-        self.ring_dimension
-    }
 }
 
 impl AppendToTranscript for AkitaCommitment {
@@ -535,7 +510,6 @@ impl AppendToTranscript for AkitaCommitment {
         transcript.append(&U64Word(self.num_vars as u64));
         transcript.append(&U64Word(self.poly_count as u64));
         transcript.append(&U64Word(self.one_hot_k as u64));
-        transcript.append(&U64Word(self.ring_dimension as u64));
         transcript.append(&U64Word(self.backend_coeff_len as u64));
         transcript.append(&LabelWithCount(
             b"akita_commitment_bytes",
@@ -671,7 +645,7 @@ pub(crate) fn backend_stack<'a>(
 ) -> Result<BackendStack<'a>, OpeningsError> {
     let _span = info_span!("jolt_akita::make_backend_stack").entered();
     akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         prepared_backend_setup,
         backend_prover_setup.expanded.as_ref(),
     )
@@ -681,7 +655,6 @@ pub(crate) fn backend_stack<'a>(
 pub(crate) fn one_hot_polynomial<P>(
     polynomial: &P,
     one_hot_k: usize,
-    ring_dimension: usize,
 ) -> Result<Option<AkitaBackendOneHotPoly>, OpeningsError>
 where
     P: MultilinearPoly<AkitaField> + ?Sized,
@@ -697,7 +670,7 @@ where
         .one_hot_indices()
         .ok_or_else(|| invalid_batch("Jolt one-hot polynomial did not expose its indices"))?;
     let _ = validate_one_hot_k(one_hot_k)?;
-    AkitaBackendOneHotPoly::new(one_hot_k, ring_dimension, indices.to_vec())
+    AkitaBackendOneHotPoly::new(one_hot_k, indices.to_vec())
         .map(Some)
         .map_err(akita_error)
 }
@@ -705,7 +678,6 @@ where
 pub(crate) fn owned_one_hot_polynomial(
     polynomial: OneHotPolynomial,
     one_hot_k: usize,
-    ring_dimension: usize,
 ) -> Result<AkitaBackendOneHotPoly, OpeningsError> {
     if polynomial.k() != one_hot_k || polynomial.index_order() != OneHotIndexOrder::RowMajor {
         return Err(invalid_batch(format!(
@@ -713,8 +685,7 @@ pub(crate) fn owned_one_hot_polynomial(
         )));
     }
     let _ = validate_one_hot_k(one_hot_k)?;
-    AkitaBackendOneHotPoly::new(one_hot_k, ring_dimension, polynomial.into_indices())
-        .map_err(akita_error)
+    AkitaBackendOneHotPoly::new(one_hot_k, polynomial.into_indices()).map_err(akita_error)
 }
 
 pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsError> {
@@ -727,41 +698,15 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
     }
 }
 
-pub(crate) fn validate_one_hot_ring_dimension(
-    one_hot_k: usize,
-    ring_dimension: usize,
-) -> Result<(), OpeningsError> {
-    match (one_hot_k, ring_dimension) {
-        (AKITA_ONE_HOT_K16 | AKITA_ONE_HOT_K256, 64) | (AKITA_ONE_HOT_K256, 128) => Ok(()),
-        _ => Err(invalid_batch(format!(
-            "Akita one-hot K={one_hot_k} does not support ring dimension {ring_dimension}"
-        ))),
-    }
-}
-
-pub(crate) const fn selected_one_hot_ring_dimension(one_hot_k: usize, num_vars: usize) -> usize {
-    if one_hot_k == AKITA_ONE_HOT_K256 && num_vars >= AKITA_D128_MIN_NUM_VARS {
-        128
-    } else {
-        64
-    }
-}
-
 pub(crate) fn one_hot_setup_prover(
     one_hot_k: usize,
-    ring_dimension: usize,
     max_num_vars: usize,
     max_num_polys: usize,
 ) -> Result<AkitaBackendProverSetup, akita_pcs::AkitaError> {
-    with_backend_pool(|| match (one_hot_k, ring_dimension) {
-        (AKITA_ONE_HOT_K16, 64) => {
-            AkitaOneHotK16BackendScheme::setup_prover(max_num_vars, max_num_polys)
-        }
-        (AKITA_ONE_HOT_K256, 64) => {
+    with_backend_pool(|| match one_hot_k {
+        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::setup_prover(max_num_vars, max_num_polys),
+        AKITA_ONE_HOT_K256 => {
             AkitaOneHotK256BackendScheme::setup_prover(max_num_vars, max_num_polys)
-        }
-        (AKITA_ONE_HOT_K256, 128) => {
-            AkitaOneHotK256D128BackendScheme::setup_prover(max_num_vars, max_num_polys)
         }
         _ => unreachable!("one-hot K is validated before backend setup"),
     })
@@ -769,25 +714,20 @@ pub(crate) fn one_hot_setup_prover(
 
 pub(crate) fn one_hot_setup_verifier(
     one_hot_k: usize,
-    ring_dimension: usize,
     prover_setup: &AkitaBackendProverSetup,
 ) -> Result<AkitaBackendVerifier, OpeningsError> {
     let invalid_setup = |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
-    match (one_hot_k, ring_dimension) {
-        (AKITA_ONE_HOT_K16, 64) => {
+    match one_hot_k {
+        AKITA_ONE_HOT_K16 => {
             with_backend_pool(|| AkitaOneHotK16BackendScheme::setup_verifier(prover_setup))
                 .map_err(|err| invalid_setup(&err))
         }
-        (AKITA_ONE_HOT_K256, 64) => {
+        AKITA_ONE_HOT_K256 => {
             with_backend_pool(|| AkitaOneHotK256BackendScheme::setup_verifier(prover_setup))
                 .map_err(|err| invalid_setup(&err))
         }
-        (AKITA_ONE_HOT_K256, 128) => {
-            with_backend_pool(|| AkitaOneHotK256D128BackendScheme::setup_verifier(prover_setup))
-                .map_err(|err| invalid_setup(&err))
-        }
         _ => Err(invalid_batch(format!(
-            "Akita one-hot K={one_hot_k} does not support ring dimension {ring_dimension}"
+            "unsupported Akita one-hot K={one_hot_k}"
         ))),
     }
 }
@@ -801,14 +741,14 @@ pub(crate) fn sparse_unit_polynomial(
             "Akita sparse polynomial dimension {num_vars} exceeds usize bit width"
         ))
     })?;
-    if domain_size < AKITA_D {
+    if domain_size < AKITA_SOURCE_RING_DIMENSION {
         return Err(invalid_batch(format!(
-            "Akita sparse polynomial domain {domain_size} is smaller than ring dimension {AKITA_D}"
+            "Akita sparse polynomial domain {domain_size} is smaller than the minimum source ring dimension {AKITA_SOURCE_RING_DIMENSION}"
         )));
     }
 
     let mut seen = BTreeSet::new();
-    let mut coeffs = Vec::new();
+    let mut evals = vec![AkitaField::zero(); domain_size];
     for index in indices {
         if index >= domain_size {
             return Err(invalid_batch(format!(
@@ -821,15 +761,18 @@ pub(crate) fn sparse_unit_polynomial(
             )));
         }
         let akita_index = jolt_to_akita_index(num_vars, index);
-        coeffs.push((akita_index / AKITA_D, akita_index % AKITA_D, 1i8));
+        *evals.get_mut(akita_index).ok_or_else(|| {
+            invalid_batch(format!(
+                "Akita sparse polynomial index transform produced {akita_index} outside domain size {domain_size}"
+            ))
+        })? = AkitaField::one();
     }
 
-    AkitaBackendSparsePoly::from_signed_coeffs(num_vars, AKITA_D, domain_size / AKITA_D, coeffs)
-        .map_err(|error| {
-            invalid_batch(format!(
-                "Akita sparse polynomial construction failed: {error}"
-            ))
-        })
+    AkitaBackendSparsePoly::from_field_evals(num_vars, evals).map_err(|error| {
+        invalid_batch(format!(
+            "Akita sparse polynomial construction failed: {error}"
+        ))
+    })
 }
 
 #[doc(hidden)]
@@ -847,8 +790,7 @@ pub(crate) fn dense_polynomials(
         .iter()
         .map(|poly| {
             let evals = jolt_to_akita_evals(poly.num_vars(), poly.evals())?;
-            AkitaBackendDensePoly::from_field_evals(poly.num_vars(), AKITA_D, &evals)
-                .map_err(akita_error)
+            AkitaBackendDensePoly::from_field_evals(poly.num_vars(), &evals).map_err(akita_error)
         })
         .collect()
 }
