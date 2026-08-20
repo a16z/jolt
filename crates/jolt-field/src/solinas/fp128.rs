@@ -767,6 +767,8 @@ crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
     type Accumulator = NaiveAccumulator<Self>;
+    type SmallScalarAccumulator = NaiveAccumulator<Self>;
+    type SignedProductAccumulator = NaiveAccumulator<Self>;
 }
 
 impl<const P: u128> PseudoMersenne for Fp128<P> {

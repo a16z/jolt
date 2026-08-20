@@ -216,8 +216,8 @@ impl<F: JoltField> RLCPolynomial<F> {
                 | CommittedPolynomial::BytecodeUnexpandedPcBytes(_)
                 | CommittedPolynomial::BytecodeImmBytes(_)
                 | CommittedPolynomial::ProgramImageBytes
-                | CommittedPolynomial::UnsignedIncChunk(_)
-                | CommittedPolynomial::UnsignedIncMsb => {
+                | CommittedPolynomial::BalancedIncDigit(_)
+                | CommittedPolynomial::BalancedIncCarry => {
                     panic!("Lattice columns never enter the homomorphic RLC opening")
                 }
             }

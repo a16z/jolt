@@ -175,6 +175,12 @@ impl LagrangeHelper {
 
     #[inline]
     pub const fn den_row_i64<const N: usize>() -> [i64; N] {
+        const {
+            assert!(
+                N <= 21,
+                "den_row_i64 requires N <= 21 (factorial table bound)"
+            );
+        }
         let mut out = [0i64; N];
         let mut i = 0usize;
         while i < N {
@@ -271,8 +277,10 @@ impl<F: JoltField> LagrangePolynomial<F> {
     #[inline]
     #[expect(clippy::expect_used)]
     pub fn evaluate<const N: usize>(values: &[F; N], r: F) -> F {
-        debug_assert!(N > 0, "N must be positive");
-        debug_assert!(N <= 20, "evaluate is intended for small N");
+        const {
+            assert!(N > 0, "N must be positive");
+            assert!(N <= 20, "evaluate is intended for small N");
+        }
         let (dists, hit) = Self::distances::<N>(r);
         if let Some(i) = hit {
             return values[i];
@@ -292,8 +300,10 @@ impl<F: JoltField> LagrangePolynomial<F> {
     #[inline]
     #[expect(clippy::expect_used)]
     pub fn evals<const N: usize>(r: F) -> [F; N] {
-        debug_assert!(N > 0, "N must be positive");
-        debug_assert!(N <= 20, "evals is intended for small N");
+        const {
+            assert!(N > 0, "N must be positive");
+            assert!(N <= 20, "evals is intended for small N");
+        }
         let (dists, hit) = Self::distances::<N>(r);
         if let Some(i) = hit {
             let mut out = [F::zero(); N];
@@ -315,8 +325,10 @@ impl<F: JoltField> LagrangePolynomial<F> {
     #[inline]
     #[expect(clippy::expect_used)]
     pub fn lagrange_kernel<const N: usize>(x: F, y: F) -> F {
-        debug_assert!(N > 0, "N must be positive");
-        debug_assert!(N <= 20, "lagrange_kernel is intended for small N");
+        const {
+            assert!(N > 0, "N must be positive");
+            assert!(N <= 20, "lagrange_kernel is intended for small N");
+        }
         let (dists_x, hit_x) = Self::distances::<N>(x);
         let (dists_y, hit_y) = Self::distances::<N>(y);
 
@@ -380,7 +392,9 @@ impl<F: JoltField> LagrangePolynomial<F> {
     #[inline]
     #[expect(clippy::expect_used)]
     pub fn interpolate_coeffs<const N: usize>(values: &[F; N]) -> [F; N] {
-        debug_assert!(N > 0, "N must be positive");
+        const {
+            assert!(N > 0, "N must be positive");
+        }
         let degree = N - 1;
         let start = Self::start_i64::<N>();
 

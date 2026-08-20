@@ -19,12 +19,12 @@
 //! One sumcheck over the widest byte-lane `(byte ‖ place)` variables, row
 //! point fixed at `r_row`; the narrower legs bind only their own suffix
 //! rounds and the flag lanes none at all (mixed-count legs are precedented by the
-//! lattice booleanity's msb). Every leg is at most a product of two
+//! lattice booleanity's carry). Every leg is at most a product of two
 //! multilinears per bound variable, hence degree 2.
 
 use jolt_field::Ring;
-use jolt_poly::math::Math;
 use jolt_riscv::{NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS};
+use jolt_utils::Math;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
@@ -70,6 +70,7 @@ pub struct BytecodeChunkReconstructionChallenges<F> {
 /// `#[derive(OutputClaims)]` `Vec` convention (single `usize` index) cannot
 /// express — the trait impl is hand-written below in the same
 /// field-declaration order the derive would use.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

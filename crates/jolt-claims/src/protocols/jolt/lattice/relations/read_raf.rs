@@ -127,6 +127,7 @@ impl SymbolicSumcheck for LatticeReadRafAddressPhase {
 
 /// The lattice cycle-phase produced openings: the committed `BytecodeRa`
 /// chunks plus the `FusedInc` stream at the bound cycle point.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

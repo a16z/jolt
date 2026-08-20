@@ -1,4 +1,5 @@
-use jolt_field::JoltField;
+use jolt_field::Field;
+use jolt_utils::log2_power_of_two;
 use serde::{Deserialize, Serialize};
 
 pub use super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
@@ -71,7 +72,7 @@ impl TraceDimensions {
         self.log_t
     }
 
-    pub fn cycle_opening_point<F: JoltField>(
+    pub fn cycle_opening_point<F: Field>(
         self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -141,7 +142,7 @@ impl ReadWriteDimensions {
         self.log_t + self.log_k - self.phase1_num_rounds
     }
 
-    pub fn read_write_opening_point<F: JoltField>(
+    pub fn read_write_opening_point<F: Field>(
         self,
         challenges: &[F],
     ) -> Result<ReadWriteOpeningPoint<F>, JoltFormulaPointError> {
@@ -179,7 +180,7 @@ impl ReadWriteDimensions {
         })
     }
 
-    pub fn address_opening_point<F: JoltField>(
+    pub fn address_opening_point<F: Field>(
         self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
@@ -201,7 +202,12 @@ impl ReadWriteDimensions {
         Ok(address)
     }
 
-    const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
+    /// Rejects a phase split exceeding the trace/address geometry. Callers
+    /// building dimensions from prover-chosen `rw_config` values must run
+    /// this eagerly: the round-count accessors above subtract
+    /// `phase1_num_rounds` without their own guard, so an unvalidated split
+    /// underflows them before the lazy check in point derivation runs.
+    pub const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
         if self.phase1_num_rounds > self.log_t || self.phase2_num_rounds > self.log_k {
             return Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
                 phase1_num_rounds: self.phase1_num_rounds,
@@ -215,7 +221,7 @@ impl ReadWriteDimensions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReadWriteOpeningPoint<F: JoltField> {
+pub struct ReadWriteOpeningPoint<F: Field> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
@@ -294,14 +300,6 @@ impl CommitmentMatrixShape {
     }
 }
 
-pub(crate) fn log2_power_of_two(value: usize) -> usize {
-    assert!(
-        value.is_power_of_two(),
-        "expected a power-of-two dimension, got {value}"
-    );
-    value.trailing_zeros() as usize
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct JoltOneHotDimensions {
     pub log_t: usize,
@@ -327,7 +325,7 @@ impl JoltOneHotConfig {
         self.lookups_ra_virtual_log_k_chunk as usize
     }
 
-    pub fn committed_address_chunks<F: JoltField>(self, r_address: &[F]) -> Vec<Vec<F>> {
+    pub fn committed_address_chunks<F: Field>(self, r_address: &[F]) -> Vec<Vec<F>> {
         committed_address_chunks(r_address, self.committed_chunk_bits())
     }
 
@@ -349,7 +347,7 @@ impl JoltOneHotConfig {
     }
 }
 
-pub fn committed_address_chunks<F: JoltField>(r_address: &[F], chunk_bits: usize) -> Vec<Vec<F>> {
+pub fn committed_address_chunks<F: Field>(r_address: &[F], chunk_bits: usize) -> Vec<Vec<F>> {
     if chunk_bits == 0 {
         return Vec::new();
     }
@@ -483,6 +481,10 @@ fn ceil_log_2(value: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic_in_result_fn,
+        reason = "test assertions inside Result-returning tests"
+    )]
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::super::claim_reductions::advice::AdviceClaimReductionLayout;

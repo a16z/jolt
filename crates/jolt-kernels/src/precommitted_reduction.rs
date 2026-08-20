@@ -40,7 +40,7 @@ use std::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::PrecommittedClaimReduction;
 use jolt_field::JoltField;
-use jolt_poly::UnivariatePoly;
+use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseOutputClaims,
@@ -56,17 +56,27 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, BytecodeReductionAddressPhaseOutputClaims,
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseOutputClaims,
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 
 use crate::{KernelError, ProofSession, SumcheckKernel, SumcheckKernelError};
 
+/// Tables at least this large run their round loops in parallel; below it
+/// rayon dispatch costs more than the work (the naive tier drives these
+/// kernels at harness scale, where the tables are tiny).
+#[cfg(feature = "parallel")]
+const PAR_THRESHOLD: usize = 1 << 10;
+
 /// The bound-table state both phase kernels drive: the summand tables, the
 /// aux tables riding alongside, and the running inactive-round scale.
+/// `Polynomial`-backed so binds take the library's threshold-gated parallel
+/// path (byte-identical fold: `lo + r·(hi − lo)` pairwise, exact field ops).
 struct PrecommittedTables<F> {
-    value: Vec<F>,
-    eq: Vec<F>,
-    aux: Vec<Vec<F>>,
+    value: Polynomial<F>,
+    eq: Polynomial<F>,
+    aux: Vec<Polynomial<F>>,
     /// `(1/2)^k` over the `k` inactive rounds ingested so far — the factor the
     /// running claim accumulated relative to the true bound product.
     scale: F,
@@ -78,21 +88,44 @@ impl<F: JoltField> PrecommittedTables<F> {
     /// The round polynomial for member-local state: the constant `claim/2` on
     /// an inactive round, else the hinted `{0,1,2}` interpolation (see the
     /// module doc for why the padded claim, not the true sum, feeds `s(1)`).
+    ///
+    /// The eval loop runs on rayon above [`PAR_THRESHOLD`] — the summand is a
+    /// sum of exact field products, so the reduction order cannot change the
+    /// value (legacy parallelizes the same loop,
+    /// `PrecommittedProver::compute_message_unscaled`).
     fn round_message(&self, active: bool, previous_claim: F) -> UnivariatePoly<F> {
         if !active {
             return UnivariatePoly::new(vec![previous_claim * self.two_inv]);
         }
         let half = self.value.len() / 2;
-        let mut eval_0 = F::zero();
-        let mut eval_2 = F::zero();
-        for j in 0..half {
-            let value_0 = self.value[2 * j];
-            let value_1 = self.value[2 * j + 1];
-            let eq_0 = self.eq[2 * j];
-            let eq_1 = self.eq[2 * j + 1];
-            eval_0 += value_0 * eq_0;
-            eval_2 += (value_1 + value_1 - value_0) * (eq_1 + eq_1 - eq_0);
-        }
+        let value = self.value.evals();
+        let eq = self.eq.evals();
+        let term = |j: usize| -> [F; 2] {
+            let value_0 = value[2 * j];
+            let value_1 = value[2 * j + 1];
+            let eq_0 = eq[2 * j];
+            let eq_1 = eq[2 * j + 1];
+            [
+                value_0 * eq_0,
+                (value_1 + value_1 - value_0) * (eq_1 + eq_1 - eq_0),
+            ]
+        };
+        let accumulate = |mut acc: [F; 2], term: [F; 2]| {
+            acc[0] += term[0];
+            acc[1] += term[1];
+            acc
+        };
+        #[cfg(feature = "parallel")]
+        let [eval_0, eval_2] = if half >= PAR_THRESHOLD {
+            (0..half)
+                .into_par_iter()
+                .fold(|| [F::zero(); 2], |acc, j| accumulate(acc, term(j)))
+                .reduce(|| [F::zero(); 2], accumulate)
+        } else {
+            (0..half).fold([F::zero(); 2], |acc, j| accumulate(acc, term(j)))
+        };
+        #[cfg(not(feature = "parallel"))]
+        let [eval_0, eval_2] = (0..half).fold([F::zero(); 2], |acc, j| accumulate(acc, term(j)));
         let eval_1 = previous_claim * self.scale_inv - eval_0;
         let c2 = (eval_0 - eval_1 - eval_1 + eval_2) * self.two_inv;
         let c1 = eval_1 - eval_0 - c2;
@@ -130,29 +163,31 @@ impl<F: JoltField> PrecommittedTables<F> {
             self.scale_inv += self.scale_inv;
             return;
         }
-        let half = self.value.len() / 2;
-        let bind = |table: &mut Vec<F>| {
-            for j in 0..half {
-                table[j] = table[2 * j] + challenge * (table[2 * j + 1] - table[2 * j]);
-            }
-            table.truncate(half);
-        };
-        bind(&mut self.value);
-        bind(&mut self.eq);
+        self.value
+            .bind_with_order(challenge, BindingOrder::LowToHigh);
+        self.eq.bind_with_order(challenge, BindingOrder::LowToHigh);
         for table in &mut self.aux {
-            bind(table);
+            table.bind_with_order(challenge, BindingOrder::LowToHigh);
         }
     }
 
     /// The intermediate claim staged at the cycle→address handoff:
     /// `Σ_i value(i) · eq(i) · scale` over the bound tables.
     fn intermediate_claim(&self) -> F {
-        let product: F = self
-            .value
-            .iter()
-            .zip(&self.eq)
-            .map(|(value, eq)| *value * *eq)
-            .sum();
+        let value = self.value.evals();
+        let eq = self.eq.evals();
+        #[cfg(feature = "parallel")]
+        let product: F = if value.len() >= PAR_THRESHOLD {
+            value
+                .par_iter()
+                .zip(eq)
+                .map(|(value, eq)| *value * *eq)
+                .sum()
+        } else {
+            value.iter().zip(eq).map(|(value, eq)| *value * *eq).sum()
+        };
+        #[cfg(not(feature = "parallel"))]
+        let product: F = value.iter().zip(eq).map(|(value, eq)| *value * *eq).sum();
         product * self.scale
     }
 
@@ -172,14 +207,14 @@ impl<F: JoltField> PrecommittedTables<F> {
     /// to). Errors while any variable remains unbound.
     fn final_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
-        Ok(self.value[0])
+        Ok(self.value.evals()[0])
     }
 
     /// The fully bound `aux` coefficients — the per-chunk `BytecodeChunk(i)`
     /// opening values. Errors while any variable remains unbound.
     fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
-        Ok(self.aux.iter().map(|table| table[0]).collect())
+        Ok(self.aux.iter().map(|table| table.evals()[0]).collect())
     }
 }
 
@@ -206,7 +241,7 @@ pub struct PrecommittedReductionCarry<F, R> {
 #[cfg(feature = "allocative")]
 impl<F, R> allocative::Allocative for PrecommittedReductionCarry<F, R> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{nested_vec_heap_bytes, vec_heap_bytes};
+        use crate::backend::{poly_heap_bytes, polys_heap_bytes};
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("reduction"),
@@ -214,15 +249,15 @@ impl<F, R> allocative::Allocative for PrecommittedReductionCarry<F, R> {
         );
         visitor.visit_simple(
             allocative::Key::new("tables.value"),
-            vec_heap_bytes(&self.tables.value),
+            poly_heap_bytes(&self.tables.value),
         );
         visitor.visit_simple(
             allocative::Key::new("tables.eq"),
-            vec_heap_bytes(&self.tables.eq),
+            poly_heap_bytes(&self.tables.eq),
         );
         visitor.visit_simple(
             allocative::Key::new("tables.aux"),
-            nested_vec_heap_bytes(&self.tables.aux),
+            polys_heap_bytes(&self.tables.aux),
         );
         visitor.exit();
     }
@@ -244,7 +279,7 @@ macro_rules! impl_reduction_kernel_allocative {
     ($($kernel:ident),+ $(,)?) => {$(
         impl<F: JoltField, R> allocative::Allocative for $kernel<F, R> {
             fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-                use crate::backend::{nested_vec_heap_bytes, vec_heap_bytes};
+                use crate::backend::{poly_heap_bytes, polys_heap_bytes};
                 let mut visitor = visitor.enter_self_sized::<Self>();
                 visitor.visit_simple(
                     allocative::Key::new("reduction"),
@@ -252,15 +287,15 @@ macro_rules! impl_reduction_kernel_allocative {
                 );
                 visitor.visit_simple(
                     allocative::Key::new("tables.value"),
-                    vec_heap_bytes(&self.tables.value),
+                    poly_heap_bytes(&self.tables.value),
                 );
                 visitor.visit_simple(
                     allocative::Key::new("tables.eq"),
-                    vec_heap_bytes(&self.tables.eq),
+                    poly_heap_bytes(&self.tables.eq),
                 );
                 visitor.visit_simple(
                     allocative::Key::new("tables.aux"),
-                    nested_vec_heap_bytes(&self.tables.aux),
+                    polys_heap_bytes(&self.tables.aux),
                 );
                 visitor.exit();
             }
@@ -300,9 +335,9 @@ impl<F: JoltField, R> CycleReductionKernel<F, R> {
         Ok(Self {
             reduction,
             tables: PrecommittedTables {
-                value,
-                eq,
-                aux,
+                value: Polynomial::new(value),
+                eq: Polynomial::new(eq),
+                aux: aux.into_iter().map(Polynomial::new).collect(),
                 scale: F::one(),
                 scale_inv: F::one(),
                 two_inv,
@@ -574,22 +609,30 @@ pub(crate) fn lsb_permutation(poly_opening_round_permutation_be: &[usize]) -> Op
 }
 
 /// Out-of-place coefficient permute: `out[new_index] = table[old_index]` where
-/// each of `new_index`'s bits moves to its pre-image LSB position.
-pub(crate) fn permute_coefficients<F: Copy>(table: &[F], old_lsb_to_new_lsb: &[usize]) -> Vec<F> {
+/// each of `new_index`'s bits moves to its pre-image LSB position. A pure
+/// gather, so large tables run on rayon (legacy parallelizes the same permute,
+/// `permute_precommitted_polys`).
+pub(crate) fn permute_coefficients<F: Copy + Send + Sync>(
+    table: &[F],
+    old_lsb_to_new_lsb: &[usize],
+) -> Vec<F> {
     let num_vars = old_lsb_to_new_lsb.len();
     let mut new_lsb_to_old_lsb = vec![0usize; num_vars];
     for (old_lsb, &new_lsb) in old_lsb_to_new_lsb.iter().enumerate() {
         new_lsb_to_old_lsb[new_lsb] = old_lsb;
     }
-    (0..table.len())
-        .map(|new_index| {
-            let mut old_index = 0usize;
-            for (new_lsb, &old_lsb) in new_lsb_to_old_lsb.iter().enumerate() {
-                old_index |= ((new_index >> new_lsb) & 1) << old_lsb;
-            }
-            table[old_index]
-        })
-        .collect()
+    let gather = |new_index: usize| -> F {
+        let mut old_index = 0usize;
+        for (new_lsb, &old_lsb) in new_lsb_to_old_lsb.iter().enumerate() {
+            old_index |= ((new_index >> new_lsb) & 1) << old_lsb;
+        }
+        table[old_index]
+    };
+    #[cfg(feature = "parallel")]
+    if table.len() >= PAR_THRESHOLD {
+        return (0..table.len()).into_par_iter().map(gather).collect();
+    }
+    (0..table.len()).map(gather).collect()
 }
 
 /// The challenge-vector counterpart of [`permute_coefficients`]: relabel the
@@ -610,7 +653,7 @@ pub(crate) fn permute_challenges<F: Copy>(
 
 /// Permute a batch of coefficient tables into the reduction's Dory
 /// opening-round order (identity-permutation short-circuit included).
-pub(crate) fn permute_tables<F: Copy>(
+pub(crate) fn permute_tables<F: Copy + Send + Sync>(
     reduction: &PrecommittedClaimReduction,
     tables: Vec<Vec<F>>,
 ) -> Vec<Vec<F>> {

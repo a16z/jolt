@@ -288,6 +288,15 @@ Final per-file actuals are recorded in the file-structure table below
 3. **bn254 `From<primitive>` impls added** (`from_primitives!`): the old
    crate's `Fr`/`Fq` exposed the plain arkworks `From` conversions; 94+
    consumer call sites rely on them.
+4. **Post-baseline signed accumulator optimizations retained through the
+   consolidated contract**: current main added real users of BN254's small
+   signed-scalar and signed 256-bit product accumulators after this rebuild
+   had deleted their then-unused standalone trait families. `WithAccumulator`
+   now exposes general, small-scalar, and signed-product associated types, all
+   implementing the single canonical `Accumulator` trait. BN254 keeps the
+   specialized representations; other backends use `NaiveAccumulator`. The
+   duplicate `SignedScalarAccumulator`, `SignedProductAccumulator`, and
+   wrapper traits remain deleted.
 
 ## Replacement validation evidence
 

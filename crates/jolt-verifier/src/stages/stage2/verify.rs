@@ -74,6 +74,7 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     }
 }
 
+#[jolt_verifier_derive::fs_scope(Stage2)]
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -95,8 +96,8 @@ where
         _ => {}
     }
 
-    let log_t = checked.trace_length.ilog2() as usize;
-    let log_k = checked.ram_K.ilog2() as usize;
+    let log_t = crate::num::ilog2(checked.trace_length);
+    let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);
     let read_write_dimensions = proof.rw_config.ram_dimensions(log_t, log_k);
     let product_dimensions = SpartanProductDimensions::new(log_t);
@@ -259,7 +260,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
+    let log_t = crate::num::ilog2(checked.trace_length);
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let tau_low = product_tau_low(&stage1.remainder_point(), log_t)?;
 

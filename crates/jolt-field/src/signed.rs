@@ -270,7 +270,7 @@ impl<const N: usize> SignedBigInt<N> {
 
     #[inline]
     fn from_u128_with_sign(value: u128, is_positive: bool) -> Self {
-        debug_assert!(N >= 2, "u128 conversion requires at least 2 limbs");
+        const { assert!(N >= 2, "u128 conversion requires at least 2 limbs") }
         let mut limbs = [0u64; N];
         limbs[0] = value as u64;
         limbs[1] = (value >> 64) as u64;
@@ -376,7 +376,7 @@ impl<const N: usize> SignedBigIntHi32<N> {
     /// large second limbs). Constant bounds let LLVM fully unroll this.
     #[inline(always)]
     fn mag_mul(&mut self, rhs: &Self) {
-        debug_assert!(2 * (N + 1) <= 16, "N too large for the product buffer");
+        const { assert!(2 * (N + 1) <= 16, "N too large for the product buffer") }
         let limb = |lo: &[u64; N], hi: u32, i: usize| {
             if i < N {
                 lo[i] as u128

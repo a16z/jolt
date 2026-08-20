@@ -5,7 +5,7 @@
 //! a compile-time Montgomery table for small-integer conversion, and the
 //! folded 4×4 product accumulator with deferred Montgomery reduction.
 
-use crate::Accumulator;
+use crate::{signed::S256, Accumulator, Limbs};
 use ark_bn254::FrConfig;
 use ark_ff::{BigInt, Fp, MontConfig};
 use num_traits::Zero;
@@ -335,6 +335,210 @@ pub struct WideAccumulator {
     slots: [u128; 8],
 }
 
+/// BN254 Fr accumulator for signed small-scalar products.
+///
+/// Positive and negative terms are held separately as unreduced five-limb
+/// integers and reduced once at the end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrSmallScalarAccumulator {
+    pos: Limbs<5>,
+    neg: Limbs<5>,
+}
+
+impl Default for FrSmallScalarAccumulator {
+    #[inline(always)]
+    fn default() -> Self {
+        Self {
+            pos: Limbs::zero(),
+            neg: Limbs::zero(),
+        }
+    }
+}
+
+impl FrSmallScalarAccumulator {
+    #[inline(always)]
+    fn add_to(slots: &mut Limbs<5>, value: Fr) {
+        slots.add_assign_trunc(&Limbs(value.inner_limbs()));
+    }
+
+    #[inline(always)]
+    fn fmadd_magnitude(slots: &mut Limbs<5>, value: Fr, scalar: u64) {
+        if scalar == 0 {
+            return;
+        }
+        if scalar == 1 {
+            Self::add_to(slots, value);
+            return;
+        }
+        slots.add_assign_trunc(&Limbs(bigint4_mul_u64(&value.0 .0, scalar).0));
+    }
+}
+
+impl Accumulator for FrSmallScalarAccumulator {
+    type Element = Fr;
+
+    #[inline(always)]
+    fn add(&mut self, value: Fr) {
+        Self::add_to(&mut self.pos, value);
+    }
+
+    #[inline(always)]
+    fn merge(&mut self, other: Self) {
+        self.pos.add_assign_trunc(&other.pos);
+        self.neg.add_assign_trunc(&other.neg);
+    }
+
+    #[inline(always)]
+    fn reduce(self) -> Fr {
+        if self.pos >= self.neg {
+            Fr(Fp::new_unchecked(barrett_reduce_5_to_4(BigInt(
+                self.pos.sub_trunc::<5, 5>(&self.neg).0,
+            ))))
+        } else {
+            -Fr(Fp::new_unchecked(barrett_reduce_5_to_4(BigInt(
+                self.neg.sub_trunc::<5, 5>(&self.pos).0,
+            ))))
+        }
+    }
+
+    #[inline(always)]
+    fn fmadd(&mut self, a: Fr, b: Fr) {
+        self.add(a * b);
+    }
+
+    #[inline(always)]
+    fn fmadd_u64(&mut self, value: Fr, scalar: u64) {
+        Self::fmadd_magnitude(&mut self.pos, value, scalar);
+    }
+
+    #[inline(always)]
+    fn fmadd_i64(&mut self, value: Fr, scalar: i64) {
+        let magnitude = scalar.unsigned_abs();
+        if scalar >= 0 {
+            Self::fmadd_magnitude(&mut self.pos, value, magnitude);
+        } else {
+            Self::fmadd_magnitude(&mut self.neg, value, magnitude);
+        }
+    }
+}
+
+/// BN254 Fr accumulator for field elements multiplied by signed 256-bit
+/// integers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrSignedProductAccumulator {
+    pos: [u128; 8],
+    neg: [u128; 8],
+}
+
+impl Default for FrSignedProductAccumulator {
+    #[inline(always)]
+    fn default() -> Self {
+        Self {
+            pos: [0; 8],
+            neg: [0; 8],
+        }
+    }
+}
+
+impl FrSignedProductAccumulator {
+    #[inline(always)]
+    fn fmadd_magnitude(slots: &mut [u128; 8], value: Fr, magnitude: Limbs<4>) {
+        for (i, value_limb) in value.inner_limbs().into_iter().enumerate() {
+            for (j, magnitude_limb) in magnitude.0.into_iter().enumerate() {
+                let product = (value_limb as u128) * (magnitude_limb as u128);
+                slots[i + j] += (product as u64) as u128;
+                slots[i + j + 1] += ((product >> 64) as u64) as u128;
+            }
+        }
+    }
+
+    #[inline]
+    fn normalize(slots: [u128; 8]) -> BigInt<9> {
+        let mut out = [0u64; 9];
+        let mut carry = 0u128;
+        for (index, slot) in slots.into_iter().enumerate() {
+            let (sum, overflow) = slot.overflowing_add(carry);
+            out[index] = sum as u64;
+            carry = (sum >> 64) + ((overflow as u128) << 64);
+        }
+        out[8] = carry as u64;
+        BigInt(out)
+    }
+
+    #[inline(always)]
+    fn fmadd_unsigned(&mut self, value: Fr, scalar: u64) {
+        Self::fmadd_magnitude(&mut self.pos, value, Limbs::from_u64(scalar));
+    }
+}
+
+impl Accumulator for FrSignedProductAccumulator {
+    type Element = Fr;
+
+    #[inline(always)]
+    fn add(&mut self, value: Fr) {
+        self.fmadd_unsigned(value, 1);
+    }
+
+    #[inline(always)]
+    fn merge(&mut self, other: Self) {
+        for (lhs, rhs) in self.pos.iter_mut().zip(other.pos) {
+            *lhs += rhs;
+        }
+        for (lhs, rhs) in self.neg.iter_mut().zip(other.neg) {
+            *lhs += rhs;
+        }
+    }
+
+    #[inline]
+    fn reduce(self) -> Fr {
+        let pos = Self::normalize(self.pos);
+        let neg = Self::normalize(self.neg);
+        let correction = Fr(Fp::new_unchecked(<FrConfig as MontConfig<4>>::R2));
+        let reduced = if pos >= neg {
+            Fr(from_montgomery_reduce(BigInt(
+                Limbs(pos.0).sub_trunc::<9, 9>(&Limbs(neg.0)).0,
+            )))
+        } else {
+            -Fr(from_montgomery_reduce(BigInt(
+                Limbs(neg.0).sub_trunc::<9, 9>(&Limbs(pos.0)).0,
+            )))
+        };
+        reduced * correction
+    }
+
+    #[inline(always)]
+    fn fmadd(&mut self, a: Fr, b: Fr) {
+        self.add(a * b);
+    }
+
+    #[inline(always)]
+    fn fmadd_u64(&mut self, value: Fr, scalar: u64) {
+        self.fmadd_unsigned(value, scalar);
+    }
+
+    #[inline(always)]
+    fn fmadd_i64(&mut self, value: Fr, scalar: i64) {
+        let magnitude = Limbs::from_u64(scalar.unsigned_abs());
+        if scalar >= 0 {
+            Self::fmadd_magnitude(&mut self.pos, value, magnitude);
+        } else {
+            Self::fmadd_magnitude(&mut self.neg, value, magnitude);
+        }
+    }
+
+    #[inline(always)]
+    fn fmadd_s256(&mut self, value: Fr, scalar: &S256) {
+        if scalar.magnitude.is_zero() {
+            return;
+        }
+        if scalar.is_positive {
+            Self::fmadd_magnitude(&mut self.pos, value, scalar.magnitude);
+        } else {
+            Self::fmadd_magnitude(&mut self.neg, value, scalar.magnitude);
+        }
+    }
+}
+
 impl Default for WideAccumulator {
     #[inline]
     fn default() -> Self {
@@ -361,12 +565,16 @@ impl WideAccumulator {
 impl Accumulator for WideAccumulator {
     type Element = Fr;
 
-    /// WARNING: elements are accumulated as `value * one` so every slot term
-    /// is a product of two Montgomery forms, matching what `reduce` divides
-    /// out. Do not add raw limbs directly.
+    /// Adds `value` in four limb additions instead of a full 4×4 `fmadd` by
+    /// `one()`. The slots hold products of Montgomery forms, so a plain
+    /// element must enter as `value * R`. Since `2^256 = R (mod p)`, placing
+    /// the element limbs at positions 4 through 8 contributes exactly that
+    /// value, and [`Accumulator::reduce`] folds the high limbs modulo `p`.
     #[inline(always)]
     fn add(&mut self, value: Fr) {
-        self.fmadd(value, <Fr as num_traits::One>::one());
+        for (slot, limb) in self.slots[4..].iter_mut().zip(value.inner_limbs()) {
+            *slot += limb as u128;
+        }
     }
 
     #[inline(always)]
@@ -396,8 +604,100 @@ impl Accumulator for WideAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Ring;
     use ark_ff::UniformRand;
+    use num_traits::One;
     use rand::{Rng, SeedableRng};
+
+    fn spread(seed: u64) -> Fr {
+        let a = Fr::from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let b = Fr::from_u64(seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) | 1);
+        a * b * b + a
+    }
+
+    fn s256_to_fr(value: &S256) -> Fr {
+        let mut magnitude = Fr::zero();
+        for limb in value.magnitude_limbs().into_iter().rev() {
+            magnitude = magnitude.mul_pow_2(64) + Fr::from_u64(limb);
+        }
+        if value.is_positive {
+            magnitude
+        } else {
+            -magnitude
+        }
+    }
+
+    #[test]
+    fn accumulator_add_matches_fmadd_by_one() {
+        for seed in 0..100u64 {
+            let value = spread(seed);
+            let a = spread(seed + 1000);
+            let b = spread(seed + 2000);
+
+            let mut via_add = WideAccumulator::default();
+            via_add.fmadd(a, b);
+            via_add.add(value);
+
+            let mut via_fmadd = WideAccumulator::default();
+            via_fmadd.fmadd(a, b);
+            via_fmadd.fmadd(value, <Fr as One>::one());
+
+            assert_eq!(via_add.reduce(), via_fmadd.reduce());
+            assert_eq!(via_add.reduce(), a * b + value);
+        }
+    }
+
+    #[test]
+    fn accumulator_repeated_add_reduces_exactly() {
+        let mut acc = WideAccumulator::default();
+        let mut expected = Fr::from_u64(0);
+        for seed in 0..1000u64 {
+            let value = spread(seed);
+            acc.add(value);
+            expected += value;
+        }
+        assert_eq!(acc.reduce(), expected);
+    }
+
+    #[test]
+    fn small_scalar_accumulator_reduces_signed_terms() {
+        let mut left = FrSmallScalarAccumulator::default();
+        left.fmadd_u64(Fr::from_u64(3), 16);
+        left.fmadd_i64(Fr::from_u64(5), -7);
+
+        let mut right = FrSmallScalarAccumulator::default();
+        right.add(Fr::from_u64(11));
+        right.fmadd_i64(Fr::from_u64(9), -13);
+        right.fmadd_u64(Fr::from_u64(2), 7);
+
+        left.merge(right);
+        assert_eq!(left.reduce(), -Fr::from_u64(79));
+    }
+
+    #[test]
+    fn signed_product_accumulator_reduces_and_merges() {
+        let terms = [
+            (Fr::from_u64(3), S256::from_i128(17)),
+            (Fr::from_u64(11), S256::from_i128(-9)),
+            (Fr::from_u64(42), S256::new([7, 5, 3, 1], true)),
+            (Fr::from_u64(6), S256::new([u64::MAX, 19, 0, 0], false)),
+        ];
+
+        let mut left = FrSignedProductAccumulator::default();
+        let mut right = FrSignedProductAccumulator::default();
+        let mut expected = Fr::zero();
+        for (index, (field, scalar)) in terms.into_iter().enumerate() {
+            if index % 2 == 0 {
+                left.fmadd_s256(field, &scalar);
+            } else {
+                right.fmadd_s256(field, &scalar);
+            }
+            expected += field * s256_to_fr(&scalar);
+        }
+
+        left.merge(right);
+        assert_eq!(left.reduce(), expected);
+    }
 
     #[test]
     fn kernel_matches_arkworks() {

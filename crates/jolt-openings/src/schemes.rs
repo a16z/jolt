@@ -80,12 +80,33 @@ pub trait CommitmentScheme: Commitment {
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError>;
 
-    /// Opens every member of one commitment group at a shared point in a
-    /// single proof. Only schemes with a native same-point batch (e.g. Akita)
-    /// support this; the hint must be the group commit's hint covering all
-    /// members.
-    fn open_batch(
+    /// Commits a group of polynomials as one commitment object whose members
+    /// are opened together at a shared point
+    /// ([`open_batch_from_hint`](Self::open_batch_from_hint)). Only schemes
+    /// with a native commitment group (e.g. Akita's one-hot flavor) support
+    /// this; `layout_digest` is the protocol-owned digest binding the ordered
+    /// member identities.
+    fn commit_batch(
         _polynomials: &[&dyn MultilinearPoly<Self::Field>],
+        _layout_digest: [u8; 32],
+        _setup: &Self::ProverSetup,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Err(OpeningsError::InvalidBatch(
+            "this commitment scheme has no native commitment group".to_owned(),
+        ))
+    }
+
+    /// Opens every member of one commitment group at a shared point in a
+    /// single proof, from the scheme's retained commit-time state: `hint` is
+    /// the committed object [`commit_batch`](Self::commit_batch) produced and
+    /// owns everything the opening consumes (witness forms plus any
+    /// commit-time opening data, e.g. Akita's Ajtai digit decompositions).
+    /// There is deliberately no polynomial argument — a scheme whose openings
+    /// cannot run from retained state alone does not implement this.
+    // TODO(#1782): fold the retained-state contract into a first-class
+    // committed-object type on this trait instead of the `OpeningHint`
+    // side-channel.
+    fn open_batch_from_hint(
         _point: &[Self::Field],
         _evaluations: &[Self::Field],
         _setup: &Self::ProverSetup,
@@ -93,7 +114,7 @@ pub trait CommitmentScheme: Commitment {
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native same-point batch opening".to_owned(),
+            "this commitment scheme has no retained-state batch opening".to_owned(),
         ))
     }
 
@@ -111,6 +132,19 @@ pub trait CommitmentScheme: Commitment {
             "this commitment scheme has no native same-point batch opening".to_owned(),
         ))
     }
+}
+
+/// Transparent derivation of a singleton commitment-object setup from the
+/// object's public shape alone (one polynomial at `num_vars`, seeded by the
+/// object plan's layout digest): prover and verifier re-derive
+/// byte-identical setups independently, so auxiliary packed objects (advice
+/// byte columns, the precommitted program) need no setup ceremony or
+/// transport.
+pub trait TransparentObjectSetup: CommitmentScheme {
+    fn transparent_object_setup(
+        num_vars: usize,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 }
 
 /// C = Σ s_i · C_i.
@@ -178,6 +212,28 @@ pub trait StreamingCommitment: CommitmentScheme {
         Self::feed(partial, &values, setup);
     }
 
+    /// Feed a batch of consecutive `row_width`-wide rows, with values
+    /// produced by `value` per flat index (`count` a multiple of
+    /// `row_width`) — equivalent to calling [`feed_i128`](Self::feed_i128)
+    /// on each window in order. Each row's commitment is independent and
+    /// only the append order is sequenced, so schemes may override this to
+    /// compute the windows in parallel; the closure lets callers feed
+    /// straight off a packed source without staging the whole batch.
+    fn feed_i128_rows_with(
+        partial: &mut Self::PartialCommitment,
+        value: impl Fn(usize) -> i128 + Sync,
+        count: usize,
+        row_width: usize,
+        setup: &Self::ProverSetup,
+    ) {
+        let mut row = Vec::with_capacity(row_width);
+        for base in (0..count).step_by(row_width) {
+            row.clear();
+            row.extend((base..base + row_width).map(&value));
+            Self::feed_i128(partial, &row, setup);
+        }
+    }
+
     fn begin_one_hot_column_major_stream(
         setup: &Self::ProverSetup,
         row_width: usize,
@@ -189,6 +245,33 @@ pub trait StreamingCommitment: CommitmentScheme {
         one_hot_k: usize,
         chunk: &[Option<usize>],
     ) -> Self::OneHotChunkCommitment;
+
+    /// Process a batch of consecutive `chunk_width`-column one-hot chunks,
+    /// with hot addresses produced by `hot_address` per flat index —
+    /// equivalent to calling
+    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk) on each window
+    /// in order and collecting the results. Chunk commitments are
+    /// independent, so schemes may override this to compute the windows in
+    /// parallel; the closure lets callers feed straight off a packed source
+    /// without staging the whole batch.
+    fn process_one_hot_chunks_with(
+        context: &mut Self::OneHotStreamContext,
+        setup: &Self::ProverSetup,
+        one_hot_k: usize,
+        hot_address: impl Fn(usize) -> Option<usize> + Sync,
+        count: usize,
+        chunk_width: usize,
+    ) -> Vec<Self::OneHotChunkCommitment> {
+        let mut chunk = Vec::with_capacity(chunk_width);
+        (0..count)
+            .step_by(chunk_width)
+            .map(|base| {
+                chunk.clear();
+                chunk.extend((base..(base + chunk_width).min(count)).map(&hot_address));
+                Self::process_one_hot_chunk(context, setup, one_hot_k, &chunk)
+            })
+            .collect()
+    }
 
     fn finish_with_hint(
         partial: Self::PartialCommitment,
@@ -501,11 +584,11 @@ where
     C: Clone,
 {
     fn new(claims: &'a [VerifierOpeningClaim<F, C>]) -> Result<Self, OpeningsError> {
-        let first = claims.first().ok_or_else(|| {
+        let (first, rest) = claims.split_first().ok_or_else(|| {
             OpeningsError::InvalidBatch("batch opening requires at least one claim".to_owned())
         })?;
         let point = first.evaluation.point.clone();
-        for claim in &claims[1..] {
+        for claim in rest {
             if claim.evaluation.point != point {
                 return Err(OpeningsError::InvalidBatch(
                     "batch opening claims must use one common point".to_owned(),

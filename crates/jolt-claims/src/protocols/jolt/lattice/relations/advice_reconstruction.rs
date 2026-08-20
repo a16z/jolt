@@ -65,6 +65,7 @@ impl AdviceReconstructionDimensions {
 
 /// The untrusted advice byte one-hot opening at the bound point — the final
 /// claim the packed opening consumes for the slot.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -174,6 +175,7 @@ pub fn untrusted_advice_bytes_opening() -> JoltOpeningId {
 
 /// The trusted advice byte one-hot opening at `(bound (byte ‖ place) ‖
 /// r_word)` — the final claim the packed opening consumes for the slot.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",

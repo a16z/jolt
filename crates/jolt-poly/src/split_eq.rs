@@ -166,6 +166,23 @@ pub struct GruenSplitEqPolynomial<F: JoltField> {
 }
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {
+    /// Keeps field-generic profilers from requiring `F: Allocative`.
+    pub fn heap_bytes(&self) -> usize {
+        self.point.capacity() * std::mem::size_of::<F>()
+            + self.e_in_vec.capacity() * std::mem::size_of::<Vec<F>>()
+            + self
+                .e_in_vec
+                .iter()
+                .map(|table| table.capacity() * std::mem::size_of::<F>())
+                .sum::<usize>()
+            + self.e_out_vec.capacity() * std::mem::size_of::<Vec<F>>()
+            + self
+                .e_out_vec
+                .iter()
+                .map(|table| table.capacity() * std::mem::size_of::<F>())
+                .sum::<usize>()
+    }
+
     pub fn new(point: &[F], binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(point, binding_order, None)
     }

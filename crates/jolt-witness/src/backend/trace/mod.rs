@@ -11,6 +11,7 @@ use jolt_program::{
     execution::{JoltProgram, RamAccess, TraceOutput, TraceRow, TraceSource},
     preprocess::JoltProgramPreprocessing,
 };
+use std::sync::Arc;
 
 use crate::backend::ProgramSource;
 use crate::witnesses::ram_access_address;
@@ -80,43 +81,43 @@ impl JoltVmWitnessConfig {
     }
 }
 
-pub struct JoltVmWitnessInputs<'a, T: TraceSource> {
-    pub program: &'a JoltProgram,
-    pub preprocessing: &'a JoltProgramPreprocessing,
+pub struct JoltVmWitnessInputs<T: TraceSource> {
+    pub program: Arc<JoltProgram>,
+    pub preprocessing: Arc<JoltProgramPreprocessing>,
     pub trace: TraceOutput<T>,
 }
 
-impl<'a, T: TraceSource> JoltVmWitnessInputs<'a, T> {
-    pub const fn new(
-        program: &'a JoltProgram,
-        preprocessing: &'a JoltProgramPreprocessing,
+impl<T: TraceSource> JoltVmWitnessInputs<T> {
+    pub fn new(
+        program: &Arc<JoltProgram>,
+        preprocessing: &Arc<JoltProgramPreprocessing>,
         trace: TraceOutput<T>,
     ) -> Self {
         Self {
-            program,
-            preprocessing,
+            program: Arc::clone(program),
+            preprocessing: Arc::clone(preprocessing),
             trace,
         }
     }
 }
 
-pub struct TraceBackend<'a, T: TraceSource> {
+pub struct TraceBackend<T: TraceSource> {
     pub config: JoltVmWitnessConfig,
-    pub program: &'a JoltProgram,
-    pub preprocessing: &'a JoltProgramPreprocessing,
+    pub program: Arc<JoltProgram>,
+    pub preprocessing: Arc<JoltProgramPreprocessing>,
     pub trace: TraceOutput<T>,
     #[cfg(feature = "field-inline")]
-    pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness<'a>>,
+    pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness>,
 }
 
-impl<T: TraceSource> ProgramSource for TraceBackend<'_, T> {
+impl<T: TraceSource> ProgramSource for TraceBackend<T> {
     fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
-        self.preprocessing
+        &self.preprocessing
     }
 }
 
-impl<'a, T: TraceSource> TraceBackend<'a, T> {
-    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<'a, T>) -> Self {
+impl<T: TraceSource> TraceBackend<T> {
+    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<T>) -> Self {
         Self {
             config,
             program: inputs.program,

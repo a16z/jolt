@@ -84,6 +84,24 @@ pub trait Transcript: Default + Clone + Sync + Send + 'static {
         self.raw_append_bytes(&bytes);
     }
 
+    /// Append a curve point with a label and a count packed into one 32-byte
+    /// word (same layout as the variable-length methods). Used to bind
+    /// per-commitment metadata — e.g. a committed sumcheck round's polynomial
+    /// degree — into the transcript alongside the commitment.
+    fn append_commitment_with_count<G: JoltGroupElement>(
+        &mut self,
+        label: &'static [u8],
+        count: u64,
+        point: &G,
+    ) {
+        self.raw_append_label_with_len(label, count);
+        let mut bytes = Vec::new();
+        point
+            .serialize_compressed(&mut bytes)
+            .expect("JoltGroupElement serialization should not fail");
+        self.raw_append_bytes(&bytes);
+    }
+
     /// Append a serializable value with a label.
     /// Variable-length: label and length packed into single 32-byte word.
     fn append_serializable<T: CanonicalSerialize>(&mut self, label: &'static [u8], data: &T) {

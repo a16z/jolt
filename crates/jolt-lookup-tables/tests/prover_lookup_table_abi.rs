@@ -108,8 +108,8 @@ fn modular_lookup_table_indices_match_prover_abi() {
             prover_index(ProverLookupTables::<XLEN>::LowerHalfWord(Default::default())),
         ),
         (
-            LookupTableKind::<XLEN>::SignExtendHalfWord(Default::default()).index(),
-            prover_index(ProverLookupTables::<XLEN>::SignExtendHalfWord(
+            LookupTableKind::<XLEN>::SignExtendWord(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::SignExtendWord(
                 Default::default(),
             )),
         ),
@@ -212,6 +212,14 @@ fn modular_lookup_table_indices_match_prover_abi() {
             prover_index(ProverLookupTables::<XLEN>::VirtualXORROTW7(
                 Default::default(),
             )),
+        ),
+        (
+            LookupTableKind::<XLEN>::WindowMaskW(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::WindowMaskW(Default::default())),
+        ),
+        (
+            LookupTableKind::<XLEN>::PextSigned(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::PextSigned(Default::default())),
         ),
     ];
 

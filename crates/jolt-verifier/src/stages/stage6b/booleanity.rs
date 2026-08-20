@@ -9,7 +9,7 @@
 //! address/cycle drawn from the stage-5 instruction opening.
 //!
 //! Under the `akita` feature the symbolic swaps to the lattice cycle phase,
-//! which extends the same boolean fold over the unsigned-inc chunk and MSB
+//! which extends the same boolean fold over the increment digit and carry
 //! one-hot columns, all opened at the shared `(r_address ‖ r_cycle)` point.
 
 #[cfg(feature = "akita")]
@@ -133,11 +133,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
             instruction_ra: vec![opening_point.clone(); layout.instruction()],
             bytecode_ra: vec![opening_point.clone(); layout.bytecode()],
             ram_ra: vec![opening_point.clone(); layout.ram()],
-            unsigned_inc_chunks: vec![
+            balanced_inc_digits: vec![
                 opening_point.clone();
                 self.dimensions.chunking().chunk_count()
             ],
-            unsigned_inc_msb: opening_point,
+            balanced_inc_carry: opening_point,
         })
     }
 

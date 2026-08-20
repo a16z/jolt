@@ -1,6 +1,6 @@
 //! Sparse per-cycle R1CS constraint matrices.
 
-use jolt_field::JoltField;
+use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
@@ -38,7 +38,7 @@ pub enum ConstraintMatrixEvalError {
     bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"),
     try_from = "RawConstraintMatrices<F>"
 )]
-pub struct ConstraintMatrices<F: JoltField> {
+pub struct ConstraintMatrices<F: Field> {
     pub num_constraints: usize,
     pub num_vars: usize,
     pub a: Vec<SparseRow<F>>,
@@ -47,14 +47,14 @@ pub struct ConstraintMatrices<F: JoltField> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct WeightedMatrixColumns<F: JoltField> {
+pub struct WeightedMatrixColumns<F: Field> {
     pub a: Vec<F>,
     pub b: Vec<F>,
     pub c: Vec<F>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MatrixColumnContributions<F: JoltField> {
+pub struct MatrixColumnContributions<F: Field> {
     pub a: F,
     pub b: F,
     pub c: F,
@@ -63,7 +63,7 @@ pub struct MatrixColumnContributions<F: JoltField> {
 /// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
-struct RawConstraintMatrices<F: JoltField> {
+struct RawConstraintMatrices<F: Field> {
     num_constraints: usize,
     num_vars: usize,
     a: Vec<SparseRow<F>>,
@@ -71,7 +71,7 @@ struct RawConstraintMatrices<F: JoltField> {
     c: Vec<SparseRow<F>>,
 }
 
-impl<F: JoltField> TryFrom<RawConstraintMatrices<F>> for ConstraintMatrices<F> {
+impl<F: Field> TryFrom<RawConstraintMatrices<F>> for ConstraintMatrices<F> {
     type Error = String;
 
     fn try_from(raw: RawConstraintMatrices<F>) -> Result<Self, Self::Error> {
@@ -93,7 +93,7 @@ impl<F: JoltField> TryFrom<RawConstraintMatrices<F>> for ConstraintMatrices<F> {
     }
 }
 
-fn check_invariants<F: JoltField>(
+fn check_invariants<F: Field>(
     num_constraints: usize,
     num_vars: usize,
     a: &[SparseRow<F>],
@@ -120,7 +120,7 @@ fn check_invariants<F: JoltField>(
     Ok(())
 }
 
-impl<F: JoltField> ConstraintMatrices<F> {
+impl<F: Field> ConstraintMatrices<F> {
     /// Builds constraint matrices from sparse rows.
     ///
     /// # Panics
@@ -155,10 +155,10 @@ impl<F: JoltField> ConstraintMatrices<F> {
     /// Returns `Ok(())` if Az ∘ Bz = Cz for every row, or the index
     /// of the first violated constraint.
     pub fn check_witness(&self, witness: &[F]) -> Result<(), usize> {
-        for k in 0..self.num_constraints {
-            let az = dot(&self.a[k], witness);
-            let bz = dot(&self.b[k], witness);
-            let cz = dot(&self.c[k], witness);
+        for (k, ((a_row, b_row), c_row)) in self.a.iter().zip(&self.b).zip(&self.c).enumerate() {
+            let az = dot(a_row, witness);
+            let bz = dot(b_row, witness);
+            let cz = dot(c_row, witness);
             if az * bz != cz {
                 return Err(k);
             }
@@ -253,7 +253,11 @@ impl<F: JoltField> ConstraintMatrices<F> {
 }
 
 #[inline]
-fn dot<F: JoltField>(row: &[(usize, F)], witness: &[F]) -> F {
+#[expect(
+    clippy::indexing_slicing,
+    reason = "column indices are below num_vars by the ConstraintMatrices invariant; callers supply witnesses covering num_vars"
+)]
+fn dot<F: Field>(row: &[(usize, F)], witness: &[F]) -> F {
     let mut acc = F::zero();
     for &(col, coeff) in row {
         acc += coeff * witness[col];
@@ -261,7 +265,7 @@ fn dot<F: JoltField>(row: &[(usize, F)], witness: &[F]) -> F {
     acc
 }
 
-fn matrix_column_eval<F: JoltField>(
+fn matrix_column_eval<F: Field>(
     rows: &[SparseRow<F>],
     row_weights: &[F],
     column: usize,
@@ -284,7 +288,7 @@ fn matrix_column_eval<F: JoltField>(
     Ok(acc)
 }
 
-fn matrix_bilinear_eval_columns<F: JoltField>(
+fn matrix_bilinear_eval_columns<F: Field>(
     rows: &[SparseRow<F>],
     row_weights: &[F],
     column_weights: &[F],
@@ -315,7 +319,13 @@ fn matrix_bilinear_eval_columns<F: JoltField>(
     for (row, &row_weight) in rows.iter().zip(row_weights) {
         for &(col, coeff) in row {
             if (start_col..end_col).contains(&col) {
-                acc += row_weight * column_weights[col - start_col] * coeff;
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "col lies in [start_col, end_col) and column_weights.len() == end_col - start_col is checked above"
+                )]
+                {
+                    acc += row_weight * column_weights[col - start_col] * coeff;
+                }
             }
         }
     }

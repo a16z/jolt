@@ -346,6 +346,8 @@ macro_rules! define_solinas_prime {
 
         impl<const P: $word> WithAccumulator for $name<P> {
             type Accumulator = NaiveAccumulator<Self>;
+            type SmallScalarAccumulator = NaiveAccumulator<Self>;
+            type SignedProductAccumulator = NaiveAccumulator<Self>;
         }
 
         // The ext-mul kernel hooks keep their generic-schedule defaults:

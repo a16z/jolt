@@ -112,4 +112,6 @@ impl CanonicalEncoding for AkitaField {
 
 impl WithAccumulator for AkitaField {
     type Accumulator = NaiveAccumulator<Self>;
+    type SmallScalarAccumulator = NaiveAccumulator<Self>;
+    type SignedProductAccumulator = NaiveAccumulator<Self>;
 }

@@ -3,7 +3,7 @@
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +26,13 @@ impl<C: AppendToTranscript> RoundMessage for CommittedRound<C> {
     }
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(SUMCHECK_COMMITMENT_LABEL));
+        // The degree is packed into the label word so the round's degree —
+        // which fixes the BlindFold R1CS coefficient layout — is
+        // Fiat-Shamir-bound, not free prover-chosen wire data.
+        transcript.append(&LabelWithCount(
+            SUMCHECK_COMMITMENT_LABEL,
+            self.degree as u64,
+        ));
         self.commitment.append_to_transcript(transcript);
     }
 }

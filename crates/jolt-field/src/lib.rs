@@ -70,6 +70,23 @@
 //! Both invariants are enforced by differential tests against `jolt-field`
 //! as the oracle (`tests/*_differential.rs`).
 
+// In the jolt-verifier runtime closure: stricter panic discipline than the
+// workspace lints (specs/verifier-closure-lints.md). The Solinas backend owns
+// audited target-specific unsafe arithmetic, so this crate cannot inherit
+// main's former crate-wide `forbid(unsafe_code)` rule.
+#![deny(
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
+#![deny(unsafe_op_in_unsafe_fn)]
+
 #[cfg(feature = "akita")]
 mod akita;
 mod algebra;
@@ -90,7 +107,7 @@ pub use algebra::{
     NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "bn254")]
-pub use bn254::{Fq, Fr, WideAccumulator};
+pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};

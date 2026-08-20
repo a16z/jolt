@@ -35,7 +35,7 @@ pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
     NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
 };
-pub use increments::{RamInc, RdInc};
+pub use increments::{BalancedIncHot, BalancedIncLane, FusedInc, RamInc, RdInc};
 pub use lookups::{LookupIndex, LookupOutput, TableIndex};
 pub use one_hot::{BytecodeRaChunk, InstructionRaChunk, RaChunkSelector, RamRaChunk};
 pub use operands::{
@@ -52,6 +52,13 @@ pub(crate) use ram::ram_access_address;
 /// mapping, memory layout). Constructed by backends; opaque to consumers.
 pub struct WitnessEnv<'a> {
     pub(crate) preprocessing: &'a JoltProgramPreprocessing,
+}
+
+impl<'a> WitnessEnv<'a> {
+    /// Build the extraction environment for one program.
+    pub fn new(preprocessing: &'a JoltProgramPreprocessing) -> Self {
+        Self { preprocessing }
+    }
 }
 
 /// The field encoding of an atomic witness value.

@@ -219,3 +219,21 @@ fn g2_scalar_mul_one_is_noop() {
 fn g2_default_is_identity() {
     assert_eq!(Bn254G2::default(), Bn254G2::identity());
 }
+
+#[test]
+#[should_panic(expected = "msm: bases/scalars length mismatch")]
+fn g1_msm_length_mismatch_panics() {
+    let mut rng = ChaCha20Rng::seed_from_u64(15);
+    let g = random_g1(&mut rng);
+    let s = Fr::random(&mut rng);
+    let _ = Bn254G1::msm(&[g, g], &[s]);
+}
+
+#[test]
+#[should_panic(expected = "msm: bases/scalars length mismatch")]
+fn g2_msm_length_mismatch_panics() {
+    let mut rng = ChaCha20Rng::seed_from_u64(16);
+    let g = Bn254::g2_generator();
+    let s = Fr::random(&mut rng);
+    let _ = Bn254G2::msm(&[g], &[s, s]);
+}

@@ -8,6 +8,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
@@ -52,11 +53,21 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 use jolt_witness::JoltWitnessPlane;
 
+use jolt_sumcheck::RoundScheduler;
+
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
 use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
 use crate::uniskip::UniskipKernel;
 use crate::KernelError;
+
+/// Factory behind [`JoltBackend::round_scheduler`]: stage fronts mint one
+/// scheduler per stage via `build`. Takes [`ProofSession`] so a device
+/// traversal shares the carry its kernels park in `prepare`, and so
+/// per-proof state cannot leak onto the long-lived backend.
+pub trait BuildRoundScheduler<F: JoltField> {
+    fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
+}
 
 /// The universal backend trait behind [`JoltBackend`]'s naive-served slots:
 /// mint the [`SumcheckKernel`] that proves `R`, from the proof session, the
@@ -108,7 +119,8 @@ where
 /// `Box<dyn PrepareKernel<F, R>>`, reached by type through the
 /// `#[derive(KernelSlots)]`-emitted delegating [`PrepareKernel`] impls; the
 /// remaining slots are the bespoke non-sumcheck duties (commit streaming, the
-/// uni-skip fronts, the advice opening evaluation, the joint opening).
+/// uni-skip fronts, the advice opening evaluation, the joint opening, and the
+/// round-traversal factory).
 #[derive(KernelSlots)]
 #[kernel_slots(crate = "crate")]
 pub struct JoltBackend<F, PCS>
@@ -117,6 +129,7 @@ where
     PCS: CommitmentScheme<Field = F>,
 {
     pub commit: Box<dyn CommitWitness<F, PCS>>,
+    pub round_scheduler: Box<dyn BuildRoundScheduler<F>>,
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
     pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,
@@ -224,6 +237,11 @@ pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
     v.capacity() * size_of::<T>()
 }
 
+#[cfg(feature = "allocative")]
+pub(crate) fn arc_vec_heap_bytes<T>(v: &Arc<Vec<T>>) -> usize {
+    size_of::<Vec<T>>() + v.capacity() * size_of::<T>()
+}
+
 /// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
 /// inner reservation.
 #[cfg(feature = "allocative")]
@@ -264,9 +282,22 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
 #[derive(Default)]
 pub struct ProofSession {
     state: HashMap<TypeId, Carry>,
+    witness: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl ProofSession {
+    /// Retain the proof's witness plane for kernels whose state outlives
+    /// their `prepare` borrow.
+    pub fn set_witness<F: JoltField>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
+        self.witness = Some(Box::new(witness));
+    }
+
+    /// The retained witness plane for `F`, when the proof was started from
+    /// an owned plane.
+    pub fn witness<F: JoltField>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
+        self.witness.as_ref()?.downcast_ref()
+    }
+
     /// The calling backend's private state, created by `init` on first
     /// access. `T` is the backend-private key: choose one type per backend
     /// family.

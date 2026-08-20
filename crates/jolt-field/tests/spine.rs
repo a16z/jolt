@@ -118,6 +118,8 @@ impl_serde_bytes!(impl[] M61, 8);
 
 impl WithAccumulator for M61 {
     type Accumulator = NaiveAccumulator<M61>;
+    type SmallScalarAccumulator = NaiveAccumulator<M61>;
+    type SignedProductAccumulator = NaiveAccumulator<M61>;
 }
 
 fn rng() -> ChaCha20Rng {
