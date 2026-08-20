@@ -563,6 +563,159 @@ extern "C" __global__ void msm_g1_add_kernel(const u64 *__restrict__ left,
     }
 }
 
+extern "C" __global__ void msm_g2_segment_sum_small_kernel(const u64 *__restrict__ bases,
+                                                          const unsigned int *__restrict__ indices,
+                                                          const unsigned int *__restrict__ offsets,
+                                                          const unsigned int *__restrict__ counts,
+                                                          unsigned int segments,
+                                                          u64 *__restrict__ out) {
+    unsigned int segment = blockIdx.x * blockDim.x + threadIdx.x;
+    if (segment >= segments) return;
+    unsigned int start = offsets[segment];
+    unsigned int end = start + counts[segment];
+
+    u64 acc[G2_LIMBS], tmp[G2_LIMBS], base[G2_LIMBS], negated[LIMBS];
+    jac2_set_zero(acc);
+    for (unsigned int i = start; i < end; i++) {
+        unsigned int index = indices[i];
+        unsigned int negate = index >> 31;
+        index &= 0x7fffffffu;
+        jac2_copy(bases + (unsigned long long)index * G2_LIMBS, base);
+        if (negate != 0) {
+            fq_neg(base + 2 * LIMBS, negated);
+            fq_copy(negated, base + 2 * LIMBS);
+            fq_neg(base + 3 * LIMBS, negated);
+            fq_copy(negated, base + 3 * LIMBS);
+        }
+        jac2_add(acc, base, tmp);
+        jac2_copy(tmp, acc);
+    }
+    jac2_copy(acc, out + (unsigned long long)segment * G2_LIMBS);
+}
+
+extern "C" __global__ void msm_g2_bucket_reduce_chunked_kernel(
+    const u64 *__restrict__ buckets_points, unsigned int rows, unsigned int buckets,
+    unsigned int chunks, u64 *__restrict__ out) {
+    extern __shared__ u64 scratch2[];
+    unsigned int row = blockIdx.x / chunks;
+    unsigned int chunk = blockIdx.x - row * chunks;
+    if (row >= rows) return;
+
+    unsigned int weighted = (buckets > 1) ? (buckets - 1) : 0;
+    unsigned int chunk_span = (weighted + chunks - 1) / chunks;
+    unsigned int chunk_lo = 1 + chunk * chunk_span;
+    unsigned int chunk_hi = chunk_lo + chunk_span;
+    if (chunk_hi > buckets) chunk_hi = buckets;
+    unsigned int width = (chunk_hi > chunk_lo) ? (chunk_hi - chunk_lo) : 0;
+
+    unsigned int groups = blockDim.x;
+    unsigned int span = (width + groups - 1) / groups;
+    unsigned int lo = chunk_lo + threadIdx.x * span;
+    unsigned int hi = lo + span;
+    if (hi > chunk_hi) hi = chunk_hi;
+
+    u64 acc[G2_LIMBS], running[G2_LIMBS], tmp[G2_LIMBS], bucket[G2_LIMBS];
+    jac2_set_zero(acc);
+    jac2_set_zero(running);
+    if (lo < hi) {
+        for (int b = (int)hi - 1; b >= (int)lo; b--) {
+            jac2_copy(buckets_points +
+                          ((unsigned long long)row * buckets + (unsigned int)b) * G2_LIMBS,
+                      bucket);
+            jac2_add(acc, bucket, tmp);
+            jac2_copy(tmp, acc);
+            jac2_add(running, acc, tmp);
+            jac2_copy(tmp, running);
+        }
+        unsigned int weight = lo - 1;
+        if (weight != 0) {
+            u64 scaled[G2_LIMBS], addend[G2_LIMBS];
+            jac2_set_zero(scaled);
+            jac2_copy(acc, addend);
+            while (weight != 0) {
+                if ((weight & 1u) != 0) {
+                    jac2_add(scaled, addend, tmp);
+                    jac2_copy(tmp, scaled);
+                }
+                jac2_double(addend, tmp);
+                jac2_copy(tmp, addend);
+                weight >>= 1;
+            }
+            jac2_add(running, scaled, tmp);
+            jac2_copy(tmp, running);
+        }
+    }
+
+    u64 *slot = scratch2 + (unsigned long long)threadIdx.x * G2_LIMBS;
+    jac2_copy(running, slot);
+    __syncthreads();
+    for (unsigned int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            jac2_add(slot, scratch2 + (unsigned long long)(threadIdx.x + stride) * G2_LIMBS, tmp);
+            jac2_copy(tmp, slot);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        jac2_copy(scratch2, out + ((unsigned long long)row * chunks + chunk) * G2_LIMBS);
+    }
+}
+
+extern "C" __global__ void msm_g2_point_rows_sum_kernel(const u64 *__restrict__ partials,
+                                                       unsigned int rows, unsigned int count,
+                                                       u64 *__restrict__ out) {
+    extern __shared__ u64 scratch2[];
+    unsigned int row = blockIdx.x;
+    if (row >= rows) return;
+
+    u64 acc[G2_LIMBS], tmp[G2_LIMBS], value[G2_LIMBS];
+    jac2_set_zero(acc);
+    for (unsigned int index = threadIdx.x; index < count; index += blockDim.x) {
+        jac2_copy(partials + ((unsigned long long)row * count + index) * G2_LIMBS, value);
+        jac2_add(acc, value, tmp);
+        jac2_copy(tmp, acc);
+    }
+
+    u64 *slot = scratch2 + (unsigned long long)threadIdx.x * G2_LIMBS;
+    jac2_copy(acc, slot);
+    __syncthreads();
+    for (unsigned int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            jac2_add(slot, scratch2 + (unsigned long long)(threadIdx.x + stride) * G2_LIMBS, tmp);
+            jac2_copy(tmp, slot);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        jac2_copy(scratch2, out + (unsigned long long)row * G2_LIMBS);
+    }
+}
+
+extern "C" __global__ void msm_g2_window_fold_kernel(const u64 *__restrict__ window_points,
+                                                    unsigned int rows, unsigned int windows,
+                                                    unsigned int window_bits,
+                                                    u64 *__restrict__ out) {
+    unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= rows) return;
+
+    u64 acc[G2_LIMBS], addend[G2_LIMBS], tmp[G2_LIMBS];
+    jac2_set_zero(acc);
+    for (int window = (int)windows - 1; window >= 0; window--) {
+        if ((unsigned int)window + 1 != windows) {
+            for (unsigned int i = 0; i < window_bits; i++) {
+                jac2_double(acc, tmp);
+                jac2_copy(tmp, acc);
+            }
+        }
+        jac2_copy(window_points +
+                      ((unsigned long long)(unsigned int)window * rows + row) * G2_LIMBS,
+                  addend);
+        jac2_add(acc, addend, tmp);
+        jac2_copy(tmp, acc);
+    }
+    jac2_copy(acc, out + (unsigned long long)row * G2_LIMBS);
+}
+
 extern "C" __global__ void msm_jacobian_z_kernel(const u64 *__restrict__ jacobian,
                                                 unsigned int count, u64 *__restrict__ out) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;

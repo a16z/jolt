@@ -197,11 +197,40 @@ fn write_back_g2(handles: &mut [DeviceG2], points: &[ArkG2]) {
     }
 }
 
+fn resident_msm_g2(bases: &[DeviceG2], scalars: &[ArkFr]) -> Result<DeviceG2, CudaError> {
+    if bases.len() != scalars.len() {
+        return Err(CudaError::LengthMismatch {
+            expected: bases.len(),
+            got: scalars.len(),
+        });
+    }
+    let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
+    let out = store_all_g2(&[ark_bn254::G2Projective::default()]);
+    let (Some(base_offset), Some(out_offset)) = (span_g2(bases), span_g2(&out)) else {
+        return Err(CudaError::InvariantViolation {
+            reason: "a resident G2 MSM needs a contiguous base span and one output slot",
+        });
+    };
+    arena::g2_msm(base_offset, out_offset, bases.len(), &weights)?;
+    out.first().copied().ok_or(CudaError::InvariantViolation {
+        reason: "a resident G2 MSM lost its output handle",
+    })
+}
+
 impl DoryRoutines<DeviceG2> for CudaG2Routines {
     #[tracing::instrument(skip_all, name = "cuda_g2r_msm", fields(len = bases.len()))]
     fn msm(bases: &[DeviceG2], scalars: &[ArkFr]) -> DeviceG2 {
-        let hosted: Vec<ArkG2> = load_all_g2(bases).into_iter().map(ArkG2).collect();
-        DeviceG2::store(&JoltG2Routines::msm(&hosted, scalars).0)
+        match resident_msm_g2(bases, scalars) {
+            Ok(handle) => handle,
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "the resident G2 MSM declined; falling back to the host"
+                );
+                let hosted: Vec<ArkG2> = load_all_g2(bases).into_iter().map(ArkG2).collect();
+                DeviceG2::store(&JoltG2Routines::msm(&hosted, scalars).0)
+            }
+        }
     }
 
     #[tracing::instrument(skip_all, name = "cuda_g2r_fixed_base_vector", fields(len = scalars.len()))]
