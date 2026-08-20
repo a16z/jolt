@@ -166,6 +166,9 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
     WindowMaskW(WindowMaskWTable<XLEN>),
     PextSigned(PextSignedTable<XLEN>),
+    VirtualXORROTW22(VirtualXORROTWTable<XLEN, 22>),
+    VirtualXORROTW19(VirtualXORROTWTable<XLEN, 19>),
+    VirtualXORROTW6(VirtualXORROTWTable<XLEN, 6>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -220,6 +223,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.materialize(),
             LookupTables::WindowMaskW(table) => table.materialize(),
             LookupTables::PextSigned(table) => table.materialize(),
+            LookupTables::VirtualXORROTW22(table) => table.materialize(),
+            LookupTables::VirtualXORROTW19(table) => table.materialize(),
+            LookupTables::VirtualXORROTW6(table) => table.materialize(),
         }
     }
 
@@ -267,6 +273,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.materialize_entry(index),
             LookupTables::WindowMaskW(table) => table.materialize_entry(index),
             LookupTables::PextSigned(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROTW22(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROTW19(table) => table.materialize_entry(index),
+            LookupTables::VirtualXORROTW6(table) => table.materialize_entry(index),
         }
     }
 
@@ -318,6 +327,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.evaluate_mle(r),
             LookupTables::WindowMaskW(table) => table.evaluate_mle(r),
             LookupTables::PextSigned(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROTW22(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROTW19(table) => table.evaluate_mle(r),
+            LookupTables::VirtualXORROTW6(table) => table.evaluate_mle(r),
         }
     }
 
@@ -365,6 +377,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.suffixes(),
             LookupTables::WindowMaskW(table) => table.suffixes(),
             LookupTables::PextSigned(table) => table.suffixes(),
+            LookupTables::VirtualXORROTW22(table) => table.suffixes(),
+            LookupTables::VirtualXORROTW19(table) => table.suffixes(),
+            LookupTables::VirtualXORROTW6(table) => table.suffixes(),
         }
     }
 
@@ -416,6 +431,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.combine(prefixes, suffixes),
             LookupTables::WindowMaskW(table) => table.combine(prefixes, suffixes),
             LookupTables::PextSigned(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROTW22(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROTW19(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualXORROTW6(table) => table.combine(prefixes, suffixes),
         }
     }
 }

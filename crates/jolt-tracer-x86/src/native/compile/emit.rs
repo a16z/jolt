@@ -896,6 +896,9 @@ impl DynasmEmitter {
             K::VirtualXorRotW12(_) => Self::emit_xor_rotw(e, row, 12),
             K::VirtualXorRotW8(_) => Self::emit_xor_rotw(e, row, 8),
             K::VirtualXorRotW7(_) => Self::emit_xor_rotw(e, row, 7),
+            K::VirtualXorRotW22(_) => Self::emit_xor_rotw(e, row, 22),
+            K::VirtualXorRotW19(_) => Self::emit_xor_rotw(e, row, 19),
+            K::VirtualXorRotW6(_) => Self::emit_xor_rotw(e, row, 6),
             K::AssertEq(_) => {
                 // imm == 0: hard assert. imm != 0: "spoil" mode, warn-and-continue
                 // in the interpreter; a no-op here (registers unaffected).

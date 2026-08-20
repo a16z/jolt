@@ -23,6 +23,9 @@ impl<const ROTATION: usize, F: Field> SparseDensePrefix<F> for XorRotWPrefix<ROT
             8 => Prefixes::XorRotW8,
             12 => Prefixes::XorRotW12,
             16 => Prefixes::XorRotW16,
+            22 => Prefixes::XorRotW22,
+            19 => Prefixes::XorRotW19,
+            6 => Prefixes::XorRotW6,
             _ => unreachable!(),
         };
 

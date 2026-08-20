@@ -112,11 +112,11 @@ mod sequence_tests {
 
     #[test]
     fn test_sha256_inline_rows_per_block() {
-        // Tranche 1: weak σ shifts, XORROTW7 σ₀, raw-BE ingest, and IV reload.
+        // Σ₀/Σ₁ are 3 rows each, σ₁ is 5; fixed-IV folds both round-0 Σ values.
         let (custom_iv_rows, custom_iv_histogram) = inline_rows(crate::SHA256_FUNCT3);
         let (fixed_iv_rows, fixed_iv_histogram) = inline_rows(crate::SHA256_INIT_FUNCT3);
-        assert_eq!(custom_iv_rows, 2300, "{custom_iv_histogram:?}");
-        assert_eq!(fixed_iv_rows, 2260, "{fixed_iv_histogram:?}");
+        assert_eq!(custom_iv_rows, 1996, "{custom_iv_histogram:?}");
+        assert_eq!(fixed_iv_rows, 1960, "{fixed_iv_histogram:?}");
     }
 
     #[test]
@@ -142,6 +142,8 @@ mod sequence_tests {
 
 mod sdk_tests {
     use crate::sdk::Sha256;
+    use sha2::{Digest, Sha256 as RefSha256};
+
     #[test]
     fn test_sha256_sdk_digest() {
         // Test vector for "abc"
@@ -209,8 +211,6 @@ mod sdk_tests {
 
     #[test]
     fn test_sha256_aligned_vs_unaligned() {
-        use sha2::{Digest, Sha256 as RefSha256};
-
         // Test various sizes including block boundary (64 bytes)
         let test_sizes = [
             0, 1, 3, 4, 7, 8, 31, 32, 55, 56, 63, 64, 65, 100, 128, 256, 512, 1024, 2048,
