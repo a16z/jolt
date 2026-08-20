@@ -11,7 +11,7 @@ use num_derive::FromPrimitive;
 use positive_remainder_equals_divisor::PositiveRemainderEqualsDivisorPrefix;
 use positive_remainder_less_than_divisor::PositiveRemainderLessThanDivisorPrefix;
 use pow2::Pow2Prefix;
-use pow2_offset_w::Pow2OffsetWPrefix;
+use pow2_offset::Pow2OffsetPrefix;
 use pow2_w::Pow2WPrefix;
 use rayon::prelude::*;
 use rev8w::Rev8WPrefix;
@@ -24,6 +24,7 @@ use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use align_addr::AlignAddrPrefix;
 use and::AndPrefix;
 use andn::AndnPrefix;
 use change_divisor::ChangeDivisorPrefix;
@@ -54,6 +55,7 @@ use xor::XorPrefix;
 use xor_rot::XorRotPrefix;
 use xor_rotw::XorRotWPrefix;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod change_divisor;
@@ -78,7 +80,7 @@ pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
-pub mod pow2_offset_w;
+pub mod pow2_offset;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -194,6 +196,9 @@ pub enum Prefixes {
     Pow2OffsetW,
     WindowSign,
     WindowSignPow2,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -342,10 +347,17 @@ impl Prefixes {
                 OverflowBitsZeroPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::Pow2OffsetW => {
-                Pow2OffsetWPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j)
+                Pow2OffsetPrefix::<XLEN, 2>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::WindowSign => WindowSignPrefix::prefix_mle(checkpoints, r_x, c, b, j),
             Prefixes::WindowSignPow2 => WindowSignPow2Prefix::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::Pow2OffsetB => {
+                Pow2OffsetPrefix::<XLEN, 0>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::Pow2OffsetH => {
+                Pow2OffsetPrefix::<XLEN, 1>::prefix_mle(checkpoints, r_x, c, b, j)
+            }
+            Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -677,7 +689,7 @@ impl Prefixes {
                 j,
                 suffix_len,
             ),
-            Prefixes::Pow2OffsetW => Pow2OffsetWPrefix::<XLEN>::update_prefix_checkpoint(
+            Prefixes::Pow2OffsetW => Pow2OffsetPrefix::<XLEN, 2>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
                 r_y,
@@ -690,6 +702,27 @@ impl Prefixes {
             Prefixes::WindowSignPow2 => {
                 WindowSignPow2Prefix::update_prefix_checkpoint(checkpoints, r_x, r_y, j, suffix_len)
             }
+            Prefixes::Pow2OffsetB => Pow2OffsetPrefix::<XLEN, 0>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::Pow2OffsetH => Pow2OffsetPrefix::<XLEN, 1>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
         }
     }
 }

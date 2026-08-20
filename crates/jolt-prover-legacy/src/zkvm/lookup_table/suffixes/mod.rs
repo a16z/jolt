@@ -18,6 +18,8 @@ use or::OrSuffix;
 use pext::PextSuffix;
 use pext_helper::PextHelperSuffix;
 use pow2::Pow2Suffix;
+use pow2_offset_b::Pow2OffsetBSuffix;
+use pow2_offset_h::Pow2OffsetHSuffix;
 use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8W;
@@ -31,6 +33,7 @@ use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
 
+use align_addr::AlignAddrSuffix;
 use and::AndSuffix;
 use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
@@ -45,6 +48,7 @@ use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
 
+pub mod align_addr;
 pub mod and;
 pub mod change_divisor;
 pub mod change_divisor_w;
@@ -66,6 +70,8 @@ pub mod overflow_bits_zero;
 pub mod pext;
 pub mod pext_helper;
 pub mod pow2;
+pub mod pow2_offset_b;
+pub mod pow2_offset_h;
 pub mod pow2_offset_w;
 pub mod pow2_w;
 pub mod rev8w;
@@ -146,6 +152,9 @@ pub enum Suffixes {
     PextHelper,
     WindowSign,
     WindowSignPow2,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -229,6 +238,9 @@ impl Suffixes {
             Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
             Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
+            Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
+            Suffixes::AlignAddr => AlignAddrSuffix::<XLEN>::suffix_mle(b),
         }
     }
 }

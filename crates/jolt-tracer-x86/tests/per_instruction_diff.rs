@@ -119,6 +119,10 @@ const SUPPORTED: &[&str] = &[
     // Byte-addressable Tier 0 (fused sub-word extraction):
     "WindowMaskW",
     "PextSigned",
+    "Pext",
+    "WindowMaskB",
+    "WindowMaskH",
+    "AlignAddr",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -727,8 +731,12 @@ difftests! {
     diff_mulw => |r| alu_rr(r, K::MULW);
     diff_addiw => |r| alu_ri(r, K::ADDIW, false);
     diff_muliw => |r| alu_ri(r, K::VirtualMULIW, true);
-    diff_window_mask_w => |r| unary(r, kind_by_name("VirtualWindowMaskW"));
+    diff_window_mask_w => |r| alu_ri(r, kind_by_name("VirtualWindowMaskW"), false);
+    diff_window_mask_b => |r| alu_ri(r, kind_by_name("VirtualWindowMaskB"), false);
+    diff_window_mask_h => |r| alu_ri(r, kind_by_name("VirtualWindowMaskH"), false);
+    diff_align_addr => |r| alu_ri(r, kind_by_name("VirtualAlignAddr"), false);
     diff_pext_signed => |r| alu_rr(r, kind_by_name("VirtualPextSigned"));
+    diff_pext => |r| alu_rr(r, kind_by_name("VirtualPext"));
 }
 
 /// Every supported kind has a differential test above; this pins the count
@@ -737,5 +745,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 73);
+    assert_eq!(SUPPORTED.len(), 77);
 }

@@ -29,9 +29,9 @@ pub(in crate::expand) fn expand_ram_region_assertion(
 /// Lowers `LB`/`LBU` by loading the containing doubleword and extracting a byte.
 ///
 /// The effective address is rounded down to the aligned 8-byte address for the
-/// `LD`. The byte offset then determines how far to left-shift the containing
-/// doubleword so the requested byte lands in bits 63:56; the final arithmetic
-/// or logical right shift performs signed or unsigned extension.
+/// `LD`. `VirtualWindowMaskB` turns the effective address into the byte mask of
+/// the addressed lane, and a single fused parallel-extract lookup (signed or
+/// unsigned) pulls the byte out of the loaded doubleword.
 pub(in crate::expand) fn expand_byte_load(
     instruction: &SourceInstructionRow,
     signed: bool,
@@ -40,40 +40,31 @@ pub(in crate::expand) fn expand_byte_load(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
-    // v0 = effective address. v1 = aligned address of the containing
-    // doubleword.
+    // v1 = aligned address of the containing doubleword; the fused lookup
+    // computes `(rs1 + imm) & !7` in one row.
     asm.expand_i(
-        SourceInstructionKind::ADDI,
+        SourceInstructionKind::VirtualAlignAddr,
+        v1.operand(),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
+    );
+    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    // v0 = byte mask of the lane at offset `(rs1 + imm) mod 8`.
+    asm.expand_i(
+        SourceInstructionKind::VirtualWindowMaskB,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(
-        SourceInstructionKind::ANDI,
-        v1.operand(),
-        v0.operand(),
-        format_i_imm(-8),
-    );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // Under the RV64 shift mask, ((address ^ 7) << 3) is
-    // (7 - byte_offset) * 8, moving the selected byte to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 7);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
     asm.expand_r(
-        SourceInstructionKind::SLL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
-    asm.expand_i(
         if signed {
-            SourceInstructionKind::SRAI
+            SourceInstructionKind::VirtualPextSigned
         } else {
-            SourceInstructionKind::SRLI
+            SourceInstructionKind::VirtualPext
         },
         reg(rd(instruction)?),
         v1.operand(),
-        56,
+        v0.operand(),
     );
     asm.release_many([v0, v1]);
 
@@ -83,8 +74,9 @@ pub(in crate::expand) fn expand_byte_load(
 /// Lowers `LH`/`LHU` by loading the containing doubleword and extracting a halfword.
 ///
 /// Halfword alignment is asserted first. The extraction mirrors byte loads:
-/// shift the selected halfword into bits 63:48, then use arithmetic or logical
-/// right shift to get signed or unsigned extension.
+/// `VirtualWindowMaskH` builds the halfword lane's byte mask from the
+/// effective address, and a fused parallel-extract lookup (signed or unsigned)
+/// pulls the lane out of the loaded doubleword.
 pub(in crate::expand) fn expand_halfword_load(
     instruction: &SourceInstructionRow,
     signed: bool,
@@ -100,40 +92,86 @@ pub(in crate::expand) fn expand_halfword_load(
         reg(rs1(instruction)?),
         instruction.operands.imm,
     );
+    // v1 = aligned address of the containing doubleword; the fused lookup
+    // computes `(rs1 + imm) & !7` in one row.
     asm.expand_i(
-        SourceInstructionKind::ADDI,
+        SourceInstructionKind::VirtualAlignAddr,
+        v1.operand(),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
+    );
+    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    // v0 = byte mask of the halfword lane at offset `(rs1 + imm) mod 8`
+    // (VirtualWindowMaskH ignores bit 0, which the assert above zeroes).
+    asm.expand_i(
+        SourceInstructionKind::VirtualWindowMaskH,
         v0.operand(),
         reg(rs1(instruction)?),
         format_i_imm(instruction.operands.imm),
     );
-    asm.expand_i(
-        SourceInstructionKind::ANDI,
-        v1.operand(),
-        v0.operand(),
-        format_i_imm(-8),
-    );
-    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
-    // Under the RV64 shift mask, ((address ^ 6) << 3) selects the aligned
-    // halfword lane and moves it to the high end.
-    asm.expand_i(SourceInstructionKind::XORI, v0.operand(), v0.operand(), 6);
-    asm.expand_i(SourceInstructionKind::SLLI, v0.operand(), v0.operand(), 3);
     asm.expand_r(
-        SourceInstructionKind::SLL,
-        v1.operand(),
-        v1.operand(),
-        v0.operand(),
-    );
-    asm.expand_i(
         if signed {
-            SourceInstructionKind::SRAI
+            SourceInstructionKind::VirtualPextSigned
         } else {
-            SourceInstructionKind::SRLI
+            SourceInstructionKind::VirtualPext
         },
         reg(rd(instruction)?),
         v1.operand(),
-        48,
+        v0.operand(),
     );
     asm.release_many([v0, v1]);
+
+    asm.finalize()
+}
+
+/// Lowers `LW`/`LWU` by loading the containing doubleword and extracting a word.
+///
+/// The word alignment assertion is required by the source semantics; it also
+/// guarantees the effective address's bits 0-1 are zero, which
+/// `VirtualWindowMaskW` relies on (it reads only bit 2). A fused
+/// parallel-extract lookup (signed or unsigned) pulls the word lane out of the
+/// loaded doubleword.
+pub(in crate::expand) fn expand_word_load(
+    instruction: &SourceInstructionRow,
+    signed: bool,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    let mut asm = ExpansionBuilder::new(*instruction);
+    let v0 = asm.allocate()?;
+    let v1 = asm.allocate()?;
+
+    asm.expand_address(
+        SourceInstructionKind::VirtualAssertWordAlignment,
+        reg(rs1(instruction)?),
+        instruction.operands.imm,
+    );
+    // v1 = aligned address of the containing doubleword; the fused lookup
+    // computes `(rs1 + imm) & !7` in one row.
+    asm.expand_i(
+        SourceInstructionKind::VirtualAlignAddr,
+        v1.operand(),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
+    );
+    asm.expand_i(SourceInstructionKind::LD, v1.operand(), v1.operand(), 0);
+    // v0 = byte mask of the word lane at offset `(rs1 + imm) mod 8`.
+    asm.expand_i(
+        SourceInstructionKind::VirtualWindowMaskW,
+        v0.operand(),
+        reg(rs1(instruction)?),
+        format_i_imm(instruction.operands.imm),
+    );
+    asm.expand_r(
+        if signed {
+            SourceInstructionKind::VirtualPextSigned
+        } else {
+            SourceInstructionKind::VirtualPext
+        },
+        reg(rd(instruction)?),
+        v1.operand(),
+        v0.operand(),
+    );
+    asm.release(v0);
+    asm.release(v1);
 
     asm.finalize()
 }

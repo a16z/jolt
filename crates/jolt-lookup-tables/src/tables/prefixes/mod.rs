@@ -7,6 +7,7 @@
 //! value becomes the prefix's checkpoint for the next phase. Checkpoints are
 //! initialized via [`SparseDensePrefix::default_checkpoint`].
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod change_divisor;
@@ -31,7 +32,7 @@ pub mod overflow_bits_zero;
 pub mod positive_remainder_equals_divisor;
 pub mod positive_remainder_less_than_divisor;
 pub mod pow2;
-pub mod pow2_offset_w;
+pub mod pow2_offset;
 pub mod pow2_w;
 pub mod rev8w;
 pub mod right_is_zero;
@@ -165,6 +166,9 @@ pub enum Prefixes {
     Pow2OffsetW,
     WindowSign,
     WindowSignPow2,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
 }
 
 /// Total number of prefix variants.
@@ -226,9 +230,12 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
             Prefixes::XorRotW16 => xor_rotw::XorRotWPrefix::<16>::$method($($args),*),
-            Prefixes::Pow2OffsetW => pow2_offset_w::Pow2OffsetWPrefix::$method($($args),*),
+            Prefixes::Pow2OffsetW => pow2_offset::Pow2OffsetPrefix::<2>::$method($($args),*),
             Prefixes::WindowSign => window_sign::WindowSignPrefix::$method($($args),*),
             Prefixes::WindowSignPow2 => window_sign_pow2::WindowSignPow2Prefix::$method($($args),*),
+            Prefixes::Pow2OffsetB => pow2_offset::Pow2OffsetPrefix::<0>::$method($($args),*),
+            Prefixes::Pow2OffsetH => pow2_offset::Pow2OffsetPrefix::<1>::$method($($args),*),
+            Prefixes::AlignAddr => align_addr::AlignAddrPrefix::$method($($args),*),
         }
     };
 }
