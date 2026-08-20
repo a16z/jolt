@@ -179,6 +179,7 @@ impl DeviceAddressPhase {
             })
     }
 
+    #[tracing::instrument(skip_all, name = "ap_init_phase")]
     fn init_phase(&mut self, context: &CudaKernelContext, phase: usize) -> Result<(), CudaError> {
         if phase != 0 {
             let v_prev = self
@@ -224,6 +225,7 @@ impl DeviceAddressPhase {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all, name = "ap_evaluate_prefixes")]
     fn evaluate_prefixes(
         &self,
         context: &CudaKernelContext,
@@ -271,6 +273,7 @@ impl DeviceAddressPhase {
         Ok(out)
     }
 
+    #[tracing::instrument(skip_all, name = "ap_build_raf_prefix")]
     fn build_raf_prefix_tables(
         &self,
         context: &CudaKernelContext,
@@ -297,6 +300,7 @@ impl DeviceAddressPhase {
         Ok(out)
     }
 
+    #[tracing::instrument(skip_all, name = "ap_round_message")]
     pub fn round_message_hinted(
         &self,
         context: &CudaKernelContext,
@@ -384,6 +388,7 @@ impl DeviceAddressPhase {
         Ok(evals)
     }
 
+    #[tracing::instrument(skip_all, name = "ap_bind")]
     pub fn bind(&mut self, context: &CudaKernelContext, challenge: Fr) -> Result<(), CudaError> {
         self.tables.bind(context, challenge)?;
         self.phase_challenges.push(challenge);

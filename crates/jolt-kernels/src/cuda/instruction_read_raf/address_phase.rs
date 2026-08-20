@@ -147,6 +147,7 @@ pub(super) struct Segments {
     pub(super) counts: CudaSlice<u32>,
 }
 
+#[tracing::instrument(skip_all, name = "ap_segment_rows")]
 pub(super) fn segment_rows(
     context: &CudaKernelContext,
     keys: &CudaSlice<u32>,
@@ -193,6 +194,7 @@ pub(super) fn segment_rows(
     })
 }
 
+#[tracing::instrument(skip_all, name = "ap_init_raf_buckets")]
 pub fn init_raf_buckets(
     context: &CudaKernelContext,
     rows: &DeviceRows,
@@ -286,6 +288,7 @@ pub fn init_raf_buckets(
     })
 }
 
+#[tracing::instrument(skip_all, name = "ap_init_suffix_buckets")]
 pub fn init_suffix_buckets(
     context: &CudaKernelContext,
     rows: &DeviceRows,
@@ -407,6 +410,7 @@ pub fn init_suffix_buckets(
     Ok(tables)
 }
 
+#[tracing::instrument(skip_all, name = "ap_condense_u_evals")]
 pub fn condense_u_evals(
     context: &CudaKernelContext,
     rows: &DeviceRows,
