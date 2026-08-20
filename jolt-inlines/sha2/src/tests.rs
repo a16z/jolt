@@ -82,10 +82,42 @@ mod exec_functions {
 }
 
 mod sequence_tests {
+    use std::collections::BTreeMap;
+
     use crate::sequence_builder::{Sha256Compression, Sha256CompressionInitial};
     use jolt_inlines_sdk::{
         assert_edge_cases_match_reference, assert_random_cases_match_reference,
     };
+    use tracer::{
+        instruction::Instruction,
+        utils::{
+            inline_test_harness::InlineTestHarness, virtual_registers::VirtualRegisterAllocator,
+        },
+    };
+
+    fn inline_rows(funct3: u32) -> (usize, BTreeMap<&'static str, usize>) {
+        let instruction = InlineTestHarness::create_default_instruction(
+            crate::INLINE_OPCODE,
+            funct3,
+            crate::SHA256_FUNCT7,
+        );
+        let sequence = instruction.inline_sequence(&VirtualRegisterAllocator::default());
+        let mut histogram = BTreeMap::new();
+        for instruction in &sequence {
+            let mnemonic: &'static str = <&Instruction>::into(instruction);
+            *histogram.entry(mnemonic).or_default() += 1;
+        }
+        (sequence.len(), histogram)
+    }
+
+    #[test]
+    fn test_sha256_inline_rows_per_block() {
+        // Tranche 1: weak σ shifts, XORROTW7 σ₀, raw-BE ingest, and IV reload.
+        let (custom_iv_rows, custom_iv_histogram) = inline_rows(crate::SHA256_FUNCT3);
+        let (fixed_iv_rows, fixed_iv_histogram) = inline_rows(crate::SHA256_INIT_FUNCT3);
+        assert_eq!(custom_iv_rows, 2300, "{custom_iv_histogram:?}");
+        assert_eq!(fixed_iv_rows, 2260, "{fixed_iv_histogram:?}");
+    }
 
     #[test]
     fn test_sha256_direct_execution() {
