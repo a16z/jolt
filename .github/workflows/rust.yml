@@ -128,6 +128,59 @@ jobs:
           --features host,field-inline
           --
           -D warnings
+      # Same for implicit-carry: lint every crate that defines the feature lane.
+      - name: cargo clippy --features implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p tracer
+          -p jolt-program
+          -p jolt-riscv
+          -p jolt-lookup-tables
+          --all-targets
+          --features implicit-carry
+          --
+          -D warnings
+      - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p jolt-prover-legacy
+          -p jolt-sdk
+          --all-targets
+          --features host,implicit-carry
+          --
+          -D warnings
+      # Composition coverage: both additive feature lanes must coexist.
+      - name: cargo clippy --features field-inline,implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p tracer
+          -p jolt-program
+          -p jolt-riscv
+          -p jolt-lookup-tables
+          --all-targets
+          --features field-inline,implicit-carry
+          --
+          -D warnings
+      # jolt-tracer-x86's native module is cfg-gated to x86_64-linux; pin the
+      # target so the implicit-carry lane covers it even if the runner
+      # architecture changes.
+      - name: cargo clippy -p jolt-tracer-x86 --features implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p jolt-tracer-x86
+          --all-targets
+          --features implicit-carry
+          --target x86_64-unknown-linux-gnu
+          --
+          -D warnings
 
   machete:
     runs-on: ubuntu-latest
@@ -562,6 +615,13 @@ jobs:
           cargo nextest run -p jolt-claims -p jolt-r1cs \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
+      - name: Test crates with implicit-carry
+        if: matrix.shard == 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo nextest run -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
+            --features implicit-carry --no-tests=pass --cargo-quiet
 
   # Join gate so the check name "Test modular crates" is stable regardless of
   # shard count.
@@ -716,6 +776,8 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
+      - name: Run tracer tests with implicit-carry
+        run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,implicit-carry --cargo-quiet
 
   zklean-extractor-tests:
     name: ZkLean extractor tests

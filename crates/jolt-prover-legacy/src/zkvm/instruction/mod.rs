@@ -365,6 +365,13 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstruction::FieldLoadFromX(_)
             | JoltInstruction::FieldStoreToX(_)
             | JoltInstruction::FieldLoadImm(_) => return None,
+            // Same combined-operand range-check lookup as ADD/MUL; the legacy
+            // prover has no implicit-carry constraint support yet, so proving
+            // a trace containing these is unsupported until then.
+            #[cfg(feature = "implicit-carry")]
+            JoltInstruction::AddC(_) | JoltInstruction::MulC(_) => {
+                LookupTables::RangeCheck(Default::default())
+            }
             JoltInstructionKind::NoOp
             | JoltInstructionKind::LD
             | JoltInstructionKind::SD
@@ -416,6 +423,15 @@ impl<const XLEN: usize> LookupQuery<XLEN> for JoltTraceCycle<'_> {
 }
 
 fn circuit_flags_from_riscv(flags: RiscvCircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
+    // jolt_riscv's flag set can be wider than the legacy layout (implicit-carry
+    // adds UsesCarry/ProducesCarry); silently truncating a set carry flag would
+    // prove wrong semantics. This runs at preprocessing time, not per cycle.
+    assert!(
+        flags.bits() >> NUM_CIRCUIT_FLAGS == 0,
+        "circuit flags {:#018b} exceed the legacy prover's {NUM_CIRCUIT_FLAGS} flags; \
+         ADDC/MULC are not supported by the legacy prover",
+        flags.bits()
+    );
     let mut converted = [false; NUM_CIRCUIT_FLAGS];
     for (index, value) in converted.iter_mut().enumerate() {
         *value = flags.bits() & (1 << index) != 0;
@@ -424,6 +440,7 @@ fn circuit_flags_from_riscv(flags: RiscvCircuitFlagSet) -> [bool; NUM_CIRCUIT_FL
 }
 
 fn instruction_flags_from_riscv(flags: RiscvInstructionFlagSet) -> [bool; NUM_INSTRUCTION_FLAGS] {
+    assert!(flags.bits() >> NUM_INSTRUCTION_FLAGS == 0);
     let mut converted = [false; NUM_INSTRUCTION_FLAGS];
     for (index, value) in converted.iter_mut().enumerate() {
         *value = flags.bits() & (1 << index) != 0;

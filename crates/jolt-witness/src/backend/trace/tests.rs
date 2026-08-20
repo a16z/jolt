@@ -277,9 +277,9 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let program = Arc::new(JoltProgram::default());
     let rows = vec![
-        TraceRow {
-            instruction: instruction_row,
-            registers: RegisterState {
+        TraceRow::new(
+            instruction_row,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: 5,
@@ -291,13 +291,11 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Read(RamRead {
+            RamAccess::Read(RamRead {
                 address: RAM_START_ADDRESS,
                 value: 7,
             }),
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        },
+        ),
         TraceRow::default(),
     ];
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
@@ -502,9 +500,9 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
     let preprocessing = preprocessing_with_bytecode(bytecode);
-    let row = TraceRow {
-        instruction: instruction_row,
-        registers: RegisterState {
+    let row = TraceRow::new(
+        instruction_row,
+        RegisterState {
             rs1: Some(RegisterRead {
                 register: 2,
                 value: 5,
@@ -516,13 +514,11 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
             }),
             ..Default::default()
         },
-        ram_access: RamAccess::Read(RamRead {
+        RamAccess::Read(RamRead {
             address: RAM_START_ADDRESS,
             value: 7,
         }),
-        #[cfg(feature = "field-inline")]
-        field_inline: None,
-    };
+    );
     let next = TraceRow::default();
     let env = WitnessEnv {
         preprocessing: &preprocessing,
@@ -950,9 +946,9 @@ fn slice_fast_paths_match_the_sequential_fallback() {
     let preprocessing = preprocessing_with_bytecode(bytecode);
     let program = Arc::new(JoltProgram::default());
     let rows = vec![
-        TraceRow {
-            instruction: instruction_row,
-            registers: RegisterState {
+        TraceRow::new(
+            instruction_row,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: 5,
@@ -964,13 +960,11 @@ fn slice_fast_paths_match_the_sequential_fallback() {
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Read(RamRead {
+            RamAccess::Read(RamRead {
                 address: RAM_START_ADDRESS,
                 value: 7,
             }),
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        },
+        ),
         TraceRow::default(),
         TraceRow {
             instruction: instruction_row,

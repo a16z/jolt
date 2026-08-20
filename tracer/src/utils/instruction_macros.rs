@@ -5,11 +5,12 @@ macro_rules! declare_riscv_instr {
       mask    = $mask:expr,
       match   = $match_:expr,
       format  = $format:ty,
-      ram     = $ram:ty $(,)?
+      ram     = $ram:ty
+      $(, produces_carry = $produces_carry:literal)? $(,)?
   ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram);
+        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram, (false $(|| $produces_carry)?));
     };
-    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty) => {
+    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty, $produces_carry:expr) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,
@@ -74,8 +75,10 @@ macro_rules! declare_riscv_instr {
                 }
             }
 
+            const PRODUCES_CARRY: bool = $produces_carry;
+
             fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RAMAccess) {
-                self.exec(cpu, ram)
+                self.exec(cpu, ram);
             }
         }
 

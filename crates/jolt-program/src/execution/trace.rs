@@ -245,6 +245,32 @@ pub struct TraceRow {
     pub ram_access: RamAccess,
     #[cfg(feature = "field-inline")]
     pub field_inline: Option<Arc<FieldInlineTraceData>>,
+    /// The row's incoming implicit carry (the previous row's carry-out).
+    /// Zero on padding rows.
+    #[cfg(feature = "implicit-carry")]
+    pub carry: u64,
+}
+
+impl TraceRow {
+    /// Builds a row from the always-present fields, defaulting the cfg-gated
+    /// extensions. Downstream constructors stay immune to future cfg-gated
+    /// fields, and unlike `..Default::default()` at fully-specified sites this
+    /// stays clean under clippy's `needless_update` with `-D warnings`.
+    pub fn new(
+        instruction: JoltInstructionRow,
+        registers: RegisterState,
+        ram_access: RamAccess,
+    ) -> Self {
+        Self {
+            instruction,
+            registers,
+            ram_access,
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
+        }
+    }
 }
 
 impl JoltCycle for TraceRow {
@@ -296,6 +322,12 @@ impl JoltCycle for TraceRow {
             RamAccess::Write(write) => Some(write.post_value),
             RamAccess::Read(_) | RamAccess::NoOp => None,
         }
+    }
+
+    #[cfg(feature = "implicit-carry")]
+    #[inline]
+    fn carry(&self) -> u64 {
+        self.carry
     }
 }
 

@@ -17,8 +17,39 @@ use crate::zkvm::bytecode::{
 };
 use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
+#[cfg(feature = "implicit-carry")]
+use jolt_riscv::JoltInstruction;
 use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
 use tracer::instruction::Cycle;
+
+/// The legacy prover has no implicit-carry constraint support: its circuit-flag
+/// layout is 14 lanes wide, so ADDC/MULC rows (whose UsesCarry/ProducesCarry
+/// flags sit at bits 14/15) would be silently truncated. Reject them up front
+/// rather than prove wrong semantics.
+#[cfg(feature = "implicit-carry")]
+pub fn reject_implicit_carry_instructions(
+    instructions: &[JoltInstructionRow],
+) -> Result<(), PreprocessingError> {
+    for instruction in instructions {
+        if matches!(
+            instruction.instruction_kind,
+            JoltInstruction::AddC(_) | JoltInstruction::MulC(_)
+        ) {
+            return Err(PreprocessingError::IllegalTargetInstruction(
+                instruction.instruction_kind,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Feature-off the ADDC/MULC kinds do not exist, so there is nothing to reject.
+#[cfg(not(feature = "implicit-carry"))]
+pub fn reject_implicit_carry_instructions(
+    _instructions: &[JoltInstructionRow],
+) -> Result<(), PreprocessingError> {
+    Ok(())
+}
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct FullProgramPreprocessing {
@@ -45,6 +76,7 @@ impl FullProgramPreprocessing {
         memory_init: Vec<(u64, u8)>,
         entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
+        reject_implicit_carry_instructions(&instructions)?;
         Ok(Self {
             bytecode: Arc::new(BytecodePreprocessing::preprocess(
                 instructions,
