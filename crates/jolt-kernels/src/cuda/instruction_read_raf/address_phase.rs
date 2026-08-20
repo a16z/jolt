@@ -164,15 +164,11 @@ pub(super) fn segment_rows(
     // `counts[keys[j]]`; live keys are `< buckets` and `counts` holds `buckets`
     // u32s. Concurrent increments are `atomicAdd`.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-    context.stream().synchronize()?;
 
-    let histogram = context.download_u32(&counts)?;
-    let total: usize = histogram.iter().map(|&value| value as usize).sum();
-    let offsets = context.exclusive_scan_u32(&histogram)?;
-    let offsets = context.upload_u32_slice(&offsets)?;
+    let offsets = context.exclusive_scan_u32_on_device(&counts, buckets)?;
 
     let mut cursors = context.alloc_u32(buckets)?;
-    let mut order = context.alloc_u32(total.max(1))?;
+    let mut order = context.alloc_u32(rows.max(1))?;
     let mut builder = context.stream().launch_builder(context.ap_scatter());
     let _ = builder.arg(keys);
     let _ = builder.arg(&offsets);
@@ -185,7 +181,6 @@ pub(super) fn segment_rows(
     // slots stay in `[0, counts[key])`, so each write lands in that key's
     // segment of the partition of `[0, total)` and no two threads share a slot.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-    context.stream().synchronize()?;
 
     Ok(Segments {
         order,

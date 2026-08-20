@@ -1152,12 +1152,11 @@ impl CudaKernelContext {
             // u32 allocation, which was zeroed by `alloc_u32`. The increment is
             // an atomic, so concurrent hits on one counter are safe.
             let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
-            self.stream().synchronize()?;
 
-            let (offsets, total) = self.exclusive_scan_with_total_u32(&counts, segments)?;
-            let widest_bucket = self.download_u32(&counts)?.into_iter().max().unwrap_or(0) as usize;
+            let offsets = self.exclusive_scan_u32_on_device(&counts, segments)?;
+            let widest_bucket = len.div_ceil(segments.max(1)).saturating_mul(4);
             let mut cursor = self.clone_u32(&offsets)?;
-            let mut indices = self.alloc_u32(total.max(1))?;
+            let mut indices = self.alloc_u32(len.max(1))?;
             let mut builder = self.stream().launch_builder(self.msm_bucket_scatter());
             let _ = builder.arg(&digits);
             let _ = builder.arg(&device_signs);
