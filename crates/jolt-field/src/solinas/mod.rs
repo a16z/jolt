@@ -12,7 +12,7 @@ mod unreduced;
 mod word;
 
 pub use ext::{
-    canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas, Ext2,
+    canonical_extension_basis, solve_frobenius_moore, validate_canonical_frobenius_thetas, Ext2,
     FpExt2, FpExt4, FpExt8,
 };
 pub use fp128::Fp128;

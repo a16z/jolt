@@ -29,7 +29,7 @@
 use super::{Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8};
 use crate::{
     CanonicalEncoding, Ext2Config, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
-    Unreduced,
+    Unreduced, WithCommitAccumulator,
 };
 
 /// Splits a canonical value into 16-bit digits stored one per `i32` lane.
@@ -87,6 +87,20 @@ wide_lanes! {
     /// Wide unreduced accumulator for [`Fp128`]: 8 × `i32` lanes (one
     /// 256-bit vector register on AVX2, two 128-bit on NEON).
     Fp128x8i32: 8;
+}
+
+const MAX_WIDE_LANE_ACCUMULATIONS: usize = (i32::MAX as usize) / (u16::MAX as usize);
+
+impl<const P: u32> WithCommitAccumulator for Fp32<P> {
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u64> WithCommitAccumulator for Fp64<P> {
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u128> WithCommitAccumulator for Fp128<P> {
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
 }
 
 macro_rules! product_accum {

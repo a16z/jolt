@@ -25,9 +25,27 @@ use jolt_field as two;
 use num_traits::Zero;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{CanonicalEncoding, ExtField, Fold, MulBaseUnreduced, Ring, Unreduced};
+use two::{
+    CanonicalEncoding, ExtField, Fold, MulBaseUnreduced, Ring, Unreduced, WithCommitAccumulator,
+};
 
 const M61: u64 = (1 << 61) - 1;
+
+#[test]
+fn commitment_accumulation_limit_is_the_exact_i32_lane_bound() {
+    let limit = <two::Prime128Offset275 as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS;
+    assert_eq!(limit, (i32::MAX as usize) / (u16::MAX as usize));
+    assert!((limit as i64) * i64::from(u16::MAX) <= i64::from(i32::MAX));
+    assert!(((limit + 1) as i64) * i64::from(u16::MAX) > i64::from(i32::MAX));
+    assert_eq!(
+        <two::Prime32Offset99 as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS,
+        limit
+    );
+    assert_eq!(
+        <two::Prime64Offset59 as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS,
+        limit
+    );
+}
 
 /// 128×128 → 256-bit schoolbook multiply over 64-bit halves (independent of
 /// the crate's `mul_wide`).

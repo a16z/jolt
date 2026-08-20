@@ -34,7 +34,7 @@ const fn is_small_prime(n: u64) -> bool {
 macro_rules! define_solinas_prime {
     (
         $(#[$doc:meta])* $name:ident,
-        word: $word:ty,
+        word: $word:ident,
         from_canonical: $from_canon:ident,
         to_canonical: $to_canon:ident,
         double: $double:ty,
@@ -337,6 +337,11 @@ macro_rules! define_solinas_prime {
             }
 
             #[inline]
+            fn canonical_u32_slice(values: &[Self]) -> Option<&[u32]> {
+                canonical_u32_slice!($word, values)
+            }
+
+            #[inline]
             fn num_bits(&self) -> u32 {
                 <$word>::BITS - self.0.leading_zeros()
             }
@@ -358,6 +363,18 @@ macro_rules! define_solinas_prime {
             const OFFSET: u128 = Self::C as u128;
         }
     };
+}
+
+macro_rules! canonical_u32_slice {
+    (u32, $values:ident) => {{
+        // SAFETY: `Fp32` is transparent over one `u32`, and every constructor
+        // and arithmetic operation maintains a canonical representative.
+        Some(unsafe { std::slice::from_raw_parts($values.as_ptr().cast(), $values.len()) })
+    }};
+    ($word:ident, $values:ident) => {{
+        let _ = $values;
+        None
+    }};
 }
 
 define_solinas_prime!(

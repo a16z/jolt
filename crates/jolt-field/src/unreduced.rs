@@ -72,6 +72,17 @@ pub trait Unreduced: Field {
     fn reduce_wide(wide: Self::Wide) -> Self;
 }
 
+/// Marks a field whose wide accumulator supports bounded unit-scale
+/// commitment streams.
+///
+/// The accumulator is [`Unreduced::Wide`]. This separate role contract keeps
+/// the commitment headroom out of extension fields and other unreduced types
+/// that do not use this accumulation pattern.
+pub trait WithCommitAccumulator: Unreduced {
+    /// Maximum unit-scale additions before any signed lane can overflow.
+    const MAX_COMMIT_ACCUMULATIONS: usize;
+}
+
 /// Per-element multilinear bind: `even + r·(odd − even)` for a challenge
 /// `r` fixed across a whole polynomial-binding round.
 ///

@@ -389,7 +389,7 @@ macro_rules! check_moore {
         };
 
         for w in 1..=d {
-            let t = two::canonical_frobenius_thetas::<$F2, $E2>(w).unwrap();
+            let t = two::canonical_extension_basis::<$F2, $E2>(w).unwrap();
             assert_eq!(t.len(), w);
             for (idx, te) in t.iter().enumerate() {
                 let mut basis = vec![0u128; d];
@@ -401,9 +401,9 @@ macro_rules! check_moore {
                 assert!(tv.is_ok(), "basis thetas must validate in a field");
             }
         }
-        assert!(two::canonical_frobenius_thetas::<$F2, $E2>(d + 1).is_err());
+        assert!(two::canonical_extension_basis::<$F2, $E2>(d + 1).is_err());
 
-        let thetas_t = two::canonical_frobenius_thetas::<$F2, $E2>(d).unwrap();
+        let thetas_t = two::canonical_extension_basis::<$F2, $E2>(d).unwrap();
         let rhs_vals: Vec<Vec<u128>> = (0..d)
             .map(|_| (0..d).map(|_| $rng.gen::<u128>() % p).collect())
             .collect();

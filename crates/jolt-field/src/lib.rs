@@ -114,7 +114,7 @@ pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};
 #[cfg(feature = "solinas")]
 pub use solinas::{
-    balanced_digit_lut, canonical_frobenius_thetas, is_registered_prime_offset,
+    balanced_digit_lut, canonical_extension_basis, is_registered_prime_offset,
     pseudo_mersenne_modulus, registered_prime_offset_spec, solve_frobenius_moore,
     validate_canonical_frobenius_thetas, AccumPair, Ext2, FoldMatrixFp32, FoldMatrixFp64, Fp128,
     Fp128MulU64Accum, Fp128Packing, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32Packing,
@@ -125,7 +125,7 @@ pub use solinas::{
     Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
-pub use unreduced::{Fold, Unreduced};
+pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
 /// Backend-independent input and shape failures.
 #[derive(Debug, thiserror::Error)]

@@ -35,7 +35,7 @@ Tests, benches, and fuzz targets are uncounted and unlimited.
 
 ## Trait system (first principles)
 
-**15 public traits** (baseline: 22; pre-consolidation: 46). Two backends, one
+**16 public traits** (baseline: 22; pre-consolidation: 46). Two backends, one
 spine; every merge below is justified by "same implementor set or a strict
 capability subset with defaulted members".
 
@@ -45,13 +45,13 @@ capability subset with defaulted members".
 |---|---|---|
 | `AdditiveGroup` | same | `Zero` + add/sub/neg (owned + by-ref) + `Copy/Send/Sync` |
 | `Ring` | `RingCore` + `FromPrimitiveInt` | ring ops, `square`/`pow2`, **integer embedding** (`from_u64/i64/u128/i128` required; small widths + `mul_*`/`mul_pow_2` defaulted). Rationale: every unital ring embeds ℤ; keeping embedding separate bought nothing and doubled bounds everywhere |
-| `Field` | `FieldCore` + `HalvingField` | `inverse`, `inv_or_zero`, `random`, and defaulted `half`/`two_inv` (fast impls override). Rationale: char ≠ 2 always, so halving is field-generic with a default |
-| `CanonicalEncoding` | `CanonicalRepr` + `CanonicalField` | one canonicity surface: `NUM_BYTES`, `MODULUS_BITS` (bit length of \|F\|), `to_bytes_le`, `from_bytes_le_reduced`, `from_bytes_le_checked`, `to_u128_checked`, `from_u128_checked/_reduced`, `num_bits`, defaulted challenge derivation. Transcript bytes are specified here; wire serde reuses `from_bytes_le_checked` so canonical-rejection is uniform |
+| `Field` | `FieldCore` + `HalvingField` | `inverse`, `inv_or_zero`, `random`, defaulted `mul_add`, and defaulted `half`/`two_inv` (fast impls override). Rationale: char ≠ 2 always, so halving is field-generic with a default |
+| `CanonicalEncoding` | `CanonicalRepr` + `CanonicalField` | one canonicity surface: `NUM_BYTES`, `MODULUS_BITS` (bit length of \|F\|), `to_bytes_le`, `from_bytes_le_reduced`, `from_bytes_le_checked`, `to_u128_checked`, `from_u128_checked/_reduced`, optional zero-copy canonical `u32` slices, `num_bits`, defaulted challenge derivation. Transcript bytes are specified here; wire serde reuses `from_bytes_le_checked` so canonical-rejection is uniform |
 | `Accumulator` | same | `add`/`merge`/`reduce`/`fmadd` + defaulted small-scalar fmadds |
 | `WithAccumulator` | same (bound: `Ring`) | associated `Accumulator` |
 | `JoltField` | `Field` umbrella | **blanket-implemented** marker: `Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned`. Blanket impl means it can never be forgotten; serde in the umbrella because every proof-system field needs a wire format |
 
-### Solinas (feature-gated, 8)
+### Solinas (feature-gated, 9)
 
 | Trait | Replaces | Contents |
 |---|---|---|
@@ -60,6 +60,7 @@ capability subset with defaulted members".
 | `Ext2Config<F>` | `FpExt2Config` | quadratic non-residue config (ZST pattern), `IS_NEG_ONE` fast path |
 | `MulBaseUnreduced<F>` | same | tiny overridable ext×base deferred multiply, stated in terms of `Unreduced::Product` (deferred from checkpoint 6, landed with checkpoint 7; lives in `extension.rs` with a degree-1 blanket impl) |
 | `Unreduced` | `HasUnreducedOps` + `HasWide` + `ReduceTo` | **one deferred-reduction companion surface**: `type Product`, `type SmallProduct`, `type Wide` (i32-lane), `SUM_IS_EXACT`, widening muls + `reduce_*` for each, `scale_wide`. Rationale: these were three fragments of one concept — "the unreduced value algebra around a field"; routing reduction through the field type kills `ReduceTo`'s ambiguity workarounds |
+| `WithCommitAccumulator` | `HasCommitAccum` | marks base fields whose existing `Unreduced::Wide` accumulator supports unit-scale commitment streams and states the exact safe addition limit without duplicating the accumulator type |
 | `Fold` | `HasOptimizedFold` | `precompute(r) -> Ctx`, `fold_one(ctx, even, odd)` — documented honestly as the multilinear bind `even + r·(odd − even)`, a protocol-support hook that lives here because implementations exploit field representation |
 | `Packed` | `PackedField` | lanes: `Scalar`, `WIDTH`, `from_fn`/`extract`/`broadcast` + defaulted slice helpers + packed ext2 kernel hook |
 | `WithPacking` | `HasPacking` | associated `Packing` |
@@ -109,9 +110,11 @@ and fold matrices; `S64`–`S256` + hi32 variants; `Limbs<N>`; rayon helpers;
   imm-vs-reg dispatch subtlety (sign-extended imm32 unusable for C ≥ 2^31,
   i.e. `Prime128OffsetA7F7`) dies with it. Baseline x86-64 `mul` was already
   portable — nothing dropped there.
-- **Dropped:** the AArch64 `mul_add` asm kernel together with the
-  `mul_add`/`add_128_into_256` fused multiply-add surface: no consumer
-  anywhere in the parity scope (only baseline fp128's own tests call it).
+- **Initially dropped:** the AArch64 `mul_add` asm kernel together with the
+  `mul_add`/`add_128_into_256` fused multiply-add surface had no consumer in
+  the original parity scope. Current Akita now uses this hook, so the refresh
+  restores it under the canonical `Field` trait. See replacement-time
+  deviation 5.
 - **Dropped:** `mul_wide_limbs<M, OUT>` (generic loop + M/OUT-unrolled
   hot-path specializations, ~270 lines): its only workspace consumer is
   `jolt-prover-legacy`'s akita field glue, and the akita bootstrap is
@@ -297,6 +300,13 @@ Final per-file actuals are recorded in the file-structure table below
    specialized representations; other backends use `NaiveAccumulator`. The
    duplicate `SignedScalarAccumulator`, `SignedProductAccumulator`, and
    wrapper traits remain deleted.
+5. **Post-baseline Akita field capabilities moved into the canonical Jolt
+   contracts**: current Akita added a zero-copy canonical `u32` slice, a
+   bounded commitment accumulator role, `Field::mul_add`, and the
+   `canonical_extension_basis` name after the original cutover base. The
+   refreshed Jolt crate owns these capabilities directly. `Fp128` restores
+   the combined-reduction multiply-add kernel, and the commitment role reuses
+   `Unreduced::Wide` instead of introducing a second accumulator type.
 
 ## Replacement validation evidence
 

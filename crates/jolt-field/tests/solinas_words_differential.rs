@@ -310,3 +310,12 @@ fn jolt_field_blanket_covers_solinas() {
     let ys = [<F as Ring>::from_u64(5), <F as Ring>::from_u64(7)];
     assert_eq!(inner_product(&xs, &ys), <F as Ring>::from_u64(31));
 }
+
+#[test]
+fn fp32_exposes_canonical_storage_slice_only_for_u32_fields() {
+    type F32 = two::Prime32Offset99;
+    type F64 = two::Prime64Offset59;
+    let values = [F32::from_u64(1), F32::from_u64(7), F32::from_u64(42)];
+    assert_eq!(F32::canonical_u32_slice(&values), Some(&[1, 7, 42][..]));
+    assert!(F64::canonical_u32_slice(&[F64::from_u64(1)]).is_none());
+}

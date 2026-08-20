@@ -168,6 +168,19 @@ impl<const P: u128> Fp128<P> {
         Self::fold2_canonicalize(t0, t1, t2)
     }
 
+    /// Adds a canonical 128-bit value to a 256-bit product.
+    #[cfg(any(not(target_arch = "aarch64"), test))]
+    #[inline(always)]
+    fn add_128_into_256(prod: [u64; 4], addend: [u64; 2]) -> [u64; 4] {
+        let (s0, carry0) = prod[0].overflowing_add(addend[0]);
+        let (s1a, carry1a) = prod[1].overflowing_add(addend[1]);
+        let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
+        let (s2, carry2) = prod[2].overflowing_add((carry1a | carry1b) as u64);
+        let (s3, carry3) = prod[3].overflowing_add(carry2 as u64);
+        debug_assert!(!carry3);
+        [s0, s1, s2, s3]
+    }
+
     /// Carry-chain add with fused reduction.
     ///
     /// For `a, b < p`: if the two-limb add wraps (`overflow`), the real sum
@@ -210,6 +223,98 @@ impl<const P: u128> Fp128<P> {
         {
             Self::mul_raw_portable(a, b)
         }
+    }
+
+    #[inline(always)]
+    fn mul_add_raw(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        #[cfg(target_arch = "aarch64")]
+        {
+            Self::mul_add_raw_aarch64(a, b, addend)
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            Self::mul_add_raw_portable(a, b, addend)
+        }
+    }
+
+    #[cfg(any(not(target_arch = "aarch64"), test))]
+    #[inline(always)]
+    fn mul_add_raw_portable(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        let product = Self(a).mul_wide(Self(b));
+        let [s0, s1, s2, s3] = Self::add_128_into_256(product, addend);
+        Self::reduce_4(s0, s1, s2, s3)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn mul_add_raw_aarch64(a: [u64; 2], b: [u64; 2], addend: [u64; 2]) -> [u64; 2] {
+        let out_lo: u64;
+        let out_hi: u64;
+        // SAFETY: this register-only assembly implements the same widening
+        // product, carry-chain add, and Solinas reduction as
+        // `mul_add_raw_portable`. It does not access memory or the stack.
+        unsafe {
+            asm!(
+                "mul     {p00l}, {a0}, {b0}",
+                "umulh   {p00h}, {a0}, {b0}",
+                "mul     {p01l}, {a0}, {b1}",
+                "umulh   {p01h}, {a0}, {b1}",
+                "mul     {p10l}, {a1}, {b0}",
+                "umulh   {p10h}, {a1}, {b0}",
+                "mul     {p11l}, {a1}, {b1}",
+                "umulh   {p11h}, {a1}, {b1}",
+                "adds   {p00h}, {p00h}, {p01l}",
+                "cset   {p01l:w}, hs",
+                "adds   {p01h}, {p01h}, {p10h}",
+                "cset   {p10h:w}, hs",
+                "adds   {p01h}, {p01h}, {p11l}",
+                "cinc   {p10h}, {p10h}, hs",
+                "adds   {p00h}, {p00h}, {p10l}",
+                "adcs   {p01h}, {p01h}, {p01l}",
+                "adc    {p11h}, {p11h}, {p10h}",
+                "adds   {p00l}, {p00l}, {add_lo}",
+                "adcs   {p00h}, {p00h}, {add_hi}",
+                "adcs   {p01h}, {p01h}, xzr",
+                "adc    {p11h}, {p11h}, xzr",
+                "mul    {p01l}, {p01h}, {c}",
+                "umulh  {p10l}, {p01h}, {c}",
+                "mul    {p10h}, {p11h}, {c}",
+                "umulh  {p11l}, {p11h}, {c}",
+                "adds   {p00l}, {p00l}, {p01l}",
+                "adcs   {p00h}, {p00h}, {p10l}",
+                "cset   {p01h:w}, hs",
+                "adds   {p00h}, {p00h}, {p10h}",
+                "adc    {p11h}, {p11l}, {p01h}",
+                "mul    {p01l}, {p11h}, {c}",
+                "adds   {p00l}, {p00l}, {p01l}",
+                "adcs   {p00h}, {p00h}, xzr",
+                "cset   {p01l:w}, hs",
+                "adds   {p10l}, {p00l}, {c}",
+                "adcs   {p10h}, {p00h}, xzr",
+                "ccmp   {p01l:w}, #0, #0, lo",
+                "csel   {out_lo}, {p10l}, {p00l}, ne",
+                "csel   {out_hi}, {p10h}, {p00h}, ne",
+                a0 = in(reg) a[0],
+                a1 = in(reg) a[1],
+                b0 = in(reg) b[0],
+                b1 = in(reg) b[1],
+                add_lo = in(reg) addend[0],
+                add_hi = in(reg) addend[1],
+                c = in(reg) Self::C_LO,
+                p00l = out(reg) _,
+                p00h = out(reg) _,
+                p01l = out(reg) _,
+                p01h = out(reg) _,
+                p10l = out(reg) _,
+                p10h = out(reg) _,
+                p11l = out(reg) _,
+                p11h = out(reg) _,
+                out_lo = lateout(reg) out_lo,
+                out_hi = lateout(reg) out_hi,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     /// Portable multiply: schoolbook 2×2 widening product, then the two
@@ -694,6 +799,11 @@ impl<const P: u128> Field for Fp128<P> {
         Self(split(super::sample_uniform_below(rng, P, u128::BITS)))
     }
 
+    #[inline(always)]
+    fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        Self(Self::mul_add_raw(self.0, rhs.0, addend.0))
+    }
+
     /// Halving via shift: `(x + (x odd)·p) / 2`, computed as
     /// `(x >> 1) + (x & 1)·(p + 1)/2`, which stays below `p` (no overflow):
     /// for odd `x ≤ p − 2`, the sum is at most `(p − 3)/2 + (p + 1)/2 = p − 1`.
@@ -806,6 +916,12 @@ mod tests {
                     Fp128::<P>::mul_raw_aarch64(a, b),
                     Fp128::<P>::mul_raw_portable(a, b),
                     "mul asm vs portable, a={a:?} b={b:?}"
+                );
+                let addend = split(join(a).wrapping_add(join(b)) % P);
+                assert_eq!(
+                    Fp128::<P>::mul_add_raw_aarch64(a, b, addend),
+                    Fp128::<P>::mul_add_raw_portable(a, b, addend),
+                    "mul-add asm vs portable, a={a:?} b={b:?} addend={addend:?}"
                 );
             }
         }

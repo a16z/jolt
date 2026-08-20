@@ -181,6 +181,14 @@ pub trait Field: Ring {
     /// coefficients independently through the same contract.
     fn random<R: RngCore>(rng: &mut R) -> Self;
 
+    /// Multiply and add, equivalent to `self * rhs + addend`.
+    ///
+    /// Fields with a cheaper combined reduction may override this method.
+    #[inline]
+    fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        self * rhs + addend
+    }
+
     /// The multiplicative inverse of two.
     ///
     /// Defaulted via [`inverse`](Self::inverse); fields with a cheap shift
@@ -309,6 +317,16 @@ pub trait CanonicalEncoding:
 
     /// Constructs an element by reducing `v` modulo the field order.
     fn from_u128_reduced(v: u128) -> Self;
+
+    /// Borrows canonical `u32` representatives without per-element conversion.
+    ///
+    /// Fields whose in-memory representation is exactly one canonical `u32`
+    /// may override this capability. Wider or encoded fields return `None`.
+    #[inline]
+    fn canonical_u32_slice(values: &[Self]) -> Option<&[u32]> {
+        let _ = values;
+        None
+    }
 
     /// Number of significant bits in this element's canonical representative.
     ///
