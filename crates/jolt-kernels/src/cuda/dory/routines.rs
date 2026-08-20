@@ -93,11 +93,40 @@ fn resident_fixed_base_g2(base: &DeviceG2, scalars: &[ArkFr]) -> Result<Vec<Devi
     Ok(out)
 }
 
+fn resident_msm(bases: &[DeviceG1], scalars: &[ArkFr]) -> Result<DeviceG1, CudaError> {
+    if bases.len() != scalars.len() {
+        return Err(CudaError::LengthMismatch {
+            expected: bases.len(),
+            got: scalars.len(),
+        });
+    }
+    let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
+    let out = store_all(&[ark_bn254::G1Projective::default()]);
+    let (Some(base_offset), Some(out_offset)) = (span(bases), span(&out)) else {
+        return Err(CudaError::InvariantViolation {
+            reason: "a resident G1 MSM needs a contiguous base span and one output slot",
+        });
+    };
+    arena::g1_msm(base_offset, out_offset, bases.len(), &weights)?;
+    out.first().copied().ok_or(CudaError::InvariantViolation {
+        reason: "a resident G1 MSM lost its output handle",
+    })
+}
+
 impl DoryRoutines<DeviceG1> for CudaG1Routines {
     #[tracing::instrument(skip_all, name = "cuda_g1r_msm", fields(len = bases.len()))]
     fn msm(bases: &[DeviceG1], scalars: &[ArkFr]) -> DeviceG1 {
-        let hosted: Vec<ArkG1> = load_all(bases).into_iter().map(ArkG1).collect();
-        DeviceG1::store(&JoltG1Routines::msm(&hosted, scalars).0)
+        match resident_msm(bases, scalars) {
+            Ok(handle) => handle,
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "the resident G1 MSM declined; falling back to the host"
+                );
+                let hosted: Vec<ArkG1> = load_all(bases).into_iter().map(ArkG1).collect();
+                DeviceG1::store(&JoltG1Routines::msm(&hosted, scalars).0)
+            }
+        }
     }
 
     #[tracing::instrument(skip_all, name = "cuda_g1r_fixed_base_vector", fields(len = scalars.len()))]

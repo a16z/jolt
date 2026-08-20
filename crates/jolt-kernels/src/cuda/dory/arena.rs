@@ -201,6 +201,24 @@ pub(super) fn axpy(family: Family, span: ResidentAxpy, scalar: Fr) -> Result<(),
     .ok_or_else(closed)?
 }
 
+pub(super) fn g1_msm(
+    base_offset: usize,
+    out_offset: usize,
+    count: usize,
+    scalars: &[Fr],
+) -> Result<(), CudaError> {
+    let context = context()?;
+    with_arena(Family::G1, |arena| {
+        if out_offset < arena.frozen {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident G1 MSM targeted the frozen setup prefix",
+            });
+        }
+        context.g1_msm_in_place(&mut arena.buffer, base_offset, out_offset, count, scalars)
+    })
+    .ok_or_else(closed)?
+}
+
 pub(super) fn multi_miller_batch(
     segments: &[(usize, usize)],
     count: usize,

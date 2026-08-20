@@ -219,7 +219,11 @@ pub struct CudaKernelContext {
     msm_one_hot_scatter: CudaFunction,
     msm_segment_sum: CudaFunction,
     msm_segment_sum_small: CudaFunction,
-    msm_bucket_reduce_parallel: CudaFunction,
+    msm_bucket_reduce_chunked: CudaFunction,
+    msm_point_rows_sum: CudaFunction,
+    msm_window_fold: CudaFunction,
+    msm_jacobian_z: CudaFunction,
+    msm_jacobian_to_affine: CudaFunction,
     msm_shared_scalar_rows: CudaFunction,
     msm_g1_axpy: CudaFunction,
     msm_g2_axpy: CudaFunction,
@@ -395,8 +399,11 @@ impl CudaKernelContext {
             msm_one_hot_scatter: module.load_function("msm_one_hot_scatter_kernel")?,
             msm_segment_sum: module.load_function("msm_segment_sum_kernel")?,
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
-            msm_bucket_reduce_parallel: module
-                .load_function("msm_bucket_reduce_parallel_kernel")?,
+            msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
+            msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
+            msm_window_fold: module.load_function("msm_window_fold_kernel")?,
+            msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
+            msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
             msm_shared_scalar_rows: module.load_function("msm_shared_scalar_rows_kernel")?,
             msm_g1_axpy: module.load_function("msm_g1_axpy_kernel")?,
             msm_g2_axpy: module.load_function("msm_g2_axpy_kernel")?,
@@ -782,8 +789,24 @@ impl CudaKernelContext {
         &self.msm_segment_sum_small
     }
 
-    pub(crate) const fn msm_bucket_reduce_parallel(&self) -> &CudaFunction {
-        &self.msm_bucket_reduce_parallel
+    pub(crate) const fn msm_bucket_reduce_chunked(&self) -> &CudaFunction {
+        &self.msm_bucket_reduce_chunked
+    }
+
+    pub(crate) const fn msm_point_rows_sum(&self) -> &CudaFunction {
+        &self.msm_point_rows_sum
+    }
+
+    pub(crate) const fn msm_window_fold(&self) -> &CudaFunction {
+        &self.msm_window_fold
+    }
+
+    pub(crate) const fn msm_jacobian_z(&self) -> &CudaFunction {
+        &self.msm_jacobian_z
+    }
+
+    pub(crate) const fn msm_jacobian_to_affine(&self) -> &CudaFunction {
+        &self.msm_jacobian_to_affine
     }
 
     pub(crate) const fn msm_g1_axpy(&self) -> &CudaFunction {

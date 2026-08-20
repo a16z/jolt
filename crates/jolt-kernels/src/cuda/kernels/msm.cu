@@ -563,6 +563,51 @@ extern "C" __global__ void msm_g1_add_kernel(const u64 *__restrict__ left,
     }
 }
 
+extern "C" __global__ void msm_jacobian_z_kernel(const u64 *__restrict__ jacobian,
+                                                unsigned int count, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 z[LIMBS];
+    load4(jacobian + ((unsigned long long)i * 3 + 2) * LIMBS, z);
+    if (fq_is_zero(z)) {
+        u64 placeholder[LIMBS];
+        placeholder[0] = 1ull;
+        for (int limb = 1; limb < LIMBS; limb++) placeholder[limb] = 0ull;
+        store4(out + (unsigned long long)i * LIMBS, placeholder);
+        return;
+    }
+    store4(out + (unsigned long long)i * LIMBS, z);
+}
+
+extern "C" __global__ void msm_jacobian_to_affine_kernel(const u64 *__restrict__ jacobian,
+                                                         const u64 *__restrict__ z_inverses,
+                                                         unsigned int count,
+                                                         u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 x[LIMBS], y[LIMBS], z[LIMBS];
+    load4(jacobian + ((unsigned long long)i * 3) * LIMBS, x);
+    load4(jacobian + ((unsigned long long)i * 3 + 1) * LIMBS, y);
+    load4(jacobian + ((unsigned long long)i * 3 + 2) * LIMBS, z);
+
+    u64 zero[LIMBS];
+    for (int limb = 0; limb < LIMBS; limb++) zero[limb] = 0ull;
+    if (fq_is_zero(z)) {
+        store4(out + ((unsigned long long)i * 2) * LIMBS, zero);
+        store4(out + ((unsigned long long)i * 2 + 1) * LIMBS, zero);
+        return;
+    }
+
+    u64 inv[LIMBS], inv2[LIMBS], inv3[LIMBS], affine[LIMBS];
+    load4(z_inverses + (unsigned long long)i * LIMBS, inv);
+    fq_sqr(inv, inv2);
+    fq_mul(inv2, inv, inv3);
+    fq_mul(x, inv2, affine);
+    store4(out + ((unsigned long long)i * 2) * LIMBS, affine);
+    fq_mul(y, inv3, affine);
+    store4(out + ((unsigned long long)i * 2 + 1) * LIMBS, affine);
+}
+
 extern "C" __global__ void msm_g1_add_affine_kernel(const u64 *__restrict__ left,
                                                     const u64 *__restrict__ right,
                                                     u64 *__restrict__ out, unsigned int count) {
@@ -759,6 +804,34 @@ extern "C" __global__ void msm_segment_sum_kernel(const u64 *__restrict__ bases,
     }
 }
 
+extern "C" __global__ void msm_window_fold_kernel(const u64 *__restrict__ window_points,
+                                                 unsigned int rows, unsigned int windows,
+                                                 unsigned int window_bits,
+                                                 u64 *__restrict__ out) {
+    unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= rows) return;
+
+    u64 acc[3 * LIMBS], addend[3 * LIMBS], tmp[3 * LIMBS];
+    jac_set_zero(acc);
+    for (int window = (int)windows - 1; window >= 0; window--) {
+        if ((unsigned int)window + 1 != windows) {
+            for (unsigned int i = 0; i < window_bits; i++) {
+                jac_double(acc, tmp);
+                jac_copy(tmp, acc);
+            }
+        }
+        unsigned long long base = ((unsigned long long)(unsigned int)window * rows + row) * 3;
+        for (int limb = 0; limb < 3; limb++) {
+            load4(window_points + (base + limb) * LIMBS, addend + limb * LIMBS);
+        }
+        jac_add(acc, addend, tmp);
+        jac_copy(tmp, acc);
+    }
+    for (int limb = 0; limb < 3; limb++) {
+        store4(out + ((unsigned long long)row * 3 + limb) * LIMBS, acc + limb * LIMBS);
+    }
+}
+
 extern "C" __global__ void msm_window_accumulate_kernel(u64 *__restrict__ accumulator,
                                                         const u64 *__restrict__ window,
                                                         unsigned int rows,
@@ -871,18 +944,26 @@ extern "C" __global__ void msm_segment_sum_small_kernel(const u64 *__restrict__ 
     }
 }
 
-extern "C" __global__ void msm_bucket_reduce_parallel_kernel(
+extern "C" __global__ void msm_bucket_reduce_chunked_kernel(
     const u64 *__restrict__ buckets_points, unsigned int rows, unsigned int buckets,
-    u64 *__restrict__ out) {
+    unsigned int chunks, u64 *__restrict__ out) {
     extern __shared__ u64 scratch[];
-    unsigned int row = blockIdx.x;
+    unsigned int row = blockIdx.x / chunks;
+    unsigned int chunk = blockIdx.x - row * chunks;
     if (row >= rows) return;
 
+    unsigned int weighted = (buckets > 1) ? (buckets - 1) : 0;
+    unsigned int chunk_span = (weighted + chunks - 1) / chunks;
+    unsigned int chunk_lo = 1 + chunk * chunk_span;
+    unsigned int chunk_hi = chunk_lo + chunk_span;
+    if (chunk_hi > buckets) chunk_hi = buckets;
+    unsigned int width = (chunk_hi > chunk_lo) ? (chunk_hi - chunk_lo) : 0;
+
     unsigned int groups = blockDim.x;
-    unsigned int span = (buckets - 1 + groups - 1) / groups;
-    unsigned int lo = 1 + threadIdx.x * span;
+    unsigned int span = (width + groups - 1) / groups;
+    unsigned int lo = chunk_lo + threadIdx.x * span;
     unsigned int hi = lo + span;
-    if (hi > buckets) hi = buckets;
+    if (hi > chunk_hi) hi = chunk_hi;
 
     u64 acc[3 * LIMBS], running[3 * LIMBS], tmp[3 * LIMBS], bucket[3 * LIMBS];
     jac_set_zero(acc);
@@ -919,6 +1000,42 @@ extern "C" __global__ void msm_bucket_reduce_parallel_kernel(
 
     u64 *slot = scratch + (unsigned long long)threadIdx.x * 3 * LIMBS;
     jac_copy(running, slot);
+    __syncthreads();
+    for (unsigned int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+        if (threadIdx.x < stride) {
+            jac_add(slot, scratch + (unsigned long long)(threadIdx.x + stride) * 3 * LIMBS, tmp);
+            jac_copy(tmp, slot);
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        unsigned long long dest = (unsigned long long)row * chunks + chunk;
+        for (int limb = 0; limb < 3; limb++) {
+            store4(out + (dest * 3 + limb) * LIMBS, scratch + limb * LIMBS);
+        }
+    }
+}
+
+extern "C" __global__ void msm_point_rows_sum_kernel(const u64 *__restrict__ partials,
+                                                    unsigned int rows, unsigned int count,
+                                                    u64 *__restrict__ out) {
+    extern __shared__ u64 scratch[];
+    unsigned int row = blockIdx.x;
+    if (row >= rows) return;
+
+    u64 acc[3 * LIMBS], tmp[3 * LIMBS], value[3 * LIMBS];
+    jac_set_zero(acc);
+    for (unsigned int index = threadIdx.x; index < count; index += blockDim.x) {
+        unsigned long long base = ((unsigned long long)row * count + index) * 3;
+        for (int limb = 0; limb < 3; limb++) {
+            load4(partials + (base + limb) * LIMBS, value + limb * LIMBS);
+        }
+        jac_add(acc, value, tmp);
+        jac_copy(tmp, acc);
+    }
+
+    u64 *slot = scratch + (unsigned long long)threadIdx.x * 3 * LIMBS;
+    jac_copy(acc, slot);
     __syncthreads();
     for (unsigned int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
         if (threadIdx.x < stride) {
