@@ -7139,6 +7139,7 @@ dependencies = [
  "paste",
  "postcard",
  "rand 0.8.7",
+ "rayon",
  "serde",
  "serde_json",
  "strum 0.28.0",
