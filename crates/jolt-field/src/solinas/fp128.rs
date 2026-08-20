@@ -625,6 +625,177 @@ impl<const P: u128> Fp128<P> {
         self.mul_wide(Self(split(other)))
     }
 
+    /// 128×(64×`M`) → (64×`OUT`) widening multiply, **no reduction**.
+    ///
+    /// Multiplies a canonical field value by an arbitrary little-endian limb
+    /// array and returns the little-endian product truncated or extended to
+    /// `OUT` limbs. The common three- and four-limb accumulator shapes use
+    /// straight-line schedules; other shapes use the generic schoolbook path.
+    #[inline(always)]
+    pub fn mul_wide_limbs<const M: usize, const OUT: usize>(self, other: [u64; M]) -> [u64; OUT] {
+        let (a0, a1) = (self.0[0], self.0[1]);
+
+        if M == 3 && OUT == 5 {
+            let (b0, b1, b2) = (other[0], other[1], other[2]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let (p12_lo, p12_hi) = mul64_wide(a1, b2);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 = p02_hi as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+            let row4 = p12_hi as u128 + (row3 >> 64);
+            debug_assert_eq!(row4 >> 64, 0);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            out[4] = row4 as u64;
+            return out;
+        }
+        if M == 3 && OUT == 4 {
+            let (b0, b1, b2) = (other[0], other[1], other[2]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let p12_lo = a1.wrapping_mul(b2);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 = p02_hi as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            return out;
+        }
+        if M == 4 && OUT == 6 {
+            let (b0, b1, b2, b3) = (other[0], other[1], other[2], other[3]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let (p03_lo, p03_hi) = mul64_wide(a0, b3);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let (p12_lo, p12_hi) = mul64_wide(a1, b2);
+            let (p13_lo, p13_hi) = mul64_wide(a1, b3);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 =
+                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+            let row4 = p03_hi as u128 + p12_hi as u128 + p13_lo as u128 + (row3 >> 64);
+            let row5 = p13_hi as u128 + (row4 >> 64);
+            debug_assert_eq!(row5 >> 64, 0);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            out[4] = row4 as u64;
+            out[5] = row5 as u64;
+            return out;
+        }
+        if M == 4 && OUT == 5 {
+            let (b0, b1, b2, b3) = (other[0], other[1], other[2], other[3]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let (p03_lo, p03_hi) = mul64_wide(a0, b3);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let (p12_lo, p12_hi) = mul64_wide(a1, b2);
+            let p13_lo = a1.wrapping_mul(b3);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 =
+                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+            let row4 = p03_hi as u128 + p12_hi as u128 + p13_lo as u128 + (row3 >> 64);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            out[4] = row4 as u64;
+            return out;
+        }
+        if M == 4 && OUT == 4 {
+            let (b0, b1, b2, b3) = (other[0], other[1], other[2], other[3]);
+            let (p00_lo, p00_hi) = mul64_wide(a0, b0);
+            let (p01_lo, p01_hi) = mul64_wide(a0, b1);
+            let (p02_lo, p02_hi) = mul64_wide(a0, b2);
+            let p03_lo = a0.wrapping_mul(b3);
+            let (p10_lo, p10_hi) = mul64_wide(a1, b0);
+            let (p11_lo, p11_hi) = mul64_wide(a1, b1);
+            let p12_lo = a1.wrapping_mul(b2);
+
+            let row1 = p00_hi as u128 + p01_lo as u128 + p10_lo as u128;
+            let row2 =
+                p01_hi as u128 + p02_lo as u128 + p10_hi as u128 + p11_lo as u128 + (row1 >> 64);
+            let row3 =
+                p02_hi as u128 + p03_lo as u128 + p11_hi as u128 + p12_lo as u128 + (row2 >> 64);
+
+            let mut out = [0u64; OUT];
+            out[0] = p00_lo;
+            out[1] = row1 as u64;
+            out[2] = row2 as u64;
+            out[3] = row3 as u64;
+            return out;
+        }
+
+        let mut out = [0u64; OUT];
+        for (i, &b) in other.iter().enumerate() {
+            if i >= OUT {
+                break;
+            }
+
+            let (p0_lo, p0_hi) = mul64_wide(a0, b);
+            let (p1_lo, p1_hi) = mul64_wide(a1, b);
+            let s0 = out[i] as u128 + p0_lo as u128;
+            out[i] = s0 as u64;
+            let mut carry = s0 >> 64;
+
+            if i + 1 >= OUT {
+                continue;
+            }
+            let s1 = out[i + 1] as u128 + p0_hi as u128 + p1_lo as u128 + carry;
+            out[i + 1] = s1 as u64;
+            carry = s1 >> 64;
+
+            if i + 2 >= OUT {
+                continue;
+            }
+            let s2 = out[i + 2] as u128 + p1_hi as u128 + carry;
+            out[i + 2] = s2 as u64;
+
+            let mut carry_hi = s2 >> 64;
+            let mut j = i + 3;
+            while carry_hi != 0 && j < OUT {
+                let sj = out[j] as u128 + carry_hi;
+                out[j] = sj as u64;
+                carry_hi = sj >> 64;
+                j += 1;
+            }
+        }
+        out
+    }
+
     /// Reduce an arbitrary-width little-endian limb array to a canonical
     /// field element via iterated Solinas folding.
     ///
@@ -874,6 +1045,41 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
 }
 
 crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
+
+#[cfg(test)]
+mod wide_tests {
+    use super::*;
+    use crate::solinas::Prime128Offset275;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::RngCore;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn mul_wide_limbs_roundtrips_through_reduction() {
+        type F = Prime128Offset275;
+        let mut rng = ChaCha20Rng::seed_from_u64(0x1bad_f00d_0ddc_afe1);
+        for _ in 0..1000 {
+            let a = F::random(&mut rng);
+            let b3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
+            let b4 = [
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+            ];
+
+            let got3_full = a.mul_wide_limbs::<3, 5>(b3);
+            let got3_trunc = a.mul_wide_limbs::<3, 4>(b3);
+            assert_eq!(got3_trunc, got3_full[..4]);
+            assert_eq!(F::solinas_reduce(&got3_full), a * F::solinas_reduce(&b3));
+
+            let got4_full = a.mul_wide_limbs::<4, 6>(b4);
+            let got4_trunc = a.mul_wide_limbs::<4, 4>(b4);
+            assert_eq!(got4_trunc, got4_full[..4]);
+            assert_eq!(F::solinas_reduce(&got4_full), a * F::solinas_reduce(&b4));
+        }
+    }
+}
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
     type Accumulator = NaiveAccumulator<Self>;
