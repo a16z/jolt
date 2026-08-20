@@ -142,10 +142,6 @@ impl CommitmentScheme for DoryCommitmentScheme {
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
-        // The setup vectors are already the exact square-grid prefix consumed by Dory:
-        // 2^ceil(max_num_vars / 2) generators per group. dory-pcs prepares both vectors in
-        // parallel; no larger cache or prefix-specific API is needed.
-        //
         // The prepared-point cache is global. Unit tests create multiple setup sizes, so a
         // smaller setup could leave later tests with too few generators; keep initialization
         // disabled in `cfg(test)` builds.
