@@ -132,4 +132,45 @@ fn main() {
             host / bucket
         );
     }
+
+    println!("\nbucket cost vs rows (row_len fixed; per-MSM = total/rows)");
+    println!(
+        "{:>8}  {:>5}  {:>10}  {:>11}  {:>10}",
+        "row_len", "rows", "total ms", "per-MSM ms", "host ms"
+    );
+    for row_len in [512usize, 2048, 4096, 8192] {
+        let affine_bases: Vec<AffineLimbs> = bases[..row_len].iter().map(affine_limbs).collect();
+        let uploaded = context
+            .upload_g1_bases(&affine_bases)
+            .expect("upload affine bases");
+        let ark_bases: Vec<ArkG1> = bases[..row_len].iter().copied().map(ArkG1).collect();
+        let ark_scalars: Vec<ArkFr> = scalars[..row_len].iter().copied().map(ArkFr).collect();
+        let mut host = f64::MAX;
+        for _ in 0..SAMPLES {
+            let now = Instant::now();
+            let _ = JoltG1Routines::msm(&ark_bases, &ark_scalars);
+            host = host.min(now.elapsed().as_secs_f64() * 1e3);
+        }
+        for rows in [1usize, 2, 4, 8, 16, 32] {
+            let wide: Vec<Fr> = (0..rows * row_len)
+                .map(|index| Fr::from(scalars[index % scalars.len()]))
+                .collect();
+            let uploaded_scalars = context.upload(&wide).expect("upload scalars");
+            let warm = context.msm_rows_fr(&uploaded, &uploaded_scalars, row_len);
+            if let Err(error) = warm {
+                println!("{row_len:>8}  {rows:>5}  declined: {error:?}");
+                continue;
+            }
+            let mut total = f64::MAX;
+            for _ in 0..SAMPLES {
+                let now = Instant::now();
+                let _ = context.msm_rows_fr(&uploaded, &uploaded_scalars, row_len);
+                total = total.min(now.elapsed().as_secs_f64() * 1e3);
+            }
+            println!(
+                "{row_len:>8}  {rows:>5}  {total:>10.2}  {:>11.2}  {host:>10.2}",
+                total / rows as f64
+            );
+        }
+    }
 }

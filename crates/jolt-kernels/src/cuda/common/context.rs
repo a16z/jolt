@@ -456,14 +456,9 @@ impl CudaKernelContext {
             ));
         }
         let buffer = xfer_stats::timed(Phase::H2d, limbs * size_of::<u64>(), || {
-            let mut pool = self.staging.lock();
-            let staging = pool.ensure(self.stream.context(), limbs)?;
-            fill_staging(&mut staging.as_mut_slice()?[..limbs], values);
-            let mut buffer = self.stream.alloc_zeros::<u64>(limbs)?;
-            self.stream
-                .memcpy_htod(&staging.as_slice()?[..limbs], &mut buffer)?;
-            self.stream.synchronize()?;
-            Ok::<_, CudaError>(buffer)
+            let mut host = vec![0u64; limbs];
+            fill_staging(&mut host, values);
+            Ok::<_, CudaError>(self.stream.clone_htod(&host)?)
         })?;
         Ok(DeviceFrVec::from_parts(
             self.stream.clone(),
