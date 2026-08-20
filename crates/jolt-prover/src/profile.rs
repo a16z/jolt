@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 use clap::ValueEnum;
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_crypto::{Bn254G1, Pedersen};
-use jolt_dory::DoryScheme;
+use jolt_dory::{DoryProverSetup, DoryScheme};
 use jolt_field::Fr;
 #[cfg(feature = "cuda")]
 use jolt_kernels::cuda::CudaDoryScheme;
@@ -636,11 +636,16 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     // materialization, commitment, all sumcheck stages, joint opening). The
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
+    let setup_width = 1usize << total_vars.div_ceil(2);
+    let shared_setup = (legacy_preprocessing.generators.g1_vec.len() >= setup_width
+        && legacy_preprocessing.generators.g2_vec.len() >= setup_width)
+        .then(|| DoryProverSetup(legacy_preprocessing.generators.clone()));
+
     let (duration, proof_size) = match backend {
         BackendKind::Reference | BackendKind::Optimized => {
             let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
                 verifier: verifier_preprocessing,
-                pcs_setup: DoryScheme::setup_prover(total_vars),
+                pcs_setup: shared_setup.unwrap_or_else(|| DoryScheme::setup_prover(total_vars)),
                 committed_program: None,
             };
             let backend = if matches!(backend, BackendKind::Reference) {
@@ -661,7 +666,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             let prover_preprocessing = JoltProverPreprocessing::<CudaDoryScheme, Pedersen<Bn254G1>> {
                 verifier: CudaDoryScheme::adopt_verifier_preprocessing(verifier_preprocessing)
                     .expect("the CUDA scheme adopts the verifier preprocessing"),
-                pcs_setup: CudaDoryScheme::setup_prover(total_vars),
+                pcs_setup: shared_setup.unwrap_or_else(|| CudaDoryScheme::setup_prover(total_vars)),
                 committed_program: None,
             };
             let backend = JoltBackend::<Fr, CudaDoryScheme>::cuda();
