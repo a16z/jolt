@@ -67,7 +67,43 @@ fn main() {
         with_table = with_table.min(now.elapsed().as_secs_f64() * 1e3);
     }
 
+    let step = ark_bn254::G1Projective::rand(&mut rng);
+    let mut walk = step;
+    let wide: Vec<u64> = (0..PAIRS * COLUMNS)
+        .flat_map(|_| {
+            walk += step;
+            g1_words(&walk)
+        })
+        .collect();
+    let device_wide = context.upload_raw_u64(&wide).expect("upload wide g1");
+
+    let mut sequential = f64::MAX;
+    for _ in 0..SAMPLES {
+        let now = Instant::now();
+        for column in 0..COLUMNS {
+            let _ = context
+                .multi_miller_resident(&device_wide, column * PAIRS, &device_g2, 0, PAIRS)
+                .expect("sequential miller");
+        }
+        sequential = sequential.min(now.elapsed().as_secs_f64() * 1e3);
+    }
+
+    let segments: Vec<(usize, usize)> = (0..COLUMNS).map(|column| (column * PAIRS, 0)).collect();
+    let mut batched = f64::MAX;
+    for _ in 0..SAMPLES {
+        let now = Instant::now();
+        let _ = context
+            .multi_miller_batch(&device_wide, &device_g2, &segments, PAIRS)
+            .expect("batched miller");
+        batched = batched.min(now.elapsed().as_secs_f64() * 1e3);
+    }
+
     println!("pairs={PAIRS}");
+    println!("  {COLUMNS} sequential  {sequential:>8.2} ms");
+    println!(
+        "  1 segmented     {batched:>8.2} ms   {:.2}x",
+        sequential / batched
+    );
     println!("  plain miller      {plain:>8.2} ms");
     println!("  prepare (once)    {prepare_ms:>8.2} ms");
     println!(

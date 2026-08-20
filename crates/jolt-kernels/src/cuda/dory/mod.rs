@@ -4,6 +4,8 @@ mod curve;
 mod gt;
 mod handle;
 mod routines;
+#[cfg(not(feature = "zk"))]
+mod tier2;
 
 use dory::backends::arkworks::ArkFr;
 use dory::mode::Transparent;
@@ -82,6 +84,29 @@ impl CudaDoryScheme {
 }
 
 impl DeviceTier1Commitment for CudaDoryScheme {
+    const BATCHES_TIER2: bool = !cfg!(feature = "zk");
+
+    #[cfg(not(feature = "zk"))]
+    fn tier2_columns(
+        setup: &Self::ProverSetup,
+        columns: &[Vec<JacobianLimbs>],
+    ) -> Result<Vec<crate::cuda::commitment::FinishedColumn<Self>>, CudaError> {
+        let context =
+            crate::cuda::common::context::shared_context().ok_or(CudaError::NotImplemented {
+                kernel: "no CUDA device is present for the batched tier-2",
+            })?;
+        let commitments = tier2::tier2_batched(context, setup, columns)?;
+        let blind = <Fr as jolt_field::FromPrimitiveInt>::from_u64(0);
+        commitments
+            .into_iter()
+            .zip(columns)
+            .map(|(commitment, rows)| {
+                let partial = DoryScheme::partial_from_rows(setup, rows)?;
+                Ok((commitment, DoryHint::new(partial.row_commitments, blind)))
+            })
+            .collect()
+    }
+
     fn tier1_bases(setup: &Self::ProverSetup, count: usize) -> Result<Vec<AffineLimbs>, CudaError> {
         DoryScheme::tier1_bases(setup, count)
     }

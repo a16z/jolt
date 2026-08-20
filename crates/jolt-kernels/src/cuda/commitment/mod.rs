@@ -34,13 +34,33 @@ use crate::optimized::rows::{collect_range_into, RandomAccessRows};
 use crate::reference::commitment::{column_kinds, ColumnKind, MaterializedColumn};
 use crate::{KernelError, ProofSession};
 
+pub type FinishedColumn<PCS> = (
+    <PCS as jolt_crypto::Commitment>::Output,
+    <PCS as CommitmentScheme>::OpeningHint,
+);
+
 pub trait DeviceTier1Commitment: CommitmentScheme + ModeStreamingCommitment {
+    const BATCHES_TIER2: bool = false;
+
     fn tier1_bases(setup: &Self::ProverSetup, count: usize) -> Result<Vec<AffineLimbs>, CudaError>;
 
     fn partial_from_rows(
         setup: &Self::ProverSetup,
         rows: &[JacobianLimbs],
     ) -> Result<Self::PartialCommitment, CudaError>;
+
+    fn tier2_columns(
+        setup: &Self::ProverSetup,
+        columns: &[Vec<JacobianLimbs>],
+    ) -> Result<Vec<FinishedColumn<Self>>, CudaError> {
+        columns
+            .iter()
+            .map(|rows| {
+                let partial = Self::partial_from_rows(setup, rows)?;
+                Ok(finish_streamed::<Self>(partial, setup))
+            })
+            .collect()
+    }
 }
 
 fn fq_from_limbs(limbs: [u64; FQ_LIMBS]) -> Fq {
@@ -386,6 +406,49 @@ where
                 })?;
             let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
                 .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
+            if PCS::BATCHES_TIER2 {
+                let mut columns: Vec<Option<Vec<JacobianLimbs>>> =
+                    (0..ids.len()).map(|_| None).collect();
+                for index in tier1_order(&hot) {
+                    let rows = match &hot[index] {
+                        Some(column) => {
+                            tracing::info_span!("cuda_commit_tier1_one_hot").in_scope(|| {
+                                context.one_hot_rows_device(
+                                    bases, column, cycles, one_hot_k, row_width,
+                                )
+                            })
+                        }
+                        None => tracing::info_span!("cuda_commit_tier1_dense").in_scope(|| {
+                            context.msm_rows_i128(bases, &collected.increments[index], row_width)
+                        }),
+                    }?;
+                    let slot = columns
+                        .get_mut(index)
+                        .ok_or(KernelError::InvariantViolation {
+                            reason: "the commit pipeline produced a column outside the id list",
+                        })?;
+                    *slot = Some(rows);
+                }
+                let columns = columns.into_iter().collect::<Option<Vec<_>>>().ok_or(
+                    KernelError::InvariantViolation {
+                        reason: "the commit pipeline finished fewer columns than it was given",
+                    },
+                )?;
+                let finished = tracing::info_span!("cuda_commit_tier2", columns = columns.len())
+                    .in_scope(|| PCS::tier2_columns(setup, &columns))?;
+                return finished
+                    .into_iter()
+                    .zip(ids)
+                    .map(|((commitment, hint), &id)| {
+                        Ok(WitnessCommitment {
+                            id,
+                            commitment,
+                            hint,
+                        })
+                    })
+                    .collect();
+            }
+
             let parent = tracing::Span::current();
             let (tx, rx) = mpsc::channel::<(usize, Vec<JacobianLimbs>)>();
             let mut tier1 = Ok(());

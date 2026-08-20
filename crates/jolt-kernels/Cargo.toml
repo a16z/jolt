@@ -112,3 +112,11 @@ required-features = ["cuda"]
 [[example]]
 name = "cuda_round_trip_bench"
 required-features = ["cuda"]
+
+[[example]]
+name = "cuda_rows1_msm_bench"
+required-features = ["cuda"]
+
+[[example]]
+name = "cuda_prepared_pairing_bench"
+required-features = ["cuda"]
