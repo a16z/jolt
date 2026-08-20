@@ -7,9 +7,9 @@
 //! - GLV: Gallant, Lambert, Vanstone. [Faster Point Multiplication on Elliptic Curves](https://link.springer.com/chapter/10.1007/3-540-44647-8_11) (CRYPTO 2001)
 //! - Dory: Lee. [Dory: Efficient, Transparent arguments for Generalised Inner Products](https://eprint.iacr.org/2020/1274)
 
-mod constants;
+pub mod constants;
 mod decomp_2d;
-mod decomp_4d;
+pub mod decomp_4d;
 mod frobenius;
 pub mod glv_four;
 pub mod glv_two;

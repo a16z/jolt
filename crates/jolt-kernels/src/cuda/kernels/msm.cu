@@ -424,10 +424,38 @@ __device__ __noinline__ void jac2_scale(const u64 *point, const u64 *scalar,
     jac2_copy(acc, out);
 }
 
-extern "C" __global__ void msm_g2_axpy_kernel(u64 *buf, const u64 *__restrict__ scalar,
-                                             unsigned int a_offset, unsigned int b_offset,
-                                             unsigned int out_offset, unsigned int count,
-                                             unsigned int scalar_bits) {
+__device__ __forceinline__ void g2_psi_power(const u64 *base, const u64 *coefficients,
+                                            unsigned int power, u64 *out) {
+    u64 scaled[2 * LIMBS], negated[LIMBS];
+    jac2_copy(base, out);
+    if ((power & 1u) == 1u) {
+        fq_neg(out + LIMBS, negated);
+        fq_copy(negated, out + LIMBS);
+        fq_neg(out + 3 * LIMBS, negated);
+        fq_copy(negated, out + 3 * LIMBS);
+        fq_neg(out + 5 * LIMBS, negated);
+        fq_copy(negated, out + 5 * LIMBS);
+    }
+    const u64 *coef_x = coefficients + (unsigned long long)(power - 1) * 4 * LIMBS;
+    const u64 *coef_y = coef_x + 2 * LIMBS;
+    fq2_mul(out, coef_x, scaled);
+    fq2_copy(scaled, out);
+    fq2_mul(out + 2 * LIMBS, coef_y, scaled);
+    fq2_copy(scaled, out + 2 * LIMBS);
+}
+
+__device__ __forceinline__ void g2_negate_y(u64 *point) {
+    u64 negated[LIMBS];
+    fq_neg(point + 2 * LIMBS, negated);
+    fq_copy(negated, point + 2 * LIMBS);
+    fq_neg(point + 3 * LIMBS, negated);
+    fq_copy(negated, point + 3 * LIMBS);
+}
+
+extern "C" __global__ void msm_g2_axpy_glv_kernel(
+    u64 *buf, const u64 *__restrict__ coeffs, const u64 *__restrict__ frobenius,
+    unsigned int signs, unsigned int max_bits, unsigned int a_offset, unsigned int b_offset,
+    unsigned int out_offset, unsigned int count) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
 
@@ -435,11 +463,30 @@ extern "C" __global__ void msm_g2_axpy_kernel(u64 *buf, const u64 *__restrict__ 
     const u64 *b = buf + ((unsigned long long)b_offset + i) * G2_LIMBS;
     u64 *out = buf + ((unsigned long long)out_offset + i) * G2_LIMBS;
 
-    u64 scaled[G2_LIMBS], addend[G2_LIMBS], sum[G2_LIMBS];
-    jac2_scale(a, scalar, scalar_bits, scaled);
-    jac2_copy(b, addend);
-    jac2_add(scaled, addend, sum);
-    jac2_copy(sum, out);
+    u64 bases[4][G2_LIMBS];
+    jac2_copy(a, bases[0]);
+    for (unsigned int power = 1; power < 4; power++) {
+        g2_psi_power(bases[0], frobenius, power, bases[power]);
+    }
+    for (unsigned int j = 0; j < 4; j++) {
+        if (((signs >> j) & 1u) != 0u) g2_negate_y(bases[j]);
+    }
+
+    u64 acc[G2_LIMBS], tmp[G2_LIMBS];
+    jac2_set_zero(acc);
+    for (int bit = (int)max_bits - 1; bit >= 0; bit--) {
+        jac2_double(acc, tmp);
+        jac2_copy(tmp, acc);
+        for (unsigned int j = 0; j < 4; j++) {
+            const u64 *coeff = coeffs + (unsigned long long)j * LIMBS;
+            if (((coeff[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
+                jac2_add(acc, bases[j], tmp);
+                jac2_copy(tmp, acc);
+            }
+        }
+    }
+    jac2_add(acc, b, tmp);
+    jac2_copy(tmp, out);
 }
 
 extern "C" __global__ void msm_g2_fixed_base_kernel(u64 *buf,
@@ -714,6 +761,188 @@ extern "C" __global__ void msm_g2_window_fold_kernel(const u64 *__restrict__ win
         jac2_copy(tmp, acc);
     }
     jac2_copy(acc, out + (unsigned long long)row * G2_LIMBS);
+}
+
+__device__ __forceinline__ void glv_mul_acc(const u64 *a, int alen, const u64 *b, int blen,
+                                           u64 *acc, int acclen) {
+    for (int j = 0; j < blen; j++) {
+        u64 carry = 0;
+        for (int l = 0; l < alen; l++) {
+            acc[j + l] = mac(acc[j + l], a[l], b[j], &carry);
+        }
+        int index = j + alen;
+        while (carry != 0 && index < acclen) {
+            u64 next = 0;
+            acc[index] = adc(acc[index], carry, &next);
+            carry = next;
+            index++;
+        }
+    }
+}
+
+__device__ __forceinline__ int glv_sub_abs(const u64 *x, const u64 *y, int len, u64 *out) {
+    int order = 0;
+    for (int i = len - 1; i >= 0; i--) {
+        if (x[i] != y[i]) {
+            order = (x[i] > y[i]) ? 1 : -1;
+            break;
+        }
+    }
+    u64 borrow = 0;
+    if (order >= 0) {
+        for (int i = 0; i < len; i++) out[i] = sbb(x[i], y[i], &borrow);
+        return 0;
+    }
+    for (int i = 0; i < len; i++) out[i] = sbb(y[i], x[i], &borrow);
+    return 1;
+}
+
+extern "C" __global__ void msm_glv_decompose_4d_kernel(
+    const u64 *__restrict__ scalars, const u64 *__restrict__ table,
+    const unsigned char *__restrict__ table_signs, unsigned int count,
+    u64 *__restrict__ out_scalars, unsigned char *__restrict__ out_signs) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    u64 k[LIMBS];
+    load4(scalars + (unsigned long long)i * LIMBS, k);
+
+    u64 acc[4][2];
+    for (int j = 0; j < 4; j++) {
+        acc[j][0] = 0;
+        acc[j][1] = 0;
+    }
+
+    for (int bit = 0; bit < 254; bit++) {
+        unsigned int limb = (unsigned int)(bit >> 6);
+        unsigned int shift = (unsigned int)(bit & 63);
+        if (((k[limb] >> shift) & 1ull) == 0ull) continue;
+        const u64 *row = table + (unsigned long long)bit * 8;
+        const unsigned char *row_signs = table_signs + (unsigned long long)bit * 4;
+        for (int j = 0; j < 4; j++) {
+            u64 lo = row[j * 2];
+            u64 hi = row[j * 2 + 1];
+            if (row_signs[j] != 0) {
+                u64 borrow = 0;
+                acc[j][0] = sbb(acc[j][0], lo, &borrow);
+                acc[j][1] = sbb(acc[j][1], hi, &borrow);
+            } else {
+                u64 carry = 0;
+                acc[j][0] = adc(acc[j][0], lo, &carry);
+                acc[j][1] = adc(acc[j][1], hi, &carry);
+            }
+        }
+    }
+
+    for (int j = 0; j < 4; j++) {
+        u64 magnitude[LIMBS];
+        unsigned char negative = (unsigned char)((acc[j][1] >> 63) & 1ull);
+        if (negative != 0) {
+            u64 borrow = 0;
+            magnitude[0] = sbb(0ull, acc[j][0], &borrow);
+            magnitude[1] = sbb(0ull, acc[j][1], &borrow);
+        } else {
+            magnitude[0] = acc[j][0];
+            magnitude[1] = acc[j][1];
+        }
+        magnitude[2] = 0;
+        magnitude[3] = 0;
+        unsigned long long slot = (unsigned long long)j * count + i;
+        store4(out_scalars + slot * LIMBS, magnitude);
+        out_signs[slot] = negative;
+    }
+}
+
+extern "C" __global__ void msm_g2_frobenius_kernel(const u64 *__restrict__ jacobian,
+                                                  const u64 *__restrict__ coefficients,
+                                                  unsigned int count, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    u64 base[G2_LIMBS];
+    jac2_copy(jacobian + (unsigned long long)i * G2_LIMBS, base);
+    jac2_copy(base, out + (unsigned long long)i * G2_LIMBS);
+
+    for (unsigned int power = 1; power < 4; power++) {
+        u64 res[G2_LIMBS];
+        g2_psi_power(base, coefficients, power, res);
+        jac2_copy(res, out + ((unsigned long long)power * count + i) * G2_LIMBS);
+    }
+}
+
+extern "C" __global__ void msm_glv_decompose_2d_kernel(const u64 *__restrict__ scalars,
+                                                     const u64 *__restrict__ constants,
+                                                     unsigned int count,
+                                                     u64 *__restrict__ out_scalars,
+                                                     unsigned char *__restrict__ out_signs) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+
+    const u64 *recip_c = constants;
+    const u64 *recip_b = constants + 5;
+    const u64 *coeff_a = constants + 9;
+    const u64 *coeff_b = constants + 11;
+    const u64 *coeff_c = constants + 12;
+
+    u64 k[LIMBS];
+    load4(scalars + (unsigned long long)i * LIMBS, k);
+
+    u64 wide[9];
+    for (int j = 0; j < 9; j++) wide[j] = 0;
+    glv_mul_acc(k, LIMBS, recip_c, 5, wide, 9);
+    u64 p[3] = {wide[6], wide[7], wide[8]};
+
+    for (int j = 0; j < 9; j++) wide[j] = 0;
+    glv_mul_acc(k, LIMBS, recip_b, 4, wide, 9);
+    u64 q[3] = {wide[6], wide[7], wide[8]};
+
+    u64 left[6], right[6];
+    for (int j = 0; j < 6; j++) {
+        left[j] = 0;
+        right[j] = 0;
+    }
+    glv_mul_acc(p, 3, coeff_a, 2, left, 6);
+    glv_mul_acc(q, 3, coeff_b, 1, left, 6);
+    u64 padded[6] = {k[0], k[1], k[2], k[3], 0, 0};
+    u64 first[6];
+    int first_negative = glv_sub_abs(padded, left, 6, first);
+
+    for (int j = 0; j < 6; j++) {
+        right[j] = 0;
+        left[j] = 0;
+    }
+    glv_mul_acc(p, 3, coeff_b, 1, left, 6);
+    glv_mul_acc(q, 3, coeff_c, 2, right, 6);
+    u64 second[6];
+    int second_negative = glv_sub_abs(left, right, 6, second);
+
+    unsigned long long mapped = (unsigned long long)count + i;
+    store4(out_scalars + (unsigned long long)i * LIMBS, first);
+    store4(out_scalars + mapped * LIMBS, second);
+    out_signs[i] = (unsigned char)first_negative;
+    out_signs[mapped] = (unsigned char)second_negative;
+}
+
+extern "C" __global__ void msm_g1_endomorphism_kernel(const u64 *__restrict__ jacobian,
+                                                     const u64 *__restrict__ beta,
+                                                     unsigned int count, u64 *__restrict__ out) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    u64 x[LIMBS], y[LIMBS], z[LIMBS], scaled[LIMBS], factor[LIMBS];
+    load4(jacobian + ((unsigned long long)i * 3) * LIMBS, x);
+    load4(jacobian + ((unsigned long long)i * 3 + 1) * LIMBS, y);
+    load4(jacobian + ((unsigned long long)i * 3 + 2) * LIMBS, z);
+    load4(beta, factor);
+
+    store4(out + ((unsigned long long)i * 3) * LIMBS, x);
+    store4(out + ((unsigned long long)i * 3 + 1) * LIMBS, y);
+    store4(out + ((unsigned long long)i * 3 + 2) * LIMBS, z);
+
+    unsigned long long mapped = (unsigned long long)count + i;
+    fq_mul(x, factor, scaled);
+    store4(out + (mapped * 3) * LIMBS, scaled);
+    store4(out + (mapped * 3 + 1) * LIMBS, y);
+    store4(out + (mapped * 3 + 2) * LIMBS, z);
 }
 
 extern "C" __global__ void msm_jacobian_z_kernel(const u64 *__restrict__ jacobian,
@@ -1204,30 +1433,49 @@ extern "C" __global__ void msm_point_rows_sum_kernel(const u64 *__restrict__ par
     }
 }
 
-extern "C" __global__ void msm_shared_scalar_rows_kernel(const u64 *__restrict__ bases,
-                                                         const u64 *__restrict__ scalars,
-                                                         unsigned int rows, unsigned int terms,
-                                                         unsigned int scalar_bits,
-                                                         u64 *__restrict__ out) {
+extern "C" __global__ void msm_shared_scalar_rows_glv_kernel(
+    const u64 *__restrict__ bases, const u64 *__restrict__ coeffs,
+    const unsigned char *__restrict__ signs, const u64 *__restrict__ beta, unsigned int rows,
+    unsigned int terms, unsigned int max_bits, u64 *__restrict__ out) {
     extern __shared__ u64 scratch[];
     unsigned int row = blockIdx.x;
     if (row >= rows) return;
 
-    u64 acc[3 * LIMBS], tmp[3 * LIMBS], product[3 * LIMBS], base[3 * LIMBS];
+    u64 acc[3 * LIMBS], tmp[3 * LIMBS], product[3 * LIMBS];
+    u64 low[3 * LIMBS], high[3 * LIMBS], factor[LIMBS], scaled[LIMBS];
+    load4(beta, factor);
     jac_set_zero(acc);
     for (unsigned int term = threadIdx.x; term < terms; term += blockDim.x) {
         const u64 *source = bases + ((unsigned long long)term * rows + row) * 3 * LIMBS;
         for (int limb = 0; limb < 3; limb++) {
-            load4(source + limb * LIMBS, base + limb * LIMBS);
+            load4(source + limb * LIMBS, low + limb * LIMBS);
         }
-        if (jac_is_zero(base)) continue;
-        const u64 *scalar = scalars + (unsigned long long)term * LIMBS;
+        if (jac_is_zero(low)) continue;
+
+        jac_copy(low, high);
+        fq_mul(low, factor, scaled);
+        fq_copy(scaled, high);
+        if (signs[term] != 0u) {
+            fq_neg(low + LIMBS, scaled);
+            fq_copy(scaled, low + LIMBS);
+        }
+        if (signs[(unsigned long long)terms + term] != 0u) {
+            fq_neg(high + LIMBS, scaled);
+            fq_copy(scaled, high + LIMBS);
+        }
+
+        const u64 *first = coeffs + (unsigned long long)term * LIMBS;
+        const u64 *second = coeffs + ((unsigned long long)terms + term) * LIMBS;
         jac_set_zero(product);
-        for (int bit = (int)scalar_bits - 1; bit >= 0; bit--) {
+        for (int bit = (int)max_bits - 1; bit >= 0; bit--) {
             jac_double(product, tmp);
-            if (((scalar[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
-                jac_add(tmp, base, product);
-            } else {
+            jac_copy(tmp, product);
+            if (((first[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
+                jac_add(product, low, tmp);
+                jac_copy(tmp, product);
+            }
+            if (((second[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
+                jac_add(product, high, tmp);
                 jac_copy(tmp, product);
             }
         }

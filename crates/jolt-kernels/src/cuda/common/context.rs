@@ -226,11 +226,15 @@ pub struct CudaKernelContext {
     msm_g2_bucket_reduce_chunked: CudaFunction,
     msm_g2_point_rows_sum: CudaFunction,
     msm_g2_window_fold: CudaFunction,
+    msm_glv_decompose_4d: CudaFunction,
+    msm_g2_frobenius: CudaFunction,
+    msm_g2_axpy_glv: CudaFunction,
+    msm_shared_scalar_rows_glv: CudaFunction,
+    msm_glv_decompose_2d: CudaFunction,
+    msm_g1_endomorphism: CudaFunction,
     msm_jacobian_z: CudaFunction,
     msm_jacobian_to_affine: CudaFunction,
-    msm_shared_scalar_rows: CudaFunction,
     msm_g1_axpy: CudaFunction,
-    msm_g2_axpy: CudaFunction,
     msm_g2_fixed_base: CudaFunction,
     pairing_miller: CudaFunction,
     pairing_prepare_lines: CudaFunction,
@@ -411,11 +415,16 @@ impl CudaKernelContext {
                 .load_function("msm_g2_bucket_reduce_chunked_kernel")?,
             msm_g2_point_rows_sum: module.load_function("msm_g2_point_rows_sum_kernel")?,
             msm_g2_window_fold: module.load_function("msm_g2_window_fold_kernel")?,
+            msm_glv_decompose_4d: module.load_function("msm_glv_decompose_4d_kernel")?,
+            msm_g2_frobenius: module.load_function("msm_g2_frobenius_kernel")?,
+            msm_g2_axpy_glv: module.load_function("msm_g2_axpy_glv_kernel")?,
+            msm_shared_scalar_rows_glv: module
+                .load_function("msm_shared_scalar_rows_glv_kernel")?,
+            msm_glv_decompose_2d: module.load_function("msm_glv_decompose_2d_kernel")?,
+            msm_g1_endomorphism: module.load_function("msm_g1_endomorphism_kernel")?,
             msm_jacobian_z: module.load_function("msm_jacobian_z_kernel")?,
             msm_jacobian_to_affine: module.load_function("msm_jacobian_to_affine_kernel")?,
-            msm_shared_scalar_rows: module.load_function("msm_shared_scalar_rows_kernel")?,
             msm_g1_axpy: module.load_function("msm_g1_axpy_kernel")?,
-            msm_g2_axpy: module.load_function("msm_g2_axpy_kernel")?,
             msm_g2_fixed_base: module.load_function("msm_g2_fixed_base_kernel")?,
             pairing_miller: module.load_function("pairing_miller_kernel")?,
             pairing_prepare_lines: module.load_function("pairing_prepare_lines_kernel")?,
@@ -522,6 +531,12 @@ impl CudaKernelContext {
     pub(crate) fn upload_u32_slice(&self, values: &[u32]) -> Result<CudaSlice<u32>, CudaError> {
         xfer_stats::timed(Phase::H2d, size_of_val(values), || {
             Ok(self.stream.clone_htod(values)?)
+        })
+    }
+
+    pub(crate) fn download_u8(&self, buffer: &CudaSlice<u8>) -> Result<Vec<u8>, CudaError> {
+        xfer_stats::timed(Phase::D2h, buffer.len(), || {
+            Ok(self.stream.clone_dtoh(buffer)?)
         })
     }
 
@@ -826,6 +841,30 @@ impl CudaKernelContext {
         &self.msm_g2_window_fold
     }
 
+    pub(crate) const fn msm_glv_decompose_4d(&self) -> &CudaFunction {
+        &self.msm_glv_decompose_4d
+    }
+
+    pub(crate) const fn msm_g2_frobenius(&self) -> &CudaFunction {
+        &self.msm_g2_frobenius
+    }
+
+    pub(crate) const fn msm_g2_axpy_glv(&self) -> &CudaFunction {
+        &self.msm_g2_axpy_glv
+    }
+
+    pub(crate) const fn msm_shared_scalar_rows_glv(&self) -> &CudaFunction {
+        &self.msm_shared_scalar_rows_glv
+    }
+
+    pub(crate) const fn msm_glv_decompose_2d(&self) -> &CudaFunction {
+        &self.msm_glv_decompose_2d
+    }
+
+    pub(crate) const fn msm_g1_endomorphism(&self) -> &CudaFunction {
+        &self.msm_g1_endomorphism
+    }
+
     pub(crate) const fn msm_jacobian_z(&self) -> &CudaFunction {
         &self.msm_jacobian_z
     }
@@ -836,10 +875,6 @@ impl CudaKernelContext {
 
     pub(crate) const fn msm_g1_axpy(&self) -> &CudaFunction {
         &self.msm_g1_axpy
-    }
-
-    pub(crate) const fn msm_g2_axpy(&self) -> &CudaFunction {
-        &self.msm_g2_axpy
     }
 
     pub(crate) const fn msm_g2_fixed_base(&self) -> &CudaFunction {
@@ -860,10 +895,6 @@ impl CudaKernelContext {
 
     pub(crate) const fn pairing_fq12_product(&self) -> &CudaFunction {
         &self.pairing_fq12_product
-    }
-
-    pub(crate) const fn msm_shared_scalar_rows(&self) -> &CudaFunction {
-        &self.msm_shared_scalar_rows
     }
 
     pub(crate) const fn msm_window_accumulate(&self) -> &CudaFunction {

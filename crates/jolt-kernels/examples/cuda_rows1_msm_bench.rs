@@ -133,6 +133,61 @@ fn main() {
         );
     }
 
+    println!("\nnormalise: device vs arkworks normalize_batch");
+    println!(
+        "{:>8}  {:>14}  {:>14}  {:>8}",
+        "len", "device ms", "host ms", "ratio"
+    );
+    for len in [1usize, 64, 512, 1024, 2048, 4096, 8192] {
+        let points: Vec<ark_bn254::G1Projective> = bases[..len].to_vec();
+        let mut flat = Vec::with_capacity(len * 12);
+        for value in &points {
+            for coordinate in [&value.x, &value.y, &value.z] {
+                flat.extend_from_slice(&coordinate.0 .0);
+            }
+        }
+        let device_points = context.upload_raw_u64(&flat).expect("upload span");
+
+        let resident = context
+            .upload_g1_bases(&points.iter().map(affine_limbs).collect::<Vec<_>>())
+            .expect("upload affine");
+        let mut readback = f64::MAX;
+        for _ in 0..SAMPLES {
+            let now = Instant::now();
+            let _ = resident.to_host().expect("readback");
+            readback = readback.min(now.elapsed().as_secs_f64() * 1e3);
+        }
+
+        let _ = context
+            .normalise_g1_span(&device_points, 0, len)
+            .expect("warm normalise")
+            .to_host()
+            .expect("warm readback");
+        let mut device = f64::MAX;
+        for _ in 0..SAMPLES {
+            let now = Instant::now();
+            let _ = context
+                .normalise_g1_span(&device_points, 0, len)
+                .expect("normalise")
+                .to_host()
+                .expect("readback");
+            device = device.min(now.elapsed().as_secs_f64() * 1e3);
+        }
+
+        let mut host = f64::MAX;
+        for _ in 0..SAMPLES {
+            let now = Instant::now();
+            let _ = ark_bn254::G1Projective::normalize_batch(&points);
+            host = host.min(now.elapsed().as_secs_f64() * 1e3);
+        }
+
+        let isolated = (device - readback).max(0.0);
+        println!(
+            "{len:>8}  {isolated:>14.3}  {host:>14.3}  {:>7.2}x",
+            host / isolated.max(1e-6)
+        );
+    }
+
     println!("\nbucket cost vs rows (row_len fixed; per-MSM = total/rows)");
     println!(
         "{:>8}  {:>5}  {:>10}  {:>11}  {:>10}",
