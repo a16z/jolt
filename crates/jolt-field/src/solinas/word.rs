@@ -355,13 +355,6 @@ macro_rules! define_solinas_prime {
             type SignedProductAccumulator = NaiveAccumulator<Self>;
         }
 
-        // The ext-mul kernel hooks keep their generic-schedule defaults:
-        // the baseline's fused u128-accumulation Fp32 override lost the
-        // checkpoint-6 bench gate (see specs/jolt-field-rebuild.md dropped-specialization
-        // evidence and benches/ext4_kernels.rs).
-        impl<const P: $word> PseudoMersenne for $name<P> {
-            const OFFSET: u128 = Self::C as u128;
-        }
     };
 }
 
@@ -389,6 +382,32 @@ define_solinas_prime!(
     random(rng): Self(super::sample_uniform_below(rng, P as u128, Self::BITS) as u32),
 );
 
+impl<const P: u32> PseudoMersenne for Fp32<P> {
+    const OFFSET: u128 = Self::C as u128;
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        if Self::BITS < 32 {
+            return crate::schedules::ext4_mul_coeffs(a, b);
+        }
+        super::unreduced::fp_ext4_mul_to_accum_fp32(a, b)
+            .0
+            .map(Self::from_u128_reduced)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn ext4_square(a: [Self; 4]) -> [Self; 4] {
+        if Self::BITS < 32 {
+            return crate::schedules::ext4_square_coeffs(a);
+        }
+        super::unreduced::fp_ext4_square_to_accum_fp32(a)
+            .0
+            .map(Self::from_u128_reduced)
+    }
+}
+
 define_solinas_prime!(
     /// Prime field element for primes `p = 2^k − c` stored as `u64`.
     Fp64,
@@ -406,6 +425,10 @@ define_solinas_prime!(
     },
     random(rng): Self(super::sample_uniform_below(rng, P as u128, Self::BITS) as u64),
 );
+
+impl<const P: u64> PseudoMersenne for Fp64<P> {
+    const OFFSET: u128 = Self::C as u128;
+}
 
 /// Whether the two-fold product reduction stays entirely in `u64` for the
 /// modulus `p`: sub-word prime with `C · 2^BITS < 2^64`.

@@ -307,6 +307,14 @@ Final per-file actuals are recorded in the file-structure table below
    refreshed Jolt crate owns these capabilities directly. `Fp128` restores
    the combined-reduction multiply-add kernel, and the commitment role reuses
    `Unreduced::Wide` instead of introducing a second accumulator type.
+6. **The Fp32 quartic deferred-reduction kernel is restored on x86-64 only.**
+   The original Apple M4 result still justifies the generic scalar schedule on
+   AArch64. Akita's shared-field cutover then supplied the missing x86-64
+   system-level evidence: same-runner interleaved profile samples on an AMD
+   EPYC 7763 put both Fp32 prove cases about 9% behind the pre-cutover field,
+   while Fp64/Fp128 results were mixed and near noise. The x86-64 hook now
+   reuses the canonical `FpExt4Fp32ProductAccum` formula and reduces four
+   slots once; sub-32-bit Fp32 moduli retain the generic schedule.
 
 ## Replacement validation evidence
 
@@ -339,9 +347,10 @@ validated by the following battery, all green:
    fp128 portable mul path are `cargo check`-validated with
    `-C target-feature` only (checkpoint 8/9 acceptance); run the packed
    differential suite and the fp128 differentials on real x86-64 hardware.
-2. **Bench re-evaluation entries:** rerun the fused deg-4 kernel bench
-   (`benches/ext4_kernels.rs`) on x86-64 before deciding the
-   `PseudoMersenne` hook overrides stay generic (checkpoint 6 caveat).
+2. **Bench re-evaluation resolved for the Akita production profile:** Akita's
+   interleaved x86-64 end-to-end profile exposed the Fp32 loss and motivated
+   the target-specific hook recorded in replacement-time deviation 6. Keep
+   `benches/ext4_kernels.rs` as the focused architecture comparison harness.
 3. **CI wiring:** a target-feature lane so SIMD is not CI-dark.
 4. **Parallel helpers: deletion withdrawn.** The checkpoint 9 audit's
    "zero consumers" verdict was workspace-blind: Akita's cutover branch
