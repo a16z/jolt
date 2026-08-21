@@ -99,8 +99,9 @@ impl GuestState {
 
 /// One row's dynamic values, written by generated code in record mode.
 ///
-/// Generated code cannot construct a `TraceRow` (its `Option` fields have no
-/// guaranteed layout), so it writes this fixed POD instead and a Rust pass
+/// Generated code cannot construct a packed `TraceRow` (its constructor
+/// enforces the final memory-row contract), so it writes this fixed POD
+/// instead and a Rust pass
 /// reassembles rows afterwards, taking the static half from
 /// `expanded_bytecode[row_index]`. 64 bytes keeps the cursor bump a shift and
 /// the write pattern cache-friendly; the fields a given kind does not use are

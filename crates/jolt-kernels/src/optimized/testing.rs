@@ -21,7 +21,8 @@ use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, TraceOutput, TraceRow,
+    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
+    RegisterWrite, TraceOutput, TraceRow,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -45,6 +46,24 @@ const BASE_ADDRESS: u64 = 0x1000;
 /// relation's `lowest_address` expects it.
 pub(crate) fn fixture_lowest_address() -> u64 {
     BASE_ADDRESS
+}
+
+/// A final LD/SD instruction row for scripted RAM traffic (the 64-byte
+/// `TraceRow` only represents RAM values on load/store-class rows).
+fn memory_instruction(kind: JoltInstructionKind) -> JoltInstructionRow {
+    JoltInstructionRow {
+        instruction_kind: kind,
+        address: 0x8000_0100,
+        operands: NormalizedOperands {
+            rd: (kind == JoltInstructionKind::LD).then_some(1),
+            rs1: Some(2),
+            rs2: (kind == JoltInstructionKind::SD).then_some(3),
+            imm: 0,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -159,29 +178,56 @@ pub(crate) fn with_ram_fixture_init<R>(
             post: 1,
         });
     }
+    // RAM traffic rides on contract-valid final LD/SD rows: a read's rd
+    // receives the loaded value, a write's rs2 carries the stored value.
     let rows: Vec<TraceRow> = script
         .into_iter()
-        .map(|op| {
-            let ram_access = match op {
-                RamOp::Read { word } => RamAccess::Read(RamRead {
-                    address: BASE_ADDRESS + 8 * word,
-                    value: state[word as usize],
-                }),
-                RamOp::Write { word, post } => {
-                    let pre_value = state[word as usize];
-                    state[word as usize] = post;
+        .map(|op| match op {
+            RamOp::Read { word } => {
+                let address = BASE_ADDRESS + 8 * word;
+                let value = state[word as usize];
+                TraceRow::new(
+                    memory_instruction(JoltInstructionKind::LD),
+                    RegisterState {
+                        rs1: Some(RegisterRead {
+                            register: 2,
+                            value: address,
+                        }),
+                        rs2: None,
+                        rd: Some(RegisterWrite {
+                            register: 1,
+                            pre_value: 0,
+                            post_value: value,
+                        }),
+                    },
+                    RamAccess::Read(RamRead { address, value }),
+                )
+            }
+            RamOp::Write { word, post } => {
+                let address = BASE_ADDRESS + 8 * word;
+                let pre_value = state[word as usize];
+                state[word as usize] = post;
+                TraceRow::new(
+                    memory_instruction(JoltInstructionKind::SD),
+                    RegisterState {
+                        rs1: Some(RegisterRead {
+                            register: 2,
+                            value: address,
+                        }),
+                        rs2: Some(RegisterRead {
+                            register: 3,
+                            value: post,
+                        }),
+                        rd: None,
+                    },
                     RamAccess::Write(RamWrite {
-                        address: BASE_ADDRESS + 8 * word,
+                        address,
                         pre_value,
                         post_value: post,
-                    })
-                }
-                RamOp::None => RamAccess::NoOp,
-            };
-            TraceRow {
-                ram_access,
-                ..Default::default()
+                    }),
+                )
             }
+            RamOp::None => TraceRow::default(),
         })
         .collect();
 

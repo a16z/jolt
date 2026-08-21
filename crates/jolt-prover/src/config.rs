@@ -78,7 +78,7 @@ impl ProverConfig {
         }
 
         let touched_address = |row: &TraceRow| {
-            let address = match row.ram_access {
+            let address = match row.ram_access() {
                 RamAccess::Read(read) => read.address,
                 RamAccess::Write(write) => write.address,
                 RamAccess::NoOp => 0,

@@ -297,13 +297,14 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
-    scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<F, SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
+    /// One allocator purge at the first shrink (see [`Self::bind`]).
+    purged: bool,
 }
 
 #[cfg(feature = "allocative")]
@@ -311,7 +312,6 @@ crate::optimized::impl_field_allocative!(ProductRemainderKernel, |kernel| {
     use crate::backend::{poly_heap_bytes, vec_heap_bytes};
     poly_heap_bytes(&kernel.left)
         + poly_heap_bytes(&kernel.right)
-        + vec_heap_bytes(&kernel.scratch)
         + kernel.split_eq.heap_bytes()
         + kernel.challenges.heap_bytes()
         + kernel.rows.heap_bytes()
@@ -427,20 +427,30 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         Ok(Self {
             left: Polynomial::new(left),
             right: Polynomial::new(right),
-            scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
             challenges: RoundChallenges::new(rounds),
             rows,
             lagrange_weights: weights,
+            purged: false,
         })
     }
 
     fn bind(&mut self, challenge: F) {
-        self.left
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
-        self.right
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+        self.left.bind_low_to_high_in_place(challenge);
+        self.right.bind_low_to_high_in_place(challenge);
+        // Return the vacated tails once they dominate the allocations, with
+        // one allocator purge at the first shrink so the multi-GiB freed
+        // pages leave the resident set mid-stage (the spartan-outer
+        // precedent). Allocator-only: no transcript value is touched.
+        if self.left.capacity() >= 8 * self.left.len().max(1) {
+            self.left.shrink_to_fit();
+            self.right.shrink_to_fit();
+            if !self.purged && self.challenges.total() >= crate::mem::PURGE_MIN_LOG_T {
+                self.purged = true;
+                let _ = crate::mem::release_retained_memory();
+            }
+        }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;

@@ -48,7 +48,7 @@ impl Extract for RamAddress {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(ram_access_address(row.ram_access).unwrap_or(0)))
+        Ok(Self(ram_access_address(row.ram_access()).unwrap_or(0)))
     }
 }
 
@@ -64,7 +64,7 @@ impl Extract for RamReadValue {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.ram_access {
+        Ok(Self(match row.ram_access() {
             RamAccess::Read(read) => read.value,
             RamAccess::Write(write) => write.pre_value,
             RamAccess::NoOp => 0,
@@ -84,7 +84,7 @@ impl Extract for RamWriteValue {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.ram_access {
+        Ok(Self(match row.ram_access() {
             RamAccess::Read(read) => read.value,
             RamAccess::Write(write) => write.post_value,
             RamAccess::NoOp => 0,
@@ -105,7 +105,7 @@ impl Extract for RamHammingWeight {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(
-            ram_access_address(row.ram_access).is_some_and(|address| address != 0),
+            ram_access_address(row.ram_access()).is_some_and(|address| address != 0),
         ))
     }
 }
@@ -117,7 +117,7 @@ impl Extract for RemappedRamAddress {
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self(
-            ram_access_address(row.ram_access)
+            ram_access_address(row.ram_access())
                 .and_then(|address| {
                     env.preprocessing
                         .memory_layout

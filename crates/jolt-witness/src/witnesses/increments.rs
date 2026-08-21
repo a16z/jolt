@@ -27,7 +27,7 @@ impl Extract for RdInc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.registers.rd {
+        Ok(Self(match row.rd_write() {
             Some(write) => write.post_value as i128 - write.pre_value as i128,
             None => 0,
         }))
@@ -46,7 +46,7 @@ impl Extract for RamInc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.ram_access {
+        Ok(Self(match row.ram_access() {
             RamAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
             RamAccess::Read(_) | RamAccess::NoOp => 0,
         }))
@@ -115,7 +115,7 @@ impl Extract for FusedInc {
         let store = row_circuit_flags(row)?[CircuitFlags::Store];
         debug_assert_eq!(
             store,
-            matches!(row.ram_access, RamAccess::Write(_)),
+            matches!(row.ram_access(), RamAccess::Write(_)),
             "Store circuit flag disagrees with the cycle's RAM-write access"
         );
         let ram_delta = RamInc::extract(row, next, env)?.0;

@@ -16,7 +16,7 @@
 //!   integer dot products and one field fmadd per `(cycle, stream)` instead
 //!   of per-row field multiplies.
 //! - **Unreduced accumulation**: field × wide-integer products accumulate
-//!   through `jolt-field`'s `Accumulator` /
+//!   through `jolt-field`'s `SignedProductAccumulator` /
 //!   `SmallScalarAccumulator` and reduce once per block
 //!   (`FullAccumS`/`SmallAccumU`/`WideAccumS` + `barrett_reduce`).
 //! - **Split-eq (Gruen/Dao-Thaler) factoring**: `eq(τ_low, ·)` is held as an
@@ -24,12 +24,12 @@
 //!   ([`GruenSplitEqPolynomial`]); round polynomials come from the two
 //!   endpoints `q(0)`, `q(∞)` and the running claim (`gruen_poly_deg_3`),
 //!   never from four full-domain evaluation sweeps.
-//! - **Fused round-0 materialization**: the bound `Az`/`Bz` tables over the
-//!   joint `(cycle ‖ stream)` domain and the first round's endpoints are
-//!   produced by one pass over the typed rows
-//!   (`OuterLinearStage::fused_materialise_polynomials_round_zero`).
-//! - **In-place binding**: `Az`/`Bz` bind low-to-high in place with a reused
-//!   scratch buffer; the 35 input tables are never bound at all.
+//! - **Fused round-0 materialization**: the joint-domain `Az`/`Bz` tables
+//!   and the first round's endpoints are produced by one pass over the typed
+//!   rows — the wide-integer fold per row runs exactly once.
+//! - **In-place binding**: `Az`/`Bz` bind low-to-high in place (no swap
+//!   buffer), shrinking their allocations as the live prefix collapses; the
+//!   35 input tables are never bound at all.
 //! - **Post-hoc opening evaluation**: the 35 produced opening claims come
 //!   from one final eq-weighted walk over the typed rows
 //!   (`R1CSEval::compute_claimed_inputs`), not from binding 35 polynomials
@@ -550,18 +550,23 @@ struct DerivedWeights<F> {
 }
 
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
-/// domain (stream = index LSB, bound `LowToHigh`).
+/// domain (stream = index LSB, bound `LowToHigh`). One prepare pass over the
+/// typed rows writes the joint `Az`/`Bz` tables (2T cells each) and
+/// accumulates round 0's endpoints — the expensive wide-integer fold per row
+/// runs exactly once; every bind then folds the tables in place, shrinking
+/// their allocations as the live prefix collapses.
 struct OuterRemainderKernel<F: JoltField> {
+    /// `(Az, Bz)` over the joint domain, folded in place per bind.
     az: Polynomial<F>,
     bz: Polynomial<F>,
-    scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
-    /// Round-0 endpoints, fused into the materialization pass.
+    /// Round-0 endpoints, fused into the prepare pass.
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<F, SpartanOuterRow>,
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
+    purged: bool,
 }
 
 #[cfg(feature = "allocative")]
@@ -569,7 +574,6 @@ crate::optimized::impl_field_allocative!(OuterRemainderKernel, |kernel| {
     use crate::backend::{poly_heap_bytes, vec_heap_bytes};
     poly_heap_bytes(&kernel.az)
         + poly_heap_bytes(&kernel.bz)
-        + vec_heap_bytes(&kernel.scratch)
         + kernel.split_eq.heap_bytes()
         + kernel.challenges.heap_bytes()
         + kernel.rows.heap_bytes()
@@ -617,8 +621,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let derived = Self::derived_weights(uniskip_challenge, opening_ids.len())?;
 
         // Fused round-0 materialization: one pass over the typed rows writes
-        // the bound Az/Bz tables and accumulates the first round's endpoints
+        // the joint Az/Bz tables and accumulates the first round's endpoints
         // q(0) = Σ_t E(t)·az₀·bz₀ and q(∞) = Σ_t E(t)·(az₁−az₀)(bz₁−bz₀).
+        // The wide-integer fold per row is the stage's dominant compute —
+        // running it once (writing 2·2T cells) beats an endpoints-only pass
+        // plus a second rebuild pass at the first bind.
         let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * cycles);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(2 * cycles);
@@ -634,9 +641,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
          -> Result<(F, F), WitnessError> {
             let mut inner_zero = F::zero();
             let mut inner_infinity = F::zero();
-            for x_in in 0..in_len {
-                let t = x_out * in_len + x_in;
-                let row = access.row(t)?;
+            for (x_in, &e) in e_in.iter().enumerate() {
+                let row = access.row(x_out * in_len + x_in)?;
                 let values = row.group_values();
                 let (az_zero, bz_zero) = values.fold_first(lagrange);
                 let (az_one, bz_one) = values.fold_second(lagrange);
@@ -644,7 +650,6 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 az_chunk[2 * x_in + 1] = az_one;
                 bz_chunk[2 * x_in] = bz_zero;
                 bz_chunk[2 * x_in + 1] = bz_one;
-                let e = e_in[x_in];
                 inner_zero += e * (az_zero * bz_zero);
                 inner_infinity += e * ((az_one - az_zero) * (bz_one - bz_zero));
             }
@@ -675,13 +680,13 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         Ok(Self {
             az: Polynomial::new(az),
             bz: Polynomial::new(bz),
-            scratch: Vec::new(),
             split_eq,
             pending_endpoints: Some(endpoints),
             challenges: RoundChallenges::new(rounds),
             rows,
             opening_ids,
             derived,
+            purged: false,
         })
     }
 
@@ -715,10 +720,22 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        self.az
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
-        self.bz
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+        self.az.bind_low_to_high_in_place(challenge);
+        self.bz.bind_low_to_high_in_place(challenge);
+        // Return the vacated tails once they dominate the allocations, with
+        // one allocator purge at the first shrink so the multi-GiB freed
+        // pages leave the resident set mid-stage. Allocator-only: no
+        // transcript value is touched.
+        if self.az.capacity() >= 8 * self.az.len().max(1) {
+            self.az.shrink_to_fit();
+            self.bz.shrink_to_fit();
+            // `rounds = log_t + 1` (joint cycle‖stream domain): strict
+            // comparison keeps the threshold's log_t semantics.
+            if !self.purged && self.challenges.total() > crate::mem::PURGE_MIN_LOG_T {
+                self.purged = true;
+                let _ = crate::mem::release_retained_memory();
+            }
+        }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;
@@ -726,28 +743,36 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 
     /// The 35 produced opening values at the bound cycle point: one
     /// eq-weighted walk over the typed rows (`compute_claimed_inputs`),
-    /// mixed-width accumulators per input.
+    /// mixed-width accumulators per input. The eq table is held as the
+    /// `e_hi ⊗ e_lo` split tensor (never the full cycle-sized table); each
+    /// `idx_hi` block folds with `e_lo` weights and scales once by
+    /// `e_hi[idx_hi]` — exact-field reassociation, values unchanged.
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
         let reversed: Vec<F> = self.challenges.as_slice()[1..]
             .iter()
             .rev()
             .copied()
             .collect();
-        let weights = EqPolynomial::<F>::evals(&reversed, None);
-        let cycles = weights.len();
+        let split = reversed.len() / 2;
+        let (r_hi, r_lo) = reversed.split_at(split);
+        let e_hi = EqPolynomial::<F>::evals(r_hi, None);
+        let e_lo = EqPolynomial::<F>::evals(r_lo, None);
+        let lo_len = e_lo.len();
         let access = self.rows.access()?;
 
-        let block_size = 1usize << 12;
-        let blocks = cycles.div_ceil(block_size);
-        try_par_sum_vecs(blocks, VARIABLE_COUNT, |index| {
-            let start = index * block_size;
-            let end = (start + block_size).min(cycles);
+        try_par_sum_vecs(e_hi.len(), VARIABLE_COUNT, |idx_hi| {
+            let start = idx_hi * lo_len;
             let mut accumulator = ClaimAccumulator::<F>::default();
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
-                let row = access.row(t)?;
+            for (offset, &weight) in e_lo.iter().enumerate() {
+                let row = access.row(start + offset)?;
                 accumulator.add_row(weight, &row);
             }
-            Ok(accumulator.finish())
+            let e_hi_eval = e_hi[idx_hi];
+            let mut claims = accumulator.finish();
+            for claim in &mut claims {
+                *claim *= e_hi_eval;
+            }
+            Ok(claims)
         })
     }
 }

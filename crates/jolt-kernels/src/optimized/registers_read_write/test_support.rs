@@ -9,7 +9,8 @@ use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, Ring};
 use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,
+    JoltProgram, OwnedTrace, RamAccess, RegisterRead, RegisterState, RegisterWrite, TraceOutput,
+    TraceRow,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -52,7 +53,7 @@ fn cycle_entry_count_matches_cycle_entries() {
                     rs2: rs2.map(|register| (register, 22)),
                     rd: rd.map(|register| (register, 33, 44)),
                 };
-                let (_, len) = cycle.entries::<Fr>(0);
+                let (_, len) = cycle.entries(0);
                 assert_eq!(
                     cycle.entry_count(),
                     len,
@@ -73,8 +74,9 @@ fn collect_rejects_out_of_domain_register_indices() {
     let mut fixture = TraceFixture::new();
     fixture.noop();
     fixture.op(Some(3), Some(2), None);
-    fixture.rows.push(TraceRow {
-        registers: RegisterState {
+    fixture.rows.push(TraceRow::new(
+        JoltInstructionRow::default(),
+        RegisterState {
             rs1: None,
             rs2: Some(RegisterRead {
                 register: 200,
@@ -82,10 +84,11 @@ fn collect_rejects_out_of_domain_register_indices() {
             }),
             rd: None,
         },
-        ..TraceRow::default()
-    });
-    fixture.rows.push(TraceRow {
-        registers: RegisterState {
+        RamAccess::NoOp,
+    ));
+    fixture.rows.push(TraceRow::new(
+        JoltInstructionRow::default(),
+        RegisterState {
             rs1: Some(RegisterRead {
                 register: 255,
                 value: 1,
@@ -93,10 +96,10 @@ fn collect_rejects_out_of_domain_register_indices() {
             rs2: None,
             rd: None,
         },
-        ..TraceRow::default()
-    });
+        RamAccess::NoOp,
+    ));
     fixture.with_plane(2, |witness| {
-        let error = match CollectRegisterEntries::<Fr>::collect(witness, 1 << 2) {
+        let error = match CollectRegisterEntries::collect::<Fr>(witness, 1 << 2) {
             Err(error) => error,
             Ok(_) => panic!("collect accepted an out-of-domain register index"),
         };
@@ -142,10 +145,7 @@ impl TraceFixture {
 
     pub(crate) fn noop(&mut self) {
         let instruction = self.instruction;
-        self.rows.push(TraceRow {
-            instruction,
-            ..TraceRow::default()
-        });
+        self.rows.push(TraceRow::from_instruction(instruction));
     }
 
     /// One cycle touching the given operands; the write value is a fresh
@@ -176,11 +176,8 @@ impl TraceFixture {
             }),
         };
         let instruction = self.instruction;
-        self.rows.push(TraceRow {
-            instruction,
-            registers,
-            ..TraceRow::default()
-        });
+        self.rows
+            .push(TraceRow::new(instruction, registers, RamAccess::NoOp));
     }
 
     /// Run `f` against a trace backend padded to `2^log_t` cycles.

@@ -1902,9 +1902,7 @@ mod inline_sha3 {
                 .trace
                 .rows()
                 .iter()
-                .filter(|row| {
-                    row.instruction.instruction_kind == JoltInstructionKind::VirtualROTRI
-                })
+                .filter(|row| row.instruction_kind() == JoltInstructionKind::VirtualROTRI)
                 .count(),
             KECCAK_ROTRI_ROWS,
             "one Keccak permutation must be expanded into the modular trace",

@@ -1,5 +1,8 @@
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_riscv::{JoltCycle, JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::{
+    CircuitFlags, Flags, JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
+    JoltInstructionRow, JoltInstructionTag, NormalizedOperands, RV64IMAC_JOLT,
+};
 use std::sync::Arc;
 
 #[cfg(feature = "field-inline")]
@@ -233,18 +236,365 @@ pub struct MemoryImage {
     pub bytes: Vec<(u64, u8)>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+/// Presence bits and packed row metadata (`TraceRow::meta`).
+const RS1_PRESENT: u8 = 1 << 0;
+const RS2_PRESENT: u8 = 1 << 1;
+const RD_PRESENT: u8 = 1 << 2;
+/// Two-bit RAM tag at bits 3..5: [`RAM_NOOP`], [`RAM_READ`], or [`RAM_WRITE`].
+const RAM_TAG_SHIFT: u8 = 3;
+const RAM_TAG_MASK: u8 = 0b11 << RAM_TAG_SHIFT;
+const IMM_NEGATIVE: u8 = 1 << 5;
+
+const RAM_NOOP: u8 = 0;
+const RAM_READ: u8 = 1 << RAM_TAG_SHIFT;
+const RAM_WRITE: u8 = 2 << RAM_TAG_SHIFT;
+
+/// Cached `Load`/`Store` circuit-flag bits: the row class selecting the
+/// meaning of the four aliased value slots.
+const IS_LOAD: u16 = 1 << CircuitFlags::Load as u16;
+const IS_STORE: u16 = 1 << CircuitFlags::Store as u16;
+
+/// `virtual_sequence_remaining` sentinel for `None`.
+const VSR_NONE: u16 = u16::MAX;
+/// Operand-id byte sentinel for an absent (`None`) operand.
+const OPERAND_NONE: u8 = u8::MAX;
+
+/// One execution cycle, packed to 64 bytes.
+///
+/// The unpacked view (48-byte [`JoltInstructionRow`] + 80-byte
+/// [`RegisterState`] + 32-byte [`RamAccess`]) collapses losslessly for final
+/// Jolt rows: the instruction half stores kind tag, address, sign/magnitude
+/// immediate, operand ids, and the sequence/compression metadata that fully
+/// determine the row's circuit flags; the dynamic half stores four value
+/// slots aliased by the row's `Load`/`Store` class, per the final memory-row
+/// contract (`specs/proof-trace-row-layout.md`):
+///
+/// - non-memory: `rs1`, `rs2`, `rd_pre`, `rd_post` (RAM values must be zero);
+/// - load: `rs1`, `ram_address`, `rd_pre`, `rd_post` (= the RAM value; no rs2);
+/// - store: `rs1`, `rs2` (= RAM post), `ram_pre`, `ram_address` (no rd).
+///
+/// The trace vector is resident for the entire prove, so this packing is
+/// load-bearing for prover peak memory. Recorded register ids are stored
+/// separately from instruction operand ids, so both [`TraceRow::registers`]
+/// and [`TraceRow::instruction`] round-trip exactly.
+///
+/// WARNING: construction is fail-closed — [`TraceRow::new`] panics on rows
+/// that violate the memory-row contract (it would otherwise silently corrupt
+/// aliased columns). The tracer only emits contract-satisfying final rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(feature = "field-inline"), derive(Copy))]
 #[cfg_attr(
     feature = "serialization",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[repr(C)]
 pub struct TraceRow {
-    pub instruction: JoltInstructionRow,
-    pub registers: RegisterState,
-    pub ram_access: RamAccess,
+    /// Class-aliased value slots; see the type docs.
+    slots: [u64; 4],
+    /// Source RV64 instruction address.
+    address: u64,
+    /// Magnitude of the immediate; sign is [`IMM_NEGATIVE`] in `meta`.
+    imm_abs: u64,
+    /// Cached circuit flags (a pure function of kind, `vsr`, `is_compressed`,
+    /// `is_first_in_sequence` — all stored, so this is derived state; caching
+    /// keeps per-flag witness extraction a bit test).
+    circuit_flags: u16,
+    /// Final Jolt instruction tag (stable identity).
+    kind_tag: u16,
+    /// `virtual_sequence_remaining`, or [`VSR_NONE`].
+    virtual_sequence_remaining: u16,
+    /// Cached instruction flags (a pure function of kind).
+    instruction_flags: u8,
+    /// Presence bits, RAM tag, immediate sign.
+    meta: u8,
+    /// Recorded register ids, valid iff the matching presence bit is set.
+    rs1_register: u8,
+    rs2_register: u8,
+    rd_register: u8,
+    /// Instruction operand ids, or [`OPERAND_NONE`].
+    rs1_operand: u8,
+    rs2_operand: u8,
+    rd_operand: u8,
     #[cfg(feature = "field-inline")]
     pub field_inline: Option<Arc<FieldInlineTraceData>>,
+}
+
+#[cfg(not(feature = "field-inline"))]
+const _: () = assert!(
+    std::mem::size_of::<TraceRow>() == 64,
+    "TraceRow must stay 64 bytes; any size change should be intentional and reviewed"
+);
+
+impl Default for TraceRow {
+    fn default() -> Self {
+        Self::from_instruction(JoltInstructionRow::default())
+    }
+}
+
+#[cold]
+#[inline(never)]
+#[expect(
+    clippy::panic,
+    reason = "fail-closed: silently packing a non-conforming row would corrupt aliased columns"
+)]
+fn contract_violation(kind: JoltInstructionKind, detail: &str) -> ! {
+    panic!("trace row for {kind:?} violates the final memory-row contract: {detail}");
+}
+
+#[inline]
+fn checked_operand_id(kind: JoltInstructionKind, id: Option<u8>) -> u8 {
+    match id {
+        None => OPERAND_NONE,
+        Some(id) if id < OPERAND_NONE => id,
+        Some(id) => contract_violation(kind, &format!("operand register id {id} is reserved")),
+    }
+}
+
+impl TraceRow {
+    /// Packs one cycle. Panics if the row violates the final memory-row
+    /// contract (fail-closed; see the type docs).
+    pub fn new(
+        instruction: JoltInstructionRow,
+        registers: RegisterState,
+        ram_access: RamAccess,
+    ) -> Self {
+        let kind = instruction.instruction_kind;
+        let (circuit_flags, instruction_flags) = match JoltInstruction::try_from(instruction) {
+            Ok(instruction) => (instruction.circuit_flags(), instruction.instruction_flags()),
+            // Fail closed like the rest of the constructor: a source-only kind
+            // has no flag semantics, and caching empty flags would yield
+            // well-formed-but-wrong flag witnesses downstream.
+            Err(_) => contract_violation(kind, "instruction kind has no JoltInstruction lowering"),
+        };
+        let is_load = circuit_flags.get(CircuitFlags::Load);
+        let is_store = circuit_flags.get(CircuitFlags::Store);
+
+        let mut meta = 0u8;
+        let rs1 = registers.rs1.unwrap_or(RegisterRead {
+            register: 0,
+            value: 0,
+        });
+        let rs2 = registers.rs2.unwrap_or(RegisterRead {
+            register: 0,
+            value: 0,
+        });
+        let rd = registers.rd.unwrap_or(RegisterWrite {
+            register: 0,
+            pre_value: 0,
+            post_value: 0,
+        });
+        meta |= RS1_PRESENT * u8::from(registers.rs1.is_some());
+        meta |= RS2_PRESENT * u8::from(registers.rs2.is_some());
+        meta |= RD_PRESENT * u8::from(registers.rd.is_some());
+        let (ram_tag, ram_address, ram_pre, ram_post) = match ram_access {
+            RamAccess::Read(read) => (RAM_READ, read.address, read.value, read.value),
+            RamAccess::Write(write) => {
+                (RAM_WRITE, write.address, write.pre_value, write.post_value)
+            }
+            RamAccess::NoOp => (RAM_NOOP, 0, 0, 0),
+        };
+        meta |= ram_tag;
+
+        let slots = if is_load {
+            if registers.rs2.is_some() {
+                contract_violation(kind, "load row reads rs2");
+            }
+            if ram_tag != RAM_NOOP && (ram_pre != rd.post_value || ram_post != rd.post_value) {
+                contract_violation(kind, "load RAM value must equal the rd write value");
+            }
+            [rs1.value, ram_address, rd.pre_value, rd.post_value]
+        } else if is_store {
+            if registers.rd.is_some() {
+                contract_violation(kind, "store row writes rd");
+            }
+            if ram_tag == RAM_WRITE && ram_post != rs2.value {
+                contract_violation(kind, "store RAM write value must equal the rs2 value");
+            }
+            [rs1.value, rs2.value, ram_pre, ram_address]
+        } else {
+            if ram_address != 0 || ram_pre != 0 || ram_post != 0 {
+                contract_violation(kind, "non-memory row carries RAM values");
+            }
+            [rs1.value, rs2.value, rd.pre_value, rd.post_value]
+        };
+
+        let imm = instruction.operands.imm;
+        let Ok(imm_abs) = u64::try_from(imm.unsigned_abs()) else {
+            contract_violation(kind, "immediate does not fit the u64 magnitude encoding");
+        };
+        meta |= IMM_NEGATIVE * u8::from(imm < 0);
+        let virtual_sequence_remaining = match instruction.virtual_sequence_remaining {
+            None => VSR_NONE,
+            Some(VSR_NONE) => contract_violation(
+                kind,
+                "virtual_sequence_remaining collides with the sentinel",
+            ),
+            Some(remaining) => remaining,
+        };
+
+        Self {
+            slots,
+            address: instruction.address as u64,
+            imm_abs,
+            circuit_flags: circuit_flags.bits(),
+            kind_tag: kind.tag().0,
+            virtual_sequence_remaining,
+            instruction_flags: instruction_flags.bits(),
+            meta,
+            rs1_register: rs1.register,
+            rs2_register: rs2.register,
+            rd_register: rd.register,
+            rs1_operand: checked_operand_id(kind, instruction.operands.rs1),
+            rs2_operand: checked_operand_id(kind, instruction.operands.rs2),
+            rd_operand: checked_operand_id(kind, instruction.operands.rd),
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
+        }
+    }
+
+    pub fn from_instruction(instruction: JoltInstructionRow) -> Self {
+        Self::new(instruction, RegisterState::default(), RamAccess::NoOp)
+    }
+
+    /// The final Jolt instruction row, reconstructed exactly from the packed
+    /// instruction half.
+    #[inline]
+    pub fn instruction(&self) -> JoltInstructionRow {
+        #[inline]
+        fn operand(id: u8) -> Option<u8> {
+            (id != OPERAND_NONE).then_some(id)
+        }
+        let imm_abs = self.imm_abs as i128;
+        JoltInstructionRow {
+            instruction_kind: self.instruction_kind(),
+            address: self.address as usize,
+            operands: NormalizedOperands {
+                rs1: operand(self.rs1_operand),
+                rs2: operand(self.rs2_operand),
+                rd: operand(self.rd_operand),
+                imm: if self.meta & IMM_NEGATIVE != 0 {
+                    -imm_abs
+                } else {
+                    imm_abs
+                },
+            },
+            virtual_sequence_remaining: (self.virtual_sequence_remaining != VSR_NONE)
+                .then_some(self.virtual_sequence_remaining),
+            is_first_in_sequence: self.circuit_flags
+                & (1 << CircuitFlags::IsFirstInSequence as u16)
+                != 0,
+            is_compressed: self.circuit_flags & (1 << CircuitFlags::IsCompressed as u16) != 0,
+        }
+    }
+
+    /// The row's cached circuit flags (identical to deriving them from
+    /// [`TraceRow::instruction`]; see the field docs).
+    #[inline]
+    pub fn circuit_flags(&self) -> jolt_riscv::CircuitFlagSet {
+        jolt_riscv::CircuitFlagSet::from_bits(self.circuit_flags)
+    }
+
+    /// The row's cached instruction flags.
+    #[inline]
+    pub fn instruction_flags(&self) -> jolt_riscv::InstructionFlagSet {
+        jolt_riscv::InstructionFlagSet::from_bits(self.instruction_flags)
+    }
+
+    /// The row's final instruction kind, without reconstructing the full row.
+    #[inline]
+    #[expect(clippy::expect_used, reason = "the tag is stored from a valid kind")]
+    pub fn instruction_kind(&self) -> JoltInstructionKind {
+        JoltInstructionKind::from_tag(JoltInstructionTag(self.kind_tag))
+            .expect("trace row kind tag was stored from a valid instruction kind")
+    }
+
+    /// Whether the row's instruction is the canonical `NoOp`.
+    #[inline]
+    pub fn is_noop(&self) -> bool {
+        self.kind_tag == const { JoltInstructionKind::NoOp.tag().0 }
+    }
+
+    /// Source RV64 instruction address (`instruction().address`).
+    #[inline]
+    pub fn address(&self) -> u64 {
+        self.address
+    }
+
+    /// The instruction's immediate operand (`instruction().operands.imm`).
+    #[inline]
+    pub fn imm(&self) -> i128 {
+        let imm_abs = self.imm_abs as i128;
+        if self.meta & IMM_NEGATIVE != 0 {
+            -imm_abs
+        } else {
+            imm_abs
+        }
+    }
+
+    #[inline]
+    fn ram_slots(&self) -> (u64, u64, u64) {
+        if self.circuit_flags & IS_LOAD != 0 {
+            (self.slots[1], self.slots[3], self.slots[3])
+        } else if self.circuit_flags & IS_STORE != 0 {
+            (self.slots[3], self.slots[2], self.slots[1])
+        } else {
+            (0, 0, 0)
+        }
+    }
+
+    #[inline]
+    pub fn rs1_read(&self) -> Option<RegisterRead> {
+        (self.meta & RS1_PRESENT != 0).then_some(RegisterRead {
+            register: self.rs1_register,
+            value: self.slots[0],
+        })
+    }
+
+    #[inline]
+    pub fn rs2_read(&self) -> Option<RegisterRead> {
+        // Loads have no rs2 (checked at construction), so slot 1 never needs
+        // disambiguation here.
+        (self.meta & RS2_PRESENT != 0).then_some(RegisterRead {
+            register: self.rs2_register,
+            value: self.slots[1],
+        })
+    }
+
+    #[inline]
+    pub fn rd_write(&self) -> Option<RegisterWrite> {
+        // Stores have no rd (checked at construction).
+        (self.meta & RD_PRESENT != 0).then_some(RegisterWrite {
+            register: self.rd_register,
+            pre_value: self.slots[2],
+            post_value: self.slots[3],
+        })
+    }
+
+    #[inline]
+    pub fn registers(&self) -> RegisterState {
+        RegisterState {
+            rs1: self.rs1_read(),
+            rs2: self.rs2_read(),
+            rd: self.rd_write(),
+        }
+    }
+
+    #[inline]
+    pub fn ram_access(&self) -> RamAccess {
+        let (address, pre_value, post_value) = self.ram_slots();
+        match self.meta & RAM_TAG_MASK {
+            RAM_READ => RamAccess::Read(RamRead {
+                address,
+                value: pre_value,
+            }),
+            RAM_WRITE => RamAccess::Write(RamWrite {
+                address,
+                pre_value,
+                post_value,
+            }),
+            _ => RamAccess::NoOp,
+        }
+    }
 }
 
 impl JoltCycle for TraceRow {
@@ -252,50 +602,37 @@ impl JoltCycle for TraceRow {
 
     #[inline]
     fn instruction(&self) -> Self::Instruction {
-        self.instruction
+        TraceRow::instruction(self)
     }
 
     #[inline]
     fn rs1_val(&self) -> Option<u64> {
-        self.registers.rs1.map(|read| read.value)
+        (self.meta & RS1_PRESENT != 0).then_some(self.slots[0])
     }
 
     #[inline]
     fn rs2_val(&self) -> Option<u64> {
-        self.registers.rs2.map(|read| read.value)
+        (self.meta & RS2_PRESENT != 0).then_some(self.slots[1])
     }
 
     #[inline]
     fn rd_vals(&self) -> Option<(u64, u64)> {
-        self.registers
-            .rd
-            .map(|write| (write.pre_value, write.post_value))
+        (self.meta & RD_PRESENT != 0).then_some((self.slots[2], self.slots[3]))
     }
 
     #[inline]
     fn ram_access_address(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Read(read) => Some(read.address),
-            RamAccess::Write(write) => Some(write.address),
-            RamAccess::NoOp => None,
-        }
+        (self.meta & RAM_TAG_MASK != RAM_NOOP).then_some(self.ram_slots().0)
     }
 
     #[inline]
     fn ram_read_value(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Read(read) => Some(read.value),
-            RamAccess::Write(write) => Some(write.pre_value),
-            RamAccess::NoOp => None,
-        }
+        (self.meta & RAM_TAG_MASK != RAM_NOOP).then_some(self.ram_slots().1)
     }
 
     #[inline]
     fn ram_write_value(&self) -> Option<u64> {
-        match self.ram_access {
-            RamAccess::Write(write) => Some(write.post_value),
-            RamAccess::Read(_) | RamAccess::NoOp => None,
-        }
+        (self.meta & RAM_TAG_MASK == RAM_WRITE).then_some(self.ram_slots().2)
     }
 }
 
@@ -376,5 +713,305 @@ impl TraceSource for OwnedTrace {
         // Pristine sources only: after `next_row` consumption the full slice
         // would diverge from the remaining stream.
         (self.next == 0).then(|| self.rows.as_slice())
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use super::*;
+
+    fn instruction(kind: JoltInstructionKind, operands: NormalizedOperands) -> JoltInstructionRow {
+        JoltInstructionRow {
+            instruction_kind: kind,
+            address: 0x8000_0000,
+            operands,
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        }
+    }
+
+    /// The pack/unpack codec must be exact on contract-satisfying rows:
+    /// every field, presence vs absence, and the enum variant itself
+    /// round-trip — a `Write` with `post == pre` must not collapse into a
+    /// `Read`, and `Some` of a zero-valued access must not collapse into
+    /// absence.
+    #[test]
+    fn non_memory_state_round_trips_exactly() {
+        let register_states = [
+            RegisterState::default(),
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 0,
+                    value: 0,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 63,
+                    value: u64::MAX,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 5,
+                    pre_value: 7,
+                    post_value: 7,
+                }),
+            },
+            RegisterState {
+                rs1: None,
+                rs2: None,
+                rd: Some(RegisterWrite {
+                    register: 0,
+                    pre_value: u64::MAX,
+                    post_value: 0,
+                }),
+            },
+        ];
+        // Zero-valued RAM accesses on non-memory rows are representable and
+        // must keep their variant.
+        let ram_accesses = [
+            RamAccess::NoOp,
+            RamAccess::Read(RamRead {
+                address: 0,
+                value: 0,
+            }),
+            RamAccess::Write(RamWrite {
+                address: 0,
+                pre_value: 0,
+                post_value: 0,
+            }),
+        ];
+        for registers in register_states {
+            for ram_access in ram_accesses {
+                let row = TraceRow::new(JoltInstructionRow::default(), registers, ram_access);
+                assert_eq!(row.registers(), registers);
+                assert_eq!(row.ram_access(), ram_access);
+                assert_eq!(row.rs1_read(), registers.rs1);
+                assert_eq!(row.rs2_read(), registers.rs2);
+                assert_eq!(row.rd_write(), registers.rd);
+            }
+        }
+    }
+
+    #[test]
+    fn load_row_round_trips_and_aliases() {
+        let loaded = 0xdead_beefu64;
+        let registers = RegisterState {
+            rs1: Some(RegisterRead {
+                register: 10,
+                value: 0x1000,
+            }),
+            rs2: None,
+            rd: Some(RegisterWrite {
+                register: 11,
+                pre_value: 5,
+                post_value: loaded,
+            }),
+        };
+        let ram_access = RamAccess::Read(RamRead {
+            address: 0x2000,
+            value: loaded,
+        });
+        let row = TraceRow::new(
+            instruction(
+                JoltInstructionKind::LD,
+                NormalizedOperands {
+                    rs1: Some(10),
+                    rs2: None,
+                    rd: Some(11),
+                    imm: 8,
+                },
+            ),
+            registers,
+            ram_access,
+        );
+        assert_eq!(row.registers(), registers);
+        assert_eq!(row.ram_access(), ram_access);
+        assert_eq!(row.imm(), 8);
+        assert_eq!(JoltCycle::ram_read_value(&row), Some(loaded));
+        assert_eq!(JoltCycle::ram_write_value(&row), None);
+        assert_eq!(JoltCycle::ram_access_address(&row), Some(0x2000));
+    }
+
+    #[test]
+    fn store_row_round_trips_and_aliases() {
+        let stored = 0x1234u64;
+        let registers = RegisterState {
+            rs1: Some(RegisterRead {
+                register: 10,
+                value: 0x3000,
+            }),
+            rs2: Some(RegisterRead {
+                register: 12,
+                value: stored,
+            }),
+            rd: None,
+        };
+        let ram_access = RamAccess::Write(RamWrite {
+            address: 0x4000,
+            pre_value: 0x5678,
+            post_value: stored,
+        });
+        let row = TraceRow::new(
+            instruction(
+                JoltInstructionKind::SD,
+                NormalizedOperands {
+                    rs1: Some(10),
+                    rs2: Some(12),
+                    rd: None,
+                    imm: -4,
+                },
+            ),
+            registers,
+            ram_access,
+        );
+        assert_eq!(row.registers(), registers);
+        assert_eq!(row.ram_access(), ram_access);
+        assert_eq!(row.imm(), -4);
+        assert_eq!(JoltCycle::ram_read_value(&row), Some(0x5678));
+        assert_eq!(JoltCycle::ram_write_value(&row), Some(stored));
+    }
+
+    /// The cached flag sets must equal the sets derived from the
+    /// reconstructed instruction (they are the same derivation, cached at
+    /// construction).
+    #[test]
+    fn cached_flags_match_the_derivation() {
+        let mut source = instruction(
+            JoltInstructionKind::SD,
+            NormalizedOperands {
+                rs1: Some(1),
+                rs2: Some(2),
+                rd: None,
+                imm: 0,
+            },
+        );
+        source.virtual_sequence_remaining = Some(0);
+        source.is_compressed = true;
+        for instruction in [source, JoltInstructionRow::default()] {
+            let row = TraceRow::from_instruction(instruction);
+            let decoded = JoltInstruction::try_from(row.instruction()).unwrap();
+            assert_eq!(row.circuit_flags(), decoded.circuit_flags());
+            assert_eq!(row.instruction_flags(), decoded.instruction_flags());
+        }
+    }
+
+    /// `instruction()` must reconstruct the exact `JoltInstructionRow`,
+    /// including sequence/compression metadata and operand ids that differ
+    /// from the recorded register state.
+    #[test]
+    fn instruction_reconstruction_is_exact() {
+        let mut source = instruction(
+            JoltInstructionKind::ADDI,
+            NormalizedOperands {
+                rs1: Some(2),
+                rs2: None,
+                rd: Some(1),
+                imm: -12345,
+            },
+        );
+        source.virtual_sequence_remaining = Some(3);
+        source.is_first_in_sequence = true;
+        source.is_compressed = true;
+        let row = TraceRow::new(
+            source,
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 200,
+                    value: 9,
+                }),
+                rs2: None,
+                rd: None,
+            },
+            RamAccess::NoOp,
+        );
+        assert_eq!(row.instruction(), source);
+        assert_eq!(row.instruction_kind(), JoltInstructionKind::ADDI);
+        assert_eq!(row.address(), 0x8000_0000);
+        assert_eq!(row.imm(), -12345);
+        // Recorded register ids stay independent of operand ids.
+        assert_eq!(row.rs1_read().unwrap().register, 200);
+    }
+
+    /// `TraceRow::default()` must stay semantically identical to the
+    /// canonical padding row: NoOp instruction, no register activity, RAM
+    /// no-op.
+    #[test]
+    fn default_row_is_the_canonical_padding_row() {
+        let row = TraceRow::default();
+        assert_eq!(row.registers(), RegisterState::default());
+        assert_eq!(row.ram_access(), RamAccess::NoOp);
+        assert!(row.is_noop());
+        assert_eq!(row.instruction(), JoltInstructionRow::default());
+        assert_eq!(
+            row,
+            TraceRow::new(
+                JoltInstructionRow::default(),
+                RegisterState::default(),
+                RamAccess::NoOp,
+            )
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "violates the final memory-row contract")]
+    fn non_memory_row_with_ram_traffic_is_rejected() {
+        let _ = TraceRow::new(
+            JoltInstructionRow::default(),
+            RegisterState::default(),
+            RamAccess::Write(RamWrite {
+                address: 8,
+                pre_value: 7,
+                post_value: 11,
+            }),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "violates the final memory-row contract")]
+    fn load_row_with_mismatched_ram_value_is_rejected() {
+        let _ = TraceRow::new(
+            instruction(
+                JoltInstructionKind::LD,
+                NormalizedOperands {
+                    rs1: Some(10),
+                    rs2: None,
+                    rd: Some(11),
+                    imm: 0,
+                },
+            ),
+            RegisterState {
+                rs1: None,
+                rs2: None,
+                rd: Some(RegisterWrite {
+                    register: 11,
+                    pre_value: 0,
+                    post_value: 1,
+                }),
+            },
+            RamAccess::Read(RamRead {
+                address: 0x2000,
+                value: 2,
+            }),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "violates the final memory-row contract")]
+    fn oversized_immediate_is_rejected() {
+        let _ = TraceRow::from_instruction(instruction(
+            JoltInstructionKind::ADDI,
+            NormalizedOperands {
+                rs1: None,
+                rs2: None,
+                rd: None,
+                imm: i128::MAX,
+            },
+        ));
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn trace_row_is_64_bytes() {
+        assert_eq!(std::mem::size_of::<TraceRow>(), 64);
     }
 }

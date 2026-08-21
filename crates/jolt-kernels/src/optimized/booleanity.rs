@@ -14,11 +14,11 @@
 //! - **Sparse one-hot access.** Each `ra_i(·, j)` is one-hot in the chunk
 //!   domain, so the per-cycle hot index is a chunk of that cycle's lookup
 //!   index / mapped PC / remapped RAM address. Both phases gather through
-//!   [`RaChunkSelector`]s over the packed stage-5 rows
-//!   ([`SharedInstructionRows`], reclaimed from the [`ProofSession`] or
-//!   collected in one streaming pass) and never materialize the `K × T`
-//!   grids the naive tier's `oracle_table` walks, nor per-polynomial index
-//!   columns (legacy `RaIndices`).
+//!   [`RaChunkSelector`]s over the shared per-cycle columns (the bare
+//!   lookup-index column, the bytecode PC rows, the RAM address column —
+//!   reclaimed from the [`ProofSession`] or collected fresh) and never
+//!   materialize the `K × T` grids the naive tier's `oracle_table` walks,
+//!   nor per-polynomial index columns (legacy `RaIndices`).
 //! - **Pushforward `G` tables (address phase).** `G_i[k] = Σ_j
 //!   eq(r_ref_cycle, j) · ra_i(k, j)` collapses to a scatter of the
 //!   tensor-factored eq weights into a `K`-sized accumulator per
@@ -47,10 +47,11 @@
 //! construction — so it reuses the reference kernel's explicit four-point
 //! sampling verbatim; only the table construction is replaced.
 //!
-//! Cross-stage carry: both prepares reclaim the packed stage-5 rows with
-//! [`ProofSession::take`], clone the [`Arc`], and park the carry back for
-//! the later consumers (mixed-backend registries fall back to a fresh
-//! streaming pass when the carry is absent or geometry-stale).
+//! Cross-stage carry: both prepares reclaim the shared columns from the
+//! session (mixed-backend registries fall back to a fresh pass when a carry
+//! is absent or geometry-stale). The 6b cycle prepare is the PC scan's last
+//! consumer and takes it; the lookup-index and RAM address columns are
+//! taken by the later stage-6b RA virtualization members.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -79,16 +80,18 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::instruction_read_raf::InstructionCycleRow;
+use super::bytecode_read_raf::{PcRow, PcRowsKey};
+use super::instruction_read_raf::shared_lookup_indices;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
 use super::support::{gamma_power_pairs, gamma_powers, pin_derived_term_if_derived, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// One checked polynomial's chunk selector over the packed per-cycle rows
-/// (canonical layout order: instruction, bytecode, ram).
+/// One checked polynomial's chunk selector over the shared per-cycle
+/// columns (canonical layout order: instruction, bytecode, ram).
 enum ColumnSelector {
     Instruction(RaChunkSelector),
     Bytecode(RaChunkSelector),
@@ -133,19 +136,87 @@ impl ColumnSelector {
             })
             .collect()
     }
+}
 
-    /// The hot chunk index at `row`; `None` is a cold cycle. Mirrors the
-    /// trace oracle's grid materializers (`materialize_one_hot`), so
-    /// gathered indices and the reference tier's dense grids describe the
-    /// same one-hot polynomials.
+/// The shared per-cycle chunk-source columns both booleanity phases gather
+/// from: the bare lookup-index column, the bytecode PC rows, and the RAM
+/// address column — each fetched only when the layout has members of that
+/// family (empty otherwise, and never indexed).
+struct BooleanityColumns {
+    cycles: usize,
+    lookup_indices: Arc<Vec<u128>>,
+    pc: Arc<Vec<PcRow>>,
+    ram_addresses: Arc<Vec<u64>>,
+}
+
+impl BooleanityColumns {
+    /// Reclaim (or collect) the session-shared columns the given selectors
+    /// need. One typed walk per absent column, shared with every other
+    /// consumer stage through the session carries.
+    fn gather<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        selectors: &[ColumnSelector],
+    ) -> Result<Self, KernelError<F>> {
+        let cycles = 1usize << log_t;
+        let lookup_indices = if selectors
+            .iter()
+            .any(|selector| matches!(selector, ColumnSelector::Instruction(_)))
+        {
+            shared_lookup_indices(session, witness, cycles)?
+        } else {
+            Arc::new(Vec::new())
+        };
+        let pc = if selectors
+            .iter()
+            .any(|selector| matches!(selector, ColumnSelector::Bytecode(_)))
+        {
+            PcRow::shared(session, witness, cycles)?
+        } else {
+            Arc::new(Vec::new())
+        };
+        let ram_addresses = if selectors
+            .iter()
+            .any(|selector| matches!(selector, ColumnSelector::Ram(_)))
+        {
+            SharedRamAddresses::shared(session, witness, log_t)?
+        } else {
+            Arc::new(Vec::new())
+        };
+        Ok(Self {
+            cycles,
+            lookup_indices,
+            pc,
+            ram_addresses,
+        })
+    }
+
+    /// The hot chunk index of `selector` at cycle `j`; `None` is a cold
+    /// cycle. Mirrors the trace oracle's grid materializers
+    /// (`materialize_one_hot`), so gathered indices and the reference tier's
+    /// dense grids describe the same one-hot polynomials.
+    ///
+    /// Sentinel parity: each column derives from the same typed witness as
+    /// the packed stage-5 rows previously shared here — `LookupIndex`
+    /// (always hot), `MappedPc` (`PcRow` cold sentinel ⇔ `MappedPc::None`),
+    /// `RemappedRamAddress` (`NO_ACCESS` ⇔ `RemappedRamAddress::None`) — so
+    /// per-cycle hotness and indices are identical by construction,
+    /// including cold/no-access cycles (pinned by this module's parity
+    /// tests over fixtures with cold bytecode and cold RAM rows).
     #[inline]
-    fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
-        match self {
-            Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index)),
-            Self::Bytecode(selector) => row.mapped_pc().map(|pc| selector.chunk_usize(pc)),
-            Self::Ram(selector) => row
-                .remapped_ram_address()
-                .map(|address| selector.chunk_usize(address as usize)),
+    fn index(&self, selector: &ColumnSelector, j: usize) -> Option<usize> {
+        match selector {
+            ColumnSelector::Instruction(selector) => {
+                Some(selector.chunk_u128(self.lookup_indices[j]))
+            }
+            ColumnSelector::Bytecode(selector) => {
+                self.pc[j].one_hot_pc().map(|pc| selector.chunk_usize(pc))
+            }
+            ColumnSelector::Ram(selector) => {
+                let address = self.ram_addresses[j];
+                (address != NO_ACCESS).then(|| selector.chunk_usize(address as usize))
+            }
         }
     }
 }
@@ -159,13 +230,13 @@ impl ColumnSelector {
 /// per-chunk cycle masses exactly — same terms, regrouped through the
 /// `eq = E_out ⊗ E_in` factorization.
 fn cycle_pushforward<F: JoltField>(
-    rows: &[InstructionCycleRow],
+    columns: &BooleanityColumns,
     selectors: &[ColumnSelector],
     k_chunk: usize,
     point: &[F],
 ) -> Vec<Vec<F>> {
     let eq = TensorEqTable::new(point);
-    debug_assert_eq!(eq.len(), rows.len());
+    debug_assert_eq!(eq.len(), columns.cycles);
     let e_out = eq.e_out();
     let e_in = eq.e_in();
     let in_len = e_in.len();
@@ -183,9 +254,9 @@ fn cycle_pushforward<F: JoltField>(
     let scatter = |mut state: State<F>, x_out: usize| {
         let base = x_out * in_len;
         for (x_in, e) in e_in.iter().enumerate() {
-            let row = &rows[base + x_in];
+            let j = base + x_in;
             for (selector, block) in selectors.iter().zip(state.block.iter_mut()) {
-                if let Some(k) = selector.index(row) {
+                if let Some(k) = columns.index(selector, j) {
                     block[k].add(*e);
                 }
             }
@@ -264,9 +335,9 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
         }
 
         let selectors = ColumnSelector::for_layout(witness, dimensions)?;
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
+        let columns = BooleanityColumns::gather(session, witness, dimensions.log_t, &selectors)?;
         let masses = cycle_pushforward(
-            &rows,
+            &columns,
             &selectors,
             1usize << dimensions.log_k_chunk,
             &reference_cycle,
@@ -475,7 +546,13 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
         }
 
         let selectors = ColumnSelector::for_layout(witness, dimensions)?;
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
+        let columns = BooleanityColumns::gather(session, witness, dimensions.log_t, &selectors)?;
+        // The PC scan's last consumer (the earlier bytecode cycle member of
+        // this batch holds its own Arc): remove the session's copy so the
+        // rows free at the lazy fold's materialization instead of living to
+        // the end of the proof. The lookup-index and RAM address columns are
+        // taken by the later instruction/RAM RA virtualization members.
+        let _ = session.take::<PcRowsKey>();
 
         // The fixed address eq factor of the `EqAddressCycle` public; rides
         // in the split-eq scaling so round messages and the bound scalar
@@ -503,7 +580,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
                 BindingOrder::LowToHigh,
                 Some(address_scalar),
             ),
-            tables: LazyFoldedRa::new(tables, BooleanityChunks { rows, selectors }),
+            tables: LazyFoldedRa::new(tables, BooleanityChunks { columns, selectors }),
             gamma_powers,
             gamma_powers_inv,
             layout,
@@ -511,10 +588,10 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
     }
 }
 
-/// Lazy-RA index source over the packed stage-5 rows: polynomial `i`'s hot
-/// chunk at cycle `j`, through the layout's selectors.
+/// Lazy-RA index source over the shared columns: polynomial `i`'s hot chunk
+/// at cycle `j`, through the layout's selectors.
 struct BooleanityChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    columns: BooleanityColumns,
     selectors: Vec<ColumnSelector>,
 }
 
@@ -524,12 +601,12 @@ impl ChunkIndexSource for BooleanityChunks {
     }
 
     fn cycles(&self) -> usize {
-        self.rows.len()
+        self.columns.cycles
     }
 
     #[inline]
     fn index(&self, i: usize, j: usize) -> Option<usize> {
-        self.selectors[i].index(&self.rows[j])
+        self.columns.index(&self.selectors[i], j)
     }
 }
 
@@ -552,7 +629,10 @@ crate::optimized::impl_field_allocative!(OptimizedBooleanityCycleKernel, |kernel
     use crate::backend::{arc_vec_heap_bytes, vec_heap_bytes};
     kernel.eq.heap_bytes()
         + kernel.tables.heap_bytes(|source| {
-            arc_vec_heap_bytes(&source.rows) + vec_heap_bytes(&source.selectors)
+            arc_vec_heap_bytes(&source.columns.lookup_indices)
+                + arc_vec_heap_bytes(&source.columns.pc)
+                + arc_vec_heap_bytes(&source.columns.ram_addresses)
+                + vec_heap_bytes(&source.selectors)
         })
         + vec_heap_bytes(&kernel.gamma_powers)
         + vec_heap_bytes(&kernel.gamma_powers_inv)
@@ -729,19 +809,37 @@ pub(crate) mod testing {
             is_compressed: false,
         };
         let instruction_b = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::SD,
             address: 0x8000_0004,
             operands: NormalizedOperands {
-                rd: Some(3),
+                rd: None,
                 rs1: Some(1),
-                rs2: None,
+                rs2: Some(3),
                 imm: 113,
             },
             ..instruction_a
         };
+        let instruction_c = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::LD,
+            address: 0x8000_0008,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: None,
+                imm: 0,
+            },
+            ..instruction_a
+        };
+        // An SD whose address is NOT in the bytecode table: a cold bytecode
+        // cycle that still carries RAM traffic.
+        let unmapped_store = JoltInstructionRow {
+            address: 0x8000_0100,
+            ..instruction_b
+        };
         use std::sync::Arc;
         let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
-                vec![instruction_a, instruction_b],
+                vec![instruction_a, instruction_b, instruction_c],
                 instruction_a.address as u64,
                 RV64IMAC_JOLT,
             )
@@ -751,24 +849,10 @@ pub(crate) mod testing {
             max_padded_trace_length: 4.max(1 << log_t),
         });
         let program = Arc::new(JoltProgram::default());
-        // Field mutation instead of struct literals: `TraceRow` grows a
-        // cfg-gated field under the `field-inline` feature, which a literal
-        // cannot spell portably from this crate.
-        let row = |instruction: Option<JoltInstructionRow>,
-                   registers: RegisterState,
-                   ram_access: RamAccess| {
-            let mut row = TraceRow::default();
-            if let Some(instruction) = instruction {
-                row.instruction = instruction;
-            }
-            row.registers = registers;
-            row.ram_access = ram_access;
-            row
-        };
         let mut rows = vec![
-            // Hot bytecode, hot RAM, register activity.
-            row(
-                Some(instruction_a),
+            // Hot bytecode, register activity, nonzero lookup index.
+            TraceRow::new(
+                instruction_a,
                 RegisterState {
                     rs1: Some(RegisterRead {
                         register: 2,
@@ -781,23 +865,19 @@ pub(crate) mod testing {
                     }),
                     ..Default::default()
                 },
-                RamAccess::Read(RamRead {
-                    address: 0x8000_1000,
-                    value: 7,
-                }),
+                RamAccess::NoOp,
             ),
-            // Hot bytecode (different PC / lookup index), hot RAM (write).
-            row(
-                Some(instruction_b),
+            // Hot bytecode (different PC), hot RAM (write).
+            TraceRow::new(
+                instruction_b,
                 RegisterState {
                     rs1: Some(RegisterRead {
                         register: 1,
                         value: 8,
                     }),
-                    rd: Some(RegisterWrite {
+                    rs2: Some(RegisterRead {
                         register: 3,
-                        pre_value: 0,
-                        post_value: 121,
+                        value: 11,
                     }),
                     ..Default::default()
                 },
@@ -808,31 +888,40 @@ pub(crate) mod testing {
                 }),
             ),
             // Cold bytecode, hot RAM.
-            row(
-                None,
-                RegisterState::default(),
+            TraceRow::new(
+                unmapped_store,
+                RegisterState {
+                    rs2: Some(RegisterRead {
+                        register: 3,
+                        value: 5,
+                    }),
+                    ..Default::default()
+                },
                 RamAccess::Write(RamWrite {
                     address: 0x8000_1010,
                     pre_value: 0,
                     post_value: 5,
                 }),
             ),
-            // Hot bytecode, cold RAM.
-            row(
-                Some(instruction_a),
+            // Hot bytecode, hot RAM (read).
+            TraceRow::new(
+                instruction_c,
                 RegisterState {
                     rs1: Some(RegisterRead {
                         register: 2,
-                        value: 8,
+                        value: 0x8000_1000,
                     }),
                     rd: Some(RegisterWrite {
                         register: 1,
                         pre_value: 8,
-                        post_value: 11,
+                        post_value: 7,
                     }),
                     ..Default::default()
                 },
-                RamAccess::NoOp,
+                RamAccess::Read(RamRead {
+                    address: 0x8000_1000,
+                    value: 7,
+                }),
             ),
         ];
         rows.truncate(1 << log_t);
@@ -891,7 +980,9 @@ mod tests {
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
     use jolt_witness::JoltWitnessOracle;
 
-    use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
+    use super::super::instruction_read_raf::{
+        collect_lookup_indices, SharedLookupIndices, SharedLookupIndicesWeak,
+    };
     use super::testing::{test_challenge, with_booleanity_backend};
     use super::*;
     use crate::ReferenceBackend;
@@ -1021,10 +1112,10 @@ mod tests {
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap(),
             );
-            // The 6a prepare parks a shared-rows carry for the 6b consumers.
+            // The 6a prepare parks a lookup-index carry for the 6b consumers.
             assert!(
-                session.state::<SharedInstructionRows>().is_some()
-                    || session.state::<SharedInstructionRowsWeak>().is_some()
+                session.state::<SharedLookupIndices>().is_some()
+                    || session.state::<SharedLookupIndicesWeak>().is_some()
             );
         });
     }
@@ -1086,8 +1177,8 @@ mod tests {
                 .unwrap();
             let mut session = ProofSession::default();
             if carried_indices {
-                let rows = InstructionCycleRow::collect::<Fr>(backend, 1usize << log_t).unwrap();
-                session.park(SharedInstructionRows(Arc::new(rows)));
+                let indices = collect_lookup_indices::<Fr>(backend, 1usize << log_t).unwrap();
+                session.park(SharedLookupIndices(std::sync::Arc::new(indices)));
             }
             let optimized = OptimizedBooleanityCycle
                 .prepare(
@@ -1103,9 +1194,9 @@ mod tests {
                 .unwrap();
             if carried_indices {
                 assert!(
-                    session.state::<SharedInstructionRows>().is_some()
-                        || session.state::<SharedInstructionRowsWeak>().is_some(),
-                    "cycle prepare must park a shared-rows carry back for later consumers"
+                    session.state::<SharedLookupIndices>().is_some()
+                        || session.state::<SharedLookupIndicesWeak>().is_some(),
+                    "cycle prepare must park a lookup-index carry back for later consumers"
                 );
             }
 
@@ -1279,9 +1370,9 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                session.state::<SharedInstructionRows>().is_some()
-                    || session.state::<SharedInstructionRowsWeak>().is_some(),
-                "cycle prepare must park a shared-rows carry back"
+                session.state::<SharedLookupIndices>().is_some()
+                    || session.state::<SharedLookupIndicesWeak>().is_some(),
+                "cycle prepare must park a lookup-index carry back"
             );
             let (mut reference, mut optimized, cycle_challenges_drawn) =
                 drive_lockstep(reference, optimized, input_claim);

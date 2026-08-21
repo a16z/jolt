@@ -34,7 +34,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 let Some(row) = trace.next_row() else {
                     continue;
                 };
-                if let Some(write) = row.registers.rd {
+                if let Some(write) = row.rd_write() {
                     let register = usize::from(write.register);
                     if register >= register_count {
                         return Err(invalid_register_address(write.register));
@@ -50,9 +50,9 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
                 break;
             };
             let register = match id {
-                JoltVirtualPolynomial::Rs1Ra => row.registers.rs1.map(|read| read.register),
-                JoltVirtualPolynomial::Rs2Ra => row.registers.rs2.map(|read| read.register),
-                JoltVirtualPolynomial::RdWa => row.registers.rd.map(|write| write.register),
+                JoltVirtualPolynomial::Rs1Ra => row.rs1_read().map(|read| read.register),
+                JoltVirtualPolynomial::Rs2Ra => row.rs2_read().map(|read| read.register),
+                JoltVirtualPolynomial::RdWa => row.rd_write().map(|write| write.register),
                 _ => None,
             };
             if let Some(register) = register {

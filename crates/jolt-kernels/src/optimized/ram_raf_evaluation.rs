@@ -19,9 +19,8 @@ use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
-use super::ram_trace::RamAccessColumns;
+use super::ram_trace::SharedRamAddresses;
 use super::OptimizedBackend;
-use crate::reference::views::eq_table;
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
 };
@@ -51,9 +50,9 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
         }
 
         let addresses = 1usize << ram_log_k;
-        let columns = RamAccessColumns::shared(session, witness, dimensions.log_t())?;
-        columns.validate_addresses(addresses)?;
-        let ra_folded = columns.fold_cycles(&eq_table(tau_low), addresses);
+        let address_column = SharedRamAddresses::shared(session, witness, dimensions.log_t())?;
+        super::ram_trace::validate_addresses(&address_column, addresses)?;
+        let ra_folded = super::ram_trace::fold_cycles(&address_column, tau_low, addresses);
         let unmap: Vec<F> = (0..addresses as u64)
             .map(|k| F::from_u64(8 * k + lowest_address))
             .collect();

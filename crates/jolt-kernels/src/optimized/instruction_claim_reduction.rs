@@ -9,8 +9,11 @@
 //! - binds a single γ-combined table `C(j) = Σ_i γ^i·o_i(j)` — the operands
 //!   enter the summand linearly, so every round message over `C` equals the
 //!   five-table computation exactly (distributivity; binding is linear), at
-//!   a fifth of the table memory;
-//! - keeps the per-cycle operands as native scalars (56 bytes per cycle) and
+//!   a fifth of the table memory (the combine pass over the rows runs
+//!   exactly once, at construction — deferring it to the rounds re-runs the
+//!   per-row combine and costs wall);
+//! - serves the per-cycle operands from a [`BundleStore`] (a slice-backed
+//!   witness re-extracts windows on the fly — no retained row vector) and
 //!   recovers the five individual output claims post hoc: each bound value
 //!   is the operand's multilinear evaluation at the bound point, one
 //!   split-eq-weighted walk over the native rows (the spartan-outer
@@ -38,11 +41,11 @@ use jolt_witness::witnesses::{
     LeftInstructionInput, LeftLookupOperand, LookupOutput, RightInstructionInput,
     RightLookupOperand,
 };
-use jolt_witness::{JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
+use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -86,13 +89,13 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
 {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionClaimReduction<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionClaimReduction<F>>>, KernelError<F>>
     {
-        let rows: Vec<InstructionOperandRow> =
-            collect_rows(witness, 1usize << inputs.relation.tau_low().len())?;
+        let rows =
+            BundleStore::resolve(session, witness, 1usize << inputs.relation.tau_low().len())?;
         Ok(Box::new(OptimizedInstructionClaimReductionKernel::new(
             inputs.relation.tau_low(),
             rows,
@@ -101,41 +104,23 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     }
 }
 
-pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
-    progress: RoundProgress,
-    /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
-    /// table (the summand is linear in the five operands).
-    combined: Polynomial<F>,
-    /// Native per-cycle operand values, kept for the post-hoc output-claim
-    /// walk.
-    rows: Vec<InstructionOperandRow>,
-    gruen: GruenSplitEqPolynomial<F>,
-    bound_challenges: Vec<F>,
+/// The γ-combination coefficients for the construction-time combine pass.
+///
+/// The combine runs on the native scalars through the wide accumulator
+/// — one 4×1 fused multiply per u64 limb and a single reduction, no
+/// per-operand Montgomery conversion. The wide lanes split limb-wise
+/// against `2^64`-shifted coefficient copies, the signed lane folds its
+/// sign into the coefficient: exactly `Σ_i γ^i·F(o_i)` by distributivity.
+struct CombineCoefficients<F> {
+    gamma_powers: [F; NUM_TABLES],
+    right_lookup_hi: F,
+    /// `(lo, hi)` coefficient pairs for the signed lane: `.0` negative, `.1`
+    /// positive.
+    right_input_coeffs: ((F, F), (F, F)),
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedInstructionClaimReductionKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    poly_heap_bytes(&kernel.combined)
-        + vec_heap_bytes(&kernel.rows)
-        + kernel.gruen.heap_bytes()
-        + vec_heap_bytes(&kernel.bound_challenges)
-});
-
-impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
-    pub fn new(
-        tau_low: &[F],
-        rows: Vec<InstructionOperandRow>,
-        gamma: F,
-    ) -> Result<Self, KernelError<F>> {
-        let log_t = tau_low.len();
-        if rows.len() != 1 << log_t {
-            return Err(KernelError::TableSizeMismatch {
-                table: "instruction claim-reduction operand rows".to_owned(),
-                expected: 1 << log_t,
-                got: rows.len(),
-            });
-        }
+impl<F: JoltField> CombineCoefficients<F> {
+    fn new(gamma: F) -> Self {
         let gamma_sqr = gamma * gamma;
         let gamma_powers = [
             F::one(),
@@ -144,42 +129,98 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             gamma_sqr * gamma,
             gamma_sqr * gamma_sqr,
         ];
-        // The combine runs on the native scalars through the wide accumulator
-        // — one 4×1 fused multiply per u64 limb and a single reduction, no
-        // per-operand Montgomery conversion. The wide lanes split limb-wise
-        // against `2^64`-shifted coefficient copies, the signed lane folds its
-        // sign into the coefficient: exactly `Σ_i γ^i·F(o_i)` by
-        // distributivity.
         let shift_64 = F::from_u128(1u128 << 64);
         let right_lookup_hi = gamma_powers[2] * shift_64;
         let right_input_coeffs = {
             let positive = (gamma_powers[4], gamma_powers[4] * shift_64);
             ((-positive.0, -positive.1), positive)
         };
-        let combine = |row: &InstructionOperandRow| -> F {
-            let mut acc = F::Accumulator::default();
-            acc.fmadd_u64(gamma_powers[0], row.lookup_output.0);
-            acc.fmadd_u64(gamma_powers[1], row.left_lookup_operand.0);
-            let right_lookup = row.right_lookup_operand.0;
-            acc.fmadd_u64(gamma_powers[2], right_lookup as u64);
-            acc.fmadd_u64(right_lookup_hi, (right_lookup >> 64) as u64);
-            acc.fmadd_u64(gamma_powers[3], row.left_instruction_input.0);
-            let right_input = row.right_instruction_input.0;
-            let magnitude = right_input.unsigned_abs();
-            let (lo, hi) = if right_input < 0 {
-                right_input_coeffs.0
-            } else {
-                right_input_coeffs.1
-            };
-            acc.fmadd_u64(lo, magnitude as u64);
-            acc.fmadd_u64(hi, (magnitude >> 64) as u64);
-            acc.reduce()
-        };
-        #[cfg(feature = "parallel")]
-        let combined: Vec<F> = rows.par_iter().map(combine).collect();
-        #[cfg(not(feature = "parallel"))]
-        let combined: Vec<F> = rows.iter().map(combine).collect();
+        Self {
+            gamma_powers,
+            right_lookup_hi,
+            right_input_coeffs,
+        }
+    }
 
+    #[inline]
+    fn combine(&self, row: &InstructionOperandRow) -> F {
+        let mut acc = F::Accumulator::default();
+        acc.fmadd_u64(self.gamma_powers[0], row.lookup_output.0);
+        acc.fmadd_u64(self.gamma_powers[1], row.left_lookup_operand.0);
+        let right_lookup = row.right_lookup_operand.0;
+        acc.fmadd_u64(self.gamma_powers[2], right_lookup as u64);
+        acc.fmadd_u64(self.right_lookup_hi, (right_lookup >> 64) as u64);
+        acc.fmadd_u64(self.gamma_powers[3], row.left_instruction_input.0);
+        let right_input = row.right_instruction_input.0;
+        let magnitude = right_input.unsigned_abs();
+        let (lo, hi) = if right_input < 0 {
+            self.right_input_coeffs.0
+        } else {
+            self.right_input_coeffs.1
+        };
+        acc.fmadd_u64(lo, magnitude as u64);
+        acc.fmadd_u64(hi, (magnitude >> 64) as u64);
+        acc.reduce()
+    }
+}
+
+pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
+    progress: RoundProgress,
+    /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
+    /// table (the summand is linear in the five operands).
+    combined: Polynomial<F>,
+    /// Native per-cycle operand values, served from the witness when
+    /// slice-backed (nothing retained), for the post-hoc output-claim walk.
+    rows: BundleStore<F, InstructionOperandRow>,
+    gruen: GruenSplitEqPolynomial<F>,
+    bound_challenges: Vec<F>,
+}
+
+#[cfg(feature = "allocative")]
+crate::optimized::impl_field_allocative!(OptimizedInstructionClaimReductionKernel, |kernel| {
+    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
+    poly_heap_bytes(&kernel.combined)
+        + kernel.rows.heap_bytes()
+        + kernel.gruen.heap_bytes()
+        + vec_heap_bytes(&kernel.bound_challenges)
+});
+
+impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
+    pub(crate) fn new(
+        tau_low: &[F],
+        rows: BundleStore<F, InstructionOperandRow>,
+        gamma: F,
+    ) -> Result<Self, KernelError<F>> {
+        let log_t = tau_low.len();
+        if let BundleStore::Retained(rows) = &rows {
+            if rows.len() != 1 << log_t {
+                return Err(KernelError::TableSizeMismatch {
+                    table: "instruction claim-reduction operand rows".to_owned(),
+                    expected: 1 << log_t,
+                    got: rows.len(),
+                });
+            }
+        }
+        let coefficients = CombineCoefficients::new(gamma);
+        // One combine pass over the rows at construction — the rounds only
+        // ever read/bind the table.
+        let combined: Vec<F> = {
+            let access = rows.access()?;
+            let coefficients = &coefficients;
+            let cell =
+                |j: usize| -> Result<F, WitnessError> { Ok(coefficients.combine(&access.row(j)?)) };
+            #[cfg(feature = "parallel")]
+            {
+                (0..1usize << log_t)
+                    .into_par_iter()
+                    .map(cell)
+                    .collect::<Result<_, _>>()?
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                (0..1usize << log_t).map(cell).collect::<Result<_, _>>()?
+            }
+        };
         Ok(Self {
             progress: RoundProgress::new(log_t),
             combined: Polynomial::new(combined),
@@ -191,25 +232,27 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
 
     /// The five individual bound operand values: multilinear evaluations of
     /// the native rows at the bound point, one split-eq-weighted walk.
-    fn operand_claims(&self) -> [F; NUM_TABLES] {
+    fn operand_claims(&self) -> Result<[F; NUM_TABLES], WitnessError> {
         let reversed: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
         let split = reversed.len() / 2;
         let (r_hi, r_lo) = reversed.split_at(split);
         let e_hi = EqPolynomial::<F>::evals(r_hi, None);
         let e_lo = EqPolynomial::<F>::evals(r_lo, None);
         let lo_len = e_lo.len();
+        let access = self.rows.access()?;
 
-        let block = |idx_hi: usize| -> [F; NUM_TABLES] {
+        let block = |idx_hi: usize| -> Result<[F; NUM_TABLES], WitnessError> {
             let mut sums = [F::zero(); NUM_TABLES];
             let start = idx_hi * lo_len;
-            for (row, &weight) in self.rows[start..start + lo_len].iter().zip(&e_lo) {
+            for (offset, &weight) in e_lo.iter().enumerate() {
+                let row = access.row(start + offset)?;
                 let values = row.field_values::<F>();
                 for (sum, value) in sums.iter_mut().zip(values) {
                     *sum += weight * value;
                 }
             }
             let e_hi_eval = e_hi[idx_hi];
-            sums.map(|sum| e_hi_eval * sum)
+            Ok(sums.map(|sum| e_hi_eval * sum))
         };
         let merge = |mut left: [F; NUM_TABLES], right: [F; NUM_TABLES]| {
             for (left, right) in left.iter_mut().zip(right) {
@@ -220,16 +263,18 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
 
         #[cfg(feature = "parallel")]
         {
-            (0..e_hi.len())
-                .into_par_iter()
-                .map(block)
-                .reduce(|| [F::zero(); NUM_TABLES], merge)
+            (0..e_hi.len()).into_par_iter().map(block).try_reduce(
+                || [F::zero(); NUM_TABLES],
+                |left, right| Ok(merge(left, right)),
+            )
         }
         #[cfg(not(feature = "parallel"))]
         {
-            (0..e_hi.len())
-                .map(block)
-                .fold([F::zero(); NUM_TABLES], merge)
+            let mut folded = [F::zero(); NUM_TABLES];
+            for idx_hi in 0..e_hi.len() {
+                folded = merge(folded, block(idx_hi)?);
+            }
+            Ok(folded)
         }
     }
 
@@ -242,10 +287,11 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         const POINTS: usize = 3;
+        let combined = &self.combined;
         let mut q_evals = self.gruen.par_fold_out_in(
             || [F::zero(); POINTS],
             |acc, row, _x_in, e_in| {
-                let evals = self.combined.evals();
+                let evals = combined.evals();
                 let lo = evals[2 * row];
                 let step = evals[2 * row + 1] - lo;
                 let mut eval = lo;
@@ -274,8 +320,13 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
-        self.combined
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
+        // In place: the out-of-place low-to-high bind reallocates a fresh
+        // half-size table every round, stranding a geometric series of dead
+        // generations in the allocator between the stage's purges.
+        self.combined.bind_low_to_high_in_place(challenge);
+        if self.combined.capacity() >= 8 * self.combined.len().max(1) {
+            self.combined.shrink_to_fit();
+        }
         self.bound_challenges.push(challenge);
         self.progress.advance();
     }
@@ -313,7 +364,10 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKerne
     ) -> Result<InstructionClaimReductionOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
         let [lookup_output, left_lookup_operand, right_lookup_operand, left_instruction_input, right_instruction_input] =
-            self.operand_claims();
+            self.operand_claims()
+                .map_err(|_| SumcheckKernelError::InvariantViolation {
+                    reason: "instruction operand walk re-extraction failed after the rounds",
+                })?;
         Ok(InstructionClaimReductionOutputClaims {
             lookup_output,
             left_lookup_operand,
@@ -463,8 +517,12 @@ mod tests {
         )
         .unwrap();
 
-        let mut optimized =
-            OptimizedInstructionClaimReductionKernel::new(&tau_low, rows, gamma).unwrap();
+        let mut optimized = OptimizedInstructionClaimReductionKernel::new(
+            &tau_low,
+            crate::optimized::support::BundleStore::Retained(rows),
+            gamma,
+        )
+        .unwrap();
 
         // True input claim: the full hypercube sum of the summand.
         let eq = eq_table(&tau_low);
