@@ -30,6 +30,7 @@ pub mod prefixes;
 pub mod range_check;
 pub mod range_check_aligned;
 pub mod shift_right_bitmask;
+pub mod shift_right_bitmask_w;
 pub mod sign_extend_word;
 pub mod sign_mask;
 pub mod signed_greater_than_equal;
@@ -47,7 +48,9 @@ pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
 pub mod virtual_sra;
+pub mod virtual_sraw;
 pub mod virtual_srl;
+pub mod virtual_srlw;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;
 pub mod window_mask_w;
@@ -71,6 +74,7 @@ use pow2_w::Pow2WTable;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
+use shift_right_bitmask_w::ShiftRightBitmaskWTable;
 use sign_extend_word::SignExtendWordTable;
 use sign_mask::SignMaskTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
@@ -87,7 +91,9 @@ use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualROTRTable;
 use virtual_rotrw::VirtualROTRWTable;
 use virtual_sra::VirtualSRATable;
+use virtual_sraw::VirtualSRAWTable;
 use virtual_srl::VirtualSRLTable;
+use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
 use virtual_xor_rotw::VirtualXORROTWTable;
 use window_mask_w::WindowMaskWTable;
@@ -159,6 +165,9 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
     WindowMaskW(WindowMaskWTable<XLEN>),
     PextSigned(PextSignedTable<XLEN>),
+    ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
+    VirtualSRLW(VirtualSRLWTable<XLEN>),
+    VirtualSRAW(VirtualSRAWTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -210,6 +219,9 @@ macro_rules! dispatch {
             Self::VirtualXORROTW7($t) => $expr,
             Self::WindowMaskW($t) => $expr,
             Self::PextSigned($t) => $expr,
+            Self::ShiftRightBitmaskW($t) => $expr,
+            Self::VirtualSRLW($t) => $expr,
+            Self::VirtualSRAW($t) => $expr,
         }
     };
 }
@@ -279,11 +291,14 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Def
     /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 
-    /// Generate a random lookup index for testing.
+    /// Generate a random lookup index inside the table's valid input domain,
+    /// for testing.
     ///
     /// The default returns a uniform random `u128` masked to `2 * XLEN` bits.
-    /// Tables with constrained input domains (e.g., shift/rotate tables that expect
-    /// bitmask-shaped right operands) should override this.
+    /// Tables with constrained input domains (e.g., shift/rotate tables that
+    /// expect bitmask-shaped right operands) override this; off-domain
+    /// indices are unreachable in real traces, and the prefix-suffix
+    /// decomposition only matches `materialize_entry` on the valid domain.
     #[cfg(test)]
     fn random_lookup_index(rng: &mut rand::rngs::StdRng) -> u128 {
         let raw: u128 = rand::Rng::gen(rng);

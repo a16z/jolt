@@ -45,10 +45,12 @@ mod right_shift_w_helper;
 mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
+mod sign_extension_w;
 mod two_lsb;
 mod upper_word;
 mod window_sign;
 mod window_sign_pow2;
+mod x31_y0;
 mod xor;
 mod xor_rot;
 mod xor_rotw;
@@ -91,11 +93,13 @@ use right_shift_w_helper::RightShiftWHelperSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use sign_extension_w::SignExtensionWSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 pub(crate) use window_sign::window_sign_bit;
 use window_sign::WindowSignSuffix;
 use window_sign_pow2::WindowSignPow2Suffix;
+use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
@@ -167,6 +171,10 @@ pub enum Suffixes {
     PextHelper,
     WindowSign,
     WindowSignPow2,
+    /// SRAW sign-fill terms whose variables remain in the suffix.
+    SignExtensionW,
+    /// The suffix-owned product `x_{XLEN/2-1} * y_0` used by SRLW.
+    X31Y0,
 }
 
 /// Total number of suffix variants.
@@ -248,6 +256,8 @@ impl Suffixes {
             Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
             Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::SignExtensionW => SignExtensionWSuffix::suffix_mle(b),
+            Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
         }
     }
 

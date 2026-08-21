@@ -15,6 +15,7 @@ use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
 use serde::{Deserialize, Serialize};
 use shift_right_bitmask::ShiftRightBitmaskTable;
+use shift_right_bitmask_w::ShiftRightBitmaskWTable;
 use sign_extend_word::SignExtendWordTable;
 use signed_greater_than_equal::SignedGreaterThanEqualTable;
 use signed_less_than::SignedLessThanTable;
@@ -34,7 +35,9 @@ use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualRotrTable;
 use virtual_rotrw::VirtualRotrWTable;
 use virtual_sra::VirtualSRATable;
+use virtual_sraw::VirtualSRAWTable;
 use virtual_srl::VirtualSRLTable;
+use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
 use virtual_xor_rotw::VirtualXORROTWTable;
 use window_mask_w::WindowMaskWTable;
@@ -91,6 +94,7 @@ pub mod pow2_w;
 pub mod range_check;
 pub mod range_check_aligned;
 pub mod shift_right_bitmask;
+pub mod shift_right_bitmask_w;
 pub mod sign_extend_word;
 pub mod signed_greater_than_equal;
 pub mod signed_less_than;
@@ -107,7 +111,9 @@ pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
 pub mod virtual_sra;
+pub mod virtual_sraw;
 pub mod virtual_srl;
+pub mod virtual_srlw;
 pub mod virtual_xor_rot;
 pub mod virtual_xor_rotw;
 pub mod window_mask_w;
@@ -166,6 +172,9 @@ pub enum LookupTables<const XLEN: usize> {
     VirtualXORROTW7(VirtualXORROTWTable<XLEN, 7>),
     WindowMaskW(WindowMaskWTable<XLEN>),
     PextSigned(PextSignedTable<XLEN>),
+    ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
+    VirtualSRLW(VirtualSRLWTable<XLEN>),
+    VirtualSRAW(VirtualSRAWTable<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -220,6 +229,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.materialize(),
             LookupTables::WindowMaskW(table) => table.materialize(),
             LookupTables::PextSigned(table) => table.materialize(),
+            LookupTables::ShiftRightBitmaskW(table) => table.materialize(),
+            LookupTables::VirtualSRLW(table) => table.materialize(),
+            LookupTables::VirtualSRAW(table) => table.materialize(),
         }
     }
 
@@ -267,6 +279,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.materialize_entry(index),
             LookupTables::WindowMaskW(table) => table.materialize_entry(index),
             LookupTables::PextSigned(table) => table.materialize_entry(index),
+            LookupTables::ShiftRightBitmaskW(table) => table.materialize_entry(index),
+            LookupTables::VirtualSRLW(table) => table.materialize_entry(index),
+            LookupTables::VirtualSRAW(table) => table.materialize_entry(index),
         }
     }
 
@@ -318,6 +333,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.evaluate_mle(r),
             LookupTables::WindowMaskW(table) => table.evaluate_mle(r),
             LookupTables::PextSigned(table) => table.evaluate_mle(r),
+            LookupTables::ShiftRightBitmaskW(table) => table.evaluate_mle(r),
+            LookupTables::VirtualSRLW(table) => table.evaluate_mle(r),
+            LookupTables::VirtualSRAW(table) => table.evaluate_mle(r),
         }
     }
 
@@ -365,6 +383,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.suffixes(),
             LookupTables::WindowMaskW(table) => table.suffixes(),
             LookupTables::PextSigned(table) => table.suffixes(),
+            LookupTables::ShiftRightBitmaskW(table) => table.suffixes(),
+            LookupTables::VirtualSRLW(table) => table.suffixes(),
+            LookupTables::VirtualSRAW(table) => table.suffixes(),
         }
     }
 
@@ -416,6 +437,9 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::VirtualXORROTW16(table) => table.combine(prefixes, suffixes),
             LookupTables::WindowMaskW(table) => table.combine(prefixes, suffixes),
             LookupTables::PextSigned(table) => table.combine(prefixes, suffixes),
+            LookupTables::ShiftRightBitmaskW(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualSRLW(table) => table.combine(prefixes, suffixes),
+            LookupTables::VirtualSRAW(table) => table.combine(prefixes, suffixes),
         }
     }
 }

@@ -175,6 +175,11 @@ macro_rules! for_each_instruction_kind {
                 VirtualXORROTW7 => VirtualXorRotW7 => "jolt.virtual.xorrotw7",
                 VirtualWindowMaskW => WindowMaskW => "jolt.virtual.windowmaskw",
                 VirtualPextSigned => PextSigned => "jolt.virtual.pextsigned",
+                VirtualShiftRightBitmaskW => VirtualShiftRightBitmaskW => "jolt.virtual.shift_right_bitmask_w",
+                VirtualSRLW => VirtualSrlw => "jolt.virtual.srlw",
+                VirtualSRLIW => VirtualSrliw => "jolt.virtual.srliw",
+                VirtualSRAW => VirtualSraw => "jolt.virtual.sraw",
+                VirtualSRAIW => VirtualSraiw => "jolt.virtual.sraiw",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -275,6 +280,11 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualMULIW => MulIW => (0x008e, "jolt.virtual.muliw"),
                 VirtualWindowMaskW => WindowMaskW => (0x008f, "jolt.virtual.windowmaskw"),
                 VirtualPextSigned => PextSigned => (0x0090, "jolt.virtual.pextsigned"),
+                VirtualShiftRightBitmaskW => VirtualShiftRightBitmaskW => (0x0091, "jolt.virtual.shift_right_bitmask_w"),
+                VirtualSRLW => VirtualSrlw => (0x0092, "jolt.virtual.srlw"),
+                VirtualSRLIW => VirtualSrliw => (0x0093, "jolt.virtual.srliw"),
+                VirtualSRAW => VirtualSraw => (0x0094, "jolt.virtual.sraw"),
+                VirtualSRAIW => VirtualSraiw => (0x0095, "jolt.virtual.sraiw"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]
