@@ -55,6 +55,27 @@ fn host(value: ArkGT) -> DeviceGT {
     push(Slot::Ready(value))
 }
 
+fn lane_words(limbs: &[u64], lane: usize) -> Option<&[u64]> {
+    limbs.get(lane * FQ12_LIMBS..(lane + 1) * FQ12_LIMBS)
+}
+
+#[cfg(feature = "parallel")]
+fn final_exponentiations(limbs: &[u64], lanes: usize) -> Vec<Option<ArkGT>> {
+    use rayon::prelude::*;
+
+    (0..lanes)
+        .into_par_iter()
+        .map(|lane| lane_words(limbs, lane).and_then(final_exponentiation))
+        .collect()
+}
+
+#[cfg(not(feature = "parallel"))]
+fn final_exponentiations(limbs: &[u64], lanes: usize) -> Vec<Option<ArkGT>> {
+    (0..lanes)
+        .map(|lane| lane_words(limbs, lane).and_then(final_exponentiation))
+        .collect()
+}
+
 fn final_exponentiation(limbs: &[u64]) -> Option<ArkGT> {
     <ark_bn254::Bn254 as Pairing>::final_exponentiation(MillerLoopOutput(super::curve::fq12(limbs)))
         .map(ArkGT)
@@ -92,12 +113,9 @@ fn flush() {
                 continue;
             }
         };
-        for (lane, (index, _)) in members.iter().enumerate() {
-            let start = lane * FQ12_LIMBS;
-            let Some(value) = limbs
-                .get(start..start + FQ12_LIMBS)
-                .and_then(final_exponentiation)
-            else {
+        let values = final_exponentiations(&limbs, members.len());
+        for ((index, _), value) in members.iter().zip(values) {
+            let Some(value) = value else {
                 arena::poison("a batched Miller output was degenerate");
                 continue;
             };

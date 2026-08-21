@@ -8,6 +8,87 @@ use crate::cuda::common::error::CudaError;
 use crate::cuda::common::msm::{JacobianLimbs, FQ_LIMBS};
 use crate::cuda::common::pairing::FQ12_LIMBS;
 
+fn exponentiate(words: &[u64]) -> Option<Bn254GT> {
+    <ark_bn254::Bn254 as Pairing>::final_exponentiation(MillerLoopOutput(curve::fq12(words)))
+        .map(|output| Bn254GT::from(output.0))
+}
+
+fn lane_words(limbs: &[u64], lane: usize) -> Option<&[u64]> {
+    limbs.get(lane * FQ12_LIMBS..(lane + 1) * FQ12_LIMBS)
+}
+
+#[cfg(feature = "parallel")]
+fn final_exponentiations(limbs: &[u64], lanes: usize) -> Option<Vec<Bn254GT>> {
+    use rayon::prelude::*;
+
+    (0..lanes)
+        .into_par_iter()
+        .map(|lane| lane_words(limbs, lane).and_then(exponentiate))
+        .collect()
+}
+
+#[cfg(not(feature = "parallel"))]
+fn final_exponentiations(limbs: &[u64], lanes: usize) -> Option<Vec<Bn254GT>> {
+    (0..lanes)
+        .map(|lane| lane_words(limbs, lane).and_then(exponentiate))
+        .collect()
+}
+
+fn write_row(dst: &mut [u64], row: &JacobianLimbs) {
+    dst[..FQ_LIMBS].copy_from_slice(&row.x);
+    dst[FQ_LIMBS..2 * FQ_LIMBS].copy_from_slice(&row.y);
+    dst[2 * FQ_LIMBS..3 * FQ_LIMBS].copy_from_slice(&row.z);
+}
+
+fn locate<'a>(
+    columns: &'a [Vec<JacobianLimbs>],
+    members: &[usize],
+    count: usize,
+    index: usize,
+) -> Option<&'a JacobianLimbs> {
+    let member = *members.get(index / count)?;
+    columns.get(member)?.get(index % count)
+}
+
+#[cfg(feature = "parallel")]
+fn flatten_rows(
+    columns: &[Vec<JacobianLimbs>],
+    members: &[usize],
+    count: usize,
+    out: &mut [u64],
+) -> bool {
+    use rayon::prelude::*;
+
+    out.par_chunks_mut(3 * FQ_LIMBS)
+        .enumerate()
+        .map(
+            |(index, dst)| match locate(columns, members, count, index) {
+                Some(row) => {
+                    write_row(dst, row);
+                    true
+                }
+                None => false,
+            },
+        )
+        .reduce(|| true, |a, b| a && b)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn flatten_rows(
+    columns: &[Vec<JacobianLimbs>],
+    members: &[usize],
+    count: usize,
+    out: &mut [u64],
+) -> bool {
+    for (index, dst) in out.chunks_mut(3 * FQ_LIMBS).enumerate() {
+        match locate(columns, members, count, index) {
+            Some(row) => write_row(dst, row),
+            None => return false,
+        }
+    }
+    true
+}
+
 pub(crate) fn tier2_batched(
     context: &CudaKernelContext,
     setup: &DoryProverSetup,
@@ -38,16 +119,11 @@ pub(crate) fn tier2_batched(
             .collect();
         let device_g2 = context.upload_raw_u64(&g2)?;
 
-        let mut g1 = Vec::with_capacity(members.len() * count * 3 * FQ_LIMBS);
-        for &member in &members {
-            let rows = columns.get(member).ok_or(CudaError::InvariantViolation {
+        let mut g1 = vec![0u64; members.len() * count * 3 * FQ_LIMBS];
+        if !flatten_rows(columns, &members, count, &mut g1) {
+            return Err(CudaError::InvariantViolation {
                 reason: "a tier-2 group named a column outside the batch",
-            })?;
-            for row in rows {
-                g1.extend_from_slice(&row.x);
-                g1.extend_from_slice(&row.y);
-                g1.extend_from_slice(&row.z);
-            }
+            });
         }
         let device_g1 = context.upload_raw_u64(&g1)?;
 
@@ -55,21 +131,12 @@ pub(crate) fn tier2_batched(
             (0..members.len()).map(|lane| (lane * count, 0)).collect();
         let limbs = context.multi_miller_batch(&device_g1, &device_g2, &segments, count)?;
 
-        for (lane, &member) in members.iter().enumerate() {
-            let start = lane * FQ12_LIMBS;
-            let words =
-                limbs
-                    .get(start..start + FQ12_LIMBS)
-                    .ok_or(CudaError::InvariantViolation {
-                        reason: "the batched Miller output is shorter than its segment count",
-                    })?;
-            let output = <ark_bn254::Bn254 as Pairing>::final_exponentiation(MillerLoopOutput(
-                curve::fq12(words),
-            ))
-            .ok_or(CudaError::InvariantViolation {
+        let outputs =
+            final_exponentiations(&limbs, members.len()).ok_or(CudaError::InvariantViolation {
                 reason: "a batched tier-2 Miller output was degenerate",
             })?;
-            placed.push((member, DoryCommitment(Bn254GT::from(output.0))));
+        for (value, &member) in outputs.into_iter().zip(members.iter()) {
+            placed.push((member, DoryCommitment(value)));
         }
     }
 

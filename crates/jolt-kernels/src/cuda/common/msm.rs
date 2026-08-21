@@ -209,8 +209,14 @@ const G2_POINT_BLOCK: u32 = 64;
 
 const BATCHED_WINDOW_BYTES: usize = 64 << 20;
 
+struct DeviceScalars<'a> {
+    values: &'a CudaSlice<u64>,
+    limbs: usize,
+}
+
 struct IndexPlan<'a> {
     scalars: &'a CudaSlice<u64>,
+    scalar_limbs: usize,
     signs: &'a CudaSlice<u8>,
     row_len: usize,
     buckets: usize,
@@ -229,6 +235,7 @@ struct BucketIndex {
 struct PassPlan<'a> {
     bases: &'a DeviceG1Bases,
     scalars: &'a CudaSlice<u64>,
+    scalar_limbs: usize,
     signs: &'a CudaSlice<u8>,
     row_len: usize,
     buckets: usize,
@@ -280,6 +287,35 @@ fn take_limbs(chunk: &[u64]) -> [u64; FQ_LIMBS] {
     let mut limbs = [0u64; FQ_LIMBS];
     limbs.copy_from_slice(chunk);
     limbs
+}
+
+#[cfg(feature = "parallel")]
+fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u8]) -> bool {
+    use rayon::prelude::*;
+
+    magnitudes
+        .par_iter_mut()
+        .zip(signs.par_iter_mut())
+        .zip(rows.par_iter())
+        .map(|((magnitude, sign), &scalar)| {
+            let value = scalar.unsigned_abs();
+            *magnitude = u64::try_from(value).unwrap_or_default();
+            *sign = u8::from(scalar.is_negative());
+            value <= u128::from(u64::MAX)
+        })
+        .reduce(|| true, |a, b| a && b)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn split_signed_magnitudes(rows: &[i128], magnitudes: &mut [u64], signs: &mut [u8]) -> bool {
+    let mut fits = true;
+    for ((magnitude, sign), &scalar) in magnitudes.iter_mut().zip(signs.iter_mut()).zip(rows) {
+        let value = scalar.unsigned_abs();
+        *magnitude = u64::try_from(value).unwrap_or_default();
+        *sign = u8::from(scalar.is_negative());
+        fits &= value <= u128::from(u64::MAX);
+    }
+    fits
 }
 
 fn unflatten_jacobian(flat: &[u64]) -> Vec<JacobianLimbs> {
@@ -576,7 +612,10 @@ impl CudaKernelContext {
         let signs = vec![0u8; rows.len()];
         let accumulator = self.pippenger_device(
             bases,
-            &canonical,
+            DeviceScalars {
+                values: &canonical,
+                limbs: FQ_LIMBS,
+            },
             &signs,
             rows.len(),
             row_len,
@@ -905,20 +944,25 @@ impl CudaKernelContext {
         rows: &[i128],
         row_len: usize,
     ) -> Result<Vec<JacobianLimbs>, CudaError> {
-        let mut magnitudes = Vec::with_capacity(rows.len() * FQ_LIMBS);
-        let mut signs = Vec::with_capacity(rows.len());
-        for &scalar in rows {
-            let magnitude = scalar.unsigned_abs();
-            if magnitude > u128::from(u64::MAX) {
-                return Err(CudaError::InvariantViolation {
-                    reason: "signed MSM scalars must fit in [-u64::MAX, u64::MAX]",
-                });
-            }
-            magnitudes.extend_from_slice(&[magnitude as u64, 0, 0, 0]);
-            signs.push(u8::from(scalar.is_negative()));
+        let mut magnitudes = vec![0u64; rows.len()];
+        let mut signs = vec![0u8; rows.len()];
+        if !split_signed_magnitudes(rows, &mut magnitudes, &mut signs) {
+            return Err(CudaError::InvariantViolation {
+                reason: "signed MSM scalars must fit in [-u64::MAX, u64::MAX]",
+            });
         }
         let device = self.upload_u64_slice(&magnitudes)?;
-        let accumulator = self.pippenger_device(bases, &device, &signs, rows.len(), row_len, 64)?;
+        let accumulator = self.pippenger_device(
+            bases,
+            DeviceScalars {
+                values: &device,
+                limbs: 1,
+            },
+            &signs,
+            rows.len(),
+            row_len,
+            64,
+        )?;
         Ok(unflatten_jacobian(&self.download_u64(&accumulator)?))
     }
 
@@ -1436,6 +1480,7 @@ impl CudaKernelContext {
         let shifts: Vec<usize> = (0..windows).map(|window| window * window_bits).collect();
         let index = self.bucket_index_pass(IndexPlan {
             scalars: &split,
+            scalar_limbs: FQ_LIMBS,
             signs: &device_signs,
             row_len: terms,
             buckets,
@@ -1737,7 +1782,10 @@ impl CudaKernelContext {
             let _span = tracing::info_span!("g1r_pippenger", len = count).entered();
             self.pippenger_device(
                 &bases,
-                &split,
+                DeviceScalars {
+                    values: &split,
+                    limbs: FQ_LIMBS,
+                },
                 &signs,
                 2 * count,
                 2 * count,
@@ -1762,6 +1810,7 @@ impl CudaKernelContext {
     fn bucket_index_pass(&self, plan: IndexPlan<'_>) -> Result<BucketIndex, CudaError> {
         let IndexPlan {
             scalars,
+            scalar_limbs,
             signs,
             row_len,
             buckets,
@@ -1775,6 +1824,7 @@ impl CudaKernelContext {
         let row_len_arg = Self::count_of(row_len)?;
         let buckets_arg = Self::count_of(buckets)?;
         let mask = Self::count_of(buckets - 1)?;
+        let limbs_arg = Self::count_of(scalar_limbs)?;
 
         let mut digits = self.alloc_u32(total)?;
         for (index, &shift_bits) in shifts.iter().enumerate() {
@@ -1783,6 +1833,7 @@ impl CudaKernelContext {
             let mut builder = self.stream().launch_builder(self.msm_digits());
             let _ = builder.arg(scalars);
             let _ = builder.arg(&lane_count);
+            let _ = builder.arg(&limbs_arg);
             let _ = builder.arg(&shift);
             let _ = builder.arg(&mask);
             let _ = builder.arg(&mut lane_digits);
@@ -1848,6 +1899,7 @@ impl CudaKernelContext {
         let PassPlan {
             bases,
             scalars,
+            scalar_limbs,
             signs,
             row_len,
             buckets,
@@ -1862,6 +1914,7 @@ impl CudaKernelContext {
         let segments = rows * buckets;
         let index = self.bucket_index_pass(IndexPlan {
             scalars,
+            scalar_limbs,
             signs,
             row_len,
             buckets,
@@ -1992,12 +2045,16 @@ impl CudaKernelContext {
     fn pippenger_device(
         &self,
         bases: &DeviceG1Bases,
-        scalars: &CudaSlice<u64>,
+        scalars: DeviceScalars<'_>,
         signs: &[u8],
         len: usize,
         row_len: usize,
         scalar_bits: usize,
     ) -> Result<CudaSlice<u64>, CudaError> {
+        let DeviceScalars {
+            values: scalars,
+            limbs: scalar_limbs,
+        } = scalars;
         if row_len == 0 || !len.is_multiple_of(row_len) {
             return Err(CudaError::LengthMismatch {
                 expected: row_len,
@@ -2035,6 +2092,7 @@ impl CudaKernelContext {
                 PassPlan {
                     bases,
                     scalars,
+                    scalar_limbs,
                     signs: &device_lane_signs,
                     row_len,
                     buckets,
@@ -2062,6 +2120,7 @@ impl CudaKernelContext {
                 PassPlan {
                     bases,
                     scalars,
+                    scalar_limbs,
                     signs: &device_signs,
                     row_len,
                     buckets,

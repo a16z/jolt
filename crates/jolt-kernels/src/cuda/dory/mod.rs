@@ -19,6 +19,8 @@ use jolt_openings::{
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::Transcript;
 use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
+#[cfg(all(feature = "parallel", not(feature = "zk")))]
+use rayon::prelude::*;
 
 use crate::cuda::commitment::DeviceTier1Commitment;
 use crate::cuda::common::error::CudaError;
@@ -97,11 +99,20 @@ impl DeviceTier1Commitment for CudaDoryScheme {
             })?;
         let commitments = tier2::tier2_batched(context, setup, columns)?;
         let blind = <Fr as jolt_field::FromPrimitiveInt>::from_u64(0);
+        #[cfg(feature = "parallel")]
+        let partials = columns
+            .par_iter()
+            .map(|rows| DoryScheme::partial_from_rows(setup, rows))
+            .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(not(feature = "parallel"))]
+        let partials = columns
+            .iter()
+            .map(|rows| DoryScheme::partial_from_rows(setup, rows))
+            .collect::<Result<Vec<_>, _>>()?;
         commitments
             .into_iter()
-            .zip(columns)
-            .map(|(commitment, rows)| {
-                let partial = DoryScheme::partial_from_rows(setup, rows)?;
+            .zip(partials)
+            .map(|(commitment, partial)| {
                 Ok((commitment, DoryHint::new(partial.row_commitments, blind)))
             })
             .collect()

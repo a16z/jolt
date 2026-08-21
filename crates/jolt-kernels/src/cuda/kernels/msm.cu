@@ -1070,12 +1070,19 @@ __device__ __forceinline__ unsigned int msm_digit(const u64 *scalar, unsigned in
 }
 
 extern "C" __global__ void msm_digits_kernel(const u64 *__restrict__ scalars, unsigned int count,
-                                             unsigned int shift, unsigned int mask,
+                                             unsigned int limbs, unsigned int shift,
+                                             unsigned int mask,
                                              unsigned int *__restrict__ digits) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
     u64 scalar[LIMBS];
-    load4(scalars + (unsigned long long)i * LIMBS, scalar);
+    const u64 *source = scalars + (unsigned long long)i * limbs;
+    if (limbs >= LIMBS) {
+        load4(source, scalar);
+    } else {
+        for (int l = 0; l < LIMBS; l++) scalar[l] = 0;
+        for (unsigned int l = 0; l < limbs; l++) scalar[l] = source[l];
+    }
     digits[i] = msm_digit(scalar, shift, mask);
 }
 
