@@ -438,10 +438,6 @@ impl<const P: u64> Fp64<P> {
     pub(crate) const FOLD_IN_U64: bool =
         Self::BITS < 64 && (Self::C as u128) < (1u128 << (64 - Self::BITS));
 
-    /// Whether two folds and one subtraction reduce a sum of three products.
-    pub(crate) const EXT2_TWO_FUSION_SAFE: bool =
-        Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
-
     /// Reduces a product supplied as exact low and high words.
     #[inline(always)]
     pub(crate) fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
@@ -458,17 +454,10 @@ impl<const P: u64> Fp64<P> {
         }
     }
 
-    /// Reduces a sum of up to three products for the fused quadratic kernel.
-    #[inline(always)]
-    pub(crate) fn reduce_three_product_sum(lo: u64, hi: u64) -> u64 {
-        debug_assert!(Self::EXT2_TWO_FUSION_SAFE);
-        Self::reduce_sub_word_wide(lo, hi, hi >> Self::BITS)
-    }
-
     /// Two-fold sub-word reduction. `high_overflow` is the portion of
     /// `x >> BITS` above one word, which can be nonzero for three products.
     #[inline(always)]
-    fn reduce_sub_word_wide(lo: u64, hi: u64, high_overflow: u64) -> u64 {
+    pub(super) fn reduce_sub_word_wide(lo: u64, hi: u64, high_overflow: u64) -> u64 {
         let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
         let c_high = (Self::C as u128) * (high as u128)
             + (((Self::C as u128) * (high_overflow as u128)) << 64);

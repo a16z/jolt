@@ -265,6 +265,16 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
     } else {
         (1u64 << Self::BITS) - 1
     };
+    /// Whether two folds and one subtraction reduce a sum of three products.
+    const EXT2_TWO_FUSION_SAFE: bool =
+        Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
+
+    /// Reduces a scalar sum of up to three products for lane-wise backends.
+    #[inline(always)]
+    fn reduce_three_product_sum(lo: u64, hi: u64) -> u64 {
+        debug_assert!(Self::EXT2_TWO_FUSION_SAFE);
+        Fp64::<P>::reduce_sub_word_wide(lo, hi, hi >> Self::BITS)
+    }
 
     /// Adds lane-wise 128-bit values represented as `[lo, hi]`.
     #[inline(always)]
@@ -356,7 +366,7 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
 
     /// Two-fold sub-word reduction that retains the carry out of the first
     /// `C * (product >> BITS)` fold. It also accepts sums of up to three
-    /// products when [`Fp64::EXT2_TWO_FUSION_SAFE`] holds.
+    /// products when [`Self::EXT2_TWO_FUSION_SAFE`] holds.
     #[inline(always)]
     fn reduce128_sub_word_wide(lo: I::V64, hi: I::V64) -> I::V64 {
         let mask = I::splat64(Self::MASK);
@@ -408,7 +418,7 @@ impl<const P: u64, I: SimdWord> Packed for PackedFp64<P, I> {
         b0: Self,
         b1: Self,
     ) -> (Self, Self) {
-        if C::NON_RESIDUE_KIND == Ext2NonResidueKind::Two && Fp64::<P>::EXT2_TWO_FUSION_SAFE {
+        if C::NON_RESIDUE_KIND == Ext2NonResidueKind::Two && Self::EXT2_TWO_FUSION_SAFE {
             if I::FP64_MUL_BY_LANES {
                 let c0 = I::v64_from_fn(|lane| {
                     let a0 = I::v64_lane(a0.0, lane) as u128;
@@ -416,7 +426,7 @@ impl<const P: u64, I: SimdWord> Packed for PackedFp64<P, I> {
                     let b0 = I::v64_lane(b0.0, lane) as u128;
                     let b1 = I::v64_lane(b1.0, lane) as u128;
                     let z = a0 * b0 + 2 * a1 * b1;
-                    Fp64::<P>::reduce_three_product_sum(z as u64, (z >> 64) as u64)
+                    Self::reduce_three_product_sum(z as u64, (z >> 64) as u64)
                 });
                 let c1 = I::v64_from_fn(|lane| {
                     let a0 = I::v64_lane(a0.0, lane) as u128;
@@ -424,7 +434,7 @@ impl<const P: u64, I: SimdWord> Packed for PackedFp64<P, I> {
                     let b0 = I::v64_lane(b0.0, lane) as u128;
                     let b1 = I::v64_lane(b1.0, lane) as u128;
                     let z = a0 * b1 + a1 * b0;
-                    Fp64::<P>::reduce_three_product_sum(z as u64, (z >> 64) as u64)
+                    Self::reduce_three_product_sum(z as u64, (z >> 64) as u64)
                 });
                 return (Self(c0), Self(c1));
             }
