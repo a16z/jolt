@@ -126,6 +126,10 @@ struct MeasurementRecord {
     subphases_disjoint: bool,
     gpu_active_ns: Option<u64>,
     command_wall_ns: Option<u64>,
+    #[serde(default)]
+    linear_source_command_wall_ns: Option<u64>,
+    #[serde(default)]
+    linear_source_gpu_ns: Option<u64>,
     upload_ns: Option<u64>,
     readback_ns: Option<u64>,
     allocation_bytes: Option<usize>,
@@ -677,6 +681,12 @@ fn measure(
             command_wall_ns: metal_metrics
                 .as_ref()
                 .map(|metrics| duration_ns(metrics.command_wall_time)),
+            linear_source_command_wall_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.linear_source_command_wall_time)),
+            linear_source_gpu_ns: metal_metrics
+                .as_ref()
+                .map(|metrics| duration_ns(metrics.linear_source_gpu_time)),
             upload_ns: metal_metrics
                 .as_ref()
                 .map(|metrics| duration_ns(metrics.upload_time)),

@@ -78,6 +78,8 @@ pub struct TraceMetalCommitMetrics {
 pub struct TraceMetalOpeningMetrics {
     pub command_wall_time: Duration,
     pub gpu_active_time: Duration,
+    pub linear_source_command_wall_time: Duration,
+    pub linear_source_gpu_time: Duration,
     pub upload_time: Duration,
     pub readback_time: Duration,
     pub allocation_bytes: usize,
@@ -237,6 +239,8 @@ impl TraceCommitmentBackend {
                     metrics.map(|metrics| TraceMetalOpeningMetrics {
                         command_wall_time: metrics.command_wall_time,
                         gpu_active_time: metrics.gpu_active_time,
+                        linear_source_command_wall_time: metrics.linear_source_command_wall_time,
+                        linear_source_gpu_time: metrics.linear_source_gpu_time,
                         upload_time: metrics.upload_time,
                         readback_time: metrics.readback_time,
                         allocation_bytes: metrics.allocation_bytes,
