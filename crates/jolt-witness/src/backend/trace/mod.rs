@@ -86,13 +86,13 @@ impl JoltVmWitnessConfig {
     }
 }
 
-pub struct JoltVmWitnessInputs<T: TraceSource> {
+pub struct JoltVmWitnessInputs<T> {
     pub program: Arc<JoltProgram>,
     pub preprocessing: Arc<JoltProgramPreprocessing>,
     pub trace: TraceOutput<T>,
 }
 
-impl<T: TraceSource> JoltVmWitnessInputs<T> {
+impl<T> JoltVmWitnessInputs<T> {
     pub fn new(
         program: &Arc<JoltProgram>,
         preprocessing: &Arc<JoltProgramPreprocessing>,
@@ -125,6 +125,28 @@ impl<T: TraceSource> ProgramSource for TraceBackend<T> {
 }
 
 impl<T: TraceSource> TraceBackend<T> {
+    /// Constructs a backend from proof rows built by the tracer, retaining
+    /// their allocation.
+    #[cfg(not(feature = "field-inline"))]
+    pub fn from_compact(
+        config: JoltVmWitnessConfig,
+        inputs: JoltVmWitnessInputs<Arc<Vec<JoltTraceRow>>>,
+    ) -> Self {
+        let TraceOutput {
+            trace,
+            device,
+            final_memory,
+            advice_tape,
+        } = inputs.trace;
+        Self {
+            config,
+            program: inputs.program,
+            preprocessing: inputs.preprocessing,
+            trace: TraceOutput::new(trace, device, final_memory, advice_tape),
+            source: PhantomData,
+        }
+    }
+
     /// Constructs a backend from a trace produced against `inputs.preprocessing`.
     ///
     /// Panics when the trace violates that producer contract. Use

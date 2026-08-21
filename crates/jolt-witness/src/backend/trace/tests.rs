@@ -204,6 +204,20 @@ fn witness_keeps_jolt_program_execution_boundary() {
     );
 }
 
+#[cfg(not(feature = "field-inline"))]
+#[test]
+fn backend_shares_precompacted_trace_rows() {
+    let rows = Arc::new(vec![JoltTraceRow::default()]);
+    let trace = TraceOutput::new(Arc::clone(&rows), Default::default(), None, None);
+    let program = Arc::new(JoltProgram::default());
+    let preprocessing = preprocessing();
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace);
+
+    let backend = TraceBackend::<OwnedTrace>::from_compact(config(), inputs);
+
+    assert!(Arc::ptr_eq(&backend.trace.trace, &rows));
+}
+
 #[test]
 fn committed_polynomial_order_uses_proof_payload_order() {
     let program = Arc::new(JoltProgram::default());
