@@ -99,25 +99,23 @@ __device__ __forceinline__ void ap_block_reduce(u64 *scratch, u64 *acc) {
     }
 }
 
-extern "C" __global__ void ap_raf_reduce_kernel(const unsigned int *__restrict__ order,
-                                                const unsigned int *__restrict__ offsets,
-                                                const unsigned int *__restrict__ counts,
-                                                const unsigned long long *__restrict__ lookup_index,
-                                                const unsigned char *__restrict__ raf_flags,
-                                                const u64 *__restrict__ u_evals,
-                                                unsigned int suffix_len,
-                                                unsigned int upper_suffix_bits,
-                                                unsigned int canonical,
-                                                u64 *__restrict__ slots) {
+extern "C" __global__ void ap_raf_reduce_chunked_kernel(
+    const unsigned int *__restrict__ order, const unsigned int *__restrict__ offsets,
+    const unsigned int *__restrict__ counts, const unsigned long long *__restrict__ lookup_index,
+    const unsigned char *__restrict__ raf_flags, const u64 *__restrict__ u_evals,
+    unsigned int suffix_len, unsigned int upper_suffix_bits, unsigned int canonical,
+    unsigned int chunks, u64 *__restrict__ slots) {
     extern __shared__ u64 scratch[];
-    unsigned int bucket = blockIdx.x;
+    unsigned int bucket = blockIdx.x / chunks;
+    unsigned int chunk = blockIdx.x % chunks;
     unsigned int start = offsets[bucket];
     unsigned int count = counts[bucket];
+    if (chunk * blockDim.x >= count) return;
 
     u64 acc[AP_RAF_LANES][2 * UNR_SLOTS];
     for (int lane = 0; lane < AP_RAF_LANES; lane++) unr_zero(acc[lane]);
 
-    for (unsigned int i = threadIdx.x; i < count; i += blockDim.x) {
+    for (unsigned int i = chunk * blockDim.x + threadIdx.x; i < count; i += chunks * blockDim.x) {
         unsigned int j = order[start + i];
         u64 u[LIMBS];
         load4(u_evals + (unsigned long long)j * LIMBS, u);
@@ -153,7 +151,9 @@ extern "C" __global__ void ap_raf_reduce_kernel(const unsigned int *__restrict__
         ap_block_reduce_folded(scratch, acc[lane]);
         if (threadIdx.x == 0) {
             u64 *target =
-                slots + ((unsigned long long)lane * AP_CHUNK_SIZE + bucket) * (2 * UNR_SLOTS);
+                slots +
+                (((unsigned long long)lane * AP_CHUNK_SIZE + bucket) * chunks + chunk) *
+                    (2 * UNR_SLOTS);
             for (int i = 0; i < 2 * UNR_SLOTS; i++) target[i] = scratch[i];
         }
         __syncthreads();
@@ -178,11 +178,13 @@ extern "C" __global__ void ap_suffix_reduce_kernel(
     unsigned int count = counts[blockIdx.x];
     unsigned int families = suffix_counts[slot];
     unsigned int family_base = suffix_offsets[slot];
+    if (blockIdx.y * blockDim.x >= count) return;
 
     u64 acc[AP_MAX_SUFFIXES][2 * UNR_SLOTS];
     for (int s = 0; s < AP_MAX_SUFFIXES; s++) unr_zero(acc[s]);
 
-    for (unsigned int i = threadIdx.x; i < count; i += blockDim.x) {
+    for (unsigned int i = blockIdx.y * blockDim.x + threadIdx.x; i < count;
+         i += gridDim.y * blockDim.x) {
         unsigned int j = order[start + i];
         u64 u[LIMBS];
         load4(u_evals + (unsigned long long)j * LIMBS, u);
@@ -203,8 +205,11 @@ extern "C" __global__ void ap_suffix_reduce_kernel(
     for (unsigned int s = 0; s < families; s++) {
         ap_block_reduce_folded(scratch, acc[s]);
         if (threadIdx.x == 0) {
-            u64 *target = slots + ((unsigned long long)(family_base + s) * AP_CHUNK_SIZE + bucket) *
-                                      (2 * UNR_SLOTS);
+            u64 *target =
+                slots +
+                ((((unsigned long long)(family_base + s) * AP_CHUNK_SIZE + bucket) * gridDim.y) +
+                 blockIdx.y) *
+                    (2 * UNR_SLOTS);
             for (int i = 0; i < 2 * UNR_SLOTS; i++) target[i] = scratch[i];
         }
         __syncthreads();

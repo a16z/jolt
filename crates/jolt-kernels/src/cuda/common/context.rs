@@ -144,7 +144,7 @@ pub struct CudaKernelContext {
     ap_table_keys: CudaFunction,
     ap_histogram: CudaFunction,
     ap_scatter: CudaFunction,
-    ap_raf_reduce: CudaFunction,
+    ap_raf_reduce_chunked: CudaFunction,
     ap_suffix_reduce: CudaFunction,
     ap_scale_shift: CudaFunction,
     ap_condense: CudaFunction,
@@ -158,6 +158,7 @@ pub struct CudaKernelContext {
     ap_raf_flag_sum: CudaFunction,
     unr_mul_scatter: CudaFunction,
     unr_reduce: CudaFunction,
+    unr_fold_chunks: CudaFunction,
     pa_scatter: CudaFunction,
     pa_reduce: CudaFunction,
     rwm_segment_flags: CudaFunction,
@@ -333,7 +334,7 @@ impl CudaKernelContext {
             ap_table_keys: module.load_function("ap_table_keys_kernel")?,
             ap_histogram: module.load_function("ap_histogram_kernel")?,
             ap_scatter: module.load_function("ap_scatter_kernel")?,
-            ap_raf_reduce: module.load_function("ap_raf_reduce_kernel")?,
+            ap_raf_reduce_chunked: module.load_function("ap_raf_reduce_chunked_kernel")?,
             ap_suffix_reduce: module.load_function("ap_suffix_reduce_kernel")?,
             ap_scale_shift: module.load_function("ap_scale_shift_kernel")?,
             ap_condense: module.load_function("ap_condense_kernel")?,
@@ -347,6 +348,7 @@ impl CudaKernelContext {
             ap_raf_flag_sum: module.load_function("ap_raf_flag_sum_kernel")?,
             unr_mul_scatter: module.load_function("unr_mul_scatter_kernel")?,
             unr_reduce: module.load_function("unr_reduce_kernel")?,
+            unr_fold_chunks: module.load_function("unr_fold_chunks_kernel")?,
             pa_scatter: module.load_function("pa_scatter_kernel")?,
             pa_reduce: module.load_function("pa_reduce_kernel")?,
             rwm_segment_flags: module.load_function("rwm_segment_flags_kernel")?,
@@ -1063,8 +1065,8 @@ impl CudaKernelContext {
         &self.ap_scatter
     }
 
-    pub(crate) const fn ap_raf_reduce(&self) -> &CudaFunction {
-        &self.ap_raf_reduce
+    pub(crate) const fn ap_raf_reduce_chunked(&self) -> &CudaFunction {
+        &self.ap_raf_reduce_chunked
     }
 
     pub(crate) const fn ap_suffix_reduce(&self) -> &CudaFunction {
@@ -1201,6 +1203,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn unr_reduce(&self) -> &CudaFunction {
         &self.unr_reduce
+    }
+
+    pub(crate) const fn unr_fold_chunks(&self) -> &CudaFunction {
+        &self.unr_fold_chunks
     }
 
     pub(crate) fn copy_into(

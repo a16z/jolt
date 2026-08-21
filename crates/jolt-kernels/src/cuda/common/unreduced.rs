@@ -21,6 +21,41 @@ pub(crate) fn alloc_slots(
     context.alloc_u64(count * 2 * ACCUM_LIMBS)
 }
 
+pub(crate) fn fold_slot_chunks(
+    context: &CudaKernelContext,
+    slots: &cudarc::driver::CudaSlice<u64>,
+    groups: usize,
+    chunks: usize,
+) -> Result<cudarc::driver::CudaSlice<u64>, CudaError> {
+    if chunks == 0 {
+        return Err(CudaError::InvariantViolation {
+            reason: "a chunked slot fold needs at least one chunk",
+        });
+    }
+    if slots.len() != groups * chunks * 2 * ACCUM_LIMBS {
+        return Err(CudaError::LengthMismatch {
+            expected: groups * chunks * 2 * ACCUM_LIMBS,
+            got: slots.len(),
+        });
+    }
+    let mut out = alloc_slots(context, groups)?;
+    let groups_arg = CudaKernelContext::count_of(groups)?;
+    let chunks_arg = CudaKernelContext::count_of(chunks)?;
+    let mut builder = context.stream().launch_builder(context.unr_fold_chunks());
+    let _ = builder.arg(slots);
+    let _ = builder.arg(&chunks_arg);
+    let _ = builder.arg(&groups_arg);
+    let _ = builder.arg(&mut out);
+    // SAFETY: thread `g < groups` reads the `chunks` folded accumulators at
+    // `slots[(g * chunks + c) * 2 * ACCUM_LIMBS]`, all inside the length checked
+    // above, and writes only the `2 * ACCUM_LIMBS` lanes at
+    // `out[g * 2 * ACCUM_LIMBS]` of the freshly allocated `groups`-slot buffer,
+    // which is distinct from `slots`.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(groups_arg)) }?;
+    context.stream().synchronize()?;
+    Ok(out)
+}
+
 pub(crate) fn finalize_slots(
     context: &CudaKernelContext,
     slots: &cudarc::driver::CudaSlice<u64>,

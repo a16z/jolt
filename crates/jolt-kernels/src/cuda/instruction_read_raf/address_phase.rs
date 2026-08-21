@@ -8,7 +8,7 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{DeviceFrVec, LIMBS};
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::unreduced::{alloc_slots, finalize_slots, ACCUM_LIMBS};
+use crate::cuda::common::unreduced::{alloc_slots, finalize_slots, fold_slot_chunks, ACCUM_LIMBS};
 
 pub const CHUNK_LEN: usize = 8;
 pub const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
@@ -16,6 +16,10 @@ pub const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 pub const NO_TABLE: u32 = u32::MAX;
 const SKIP: u32 = u32::MAX;
 const RAF_LANES: usize = 6;
+
+pub(super) const RAF_CHUNKS: usize = 64;
+
+pub(super) const SUFFIX_CHUNKS: usize = 64;
 const MAX_SUFFIXES: usize = 4;
 
 pub struct DeviceRows {
@@ -197,10 +201,26 @@ pub fn init_raf_buckets(
     address_bits: usize,
     phase: usize,
 ) -> Result<RafBuckets, CudaError> {
+    init_raf_buckets_chunked(context, rows, u_evals, address_bits, phase, RAF_CHUNKS)
+}
+
+pub fn init_raf_buckets_chunked(
+    context: &CudaKernelContext,
+    rows: &DeviceRows,
+    u_evals: &DeviceFrVec,
+    address_bits: usize,
+    phase: usize,
+    chunks: usize,
+) -> Result<RafBuckets, CudaError> {
     if u_evals.len() != rows.cycles {
         return Err(CudaError::LengthMismatch {
             expected: rows.cycles,
             got: u_evals.len(),
+        });
+    }
+    if chunks == 0 {
+        return Err(CudaError::InvariantViolation {
+            reason: "a chunked raf reduce needs at least one chunk",
         });
     }
     let suffix_len = suffix_len(address_bits, phase)?;
@@ -226,9 +246,12 @@ pub fn init_raf_buckets(
     );
     let upper_suffix_bits = CudaKernelContext::count_of(upper_suffix_bits)?;
 
-    let mut slots = alloc_slots(context, RAF_LANES * CHUNK_SIZE)?;
-    let chunk_count = CudaKernelContext::count_of(CHUNK_SIZE)?;
-    let mut builder = context.stream().launch_builder(context.ap_raf_reduce());
+    let mut partials = alloc_slots(context, RAF_LANES * CHUNK_SIZE * chunks)?;
+    let chunks_arg = CudaKernelContext::count_of(chunks)?;
+    let blocks = CudaKernelContext::count_of(CHUNK_SIZE * chunks)?;
+    let mut builder = context
+        .stream()
+        .launch_builder(context.ap_raf_reduce_chunked());
     let _ = builder.arg(&segments.order);
     let _ = builder.arg(&segments.offsets);
     let _ = builder.arg(&segments.counts);
@@ -238,25 +261,29 @@ pub fn init_raf_buckets(
     let _ = builder.arg(&suffix_len_arg);
     let _ = builder.arg(&upper_suffix_bits);
     let _ = builder.arg(&canonical);
-    let _ = builder.arg(&mut slots);
-    // SAFETY: block `bucket < CHUNK_SIZE` reads `order[offsets[bucket] ..
-    // + counts[bucket]]`, whose elements are row indices `< cycles`, bounding the
-    // `lookup_index` (`2 * cycles`), `raf_flag` and `u_evals` (`cycles`) reads.
-    // Thread 0 writes the `2 * ACCUM_LIMBS` lanes at
-    // `slots[(lane * CHUNK_SIZE + bucket) * 2 * ACCUM_LIMBS]` for
-    // `lane < RAF_LANES`, one folded slot per (lane, bucket) of the
-    // `RAF_LANES * CHUNK_SIZE` `alloc_slots` reserved. Shared memory is
-    // `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded accumulator width the reduction
-    // tree operates on — matching `shared_mem_bytes`.
+    let _ = builder.arg(&chunks_arg);
+    let _ = builder.arg(&mut partials);
+    // SAFETY: block `b < CHUNK_SIZE * chunks` takes bucket `b / chunks` and chunk
+    // `b % chunks`, so the bucket index stays below `CHUNK_SIZE` and indexes
+    // `offsets`/`counts`; it reads the stride-`chunks * blockDim.x` subsequence of
+    // `order[offsets[bucket] .. + counts[bucket]]`, whose elements are row indices
+    // `< cycles`, bounding the `lookup_index` (`2 * cycles`), `raf_flag` and
+    // `u_evals` (`cycles`) reads. Thread 0 writes the `2 * ACCUM_LIMBS` lanes at
+    // `partials[((lane * CHUNK_SIZE + bucket) * chunks + chunk) * 2 * ACCUM_LIMBS]`
+    // for `lane < RAF_LANES` — one disjoint slot per (lane, bucket, chunk) of the
+    // `RAF_LANES * CHUNK_SIZE * chunks` reserved by `alloc_slots`. Shared memory is
+    // `BLOCK * 2 * ACCUM_LIMBS` u64s, the folded accumulator width the block
+    // reduction operates on, matching `shared_mem_bytes`.
     let _ = unsafe {
         builder.launch(LaunchConfig {
-            grid_dim: (chunk_count, 1, 1),
+            grid_dim: (blocks, 1, 1),
             block_dim: (BLOCK, 1, 1),
             shared_mem_bytes: BLOCK * 2 * ACCUM_LIMBS as u32 * size_of::<u64>() as u32,
         })
     }?;
     context.stream().synchronize()?;
 
+    let slots = fold_slot_chunks(context, &partials, RAF_LANES * CHUNK_SIZE, chunks)?;
     let mut buckets = finalize_slots(context, &slots, RAF_LANES * CHUNK_SIZE)?;
 
     let one = Fr::from(1u64);
@@ -266,6 +293,7 @@ pub fn init_raf_buckets(
     let _ = builder.arg(buckets.limbs_mut());
     let _ = builder.arg(half_scale.limbs());
     let _ = builder.arg(full_scale.limbs());
+    let chunk_count = CudaKernelContext::count_of(CHUNK_SIZE)?;
     // SAFETY: thread `i < CHUNK_SIZE` read-modify-writes exactly `buckets[i]` and
     // `buckets[CHUNK_SIZE + i]` of `RAF_LANES * CHUNK_SIZE` — one thread per
     // element, so uncontended — and reads the two single-element scale buffers.
@@ -292,6 +320,31 @@ pub fn init_suffix_buckets(
     address_bits: usize,
     phase: usize,
 ) -> Result<Vec<Vec<DeviceFrVec>>, CudaError> {
+    init_suffix_buckets_chunked(
+        context,
+        rows,
+        u_evals,
+        present,
+        address_bits,
+        phase,
+        SUFFIX_CHUNKS,
+    )
+}
+
+pub fn init_suffix_buckets_chunked(
+    context: &CudaKernelContext,
+    rows: &DeviceRows,
+    u_evals: &DeviceFrVec,
+    present: &[LookupTableKind<RISCV_XLEN>],
+    address_bits: usize,
+    phase: usize,
+    chunks: usize,
+) -> Result<Vec<Vec<DeviceFrVec>>, CudaError> {
+    if chunks == 0 {
+        return Err(CudaError::InvariantViolation {
+            reason: "a chunked suffix reduce needs at least one chunk",
+        });
+    }
     if u_evals.len() != rows.cycles {
         return Err(CudaError::LengthMismatch {
             expected: rows.cycles,
@@ -356,8 +409,10 @@ pub fn init_suffix_buckets(
     let device_suffix_offsets = context.upload_u32_slice(&suffix_offsets)?;
     let device_suffix_counts = context.upload_u32_slice(&suffix_counts)?;
 
-    let mut slots = alloc_slots(context, suffix_ids.len() * CHUNK_SIZE)?;
+    let groups = suffix_ids.len() * CHUNK_SIZE;
+    let mut slots = alloc_slots(context, groups * chunks)?;
     let blocks = CudaKernelContext::count_of(bucket_count)?;
+    let chunks_arg = CudaKernelContext::count_of(chunks)?;
     let mut builder = context.stream().launch_builder(context.ap_suffix_reduce());
     let _ = builder.arg(&segments.order);
     let _ = builder.arg(&segments.offsets);
@@ -379,18 +434,29 @@ pub fn init_suffix_buckets(
     // the `suffix_ids.len() * CHUNK_SIZE` folded slots `alloc_slots` reserved;
     // distinct blocks have distinct `(slot, bucket)`, so targets are distinct.
     // `acc` is indexed by `s < families <= MAX_SUFFIXES`, its declared extent.
+    // `blockIdx.y < chunks` selects a stride-`gridDim.y * blockDim.x` subsequence
+    // of that segment and the matching chunk slot, so the `groups * chunks` slots
+    // reserved above hold one disjoint target per (family, bucket, chunk); blocks
+    // whose chunk starts past `counts[blockIdx.x]` return before any access, and
+    // their slots stay at the zero `alloc_slots` left, which is the identity the
+    // chunk fold adds.
     // Shared memory is `BLOCK * 2 * ACCUM_LIMBS` u64s — the folded accumulator
     // width the reduction tree operates on — matching `shared_mem_bytes`.
     let _ = unsafe {
         builder.launch(LaunchConfig {
-            grid_dim: (blocks, 1, 1),
+            grid_dim: (blocks, chunks_arg, 1),
             block_dim: (BLOCK, 1, 1),
             shared_mem_bytes: BLOCK * 2 * ACCUM_LIMBS as u32 * size_of::<u64>() as u32,
         })
     }?;
     context.stream().synchronize()?;
 
-    let buckets = finalize_slots(context, &slots, suffix_ids.len() * CHUNK_SIZE)?;
+    let folded = if chunks == 1 {
+        slots
+    } else {
+        fold_slot_chunks(context, &slots, groups, chunks)?
+    };
+    let buckets = finalize_slots(context, &folded, groups)?;
 
     let mut tables = Vec::with_capacity(present.len());
     for (slot, _) in present.iter().enumerate() {
@@ -549,7 +615,8 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use super::{
-        condense_u_evals, init_raf_buckets, init_suffix_buckets, DeviceRows, CHUNK_LEN, CHUNK_SIZE,
+        condense_u_evals, init_raf_buckets, init_raf_buckets_chunked, init_suffix_buckets,
+        init_suffix_buckets_chunked, DeviceRows, CHUNK_LEN, CHUNK_SIZE,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
     use crate::cuda::common::testing::fr;
@@ -661,6 +728,51 @@ mod tests {
         }
 
         #[test]
+        fn chunked_raf_buckets_match_the_reference_init_phase(
+            log_t in 4usize..=10,
+            seed in any::<u64>(),
+            phase in 0usize..PHASES,
+            chunks in prop::sample::select(vec![1usize, 2, 3, 8, 64]),
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            let host = reference_at_phase(log_t, seed, phase);
+            let rows = device_rows(context, host.rows());
+            let u_evals = context.upload(host.u_evals()).expect("upload u_evals");
+
+            let got = init_raf_buckets_chunked(
+                context, &rows, &u_evals, ADDRESS_BITS, phase, chunks,
+            )
+            .expect("device init_raf_buckets_chunked");
+
+            for (label, device, expected) in [
+                ("shift_half", &got.shift_half, evals(&host.raf_left.q_shift)),
+                ("left", &got.left, evals(&host.raf_left.q_value)),
+                ("shift_full", &got.shift_full, evals(&host.raf_identity.q_shift)),
+                ("identity", &got.identity, evals(&host.raf_identity.q_value)),
+                ("right", &got.right, evals(&host.raf_right.q_value)),
+            ] {
+                prop_assert_eq!(
+                    &device.to_host().expect("download"),
+                    &expected,
+                    "{} bucket diverged at phase {} with {} chunks",
+                    label,
+                    phase,
+                    chunks
+                );
+            }
+
+            if CANONICAL_INSTRUCTION_ADDRESS {
+                prop_assert_eq!(
+                    &got.upper_all_ones.to_host().expect("download"),
+                    &evals(&host.raf_upper_all_ones.q_shift),
+                    "upper_all_ones bucket diverged at phase {} with {} chunks",
+                    phase,
+                    chunks
+                );
+            }
+        }
+
+        #[test]
         fn suffix_buckets_match_the_reference_init_phase(
             log_t in 4usize..=10,
             seed in any::<u64>(),
@@ -689,6 +801,42 @@ mod tests {
                         table,
                         slot,
                         phase
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn chunked_suffix_buckets_match_the_reference_init_phase(
+            log_t in 4usize..=10,
+            seed in any::<u64>(),
+            phase in 0usize..PHASES,
+            chunks in prop::sample::select(vec![1usize, 2, 3, 8, 64]),
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            let host = reference_at_phase(log_t, seed, phase);
+            let rows = device_rows(context, host.rows());
+            let u_evals = context.upload(host.u_evals()).expect("upload u_evals");
+            let present: Vec<LookupTableKind<RISCV_XLEN>> =
+                host.suffix_tables.iter().map(|(table, _)| *table).collect();
+
+            let got = init_suffix_buckets_chunked(
+                context, &rows, &u_evals, &present, ADDRESS_BITS, phase, chunks,
+            )
+            .expect("device init_suffix_buckets_chunked");
+
+            prop_assert_eq!(got.len(), host.suffix_tables.len());
+            for (columns, (table, expected)) in got.iter().zip(&host.suffix_tables) {
+                prop_assert_eq!(columns.len(), expected.len());
+                for (slot, (column, want)) in columns.iter().zip(expected).enumerate() {
+                    prop_assert_eq!(
+                        &column.to_host().expect("download"),
+                        &evals(want),
+                        "table {:?} suffix slot {} diverged at phase {} with {} chunks",
+                        table,
+                        slot,
+                        phase,
+                        chunks
                     );
                 }
             }
