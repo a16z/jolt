@@ -139,13 +139,12 @@ macro_rules! define_solinas_prime {
 
             #[inline(always)]
             fn sub_raw(a: $word, b: $word) -> $word {
-                if Self::BITS < <$word>::BITS {
-                    let d = a.wrapping_sub(b);
-                    d.min(d.wrapping_add(P))
-                } else {
-                    let (d, underflow) = a.overflowing_sub(b);
-                    d.wrapping_sub((underflow as $word).wrapping_neg() & Self::C)
-                }
+                let (d, underflow) = a.overflowing_sub(b);
+                // If subtraction borrowed, subtracting -P modulo the word
+                // adds P. At full width, -P is the small Solinas offset C.
+                d.wrapping_sub(
+                    (underflow as $word).wrapping_neg() & P.wrapping_neg()
+                )
             }
 
             #[inline(always)]
@@ -417,11 +416,8 @@ define_solinas_prime!(
     double: u128,
     mul_wide_raw: mul_wide_u64(u64),
     mul(a, b): {
-        if fp64_folds_in_word(P) {
-            fp64_mul_fast::<P>(a, b)
-        } else {
-            Self::reduce_product((a as u128) * (b as u128))
-        }
+        let (lo, hi) = mul64_wide(a, b);
+        Self::reduce_product_wide(lo, hi)
     },
     random(rng): Self(super::sample_uniform_below(rng, P as u128, Self::BITS) as u64),
 );
@@ -430,12 +426,59 @@ impl<const P: u64> PseudoMersenne for Fp64<P> {
     const OFFSET: u128 = Self::C as u128;
 }
 
-/// Whether the two-fold product reduction stays entirely in `u64` for the
-/// modulus `p`: sub-word prime with `C · 2^BITS < 2^64`.
-#[inline(always)]
-const fn fp64_folds_in_word(p: u64) -> bool {
-    let bits = 64 - p.leading_zeros();
-    bits < 64 && (((1u64 << bits) - p) as u128) < (1u128 << (64 - bits))
+impl<const P: u64> Fp64<P> {
+    /// Mask for the low `BITS` bits in a word.
+    pub(crate) const MASK64: u64 = if Self::BITS < 64 {
+        (1u64 << Self::BITS) - 1
+    } else {
+        u64::MAX
+    };
+
+    /// Whether both product folds stay in a single word.
+    pub(crate) const FOLD_IN_U64: bool =
+        Self::BITS < 64 && (Self::C as u128) < (1u128 << (64 - Self::BITS));
+
+    /// Whether two folds and one subtraction reduce a sum of three products.
+    pub(crate) const EXT2_TWO_FUSION_SAFE: bool =
+        Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
+
+    /// Reduces a product supplied as exact low and high words.
+    #[inline(always)]
+    pub(crate) fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
+        if Self::FOLD_IN_U64 {
+            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
+            let f1 = (lo & Self::MASK64) + mul_c_narrow(Self::C, high);
+            let f2 = (f1 & Self::MASK64) + mul_c_narrow(Self::C, f1 >> Self::BITS);
+            let reduced = f2.wrapping_sub(P);
+            reduced.wrapping_add((reduced >> 63).wrapping_neg() & P)
+        } else if Self::BITS < 64 {
+            Self::reduce_sub_word_wide(lo, hi, 0)
+        } else {
+            Self::reduce_product((lo as u128) | ((hi as u128) << 64))
+        }
+    }
+
+    /// Reduces a sum of up to three products for the fused quadratic kernel.
+    #[inline(always)]
+    pub(crate) fn reduce_three_product_sum(lo: u64, hi: u64) -> u64 {
+        debug_assert!(Self::EXT2_TWO_FUSION_SAFE);
+        Self::reduce_sub_word_wide(lo, hi, hi >> Self::BITS)
+    }
+
+    /// Two-fold sub-word reduction. `high_overflow` is the portion of
+    /// `x >> BITS` above one word, which can be nonzero for three products.
+    #[inline(always)]
+    fn reduce_sub_word_wide(lo: u64, hi: u64, high_overflow: u64) -> u64 {
+        let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
+        let c_high = (Self::C as u128) * (high as u128)
+            + (((Self::C as u128) * (high_overflow as u128)) << 64);
+        let (fold1_lo, carry) = (lo & Self::MASK64).overflowing_add(c_high as u64);
+        let fold1_hi = ((c_high >> 64) as u64) + u64::from(carry);
+        let fold1_high = (fold1_lo >> Self::BITS) | (fold1_hi << (64 - Self::BITS));
+        let fold2 = (fold1_lo & Self::MASK64) + mul_c_narrow(Self::C, fold1_high);
+        let reduced = fold2.wrapping_sub(P);
+        reduced.wrapping_add(u64::from(fold2 < P).wrapping_neg() & P)
+    }
 }
 
 /// `a * b` widening to 128 bits; returns `(lo, hi)`. Shared with the
@@ -470,20 +513,4 @@ fn mul_c_narrow(c: u64, x: u64) -> u64 {
         let (c, x_lo, x_hi) = (c as u32 as u64, x as u32 as u64, x >> 32);
         (c * x_lo).wrapping_add((c * x_hi) << 32)
     }
-}
-
-/// Two-fold product reduction entirely in `u64` (requires
-/// [`fp64_folds_in_word`]): avoids u128 mask/shift on sub-word primes.
-#[inline(always)]
-fn fp64_mul_fast<const P: u64>(a: u64, b: u64) -> u64 {
-    let bits = 64 - P.leading_zeros();
-    let c = (1u64 << bits).wrapping_sub(P);
-    let mask = (1u64 << bits) - 1;
-    let (lo, hi) = mul64_wide(a, b);
-    let high = (lo >> bits) | (hi << (64 - bits));
-    let f1 = (lo & mask) + mul_c_narrow(c, high);
-    let f2 = (f1 & mask) + mul_c_narrow(c, f1 >> bits);
-    let reduced = f2.wrapping_sub(P);
-    let borrow = reduced >> 63;
-    reduced.wrapping_add(borrow.wrapping_neg() & P)
 }

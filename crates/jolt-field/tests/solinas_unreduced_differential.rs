@@ -30,6 +30,15 @@ use two::{
 };
 
 const M61: u64 = (1 << 61) - 1;
+const P62: u64 = (1 << 62) - 143;
+
+struct ThreeNr;
+
+impl two::Ext2Config<two::Fp64<P62>> for ThreeNr {
+    fn non_residue() -> two::Fp64<P62> {
+        <two::Fp64<P62> as Ring>::from_u64(3)
+    }
+}
 
 #[test]
 fn commitment_accumulation_limit_is_the_exact_i32_lane_bound() {
@@ -497,6 +506,15 @@ ext2_fp64_suite!(
     two::NegOneNr,
     M61 as u128,
     0x0E22_0003
+);
+// A custom non-residue must use the generic reduced-product fallback rather
+// than silently taking the NR=2 carry formula.
+ext2_fp64_suite!(
+    ext2_fp64_generic_non_residue_accum,
+    two::Fp64<P62>,
+    ThreeNr,
+    P62 as u128,
+    0x0E22_0004
 );
 
 /// Fold semantics for one instantiation: `fold_one(precompute(r), e, o)`

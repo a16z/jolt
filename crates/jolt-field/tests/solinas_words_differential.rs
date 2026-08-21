@@ -228,6 +228,10 @@ fn fp64_offsets_match() {
     check_prime!(two::Prime64Offset59, (1 << 64) - 59, 8, &mut rng);
     // Mersenne61: sub-word u64 prime exercising C = 1.
     check_prime!(two::Fp64<{ (1 << 61) - 1 }>, (1 << 61) - 1, 8, &mut rng);
+    // Test-only 63-bit primes exercise the carry-preserving wide sub-word
+    // reducer with two distinct offsets.
+    check_prime!(two::Fp64<{ (1 << 63) - 259 }>, (1 << 63) - 259, 8, &mut rng);
+    check_prime!(two::Fp64<{ (1 << 63) - 25 }>, (1 << 63) - 25, 8, &mut rng);
 }
 
 /// The registered prime-offset table, pinned as data. Generated from

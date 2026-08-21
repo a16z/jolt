@@ -75,6 +75,13 @@ pub trait SimdWord: 'static {
     fn mul_pm31(_a: Self::V32, _b: Self::V32, _p: u32, _c: u32) -> Option<Self::V32> {
         None
     }
+
+    /// Scalar-lane multiply for 63-bit pseudo-Mersenne primes when the ISA
+    /// has a dedicated carry-preserving sequence.
+    #[inline(always)]
+    fn mul_pm63(_a: u64, _b: u64, _p: u64, _c: u64) -> Option<u64> {
+        None
+    }
 }
 
 /// Stamps vocabulary methods whose body is a single (possibly block)
@@ -220,6 +227,45 @@ mod neon {
                 let tprime = vaddq_u32(vmulq_u32(hp, cvec), lo31p);
                 Some(vminq_u32(tprime, vsubq_u32(tprime, pvec)))
             }
+        }
+
+        /// Carry-preserving two-fold reducer for `p = 2^63 - c`.
+        #[inline(always)]
+        fn mul_pm63(lhs: u64, rhs: u64, _p: u64, c: u64) -> Option<u64> {
+            let result: u64;
+            let reduction_bias = (1u64 << 63) + c;
+
+            // SAFETY: the assembly has no memory or stack effects and all
+            // temporaries are declared outputs. The caller dispatches here
+            // only for a 63-bit modulus satisfying the field invariant.
+            unsafe {
+                core::arch::asm!(
+                    "umulh {high}, {lhs}, {rhs}",
+                    "mul {result}, {lhs}, {rhs}",
+                    "extr {quotient}, {high}, {result}, #63",
+                    "and {result}, {result}, #0x7fffffffffffffff",
+                    "umulh {product_hi}, {quotient}, {c}",
+                    "mul {product_lo}, {quotient}, {c}",
+                    "adds {result}, {result}, {product_lo}",
+                    "adc {high}, {product_hi}, xzr",
+                    "extr {quotient}, {high}, {result}, #63",
+                    "and {result}, {result}, #0x7fffffffffffffff",
+                    "madd {result}, {quotient}, {c}, {result}",
+                    "adds {high}, {result}, {reduction_bias}",
+                    "csel {result}, {high}, {result}, hs",
+                    lhs = in(reg) lhs,
+                    rhs = in(reg) rhs,
+                    c = in(reg) c,
+                    reduction_bias = in(reg) reduction_bias,
+                    result = out(reg) result,
+                    high = out(reg) _,
+                    quotient = out(reg) _,
+                    product_lo = out(reg) _,
+                    product_hi = out(reg) _,
+                    options(pure, nomem, nostack),
+                );
+            }
+            Some(result)
         }
     }
 }

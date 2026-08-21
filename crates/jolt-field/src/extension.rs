@@ -69,14 +69,31 @@ pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
 /// A base field is its own degree-1 extension; the default body is exact.
 impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {}
 
+/// Arithmetic form of an [`Ext2Config`] non-residue.
+///
+/// Configurations must use [`Self::Generic`] unless [`Ext2Config::non_residue`]
+/// returns exactly `-1` or `2`. Packed and delayed-reduction kernels use this
+/// value to select formulas that are valid only for those two constants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ext2NonResidueKind {
+    /// Any non-residue without a dedicated arithmetic formula.
+    Generic,
+    /// The non-residue is exactly `-1`.
+    NegOne,
+    /// The non-residue is exactly `2`.
+    Two,
+}
+
 /// Parameters for a quadratic extension `F[u]/(u^2 − NR)` over `F`.
 ///
 /// Implemented by zero-sized config types so the non-residue choice is a
 /// compile-time property of the extension type.
 pub trait Ext2Config<F: Ring> {
-    /// Whether the non-residue is −1: multiplication by `NR` is then a free
-    /// negation and the Karatsuba/squaring routines save a base multiply.
-    const IS_NEG_ONE: bool = false;
+    /// Arithmetic form of the non-residue.
+    ///
+    /// The default keeps the generic formula. Implementations may select a
+    /// specialized kind only when [`Self::non_residue`] returns that value.
+    const NON_RESIDUE_KIND: Ext2NonResidueKind = Ext2NonResidueKind::Generic;
 
     /// The quadratic non-residue `NR` with `u^2 = NR`.
     fn non_residue() -> F;
@@ -90,7 +107,7 @@ pub trait Ext2Config<F: Ring> {
         A: Copy + Add<Output = A> + Sub<Output = A> + Mul<Output = A>,
         B: FnOnce(F) -> A,
     {
-        if Self::IS_NEG_ONE {
+        if Self::NON_RESIDUE_KIND == Ext2NonResidueKind::NegOne {
             from_base(F::zero()) - x
         } else {
             from_base(Self::non_residue()) * x
@@ -102,7 +119,7 @@ pub trait Ext2Config<F: Ring> {
 pub struct NegOneNr;
 
 impl<F: Ring> Ext2Config<F> for NegOneNr {
-    const IS_NEG_ONE: bool = true;
+    const NON_RESIDUE_KIND: Ext2NonResidueKind = Ext2NonResidueKind::NegOne;
 
     #[inline]
     fn non_residue() -> F {
@@ -115,6 +132,8 @@ impl<F: Ring> Ext2Config<F> for NegOneNr {
 pub struct TwoNr;
 
 impl<F: Ring> Ext2Config<F> for TwoNr {
+    const NON_RESIDUE_KIND: Ext2NonResidueKind = Ext2NonResidueKind::Two;
+
     #[inline]
     fn non_residue() -> F {
         F::from_u64(2)
