@@ -43,6 +43,7 @@ use window_sign::WindowSignSuffix;
 use window_sign_pow2::WindowSignPow2Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
+use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
 use xor_rotw::XorRotWSuffix;
 
 pub mod and;
@@ -86,6 +87,7 @@ pub mod window_sign;
 pub mod window_sign_pow2;
 pub mod xor;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 
 pub trait SparseDenseSuffix: 'static + Sync {
@@ -146,6 +148,9 @@ pub enum Suffixes {
     PextHelper,
     WindowSign,
     WindowSignPow2,
+    XorRotL1Pairs,
+    TopYBit,
+    BottomXBit,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -172,6 +177,8 @@ impl Suffixes {
                 | Suffixes::ChangeDivisor
                 | Suffixes::ChangeDivisorW
                 | Suffixes::WindowSign
+                | Suffixes::TopYBit
+                | Suffixes::BottomXBit
         )
     }
 
@@ -229,6 +236,9 @@ impl Suffixes {
             Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
             Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
+            Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
+            Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
         }
     }
 }

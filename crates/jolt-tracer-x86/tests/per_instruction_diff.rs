@@ -102,6 +102,7 @@ const SUPPORTED: &[&str] = &[
     "VirtualXorRotW12",
     "VirtualXorRotW8",
     "VirtualXorRotW7",
+    "VirtualXorRotL1",
     "AssertEq",
     "AssertValidDiv0",
     "AssertValidUnsignedRemainder",
@@ -714,6 +715,7 @@ difftests! {
     diff_xorrotw12 => |r| alu_rr(r, K::VirtualXORROTW12);
     diff_xorrotw8 => |r| alu_rr(r, K::VirtualXORROTW8);
     diff_xorrotw7 => |r| alu_rr(r, K::VirtualXORROTW7);
+    diff_xorrotl1 => |r| alu_rr(r, K::VirtualXORROTL1);
     diff_assert_eq => assert_eq_gen;
     diff_assert_valid_div0 => assert_valid_div0;
     diff_assert_valid_unsigned_remainder => assert_valid_unsigned_remainder;
@@ -737,5 +739,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 73);
+    assert_eq!(SUPPORTED.len(), 74);
 }

@@ -330,7 +330,8 @@ mod zk {
 
     use super::support;
 
-    const KECCAK_ROTRI_ROWS: usize = 696;
+    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
+    const KECCAK_ROTRI_ROWS: usize = 576;
 
     fn prove_guest_zk(
         guest_name: &str,

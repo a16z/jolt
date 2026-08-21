@@ -33,5 +33,6 @@ pub mod srl;
 pub mod srli;
 pub mod window_mask_w;
 pub mod xor_rot;
+pub mod xor_rotl1;
 pub mod xor_rotw;
 pub mod zero_extend_word;

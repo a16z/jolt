@@ -156,6 +156,7 @@ use virtual_srl::VirtualSRL;
 use virtual_srli::VirtualSRLI;
 use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use virtual_xor_rotl1::VirtualXORROTL1;
 use virtual_xor_rotw::{VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW7, VirtualXORROTW8};
 use virtual_zero_extend_word::VirtualZeroExtendWord;
 
@@ -345,6 +346,7 @@ pub mod virtual_srl;
 pub mod virtual_srli;
 pub mod virtual_window_mask_w;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
 pub mod virtual_zero_extend_word;
 pub mod xor;

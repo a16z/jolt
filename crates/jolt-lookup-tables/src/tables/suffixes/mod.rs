@@ -51,6 +51,7 @@ mod window_sign;
 mod window_sign_pow2;
 mod xor;
 mod xor_rot;
+mod xor_rotl1;
 mod xor_rotw;
 
 use and::AndSuffix;
@@ -98,6 +99,7 @@ use window_sign::WindowSignSuffix;
 use window_sign_pow2::WindowSignPow2Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
+use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
 use xor_rotw::XorRotWSuffix;
 
 use jolt_field::JoltField;
@@ -167,6 +169,9 @@ pub enum Suffixes {
     PextHelper,
     WindowSign,
     WindowSignPow2,
+    XorRotL1Pairs,
+    TopYBit,
+    BottomXBit,
 }
 
 /// Total number of suffix variants.
@@ -194,6 +199,8 @@ impl Suffixes {
                 | Suffixes::ChangeDivisor
                 | Suffixes::ChangeDivisorW
                 | Suffixes::WindowSign
+                | Suffixes::TopYBit
+                | Suffixes::BottomXBit
         )
     }
 
@@ -248,6 +255,9 @@ impl Suffixes {
             Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
             Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
             Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
+            Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
+            Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
         }
     }
 
