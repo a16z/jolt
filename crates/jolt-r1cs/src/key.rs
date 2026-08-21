@@ -15,7 +15,7 @@
 //! Matrix MLE factors as:
 //! $$\tilde{M}(r_x, r_y) = \widetilde{eq}(r_x^{cyc}, r_y^{cyc}) \cdot \tilde{M}_{local}(r_x^{con}, r_y^{var})$$
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +36,7 @@ use crate::constraint::ConstraintMatrices;
     bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"),
     try_from = "RawR1csKey<F>"
 )]
-pub struct R1csKey<F: Field> {
+pub struct R1csKey<F: JoltField> {
     pub(crate) matrices: ConstraintMatrices<F>,
     pub(crate) num_cycles: usize,
     pub(crate) num_constraints_padded: usize,
@@ -46,14 +46,14 @@ pub struct R1csKey<F: Field> {
 /// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
-struct RawR1csKey<F: Field> {
+struct RawR1csKey<F: JoltField> {
     matrices: ConstraintMatrices<F>,
     num_cycles: usize,
     num_constraints_padded: usize,
     num_vars_padded: usize,
 }
 
-impl<F: Field> TryFrom<RawR1csKey<F>> for R1csKey<F> {
+impl<F: JoltField> TryFrom<RawR1csKey<F>> for R1csKey<F> {
     type Error = String;
 
     fn try_from(raw: RawR1csKey<F>) -> Result<Self, Self::Error> {
@@ -78,7 +78,7 @@ impl<F: Field> TryFrom<RawR1csKey<F>> for R1csKey<F> {
     }
 }
 
-fn check_key_invariants<F: Field>(
+fn check_key_invariants<F: JoltField>(
     matrices: &ConstraintMatrices<F>,
     num_cycles: usize,
     num_constraints_padded: usize,
@@ -135,7 +135,7 @@ fn check_key_invariants<F: Field>(
     Ok(())
 }
 
-impl<F: Field> R1csKey<F> {
+impl<F: JoltField> R1csKey<F> {
     /// Creates a new key from per-cycle constraints and cycle count.
     ///
     /// # Panics
@@ -393,7 +393,7 @@ impl<F: Field> R1csKey<F> {
     clippy::indexing_slicing,
     reason = "column indices are below num_vars by the ConstraintMatrices invariant and tables cover num_vars"
 )]
-fn sparse_row_dot<F: Field>(row: &[(usize, F)], table: &[F]) -> F {
+fn sparse_row_dot<F: JoltField>(row: &[(usize, F)], table: &[F]) -> F {
     let mut acc = F::zero();
     for &(j, coeff) in row {
         acc += coeff * table[j];
@@ -406,7 +406,7 @@ fn sparse_row_dot<F: Field>(row: &[(usize, F)], table: &[F]) -> F {
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr, Ring};
     use num_traits::{One, Zero};
 
     /// x * x = y, y * x = z — 2 constraints, 4 vars [1, x, y, z]

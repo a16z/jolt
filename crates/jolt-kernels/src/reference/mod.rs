@@ -12,7 +12,7 @@
 //! fallback partial backends compose over; it is eager-dense throughout — a
 //! test oracle at harness scale, never a performance path.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
 use jolt_sumcheck::{RoundScheduler, SequentialRounds};
@@ -71,7 +71,7 @@ pub(crate) fn lattice_shape() -> bool {
         == jolt_claims::protocols::jolt::lattice::LATTICE_BYTECODE_VAL_STAGES
 }
 
-impl<F: Field> BuildRoundScheduler<F> for ReferenceBackend {
+impl<F: JoltField> BuildRoundScheduler<F> for ReferenceBackend {
     fn build(&self, _session: &mut ProofSession) -> Box<dyn RoundScheduler<F>> {
         Box::new(SequentialRounds)
     }
@@ -79,7 +79,7 @@ impl<F: Field> BuildRoundScheduler<F> for ReferenceBackend {
 
 impl<F, PCS> JoltBackend<F, PCS>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
     /// The always-present reference backend: every slot served by the naive

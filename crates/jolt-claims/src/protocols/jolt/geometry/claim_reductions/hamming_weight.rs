@@ -1,4 +1,4 @@
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 
 use crate::opening;
 
@@ -21,7 +21,7 @@ impl HammingWeightClaimReductionDimensions {
         }
     }
 
-    pub fn opening_point<F: Field>(
+    pub fn opening_point<F: JoltField>(
         self,
         challenges: &[F],
         r_cycle: &[F],
@@ -81,7 +81,7 @@ pub fn claim_reduction_output_openings(
 
 pub(crate) fn hamming_weight_claim<F>(polynomial: JoltRaPolynomial) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     match polynomial {
         JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => JoltExpr::one(),
@@ -121,7 +121,7 @@ mod tests {
 
     use super::super::super::dimensions::JoltFormulaDimensionsError;
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn layout(
         instruction: usize,

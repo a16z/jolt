@@ -14,14 +14,14 @@ use jolt_claims::protocols::jolt::{
     RamHammingBooleanityPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
 #[derive(Clone)]
-pub struct RamHammingBooleanity<F: Field> {
+pub struct RamHammingBooleanity<F: JoltField> {
     symbolic: relations::ram::HammingBooleanity,
     trace_dimensions: TraceDimensions,
     /// The stage-1 Spartan-outer cycle binding that `EqCycle` compares the raw
@@ -29,7 +29,7 @@ pub struct RamHammingBooleanity<F: Field> {
     stage1_cycle_binding: Vec<F>,
 }
 
-impl<F: Field> RamHammingBooleanity<F> {
+impl<F: JoltField> RamHammingBooleanity<F> {
     pub fn new(trace_dimensions: TraceDimensions, stage1_cycle_binding: Vec<F>) -> Self {
         Self {
             symbolic: relations::ram::HammingBooleanity::new(trace_dimensions),
@@ -54,7 +54,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
     type Symbolic = relations::ram::HammingBooleanity;
 
     fn symbolic(&self) -> &Self::Symbolic {

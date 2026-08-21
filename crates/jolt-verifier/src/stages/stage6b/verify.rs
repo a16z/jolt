@@ -6,7 +6,7 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
@@ -261,7 +261,7 @@ where
 /// intermediate-vs-chunks shape. Member presence is enforced separately by the
 /// hand-listed `validate_member_presence` calls; a missing advice inner opening is caught by
 /// `expected_final_claim` (the advice cycle phase's `expected_output`).
-fn validate_cycle_phase_claim_shape<F: Field>(
+fn validate_cycle_phase_claim_shape<F: JoltField>(
     formula_dimensions: &JoltFormulaDimensions,
     claims: &Stage6bOutputClaims<F>,
     bytecode_reduction_layout: Option<&BytecodeClaimReductionLayout>,
@@ -388,7 +388,7 @@ fn require_claim_count(
 /// aggregate. The `Option` cells track member presence, so a present member always
 /// has its input cell populated. Public because the prover's stage-6b recipe
 /// builds its batch inputs through the same wiring.
-pub fn stage6b_input_values_from_upstream<F: Field>(
+pub fn stage6b_input_values_from_upstream<F: JoltField>(
     sumchecks: &Stage6bSumchecks<F>,
     address_claims: &Stage6aOutputClaims<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputClaims<F>,
@@ -450,7 +450,7 @@ pub fn stage6b_input_values_from_upstream<F: Field>(
 /// and read no input point, so their cells come from the generated
 /// `empty_input_points` (empty, and present for present `Option` members exactly as
 /// the generated `derive_opening_points` requires).
-pub fn stage6b_input_points_from_upstream<F: Field>(
+pub fn stage6b_input_points_from_upstream<F: JoltField>(
     sumchecks: &Stage6bSumchecks<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputPoints<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage4: &Stage4OutputPoints<F>,
@@ -474,7 +474,7 @@ pub fn stage6b_input_points_from_upstream<F: Field>(
 /// against the bytecode-read-RAF points (a runtime point-equality the output
 /// `Expr`s cannot express). Public because the prover's recorder absorbs the
 /// same curated sequence.
-pub fn stage6b_opening_values<F: Field>(
+pub fn stage6b_opening_values<F: JoltField>(
     claims: &Stage6bOutputClaims<F>,
     bytecode_read_raf_points: &[Vec<F>],
     booleanity_point: &[F],
@@ -518,7 +518,7 @@ pub fn stage6b_opening_values<F: Field>(
     values
 }
 
-fn validate_bytecode_ra_aliases<F: Field>(
+fn validate_bytecode_ra_aliases<F: JoltField>(
     claims: &Stage6bOutputClaims<F>,
     bytecode_read_raf_points: &[Vec<F>],
     booleanity_point: &[F],
@@ -555,7 +555,7 @@ fn append_opening_claims<F, T>(
     bytecode_read_raf_points: &[Vec<F>],
     booleanity_point: &[F],
 ) where
-    F: Field,
+    F: JoltField,
     T: Transcript<Challenge = F>,
 {
     // Full relations and the optional members delegate to their derived
@@ -625,7 +625,7 @@ mod tests {
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
     use crate::stages::relations::append_recording::RecordingTranscript;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)

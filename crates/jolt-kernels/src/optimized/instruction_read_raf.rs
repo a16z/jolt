@@ -42,7 +42,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
 use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::{SuffixEval, Suffixes};
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
@@ -125,7 +125,7 @@ impl InstructionCycleRow {
     }
 }
 
-fn bucket_instruction_cycles<F: Field>(
+fn bucket_instruction_cycles<F: JoltField>(
     rows: &[InstructionCycleRow],
 ) -> Result<Vec<Vec<u32>>, KernelError<F>> {
     let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
@@ -279,7 +279,7 @@ crate::optimized::impl_allocative!(SharedInstructionRowsWeak, |_rows| { 0 });
 impl InstructionCycleRow {
     /// One streaming bundle pass over the cycle domain, packed row by row (the
     /// wide bundle row exists only per chunk).
-    pub(crate) fn collect<F: Field>(
+    pub(crate) fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
@@ -307,7 +307,7 @@ impl InstructionCycleRow {
     /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
     /// impossible to consume) or collect them fresh, and park the carry back
     /// for later consumers.
-    pub(crate) fn shared<F: Field>(
+    pub(crate) fn shared<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
@@ -348,7 +348,7 @@ impl InstructionCycleRow {
 /// slot.
 pub struct OptimizedInstructionReadRaf;
 
-impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionReadRaf {
+impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionReadRaf {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -384,7 +384,7 @@ impl<F: Field> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionR
 
 /// One RAF prefix–suffix decomposition — same shape and binding as the
 /// reference kernel's.
-struct RafDecomposition<F: Field> {
+struct RafDecomposition<F: JoltField> {
     prefix: Polynomial<F>,
     q_shift: Polynomial<F>,
     q_value: Polynomial<F>,
@@ -392,7 +392,7 @@ struct RafDecomposition<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> RafDecomposition<F> {
+impl<F: JoltField> RafDecomposition<F> {
     fn heap_bytes(&self) -> usize {
         use crate::backend::poly_heap_bytes;
         poly_heap_bytes(&self.prefix)
@@ -401,7 +401,7 @@ impl<F: Field> RafDecomposition<F> {
     }
 }
 
-impl<F: Field> RafDecomposition<F> {
+impl<F: JoltField> RafDecomposition<F> {
     fn empty() -> Self {
         Self {
             prefix: Polynomial::new(vec![F::zero()]),
@@ -444,14 +444,14 @@ impl<F: Field> RafDecomposition<F> {
 /// Linear extension of a dense table's top variable at `c = 0` and `c = 2`:
 /// `(evals[b], 2·evals[b + half] − evals[b])`.
 #[inline]
-fn extension_pair<F: Field>(evals: &[F], b: usize, half: usize) -> (F, F) {
+fn extension_pair<F: JoltField>(evals: &[F], b: usize, half: usize) -> (F, F) {
     let lo = evals[b];
     let hi = evals[b + half];
     (lo, hi + hi - lo)
 }
 
 /// Cycle-round state: the Gruen-split eq factor plus the cycle tables.
-struct CycleState<F: Field> {
+struct CycleState<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     tables: CycleTables<F>,
     /// Reused low-to-high binding buffer (swapped through every bind).
@@ -459,7 +459,7 @@ struct CycleState<F: Field> {
 }
 
 #[cfg(feature = "allocative")]
-impl<F: Field> CycleState<F> {
+impl<F: JoltField> CycleState<F> {
     fn heap_bytes(&self) -> usize {
         use crate::backend::{poly_heap_bytes, polys_heap_bytes, vec_heap_bytes};
         let tables = match &self.tables {
@@ -480,7 +480,7 @@ impl<F: Field> CycleState<F> {
 /// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
 /// exist. Values are identical to materialize-then-bind: the bases are the
 /// same, and `lo + r·(hi − lo)` is the binding formula either way.
-enum CycleTables<F: Field> {
+enum CycleTables<F: JoltField> {
     Pending(PendingCycleTables<F>),
     Dense {
         combined_val: Polynomial<F>,
@@ -490,7 +490,7 @@ enum CycleTables<F: Field> {
 
 /// Everything the pending-base evaluations need beyond the kernel's own
 /// rows / claim columns / phase eq tables.
-struct PendingCycleTables<F: Field> {
+struct PendingCycleTables<F: JoltField> {
     /// Per-table combined value at the bound address point.
     table_values: Vec<F>,
     raf_interleaved: F,
@@ -499,7 +499,7 @@ struct PendingCycleTables<F: Field> {
 
 /// Per-thread RAF scan accumulators over one phase's chunk domain, in
 /// deferred-reduction form.
-struct RafScan<F: Field> {
+struct RafScan<F: JoltField> {
     shift_half: Vec<F::Accumulator>,
     left: Vec<F::Accumulator>,
     right: Vec<F::Accumulator>,
@@ -518,7 +518,7 @@ struct RafSums<F> {
     upper_all_ones: Vec<F>,
 }
 
-impl<F: Field> RafScan<F> {
+impl<F: JoltField> RafScan<F> {
     fn new() -> Self {
         Self {
             shift_half: vec![F::Accumulator::default(); CHUNK_SIZE],
@@ -548,7 +548,7 @@ impl<F: Field> RafScan<F> {
     }
 }
 
-impl<F: Field> RafSums<F> {
+impl<F: JoltField> RafSums<F> {
     fn zero() -> Self {
         Self {
             shift_half: vec![F::zero(); CHUNK_SIZE],
@@ -578,7 +578,7 @@ impl<F: Field> RafSums<F> {
     }
 }
 
-pub struct OptimizedInstructionReadRafKernel<F: Field> {
+pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     dimensions: InstructionReadRafDimensions,
     gamma: F,
     r_reduction: Vec<F>,
@@ -644,7 +644,7 @@ crate::optimized::impl_field_allocative!(OptimizedInstructionReadRafKernel, |ker
         + vec_heap_bytes(&kernel.claim_columns)
 });
 
-impl<F: Field> OptimizedInstructionReadRafKernel<F> {
+impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
@@ -1060,7 +1060,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
             .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
         let factors = 1 + self.dimensions.num_virtual_ra_polys();
 
-        struct Scratch<F: Field> {
+        struct Scratch<F: JoltField> {
             /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
             /// the `Val` factor, so these stay unreduced across the block.
             lanes: Vec<F::Accumulator>,
@@ -1344,7 +1344,7 @@ impl<F: Field> OptimizedInstructionReadRafKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
     fn num_rounds(&self) -> usize {
         self.dimensions.sumcheck_rounds()
     }
@@ -1370,7 +1370,7 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionReadRafKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
     type Relation = InstructionReadRaf<F>;
 
     fn output_claims(
@@ -1443,7 +1443,7 @@ mod tests {
         InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
     };
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
-    use jolt_field::{Fr, FromPrimitiveInt, MulPow2};
+    use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};

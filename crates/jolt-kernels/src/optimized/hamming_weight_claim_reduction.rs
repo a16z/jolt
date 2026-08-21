@@ -24,7 +24,7 @@ use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use std::ops::Range;
 
 use jolt_claims::OutputClaims;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -62,7 +62,7 @@ struct FamilySelectors {
 }
 
 impl FamilySelectors {
-    fn new<F: Field>(
+    fn new<F: JoltField>(
         counts: (usize, usize, usize),
         chunk_bits: usize,
     ) -> Result<Self, KernelError<F>> {
@@ -82,7 +82,7 @@ impl FamilySelectors {
 
     /// All `N` pushforwards from one bundle walk against the shared cycle-eq
     /// table, in canonical (instruction, bytecode, RAM) order.
-    fn pushforwards<F: Field>(
+    fn pushforwards<F: JoltField>(
         &self,
         rows: &[RaIndexBundle],
         eq_cycle: &[F],
@@ -146,7 +146,7 @@ impl FamilySelectors {
 /// optimized kernel.
 pub struct OptimizedHammingWeightClaimReduction;
 
-impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
+impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
     for OptimizedHammingWeightClaimReduction
 {
     fn prepare(
@@ -222,7 +222,7 @@ impl<F: Field> PrepareKernel<F, HammingWeightClaimReduction<F>>
     }
 }
 
-struct HammingWeightKernel<F: Field> {
+struct HammingWeightKernel<F: JoltField> {
     progress: RoundProgress,
     /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
@@ -239,7 +239,7 @@ crate::optimized::impl_field_allocative!(HammingWeightKernel, |kernel| {
         + vec_heap_bytes(&kernel.output_openings)
 });
 
-impl<F: Field> HammingWeightKernel<F> {
+impl<F: JoltField> HammingWeightKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(
             self.g_tables
@@ -264,7 +264,7 @@ impl<F: Field> HammingWeightKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for HammingWeightKernel<F> {
+impl<F: JoltField> ProveRounds<F> for HammingWeightKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -295,7 +295,7 @@ impl<F: Field> ProveRounds<F> for HammingWeightKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for HammingWeightKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for HammingWeightKernel<F> {
     type Relation = HammingWeightClaimReduction<F>;
 
     fn output_claims(
@@ -326,7 +326,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     };

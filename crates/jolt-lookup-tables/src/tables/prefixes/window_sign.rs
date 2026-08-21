@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::tables::suffixes::window_sign_bit;
@@ -10,7 +10,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 /// `σ = Σ_i x_i·y_i·Π_{j<i}(1−y_j)` (indices MSB-first).
 pub enum WindowSignPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for WindowSignPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for WindowSignPrefix {
     fn default_checkpoint() -> F {
         F::zero()
     }
