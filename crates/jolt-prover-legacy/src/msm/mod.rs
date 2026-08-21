@@ -2,7 +2,6 @@ use std::borrow::Borrow;
 
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
-use crate::poly::unipoly::UniPoly;
 use crate::utils::errors::ProofVerifyError;
 use ark_ec::scalar_mul::variable_base::{
     msm_binary, msm_i128, msm_i64, msm_s128, msm_s64, msm_u128, msm_u16, msm_u32, msm_u64, msm_u8,
@@ -155,29 +154,6 @@ where
         (bases.len() == scalars.len())
             .then(|| msm_s128::<Self>(bases, scalars, true))
             .ok_or(ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
-    }
-
-    fn batch_msm<U>(bases: &[Self::MulBase], polys: &[U]) -> Vec<Self>
-    where
-        U: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
-    {
-        polys
-            .par_iter()
-            .map(|poly| VariableBaseMSM::msm(&bases[..poly.borrow().len()], poly).unwrap())
-            .collect()
-    }
-
-    fn batch_msm_univariate(
-        bases: &[Self::MulBase],
-        polys: &[UniPoly<Self::ScalarField>],
-    ) -> Vec<Self> {
-        polys
-            .par_iter()
-            .map(|poly| {
-                VariableBaseMSM::msm_field_elements(&bases[..poly.coeffs.len()], &poly.coeffs)
-                    .unwrap()
-            })
-            .collect()
     }
 }
 
