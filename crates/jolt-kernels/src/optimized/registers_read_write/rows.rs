@@ -4,7 +4,7 @@
 use crate::optimized::rows::RandomAccessRows;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use jolt_utils::FirstErrorLatch;
 use jolt_witness::__private::TraceRow;
@@ -135,7 +135,7 @@ impl CollectRegisterEntries {
     /// index-parallel; re-emulating sources stream sequentially. Entry values
     /// and order are identical either way — [`RegisterCycleRow::entries`] is
     /// pure per cycle, and runs concatenate in cycle order.
-    pub(super) fn collect<F: Field>(
+    pub(super) fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
@@ -170,7 +170,7 @@ impl CollectRegisterEntries {
     /// values and order are identical to the streaming pass:
     /// [`RegisterCycleRow::entries`] is pure per cycle.
     #[cfg(feature = "parallel")]
-    fn collect_par<F: Field>(
+    fn collect_par<F: JoltField>(
         access: &RandomAccessRows<'_>,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {

@@ -19,7 +19,7 @@
 
 use core::cmp::Ordering;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -58,7 +58,7 @@ pub(crate) struct AddressMajorEntry<F> {
     pub ra: F,
 }
 
-impl<F: Field> CycleMajorEntry<F> {
+impl<F: JoltField> CycleMajorEntry<F> {
     fn into_address_major(self) -> AddressMajorEntry<F> {
         AddressMajorEntry {
             row: self.row,
@@ -248,7 +248,7 @@ impl<F: Field> CycleMajorEntry<F> {
 /// `val + γ·(inc + val)` — the value factor of the summand, shared by both
 /// entry types' round evaluations.
 #[inline]
-fn val_slope_term<F: Field>(val: F, inc: F, gamma: F) -> F {
+fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
     val + gamma * (inc + val)
 }
 
@@ -257,7 +257,7 @@ pub(crate) struct CycleMajorMatrix<F> {
     pub entries: Vec<CycleMajorEntry<F>>,
 }
 
-impl<F: Field> CycleMajorMatrix<F> {
+impl<F: JoltField> CycleMajorMatrix<F> {
     /// Bind one cycle variable low-to-high: merge every adjacent row pair.
     pub fn bind(&mut self, r: F) {
         #[cfg(feature = "parallel")]
@@ -345,7 +345,10 @@ impl<F: Field> CycleMajorMatrix<F> {
 /// entry vector held, so the round-0 message and bind are value-identical
 /// without the vector ever existing.
 #[inline]
-fn round0_entry<F: Field>(columns: &RamAccessColumns, cycle: usize) -> Option<CycleMajorEntry<F>> {
+fn round0_entry<F: JoltField>(
+    columns: &RamAccessColumns,
+    cycle: usize,
+) -> Option<CycleMajorEntry<F>> {
     let address = columns.addresses[cycle];
     (address != NO_ACCESS).then(|| {
         let pre_value = columns.pre_values[cycle];
@@ -365,7 +368,7 @@ fn round0_entry<F: Field>(columns: &RamAccessColumns, cycle: usize) -> Option<Cy
 /// at most one address), so a pair group is just the two optional per-cycle
 /// entries; groups with no access contribute nothing, exactly like the
 /// absent groups of the sparse iteration.
-pub(crate) fn round0_quadratic_coefficients<F: Field>(
+pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
     columns: &RamAccessColumns,
     eq_head: impl Fn(usize) -> F + Sync,
     inc: &Polynomial<F>,
@@ -412,7 +415,7 @@ pub(crate) fn round0_quadratic_coefficients<F: Field>(
 /// straight off the access columns — the first entry vector to exist is the
 /// bind's OUTPUT. Entry order matches the sparse merge exactly: pairs in
 /// cycle order, a differing-col pair's two lone-side outputs in col order.
-pub(crate) fn round0_bind<F: Field>(columns: &RamAccessColumns, r: F) -> CycleMajorMatrix<F> {
+pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> CycleMajorMatrix<F> {
     let pairs = columns.addresses.len() / 2;
     let per_pair = |pair: usize| -> [Option<CycleMajorEntry<F>>; 2] {
         let even = round0_entry::<F>(columns, 2 * pair);
@@ -447,7 +450,7 @@ pub(crate) fn round0_bind<F: Field>(columns: &RamAccessColumns, r: F) -> CycleMa
     CycleMajorMatrix { entries }
 }
 
-impl<F: Field> AddressMajorEntry<F> {
+impl<F: JoltField> AddressMajorEntry<F> {
     /// Bind a `(col 2k, col 2k+1)` pair of same-row entries; a `None` side
     /// is implicit (`ra = 0`, `val` recovered from its column checkpoint).
     fn bind(
@@ -705,7 +708,7 @@ pub(crate) struct AddressMajorMatrix<F> {
     pub entries: Vec<AddressMajorEntry<F>>,
 }
 
-impl<F: Field> AddressMajorMatrix<F> {
+impl<F: JoltField> AddressMajorMatrix<F> {
     /// Bind one address variable low-to-high: merge every adjacent column
     /// pair against the `val_init` checkpoints, then bind `val_init` itself.
     pub fn bind(&mut self, r: F, val_init: &mut Polynomial<F>) {

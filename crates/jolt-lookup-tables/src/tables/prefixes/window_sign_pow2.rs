@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::tables::suffixes::window_sign_bit;
@@ -11,7 +11,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 /// At binary points this equals `σ·2^popcount(y)`.
 pub enum WindowSignPow2Prefix {}
 
-impl<F: Field> SparseDensePrefix<F> for WindowSignPow2Prefix {
+impl<F: JoltField> SparseDensePrefix<F> for WindowSignPow2Prefix {
     fn default_checkpoint() -> F {
         F::zero()
     }

@@ -27,7 +27,7 @@
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, RegistersClaimReductionPublic,
 };
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, SignedScalarAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -73,7 +73,9 @@ impl WitnessBundle for RegisterValuesRow {
 
 pub struct OptimizedRegistersClaimReduction;
 
-impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegistersClaimReduction {
+impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
+    for OptimizedRegistersClaimReduction
+{
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -166,7 +168,7 @@ enum Phase<F> {
     },
 }
 
-struct ClaimReductionKernel<F: Field> {
+struct ClaimReductionKernel<F: JoltField> {
     log_t: usize,
     gamma: F,
     gamma_sq: F,
@@ -202,13 +204,13 @@ crate::optimized::impl_field_allocative!(ClaimReductionKernel, |kernel| {
         + kernel.challenges.heap_bytes()
 });
 
-fn row_extraction_error<F: Field>(_: WitnessError) -> SumcheckError<F> {
+fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
         kind: "register values row",
     }
 }
 
-impl<F: Field> ClaimReductionKernel<F> {
+impl<F: JoltField> ClaimReductionKernel<F> {
     /// Regenerate the dense phase from the raw values: the three columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix
     /// eq table scaled by the bound-prefix eq factor.
@@ -285,7 +287,7 @@ impl<F: Field> ClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ClaimReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -345,7 +347,7 @@ impl<F: Field> ProveRounds<F> for ClaimReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ClaimReductionKernel<F> {
     type Relation = RegistersClaimReduction<F>;
 
     fn output_claims(
@@ -402,7 +404,7 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::Polynomial;
     use jolt_verifier::stages::stage3::registers_claim_reduction::{
         RegistersClaimReduction, RegistersClaimReductionChallenges,

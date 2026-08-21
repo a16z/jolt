@@ -10,7 +10,7 @@
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
-use jolt_field::FieldCore;
+use jolt_field::JoltField;
 use jolt_program::execution::{RamAccess, TraceRow};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -59,7 +59,7 @@ impl ProverConfig {
     /// program image extent, and pick the chunking policies from `log_T`.
     #[expect(non_snake_case)]
     #[tracing::instrument(skip_all, name = "ProverConfig::derive", fields(rows = rows.len()))]
-    pub fn derive<F: FieldCore>(
+    pub fn derive<F: JoltField>(
         rows: &[TraceRow],
         memory_layout: &MemoryLayout,
         min_bytecode_address: u64,

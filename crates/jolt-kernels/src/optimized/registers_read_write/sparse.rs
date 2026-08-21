@@ -4,7 +4,7 @@
 //! Representation and algorithm contracts live on the items themselves.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
-use jolt_field::{AdditiveAccumulator, Field, OptimizedMul, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -24,7 +24,7 @@ pub(super) struct CoeffLut<F> {
     pub(super) values: Vec<F>,
 }
 
-impl<F: Field> CoeffLut<F> {
+impl<F: JoltField> CoeffLut<F> {
     /// One-past the largest table an entry's `u16` index can address.
     const MAX_VALUES: usize = 1 << 16;
 
@@ -63,11 +63,35 @@ impl<F: Field> CoeffLut<F> {
     }
 }
 
+/// `left * right`, skipping the multiply when either side is zero.
+#[inline(always)]
+fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
+    if left.is_zero() || right.is_zero() {
+        F::zero()
+    } else {
+        left * right
+    }
+}
+
+/// `left * right`, skipping the multiply when either side is zero or one.
+#[inline(always)]
+fn mul_01_optimized<F: JoltField>(left: F, right: F) -> F {
+    if left.is_zero() || right.is_zero() {
+        F::zero()
+    } else if left.is_one() {
+        right
+    } else if right.is_one() {
+        left
+    } else {
+        left * right
+    }
+}
+
 /// One-hot coefficient storage: either a direct field value or a `u16` index
 /// into a [`CoeffLut`]. Both compute identical field values — the lookup
 /// table pre-binds every possible value, the index arithmetic just selects —
 /// so switching representations is memory-shape only, never wire-visible.
-pub(super) trait OneHotCoeff<F: Field>: Copy + Send + Sync + 'static {
+pub(super) trait OneHotCoeff<F: JoltField>: Copy + Send + Sync + 'static {
     /// Bind a vertically adjacent pair with `r`; a missing side is an
     /// implicit zero coefficient.
     fn bind(even: Option<Self>, odd: Option<Self>, r: F, lut: &CoeffLut<F>) -> Self;
@@ -79,13 +103,13 @@ pub(super) trait OneHotCoeff<F: Field>: Copy + Send + Sync + 'static {
     fn value(self, lut: &CoeffLut<F>) -> F;
 }
 
-impl<F: Field> OneHotCoeff<F> for F {
+impl<F: JoltField> OneHotCoeff<F> for F {
     #[inline]
     fn bind(even: Option<Self>, odd: Option<Self>, r: F, _lut: &CoeffLut<F>) -> Self {
         match (even, odd) {
-            (Some(even), Some(odd)) => even + r.mul_0_optimized(odd - even),
-            (Some(even), None) => (F::one() - r).mul_01_optimized(even),
-            (None, Some(odd)) => r.mul_01_optimized(odd),
+            (Some(even), Some(odd)) => even + mul_0_optimized(r, odd - even),
+            (Some(even), None) => mul_01_optimized(F::one() - r, even),
+            (None, Some(odd)) => mul_01_optimized(r, odd),
             (None, None) => unreachable!("merge visits only represented cells"),
         }
     }
@@ -111,7 +135,7 @@ impl<F: Field> OneHotCoeff<F> for F {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct LutIndex(pub(super) u16);
 
-impl<F: Field> OneHotCoeff<F> for LutIndex {
+impl<F: JoltField> OneHotCoeff<F> for LutIndex {
     #[inline]
     fn bind(even: Option<Self>, odd: Option<Self>, _r: F, lut: &CoeffLut<F>) -> Self {
         // The table itself binds with `r` separately; index 0 is the zero
@@ -214,7 +238,7 @@ type SoaSpareBlock<'a, F> = (
 /// Reassemble the working entry at `i` — pure representation change, the
 /// field values are the stored ones.
 #[inline]
-pub(super) fn load_indexed<F: Field>(
+pub(super) fn load_indexed<F: JoltField>(
     (vals, metas): SoaRow<'_, F>,
     i: usize,
 ) -> SparseEntry<F, LutIndex> {
@@ -232,7 +256,7 @@ pub(super) fn load_indexed<F: Field>(
 
 /// Split a working entry into its SoA columns (inverse of [`load_indexed`]).
 #[inline]
-fn split_indexed<F: Field>(entry: SparseEntry<F, LutIndex>) -> (F, IndexedMeta) {
+fn split_indexed<F: JoltField>(entry: SparseEntry<F, LutIndex>) -> (F, IndexedMeta) {
     debug_assert!(u32::try_from(entry.row).is_ok());
     (
         entry.val,
@@ -264,7 +288,7 @@ fn split_soa_pair_group<'a, F>(
 /// as the reassembled working pair in column order — the SoA twin of
 /// [`merge_bind`] (a missing side is an untouched slice, exactly as there).
 #[inline]
-fn merge_soa<F: Field>(
+fn merge_soa<F: JoltField>(
     evens: SoaRow<'_, F>,
     odds: SoaRow<'_, F>,
     mut visit: impl FnMut(Option<SparseEntry<F, LutIndex>>, Option<SparseEntry<F, LutIndex>>),
@@ -299,7 +323,7 @@ fn merge_soa<F: Field>(
 
 /// A sparse matrix cell in one of the round-dependent layouts, bound
 /// pairwise against the coefficient LUTs.
-pub(super) trait MatrixEntry<F: Field>: Cell {
+pub(super) trait MatrixEntry<F: JoltField>: Cell {
     /// The layout after one cycle bind (the seed layout materializes `val`).
     type Bound: Cell;
 
@@ -382,7 +406,7 @@ impl Cell for SeedEntry {
     }
 }
 
-impl<F: Field> MatrixEntry<F> for SeedEntry {
+impl<F: JoltField> MatrixEntry<F> for SeedEntry {
     type Bound = SparseEntry<F, LutIndex>;
 
     #[inline]
@@ -400,7 +424,7 @@ impl<F: Field> MatrixEntry<F> for SeedEntry {
                 let even_val = F::from_u64(even.prev_val);
                 let odd_val = F::from_u64(odd.prev_val);
                 SparseEntry {
-                    val: even_val + r.mul_0_optimized(odd_val - even_val),
+                    val: even_val + mul_0_optimized(r, odd_val - even_val),
                     ra: coeff_bind(Some(even.ra()), Some(odd.ra()), r, ra_lut),
                     wa: coeff_bind(Some(even.wa()), Some(odd.wa()), r, wa_lut),
                     prev_val: even.prev_val,
@@ -413,7 +437,7 @@ impl<F: Field> MatrixEntry<F> for SeedEntry {
                 let even_val = F::from_u64(even.prev_val);
                 let odd_val = F::from_u64(even.next_val);
                 SparseEntry {
-                    val: even_val + r.mul_0_optimized(odd_val - even_val),
+                    val: even_val + mul_0_optimized(r, odd_val - even_val),
                     ra: coeff_bind(Some(even.ra()), None, r, ra_lut),
                     wa: coeff_bind(Some(even.wa()), None, r, wa_lut),
                     prev_val: even.prev_val,
@@ -513,7 +537,7 @@ pub(super) struct SparseEntry<F, C> {
     pub(super) col: u8,
 }
 
-impl<F: Field, C: OneHotCoeff<F>> Cell for SparseEntry<F, C> {
+impl<F: JoltField, C: OneHotCoeff<F>> Cell for SparseEntry<F, C> {
     #[inline]
     fn row(&self) -> usize {
         self.row
@@ -525,7 +549,7 @@ impl<F: Field, C: OneHotCoeff<F>> Cell for SparseEntry<F, C> {
     }
 }
 
-impl<F: Field, C: OneHotCoeff<F>> MatrixEntry<F> for SparseEntry<F, C> {
+impl<F: JoltField, C: OneHotCoeff<F>> MatrixEntry<F> for SparseEntry<F, C> {
     type Bound = Self;
 
     fn bind(
@@ -539,7 +563,7 @@ impl<F: Field, C: OneHotCoeff<F>> MatrixEntry<F> for SparseEntry<F, C> {
             (Some(even), Some(odd)) => {
                 debug_assert_eq!(even.col, odd.col);
                 Self {
-                    val: even.val + r.mul_0_optimized(odd.val - even.val),
+                    val: even.val + mul_0_optimized(r, odd.val - even.val),
                     ra: C::bind(Some(even.ra), Some(odd.ra), r, ra_lut),
                     wa: C::bind(Some(even.wa), Some(odd.wa), r, wa_lut),
                     prev_val: even.prev_val,
@@ -551,7 +575,7 @@ impl<F: Field, C: OneHotCoeff<F>> MatrixEntry<F> for SparseEntry<F, C> {
             (Some(even), None) => {
                 let odd_val = F::from_u64(even.next_val);
                 Self {
-                    val: even.val + r.mul_0_optimized(odd_val - even.val),
+                    val: even.val + mul_0_optimized(r, odd_val - even.val),
                     ra: C::bind(Some(even.ra), None, r, ra_lut),
                     wa: C::bind(Some(even.wa), None, r, wa_lut),
                     prev_val: even.prev_val,
@@ -563,7 +587,7 @@ impl<F: Field, C: OneHotCoeff<F>> MatrixEntry<F> for SparseEntry<F, C> {
             (None, Some(odd)) => {
                 let even_val = F::from_u64(odd.prev_val);
                 Self {
-                    val: even_val + r.mul_0_optimized(odd.val - even_val),
+                    val: even_val + mul_0_optimized(r, odd.val - even_val),
                     ra: C::bind(None, Some(odd.ra), r, ra_lut),
                     wa: C::bind(None, Some(odd.wa), r, wa_lut),
                     prev_val: odd.prev_val,
@@ -780,7 +804,7 @@ fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
 /// seed layout with implicit `Val` at round 0 (the peak-memory window), then
 /// SoA-split `u16` LUT indices while the tables can still square (through
 /// the fourth cycle round), direct field values after.
-pub(super) enum SparseEntries<F: Field> {
+pub(super) enum SparseEntries<F: JoltField> {
     Seed {
         entries: Vec<SeedEntry>,
         ra_lut: CoeffLut<F>,
@@ -820,7 +844,7 @@ pub(super) enum SparseEntries<F: Field> {
 /// materializes at `T/4` on the second bind. Neither the `T`- nor the
 /// `T/2`-sized field table ever exists; the raw column (16 B/cycle, exactly
 /// a `T/2` field table's footprint) covers both early rounds.
-pub(super) enum IncColumn<F: Field> {
+pub(super) enum IncColumn<F: JoltField> {
     Raw(Vec<i128>),
     RawBound { raw: Vec<i128>, r1: F },
     Bound(Polynomial<F>),
@@ -829,13 +853,13 @@ pub(super) enum IncColumn<F: Field> {
 /// The composed first-bind value `inc(y)` on the half domain: the exact
 /// `lo + r·(hi − lo)` op the eager `T/2` materialization applied.
 #[inline]
-fn raw_bound_inc<F: Field>(raw: &[i128], r1: F, y: usize) -> F {
+fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
     let lo = F::from_i128(raw[2 * y]);
     let hi = F::from_i128(raw[2 * y + 1]);
-    lo + r1.mul_0_optimized(hi - lo)
+    lo + mul_0_optimized(r1, hi - lo)
 }
 
-impl<F: Field> IncColumn<F> {
+impl<F: JoltField> IncColumn<F> {
     /// Bind one cycle variable. The first bind is free (round 1 serves the
     /// composed pairs straight from the raw deltas); the second materializes
     /// directly at `T/4`, each level the same pair op `lo + r·(hi − lo)` as
@@ -853,7 +877,7 @@ impl<F: Field> IncColumn<F> {
                 let pair = |z: usize| {
                     let lo = raw_bound_inc(&raw, r1, 2 * z);
                     let hi = raw_bound_inc(&raw, r1, 2 * z + 1);
-                    lo + r.mul_0_optimized(hi - lo)
+                    lo + mul_0_optimized(r, hi - lo)
                 };
                 #[cfg(feature = "parallel")]
                 let bound: Vec<F> = (0..quarter).into_par_iter().map(pair).collect();
@@ -1001,7 +1025,7 @@ pub(super) fn bind_sparse_entries_in_place<E>(
 /// [`bind_sparse_entries_in_place`]: same pair-aligned blocks, same forward
 /// write cursor (moved in lockstep across both columns, so the safety
 /// argument there carries over verbatim), same left-compaction.
-pub(super) fn bind_indexed_in_place_soa<F: Field>(
+pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
     vals: &mut Vec<F>,
     metas: &mut Vec<IndexedMeta>,
     ra_lut: &CoeffLut<F>,
@@ -1124,7 +1148,7 @@ pub(super) fn bind_indexed_in_place_soa<F: Field>(
 /// each side's LUT indices during the merge and bind as direct field
 /// coefficients — the exact deref-then-bind values of the AoS path, sized by
 /// the same dry-run count pass.
-pub(super) fn bind_indexed_to_direct<F: Field>(
+pub(super) fn bind_indexed_to_direct<F: JoltField>(
     vals: &[F],
     metas: &[IndexedMeta],
     ra_lut: &CoeffLut<F>,
@@ -1215,7 +1239,7 @@ fn accumulate_pair_group<F, E>(
     ra_lut: &CoeffLut<F>,
     wa_lut: &CoeffLut<F>,
 ) where
-    F: Field,
+    F: JoltField,
     E: MatrixEntry<F>,
 {
     let mut i = 0;
@@ -1264,7 +1288,7 @@ pub(super) fn sparse_quadratic<F, E>(
     inc_evals_at: impl Fn(usize) -> [F; 2] + Sync,
 ) -> [F; 2]
 where
-    F: Field,
+    F: JoltField,
     E: MatrixEntry<F>,
 {
     let e_in_len = e_in.len();
@@ -1318,7 +1342,7 @@ where
 /// [`sparse_quadratic`] over the SoA indexed columns: identical grouping and
 /// accumulation order (pair groups reassembled through [`merge_soa`]), so
 /// every summand matches the AoS walk bit-for-bit.
-pub(super) fn sparse_quadratic_soa<F: Field>(
+pub(super) fn sparse_quadratic_soa<F: JoltField>(
     vals: &[F],
     metas: &[IndexedMeta],
     ra_lut: &CoeffLut<F>,
@@ -1399,7 +1423,7 @@ pub(super) fn sparse_quadratic_soa<F: Field>(
 /// 4-row group (each ≤ `K` entries).
 type FusedScratch<F> = (Vec<SparseEntry<F, LutIndex>>, Vec<SparseEntry<F, LutIndex>>);
 
-fn fused_scratch<F: Field>() -> FusedScratch<F> {
+fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
     (
         Vec::with_capacity(1 << REGISTER_ADDRESS_BITS),
         Vec::with_capacity(1 << REGISTER_ADDRESS_BITS),
@@ -1411,7 +1435,7 @@ fn fused_scratch<F: Field>() -> FusedScratch<F> {
 /// against the pre-square tables — entry for entry what the sequential
 /// first bind materialized at full size.
 #[inline]
-fn fused_intermediates<F: Field>(
+fn fused_intermediates<F: JoltField>(
     group: &[SeedEntry],
     seed_ra_lut: &CoeffLut<F>,
     seed_wa_lut: &CoeffLut<F>,
@@ -1440,7 +1464,7 @@ fn fused_intermediates<F: Field>(
     clippy::too_many_arguments,
     reason = "mirrors sparse_quadratic plus the two table generations"
 )]
-pub(super) fn sparse_quadratic_fused<F: Field>(
+pub(super) fn sparse_quadratic_fused<F: JoltField>(
     entries: &[SeedEntry],
     seed_ra_lut: &CoeffLut<F>,
     seed_wa_lut: &CoeffLut<F>,
@@ -1511,7 +1535,7 @@ pub(super) fn sparse_quadratic_fused<F: Field>(
 /// Identical values by construction (both levels are the canonical binds
 /// the sequential rounds applied); only the full-size intermediate
 /// generation between them disappears.
-pub(super) fn bind_seed_entries_fused<F: Field>(
+pub(super) fn bind_seed_entries_fused<F: JoltField>(
     entries: &[SeedEntry],
     seed_ra_lut: &CoeffLut<F>,
     seed_wa_lut: &CoeffLut<F>,
@@ -1609,7 +1633,7 @@ pub(super) fn bind_seed_entries_fused<F: Field>(
     (vals, metas)
 }
 
-impl<F: Field> SparseEntries<F> {
+impl<F: JoltField> SparseEntries<F> {
     /// A placeholder table for the direct representation, which ignores it.
     pub(super) fn unused_lut() -> CoeffLut<F> {
         CoeffLut { values: Vec::new() }

@@ -336,7 +336,7 @@ fn matrix_bilinear_eval_columns<F: Field>(
 #[expect(clippy::expect_used, reason = "tests should fail loudly")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn satisfied_constraint() {

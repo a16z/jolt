@@ -12,7 +12,7 @@ use crate::support;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use crate::support::tamper_manifest;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_field::FromPrimitiveInt as _;
+use jolt_field::Ring as _;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
@@ -299,7 +299,7 @@ fn with_zk_verifier_stack(test: impl FnOnce() + Send + 'static) {
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn pop_committed_round<F, C>(proof: &mut jolt_sumcheck::SumcheckProof<F, C>)
 where
-    F: jolt_field::Field,
+    F: jolt_field::JoltField,
 {
     let jolt_sumcheck::SumcheckProof::Committed(proof) = proof else {
         panic!("ZK fixture must use committed sumcheck proofs");
@@ -310,7 +310,7 @@ where
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn exceed_first_committed_round_degree_bound<F, C>(proof: &mut jolt_sumcheck::SumcheckProof<F, C>)
 where
-    F: jolt_field::Field,
+    F: jolt_field::JoltField,
 {
     let jolt_sumcheck::SumcheckProof::Committed(proof) = proof else {
         panic!("ZK fixture must use committed sumcheck proofs");
@@ -324,7 +324,7 @@ where
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn pop_committed_output_claim_row<F, C>(proof: &mut jolt_sumcheck::SumcheckProof<F, C>)
 where
-    F: jolt_field::Field,
+    F: jolt_field::JoltField,
 {
     let jolt_sumcheck::SumcheckProof::Committed(proof) = proof else {
         panic!("ZK fixture must use committed sumcheck proofs");

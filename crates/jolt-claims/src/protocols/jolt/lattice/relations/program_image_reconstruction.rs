@@ -9,7 +9,7 @@
 //! offline, so only the decode leg is spent. Binds the `(byte ‖ place)`
 //! variables; the word point is fixed by the incoming claim.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::program_image::final_program_image_opening;
@@ -71,11 +71,11 @@ impl SymbolicSumcheck for ProgramImageReconstruction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(final_program_image_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(ProgramImageReconstructionPublic::ByteDecode)
             * opening(program_image_bytes_opening())
     }
@@ -92,7 +92,7 @@ pub fn program_image_bytes_opening() -> JoltOpeningId {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn program_image_reconstruction_evaluates_like_core_formula() {

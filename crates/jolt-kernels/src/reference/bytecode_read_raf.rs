@@ -51,7 +51,7 @@ use jolt_claims::protocols::jolt::{
     BytecodeReadRafPublic, JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial,
 };
 use jolt_claims::{Source, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
@@ -90,7 +90,7 @@ enum StageVal {
     Complement(usize),
 }
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -142,7 +142,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for ReferenceBac
     }
 }
 
-pub struct BytecodeReadRafAddressKernel<F: Field> {
+pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     rounds: usize,
     /// Committed-program mode stages the raw bound `Val_s` wire claims.
     committed_program: bool,
@@ -171,7 +171,7 @@ pub struct BytecodeReadRafAddressKernel<F: Field> {
 // Size arithmetic rather than a derive, so `F` stays unbounded; `Polynomial`
 // sizing is by `len()`, exact at the mid-stage snapshot.
 #[cfg(feature = "allocative")]
-impl<F: Field> allocative::Allocative for BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> allocative::Allocative for BytecodeReadRafAddressKernel<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         use crate::backend::poly_heap_bytes;
         let mut visitor = visitor.enter_self_sized::<Self>();
@@ -199,7 +199,7 @@ impl<F: Field> allocative::Allocative for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
     #[expect(
         clippy::too_many_arguments,
         reason = "the address phase's full geometry, spelled per source"
@@ -339,7 +339,7 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
     fn bind(&mut self, challenge: F) {
         for table in self.pushforwards.iter_mut().chain(self.values.iter_mut()) {
             table.bind_with_order(challenge, BindingOrder::LowToHigh);
@@ -362,7 +362,7 @@ impl<F: Field> BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.rounds
     }
@@ -417,7 +417,7 @@ impl<F: Field> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
 
     fn output_claims(
@@ -451,7 +451,7 @@ impl<F: Field> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

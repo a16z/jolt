@@ -2,7 +2,7 @@
 
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -126,7 +126,7 @@ impl<T: Copy> Polynomial<T> {
     ///
     /// When `T = F`, the `From` conversion is the identity and the compiler
     /// eliminates it, making this equivalent to an allocating bind.
-    pub fn bind_to_field<F: Field + From<T>>(&self, scalar: F) -> Polynomial<F> {
+    pub fn bind_to_field<F: JoltField + From<T>>(&self, scalar: F) -> Polynomial<F> {
         assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         let half = self.evals.len() / 2;
         let mut result = Vec::with_capacity(half);
@@ -142,7 +142,7 @@ impl<T: Copy> Polynomial<T> {
     }
 }
 
-impl<F: Field> Polynomial<F> {
+impl<F: JoltField> Polynomial<F> {
     /// Creates the zero polynomial with $2^n$ evaluations all equal to zero.
     pub fn zeros(num_vars: usize) -> Self {
         Self {
@@ -417,13 +417,13 @@ impl<F: Field> Polynomial<F> {
     }
 }
 
-impl<F: Field> From<Vec<F>> for Polynomial<F> {
+impl<F: JoltField> From<Vec<F>> for Polynomial<F> {
     fn from(evaluations: Vec<F>) -> Self {
         Self::new(evaluations)
     }
 }
 
-impl<F: Field> crate::MultilinearEvaluation<F> for Polynomial<F> {
+impl<F: JoltField> crate::MultilinearEvaluation<F> for Polynomial<F> {
     #[inline]
     fn num_vars(&self) -> usize {
         self.num_vars
@@ -439,14 +439,14 @@ impl<F: Field> crate::MultilinearEvaluation<F> for Polynomial<F> {
     }
 }
 
-impl<F: Field> crate::MultilinearBinding<F> for Polynomial<F> {
+impl<F: JoltField> crate::MultilinearBinding<F> for Polynomial<F> {
     fn bind(&mut self, scalar: F) {
         Polynomial::bind(self, scalar);
     }
 }
 
 #[inline]
-fn assert_matching_dims<F: Field>(a: &Polynomial<F>, b: &Polynomial<F>) -> (usize, usize) {
+fn assert_matching_dims<F: JoltField>(a: &Polynomial<F>, b: &Polynomial<F>) -> (usize, usize) {
     assert_eq!(
         a.num_vars, b.num_vars,
         "num_vars mismatch: {} vs {}",
@@ -455,7 +455,7 @@ fn assert_matching_dims<F: Field>(a: &Polynomial<F>, b: &Polynomial<F>) -> (usiz
     (a.num_vars, a.evals.len())
 }
 
-impl<F: Field> Add for Polynomial<F> {
+impl<F: JoltField> Add for Polynomial<F> {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self {
@@ -464,7 +464,7 @@ impl<F: Field> Add for Polynomial<F> {
     }
 }
 
-impl<F: Field> Add<&Self> for Polynomial<F> {
+impl<F: JoltField> Add<&Self> for Polynomial<F> {
     type Output = Self;
 
     fn add(mut self, rhs: &Self) -> Self {
@@ -473,13 +473,13 @@ impl<F: Field> Add<&Self> for Polynomial<F> {
     }
 }
 
-impl<F: Field> AddAssign for Polynomial<F> {
+impl<F: JoltField> AddAssign for Polynomial<F> {
     fn add_assign(&mut self, rhs: Self) {
         *self += &rhs;
     }
 }
 
-impl<F: Field> AddAssign<&Self> for Polynomial<F> {
+impl<F: JoltField> AddAssign<&Self> for Polynomial<F> {
     fn add_assign(&mut self, rhs: &Self) {
         let (_nv, len) = assert_matching_dims(self, rhs);
 
@@ -501,7 +501,7 @@ impl<F: Field> AddAssign<&Self> for Polynomial<F> {
     }
 }
 
-impl<F: Field> Sub for Polynomial<F> {
+impl<F: JoltField> Sub for Polynomial<F> {
     type Output = Self;
 
     fn sub(mut self, rhs: Self) -> Self {
@@ -510,7 +510,7 @@ impl<F: Field> Sub for Polynomial<F> {
     }
 }
 
-impl<F: Field> Sub<&Self> for Polynomial<F> {
+impl<F: JoltField> Sub<&Self> for Polynomial<F> {
     type Output = Self;
 
     fn sub(mut self, rhs: &Self) -> Self {
@@ -519,13 +519,13 @@ impl<F: Field> Sub<&Self> for Polynomial<F> {
     }
 }
 
-impl<F: Field> SubAssign for Polynomial<F> {
+impl<F: JoltField> SubAssign for Polynomial<F> {
     fn sub_assign(&mut self, rhs: Self) {
         *self -= &rhs;
     }
 }
 
-impl<F: Field> SubAssign<&Self> for Polynomial<F> {
+impl<F: JoltField> SubAssign<&Self> for Polynomial<F> {
     fn sub_assign(&mut self, rhs: &Self) {
         let (_nv, len) = assert_matching_dims(self, rhs);
 
@@ -547,7 +547,7 @@ impl<F: Field> SubAssign<&Self> for Polynomial<F> {
     }
 }
 
-impl<F: Field> Mul<F> for Polynomial<F> {
+impl<F: JoltField> Mul<F> for Polynomial<F> {
     type Output = Self;
 
     fn mul(mut self, rhs: F) -> Self {
@@ -569,7 +569,7 @@ impl<F: Field> Mul<F> for Polynomial<F> {
     }
 }
 
-impl<F: Field> Mul<F> for &Polynomial<F> {
+impl<F: JoltField> Mul<F> for &Polynomial<F> {
     type Output = Polynomial<F>;
 
     fn mul(self, rhs: F) -> Polynomial<F> {
@@ -577,7 +577,7 @@ impl<F: Field> Mul<F> for &Polynomial<F> {
     }
 }
 
-impl<F: Field> Neg for Polynomial<F> {
+impl<F: JoltField> Neg for Polynomial<F> {
     type Output = Self;
 
     fn neg(mut self) -> Self {
@@ -610,7 +610,7 @@ impl<F: Field> Neg for Polynomial<F> {
 /// the original value. Output 0 (reading indices 0 and 1) goes first, before
 /// level 2 overwrites index 1. Each level splits the buffer into disjoint
 /// `dst`/`src` slices, so the parallel path needs no `unsafe`.
-pub fn bind_low_to_high_in_place<F: Field>(evals: &mut Vec<F>, challenge: F) {
+pub fn bind_low_to_high_in_place<F: JoltField>(evals: &mut Vec<F>, challenge: F) {
     debug_assert!(evals.len().is_power_of_two());
     let half = evals.len() / 2;
     if half == 0 {
@@ -647,7 +647,7 @@ pub fn bind_low_to_high_in_place<F: Field>(evals: &mut Vec<F>, challenge: F) {
 mod tests {
     use super::*;
     use jolt_field::Fr;
-    use jolt_field::{FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

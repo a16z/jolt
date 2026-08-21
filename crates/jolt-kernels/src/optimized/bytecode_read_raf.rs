@@ -45,7 +45,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -108,7 +108,7 @@ struct PcBundle {
 impl PcRow {
     /// One trace scan per proof, shared by both bytecode phases and the
     /// stage-6a/6b booleanity kernels through the session.
-    pub(crate) fn shared<F: Field>(
+    pub(crate) fn shared<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
@@ -163,7 +163,7 @@ impl PcRow {
 
 /// The five per-stage cycle-eq pushforwards onto the bytecode address domain,
 /// all stages in one trace walk over the split-eq two-table decomposition.
-fn stage_pushforwards<F: Field>(
+fn stage_pushforwards<F: JoltField>(
     stage_cycle_points: &[Vec<F>; 5],
     rows: &[PcRow],
     addresses: usize,
@@ -249,7 +249,7 @@ fn stage_pushforwards<F: Field>(
 /// Stage-6a address phase: `PrepareKernel` front of the optimized kernel.
 pub struct OptimizedBytecodeReadRafAddress;
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
     for OptimizedBytecodeReadRafAddress
 {
     fn prepare(
@@ -339,7 +339,7 @@ impl<F: Field> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
     }
 }
 
-struct AddressKernel<F: Field> {
+struct AddressKernel<F: JoltField> {
     progress: RoundProgress,
     committed_program: bool,
     stage_weights: [F; 5],
@@ -370,7 +370,7 @@ crate::optimized::impl_field_allocative!(AddressKernel, |kernel| {
         + poly_heap_bytes(&kernel.entry_expected)
 });
 
-impl<F: Field> AddressKernel<F> {
+impl<F: JoltField> AddressKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all(
             self.pushforwards
@@ -410,7 +410,7 @@ impl<F: Field> AddressKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for AddressKernel<F> {
+impl<F: JoltField> ProveRounds<F> for AddressKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -441,7 +441,7 @@ impl<F: Field> ProveRounds<F> for AddressKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for AddressKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
 
     fn output_claims(
@@ -472,7 +472,7 @@ impl<F: Field> SumcheckKernel<F> for AddressKernel<F> {
 /// Stage-6b cycle phase: `PrepareKernel` front of the optimized kernel.
 pub struct OptimizedBytecodeReadRafCycle;
 
-impl<F: Field> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeReadRafCycle {
+impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeReadRafCycle {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -594,7 +594,7 @@ impl ChunkIndexSource for BytecodePcChunks {
     }
 }
 
-struct CycleKernel<F: Field> {
+struct CycleKernel<F: JoltField> {
     progress: RoundProgress,
     degree: usize,
     ra: LazyFoldedRa<F, BytecodePcChunks>,
@@ -614,7 +614,7 @@ crate::optimized::impl_field_allocative!(CycleKernel, |kernel| {
         + vec_heap_bytes(&kernel.output_openings)
 });
 
-impl<F: Field> CycleKernel<F> {
+impl<F: JoltField> CycleKernel<F> {
     fn bind(&mut self, challenge: F) {
         bind_all([&mut self.combined], challenge);
         self.ra.bind(challenge);
@@ -644,7 +644,7 @@ impl<F: Field> CycleKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for CycleKernel<F> {
+impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -678,7 +678,7 @@ impl<F: Field> ProveRounds<F> for CycleKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for CycleKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
     type Relation = BytecodeReadRafCycle<F>;
 
     fn output_claims(
@@ -714,7 +714,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6a::bytecode_read_raf::{
         BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
     };

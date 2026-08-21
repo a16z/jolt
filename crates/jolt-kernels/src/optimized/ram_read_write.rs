@@ -32,7 +32,7 @@ use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -59,7 +59,7 @@ use crate::{
 /// ⌈N/2⌉ + spill entries — by the first bind), remaining cycle rounds on the
 /// cycle-major matrix, address rounds on the address-major matrix, then the
 /// fully bound values. `None` only transiently inside a transition.
-enum Phase<F: Field> {
+enum Phase<F: JoltField> {
     Round0 {
         columns: RamAccessColumns,
         gruen: GruenSplitEqPolynomial<F>,
@@ -80,7 +80,7 @@ enum Phase<F: Field> {
     },
 }
 
-pub(crate) struct RamReadWriteKernel<F: Field> {
+pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
     /// The committed per-cycle increment column, bound alongside phase 1;
     /// a scalar once every cycle variable is bound.
@@ -112,7 +112,7 @@ crate::optimized::impl_field_allocative!(RamReadWriteKernel, |kernel| {
     phase + poly_heap_bytes(&kernel.inc) + poly_heap_bytes(&kernel.val_init)
 });
 
-impl<F: Field> Phase<F> {
+impl<F: JoltField> Phase<F> {
     /// The error for a bind or round message arriving outside its phase.
     fn error() -> SumcheckError<F> {
         SumcheckError::MissingEvaluationSource {
@@ -127,7 +127,7 @@ impl<F: Field> Phase<F> {
 /// generation in the allocator's freed-large-block cache).
 const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
 
-impl<F: Field> RamReadWriteKernel<F> {
+impl<F: JoltField> RamReadWriteKernel<F> {
     /// Bind the challenge of `round` (0-indexed over the member's window),
     /// advancing the phase machine at the boundaries.
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
@@ -262,7 +262,7 @@ impl<F: Field> RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t + self.log_k
     }
@@ -288,7 +288,7 @@ impl<F: Field> ProveRounds<F> for RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
     type Relation = RamReadWriteChecking<F>;
 
     fn output_claims(
@@ -338,7 +338,7 @@ impl<F: Field> SumcheckKernel<F> for RamReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -404,7 +404,7 @@ impl<F: Field> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::stage2::ram_read_write_checking::{
         RamReadWriteChallenges, RamReadWriteInputClaims,

@@ -28,7 +28,7 @@
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 use jolt_field::signed::{S192, S256, S64};
-use jolt_field::{Field, SignedProductAccumulator as _, WithSignedProductAccumulator};
+use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -84,7 +84,7 @@ impl InstructionInputRow {
     /// entries the dense tables hold (same `ToField` conversions as the
     /// oracle walk).
     #[inline]
-    fn field_values<F: Field>(&self) -> [F; NUM_TABLES] {
+    fn field_values<F: JoltField>(&self) -> [F; NUM_TABLES] {
         [
             self.is_rs1.to_field(),
             self.rs1_value.to_field(),
@@ -101,7 +101,7 @@ impl InstructionInputRow {
 /// Optimized [`PrepareKernel`] implementor for the `instruction_input` slot.
 pub struct OptimizedInstructionInput;
 
-impl<F: Field> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
+impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -120,12 +120,12 @@ impl<F: Field> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInp
 
 /// The column state: native rows through round 0, eight dense `T/2` tables
 /// after the first bind.
-enum InputState<F: Field> {
+enum InputState<F: JoltField> {
     Native(BundleStore<F, InstructionInputRow>),
     Dense(Vec<Polynomial<F>>),
 }
 
-pub struct OptimizedInstructionInputKernel<F: Field> {
+pub struct OptimizedInstructionInputKernel<F: JoltField> {
     progress: RoundProgress,
     gamma: F,
     state: InputState<F>,
@@ -142,7 +142,7 @@ crate::optimized::impl_field_allocative!(OptimizedInstructionInputKernel, |kerne
     state + kernel.gruen.heap_bytes()
 });
 
-fn row_extraction_error<F: Field>(_: WitnessError) -> SumcheckError<F> {
+fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
         kind: "instruction input operand row",
     }
@@ -160,7 +160,7 @@ fn ext_flag(even: bool, odd: bool) -> (i64, i64) {
     (i64::from(even), i64::from(odd) - i64::from(even))
 }
 
-impl<F: Field> OptimizedInstructionInputKernel<F> {
+impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     pub(crate) fn new(
         r_product: &[F],
         rows: BundleStore<F, InstructionInputRow>,
@@ -195,7 +195,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
         rows: &BundleStore<F, InstructionInputRow>,
     ) -> Result<[F; 4], WitnessError> {
         const POINTS: usize = 4;
-        type Accumulator<F> = <F as WithSignedProductAccumulator>::SignedProductAccumulator;
+        type Accumulator<F> = <F as WithAccumulator>::SignedProductAccumulator;
         let access = rows.access()?;
         let e_out = self.gruen.e_out_current();
         let e_in = self.gruen.e_in_current();
@@ -232,8 +232,8 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
                     // even for full-range `i128` immediates.
                     let mut right =
                         S256::from_i128(i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m));
-                    S64::from_i64(f_imm * (1 - t)).fmadd_trunc::<3, 4>(&imm_even, &mut right);
-                    S64::from_i64(f_imm * t).fmadd_trunc::<3, 4>(&imm_odd, &mut right);
+                    right += S64::from_i64(f_imm * (1 - t)).mul_trunc::<3, 4>(&imm_even);
+                    right += S64::from_i64(f_imm * t).mul_trunc::<3, 4>(&imm_odd);
                     right_acc[t as usize].fmadd_s256(e_in, &right);
                     left_acc[t as usize].fmadd_s256(e_in, &S256::from_i128(left));
                 }
@@ -437,7 +437,7 @@ impl<F: Field> OptimizedInstructionInputKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -459,7 +459,7 @@ impl<F: Field> ProveRounds<F> for OptimizedInstructionInputKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
     type Relation = InstructionInput<F>;
 
     fn output_claims(
@@ -519,7 +519,7 @@ mod tests {
         InstructionInputChallenges, InstructionInputInputClaims,
     };
     use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId, TraceDimensions};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;

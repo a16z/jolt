@@ -30,7 +30,7 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::increments::{
     ram_inc_reduced, rd_inc_reduced,
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
@@ -65,7 +65,7 @@ struct IncRow {
     rd_inc: RdInc,
 }
 
-impl<F: Field> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduction {
+impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimReduction {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -160,7 +160,7 @@ impl<F> PairedEq<F> {
     }
 }
 
-impl<F: Field> PairedEq<F> {
+impl<F: JoltField> PairedEq<F> {
     fn new(p1: &[F], s1: F, p2: &[F], s2: F) -> Self {
         debug_assert_eq!(p1.len(), p2.len());
         let mid = p1.len() / 2;
@@ -241,7 +241,7 @@ impl<F: Field> PairedEq<F> {
 /// The increment columns' lifecycle: typed trace rows until the first bind
 /// (the full-length dense field tables never exist), dense bound tables
 /// afterwards.
-enum IncState<F: Field> {
+enum IncState<F: JoltField> {
     Rows(BundleStore<F, IncRow>),
     Dense {
         ram: Polynomial<F>,
@@ -249,7 +249,7 @@ enum IncState<F: Field> {
     },
 }
 
-struct IncKernel<F: Field> {
+struct IncKernel<F: JoltField> {
     progress: RoundProgress,
     incs: IncState<F>,
     ram_weights: PairedEq<F>,
@@ -266,13 +266,13 @@ crate::optimized::impl_field_allocative!(IncKernel, |kernel| {
     incs + kernel.ram_weights.heap_bytes() + kernel.rd_weights.heap_bytes()
 });
 
-fn row_unavailable<F: Field>() -> SumcheckError<F> {
+fn row_unavailable<F: JoltField>() -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
         kind: "increment claim-reduction trace rows",
     }
 }
 
-impl<F: Field> IncKernel<F> {
+impl<F: JoltField> IncKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         if let IncState::Dense { ram, rd } = &mut self.incs {
             bind_all([ram, rd], challenge);
@@ -342,7 +342,7 @@ impl<F: Field> IncKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for IncKernel<F> {
+impl<F: JoltField> ProveRounds<F> for IncKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -413,7 +413,7 @@ impl<F: Field> ProveRounds<F> for IncKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for IncKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for IncKernel<F> {
     type Relation = IncClaimReduction<F>;
 
     fn output_claims(
@@ -440,7 +440,7 @@ impl<F: Field> SumcheckKernel<F> for IncKernel<F> {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage6b::inc_claim_reduction::{
         IncClaimReductionChallenges, IncClaimReductionInputClaims,
     };

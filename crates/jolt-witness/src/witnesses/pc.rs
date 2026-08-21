@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_program::execution::TraceRow;
 
 use super::{pc_for_row, row_is_noop, Extract, ToField, WitnessEnv};
@@ -61,7 +61,7 @@ pub struct NextPc(pub u64);
 pub struct NextUnexpandedPc(pub u64);
 
 impl ToField for Pc {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -77,7 +77,7 @@ impl Extract for Pc {
 }
 
 impl ToField for UnexpandedPc {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -93,7 +93,7 @@ impl Extract for UnexpandedPc {
 }
 
 impl ToField for NextPc {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }
@@ -113,7 +113,7 @@ impl Extract for NextPc {
 }
 
 impl ToField for NextUnexpandedPc {
-    fn to_field<F: Field>(self) -> F {
+    fn to_field<F: JoltField>(self) -> F {
         F::from_u64(self.0)
     }
 }

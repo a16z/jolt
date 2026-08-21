@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
@@ -74,7 +74,7 @@ impl SharedRamAddresses {
         clippy::expect_used,
         reason = "the entry is parked by this function right above the read"
     )]
-    pub fn shared<F: Field>(
+    pub fn shared<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
@@ -111,7 +111,7 @@ impl SharedRamAddresses {
 /// Collect per-cycle `u64` columns straight into SoA form: index-parallel
 /// scatter for slice-backed sources, streaming windows otherwise. `split` is
 /// pure per row, so column values and order match a bundle collect + split.
-fn collect_split_columns<F: Field, B, const N: usize>(
+fn collect_split_columns<F: JoltField, B, const N: usize>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
     split: impl Fn(&B) -> [u64; N] + Send + Sync,
@@ -155,7 +155,7 @@ where
 /// The index-parallel split: rows scatter straight into their offsets of
 /// every column's spare capacity (chunked so extraction load-balances).
 #[cfg(feature = "parallel")]
-fn collect_split_columns_par<F: Field, B, const N: usize>(
+fn collect_split_columns_par<F: JoltField, B, const N: usize>(
     access: &super::rows::RandomAccessRows<'_>,
     cycles: usize,
     split: &(impl Fn(&B) -> [u64; N] + Sync),
@@ -234,7 +234,7 @@ impl RamAccessColumns {
     /// Collect the full three-column view, sharing the address column with
     /// the session: one fused walk when the column is not parked yet, a
     /// value-only walk when it is.
-    pub fn collect_full<F: Field>(
+    pub fn collect_full<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
@@ -285,7 +285,7 @@ impl RamAccessColumns {
     /// being consistent with the final memory image (exactly what the RAM
     /// val/output sumchecks prove). A dishonest witness diverges here and
     /// fails the engine's round checks loudly.
-    pub fn reconstruct_val_init<F: Field>(&self, val_final: Vec<F>) -> Vec<F> {
+    pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
         let mut val_init = val_final;
         let mut seen = vec![false; val_init.len()];
         for (&address, &pre_value) in self.addresses.iter().zip(&self.pre_values) {
@@ -304,7 +304,7 @@ impl RamAccessColumns {
 
 /// Bounds-check every accessed address against the proof's `K`, matching
 /// the grid materializers' fail-loud contract.
-pub(crate) fn validate_addresses<F: Field>(
+pub(crate) fn validate_addresses<F: JoltField>(
     addresses: &[u64],
     ram_k: usize,
 ) -> Result<(), KernelError<F>> {
@@ -323,7 +323,7 @@ pub(crate) fn validate_addresses<F: Field>(
 /// `out[j] = Σ_k eq(r_address, k) · ra(k, j) = eq_address[addresses[j]]`
 /// (0 on no-access cycles). Reproduces `views::address_fold` of the dense
 /// grid without materializing it.
-pub(crate) fn fold_addresses<F: Field>(addresses: &[u64], eq_address: &[F]) -> Vec<F> {
+pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u64], eq_address: &[F]) -> Vec<F> {
     addresses
         .iter()
         .map(|&address| {
@@ -347,7 +347,7 @@ const FOLD_CYCLES_CHUNK: usize = 1 << 20;
 /// `e_hi ⊗ e_lo` split tensor (`eq(r, j) = eq(r_hi, j_hi) · eq(r_lo, j_lo)`,
 /// an exact-field product of the same factors as the dense table's entries),
 /// and each chunk folds serially in the same ascending-`j` order.
-pub(crate) fn fold_cycles<F: Field>(addresses: &[u64], r_cycle: &[F], ram_k: usize) -> Vec<F> {
+pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u64], r_cycle: &[F], ram_k: usize) -> Vec<F> {
     let mid = r_cycle.len() / 2;
     let (r_hi, r_lo) = r_cycle.split_at(mid);
     let e_hi = EqPolynomial::<F>::evals(r_hi, None);

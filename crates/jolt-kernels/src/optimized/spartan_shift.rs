@@ -31,7 +31,7 @@
 //!   ring-accumulator `fmadd` for the field-by-field `Q` products.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, SignedScalarAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -71,7 +71,7 @@ struct SpartanShiftRow {
 
 pub struct OptimizedSpartanShift;
 
-impl<F: Field> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
+impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -207,7 +207,7 @@ enum Phase<F> {
     },
 }
 
-struct ShiftKernel<F: Field> {
+struct ShiftKernel<F: JoltField> {
     log_t: usize,
     gamma_powers: [F; 5],
     /// The two `eq+1` points (big-endian) the summand factors fix.
@@ -257,13 +257,13 @@ crate::optimized::impl_field_allocative!(ShiftKernel, |kernel| {
         + kernel.challenges.heap_bytes()
 });
 
-fn row_extraction_error<F: Field>(_: WitnessError) -> SumcheckError<F> {
+fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
         kind: "spartan shift row",
     }
 }
 
-impl<F: Field> ShiftKernel<F> {
+impl<F: JoltField> ShiftKernel<F> {
     /// Regenerate the dense phase from the raw values: the five columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
     /// table recombined from its suffix pair and bound-prefix evaluations.
@@ -380,7 +380,7 @@ impl<F: Field> ShiftKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ShiftKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ShiftKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -461,7 +461,7 @@ impl<F: Field> ProveRounds<F> for ShiftKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
     type Relation = SpartanShift<F>;
 
     fn output_claims(
@@ -533,7 +533,7 @@ impl<F: Field> SumcheckKernel<F> for ShiftKernel<F> {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPlusOnePolynomial;
     use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
     use jolt_program::preprocess::{

@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -53,7 +53,7 @@ impl<const XLEN: usize> LookupTable for PextSignedTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         // pext:   result·(1+y_i) + x_i·y_i
@@ -98,7 +98,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for PextSignedTable<XLEN
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, pext, pext_helper, window_sign, window_sign_pow2] = suffixes.try_into().unwrap();
         let pow_xlen = F::from_u128(1u128 << XLEN);

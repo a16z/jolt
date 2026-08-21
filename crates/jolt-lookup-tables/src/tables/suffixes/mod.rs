@@ -100,7 +100,7 @@ use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
 use xor_rotw::XorRotWSuffix;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 /// A suffix polynomial: evaluates on unbound Boolean variables during sumcheck.
 ///
@@ -253,7 +253,7 @@ impl Suffixes {
 
     /// Evaluate and promote to a field element.
     #[inline]
-    pub fn evaluate<F: Field>(&self, b: LookupBits) -> SuffixEval<F> {
+    pub fn evaluate<F: JoltField>(&self, b: LookupBits) -> SuffixEval<F> {
         F::from_u64(self.suffix_mle(b))
     }
 }

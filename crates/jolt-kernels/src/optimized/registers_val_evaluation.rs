@@ -33,7 +33,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -58,7 +58,7 @@ use crate::{
 /// The write-address column: hot indices plus the address eq table until the
 /// first bind, a dense bound table afterwards. The `K × T` grid never exists,
 /// and the low-to-high dense binds shed capacity as the table halves.
-enum WaState<F: Field> {
+enum WaState<F: JoltField> {
     Indices {
         rd: Vec<Option<u8>>,
         eq_address: Vec<F>,
@@ -66,7 +66,7 @@ enum WaState<F: Field> {
     Dense(Polynomial<F>),
 }
 
-impl<F: Field> WaState<F> {
+impl<F: JoltField> WaState<F> {
     #[inline]
     fn pair(&self, y: usize) -> (F, F) {
         match self {
@@ -113,7 +113,7 @@ impl<F: Field> WaState<F> {
 
 pub struct OptimizedRegistersValEvaluation;
 
-impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
+impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegistersValEvaluation {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -173,7 +173,7 @@ impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegister
 /// The increment column's lifecycle: typed trace rows until the first bind
 /// (the full-length dense field table never exists), a dense bound table
 /// afterwards.
-enum IncState<F: Field> {
+enum IncState<F: JoltField> {
     Rows(BundleStore<F, RdIncRow>),
     Dense(Polynomial<F>),
 }
@@ -184,7 +184,7 @@ struct RdIncRow {
     rd_inc: RdInc,
 }
 
-struct ValEvaluationKernel<F: Field> {
+struct ValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncState<F>,
     wa: WaState<F>,
@@ -205,13 +205,13 @@ crate::optimized::impl_field_allocative!(ValEvaluationKernel, |kernel| {
     inc + wa + kernel.lt.heap_bytes()
 });
 
-fn row_unavailable<F: Field>() -> SumcheckError<F> {
+fn row_unavailable<F: JoltField>() -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource {
         kind: "registers increment trace rows",
     }
 }
 
-impl<F: Field> ValEvaluationKernel<F> {
+impl<F: JoltField> ValEvaluationKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         match &mut self.inc {
             IncState::Dense(inc) => inc.bind_with_order(challenge, BindingOrder::LowToHigh),
@@ -246,7 +246,7 @@ impl<F: Field> ValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -330,7 +330,7 @@ impl<F: Field> ProveRounds<F> for ValEvaluationKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ValEvaluationKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
     type Relation = RegistersValEvaluation<F>;
 
     fn output_claims(

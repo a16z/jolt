@@ -5,7 +5,7 @@
 //!
 //! Used internally by `ProverData` — not a standalone `BufferProvider`.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::column::R1csColumn;
 use crate::key::R1csKey;
@@ -25,13 +25,13 @@ pub struct SpartanChallenges<F> {
 /// Handles `PolySource::R1cs(column)`: Az, Bz, Cz (sparse matvec),
 /// CombinedRow (linear combination with Spartan challenges), and
 /// Variable(i) column extraction from the per-cycle witness vector.
-pub struct R1csSource<'a, F: Field> {
+pub struct R1csSource<'a, F: JoltField> {
     key: &'a R1csKey<F>,
     witness: &'a [F],
     challenges: Option<SpartanChallenges<F>>,
 }
 
-impl<'a, F: Field> R1csSource<'a, F> {
+impl<'a, F: JoltField> R1csSource<'a, F> {
     /// # Panics
     ///
     /// Panics if the witness length does not match the key's padded layout
@@ -164,7 +164,7 @@ impl<'a, F: Field> R1csSource<'a, F> {
 mod tests {
     use super::*;
     use crate::constraint::ConstraintMatrices;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use num_traits::{One, Zero};
 
     #[test]

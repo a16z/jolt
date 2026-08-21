@@ -26,7 +26,7 @@
 //!   rounds.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_field::{Field, OptimizedMul};
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -69,7 +69,7 @@ impl ChunkIndexSource for RamAddressIndices {
     }
 }
 
-impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -112,7 +112,7 @@ impl<F: Field> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
 /// is `F::from_i128(post − pre)` for writes and `F::from_i128(0)` otherwise,
 /// and the columns carry `post == pre` on reads and zeros on no-ops, so
 /// [`raw_inc`] reproduces the oracle's field values bit-for-bit.
-enum IncColumn<F: Field> {
+enum IncColumn<F: JoltField> {
     Raw(RamAccessColumns),
     RawBound { columns: RamAccessColumns, r1: F },
     Bound(Polynomial<F>),
@@ -120,20 +120,30 @@ enum IncColumn<F: Field> {
 
 /// `inc(j)` from the raw columns — the witness oracle's exact op.
 #[inline]
-fn raw_inc<F: Field>(columns: &RamAccessColumns, j: usize) -> F {
+fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
     F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
+}
+
+/// `left * right`, skipping the multiply when either side is zero.
+#[inline(always)]
+fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
+    if left.is_zero() || right.is_zero() {
+        F::zero()
+    } else {
+        left * right
+    }
 }
 
 /// The composed first-bind value `inc(y)` on the half domain: the exact
 /// `lo + r·(hi − lo)` op the eager `T/2` materialization applied.
 #[inline]
-fn raw_bound_inc<F: Field>(columns: &RamAccessColumns, r1: F, y: usize) -> F {
+fn raw_bound_inc<F: JoltField>(columns: &RamAccessColumns, r1: F, y: usize) -> F {
     let lo = raw_inc::<F>(columns, 2 * y);
     let hi = raw_inc::<F>(columns, 2 * y + 1);
-    lo + r1.mul_0_optimized(hi - lo)
+    lo + mul_0_optimized(r1, hi - lo)
 }
 
-struct RamValCheckKernel<F: Field> {
+struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncColumn<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,
@@ -157,7 +167,7 @@ crate::optimized::impl_field_allocative!(RamValCheckKernel, |kernel| {
         + kernel.lt.heap_bytes()
 });
 
-impl<F: Field> RamValCheckKernel<F> {
+impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         let mut freed_columns = false;
         if let IncColumn::Bound(inc) = &mut self.inc {
@@ -183,7 +193,7 @@ impl<F: Field> RamValCheckKernel<F> {
                     let pair = |z: usize| {
                         let lo = raw_bound_inc::<F>(&columns, r1, 2 * z);
                         let hi = raw_bound_inc::<F>(&columns, r1, 2 * z + 1);
-                        lo + challenge.mul_0_optimized(hi - lo)
+                        lo + mul_0_optimized(challenge, hi - lo)
                     };
                     #[cfg(feature = "parallel")]
                     let bound: Vec<F> = (0..quarter).into_par_iter().map(pair).collect();
@@ -208,7 +218,7 @@ impl<F: Field> RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -261,7 +271,7 @@ impl<F: Field> ProveRounds<F> for RamValCheckKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamValCheckKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
     type Relation = RamValCheck<F>;
 
     fn output_claims(
@@ -317,7 +327,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::{
         RamValCheckChallenges, RamValCheckInputClaims,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::LtPolynomial;
 
     use super::super::testing::{

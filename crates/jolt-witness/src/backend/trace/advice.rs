@@ -4,7 +4,7 @@
 use super::*;
 
 impl<T: TraceSource + Clone> TraceBackend<T> {
-    pub(crate) fn materialize_trusted_advice<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_trusted_advice<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         materialize_advice(
             "trusted",
             &self.trace.device.trusted_advice,
@@ -12,7 +12,9 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         )
     }
 
-    pub(crate) fn materialize_untrusted_advice<F: Field>(&self) -> Result<Vec<F>, WitnessError> {
+    pub(crate) fn materialize_untrusted_advice<F: JoltField>(
+        &self,
+    ) -> Result<Vec<F>, WitnessError> {
         materialize_advice(
             "untrusted",
             &self.trace.device.untrusted_advice,
@@ -20,7 +22,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         )
     }
 
-    pub(crate) fn materialize_trusted_advice_bytes<F: Field>(
+    pub(crate) fn materialize_trusted_advice_bytes<F: JoltField>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
         materialize_advice_bytes(
@@ -30,7 +32,7 @@ impl<T: TraceSource + Clone> TraceBackend<T> {
         )
     }
 
-    pub(crate) fn materialize_untrusted_advice_bytes<F: Field>(
+    pub(crate) fn materialize_untrusted_advice_bytes<F: JoltField>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
         materialize_advice_bytes(
@@ -48,7 +50,7 @@ pub(super) fn advice_words(max_bytes: usize) -> usize {
     (max_bytes / 8).next_power_of_two().max(1)
 }
 
-fn materialize_advice<F: Field>(
+fn materialize_advice<F: JoltField>(
     kind: &str,
     bytes: &[u8],
     max_bytes: usize,
@@ -72,7 +74,7 @@ fn materialize_advice<F: Field>(
 /// the advice byte, zero-padded past the actual advice length — the same zero
 /// padding the word column carries, so every `(place, word)` pair holds
 /// exactly one hot byte (the hamming leg of the untrusted reconstruction).
-fn materialize_advice_bytes<F: Field>(
+fn materialize_advice_bytes<F: JoltField>(
     kind: &str,
     bytes: &[u8],
     max_bytes: usize,

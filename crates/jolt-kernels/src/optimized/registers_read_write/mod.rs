@@ -60,7 +60,7 @@
 //! all cycle rounds, phase 2 = 0) is supported.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
-use jolt_field::{AdditiveAccumulator, Field};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -94,7 +94,7 @@ use sparse::{CoeffLut, IncColumn, SparseEntries};
 
 pub struct OptimizedRegistersReadWrite;
 
-impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
+impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -169,7 +169,7 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
     }
 }
 
-struct ReadWriteKernel<F: Field> {
+struct ReadWriteKernel<F: JoltField> {
     log_t: usize,
     log_k: usize,
     /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
@@ -246,7 +246,7 @@ crate::optimized::impl_field_allocative!(ReadWriteKernel, |kernel| {
         + kernel.challenges.heap_bytes()
 });
 
-impl<F: Field> ReadWriteKernel<F> {
+impl<F: JoltField> ReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's
     /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
     /// into the exact cubic by `gruen_poly_deg_3`.
@@ -407,7 +407,7 @@ impl<F: Field> ReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t + self.log_k
     }
@@ -434,7 +434,7 @@ impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
     type Relation = RegistersReadWriteChecking<F>;
 
     fn output_claims(

@@ -22,7 +22,7 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::{
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use std::collections::BTreeMap;
 
 use jolt_kernels::committed_program::{
@@ -82,7 +82,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage8ProverOutput<PCS>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic + ZkOpeningScheme<Blind = F>,
     PCS::Output: HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
@@ -334,14 +334,14 @@ impl<H: Clone> IntoHints<H> for &Vec<H> {
 /// Fail-closed: any access to the inner view after its fold (nothing on the
 /// transparent batch path does this) panics rather than serving stale data.
 #[cfg(not(feature = "zk"))]
-struct FoldOnce<F: Field> {
+struct FoldOnce<F: JoltField> {
     inner: std::sync::Mutex<Option<Box<dyn MultilinearPoly<F>>>>,
     num_vars: usize,
     remaining: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[cfg(not(feature = "zk"))]
-impl<F: Field> FoldOnce<F> {
+impl<F: JoltField> FoldOnce<F> {
     fn wrap(polynomials: Vec<Box<dyn MultilinearPoly<F>>>) -> Vec<Self> {
         let remaining = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(polynomials.len()));
         polynomials
@@ -368,7 +368,7 @@ impl<F: Field> FoldOnce<F> {
 }
 
 #[cfg(not(feature = "zk"))]
-impl<F: Field> MultilinearPoly<F> for FoldOnce<F> {
+impl<F: JoltField> MultilinearPoly<F> for FoldOnce<F> {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
