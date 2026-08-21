@@ -5,7 +5,7 @@
 //! allocator as the underlying memory source.
 extern crate alloc;
 
-use core::{alloc::Layout, cmp, ffi::c_void, mem, ptr};
+use core::{alloc::Layout, ffi::c_void, mem};
 
 /// Alignment guaranteed to C code, matching `max_align_t` behavior.
 /// RISC-V 64-bit: 16 bytes, 32-bit: 8 bytes. Over-aligning is safe.
@@ -114,23 +114,30 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
     }
 
     let old_payload_ptr = ptr as *mut u8;
-    let Some((_, _, old_payload_size)) = read_header(old_payload_ptr) else {
+    let Some((old_layout, old_block_ptr, _)) = read_header(old_payload_ptr) else {
+        return core::ptr::null_mut();
+    };
+    let Some(new_layout) = alloc_layout(new_size) else {
         return core::ptr::null_mut();
     };
 
-    let new_ptr = malloc(new_size);
-    if new_ptr.is_null() {
+    // Delegate to the global allocator rather than doing alloc-copy-free here:
+    // allocators that can resize a block in place (e.g. `size_class_alloc`, which
+    // grows the newest bump block and treats same-class requests as no-ops) then
+    // serve C growth loops without moving or copying. The allocator copies the
+    // header along with the payload when it does have to move the block.
+    let new_block_ptr = alloc::alloc::realloc(old_block_ptr, old_layout, new_layout.size());
+    if new_block_ptr.is_null() {
         return core::ptr::null_mut();
     }
 
-    // Copy existing data (up to smaller of old/new sizes)
-    ptr::copy_nonoverlapping(
-        old_payload_ptr,
-        new_ptr as *mut u8,
-        cmp::min(old_payload_size, new_size),
-    );
-    free(ptr);
-    new_ptr
+    // Record the new payload size so free/realloc reconstruct the right layout.
+    (new_block_ptr as *mut AllocHeader).write(AllocHeader {
+        magic: HEADER_MAGIC,
+        payload_size: new_size,
+    });
+
+    new_block_ptr.add(mem::size_of::<AllocHeader>()) as *mut c_void
 }
 
 /// Standard C calloc - allocate zero-initialized memory for array.
